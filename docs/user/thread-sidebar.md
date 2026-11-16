@@ -142,7 +142,9 @@ the thread you last sent work to first. Pinned threads stay in the pinned sectio
 
 On web and desktop, threads that need an answer, an approval, or a plan review move into
 **Input**, above Working. Both sections stay available while you scroll the active list.
-Find **Settled** at the end of that list. On native mobile, requests return to the active list.
+Find **Settled** at the end of that list. Enable **Settings → General → Keep Settled at bottom**
+to keep it visible below Working and Snoozed instead. Each device remembers its choice.
+On native mobile, requests return to the active list.
 
 This is on by default. Turn it off with **Settings → General → Working section** on web and desktop,
 or **Settings → General → Working section** on iOS and Android. Each device keeps its own

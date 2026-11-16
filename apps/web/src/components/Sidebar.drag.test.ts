@@ -333,6 +333,29 @@ describe("sidebar drag projection", () => {
     expect(strategy({ ...args, index: 5 })?.y).toBe(-46);
   });
 
+  it("keeps Settled fixed below Working when it is outside the main scroll", () => {
+    const items = [
+      pinnedHeader,
+      divider,
+      thread("a1", "active"),
+      thread("a2", "active"),
+      marker("working-header"),
+      thread("w", "working"),
+      settledHeader,
+      thread("s", "settled"),
+    ];
+    const args = layout(items, "a1", sidebarMarkerId("settled-header"));
+    const strategy = createSidebarSortingStrategy({
+      items,
+      settledOrder: ["a1", "s"],
+      settledExpanded: true,
+      independentShelves: true,
+      settledInMainList: false,
+    });
+    for (const index of [4, 5, 6]) expect(strategy({ ...args, index })).toEqual(stationary);
+    expect(strategy({ ...args, index: 7 })?.y).toBe(37);
+  });
+
   const pinned = [
     pinnedHeader,
     thread("p1", "pinned"),

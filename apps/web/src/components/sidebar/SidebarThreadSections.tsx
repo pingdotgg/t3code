@@ -11,6 +11,7 @@ export function SidebarThreadSections({
   main,
   shelves,
   settledMore,
+  settledFixed,
   sweeping,
   dragging,
 }: {
@@ -18,10 +19,13 @@ export function SidebarThreadSections({
   main: ReactNode;
   shelves: Record<(typeof shelfNames)[number] | "settled", readonly ReactNode[]>;
   settledMore: ReactNode;
+  settledFixed: boolean;
   sweeping: boolean;
   dragging: boolean;
 }) {
   const [settledHeader, ...settledRows] = shelves.settled;
+  const fixedShelves = settledFixed ? [...shelfNames, "settled" as const] : shelfNames;
+  const crowded = fixedShelves.filter((name) => shelves[name][0]).length > 3;
   return (
     <div
       ref={ref}
@@ -43,19 +47,23 @@ export function SidebarThreadSections({
         >
           {main}
         </ul>
-        <ul role="presentation">{settledHeader}</ul>
-        <AnimatedHeight>
-          <ul
-            data-sidebar-list="settled"
-            role="presentation"
-            className="relative flex flex-col gap-px"
-          >
-            {settledRows}
-            {settledMore}
-          </ul>
-        </AnimatedHeight>
+        {!settledFixed ? (
+          <>
+            <ul role="presentation">{settledHeader}</ul>
+            <AnimatedHeight>
+              <ul
+                data-sidebar-list="settled"
+                role="presentation"
+                className="relative flex flex-col gap-px"
+              >
+                {settledRows}
+                {settledMore}
+              </ul>
+            </AnimatedHeight>
+          </>
+        ) : null}
       </ScrollArea>
-      {shelfNames.map((name) => {
+      {fixedShelves.map((name) => {
         const [header, ...rows] = shelves[name];
         return (
           <div key={name} hidden={!header} className="shrink-0">
@@ -64,7 +72,12 @@ export function SidebarThreadSections({
               <ScrollArea
                 hideScrollbars
                 viewportTabIndex={-1}
-                className="h-auto max-h-[max(0px,calc(28cqh-2rem))]"
+                className={cn(
+                  "h-auto",
+                  crowded
+                    ? "max-h-[max(0px,calc(20cqh-2rem))]"
+                    : "max-h-[max(0px,calc(28cqh-2rem))]",
+                )}
               >
                 <ul
                   data-sidebar-list={name}
@@ -72,6 +85,7 @@ export function SidebarThreadSections({
                   className="relative flex flex-col gap-px"
                 >
                   {rows}
+                  {name === "settled" ? settledMore : null}
                 </ul>
               </ScrollArea>
             </AnimatedHeight>

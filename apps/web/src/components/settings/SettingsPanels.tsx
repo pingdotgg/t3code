@@ -496,6 +496,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
+    ...(settings.sidebarSettledShelfFixed !== DEFAULT_UNIFIED_SETTINGS.sidebarSettledShelfFixed
+      ? ["Keep Settled at bottom"]
+      : []),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? ["Auto-settle inactive threads"]
       : []),
@@ -677,6 +680,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarSettledShelfFixed: DEFAULT_UNIFIED_SETTINGS.sidebarSettledShelfFixed,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -927,6 +931,32 @@ export function GeneralSettingsPanel() {
                 updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
               }
               aria-label={gt("Working section")}
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("fixed-settled-shelf")}
+          description="Keep Settled below Working and Snoozed instead of at the end of the main list."
+          resetAction={
+            settings.sidebarSettledShelfFixed !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarSettledShelfFixed ? (
+              <SettingResetButton
+                label="settled section position"
+                onClick={() =>
+                  updateSettings({
+                    sidebarSettledShelfFixed: DEFAULT_UNIFIED_SETTINGS.sidebarSettledShelfFixed,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarSettledShelfFixed}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarSettledShelfFixed: Boolean(checked) })
+              }
+              aria-label="Keep Settled at bottom"
             />
           }
         />

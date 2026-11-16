@@ -466,6 +466,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
   {
+    id: "fixed-settled-shelf",
+    title: "Keep Settled at bottom",
+    to: "/settings/general",
+    searchTerms: ["sidebar settled section fixed working below end scroll list"],
+  },
+  {
     id: "boring-sidebar",
     title: "Boring sidebar (group by project)",
     to: "/settings/labs",

@@ -332,96 +332,108 @@ describe("sidebar thread rename", () => {
 });
 
 describe("sidebar settled pagination", () => {
-  it("keeps the viewport in place when showing more settled threads", async () => {
-    using stack = new DisposableStack();
-    const style = document.createElement("style");
-    style.textContent = appCss;
-    document.head.append(style);
-    stack.defer(() => style.remove());
-    const focusController = createWorkspaceFocusController(document);
-    stack.defer(() => focusController.dispose());
-    let loading = false;
-    const originalShelf = vi.mocked(shelfHooks.useOlderSettledShelf).getMockImplementation()!;
-    using _shelf = vi.spyOn(shelfHooks, "useOlderSettledShelf").mockImplementation((input) => ({
-      ...originalShelf(input),
-      loading,
-      retry: () => {
-        loading = true;
-      },
-    }));
-    const activeProject = project("active");
-    const threads = Array.from({ length: 70 }, (_, index) =>
-      makeThreadFixture({
-        environmentId: activeProject.environmentId,
-        projectId: activeProject.id,
-        id: ThreadId.make(`settled-${index}`),
-        title: `Settled thread ${index}`,
-        settledOverride: "settled",
-        settledAt: "2026-01-01T00:00:00.000Z",
-      }),
-    );
-    threads.unshift(threadShell(activeProject.id, 100));
-    vi.mocked(useProjects).mockReturnValue([activeProject]);
-    vi.mocked(useQuietThreadShells).mockReturnValue(threads);
-    vi.mocked(useThreadRouteTarget).mockReturnValue({
-      kind: "server",
-      threadRef: { environmentId: activeProject.environmentId, threadId: threads[0]!.id },
-    });
-    vi.mocked(useHandleNewThread).mockReturnValue({
-      activeDraftThread: null,
-      activeThread: null,
-      defaultProjectRef: {
-        environmentId: activeProject.environmentId,
-        projectId: activeProject.id,
-      },
-      defaultProjectFallbackReady: true,
-      handleNewThread: vi.fn().mockResolvedValue(null),
-      routeDraftId: null,
-      routeThreadRef: { environmentId: activeProject.environmentId, threadId: threads[0]!.id },
-    });
-    vi.mocked(useServerConfigs).mockReturnValue(
-      new Map([
-        [
-          activeProject.environmentId,
-          {
-            scratchWorkspaceRoot: null,
-            shellThreadFamilies: false,
-          } as unknown as EnvironmentServerConfig,
-        ],
-      ]),
-    );
-    await using screen = await render(
-      <SidebarProvider
-        {...workspaceAreaProps("sidebar", 0, "Threads")}
-        style={{ height: 400, minHeight: 400 }}
-      >
-        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
-      </SidebarProvider>,
-    );
-    const shelf = screen.container.querySelector<HTMLElement>(
-      '[data-sidebar-row="shelf:settled"]',
-    )!;
-    if (shelf.getAttribute("aria-expanded") === "false") await act(() => shelf.click());
-    const more = screen.getByRole("button", { name: "Show 25 more", exact: true });
-    await expect.element(more).toBeInTheDocument();
-    const moreButton = more.element() as HTMLButtonElement;
-    const viewport = moreButton.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
-    viewport.style.height = "300px";
-    viewport.style.maxHeight = "300px";
-    moreButton.scrollIntoView({ block: "nearest" });
-    const before = viewport.scrollTop;
-    expect(before).toBeGreaterThan(0);
-    moreButton.focus({ preventScroll: true });
-    await act(() => moreButton.click());
-    await expect
-      .element(screen.getByRole("button", { name: "Loading", exact: true }))
-      .toBeInTheDocument();
-    await expect
-      .element(screen.getByRole("button", { name: "Loading", exact: true }))
-      .toHaveFocus();
-    expect(viewport.scrollTop).toBe(before);
-    const loadedRows = screen.container.querySelectorAll("[data-thread-item]").length;
-    await act(() => moreButton.click());
-    expect(screen.container.querySelectorAll("[data-thread-item]")).toHaveLength(loadedRows);
-  });
+  it.each([false, true])(
+    "keeps the viewport in place when showing more settled threads (fixed=%s)",
+    async (fixed) => {
+      using stack = new DisposableStack();
+      const previousSettings = getClientSettings();
+      stack.defer(() => __setClientSettingsForTests(previousSettings));
+      __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, sidebarSettledShelfFixed: fixed });
+      const style = document.createElement("style");
+      style.textContent = appCss;
+      document.head.append(style);
+      stack.defer(() => style.remove());
+      const focusController = createWorkspaceFocusController(document);
+      stack.defer(() => focusController.dispose());
+      let loading = false;
+      const originalShelf = vi.mocked(shelfHooks.useOlderSettledShelf).getMockImplementation()!;
+      using _shelf = vi.spyOn(shelfHooks, "useOlderSettledShelf").mockImplementation((input) => ({
+        ...originalShelf(input),
+        loading,
+        retry: () => {
+          loading = true;
+        },
+      }));
+      const activeProject = project("active");
+      const threads = Array.from({ length: 70 }, (_, index) =>
+        makeThreadFixture({
+          environmentId: activeProject.environmentId,
+          projectId: activeProject.id,
+          id: ThreadId.make(`settled-${index}`),
+          title: `Settled thread ${index}`,
+          settledOverride: "settled",
+          settledAt: "2026-01-01T00:00:00.000Z",
+        }),
+      );
+      threads.unshift(threadShell(activeProject.id, 100));
+      vi.mocked(useProjects).mockReturnValue([activeProject]);
+      vi.mocked(useQuietThreadShells).mockReturnValue(threads);
+      vi.mocked(useThreadRouteTarget).mockReturnValue({
+        kind: "server",
+        threadRef: { environmentId: activeProject.environmentId, threadId: threads[0]!.id },
+      });
+      vi.mocked(useHandleNewThread).mockReturnValue({
+        activeDraftThread: null,
+        activeThread: null,
+        defaultProjectRef: {
+          environmentId: activeProject.environmentId,
+          projectId: activeProject.id,
+        },
+        defaultProjectFallbackReady: true,
+        handleNewThread: vi.fn().mockResolvedValue(null),
+        routeDraftId: null,
+        routeThreadRef: { environmentId: activeProject.environmentId, threadId: threads[0]!.id },
+      });
+      vi.mocked(useServerConfigs).mockReturnValue(
+        new Map([
+          [
+            activeProject.environmentId,
+            {
+              scratchWorkspaceRoot: null,
+              shellThreadFamilies: false,
+            } as unknown as EnvironmentServerConfig,
+          ],
+        ]),
+      );
+      await using screen = await render(
+        <SidebarProvider
+          {...workspaceAreaProps("sidebar", 0, "Threads")}
+          style={{ height: 400, minHeight: 400 }}
+        >
+          <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+        </SidebarProvider>,
+      );
+      const shelf = screen.container.querySelector<HTMLElement>(
+        '[data-sidebar-row="shelf:settled"]',
+      )!;
+      if (shelf.getAttribute("aria-expanded") === "false") await act(() => shelf.click());
+      const more = screen.getByRole("button", { name: "Show 25 more", exact: true });
+      await expect.element(more).toBeInTheDocument();
+      const moreButton = more.element() as HTMLButtonElement;
+      const viewport = moreButton.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
+      const activeViewport = screen.container
+        .querySelector('[data-sidebar-list="active"]')
+        ?.closest('[data-slot="scroll-area-viewport"]');
+      expect(viewport === activeViewport).toBe(!fixed);
+      viewport.style.height = "300px";
+      viewport.style.maxHeight = "300px";
+      await vi.waitFor(() => {
+        moreButton.scrollIntoView({ block: "nearest" });
+        expect(viewport.scrollTop).toBeGreaterThan(0);
+      });
+      const before = viewport.scrollTop;
+      moreButton.focus({ preventScroll: true });
+      await act(() => moreButton.click());
+      await expect
+        .element(screen.getByRole("button", { name: "Loading", exact: true }))
+        .toBeInTheDocument();
+      await expect
+        .element(screen.getByRole("button", { name: "Loading", exact: true }))
+        .toHaveFocus();
+      expect(viewport.scrollTop).toBe(before);
+      const loadedRows = screen.container.querySelectorAll("[data-thread-item]").length;
+      await act(() => moreButton.click());
+      expect(screen.container.querySelectorAll("[data-thread-item]")).toHaveLength(loadedRows);
+    },
+  );
 });
