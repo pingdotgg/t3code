@@ -17,7 +17,7 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
 import { cn, isMacPlatform } from "../lib/utils";
 import { scrollTabStripFromRow, sidewaysWheelScrollsStrip, wheelDeltaPx } from "../motion/gesture";
-import { PaneMotionSnapshot, usePaneMotion } from "../motion/paneMotion";
+import { noteStripScroll, PaneMotionSnapshot, usePaneMotion } from "../motion/paneMotion";
 import {
   ChatPanelAnimationSuppressionProvider,
   usePanelNavigationSuppression,
@@ -438,6 +438,7 @@ function useStripResizeScroll(
       if (Math.abs(next - scroller.scrollLeft) >= 0.01) {
         settleStripCamera();
         scroller.scrollLeft = next;
+        noteStripScroll(scroller);
       }
       landed = scroller.scrollLeft;
       const rest = landed - next;

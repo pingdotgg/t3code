@@ -1,4 +1,5 @@
 import { expect, it, vi } from "vite-plus/test";
+import { flushSync } from "react-dom";
 import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
@@ -185,6 +186,28 @@ it.each([
     for (const left of host.seen) expect(Math.abs(left - resting)).toBeLessThan(STILL);
   },
 );
+
+it("keeps the panes in place when the host renders while the sidebar slides", async () => {
+  await using host = await renderStrip();
+  await host.scrollTo(host.strip.scrollWidth - host.strip.clientWidth);
+  const resting = host.paneLeft();
+  let renders = 0;
+  const rerender = new ResizeObserver(() => {
+    if (renders++ > 2) return;
+    flushSync(() => useLayoutStore.setState({ layout: { ...useLayoutStore.getState().layout } }));
+    host.seen.push(host.paneLeft());
+  });
+  rerender.observe(host.strip);
+  try {
+    await host.toggle(256);
+    await host.toggle(0);
+  } finally {
+    rerender.disconnect();
+  }
+  expect(renders).toBeGreaterThan(2);
+  expect(host.paneLeft()).toBeCloseTo(resting, 2);
+  for (const left of host.seen) expect(Math.abs(left - resting)).toBeLessThan(STILL);
+});
 
 it("gives a scroll back after closing the sidebar had to clamp it", async () => {
   await using host = await renderStrip();
