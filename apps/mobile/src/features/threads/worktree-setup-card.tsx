@@ -46,7 +46,8 @@ interface SetupDetailsControl {
 export function WorktreeSetupCard(props: WorktreeSetupCardProps & SetupDetailsControl) {
   // Once the agent has the turn, running setup is a chip on the live Working row.
   if (worktreeSetupHandedOff(props)) {
-    return props.snapshot.phase === "running" ? null : <WorktreeSetupSummaryRow {...props} />;
+    // As on web, only a setup that went wrong stays in view.
+    return setupWentWrong(props.snapshot) ? <WorktreeSetupSummaryRow {...props} /> : null;
   }
   return <WorktreeSetupHeaderCard {...props} />;
 }
@@ -153,21 +154,24 @@ export function WorktreeSetupFoldChip(props: WorktreeSetupCardProps & SetupDetai
  * Setup that ended after the agent took the turn, as one row under the prompt, like web's
  * collapsed summary. Tapping it opens the details.
  */
+function setupWentWrong(snapshot: WorktreeSetupSnapshot): boolean {
+  return (
+    snapshot.phase === "failed" ||
+    snapshot.phase === "cancelled" ||
+    (snapshot.phase === "done" &&
+      snapshot.stages.some((stage) => stage.id === "setup-script" && stage.status === "failed"))
+  );
+}
+
 function WorktreeSetupSummaryRow(props: WorktreeSetupCardProps & SetupDetailsControl) {
   const { snapshot } = props;
   const now = useVisibleSecondClock(false);
-  const failed =
-    snapshot.phase === "failed" ||
-    snapshot.phase === "cancelled" ||
-    snapshot.stages.some((stage) => stage.id === "setup-script" && stage.status === "failed");
   const label =
     snapshot.phase === "failed"
       ? "Worktree setup failed"
       : snapshot.phase === "cancelled"
         ? "Worktree setup cancelled"
-        : failed
-          ? "Worktree ready, setup script failed"
-          : "Worktree ready";
+        : "Worktree ready, setup script failed";
   return (
     <Pressable
       accessibilityRole="button"
@@ -177,20 +181,9 @@ function WorktreeSetupSummaryRow(props: WorktreeSetupCardProps & SetupDetailsCon
       style={{ columnGap: 8 }}
     >
       <View className="w-6 items-center">
-        <SymbolView
-          name={failed ? "xmark" : "checkmark"}
-          size={14}
-          tintColorClassName={failed ? "accent-danger-foreground" : "accent-icon-muted"}
-        />
+        <SymbolView name="xmark" size={14} tintColorClassName="accent-danger-foreground" />
       </View>
-      <Text
-        numberOfLines={1}
-        className={
-          failed
-            ? "flex-1 text-sm text-danger-foreground"
-            : "flex-1 text-sm text-foreground-secondary"
-        }
-      >
+      <Text numberOfLines={1} className="flex-1 text-sm text-danger-foreground">
         {label}
       </Text>
       <Text
