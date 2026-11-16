@@ -420,10 +420,7 @@ function AssistantForkButton(props: {
     sourceThreadId: props.projectedItem.sourceThreadId,
     sourceItemId: props.projectedItem.sourceItemId,
   });
-  const forkFromRun = useAtomCommand(threadEnvironment.forkFromRun, {
-    label: "fork from response",
-    reportFailure: false,
-  });
+  const forkFromRun = useAtomCommand(threadEnvironment.forkFromRun, "fork from response");
   const selectDetail = useSelectWorkspaceDetail();
   const [busy, setBusy] = useState(false);
   const canFork = canForkProjectedAssistantItem({
@@ -456,12 +453,9 @@ function AssistantForkButton(props: {
           .then(async (result) => {
             if (isAtomCommandInterrupted(result)) return;
             if (result._tag !== "Success") {
-              const error = squashAtomCommandFailure(result);
               Dialog.alert(
                 "Could not confirm fork",
-                error instanceof Error
-                  ? error.message
-                  : "Reconnect and check the thread list before trying again.",
+                "Reconnect and check the thread list before trying again.",
               );
               return;
             }
