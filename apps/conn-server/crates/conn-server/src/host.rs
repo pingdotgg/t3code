@@ -83,6 +83,10 @@ impl EngineHost for Host {
                 thread_id: session.thread_id,
                 provider_instance_id: session.provider_instance_id,
                 subagent: session.subagent,
+                preview: crate::settings::agent_browser_access(
+                    &self.environment.settings.raw(),
+                    session.project_id.as_deref(),
+                ),
             });
         Some(AgentTools {
             servers: vec![McpServer {
@@ -244,5 +248,74 @@ impl TurnObserver for Host {
                 let _ = self.vcs.hub.refresh_local(&cwd).await;
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{methods::Deps, routes::mcp};
+    use conn_engine::Engine;
+    use serde_json::json;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn browser_access_is_scoped_to_project_and_captured_at_session_start() {
+        let dir =
+            std::env::temp_dir().join(format!("conn-browser-access-{}", conn_support::uuid_v4()));
+        let environment = Arc::new(Environment::load(&dir, None, dir.clone()).unwrap());
+        let engine = Arc::new(
+            conn_engine::SqliteEngine::open(conn_engine::EngineConfig::new(
+                dir.join("engine.sqlite"),
+            ))
+            .unwrap(),
+        );
+        let service = mcp::service(&Deps {
+            environment: Some(environment.clone()),
+            engine: Some(engine.clone()),
+            ..Deps::default()
+        })
+        .unwrap();
+        let host = Host {
+            mcp: OnceLock::new(),
+            files: None,
+            vcs: VcsShared::default(),
+            terminals: crate::methods::terminal::manager(Some(&environment)),
+            environment: environment.clone(),
+            scheduled_tasks: OnceLock::new(),
+        };
+        host.mcp.set(service.clone()).unwrap();
+        let issue = |project: Option<&str>| {
+            let tools = host
+                .agent_tools(AgentSession {
+                    thread_id: "thread".into(),
+                    project_id: project.map(str::to_owned),
+                    provider_instance_id: "claudeAgent".into(),
+                    subagent: false,
+                })
+                .unwrap();
+            let authorization = &tools.servers[0].headers[0].1;
+            service
+                .resolve_thread_token(authorization.strip_prefix("Bearer ").unwrap())
+                .unwrap()
+        };
+        assert!(issue(Some("p")).preview, "T3 defaults browser access on");
+        environment.settings.update(json!({"enableAgentBrowserAccess":false,"projectSettingsOverrides":{"p":{"enableAgentBrowserAccess":true}}}),None).unwrap();
+        let enabled = issue(Some("p"));
+        let disabled = issue(Some("q"));
+        assert!(enabled.preview);
+        assert!(!disabled.preview);
+        assert!(!issue(None).preview);
+        environment.settings.update(json!({"enableAgentBrowserAccess":true,"projectSettingsOverrides":{"p":{"enableAgentBrowserAccess":false}}}),None).unwrap();
+        assert!(!issue(Some("p")).preview);
+        assert!(issue(Some("q")).preview);
+        assert!(enabled.preview, "existing credential keeps its grant");
+        assert!(
+            !disabled.preview,
+            "existing credential does not gain a grant"
+        );
+        engine.shutdown().await;
+        drop(host);
+        drop(service);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

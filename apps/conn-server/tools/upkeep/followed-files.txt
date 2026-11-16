@@ -167,3 +167,11 @@ apps/server/src/panels/AgentPanelBroker.ts
 apps/server/src/mcp/toolkits/panels
 packages/contracts/src/secretRequest.ts
 packages/contracts/src/agentPanels.ts
+
+[crates/conn-features/src/test_logins]
+apps/server/src/credentials/TestLoginStore.ts
+packages/contracts/src/credentials.ts
+
+[crates/conn-mcp/src/tools/test_logins.rs]
+apps/server/src/credentials/credentialOrigin.ts
+apps/server/src/mcp/toolkits/credentials

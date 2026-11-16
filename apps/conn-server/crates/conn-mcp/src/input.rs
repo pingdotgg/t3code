@@ -153,9 +153,7 @@ fn decode(
     if rule["trim"] == true
         && let Some(s) = value.as_str()
     {
-        *value = json!(
-            s.trim_matches(|c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}')
-        );
+        *value = json!(js_trim(s));
     }
     if rule["fromRecord"] == true
         && let Some(map) = value.as_object()
@@ -204,6 +202,7 @@ fn decode(
             .or_else(|| value.as_array().map(Vec::len));
         let valid = match check["id"].as_str().unwrap_or_default() {
             "nonBlank" => value.as_str().is_some_and(|s| !s.trim().is_empty()),
+            "isTrimmed" => value.as_str().is_some_and(|s| s == js_trim(s)),
             "isMinLength" => {
                 length.is_some_and(|n| n as u64 >= check["minLength"].as_u64().unwrap_or(0))
             }
@@ -232,8 +231,29 @@ fn decode(
     Ok(())
 }
 
+pub(crate) fn js_trim(value: &str) -> &str {
+    value.trim_matches(|c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}')
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+    #[test]
+    fn trimmed_check_uses_javascript_whitespace() {
+        for (domain, allowed) in [
+            ("\u{feff}example.test", false),
+            ("example.test\u{feff}", false),
+            ("\u{0085}example.test", true),
+            ("example.test\u{0085}", true),
+        ] {
+            let mut args = serde_json::from_value(json!({"domain":domain})).unwrap();
+            assert_eq!(
+                check("request_credentials", &mut args).is_ok(),
+                allowed,
+                "{domain:?}"
+            );
+        }
+    }
     #[test]
     fn every_generated_rule_compiles() {
         assert!(
