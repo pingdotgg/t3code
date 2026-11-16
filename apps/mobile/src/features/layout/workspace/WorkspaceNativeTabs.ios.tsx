@@ -92,7 +92,8 @@ function RetainedWorkspaceTab(props: {
       new Map(current).set(routeKey, { ...current.get(routeKey), ...options }),
     );
   const slotOptions = { byRoute: optionsByRoute, set: setRouteOptions };
-  const mounted = content !== null && !content.headerOnly;
+  // A prewarmed slot already draws its header and background, so it can be shown before its body.
+  const mounted = content !== null;
   const headerOnly = content?.headerOnly === true;
   const { slot, setMountedSlots, setPrewarmRequests } = props;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports the slot's first native mount to the host, which holds the switch until then
@@ -167,8 +168,8 @@ export function WorkspaceNativeTabs(props: {
   const selectedSlot = workspace.settingsOpen ? -1 : primaryTabs.indexOf(selectedTab);
   const selectedScreenKey =
     selectedSlot === -1 ? "settings" : NATIVE_WORKSPACE_TAB_SLOTS[selectedSlot]!;
-  // A slot mounts its content the first time it's selected. Showing it in that same commit
-  // shows a blank controller, then its header animates in, so the switch waits for the mount.
+  // A slot draws nothing until it's prewarmed or selected. Showing it before then shows a
+  // blank controller, so a switch to it waits for the mount. Refusing a tap bounces the tab bar.
   const [mountedSlots, setMountedSlots] = useState<ReadonlySet<string>>(() => new Set());
   const [shownScreenKey, setShownScreenKey] = useState(selectedScreenKey);
   if (shownScreenKey !== selectedScreenKey && mountedSlots.has(selectedScreenKey))
