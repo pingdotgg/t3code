@@ -57,9 +57,43 @@ describe("deriveThreadUsageRows", () => {
       },
     });
     expect(rows).toEqual([
+      { label: "Context", value: "12k tokens" },
       { label: "Last turn", value: "12K tokens" },
       { label: "Input", value: "10K" },
       { label: "Output", value: "2K" },
     ]);
+  });
+
+  it("prefers the latest turn usage over a stale provider snapshot, like the chat meter", () => {
+    const rows = deriveThreadUsageRows({
+      threadId: ThreadId.make("thread-1"),
+      providerThread: {
+        id: ProviderThreadId.make("provider-thread-1"),
+        contextUsage: { usedTokens: 20_000, maxTokens: 200_000 },
+        updatedAt: DateTime.makeUnsafe(updatedAt),
+      },
+      latestTurnTokenUsage: {
+        usedTokens: 150_000,
+        maxTokens: 200_000,
+        updatedAt,
+      },
+    });
+    expect(rows[0]).toEqual({ label: "Context", value: "150k / 200k (75%)" });
+  });
+
+  it("caps the percentage at 100 and skips it when max is zero", () => {
+    const over = deriveThreadUsageRows({
+      threadId: ThreadId.make("thread-1"),
+      providerThread: null,
+      latestTurnTokenUsage: { usedTokens: 220_000, maxTokens: 200_000, updatedAt },
+    });
+    expect(over[0]).toEqual({ label: "Context", value: "220k / 200k (100%)" });
+
+    const zero = deriveThreadUsageRows({
+      threadId: ThreadId.make("thread-1"),
+      providerThread: null,
+      latestTurnTokenUsage: { usedTokens: 1_000, maxTokens: 0, updatedAt },
+    });
+    expect(zero[0]).toEqual({ label: "Context", value: "1k tokens" });
   });
 });

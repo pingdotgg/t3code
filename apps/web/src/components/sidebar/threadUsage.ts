@@ -18,21 +18,26 @@ export function deriveThreadUsageRows(
 ): ReadonlyArray<ThreadUsageRow> {
   const rows: ThreadUsageRow[] = [];
 
-  const context = usage?.providerThread?.contextUsage ?? null;
+  const turn = usage?.latestTurnTokenUsage ?? null;
+  // Same source order as the chat context meter: the latest turn first, then the
+  // stored provider context snapshot, which can be stale after compaction.
+  const context =
+    turn !== null
+      ? { usedTokens: turn.usedTokens, maxTokens: turn.maxTokens }
+      : (usage?.providerThread?.contextUsage ?? null);
   if (context !== null) {
     const used = formatContextWindowTokens(context.usedTokens);
     const max = context.maxTokens;
     rows.push(
-      max === undefined
+      max === undefined || max === null || max <= 0
         ? { label: "Context", value: `${used} tokens` }
         : {
             label: "Context",
-            value: `${used} / ${formatContextWindowTokens(max)} (${Math.round((context.usedTokens / max) * 100)}%)`,
+            value: `${used} / ${formatContextWindowTokens(max)} (${Math.min(100, Math.round((context.usedTokens / max) * 100))}%)`,
           },
     );
   }
 
-  const turn = usage?.latestTurnTokenUsage ?? null;
   if (turn !== null) {
     rows.push({ label: "Last turn", value: `${formatTokens(turn.usedTokens)} tokens` });
     if (turn.inputTokens !== undefined) {
