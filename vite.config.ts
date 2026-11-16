@@ -220,6 +220,8 @@ export default defineConfig({
       ".repos",
       ".repos/**",
       "infra/task-cache/vendor/**",
+      // Vendored upstream scripts and tests, kept byte-identical (see the fmt list above).
+      "workflow/skills/pstack/**",
       "dist",
       "dist-electron",
       "node_modules",

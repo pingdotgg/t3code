@@ -11,7 +11,7 @@ Twenty-one `principle-*` skills (twenty-three upstream, two removed after review
 `blast-radius`, `bro`, `correct`, `create-verification-skill`, `explain-work`, `figure-it-out`, `how`, `interrogate`,
 `maintain-verification-skill`, `no-comments`, `recall`, `reflect`, `show-me-your-work`, `swarm`,
 `technical-writing`, `typescript-best-practices`, `unslop`, `why`, `in-your-own-words`, `sharpen`,
-`ketchup`, and `ketchup-video`. The `comment-sicko` agent
+`ketchup`, `ketchup-video`, and `statechart`. The `comment-sicko` agent
 came across too, since `no-comments` spawns it.
 
 ## What was left behind
@@ -37,9 +37,6 @@ came across too, since `no-comments` spawns it.
 - `principle-never-block-on-the-human`. It instructs the agent to act first and explain
   afterwards, which conflicts with ordinary change-control expectations.
 - `tdd`. The vendored Matt Pocock set has a fuller one under the same name.
-- `statechart`. About 2.8 MB across 407 files with 26 scripts, and it installs Java and TLC through
-  mise on first run. Every script would need the review this directory requires, for a skill that
-  only serves TLA+ models.
 - `create-formal-verification-skill` and `maintain-formal-verification-skill`. Left out when
   `ketchup` and `sharpen` came across, by the owner's choice.
 - The `benny` automations. A Slack-to-pull-request pipeline that needs its own security review
@@ -126,6 +123,42 @@ is all this plugin has. Beyond that:
   existed only to map it onto those playbooks and was dropped.
 - `architect`'s runner prompt told each runner it ran on a different model. The runners here share
   one vendor, so it now tells each runner it holds a different starting constraint.
+
+### `statechart`
+
+Taken byte-identical at `bf0c7cd`, minus `agents/openai.yaml`, which upstream does not ship for this
+skill. About 3.9 MB across 408 files, most of it recorded TLC output under `scripts/test/corpus/`.
+Nothing in it names a harness's tools, so the wording needed no port. One local decision:
+`disable-model-invocation: true` stays, like `correct` and `ketchup-video`. The first run installs
+Java and TLC through mise and downloads from the network, which is too much to start on the
+model's own judgment. `vite.config.ts` lints and formats nothing under `workflow/skills/pstack/**`,
+since upstream's test files break this repo's lint rules and the files stay as upstream wrote them.
+
+Its scripts were reviewed before they came across:
+
+- `scripts/statechart` (the `sh` launcher), `statechart.ts`, `worker.ts`, and `run.ts` are the only
+  files that run anything. The launcher picks `node`, `bun`, or `deno` and runs `statechart.ts`
+  with it. It spawns a worker in its own process group with a fresh temp folder as `TMPDIR`, and a
+  janitor shell that kills that group by the PID it captured and deletes the stage and temp
+  folders it created. The output folder must be new or empty, the result lands there by one
+  `rename`, and nothing is written outside it and the temp folders.
+- `run.ts` finds TLC. With `TLA2TOOLS` set it uses that jar and `JAVA`. Otherwise it runs
+  `mise install java@temurin-25` and `mise install` of `tla2tools` 1.7.4, which mise downloads from
+  the `tlaplus/tlaplus` GitHub release `v1.7.4` and checks against a pinned SHA-256. mise keeps
+  both in its own data directory, so they are the only thing written outside the output folder
+  and `os.tmpdir()`, and they are a tool cache. It then runs `java` on that jar with
+  `-Djava.io.tmpdir` pointed at a per-run folder. It runs no shell with user text interpolated:
+  every child gets an argv array.
+- The user's `--view` module is loaded with `import()`. That runs user code by design, and the
+  user wrote it, as with any build config.
+- `ir.ts`, `pipeline.ts`, `passes/`, `frontends/`, and `backends/` are pure: they parse TLC text
+  and build Mermaid. They import no `node:` module at all, so they cannot touch the
+  filesystem, the network, or a process.
+- `scripts/test/` is not run by the skill. It needs `TLA2TOOLS` set, and `render.test.ts`
+  installs `pele`, `mermaid`, and `jsdom` with `npm install` into `~/.cache/statechart`.
+  `corpus/` holds recorded TLC and SANY output as fixtures. Its only URLs are two in comments of
+  recorded TLC output.
+- Nothing runs as root, uses `sudo`, edits shell profiles, or reads credentials.
 
 ## Upstream sync
 

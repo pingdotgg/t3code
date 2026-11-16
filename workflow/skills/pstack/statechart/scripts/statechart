@@ -1,0 +1,29 @@
+#!/bin/sh
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case $link in
+    /*) self=$link ;;
+    *) self=$(dirname "$self")/$link ;;
+  esac
+done
+entry=$(dirname "$self")/statechart.ts
+version() {
+  command -v "$1" >/dev/null || { echo 0; return; }
+  "$1" --version 2>/dev/null | sed -n '1s/[^0-9]*\([0-9]*\)\.\([0-9]*\)\.\([0-9]*\).*/\1 \2 \3/p' | {
+    read -r major minor patch
+    echo $((${major:-0} * 1000000 + ${minor:-0} * 1000 + ${patch:-0}))
+  }
+}
+node=$(version node)
+if [ "$node" -ge 23006000 ] || { [ "$node" -ge 22018000 ] && [ "$node" -lt 23000000 ]; }; then
+  exec node --disable-warning=ExperimentalWarning "$entry" "$@"
+fi
+if [ "$(version bun)" -ge 1001005 ]; then
+  exec bun "$entry" "$@"
+fi
+if [ "$(version deno)" -ge 2000000 ]; then
+  exec deno run --quiet --no-prompt --allow-read --allow-write --allow-run --allow-env "$entry" "$@"
+fi
+echo "statechart needs Node 22.18 to 22.x, Node 23.6 or later, Bun 1.1.5 or later, or Deno 2.0 or later." >&2
+exit 127
