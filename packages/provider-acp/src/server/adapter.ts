@@ -2071,8 +2071,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         // Child sessions and a replaced root share the runtime; only the root's history is the snapshot.
         const ownsSnapshotHistory = (sessionId: string) =>
           Effect.map(
-            Effect.all([Ref.get(activeSessionId), Ref.get(activatingSessionId)]),
-            ([active, activating]) => sessionId === active || sessionId === activating,
+            Effect.all([Ref.get(activatingSessionId), Ref.get(activeSessionId)]),
+            ([activating, active]) => sessionId === (activating ?? active),
           );
         const contextUsageBySessionId = yield* Ref.make(
           new Map<string, ThreadTokenUsageSnapshot>(),

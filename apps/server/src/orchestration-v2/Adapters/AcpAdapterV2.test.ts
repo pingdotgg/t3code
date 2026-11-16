@@ -3358,13 +3358,15 @@ describe("AcpAdapterV2", () => {
                   sessionUpdateHandler = handler;
                 }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
               loadSession: (sessionId, activationOptions) =>
-                sessionUpdateHandler!({
-                  sessionId: "child-session",
-                  update: {
-                    sessionUpdate: "agent_message_chunk",
-                    content: { type: "text", text: "child during load" },
-                  },
-                }).pipe(Effect.andThen(runtime.loadSession(sessionId, activationOptions))),
+                Effect.forEach(["child-session", "mock-session-1"], (otherSessionId) =>
+                  sessionUpdateHandler!({
+                    sessionId: otherSessionId,
+                    update: {
+                      sessionUpdate: "agent_message_chunk",
+                      content: { type: "text", text: `${otherSessionId} during load` },
+                    },
+                  }),
+                ).pipe(Effect.andThen(runtime.loadSession(sessionId, activationOptions))),
             }),
           }),
         },
@@ -4696,6 +4698,8 @@ describe("AcpAdapterV2", () => {
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* bundledMockAgentPath;
         const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
         const instanceId = ProviderInstanceId.make("acp-test-eager-resume");
         const adapter = yield* makeAcpAdapterV2({
           instanceId,
@@ -4706,6 +4710,21 @@ describe("AcpAdapterV2", () => {
               childProcessSpawner,
               mockAgentPath,
               protocolEvents,
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Effect.sync(() => {
+                    sessionUpdateHandler = handler;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+                start: () =>
+                  sessionUpdateHandler!({
+                    sessionId: "child-session",
+                    update: {
+                      sessionUpdate: "agent_message_chunk",
+                      content: { type: "text", text: "child during resume" },
+                    },
+                  }).pipe(Effect.andThen(runtime.start())),
+              }),
             }),
           },
           selfInvocation,
