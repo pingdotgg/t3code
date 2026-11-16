@@ -46,8 +46,14 @@ what serves them.
 | iPhone app | iOS | `apps/mobile` |
 | Servers | Linux and macOS | `apps/server`, the T3 server on Nick's machines; `apps/conn-server`, the Conn Server, on Linux in Orbit containers (macOS later) |
 
-Out of scope: Windows, Android and the Linux desktop app (AppImage, deb, AUR). For the Conn
-Server, also every area that `apps/conn-server/docs/orbit-profile.md` rates "not needed".
+Out of scope: Windows, Android and the Linux desktop app (AppImage, deb, AUR), the hosted web
+app (app.t3.codes and its previews), the T3 Connect relay (`infra/relay`), and the marketing
+site (`apps/marketing`). For the Conn Server, also every area that
+`apps/conn-server/docs/orbit-profile.md` rates "not needed".
+
+Their upstream workflows stay in the tree, gated to `pingdotgg/t3code` so they skip here
+("Pull request runners"). Deleting them would turn each upstream edit into a modify/delete
+conflict in the sync, and upstream edits `release.yml` almost daily.
 
 How the sync applies it:
 
@@ -76,7 +82,7 @@ from this tree.
 - **The nightly sync follows it** (Nick, 2026-11-16; this replaces the 2026-11-15 skip). On
   its `sync/*` branch, after the merge, the sync runs `apps/conn-server/tools/follow-conn.sh
   --capture`. It ports the upstream server changes in scope, as the T3 server makes them:
-  the areas `docs/orbit-profile.md` rates needed or useful. It regenerates what is
+  the areas `docs/orbit-profile.md` rates needed or useful. ForkBot does this port. It regenerates what is
   generated, and both Conn Server workflows must pass on the sync branch before the merge.
   An in-scope change that cannot be ported that night becomes a known difference with its
   reason, in the check's known list and in `apps/conn-server/docs/status.md`. A check is never
