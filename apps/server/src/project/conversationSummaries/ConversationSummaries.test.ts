@@ -482,8 +482,9 @@ it.effect("attributes peer replies to their speaker in summary model input", () 
     yield* summarize;
     assert.deepEqual(model.calls[0]?.messages[1], {
       ref: "M2",
-      role: "user",
-      text: `[Historical peer_reply; speaker=Astra (gpt-6-astra); thread=summary-thread; run=summary-run; item=item-1; provider-thread=none; status=completed]\n${rawText(1)}`,
+      role: "peer",
+      speaker: { label: "Astra", model: "gpt-6-astra" },
+      text: rawText(1),
     });
     assert.deepEqual(model.calls[0]?.messages[3], {
       ref: "M4",
@@ -498,10 +499,22 @@ it.effect("attributes peer replies to their speaker in summary model input", () 
       offset: 1,
       limit: 1,
     });
-    assert.equal(
-      expansion.sources[0]?.result.state === "available" ? expansion.sources[0].result.text : null,
-      rawText(1),
-    );
+    const peerSource = expansion.sources[0]?.result;
+    assert.equal(peerSource?.state, "available");
+    if (peerSource?.state !== "available") return yield* Effect.die("Expected the peer source");
+    assert.equal(peerSource.role, "assistant");
+    assert.deepEqual(peerSource.speaker, { label: "Astra", model: "gpt-6-astra" });
+    assert.equal(peerSource.text, rawText(1));
+    const agentPage = yield* service.expand({
+      ...scope,
+      summaryId: summary.id,
+      offset: 3,
+      limit: 1,
+    });
+    const agentSource = agentPage.sources[0]?.result;
+    if (agentSource?.state !== "available") return yield* Effect.die("Expected the agent source");
+    assert.equal(agentSource.role, "assistant");
+    assert.equal(agentSource.speaker, undefined);
   }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
 });
 

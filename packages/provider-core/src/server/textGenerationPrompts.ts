@@ -504,16 +504,20 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
   return { prompt, outputSchema };
 }
 
+export type KnowledgeCandidatesPromptMessage = {
+  readonly ref: string;
+  readonly threadId?: string;
+  readonly runId?: string;
+  readonly runOutcome?: "completed" | "failed" | "interrupted";
+  readonly text: string;
+} & (
+  | { readonly role: "user" | "assistant" }
+  | { readonly role: "peer"; readonly speaker: { readonly label: string; readonly model: string } }
+);
+
 export interface KnowledgeCandidatesPromptInput {
   runOutcome: "completed" | "failed" | "interrupted";
-  messages: ReadonlyArray<{
-    readonly ref: string;
-    readonly threadId?: string;
-    readonly runId?: string;
-    readonly runOutcome?: "completed" | "failed" | "interrupted";
-    readonly role: "user" | "assistant";
-    readonly text: string;
-  }>;
+  messages: ReadonlyArray<KnowledgeCandidatesPromptMessage>;
 }
 
 export function buildKnowledgeCandidatesPrompt(input: KnowledgeCandidatesPromptInput) {
@@ -566,13 +570,17 @@ export function buildKnowledgeCandidatesPrompt(input: KnowledgeCandidatesPromptI
 /** The rolled-up statements must fit beside the verbatim tail of a small handoff. */
 const CONDENSED_SUMMARY_MAX_CHARS = 1_200;
 
+export type ConversationSummaryPromptMessage = {
+  readonly ref: string;
+  readonly text: string;
+  readonly range?: { readonly start: number; readonly end: number; readonly total: number };
+} & (
+  | { readonly role: "user" | "assistant" | "tool" | "summary" }
+  | { readonly role: "peer"; readonly speaker: { readonly label: string; readonly model: string } }
+);
+
 export interface ConversationSummaryPromptInput {
-  messages: ReadonlyArray<{
-    readonly ref: string;
-    readonly role: "user" | "assistant" | "tool" | "summary";
-    readonly text: string;
-    readonly range?: { readonly start: number; readonly end: number; readonly total: number };
-  }>;
+  messages: ReadonlyArray<ConversationSummaryPromptMessage>;
 }
 
 export function buildConversationSummaryPrompt(input: ConversationSummaryPromptInput) {

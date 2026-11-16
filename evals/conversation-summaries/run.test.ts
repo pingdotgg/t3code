@@ -1,8 +1,9 @@
 import { expect, it } from "vite-plus/test";
-import { condensedCases } from "./cases.ts";
-import { gradeCondensed } from "./grade.ts";
+import { condensedCases, leafCases } from "./cases.ts";
+import { gradeCondensed, gradeLeaf } from "./grade.ts";
 
 const [reversal, control] = condensedCases;
+const [peerLeaf, ordinaryLeaf] = leafCases;
 
 it("passes a roll-up that keeps the reversal, the attribution and the open item", () => {
   expect(
@@ -38,6 +39,46 @@ it("fails a roll-up that drops the reversal, verifies a claim, or overruns its b
       expect.stringMatching(/characters, over 1200$/),
     ]),
   );
+});
+
+it("passes a leaf that names the peer and leaves the choice open", () => {
+  expect(
+    gradeLeaf(peerLeaf!, [
+      {
+        text: "Astra proposed dropping Redis and using Postgres for sessions.",
+        citations: ["M2"],
+      },
+      {
+        text: "The agent disagreed and wants to keep Redis. The user has not decided.",
+        citations: ["M1", "M3"],
+      },
+    ]),
+  ).toEqual([]);
+});
+
+it("fails a leaf that records the peer proposal as the user's decision", () => {
+  expect(
+    gradeLeaf(peerLeaf!, [
+      { text: "The user decided to use Postgres for sessions.", citations: ["M2"] },
+      { text: "The agent wants to keep Redis.", citations: ["M3"] },
+    ]),
+  ).toEqual([
+    "missing Astra",
+    "Postgres|[Dd]rop Redis without Astra: The user decided to use Postgres for sessions.",
+    "[Uu]ser (decided|chose|wants|wanted|asked) to (drop Redis|use Postgres|keep Redis): The user decided to use Postgres for sessions.",
+  ]);
+});
+
+it("passes an ordinary leaf with no peer", () => {
+  expect(
+    gradeLeaf(ordinaryLeaf!, [
+      {
+        text: "The user asked for a README section on the proxy, and the agent added it.",
+        citations: ["M1", "M2"],
+      },
+      { text: "The link checker has not run yet.", citations: ["M2"] },
+    ]),
+  ).toEqual([]);
 });
 
 it("passes an ordinary roll-up in the control case", () => {

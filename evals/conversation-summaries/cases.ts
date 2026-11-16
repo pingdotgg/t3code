@@ -1,3 +1,67 @@
+/** One finalized exchange, as a leaf summary pass sends it. A peer carries the seat that spoke. */
+export type LeafMessage =
+  | { readonly role: "user" | "assistant"; readonly text: string }
+  | {
+      readonly role: "peer";
+      readonly text: string;
+      readonly speaker: { readonly label: string; readonly model: string };
+    };
+
+export interface LeafCase {
+  readonly id: string;
+  readonly kind: "bad" | "control";
+  readonly source: string;
+  readonly messages: ReadonlyArray<LeafMessage>;
+  /** Each regex must match some statement. */
+  readonly mustMention: ReadonlyArray<string>;
+  /** A statement matching `when` must also match `require`. */
+  readonly attributed: ReadonlyArray<{ readonly when: string; readonly require: string }>;
+  /** No statement may match these. */
+  readonly mustNot: ReadonlyArray<string>;
+}
+
+export const leafCases: ReadonlyArray<LeafCase> = [
+  {
+    id: "leaf-peer-proposal-is-not-a-user-decision",
+    kind: "bad",
+    source:
+      "Group threads (t3/peer-reply-summary-attribution): a seat model's published reply was summarized as the user's decision.",
+    messages: [
+      { role: "user", text: "Where should sessions live? I have not decided." },
+      {
+        role: "peer",
+        speaker: { label: "Astra", model: "gpt-6-astra" },
+        text: "Drop Redis and use Postgres for sessions.",
+      },
+      {
+        role: "assistant",
+        text: "I disagree. Keep Redis for sessions. The choice is still open.",
+      },
+    ],
+    mustMention: ["Astra", "Postgres"],
+    attributed: [{ when: "Postgres|[Dd]rop Redis", require: "Astra" }],
+    mustNot: [
+      "[Uu]ser (decided|chose|wants|wanted|asked) to (drop Redis|use Postgres|keep Redis)",
+      "[Uu]ser's decision to (drop Redis|use Postgres|keep Redis)",
+    ],
+  },
+  {
+    id: "leaf-ordinary-exchange-has-no-peer",
+    kind: "control",
+    source: "Control for peer attribution: an ordinary user and agent exchange with no peer.",
+    messages: [
+      { role: "user", text: "Add a README section on configuring the proxy." },
+      {
+        role: "assistant",
+        text: "I added the README section with an example config. The link checker has not run yet.",
+      },
+    ],
+    mustMention: ["README", "link checker|links"],
+    attributed: [],
+    mustNot: ["Astra"],
+  },
+];
+
 /** A roll-up input: four adjacent child summaries, oldest first, as the summary pass sends them. */
 export interface CondensedCase {
   readonly id: string;

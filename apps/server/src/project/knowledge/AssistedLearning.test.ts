@@ -11,6 +11,7 @@ import {
   RunId,
   TextGenerationError,
   ThreadId,
+  TurnItemId,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -312,6 +313,54 @@ it.effect("saves a settled run's cited facts exactly once, recallable without re
       history.map((entry) => entry.event),
       ["created"],
     );
+  }).pipe(Effect.provide(makeLayer(model.generate)));
+});
+
+it.effect("sends a peer reply as that peer, not as the assistant", () => {
+  const model = scripted([{ candidates: [] }]);
+  const text = "Done. I converted the handlers to snake_case keys.";
+  return Effect.gen(function* () {
+    yield* seedRun;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    yield* projections.apply({
+      id: EventId.make("peer-reply"),
+      type: "turn-item.updated",
+      threadId,
+      providerInstanceId,
+      occurredAt: at,
+      payload: {
+        id: TurnItemId.make("learning-peer-item"),
+        threadId,
+        runId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 2,
+        status: "completed",
+        title: null,
+        startedAt: at,
+        completedAt: at,
+        updatedAt: at,
+        type: "assistant_message",
+        messageId: MessageId.make("learning-reply"),
+        text,
+        streaming: false,
+        speaker: { label: "Astra", model: "gpt-6-astra" },
+      },
+    });
+    const runner = yield* AssistedLearningRunner;
+    yield* runner.extractRun({ threadId, runId, runOutcome: "completed" });
+    assert.deepEqual(model.calls[0]?.messages[1], {
+      ref: "M2",
+      role: "peer",
+      speaker: { label: "Astra", model: "gpt-6-astra" },
+      threadId,
+      runId,
+      runOutcome: "completed",
+      text,
+    });
   }).pipe(Effect.provide(makeLayer(model.generate)));
 });
 
