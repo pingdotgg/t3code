@@ -1,32 +1,54 @@
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import { describe, expect, it } from "vite-plus/test";
 
-import { detectComposerTrigger, serializeComposerFileLink } from "./composerTrigger.ts";
+import {
+  detectComposerTrigger,
+  parseSideChatCommand,
+  serializeComposerFileLink,
+} from "./composerTrigger.ts";
+
+interface MarkdownNode {
+  readonly type: string;
+  readonly value?: string;
+  readonly children?: ReadonlyArray<MarkdownNode>;
+}
+
+function parsedLinkLabel(markdown: string): string | undefined {
+  const textOf = (node: MarkdownNode): string =>
+    node.value ?? (node.children ?? []).map(textOf).join("");
+  const find = (node: MarkdownNode): MarkdownNode | undefined =>
+    node.type === "link" ? node : node.children?.map(find).find(Boolean);
+  const link = find(unified().use(remarkParse).parse(markdown) as MarkdownNode);
+  return link && textOf(link);
+}
 
 describe("detectComposerTrigger", () => {
   it.each([
     ["Run /tmp/build.sh", "Run /tmp/build.sh".length],
     ["/etc/hosts", "/etc/hosts".length],
     ["Use /etc/hosts now", "Use /et".length],
+    ["cmd /foo\\bar", "cmd /foo\\bar".length],
+    ["/Windows\\System32", "/Windows\\System32".length],
   ])("keeps the path in %j out of the slash menu", (text, cursor) => {
     expect(detectComposerTrigger(text, cursor)).toBeNull();
   });
 
-  it("keeps a slash in the line-leading model picker query", () => {
-    expect(detectComposerTrigger("/model openai/gpt", 17)).toMatchObject({
-      kind: "slash-model",
-      query: "openai/gpt",
+  it.each([
+    ["/model", 0],
+    ["Question\n/MODEL", 9],
+  ])("offers typed %j as a slash command", (text, rangeStart) => {
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "slash-command",
+      query: text.slice(rangeStart + 1),
+      rangeStart,
+      rangeEnd: text.length,
     });
   });
 
-  it.each(["/Model opus", "/MODEL opus"])(
-    "opens the model picker for capitalized %j the same as /model",
-    (text) => {
-      expect(detectComposerTrigger(text, text.length)).toMatchObject({
-        kind: "slash-model",
-        query: "opus",
-      });
-    },
-  );
+  it("does not reopen a menu after /model arguments", () => {
+    expect(detectComposerTrigger("/Model opus", "/Model opus".length)).toBeNull();
+  });
 
   it.each(["Use /", "Use /review"])("detects the inline slash token in %j", (text) => {
     expect(detectComposerTrigger(text, text.length)).toEqual({
@@ -85,9 +107,32 @@ describe("serializeComposerFileLink", () => {
     );
   });
 
+  it.each([
+    ["pkg/__init__.py", "__init__.py"],
+    ["notes/*draft*.md", "*draft*.md"],
+  ])("renders the mention of %j with its file name as the label", (path, basename) => {
+    expect(parsedLinkLabel(serializeComposerFileLink(path))).toBe(basename);
+  });
+
   it("preserves paths that legitimately start with an at sign", () => {
     expect(serializeComposerFileLink("@scope/package.json")).toBe(
       "[package.json](@scope/package.json)",
     );
+  });
+});
+
+describe("parseSideChatCommand", () => {
+  it("reads an optional prompt after /side or /btw", () => {
+    expect(parseSideChatCommand("/side")).toEqual({ prompt: "" });
+    expect(parseSideChatCommand("  /SIDE  why does this fail?\nline two ")).toEqual({
+      prompt: "why does this fail?\nline two",
+    });
+    expect(parseSideChatCommand("/btw check @src/a.ts")).toEqual({ prompt: "check @src/a.ts" });
+  });
+
+  it("ignores other commands and inline mentions", () => {
+    expect(parseSideChatCommand("/sidebar")).toBeNull();
+    expect(parseSideChatCommand("/btwx")).toBeNull();
+    expect(parseSideChatCommand("ask /side later")).toBeNull();
   });
 });

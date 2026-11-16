@@ -30,6 +30,25 @@ export function isThreadWorking(thread: WorkingThreadInput): boolean {
   return !(thread.interactionMode === "plan" && thread.hasActionableProposedPlan && runSettled);
 }
 
+/**
+ * A thread its own client is launching reads as preparing until its first run lands.
+ * The server commits the thread before its run, so the list would otherwise place it twice.
+ */
+export function asLaunchingThread<T extends EnvironmentThreadShell>(thread: T): T {
+  if (thread.latestRun !== null || thread.runtime !== null) return thread;
+  return {
+    ...thread,
+    runtime: {
+      status: "preparing",
+      activeRunId: null,
+      providerInstanceId: thread.providerInstanceId,
+      providerName: null,
+      lastError: null,
+      updatedAt: thread.updatedAt,
+    },
+  };
+}
+
 type InboxThreadInput = Pick<
   EnvironmentThreadShell,
   "id" | "environmentId" | "createdAt" | "unsettledAt" | "latestRun"
@@ -115,6 +134,13 @@ type ThreadKeyInput = Pick<EnvironmentThreadShell, "environmentId" | "id">;
 const WORKING_EXIT_GRACE_MS = 2_000;
 
 /**
+ * A run that ended this long ago has no continuation about to start, so its thread gets no
+ * grace. A client sees this for work that ended while it was closed or disconnected; the
+ * margin is wide so a client clock that runs ahead of the server does not cancel the grace.
+ */
+const STALE_EXIT_MS = 60_000;
+
+/**
  * Keep one at module scope so placement survives routes that unmount the list. Call
  * `observe` when the shells or the snapshot version change, or with null while the beta
  * is off. Its result stays fixed, so a list built from it can be cached.
@@ -123,7 +149,7 @@ export function createInboxReturnTracker() {
   const keyOf = (thread: ThreadKeyInput) => `${thread.environmentId}:${thread.id}`;
   const states = new Map<
     string,
-    { working: boolean; deadline: number | null; placement: string }
+    { working: boolean; deadline: number | null; placement: string | null }
   >();
   const returns = new Map<string, number>();
   const listeners = new Set<() => void>();
@@ -184,17 +210,21 @@ export function createInboxReturnTracker() {
       for (const thread of threads) {
         const key = keyOf(thread);
         present.add(key);
-        const placement = JSON.stringify([
-          thread.archivedAt,
-          thread.deletedAt,
-          thread.pinnedAt,
-          thread.settledOverride,
-          thread.settledAt,
-          thread.snoozedAt,
-          thread.snoozedUntil,
-          thread.activeOrderKey,
-        ]);
         const previous = states.get(key);
+        const actual = isThreadWorking(thread);
+        const placement =
+          actual || previous?.working
+            ? JSON.stringify([
+                thread.archivedAt,
+                thread.deletedAt,
+                thread.pinnedAt,
+                thread.settledOverride,
+                thread.settledAt,
+                thread.snoozedAt,
+                thread.snoozedUntil,
+                thread.activeOrderKey,
+              ])
+            : null;
         const actionable =
           thread.hasPendingApprovals ||
           thread.hasPendingUserInput ||
@@ -210,10 +240,11 @@ export function createInboxReturnTracker() {
           thread.pinnedAt != null ||
           thread.settledOverride === "settled" ||
           effectiveSnoozed(thread, { now: observedAt });
-        const actual = isThreadWorking(thread);
         // Only shelf placement is held: execution state and attention requests stay authoritative.
+        const endedAt = toSortableTimestamp(thread.latestRun?.completedAt ?? undefined);
+        const endedLongAgo = endedAt !== null && endedAt <= at - STALE_EXIT_MS;
         const deadline =
-          !actual && previous?.working && !actionable && !moved && !excluded
+          !actual && previous?.working && !actionable && !moved && !excluded && !endedLongAgo
             ? (previous.deadline ?? at + WORKING_EXIT_GRACE_MS)
             : null;
         const working = actual || (deadline !== null && deadline > at);

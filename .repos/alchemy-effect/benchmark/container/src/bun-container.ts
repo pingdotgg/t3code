@@ -1,4 +1,4 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 /**
  * Non-Effect container built from a Dockerfile whose base image is the *same*
@@ -7,12 +7,9 @@ import * as Cloudflare from "alchemy/Cloudflare";
  * rules out base-image pull/boot time as the cause of any gap: the remaining
  * difference is the bundled Effect runtime.
  */
-export class BunContainer extends Cloudflare.Container<BunContainer>()(
-  "BenchBunContainer",
-  {
-    context: `${import.meta.dirname}/../contexts/bun`,
-    maxInstances: 100,
-    instanceType: "lite",
-    instances: 0,
-  },
-) {}
+export class BunContainer extends Cloudflare.Container<BunContainer>()("BenchBunContainer", {
+  context: `${import.meta.dirname}/../contexts/bun`,
+  maxInstances: 100,
+  instanceType: "lite",
+  instances: 0,
+}) {}

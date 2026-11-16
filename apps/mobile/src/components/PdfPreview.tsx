@@ -4,6 +4,7 @@ import { WebView } from "react-native-webview";
 
 import { FilePreviewLoading, FilePreviewNotice } from "../features/files/FilePreviewFeedback";
 import { PdfAppearance } from "./PdfAppearance";
+import { webViewDecelerationRate } from "../lib/webViewDecelerationRate";
 
 export function PdfPreview(props: { readonly uri: string }) {
   const [error, setError] = useState<string | null>(null);
@@ -15,6 +16,7 @@ export function PdfPreview(props: { readonly uri: string }) {
           source={{ uri: props.uri }}
           originWhitelist={["*"]}
           automaticallyAdjustContentInsets={false}
+          decelerationRate={webViewDecelerationRate}
           contentInsetAdjustmentBehavior="never"
           startInLoadingState
           onError={(event) =>

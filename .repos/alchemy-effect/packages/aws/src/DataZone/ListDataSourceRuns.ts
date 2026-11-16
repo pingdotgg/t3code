@@ -1,0 +1,42 @@
+import type * as datazone from "@distilled.cloud/aws/datazone";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+import type { Domain } from "./Domain.ts";
+
+export interface ListDataSourceRunsRequest extends Omit<
+  datazone.ListDataSourceRunsInput,
+  "domainIdentifier"
+> {}
+
+/**
+ * Runtime binding for `datazone:ListDataSourceRuns`.
+ *
+ * Lists the runs of a data source in the bound domain. The domain id is injected from the binding.
+ * Provide the implementation with
+ * `Effect.provide(AWS.DataZone.ListDataSourceRunsHttp)`.
+ * ### Data Source Runs
+ * **Example:** List Recent Runs
+ * ```typescript
+ * // init — bind the operation to the domain
+ * const listDataSourceRuns = yield* AWS.DataZone.ListDataSourceRuns(domain);
+ *
+ * // runtime
+ * const runs = yield* listDataSourceRuns({ dataSourceIdentifier: dataSourceId });
+ * ```
+ *
+ * @binding
+ */
+export interface ListDataSourceRuns extends Binding.Service<
+  ListDataSourceRuns,
+  "AWS.DataZone.ListDataSourceRuns",
+  (
+    domain: Domain,
+  ) => Effect.Effect<
+    (
+      request: ListDataSourceRunsRequest,
+    ) => Effect.Effect<datazone.ListDataSourceRunsOutput, datazone.ListDataSourceRunsError>
+  >
+> {}
+export const ListDataSourceRuns = Binding.Service<ListDataSourceRuns>(
+  "AWS.DataZone.ListDataSourceRuns",
+);

@@ -32,7 +32,10 @@ const preparedPdfAtom = Atom.family((uri: string) =>
         },
         catch: (cause) => (cause instanceof Error ? cause.message : "The PDF could not be loaded."),
       }).pipe(
-        Effect.flatMap((file) => (file === null ? Effect.interrupt : Effect.succeed(file))),
+        Effect.filterOrElse(
+          (file) => file !== null,
+          () => Effect.interrupt,
+        ),
         Effect.interruptible,
       ),
       (file) => Effect.sync(file.dispose),
@@ -78,12 +81,10 @@ function PdfContent(props: { readonly uri: string }) {
   return (
     <Pdf
       source={{ uri: localUri }}
-      page={pdfInitialPage(props.uri)}
-      fitPolicy={0}
-      trustAllCerts={false}
+      initialPage={pdfInitialPage(props.uri) - 1}
       enableAnnotationRendering
       enableDoubleTapZoom
-      onPressLink={(href) => {
+      onLinkPress={({ url: href }) => {
         const url = pdfLinkUrl(href, props.uri);
         if (url !== null) void tryOpenExternalUrl(url, "file-preview");
       }}
