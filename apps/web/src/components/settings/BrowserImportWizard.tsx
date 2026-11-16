@@ -67,7 +67,6 @@ export function BrowserImportWizard({
   onCheckFullDiskAccess,
   onClose,
 }: BrowserImportWizardProps) {
-  const m = useMessages();
   const [source, setSource] = useState(initialSource);
   const [step, setStep] = useState<WizardStep>(() => initialWizardStep(initialSource));
   const [sourceProfileDirectory, setSourceProfileDirectory] = useState(
