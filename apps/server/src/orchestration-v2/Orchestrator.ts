@@ -2747,7 +2747,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : "Provider or model selection changed.";
       yield* writeSystemEvents(
         [
-          ...(selectionChanged && queuedRun.threadPickSuperseded !== true
+          // A scheduled task's pinned model still moves the thread back when it starts.
+          ...(selectionChanged &&
+          (queuedRun.threadPickSuperseded !== true || queuedMessage.scheduledTaskId !== undefined)
             ? [
                 {
                   type:
