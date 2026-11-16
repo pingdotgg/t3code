@@ -1,4 +1,8 @@
 import { isCommitSha, normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
+import {
+  diffFileSection,
+  truncateLongDiffLines,
+} from "@t3tools/source-control-core/server/diffFileRevisions";
 import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import { KnownWorkflowRuns, makeChecksRevalidator } from "./gitHubConditionalChecks.ts";
 import { runGitHubStackAction, type GitHubStackActionError } from "./githubStackActions.ts";
@@ -378,6 +382,9 @@ const decodePullRequestActionState = Schema.decodeUnknownEffect(PullRequestActio
 
 /** A large pull request can produce a multi-megabyte patch; past this it is truncated. */
 const DIFF_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
+const WITHHELD_FILE_DIFF_MAX_OUTPUT_BYTES = 32 * 1024 * 1024;
+// Withheld files are mostly minified bundles; megabyte lines would freeze the client's layout.
+const WITHHELD_FILE_MAX_LINE_LENGTH = 1_000;
 const DIFF_TIMEOUT = Duration.seconds(60);
 const DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 
@@ -470,6 +477,7 @@ export interface GitHubPullRequestDiffSlice {
   readonly truncated: boolean;
   readonly nextCursor: string | null;
   readonly omittedFileStats?: ReadonlyArray<PullRequestOmittedFileStat>;
+  readonly withheldFilesReadable?: boolean;
 }
 
 export interface GitHubPullRequestFilesViewed {
@@ -615,6 +623,7 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly number: number;
       readonly cursor?: string | undefined;
       readonly commit?: string | undefined;
+      readonly path?: string | undefined;
     }) => Effect.Effect<GitHubPullRequestDiffSlice, GitHubPullRequestApiError>;
 
     readonly getPullRequestDiffFileContents: (input: {
@@ -2227,6 +2236,7 @@ export const make = Effect.gen(function* () {
             left.createdAt.localeCompare(right.createdAt),
           ),
           commits: commits.map((commit) => ({ ...commit, ...commitStats.get(commit.oid) })),
+          truncated: commentsAfter !== null || reviewsAfter !== null,
         } satisfies GitHubPullRequestActivity;
       },
     ),
@@ -2244,36 +2254,76 @@ export const make = Effect.gen(function* () {
       if (input.commit !== undefined && !isCommitSha(input.commit)) {
         return Effect.fail(new GitHubDiffCommitError({ cwd: input.cwd }));
       }
+      const { owner, name } = parseRepositorySelector(input.repository);
+      const fullDiff = (maxResponseBytes: number) =>
+        api.rest({
+          host: input.host,
+          operation: "getPullRequestDiff",
+          path:
+            input.commit === undefined
+              ? `repos/${owner}/${name}/pulls/${input.number}`
+              : `repos/${owner}/${name}/commits/${input.commit}`,
+          accept: "application/vnd.github.diff",
+          maxResponseBytes,
+          timeout: DIFF_TIMEOUT,
+        });
+      // GitHub has no per-file diff, so a withheld file is cut from the whole patch here and
+      // only its section reaches the client.
+      if (input.path !== undefined) {
+        const path = input.path;
+        return fullDiff(WITHHELD_FILE_DIFF_MAX_OUTPUT_BYTES).pipe(
+          Effect.flatMap((response) => {
+            const section = response.truncated ? null : diffFileSection(response.body, path);
+            if (section === null) {
+              return Effect.fail(
+                readError(
+                  input.cwd,
+                  "getPullRequestDiff",
+                  new Error(
+                    response.truncated
+                      ? `The diff for ${path} is too large to load.`
+                      : `GitHub's diff does not include ${path}.`,
+                  ),
+                ),
+              );
+            }
+            return Effect.succeed({
+              patch: truncateLongDiffLines(section, WITHHELD_FILE_MAX_LINE_LENGTH),
+              truncated: false,
+              nextCursor: null,
+            });
+          }),
+        );
+      }
       if (input.cursor !== undefined) {
         const page = diffCursorPage(input.cursor);
         return page === null
           ? Effect.fail(new GitHubDiffCursorError({ cwd: input.cwd }))
           : filesPage(page);
       }
-      if (input.commit !== undefined) {
-        return filesPage(1);
-      }
-      const { owner, name } = parseRepositorySelector(input.repository);
-      return api
-        .rest({
-          host: input.host,
-          operation: "getPullRequestDiff",
-          path: `repos/${owner}/${name}/pulls/${input.number}`,
-          accept: "application/vnd.github.diff",
-          maxResponseBytes: DIFF_MAX_OUTPUT_BYTES,
-          timeout: DIFF_TIMEOUT,
-        })
-        .pipe(
-          Effect.flatMap((response) =>
-            response.truncated
-              ? filesPage(1)
-              : Effect.succeed({ patch: response.body, truncated: false, nextCursor: null }),
-          ),
-          // Above 300 changed files, GitHub returns 406; use the paged files API.
-          Effect.catchTags({
-            GitHubApiResponseError: (error) => filesPage(1).pipe(Effect.mapError(() => error)),
-          }),
+      // A withheld file is read from the whole diff, so it is readable unless GitHub refused that.
+      const readableFirstPage = () =>
+        filesPage(1).pipe(
+          Effect.map((slice): GitHubPullRequestDiffSlice => ({
+            ...slice,
+            withheldFilesReadable: true,
+          })),
         );
+      if (input.commit !== undefined) {
+        return readableFirstPage();
+      }
+      return fullDiff(DIFF_MAX_OUTPUT_BYTES).pipe(
+        Effect.flatMap((response) =>
+          response.truncated
+            ? readableFirstPage()
+            : Effect.succeed({ patch: response.body, truncated: false, nextCursor: null }),
+        ),
+        // Above 300 changed files (or about 20,000 lines), GitHub returns 406; use the paged
+        // files API. That refusal also covers a single file's read, so none is offered.
+        Effect.catchTags({
+          GitHubApiResponseError: (error) => filesPage(1).pipe(Effect.mapError(() => error)),
+        }),
+      );
     }),
 
     getPullRequestDiffFileContents,
