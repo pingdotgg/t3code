@@ -2,6 +2,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
@@ -54,6 +55,26 @@ function makeProcess(output: string, exitCode = 0): ChildProcessSpawner.ChildPro
     all: stdout,
     exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
     isRunning: Effect.succeed(false),
+    kill: () => Effect.void,
+    stdin: Sink.drain,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+    unref: Effect.succeed(Effect.void),
+  });
+}
+
+function makeSlowProcess(
+  output: string,
+  delay: Duration.Input,
+): ChildProcessSpawner.ChildProcessHandle {
+  const stdout = Stream.fromEffect(Effect.as(Effect.sleep(delay), textEncoder.encode(output)));
+  return ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(125),
+    stdout,
+    stderr: Stream.empty,
+    all: stdout,
+    exitCode: Effect.as(Effect.sleep(delay), ChildProcessSpawner.ExitCode(0)),
+    isRunning: Effect.succeed(true),
     kill: () => Effect.void,
     stdin: Sink.drain,
     getInputFd: () => Sink.drain,
@@ -486,7 +507,7 @@ describe("DesktopShellEnvironment", () => {
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
         SHELL: "/bin/zsh",
-        PATH: "/Users/test/.local/bin:/usr/bin",
+        PATH: " /Users/test/.local/bin:/usr/bin",
       };
       const commands: ChildProcess.Command[] = [];
 
@@ -496,7 +517,7 @@ describe("DesktopShellEnvironment", () => {
         handler: (command) => {
           commands.push(command);
           return envOutput({
-            PATH: "/opt/homebrew/bin:/usr/bin",
+            PATH: "/opt/homebrew/bin:/usr/bin:/opt/bin ",
             SSH_AUTH_SOCK: "/tmp/secretive.sock",
             HOMEBREW_PREFIX: "/opt/homebrew",
           });
@@ -505,7 +526,7 @@ describe("DesktopShellEnvironment", () => {
 
       assert.equal(commands.length, 1);
       assert.equal(commands[0]?._tag === "StandardCommand" ? commands[0].command : "", "/bin/zsh");
-      assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/Users/test/.local/bin");
+      assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/opt/bin : /Users/test/.local/bin");
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
       assert.equal(env.HOMEBREW_PREFIX, "/opt/homebrew");
       assert.isTrue(prepared);
@@ -580,6 +601,39 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect.each([
+    {
+      name: "hydrates both Android SDK names when neither is inherited",
+      inherited: {},
+      expected: { ANDROID_HOME: "/shell/android-home", ANDROID_SDK_ROOT: "/shell/android-root" },
+    },
+    {
+      // The device host reads ANDROID_HOME before ANDROID_SDK_ROOT, so a shell
+      // ANDROID_HOME next to an inherited ANDROID_SDK_ROOT would change the SDK.
+      name: "keeps an inherited ANDROID_SDK_ROOT selected over a login-shell ANDROID_HOME",
+      inherited: { ANDROID_SDK_ROOT: "/inherited/android-sdk" },
+      expected: { ANDROID_HOME: undefined, ANDROID_SDK_ROOT: "/inherited/android-sdk" },
+    },
+  ])("$name", ({ inherited, expected }) =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin", ...inherited };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/usr/bin",
+            ANDROID_HOME: "/shell/android-home",
+            ANDROID_SDK_ROOT: "/shell/android-root",
+          }),
+      });
+
+      assert.equal(env.ANDROID_HOME, expected.ANDROID_HOME);
+      assert.equal(env.ANDROID_SDK_ROOT, expected.ANDROID_SDK_ROOT);
+    }),
+  );
+
   it.effect("keeps mise's PATH record with the login shell PATH", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
@@ -634,6 +688,175 @@ describe("DesktopShellEnvironment", () => {
       });
 
       assert.isFalse(prepared);
+    }),
+  );
+
+  it.effect("retries the user's shell when only the fallback shell answered", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/usr/bin/fish", PATH: "/usr/bin" };
+      const commands: string[] = [];
+      let fishReady = false;
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        handler: (command) => {
+          if (command._tag !== "StandardCommand") return "";
+          commands.push(command.command);
+          if (command.command !== "/usr/bin/fish") return envOutput({ PATH: "/usr/bin" });
+          return fishReady
+            ? envOutput({ PATH: "/fish/bin:/usr/bin" })
+            : { output: "", exitCode: 7 };
+        },
+        use: (service) =>
+          Effect.gen(function* () {
+            assert.isTrue(yield* service.awaitDiscovery);
+            assert.equal(env.PATH, "/usr/bin");
+            // The Linux probe checks the D-Bus socket on the real filesystem, which the clock does not await.
+            const published = yield* service.updates.pipe(
+              Stream.filter((snapshot) => snapshot.environment.PATH === "/fish/bin:/usr/bin"),
+              Stream.runHead,
+              Effect.forkChild({ startImmediately: true }),
+            );
+
+            fishReady = true;
+            yield* TestClock.adjust("30 seconds");
+            assert.isTrue(Option.isSome(yield* Fiber.join(published)));
+            assert.equal(env.PATH, "/fish/bin:/usr/bin");
+            return true;
+          }),
+      }).pipe(Effect.provide(Logger.layer([])));
+      assert.deepEqual(commands, ["/usr/bin/fish", "/bin/bash", "/usr/bin/fish"]);
+
+      // With no user shell to wait for, the fallback's answer is final.
+      commands.length = 0;
+      yield* runShellEnvironment({
+        env: { PATH: "/usr/bin" },
+        platform: "linux",
+        handler: (command) => {
+          if (command._tag === "StandardCommand") commands.push(command.command);
+          return envOutput({ PATH: "/usr/bin" });
+        },
+        use: (service) =>
+          Effect.gen(function* () {
+            assert.isTrue(yield* service.awaitDiscovery);
+            yield* TestClock.adjust("5 minutes");
+            return true;
+          }),
+      }).pipe(Effect.provide(Logger.layer([])));
+      assert.deepEqual(commands, ["/bin/bash"]);
+    }),
+  );
+
+  it.effect("gives background retries time for a locked or slow shell, then publishes", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+      // Startup fails fast, the first retry meets a shell blocked on a lock, the second a slow one.
+      const spawned = yield* Effect.forEach([0, 1, 2], () => Deferred.make<void>());
+      const stopped = yield* Deferred.make<ChildProcess.KillOptions>();
+      let attempts = 0;
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () => "",
+        processSpawner: ChildProcessSpawner.make((command) => {
+          if (command._tag !== "StandardCommand" || command.command !== "/bin/zsh") {
+            return Effect.succeed(makeProcess(""));
+          }
+          const attempt = attempts++;
+          const spawn = Deferred.succeed(spawned[attempt]!, undefined);
+          if (attempt === 0) return spawn.pipe(Effect.as(makeProcess("")));
+          if (attempt === 1) {
+            return spawn.pipe(
+              Effect.andThen(
+                Effect.acquireRelease(Effect.succeed(makeHungProcess()), () =>
+                  Deferred.succeed(stopped, command.options),
+                ),
+              ),
+            );
+          }
+          return spawn.pipe(
+            Effect.as(makeSlowProcess(envOutput({ PATH: "/fresh/bin" }), "20 seconds")),
+          );
+        }),
+        use: (service) =>
+          Effect.gen(function* () {
+            assert.isFalse(yield* service.awaitDiscovery);
+            const published = yield* service.updates.pipe(
+              Stream.drop(1),
+              Stream.runHead,
+              Effect.forkChild({ startImmediately: true }),
+            );
+
+            yield* TestClock.adjust("30 seconds");
+            yield* Deferred.await(spawned[1]!);
+            // pyenv waits up to 60 s on its rehash lock before the shell continues.
+            yield* TestClock.adjust("1 minute");
+            assert.isFalse(yield* Deferred.isDone(stopped));
+            yield* TestClock.adjust("1 minute");
+            const stop = yield* Deferred.await(stopped);
+            // pyenv releases that lock in an EXIT trap, which SIGTERM runs and SIGKILL skips.
+            assert.equal(stop.killSignal, "SIGTERM");
+            assert.isAtLeast(Duration.toMillis(stop.forceKillAfter ?? 0), 5_000);
+
+            yield* TestClock.adjust("30 seconds");
+            yield* Deferred.await(spawned[2]!);
+            yield* TestClock.adjust("20 seconds");
+            const snapshot = yield* Fiber.join(published);
+            assert.equal(env.PATH, "/fresh/bin:/usr/bin");
+            assert.isTrue(Option.isSome(snapshot) && snapshot.value.discovered);
+            assert.equal(
+              Option.isSome(snapshot) ? snapshot.value.environment.PATH : undefined,
+              "/fresh/bin:/usr/bin",
+            );
+            return true;
+          }),
+      });
+    }),
+  );
+
+  it.effect("recovers the login-shell PATH when the first probe outlasts the timeout", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin:/bin:/usr/sbin:/sbin" };
+      const output = envOutput({ PATH: "/opt/homebrew/bin:/usr/bin" });
+      let shellProbes = 0;
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () => "",
+        processSpawner: ChildProcessSpawner.make((command) => {
+          if (command._tag !== "StandardCommand" || command.command !== "/bin/zsh") {
+            return Effect.succeed(makeProcess(""));
+          }
+          shellProbes += 1;
+          if (shellProbes > 1) return Effect.succeed(makeProcess(output));
+          // A cold start: the first login shell answers, but only after 7s.
+          const slow = Effect.sleep("7 seconds");
+          const stdout = Stream.fromEffect(slow.pipe(Effect.as(textEncoder.encode(output))));
+          return Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(125),
+              stdout,
+              stderr: Stream.empty,
+              all: stdout,
+              exitCode: slow.pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              isRunning: Effect.succeed(true),
+              kill: () => Effect.void,
+              stdin: Sink.drain,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+              unref: Effect.succeed(Effect.void),
+            }),
+          );
+        }),
+        use: (service) =>
+          Effect.gen(function* () {
+            yield* service.installIntoProcess;
+            yield* TestClock.adjust("10 minutes");
+            return true;
+          }),
+      }).pipe(Effect.provide(Logger.layer([])));
+
+      assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin");
     }),
   );
 

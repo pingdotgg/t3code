@@ -192,9 +192,12 @@ export const readSubmission = Effect.gen(function* () {
         }),
     ),
   );
-  const fields = yield* decodeSubmit({ shareId: parts.shareId, text: parts.text ?? "" }).pipe(
-    Effect.option,
-  );
+  const text = parts.text ?? "";
+  const fields = yield* decodeSubmit({
+    shareId: parts.shareId,
+    // Form data sends every line break as CRLF; the textarea gave the guest LF.
+    text: typeof text === "string" ? text.replaceAll("\r\n", "\n") : text,
+  }).pipe(Effect.option);
   if (fields._tag === "None") return null;
   const files = parts.file;
   const uploads: ReadonlyArray<GuestUpload> = Array.isArray(files)
