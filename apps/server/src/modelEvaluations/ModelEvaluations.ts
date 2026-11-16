@@ -4,15 +4,17 @@ import {
   ModelEvaluationError,
   ModelEvaluationRecord,
   ModelSelection,
+  RunId,
+  ThreadId,
   type ModelEvaluationGuidance,
   type ModelEvaluationReport,
+  type ModelEvaluationRunOutcome,
   type ProjectId,
-  type RunId,
-  type ThreadId,
 } from "@t3tools/contracts";
 import {
   MODEL_EVALUATION_RUBRIC_VERSION,
   buildModelEvaluationEvidence,
+  modelEvaluationAwaitsSubagents,
   validateModelEvaluationVerdict,
 } from "@t3tools/provider-core/server/modelEvaluation";
 import * as Context from "effect/Context";
@@ -60,6 +62,18 @@ function evaluatorFailureReason(error: { readonly _tag: string; readonly detail:
   const detail = error.detail.replace(/\s+/g, " ").trim().slice(0, EVALUATOR_FAILURE_DETAIL_LIMIT);
   const named = detail.length === 0 ? error._tag : `${error._tag}: ${detail}`;
   return `The evaluator could not complete this evaluation (${named}). No model score was recorded.`;
+}
+
+function refreshRunOutcome(status: string): ModelEvaluationRunOutcome | undefined {
+  switch (status) {
+    case "completed":
+    case "failed":
+    case "interrupted":
+    case "cancelled":
+      return status;
+    default:
+      return undefined;
+  }
 }
 
 function selectionKey(selection: ModelSelection) {
@@ -182,6 +196,9 @@ export class ModelEvaluations extends Context.Service<
   ModelEvaluations,
   {
     readonly enqueueRun: (input: RunInput) => Effect.Effect<void, ModelEvaluationPassError>;
+    readonly enqueueSettledSubagentRefreshes: (input?: {
+      readonly runId: RunId;
+    }) => Effect.Effect<void, ModelEvaluationPassError>;
     readonly evaluateRun: (input: RunInput) => Effect.Effect<void, ModelEvaluationPassError>;
     readonly list: (input: {
       readonly projectId: ProjectId;
@@ -346,6 +363,71 @@ const make = Effect.gen(function* () {
     `;
     return yield* Effect.forEach(rows, (row) => decodeRecord(row.payload_json));
   });
+  const settledSubagentRevisions = Effect.fn("ModelEvaluations.settledSubagentRevisions")(
+    function* (runId?: RunId) {
+      const after = DateTime.formatIso(DateTime.subtract(yield* DateTime.now, { days: 90 }));
+      return yield* sql<{
+        thread_id: string;
+        run_id: string;
+        run_status: string;
+        subagent_revision: number | null;
+      }>`
+        SELECT candidate.thread_id, candidate.run_id, candidate.run_status, candidate.subagent_revision
+        FROM (
+          SELECT
+            evaluation.thread_id AS thread_id,
+            evaluation.run_id AS run_id,
+            run.status AS run_status,
+            (
+              SELECT MAX(source.sequence)
+              FROM orchestration_events AS source
+              WHERE source.application_event_version = 2 AND source.aggregate_kind = 'thread'
+                AND source.stream_id = evaluation.thread_id AND source.sequence > evaluation.source_sequence
+                AND source.event_type = 'turn-item.updated'
+                AND json_extract(source.payload_json, '$.runId') = evaluation.run_id
+                AND json_extract(source.payload_json, '$.type') = 'subagent'
+            ) AS subagent_revision
+          FROM model_evaluations AS evaluation
+          JOIN orchestration_v2_projection_threads AS thread ON thread.thread_id = evaluation.thread_id
+          JOIN orchestration_v2_projection_runs AS run ON run.run_id = evaluation.run_id
+          WHERE thread.deleted_at IS NULL AND thread.archived_at IS NULL AND run.status <> 'rolled_back'
+            AND evaluation.evaluated_at >= ${after}
+            AND ${runId === undefined ? sql`1 = 1` : sql`evaluation.run_id = ${runId}`}
+            AND NOT EXISTS (
+              SELECT 1 FROM orchestration_events AS source
+              WHERE source.application_event_version = 2 AND source.aggregate_kind = 'thread'
+                AND source.stream_id = evaluation.thread_id AND source.sequence > evaluation.source_sequence
+                AND source.event_type IN ('message.updated', 'turn-item.updated')
+                AND json_extract(source.payload_json, '$.runId') = evaluation.run_id
+                AND (
+                  source.event_type = 'message.updated'
+                  OR json_extract(source.payload_json, '$.type') IN (
+                    'user_message', 'assistant_message', 'command_execution', 'file_change', 'dynamic_tool'
+                  )
+                )
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM json_each(evaluation.source_message_ids) AS message
+              JOIN orchestration_events AS source
+                ON json_extract(source.payload_json, '$.id') = message.value
+              WHERE source.application_event_version = 2 AND source.aggregate_kind = 'thread'
+                AND source.stream_id = evaluation.thread_id AND source.event_type = 'message.updated'
+                AND source.sequence > evaluation.source_sequence
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM json_each(evaluation.source_message_ids) AS reference
+              LEFT JOIN orchestration_v2_projection_messages AS message ON message.message_id = reference.value
+              LEFT JOIN orchestration_v2_projection_runs AS source_run ON source_run.run_id = message.run_id
+              WHERE message.message_id IS NULL OR message.thread_id <> evaluation.thread_id
+                OR source_run.status = 'rolled_back'
+                OR (source_run.status = 'cancelled' AND json_extract(source_run.payload_json, '$.startedAt') IS NULL)
+                OR (${discardedRequest})
+            )
+        ) AS candidate
+        WHERE candidate.subagent_revision IS NOT NULL
+      `;
+    },
+  );
 
   const list: ModelEvaluations["Service"]["list"] = Effect.fn("ModelEvaluations.list")(
     function* ({ projectId }) {
@@ -437,7 +519,14 @@ const make = Effect.gen(function* () {
       );
       yield* requireProject(projectId);
       const previous = yield* sql`SELECT run_id FROM model_evaluations WHERE run_id = ${runId}`;
-      if (previous.length > 0) return;
+      const awaitsSubagents = modelEvaluationAwaitsSubagents(records.turnItems, runId);
+      let replacing = false;
+      if (previous.length > 0) {
+        if (awaitsSubagents) return;
+        const [revision] = yield* settledSubagentRevisions(runId);
+        if (revision === undefined) return;
+        replacing = true;
+      }
       const generation = yield* reset(projectId);
       if (DateTime.formatIso(records.run.requestedAt) <= generation.reset_at) return;
       const evaluatorSelection =
@@ -490,7 +579,8 @@ const make = Effect.gen(function* () {
         reason = "The executed model could not be attributed to one stable model selection.";
       if (!automatedWake && !settled)
         reason = "The run could not finish checkpoint finalization. No model score was recorded.";
-      if (!automatedWake && evidence !== null && attributed && settled) {
+      if (!automatedWake && awaitsSubagents) reason = "Delegated work from this run is still open.";
+      if (!automatedWake && evidence !== null && attributed && settled && !awaitsSubagents) {
         const generated = yield* Effect.gen(function* () {
           const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-model-evaluation-" });
           return yield* textGeneration.generateModelEvaluation({
@@ -564,7 +654,14 @@ const make = Effect.gen(function* () {
             };
             yield* sql`INSERT INTO model_evaluations (run_id, project_id, thread_id, evaluated_at, source_sequence, source_message_ids, payload_json)
           VALUES (${runId}, ${projectId}, ${threadId}, ${record.at}, ${source.sourceSequence}, ${encodeIds(evidence?.sourceMessageIds ?? [])}, ${encodeRecord(record)})
-          ON CONFLICT (run_id) DO NOTHING`;
+          ON CONFLICT (run_id) DO UPDATE SET
+            project_id = excluded.project_id,
+            thread_id = excluded.thread_id,
+            evaluated_at = excluded.evaluated_at,
+            source_sequence = excluded.source_sequence,
+            source_message_ids = excluded.source_message_ids,
+            payload_json = excluded.payload_json
+          WHERE ${replacing ? sql`1 = 1` : sql`0 = 1`}`;
           }),
         ),
       );
@@ -575,7 +672,65 @@ const make = Effect.gen(function* () {
         Effect.mapError((cause) => new ModelEvaluationPassError({ runId, cause })),
       ),
   );
-  return ModelEvaluations.of({ enqueueRun, evaluateRun, list, clear, guidance });
+  const enqueueSettledSubagentRefreshes: ModelEvaluations["Service"]["enqueueSettledSubagentRefreshes"] =
+    Effect.fn("ModelEvaluations.enqueueSettledSubagentRefreshes")(
+      function* (input) {
+        const current = yield* settings.getSettings;
+        if (!current.enableModelEvaluations) return;
+        const candidates = yield* settledSubagentRevisions(input?.runId);
+        const effects = yield* Effect.forEach(candidates, (candidate) =>
+          Effect.gen(function* () {
+            const runOutcome = refreshRunOutcome(candidate.run_status);
+            if (runOutcome === undefined || candidate.subagent_revision === null) return [];
+            const runId = RunId.make(candidate.run_id);
+            const loaded = yield* projections
+              .getThreadRecords(ThreadId.make(candidate.thread_id), ["turnItems"], {
+                turnItemRunIds: [runId],
+                turnItemTypes: ["subagent"],
+              })
+              .pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning(
+                    "Could not read subagent items for a model evaluation refresh",
+                    { runId, cause },
+                  ).pipe(Effect.as(null)),
+                ),
+              );
+            if (loaded === null || modelEvaluationAwaitsSubagents(loaded.turnItems, runId))
+              return [];
+            return modelEvaluationEffects({
+              settings: current,
+              threadId: ThreadId.make(candidate.thread_id),
+              runId,
+              runOutcome,
+              subagentRevision: candidate.subagent_revision,
+            });
+          }),
+        );
+        const pending = effects.flat();
+        if (pending.length === 0) return;
+        yield* outbox.enqueue(pending);
+        yield* outbox.notifyAvailable(pending.length);
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.mapError(
+            (cause) =>
+              new ModelEvaluationPassError({
+                runId: input?.runId ?? "subagent-refresh",
+                cause,
+              }),
+          ),
+        ),
+    );
+  return ModelEvaluations.of({
+    enqueueRun,
+    enqueueSettledSubagentRefreshes,
+    evaluateRun,
+    list,
+    clear,
+    guidance,
+  });
 });
 
 export const layer = Layer.effect(ModelEvaluations, make);

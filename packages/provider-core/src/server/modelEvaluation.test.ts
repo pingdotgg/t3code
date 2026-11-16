@@ -19,6 +19,7 @@ import * as DateTime from "effect/DateTime";
 import {
   buildModelEvaluationEvidence,
   buildModelEvaluationPrompt,
+  modelEvaluationAwaitsSubagents,
   validateModelEvaluationVerdict,
 } from "./modelEvaluation.ts";
 
@@ -426,4 +427,42 @@ it.each([
   expect(validateModelEvaluationVerdict({ ...verdict(), confidence: "high" }, packet)).toBe(
     scenario === "empty-context",
   );
+});
+
+it("waits only while a delegated child is still active", () => {
+  const child = (
+    status:
+      | "pending"
+      | "running"
+      | "waiting"
+      | "idle"
+      | "completed"
+      | "failed"
+      | "cancelled"
+      | "interrupted",
+  ) => ({ runId, type: "subagent" as const, status });
+  expect(modelEvaluationAwaitsSubagents([child("running")], runId)).toBe(true);
+  expect(modelEvaluationAwaitsSubagents([child("pending"), child("waiting")], runId)).toBe(true);
+  expect(
+    modelEvaluationAwaitsSubagents(
+      [
+        child("idle"),
+        child("completed"),
+        child("failed"),
+        child("cancelled"),
+        child("interrupted"),
+      ],
+      runId,
+    ),
+  ).toBe(false);
+  expect(
+    modelEvaluationAwaitsSubagents(
+      [
+        child("completed"),
+        { runId, type: "command_execution" as const, status: "running" as const },
+      ],
+      runId,
+    ),
+  ).toBe(false);
+  expect(modelEvaluationAwaitsSubagents([child("running")], RunId.make("other-run"))).toBe(false);
 });

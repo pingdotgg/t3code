@@ -1035,14 +1035,14 @@ it.effect("waits to rescore until every delegated child has settled", () => {
     yield* recordChild("child-b", "running", null, 3);
     const service = yield* ModelEvaluations.ModelEvaluations;
     yield* service.evaluateRun(input);
-    yield* recordChild("child-a", "completed", "child-a-token", 2);
+    yield* recordChild("child-a", "completed", "alpha-result", 2);
     yield* service.evaluateRun(input);
-    assert.equal(packetsWith(calls, "child-a-token").length, 0);
+    assert.equal(packetsWith(calls, "alpha-result").length, 0);
     assert.deepEqual((yield* service.list(scope)).records, []);
-    yield* recordChild("child-b", "completed", "child-b-token", 3);
+    yield* recordChild("child-b", "completed", "beta-result", 3);
     yield* service.evaluateRun(input);
-    assert.equal(packetsWith(calls, "child-a-token").length, 1);
-    assert.equal(packetsWith(calls, "child-b-token").length, 1);
+    assert.equal(packetsWith(calls, "alpha-result").length, 1);
+    assert.equal(packetsWith(calls, "beta-result").length, 1);
     assert.equal((yield* service.list(scope)).guidance[0]?.sampleCount, 1);
   }).pipe(
     Effect.provide(
@@ -1101,3 +1101,29 @@ it.effect("scores a turn whose delegated child already ended cancelled", () => {
     ),
   );
 });
+
+it.effect("enqueues one refresh after every delegated child settles", () =>
+  Effect.gen(function* () {
+    yield* seed();
+    yield* recordChild("queued-a", "running", null, 2);
+    yield* recordChild("queued-b", "running", null, 3);
+    const service = yield* ModelEvaluations.ModelEvaluations;
+    const sql = yield* SqlClient.SqlClient;
+    const refreshIds = () =>
+      sql<{ effect_id: string }>`
+        SELECT effect_id FROM orchestration_v2_effect_outbox
+        WHERE effect_id LIKE ${`effect:model-evaluation.generate:${runId}:subagents:%`}
+        ORDER BY effect_id
+      `;
+    yield* service.evaluateRun(input);
+    yield* recordChild("queued-a", "completed", "queued-a-token", 2);
+    yield* service.enqueueSettledSubagentRefreshes({ runId });
+    assert.deepEqual(yield* refreshIds(), []);
+    yield* recordChild("queued-b", "completed", "queued-b-token", 3);
+    yield* service.enqueueSettledSubagentRefreshes();
+    yield* service.enqueueSettledSubagentRefreshes({ runId });
+    const ids = yield* refreshIds();
+    assert.equal(ids.length, 1);
+    assert.match(ids[0]!.effect_id, /:subagents:\d+$/);
+  }).pipe(Effect.provide(makeLayer((request) => Effect.succeed(verdict(request.packet))))),
+);
