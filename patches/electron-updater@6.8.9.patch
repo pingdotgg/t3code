@@ -318,3 +318,17 @@ index e768d24e7a957caf32a4b8ca6c68cb50eb5865ee..708a1fa7d740192944f04259cde6d6bf
      async getLatestTagName(cancellationToken) {
          const options = this.options;
          // do not use API for GitHub to avoid limit, only for custom host or GitHub Enterprise
+diff --git a/out/windowsExecutableCodeSignatureVerifier.js b/out/windowsExecutableCodeSignatureVerifier.js
+index c9a579eb3a7a21504ad89e663afc0f97399ac169..9f3c303c4e070312096e498012b31f8a80b972dd 100644
+--- a/out/windowsExecutableCodeSignatureVerifier.js
++++ b/out/windowsExecutableCodeSignatureVerifier.js
+@@ -44,7 +44,8 @@ function verifySignature(publisherNames, unescapedTempUpdateFile, logger) {
+         // https://docs.microsoft.com/en-us/windows/win32/fileio/naming-a-file
+         const tempUpdateFile = unescapedTempUpdateFile.replace(/'/g, "''");
+         logger.info(`Verifying signature ${tempUpdateFile}`);
+-        (0, child_process_1.execFile)(...preparePowerShellExec(`"Get-AuthenticodeSignature -LiteralPath '${tempUpdateFile}' | ConvertTo-Json -Compress"`, 20 * 1000), (error, stdout, stderr) => {
++        // On-access antivirus can hold the first check of a freshly written installer for ~55 s.
++        (0, child_process_1.execFile)(...preparePowerShellExec(`"Get-AuthenticodeSignature -LiteralPath '${tempUpdateFile}' | ConvertTo-Json -Compress"`, 120 * 1000), (error, stdout, stderr) => {
+             var _a;
+             try {
+                 if (error != null || stderr) {
