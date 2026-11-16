@@ -582,7 +582,7 @@ export async function deleteSelectedThreadEntries<
   return { deletedThreadKeys, firstFailure };
 }
 
-function isSidebarHiddenThread(thread: Pick<SidebarThreadSummary, "lineage">): boolean {
+export function isSidebarHiddenThread(thread: Pick<SidebarThreadSummary, "lineage">): boolean {
   return !isListedThreadLineage(thread.lineage);
 }
 
