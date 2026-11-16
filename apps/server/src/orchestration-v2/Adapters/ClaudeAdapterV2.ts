@@ -383,7 +383,7 @@ const CLAUDE_DESCENDANT_POLL = "1 second";
 // Claude Code's refusal of bypassPermissions as root, which it explains only on stderr.
 const CLAUDE_ROOT_REFUSAL =
   "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons";
-// Claude Code's answer to a --resume whose session store is gone, which it gives only on stderr.
+// Claude Code's result error for a --resume whose session store is gone; it then exits 1.
 const CLAUDE_CONVERSATION_NOT_FOUND = "No conversation found with session ID:";
 
 // fd 4 gates the launch until the server has recorded the process it is about to become.
@@ -1538,6 +1538,7 @@ export const layerQueryRunner: Layer.Layer<
           let stderrTail = "";
           let stderrClosed: Promise<void> = Promise.resolve();
           let answered = false;
+          let conversationMissing = false;
           const appendStderr = (text: string) => {
             if (answered) return;
             stderrTail = (stderrTail + text).slice(-CLAUDE_STDERR_TAIL_LENGTH);
@@ -1715,8 +1716,6 @@ export const layerQueryRunner: Layer.Layer<
                       );
                     }
                     const refusedRoot = !answered && stderrTail.includes(CLAUDE_ROOT_REFUSAL);
-                    const conversationMissing =
-                      !answered && stderrTail.includes(CLAUDE_CONVERSATION_NOT_FOUND);
                     return yield* queryRunnerError(
                       refusedRoot
                         ? new ClaudeCodeRootRefusalError({ cause })
@@ -1728,9 +1727,16 @@ export const layerQueryRunner: Layer.Layer<
                   }),
                 ),
               ),
-              Stream.tap(() =>
+              Stream.tap((message) =>
                 Effect.sync(() => {
                   answered = true;
+                  if (
+                    message.type === "result" &&
+                    message.subtype !== "success" &&
+                    message.errors.some((error) => error.startsWith(CLAUDE_CONVERSATION_NOT_FOUND))
+                  ) {
+                    conversationMissing = true;
+                  }
                 }),
               ),
               Stream.tap((message) =>
