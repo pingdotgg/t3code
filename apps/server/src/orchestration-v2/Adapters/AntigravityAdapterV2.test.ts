@@ -416,6 +416,16 @@ describe("AntigravityAdapterV2 client file system", () => {
         context("fs/read_text_file"),
       );
       assert.equal(viaInsideLink.content, "inside");
+      for (const name of ["..notes.txt", path.join("..cache", "notes.txt")]) {
+        const dotted = path.join(workspace, name);
+        yield* fileSystem.makeDirectory(path.dirname(dotted), { recursive: true });
+        yield* fileSystem.writeFileString(dotted, "dotted");
+        const dottedRead = yield* readTextFile(
+          { sessionId: "mock-session-1", path: dotted },
+          context("fs/read_text_file"),
+        );
+        assert.equal(dottedRead.content, "dotted", `${name} is inside the workspace`);
+      }
     }).pipe(Effect.provide(layerSession)),
   );
 });
