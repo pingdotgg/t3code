@@ -5,12 +5,9 @@ import type * as Path from "effect/Path";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-const CLIENT_FILE_MAX_BYTES = 8 * 1024 * 1024;
+import { isWithinRoot } from "../../workspace/KnownWorkspaces.ts";
 
-function isInsideRoot(path: Path.Path, root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-}
+const CLIENT_FILE_MAX_BYTES = 8 * 1024 * 1024;
 
 /** Resolve all symlinks, including the final component, before checking workspace containment. */
 const resolveClientFilePath = Effect.fn("AntigravityClientFiles.resolveClientFilePath")(
@@ -49,7 +46,7 @@ const resolveClientFilePath = Effect.fn("AntigravityClientFiles.resolveClientFil
     const roots = yield* Effect.forEach(input.allowedRoots, (root) =>
       input.fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root)),
     );
-    if (!roots.some((root) => isInsideRoot(path, root, real))) {
+    if (!roots.some((root) => isWithinRoot(path, real, root))) {
       return yield* outside;
     }
     return real;
