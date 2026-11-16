@@ -290,6 +290,8 @@ const secretsRs = rustfmt(
     `// Source: ${SECRETS_FILE} (secretSettingsFields per group), packages/source-control-github/src/shared/definition.ts,`,
     "// secrets/secretProviderDefinitions.ts.",
     "",
+    `pub(super) const DEFAULT_AGENT_BROWSER_ACCESS: bool = ${settings.DEFAULT_SERVER_SETTINGS.enableAgentBrowserAccess};`,
+    "",
     "/// Secret fields of `providerInstances.*.config`, by the instance's `driver`.",
     "pub(super) const PROVIDER_CONFIG: &[(&str, &[&str])] = &[",
     ...providerFields.map(([driver, fields]) => `(${str(driver)}, ${strs(fields)}),`),

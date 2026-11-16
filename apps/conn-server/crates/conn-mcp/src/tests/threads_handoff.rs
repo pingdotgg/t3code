@@ -17,6 +17,7 @@ async fn running_parent(f: &Fixture) -> (Value, Caller) {
         provider_session_id: "handoff-session".into(),
         provider_instance_id: "claudeAgent".into(),
         subagent: false,
+        preview: true,
     });
     (parent, caller)
 }

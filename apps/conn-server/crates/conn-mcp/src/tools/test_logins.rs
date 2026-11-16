@@ -14,6 +14,7 @@ fn store<'a>(cx: &'a Cx<'_>) -> Result<&'a TestLogins, ToolError> {
 pub(super) async fn save(cx: &Cx<'_>, args: &Args) -> ToolResult {
     cx.require_thread("This tool")?;
     cx.writing_caller().await?;
+    cx.require_preview()?;
     let input: SaveTestLoginInput = from_json(Value::Object(args.clone())).map_err(internal)?;
     store(cx)?
         .save(input, TestLoginSummaryCreatedBy::Agent)
@@ -22,7 +23,7 @@ pub(super) async fn save(cx: &Cx<'_>, args: &Args) -> ToolResult {
         .map_err(|e| ToolError::Message(e.to_string()))
 }
 pub(super) async fn request(cx: &Cx<'_>, args: &Args) -> ToolResult {
-    cx.require_thread("This tool")?;
+    cx.require_preview()?;
     let Some(host) = host(str_arg(args, "domain").unwrap_or_default()) else {
         return Ok(json!({"items":[]}));
     };
@@ -39,11 +40,16 @@ pub(super) async fn request(cx: &Cx<'_>, args: &Args) -> ToolResult {
     Ok(json!({"items":items}))
 }
 fn host(value: &str) -> Option<String> {
-    let value = value.trim();
+    let value = crate::input::js_trim(value);
     if value.is_empty() {
         return None;
     }
-    let parsed = url::Url::parse(&if value.contains("://") {
+    let explicit = value.split_once("://").is_some_and(|(scheme, _)| {
+        let mut chars = scheme.chars();
+        chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+            && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
+    });
+    let parsed = url::Url::parse(&if explicit {
         value.to_owned()
     } else {
         format!("https://{value}")
@@ -54,4 +60,26 @@ fn host(value: &str) -> Option<String> {
     }
     let host = parsed.host_str()?.to_ascii_lowercase();
     Some(host.strip_prefix("www.").unwrap_or(&host).to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn bare_host_with_scheme_in_query_matches() {
+        assert_eq!(
+            host("myapp.test/login?next=https://myapp.test").as_deref(),
+            Some("myapp.test")
+        );
+        assert_eq!(
+            host("myapp.test/#https://myapp.test").as_deref(),
+            Some("myapp.test")
+        );
+        assert_eq!(
+            host("HTTPS://WWW.myapp.test/login").as_deref(),
+            Some("myapp.test")
+        );
+        assert_eq!(host("ftp://myapp.test"), None);
+        assert_eq!(host("\u{0085}myapp.test"), None);
+    }
 }

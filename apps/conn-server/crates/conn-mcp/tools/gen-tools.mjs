@@ -314,7 +314,10 @@ const failureMessages = /const SECRET_REQUEST_FAILURE_MESSAGES = \{([\s\S]+?)\} 
 if (!failureMessages) throw new Error("Secret request failure messages moved");
 const reasons = [...failureMessages.matchAll(/^  (\w+):/gm)].map((m) => m[1]);
 const secretTexts = JSON.stringify({ notes: secretContracts.SECRET_REQUEST_UNSAVED_NOTE, errors: Object.fromEntries(reasons.map((reason) => [reason, new secretContracts.SecretRequestError({reason}).message])) }) + "\n";
+const { PreviewAutomationUnavailableError } = await import(NodeURL.pathToFileURL(NodePath.join(repo,"packages/contracts/src/previewAutomation.ts")).href);
+const previewUnavailable = new PreviewAutomationUnavailableError({capability:"preview", environmentId:"fixture"}).message;
 const outputs = [
+  [NodePath.join(here,"..","src","preview-unavailable.txt"),previewUnavailable,"preview capability refusal"],
   [threadInputsOut,`${JSON.stringify(threadInputs)}\n`,"thread tool input checks"],
   [NodePath.join(here, "..", "..", "conn-features", "src", "secret-texts.json"), secretTexts, "secret request texts"],
   [out, text, `${catalog.length} tools`],

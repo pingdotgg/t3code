@@ -92,6 +92,8 @@ pub struct ThreadCaller {
     pub thread_id: String,
     pub provider_session_id: String,
     pub provider_instance_id: String,
+    /// Captured when the provider session starts, not re-read on each call.
+    pub preview: bool,
     /// A delegated child: it hands its work back to its parent.
     pub subagent: bool,
 }

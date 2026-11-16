@@ -433,6 +433,10 @@ impl Inner {
         let tools = self.host.as_ref().and_then(|host| {
             host.agent_tools(crate::AgentSession {
                 thread_id: thread_id.to_owned(),
+                project_id: thread
+                    .get("projectId")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
                 provider_instance_id: provider.instance_id().as_str().to_owned(),
                 subagent,
             })
@@ -451,6 +455,10 @@ impl Inner {
                 host: self.host.as_ref().and_then(|host| {
                     host.provider_host(crate::AgentSession {
                         thread_id: thread_id.to_owned(),
+                        project_id: thread
+                            .get("projectId")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
                         provider_instance_id: provider.instance_id().as_str().to_owned(),
                         subagent,
                     })

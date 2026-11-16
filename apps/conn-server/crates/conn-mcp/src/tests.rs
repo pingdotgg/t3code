@@ -639,6 +639,7 @@ async fn an_agent_delegates_a_task_and_is_woken() {
         thread_id: parent_id.clone(),
         provider_instance_id: "claudeAgent".into(),
         subagent: false,
+        preview: true,
     });
     assert_eq!(entry.url, "http://127.0.0.1:4711/mcp");
     let token = entry.authorization.strip_prefix("Bearer ").unwrap();
@@ -757,6 +758,7 @@ fn credentials_expire_when_idle_and_stay_bounded() {
         thread_id: "t".into(),
         provider_instance_id: "claudeAgent".into(),
         subagent: false,
+        preview: true,
     };
     let (token, _) = credentials.issue(request());
     assert!(credentials.resolve(&token).is_some());
@@ -779,6 +781,7 @@ fn a_credential_counts_idle_time_the_wall_clock_shows_after_a_freeze() {
         thread_id: "t".into(),
         provider_instance_id: "claudeAgent".into(),
         subagent: false,
+        preview: true,
     });
     credentials.jump_wall(Duration::from_secs(10 * 60));
     assert!(credentials.resolve(&token).is_some(), "10 minutes: alive");
@@ -813,6 +816,7 @@ fn caller_namespaces_key_idempotency_per_credential() {
         provider_session_id: "p".into(),
         provider_instance_id: "claudeAgent".into(),
         subagent: false,
+        preview: true,
     });
     assert_eq!(thread.namespace(), "p");
     assert_eq!(client(true).namespace(), "client:swamp");
@@ -844,6 +848,7 @@ fn agent_of(f: &Fixture, thread_id: &str) -> Caller {
         thread_id: thread_id.to_owned(),
         provider_instance_id: "claudeAgent".into(),
         subagent: false,
+        preview: true,
     });
     let token = entry.authorization.strip_prefix("Bearer ").unwrap();
     Caller::Thread(f.service.resolve_thread_token(token).unwrap())
@@ -2878,4 +2883,64 @@ async fn database_query_forwards_to_the_desktop_and_returns_its_result() {
         );
     }
     f.service.config.engine.shutdown().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn test_logins_require_preview_capability() {
+    let f = fixture("login-capability");
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let thread =
+        launch_as_swamp(&mut swamp, "Login access", "hang", "full-access", "default").await;
+    let mut caller = agent_of(&f, &thread);
+    if let Caller::Thread(caller) = &mut caller {
+        caller.preview = false;
+    }
+    let mut agent = Client::open(&f.service, caller).await;
+    for (tool, args) in [
+        ("request_credentials", json!({"domain":"example.test"})),
+        (
+            "save_test_login",
+            json!({"url":"example.test","username":"u","password":"p"}),
+        ),
+    ] {
+        let message = plain_failure(&mut agent, tool, args).await;
+        assert!(
+            message.starts_with("MCP credential does not grant the preview capability:"),
+            "{message}"
+        );
+    }
+    assert!(
+        f.service
+            .config
+            .test_logins
+            .as_ref()
+            .unwrap()
+            .list()
+            .await
+            .unwrap()
+            .items
+            .is_empty()
+    );
+    f.service.config.engine.shutdown().await;
+}
+
+#[test]
+fn preview_grant_is_retained_per_credential() {
+    let mut credentials = crate::credentials::Credentials::default();
+    let (denied, _) = credentials.issue(ThreadCredentialRequest {
+        thread_id: "t".into(),
+        provider_instance_id: "claudeAgent".into(),
+        subagent: false,
+        preview: false,
+    });
+    let (granted, _) = credentials.issue(ThreadCredentialRequest {
+        thread_id: "t".into(),
+        provider_instance_id: "claudeAgent".into(),
+        subagent: false,
+        preview: true,
+    });
+    assert!(!credentials.resolve(&denied).unwrap().preview);
+    assert!(credentials.resolve(&granted).unwrap().preview);
+    credentials.touch("t");
+    assert!(!credentials.resolve(&denied).unwrap().preview);
 }

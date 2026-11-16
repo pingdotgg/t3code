@@ -252,6 +252,16 @@ impl Cx<'_> {
         }
     }
 
+    fn require_preview(&self) -> Result<(), ToolError> {
+        let caller = self.require_thread("This tool")?;
+        if caller.preview {
+            return Ok(());
+        }
+        Err(ToolError::Message(
+            include_str!("../preview-unavailable.txt").to_owned(),
+        ))
+    }
+
     pub(crate) async fn projection(&self, thread_id: &str) -> ToolResult {
         match self
             .engine()

@@ -13,7 +13,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { McpSession, oauthMcpToken, pairBearer } from "./mcp-client.mjs";
-import { claudeStub, tsCredential, rustCredential, fileText, projectProviderPolicy } from "./handoff-fixture.mjs";
+import { claudeStub, tsCredential, rustCredential, fileText, projectProviderPolicy, updateSettings } from "./handoff-fixture.mjs";
 import { monorepo } from "../../../tools/monorepo.mjs";
 import { canaryEnv, gitEnv, sealedEnv, sealedPath } from "../../../tools/sealed-env.mjs";
 import { GUARD_ARG } from "../../../tools/no-outside-fetch.mjs";
@@ -660,11 +660,18 @@ if (noModel) {
   const credentials = await Promise.all([tsCredential(servers[0].records),rustCredential(servers[1].capture)]);
   const agents = credentials.map((entry) => new McpSession(new URL(entry.url).origin,entry.headers.Authorization));
   await Promise.all(agents.map((agent) => agent.initialize()));
+  await Promise.all(servers.map((server) => updateSettings(server,{enableAgentBrowserAccess:false})));
+  const retained = await Promise.all(agents.map((agent) => agent.callTool("request_credentials",{domain:"not a host"}).then(outcome)));
+  report("browser access captured at session start",retained.every((r) => r.kind === "ok"));
+  await Promise.all(servers.map((server) => updateSettings(server,{enableAgentBrowserAccess:true})));
   const state = [{},{}];
   const agentSteps = [
     ["save_test_login", () => ({url:" https://www.example.test/login ",username:" tester ",password:"fixture-only",label:" Tester ",otpSecret:" TEST "}), (v) => ({...v,id:"<id>",createdAt:"<time>"}), (c,v) => {c.loginId=v.id;}],
     ["request_credentials", () => ({domain:"http://example.test:8080/login"}), (v) => ({items:v.items.map(item=>({...item,id:"<id>"}))})],
+    ["request_credentials", () => ({domain:"example.test/login?next=https://example.test"}), (v) => ({items:v.items.map(item=>({...item,id:"<id>"}))})],
     ["request_credentials", () => ({domain:"other.example.test"})],
+    ["request_credentials", () => ({domain:"\ufeffexample.test"})],
+    ["request_credentials", () => ({domain:"\u0085example.test"})],
     ["request_credentials", () => ({domain:"not a host"})],
     ["request_credentials", () => ({domain:" "})],
     ["save_test_login", () => ({url:"example.test",username:"",password:"fixture-only"})],
@@ -732,6 +739,22 @@ if (noModel) {
   for (const file of loginFiles) NodeFS.writeFileSync(file,"invalid fixture store",{mode:0o600});
   const corruptLoginResults = await Promise.all(agents.map((agent) => agent.callTool("request_credentials",{domain:"example.test"}).then(outcome)));
   report("test login store failure text",corruptLoginResults.every((result) => result.kind === "failure") && canonical(corruptLoginResults[0]) === canonical(corruptLoginResults[1]));
+  await Promise.all(servers.map((server) => updateSettings(server,{enableAgentBrowserAccess:false})));
+  for (const name of NodeFS.readdirSync(servers[0].records).filter((name) => name.endsWith(".json"))) NodeFS.unlinkSync(NodePath.join(servers[0].records,name));
+  NodeFS.rmSync(servers[1].capture,{force:true});
+  const deniedLaunch = await Promise.all(sessions.map((session,i) => session.callTool("t3_thread_launch",{
+    projectId:context[i].projectId,title:"Browser access disabled",message:"hang",
+    modelSelection:{instanceId:"claudeAgent",model:"claude-haiku-5-5"},runtimeMode:"auto",
+    workspaceStrategy:{type:"root"},clientRequestId:"browser-access-disabled",
+  }).then(outcome)));
+  if (deniedLaunch.some((r) => r.kind !== "ok")) throw new Error("Could not launch denied browser fixture");
+  const deniedCredentials = await Promise.all([tsCredential(servers[0].records),rustCredential(servers[1].capture)]);
+  const deniedAgents = deniedCredentials.map((entry) => new McpSession(new URL(entry.url).origin,entry.headers.Authorization));
+  await Promise.all(deniedAgents.map((agent) => agent.initialize()));
+  for (const [tool,args] of [["request_credentials",{domain:"example.test"}],["save_test_login",{url:"example.test",username:"denied",password:"fixture-only"}]]) {
+    const results=await Promise.all(deniedAgents.map((agent) => agent.callTool(tool,args).then(outcome)));
+    report(`disabled browser access ${tool}: same refusal`,results.every((r) => r.kind === "failure") && canonical(results[0]) === canonical(results[1]));
+  }
   const setup = await Promise.all(state.map(async (c,i) => {
     const text = await fileText(NodePath.join(c.worktreePath,"handoff-setup.txt"));
     const lines = text.trimEnd().split("\n");
