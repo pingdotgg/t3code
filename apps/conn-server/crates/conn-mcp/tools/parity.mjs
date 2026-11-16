@@ -441,7 +441,11 @@ const steps = [
     undefined,
     { same: (v) => v },
   ],
-  ["list_thread_pull_requests", (c) => ({ threadId: c.idleThreadId }), undefined, { same: (v) => v }],
+  // Batch links can tie on one server's millisecond clock but not the other's; unit tests
+  // check list order with fixed linkedAt values.
+  ["list_thread_pull_requests", (c) => ({ threadId: c.idleThreadId }), undefined, {
+    same: (v) => ({ ...v, pullRequests: v.pullRequests.toSorted((a, b) => canonical(a).localeCompare(canonical(b))) }),
+  }],
   [
     "list_thread_pull_requests",
     (c) => ({ threadId: c.idleThreadId, states: ["merged"] }),

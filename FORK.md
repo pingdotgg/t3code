@@ -56,14 +56,10 @@ Ports follow the same scope. The GUI must work properly on macOS and iOS only, a
 Server runs on Linux only. When leaving out another platform or host makes a port clearly
 simpler, leave it out and name it in the sync notes or the PR.
 
-Their upstream workflows stay in the tree and skip here: each checks
-`github.repository == 'pingdotgg/t3code'` ("Pull request runners"). They are `release.yml`
-and `release-desktop.yml` (the Windows, Linux and Android release builds), `publish-aur.yml`,
-`windows-tests.yml`, `mobile-android-apk.yml`, `deploy-relay.yml`, `relay-preview.yml`,
-`relay-preview-cleanup.yml` and `web-preview.yml`. Do not delete them (Nick, 2026-11-16):
-each upstream edit would become a modify/delete conflict in the sync, and upstream edits
-`release.yml` and `release-desktop.yml` most days. On a sync, take upstream's version of
-these files and keep their repository checks.
+Keep the upstream-only workflows listed under [Pull request runners](#pull-request-runners).
+Their entry jobs, or their callers for reusable workflows, skip this fork. On a sync, take
+upstream's version and keep those repository checks. Deleting them would cause repeated
+modify/delete conflicts (Nick, 2026-11-16).
 
 How the sync applies it:
 
@@ -85,15 +81,14 @@ and `README.md` apply there. It is not a pnpm workspace package, and Conn's buil
 and mobile apps do not use it. Its tools read the contract, the web client and `apps/server`
 from this tree.
 
-- **Checks.** `conn-server-ci.yml` (format, clippy, tests, cargo-deny, the musl build) runs on
-  pull requests and pushes to `main` that change `apps/conn-server`. `conn-server-checks.yml`
-  (`apps/conn-server/tools/check.sh`) runs on changes to `apps/conn-server` or
-  `packages/contracts`.
+- **Checks.** Pull requests and `main`/`sync/**` pushes share each workflow's path filter.
+  `conn-server-ci.yml` checks changes to `apps/conn-server` or its workflow;
+  `conn-server-checks.yml` also checks `apps/server`, `apps/web` and `packages`.
 - **The nightly sync follows it** (Nick, 2026-11-16; this replaces the 2026-11-15 skip). On
   its `sync/*` branch, after the merge, the sync runs `apps/conn-server/tools/follow-conn.sh
   --capture`. It ports the upstream server changes in scope, as the T3 server makes them:
   the areas `docs/orbit-profile.md` rates needed or useful. ForkBot does this port. It regenerates what is
-  generated, and both Conn Server workflows must pass on the sync branch before the merge.
+  generated, and every triggered Conn Server workflow must pass on the sync branch before the merge.
   An in-scope change that cannot be ported that night becomes a known difference with its
   reason, in the check's known list and in `apps/conn-server/docs/status.md`. A check is never
   weakened to pass. An out-of-scope change needs no port; if it turns a check red, the fix

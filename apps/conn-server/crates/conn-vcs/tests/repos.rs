@@ -563,6 +563,9 @@ async fn provision_creates_a_worktree_and_runs_the_setup_script() {
     use conn_vcs::setup::{self, ProvisionError, ProvisionRequest, SetupScript, WorktreeSetups};
 
     let fx = Fixture::new("provision");
+    git(&fx.work, &["tag", "launch-tag"]);
+    git(&fx.work, &["push", "-q", "origin", "launch-tag"]);
+    git(&fx.work, &["tag", "-d", "launch-tag"]);
     let setups = WorktreeSetups::new();
     let request = |thread: &str, command: &str| ProvisionRequest {
         thread_id: thread.into(),
@@ -590,6 +593,12 @@ async fn provision_creates_a_worktree_and_runs_the_setup_script() {
         done.branch.starts_with("t3/") && done.branch.len() == 11,
         "{}",
         done.branch
+    );
+    assert!(
+        git(&fx.work, &["tag", "--list", "launch-tag"])
+            .trim()
+            .is_empty(),
+        "launch must not fetch tags"
     );
     assert!(done.path.join("README.md").exists());
     assert_eq!(
@@ -621,6 +630,17 @@ async fn provision_creates_a_worktree_and_runs_the_setup_script() {
     assert_eq!(
         setups.get("t1").unwrap().stages.last().unwrap().id,
         Id::Agent
+    );
+
+    write(&fx.work, "local-only.txt", "local base\n");
+    commit_all(&fx.work, "local base");
+    git(&fx.origin, &["update-ref", "-d", "refs/heads/main"]);
+    let local = setup::provision(&setups, request("deleted", "exit 0"))
+        .await
+        .unwrap();
+    assert_eq!(
+        git(&local.path, &["rev-parse", "HEAD"]),
+        git(&fx.work, &["rev-parse", "main"])
     );
 
     // A failing script fails the setup and removes the worktree and its branch.

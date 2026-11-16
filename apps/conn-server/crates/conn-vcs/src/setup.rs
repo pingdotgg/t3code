@@ -400,44 +400,17 @@ async fn provision_stages(
     let branch = request.branch.clone().unwrap_or_else(temporary_branch_name);
 
     let mut start = request.base_ref.clone();
-    let remote = if request.start_from_origin {
-        cancellable(cancel, base_remote(root, &request.base_ref)).await?
-    } else {
-        None
-    };
-    match remote {
-        Some((remote, remote_branch)) => {
-            setups.stage_status(thread, StageId::Fetch, StageStatus::Running, None);
-            cancellable(cancel, async {
-                git(
-                    "GitVcsDriver.fetchWorktreeBaseCommit",
-                    root,
-                    ["fetch", "--quiet", "--", remote.as_str()],
-                )
-                .timeout(Duration::from_secs(300))
-                .env("GCM_INTERACTIVE", "never")
-                .env("GIT_ASKPASS", "")
-                .env("SSH_ASKPASS", "")
-                .env("SSH_ASKPASS_REQUIRE", "never")
-                .run()
-                .await?;
-                Ok(())
-            })
-            .await?;
-            let full = format!("refs/remotes/{remote}/{remote_branch}^{{commit}}");
-            if let Ok(Some(sha)) = repo::optional_text(git(
-                "GitVcsDriver.fetchWorktreeBaseCommit",
-                root,
-                ["rev-parse", "--verify", "--quiet", full.as_str()],
-            ))
-            .await
-                && !sha.is_empty()
-            {
+    if request.start_from_origin {
+        setups.stage_status(thread, StageId::Fetch, StageStatus::Running, None);
+        match cancellable(cancel, fetch_base(root, &request.base_ref)).await? {
+            Some((sha, _)) => {
                 start = sha;
+                setups.stage_status(thread, StageId::Fetch, StageStatus::Done, None);
             }
-            setups.stage_status(thread, StageId::Fetch, StageStatus::Done, None);
+            None => setups.stage_status(thread, StageId::Fetch, StageStatus::Skipped, None),
         }
-        None => setups.stage_status(thread, StageId::Fetch, StageStatus::Skipped, None),
+    } else {
+        setups.stage_status(thread, StageId::Fetch, StageStatus::Skipped, None);
     }
 
     setups.stage_status(thread, StageId::Checkout, StageStatus::Running, None);
@@ -575,14 +548,11 @@ async fn base_remote(root: &Path, base_ref: &str) -> VcsResult<Option<(String, S
             _ => None,
         }
     } else {
-        remotes
-            .iter()
-            .find_map(|r| {
-                base_ref
-                    .strip_prefix(&format!("{r}/"))
-                    .map(|b| (r.clone(), b.to_owned()))
-            })
-            .or_else(|| Some(("origin".into(), base_ref.to_owned())))
+        remotes.iter().find_map(|r| {
+            base_ref
+                .strip_prefix(&format!("{r}/"))
+                .map(|b| (r.clone(), b.to_owned()))
+        })
     };
     Ok(target
         .or_else(|| Some(("origin".into(), base_ref.to_owned())))

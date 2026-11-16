@@ -1,6 +1,6 @@
 {
- "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/turn_interrupt/grok_transcript.ndjson through the orchestrator fixture runner at c0e0f16781; driver dropped.",
- "capturedOn": "2026-11-15",
+ "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/turn_interrupt/grok_transcript.ndjson through the orchestrator fixture runner at 18e031346e; driver dropped.",
+ "capturedOn": "2026-11-16",
  "outcome": "passed",
  "gates": [],
  "transcripts": [
@@ -1789,7 +1789,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-turn_interrupt-FmWpSV",
+     "cwd": "<workspace>",
      "approvalPolicy": "never",
      "sandboxPolicy": {
       "type": "workspaceWrite",
@@ -1819,7 +1819,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-turn_interrupt-FmWpSV",
+     "cwd": "<workspace>",
      "approvalPolicy": "never",
      "sandboxPolicy": {
       "type": "workspaceWrite",
@@ -1970,7 +1970,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-turn_interrupt-FmWpSV",
+     "cwd": "<workspace>",
      "approvalPolicy": "never",
      "sandboxPolicy": {
       "type": "workspaceWrite",

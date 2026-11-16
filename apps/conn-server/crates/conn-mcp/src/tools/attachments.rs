@@ -13,6 +13,7 @@ use super::{Args, Cx, ToolResult, fail, internal, str_arg};
 use crate::view;
 
 const OWNER_TTL_MS: u64 = 24 * 60 * 60_000 + attachments::UPLOAD_URL_TTL_MS;
+// Unlike T3, ownership is capped at 4,096 entries and released after a successful send.
 const MAX_PENDING_OWNERS: usize = 4096;
 
 #[derive(Default)]
@@ -61,10 +62,6 @@ pub(super) async fn prepare(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let request = UploadRequest::from(input);
     request.validate().map_err(internal)?;
     let now = attachments::now_ms();
-    {
-        let mut owners = crate::lock(&cx.service.upload_owners);
-        owners.available(now)?;
-    }
     let upload_files = files.clone();
     let result = tokio::task::spawn_blocking(move || {
         upload_files
