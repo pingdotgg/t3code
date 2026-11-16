@@ -4,9 +4,12 @@ on:
   schedule:
     - cron: "23 20 * * *"
   workflow_dispatch:
+  # PRs only replay the patches onto the latest upstream nightly; nothing is built or released.
+  pull_request:
+    branches: [main]
 
 concurrency:
-  group: patched-nightly-release
+  group: patched-nightly-${{ github.event_name == 'pull_request' && github.ref || 'release' }}
   cancel-in-progress: false
 
 permissions:
@@ -25,7 +28,7 @@ jobs:
       - name: Check out fork main
         uses: actions/checkout@v6
         with:
-          token: ${{ secrets.PATCHED_NIGHTLY_RELEASE_TOKEN }}
+          token: ${{ secrets.PATCHED_NIGHTLY_RELEASE_TOKEN || github.token }}
           ref: ${{ github.sha }}
           fetch-depth: 0
 
@@ -91,6 +94,9 @@ jobs:
           patch_set="$( { printf '%s\n' "$patch_commits"; printf '%s\n' "$compatibility_patch_sha"; printf '%s\n' "$lineage_agent_patch_sha"; } \
             | sha256sum | cut -c1-16)"
 
+          dry_run=false
+          [[ "$GITHUB_EVENT_NAME" == "pull_request" ]] && dry_run=true
+          if [[ "$dry_run" == "false" ]]; then
           releases="$(gh api "repos/$FORK_REPOSITORY/releases?per_page=100")"
           prior="$(jq -r --arg source "Source nightly: $source_tag" --arg patch_set "Patch set: $patch_set" \
             '[.[] | select(((.body // "") | contains($source)) and ((.body // "") | contains($patch_set)))] | first // empty' <<<"$releases")"
@@ -134,6 +140,7 @@ jobs:
             echo "Reusing incomplete draft release $release_tag for $source_tag."
             exit 0
           fi
+          fi
 
           git fetch --no-tags https://github.com/pingdotgg/t3code.git "$source_tag"
           source_sha="$(git rev-parse 'FETCH_HEAD^{commit}')"
@@ -172,6 +179,11 @@ jobs:
           git apply "$lineage_agent_patch"
           git add -A
           git commit -m "patch: apply portable fork fixes to upstream nightly"
+          if [[ "$dry_run" == "true" ]]; then
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            echo "Patches replay cleanly onto $source_tag ($source_sha)."
+            exit 0
+          fi
 
           if git show-ref --verify --quiet "refs/tags/$release_tag"; then
             existing_sha="$(git rev-parse "$release_tag^{commit}")"
