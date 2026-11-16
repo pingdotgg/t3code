@@ -29,7 +29,7 @@ export const DiffStatLabel = memo(function DiffStatLabel(props: {
   return (
     <span
       role="group"
-      aria-label={`${additions} additions, ${deletions} deletions`}
+      aria-label={`${additions} addition${additions === 1 ? "" : "s"}, ${deletions} deletion${deletions === 1 ? "" : "s"}`}
       className={cn(
         layout === "inline"
           ? "inline-flex items-center gap-1 tabular-nums align-middle"
