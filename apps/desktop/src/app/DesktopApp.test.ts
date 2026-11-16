@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as HttpClient from "effect/http/HttpClient";
+import { ChildProcessSpawner } from "effect/process";
 import * as NetService from "@t3tools/shared/Net";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -58,6 +59,7 @@ import * as DesktopConnectionCatalogStore from "./DesktopConnectionCatalogStore.
 import * as DesktopIpc from "../ipc/DesktopIpc.ts";
 import * as DesktopLocalEnvironmentAuth from "../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopManagedPolicy from "./DesktopManagedPolicy.ts";
+import * as DesktopPrimaryPaste from "./DesktopPrimaryPaste.ts";
 import * as DesktopSshEnvironment from "../ssh/DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "../ssh/DesktopSshPasswordPrompts.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
@@ -84,6 +86,7 @@ it.effect.each([false, true])(
       const historyStarted = yield* Deferred.make<void>();
       const releaseHistory = yield* Deferred.make<void>();
       const quitting = yield* Ref.make(false);
+      const tokenRequested = yield* Deferred.make<void>();
       const events: string[] = [];
       const record = (event: string) =>
         Effect.sync(() => {
@@ -107,6 +110,7 @@ it.effect.each([false, true])(
             platform: "linux",
             isDevelopment: false,
             isPackaged: true,
+            stateDir: "/isolated/userdata",
             configuredBackendPort: Option.some(3773),
             defaultDesktopSettings: { serverExposureMode: "local-only" },
           } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]),
@@ -141,7 +145,7 @@ it.effect.each([false, true])(
             configure: Effect.void,
           } as PreviewPasskeys.PreviewPasskeys["Service"]),
           Effect.provideService(DesktopApplicationMenu.DesktopApplicationMenu, {
-            configure: Effect.void,
+            configure: record("menu"),
           }),
           Effect.provideService(DesktopUpdates.DesktopUpdates, {
             configure: Effect.void,
@@ -213,13 +217,20 @@ it.effect.each([false, true])(
         Effect.provide(
           Layer.mergeAll(
             Layer.mock(BrowserImport.BrowserImport, {}),
+            Layer.mock(ChildProcessSpawner.ChildProcessSpawner, {}),
             Layer.mock(DesktopBackendConfiguration.DesktopBackendConfiguration, {}),
             Layer.mock(DesktopCliCommand.DesktopCliCommand, {}),
             Layer.mock(DesktopClientSettings.DesktopClientSettings, {}),
             Layer.mock(DesktopConnectionCatalogStore.DesktopConnectionCatalogStore, {}),
             Layer.mock(DesktopIpc.DesktopIpc, {}),
-            Layer.mock(DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth, {}),
+            Layer.mock(DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth, {
+              getBearerToken: record("token").pipe(
+                Effect.andThen(Deferred.succeed(tokenRequested, undefined)),
+                Effect.as("token"),
+              ),
+            }),
             Layer.mock(DesktopManagedPolicy.DesktopManagedPolicy, {}),
+            Layer.succeed(DesktopPrimaryPaste.DesktopPrimaryPaste, { enabled: true }),
             Layer.mock(DesktopSshEnvironment.DesktopSshEnvironment, {}),
             Layer.mock(DesktopSshPasswordPrompts.DesktopSshPasswordPrompts, {}),
             Layer.mock(DesktopTelemetryPublisher.DesktopTelemetryPublisher, {}),
@@ -248,7 +259,13 @@ it.effect.each([false, true])(
       );
       yield* Deferred.await(registrationStarted);
       yield* Deferred.await(windowStarted);
-      assert.deepEqual(events, ["identity", "ready", "identity", "backend", "window"]);
+      yield* Deferred.await(tokenRequested);
+      // The backend spawns before menus, and its token is minted without waiting for the renderer.
+      assert.deepEqual(
+        events.filter((event) => event !== "token"),
+        ["identity", "ready", "identity", "backend", "menu", "window"],
+      );
+      assert.isAbove(events.indexOf("token"), events.indexOf("backend"));
       assert.isFalse(yield* Deferred.isDone(registrationStopped));
       const shutdown = yield* DesktopShutdown.DesktopShutdown;
       yield* shutdown.request;
