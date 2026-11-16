@@ -34,6 +34,7 @@ import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
 import * as DesktopPrimaryPaste from "../../app/DesktopPrimaryPaste.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
+import * as DesktopShellEnvironment from "../../shell/DesktopShellEnvironment.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import * as ElectronApp from "../../electron/ElectronApp.ts";
@@ -82,8 +83,8 @@ export const getAppBranding = DesktopIpc.makeSyncIpcMethod({
 
 /**
  * Relay traces leave the machine, so a policy with `telemetry: false`, or one that cannot be read,
- * stops them. The policy is read once here: a sync IPC handler cannot wait on the filesystem. The
- * environment is read per call because the login shell's values are published after install.
+ * stops them. Read once here: a sync IPC handler cannot wait on the filesystem. The renderer asks
+ * once at startup, so until the login shell's environment (which may opt out) is known, say no.
  */
 export const installRelayTelemetryEnabled = Effect.fn("desktop.ipc.window.installRelayTelemetry")(
   function* () {
@@ -93,11 +94,15 @@ export const installRelayTelemetryEnabled = Effect.fn("desktop.ipc.window.instal
       Effect.map((found) => found?.document.limits?.telemetry !== false),
       Effect.orElseSucceed(() => false),
     );
+    const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
     yield* ipc.handleSync(
       DesktopIpc.makeSyncIpcMethod({
         channel: IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL,
         result: Schema.Boolean,
-        handler: () => Effect.sync(() => policyAllows && isRelayTracingEnabled(env)),
+        handler: () =>
+          shellEnvironment.discoveryFinished.pipe(
+            Effect.map((known) => known && policyAllows && isRelayTracingEnabled(env)),
+          ),
       }),
     );
   },
