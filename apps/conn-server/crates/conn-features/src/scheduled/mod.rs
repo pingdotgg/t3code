@@ -293,6 +293,8 @@ struct Inner {
     changes: watch::Sender<u64>,
     /// Wakes the timer to plan again.
     wake: Notify,
+    #[cfg(test)]
+    timer_pass: watch::Sender<u64>,
     /// Webhook tokens and secrets, rate windows, queue counts and run permits.
     hooks: webhook::State,
     hooks_db: PathBuf,
@@ -394,6 +396,8 @@ impl ScheduledTasks {
                 followers: StdMutex::new(HashMap::new()),
                 changes,
                 wake: Notify::new(),
+                #[cfg(test)]
+                timer_pass: watch::channel(0).0,
                 hooks,
                 hooks_db: config.state_dir.join(HOOKS_FILE_NAME),
             }),
@@ -1341,6 +1345,8 @@ impl ScheduledTasks {
                     wait
                 }
             });
+            #[cfg(test)]
+            self.inner.timer_pass.send_modify(|pass| *pass += 1);
             match wait {
                 Some(wait) => {
                     tokio::select! {

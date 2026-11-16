@@ -4010,7 +4010,7 @@ async fn a_turn_accepted_after_stop_is_interrupted() {
         .unwrap();
     next(&mut changes).await;
     dispatch(&engine, message("t1", "c3", "latestart")).await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    provider.late_start_entered.notified().await;
     dispatch(&engine, stop("t1", "c4")).await;
     assert_eq!(
         run_of(&projection(&engine, "t1").await, "run:t1:2")["status"],
