@@ -244,6 +244,57 @@ describe("MediaVideoPlayer", () => {
     expect(pause).not.toHaveBeenCalled();
   });
 
+  it("keeps a playing video that returns to fullscreen before the check reports", async () => {
+    const observers: Array<{
+      readonly callback: IntersectionObserverCallback;
+      target: Element | null;
+    }> = [];
+    class RecordingObserver {
+      readonly callback: IntersectionObserverCallback;
+      target: Element | null = null;
+      constructor(callback: IntersectionObserverCallback) {
+        this.callback = callback;
+        observers.push(this);
+      }
+      observe(target: Element) {
+        this.target = target;
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+    using _observer = stubGlobal("IntersectionObserver", RecordingObserver);
+    using _hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+    await using screen = await render(<MediaVideoPlayer src="/asset/clip.mp4" label="clip" />);
+    const video = screen.getByLabelText("clip").element() as HTMLVideoElement;
+    using pause = vi.spyOn(video, "pause");
+    Object.defineProperty(video, "webkitDisplayingFullscreen", { value: true, configurable: true });
+    await act(() => {
+      video.dispatchEvent(new Event("play"));
+    });
+
+    Object.defineProperty(video, "webkitDisplayingFullscreen", {
+      value: false,
+      configurable: true,
+    });
+    const checks = observers.length;
+    await act(() => {
+      video.dispatchEvent(new Event("webkitendfullscreen"));
+    });
+    expect(observers.length).toBeGreaterThan(checks);
+    const fresh = observers.at(-1);
+
+    // The report is queued, so fullscreen can be up again before it arrives.
+    Object.defineProperty(video, "webkitDisplayingFullscreen", { value: true, configurable: true });
+    await act(() => {
+      fresh?.callback(
+        [{ target: video, isIntersecting: false } as unknown as IntersectionObserverEntry],
+        undefined as unknown as IntersectionObserver,
+      );
+    });
+
+    expect(pause).not.toHaveBeenCalled();
+  });
+
   it("pauses a video a scroll container clipped when fullscreen ended", async () => {
     const NativeIntersectionObserver = window.IntersectionObserver;
     let video: HTMLVideoElement | null = null;

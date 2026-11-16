@@ -88,7 +88,8 @@ export function MediaVideoPlayer({
       if (inNativeFullscreen()) return;
       const observer = new IntersectionObserver((entries) => {
         observer.disconnect();
-        if (!entries[0]?.isIntersecting) video.pause();
+        // The report is queued, so fullscreen can have resumed before it arrives.
+        if (!entries[0]?.isIntersecting && !inNativeFullscreen()) video.pause();
       });
       observer.observe(video);
     };
