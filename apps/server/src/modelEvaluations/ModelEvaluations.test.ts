@@ -55,12 +55,13 @@ const makeLayer = (
   generate: Generate,
   enabled = true,
   published: ReadonlyArray<ServerProvider> = [],
+  readProviders: Effect.Effect<ReadonlyArray<ServerProvider>> = Effect.succeed(published),
 ) =>
   ModelEvaluations.layer.pipe(
     Layer.provide(Layer.mock(TextGeneration.TextGeneration)({ generateModelEvaluation: generate })),
     Layer.provide(
       Layer.mock(ProviderRegistry.ProviderRegistry)({
-        getProviders: Effect.succeed(published),
+        getProviders: readProviders,
       }),
     ),
     Layer.provideMerge(
@@ -1126,4 +1127,50 @@ it.effect("enqueues one refresh after every delegated child settles", () =>
     assert.equal(ids.length, 1);
     assert.match(ids[0]!.effect_id, /:subagents:\d+$/);
   }).pipe(Effect.provide(makeLayer((request) => Effect.succeed(verdict(request.packet))))),
+);
+
+it.effect("scores a turn whose child settles before the evaluation is stored", () =>
+  Effect.gen(function* () {
+    const reached = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const calls: Array<Parameters<Generate>[0]> = [];
+    const readProviders = Effect.gen(function* () {
+      yield* Deferred.succeed(reached, undefined);
+      yield* Deferred.await(release);
+      return [];
+    });
+    return yield* Effect.gen(function* () {
+      yield* seed();
+      yield* recordChild("racing-child", "running", null, 2);
+      const service = yield* ModelEvaluations.ModelEvaluations;
+      const sql = yield* SqlClient.SqlClient;
+      const fiber = yield* Effect.forkChild(service.evaluateRun(input));
+      yield* Deferred.await(reached);
+      yield* recordChild("racing-child", "completed", "racing-child-token", 2);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(fiber);
+      const ids = yield* sql<{ effect_id: string }>`
+        SELECT effect_id FROM orchestration_v2_effect_outbox
+        WHERE effect_id LIKE ${`effect:model-evaluation.generate:${runId}:subagents:%`}
+        ORDER BY effect_id
+      `;
+      assert.equal(calls.length, 0);
+      assert.equal(ids.length, 1);
+      yield* service.evaluateRun(input);
+      assert.equal(packetsWith(calls, "racing-child-token").length, 1);
+      assert.equal((yield* service.list(scope)).guidance[0]?.sampleCount, 1);
+    }).pipe(
+      Effect.provide(
+        makeLayer(
+          (request) => {
+            calls.push(request);
+            return Effect.succeed(verdict(request.packet));
+          },
+          true,
+          [],
+          readProviders,
+        ),
+      ),
+    );
+  }),
 );
