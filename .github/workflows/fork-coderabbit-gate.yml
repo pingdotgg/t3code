@@ -1,0 +1,50 @@
+name: Fork CodeRabbit gate
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted, dismissed]
+  pull_request_review_thread:
+    types: [resolved, unresolved]
+permissions:
+  contents: read
+  pull-requests: read
+concurrency:
+  group: fork-coderabbit-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  threads:
+    name: CodeRabbit threads
+    if: github.repository == 'LaMarCab76/t3code'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const number = context.payload.pull_request.number;
+            const open = [];
+            let cursor = null;
+            do {
+              const { repository } = await github.graphql(
+                `query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+                  repository(owner: $owner, name: $repo) {
+                    pullRequest(number: $number) {
+                      reviewThreads(first: 100, after: $cursor) {
+                        pageInfo { hasNextPage endCursor }
+                        nodes { isResolved path line comments(first: 1) { nodes { author { login } url } } }
+                      }
+                    }
+                  }
+                }`,
+                { owner, repo, number, cursor },
+              );
+              const threads = repository.pullRequest.reviewThreads;
+              for (const thread of threads.nodes) {
+                const first = thread.comments.nodes[0];
+                if (!thread.isResolved && first?.author?.login.startsWith('coderabbitai')) open.push({ ...thread, url: first.url });
+              }
+              cursor = threads.pageInfo.hasNextPage ? threads.pageInfo.endCursor : null;
+            } while (cursor);
+            for (const thread of open) core.error(`${thread.path}:${thread.line ?? '?'} ${thread.url}`);
+            if (open.length > 0) core.setFailed(`${open.length} unresolved CodeRabbit thread(s)`);
