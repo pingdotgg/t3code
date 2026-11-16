@@ -6339,7 +6339,9 @@ body {
     --pane-join-radius: 10px;
     /* The tabs and the bar's controls sit this much lower, centred in the joined tab. */
     --pane-join-shift: 5px;
-    /* From the pane edge to the first tab: the pane's 14px corner, the ear, 2px. */
+    /* The first tab starts at the pane's edge, where the pane clips its ear.
+       After the collapsed sidebar's controls (--pane-titlebar-inset) it keeps
+       room for the pane's 14px corner, the ear and 2px. */
     --pane-join-lead: calc(14px + var(--pane-join-ear) + 2px);
     /* How far down the rim's gradient runs past the shape's height, so it
        still lights the sides and the ears. */
@@ -6367,7 +6369,7 @@ body {
     & [data-pane-notch=""] {
       --pane-bar-fg: var(--foreground);
       --pane-bar-muted: var(--muted-foreground);
-      padding-inline-start: var(--pane-join-lead);
+      padding-inline-start: calc(var(--pane-join-lead) * var(--pane-titlebar-inset, 0));
 
       &::before {
         content: "";
@@ -6400,6 +6402,15 @@ body {
       inset-inline-start: 0;
       mask: radial-gradient(circle 14px at 100% 100%, transparent 13.5px, #000 14.5px);
     }
+    /* The joined first tab's side runs straight down the pane's edge, so the
+       pane's corner under it gives way (data-pane-join-start, PaneTabs.tsx). */
+    & :is([data-pane-bar-corner="start"], [data-pane-cut="start-notch"]) {
+      transition: opacity var(--panel-animation-duration, 150ms) ease-out;
+    }
+    & [data-pane-join-start] [data-pane-bar-corner="start"],
+    & [data-layout-pane-id]:has([data-pane-join-start]) > [data-pane-cut="start-notch"] {
+      opacity: 0;
+    }
     & [data-pane-bar-corner="end"] {
       inset-inline-end: 0;
       mask: radial-gradient(circle 14px at 0 100%, transparent 13.5px, #000 14.5px);
@@ -6422,14 +6433,16 @@ body {
       --pane-inactive-tab-title-max: 17rem;
       /* Where tabs are scrolled out, the strip fades as scroll areas do
          (ScrollArea's scrollFade); its end fades before the control that
-         overlaps the rim's tail. PaneTabs sets the overflow. */
+         overlaps the rim's tail. PaneTabs sets the overflow. At the pane's
+         edge its start begins past the ear room the pane clips. */
+      --strip-fade-lead: calc(var(--pane-join-ear) * (1 - var(--pane-titlebar-inset, 0)));
       --strip-fade-start: min(1.5rem, var(--strip-overflow-start, 0px));
       --strip-fade-end: min(1.5rem, var(--strip-overflow-end, 0px));
       --strip-fade-end-at: calc(100% - var(--pane-join-tail) * var(--strip-overflowing-end, 0));
       mask-image: linear-gradient(
         to right,
-        transparent,
-        #000 var(--strip-fade-start),
+        transparent var(--strip-fade-lead),
+        #000 calc(var(--strip-fade-lead) + var(--strip-fade-start)),
         #000 calc(var(--strip-fade-end-at) - var(--strip-fade-end)),
         transparent var(--strip-fade-end-at)
       );
@@ -6673,6 +6686,16 @@ body {
   @media (prefers-reduced-motion: reduce) {
     :root:not(.black-chrome) [data-pane-notch=""] [data-pane-join] * {
       transition: none;
+    }
+  }
+
+  /* The first tab's lead eases with the collapsed sidebar's inset. */
+  @media (prefers-reduced-motion: no-preference) {
+    :root:not(.black-chrome)
+      [data-panel-animations="true"]
+      [data-slot="sidebar-inset"]
+      [data-pane-notch=""] {
+      transition: padding-inline-start var(--panel-animation-duration, 150ms) ease-out;
     }
   }
 }
