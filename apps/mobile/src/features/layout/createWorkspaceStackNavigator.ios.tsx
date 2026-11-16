@@ -555,7 +555,6 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
     render: () => (
       <WorkspaceNativeTabs
         tabsInSidebarColumn={props.nativeColumns && !workspacePage && deviceType === "pad"}
-        detailOpen={projection.detail.length > 0}
         hidden={
           projection.detail.length > 0 &&
           !primaryVisible &&
@@ -563,14 +562,16 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
           (metrics?.verticalBarEdge ?? "none") === "none"
         }
       >
-        {(slotWorkspace) =>
-          props.nativeColumns &&
-          workspaceUsesColumns(slotWorkspace.state.selectedTab, slotWorkspace.settingsOpen) ? (
+        {(slotWorkspace, headerOnly) => {
+          // A hidden tab only needs its header, not the shown tab's pages.
+          const detail = headerOnly ? [] : projection.detail;
+          return props.nativeColumns &&
+            workspaceUsesColumns(slotWorkspace.state.selectedTab, slotWorkspace.settingsOpen) ? (
             <WorkspaceColumns
               {...props}
               descriptors={descriptors}
               primary={primaryRoute}
-              detail={projection.detail}
+              detail={detail}
             />
           ) : (
             <V5CardStackView
@@ -580,13 +581,13 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
               descriptors={descriptors}
               state={{
                 ...props.state,
-                routes: [primaryRoute, ...projection.detail],
-                index: projection.detail.length,
+                routes: [primaryRoute, ...detail],
+                index: detail.length,
                 preloadedRoutes: [],
               }}
             />
-          )
-        }
+          );
+        }}
       </WorkspaceNativeTabs>
     ),
   };
