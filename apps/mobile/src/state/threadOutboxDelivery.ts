@@ -23,7 +23,10 @@ import {
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Latch from "effect/Latch";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { createDebugLogger } from "../lib/debugLog";
@@ -49,12 +52,7 @@ import {
 } from "./pending-thread-creation";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
-import { composerAttachmentUploadsAtom } from "./composer-attachment-upload-states";
 import { uploadComposerAttachmentShared } from "./composer-attachment-uploads";
-import {
-  queuedAttachmentsStillUploading,
-  uploadingComposerAttachmentKeys,
-} from "../lib/composerAttachmentUploadQueue";
 import { gitEnvironment } from "./git";
 import { environmentSession, readEnvironmentScope, sessionHasScope } from "./session";
 import {
@@ -92,7 +90,7 @@ import {
   waitForComposerDraftsLoaded,
 } from "./use-composer-drafts";
 import {
-  dispatchingQueuedMessageIdAtom,
+  dispatchingQueuedMessageIdsAtom,
   editingQueuedMessageIdsAtom,
   retryingQueuedMessageIdsAtom,
   threadOutboxShellStatusesAtom,
@@ -177,12 +175,17 @@ function setQueuedMessageRetrying(queuedMessageId: MessageId, retrying: boolean)
 function beginDispatchingQueuedMessage(queuedMessageId: MessageId): void {
   // An attempt in flight is sending, even while its retry count is kept.
   setQueuedMessageRetrying(queuedMessageId, false);
-  appAtomRegistry.set(dispatchingQueuedMessageIdAtom, queuedMessageId);
+  appAtomRegistry.set(dispatchingQueuedMessageIdsAtom, {
+    ...appAtomRegistry.get(dispatchingQueuedMessageIdsAtom),
+    [queuedMessageId]: true,
+  });
 }
 
 function finishDispatchingQueuedMessage(queuedMessageId: MessageId): void {
-  const current = appAtomRegistry.get(dispatchingQueuedMessageIdAtom);
-  appAtomRegistry.set(dispatchingQueuedMessageIdAtom, current === queuedMessageId ? null : current);
+  const { [queuedMessageId]: _finished, ...others } = appAtomRegistry.get(
+    dispatchingQueuedMessageIdsAtom,
+  );
+  appAtomRegistry.set(dispatchingQueuedMessageIdsAtom, others);
 }
 
 function findThread(
@@ -599,12 +602,8 @@ async function preserveUploadedAttachmentsForEditor(
   }
 }
 
-// Everything a drain pass decides from. Each queued environment's session is
-// read here so a granted or revoked operate scope re-runs the drain.
-const uploadingComposerAttachmentKeysAtom = Atom.map(
-  composerAttachmentUploadsAtom,
-  uploadingComposerAttachmentKeys,
-);
+// Everything delivery decides from. Each queued environment's session is read
+// here so a granted or revoked operate scope wakes delivery.
 
 const deliveryInputsAtom = Atom.make((get) => {
   const connectedEnvironments = get(workspaceConnections.environmentsAtom);
@@ -620,7 +619,6 @@ const deliveryInputsAtom = Atom.make((get) => {
     }
   }
   return {
-    dispatchingQueuedMessageId: get(dispatchingQueuedMessageIdAtom),
     editingQueuedMessageIds: get(editingQueuedMessageIdsAtom),
     queuedMessagesByThreadKey: get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
     shellStatuses: get(threadOutboxShellStatusesAtom),
@@ -629,8 +627,6 @@ const deliveryInputsAtom = Atom.make((get) => {
     serverConfigs: get(environmentServerConfigsAtom),
     connectedEnvironments,
     operableEnvironments,
-    // Wakes a message waiting on the upload worker when that upload settles.
-    uploadingAttachmentKeys: get(uploadingComposerAttachmentKeysAtom),
   };
 }).pipe(Atom.withLabel("mobile:thread-outbox:delivery-inputs"));
 
@@ -695,14 +691,26 @@ function reportCommandFailure(
 interface ThreadOutboxRetry {
   readonly attempt: number;
   readonly notBefore: number;
-  readonly timer: ReturnType<typeof setTimeout>;
 }
 
+/** What a thread's delivery fiber does next with the head of its queue. */
+type ThreadDeliveryStep =
+  /** Nothing to send until an input changes, or until `until` when a backoff is running. */
+  | { readonly kind: "wait"; readonly until?: number }
+  /** The head failed without a send; back off before trying it again. */
+  | { readonly kind: "backoff"; readonly messageId: MessageId }
+  | {
+      readonly kind: "dispatch";
+      readonly messageId: MessageId;
+      /** Resolves true when the message is done with (sent, removed or handed back). */
+      readonly run: () => Promise<boolean>;
+    };
+
 /**
- * Delivers queued thread messages one at a time. A drain pass runs whenever its inputs
- * change (outbox, locks, shells, projects, configs, connections, scopes) and when a retry
- * backoff expires. `dispatchingQueuedMessageIdAtom` is the single in-flight slot; clearing
- * it re-runs the drain for the next message.
+ * Delivers queued thread messages, one fiber per thread so a slow send in one thread never
+ * holds another. Each fiber sends its thread's head message in order, backs off after a
+ * failure, and otherwise waits until an input changes (outbox, locks, shells, projects,
+ * configs, connections, scopes).
  */
 export function createThreadOutboxDelivery(): {
   readonly drain: () => void;
@@ -732,38 +740,17 @@ export function createThreadOutboxDelivery(): {
 
   const scheduleRetry = (messageId: MessageId): void => {
     if (disposed) return;
-    const previous = retries.get(messageId);
-    if (previous !== undefined) clearTimeout(previous.timer);
-    const attempt = (previous?.attempt ?? 0) + 1;
-    const delayMs = threadOutboxRetryDelayMs(attempt);
+    const attempt = (retries.get(messageId)?.attempt ?? 0) + 1;
     retries.set(messageId, {
       attempt,
-      notBefore: Date.now() + delayMs,
-      timer: setTimeout(drain, delayMs),
+      notBefore: Date.now() + threadOutboxRetryDelayMs(attempt),
     });
     setQueuedMessageRetrying(messageId, true);
   };
 
   const clearRetry = (messageId: MessageId): void => {
-    const retry = retries.get(messageId);
-    if (retry === undefined) return;
-    clearTimeout(retry.timer);
-    retries.delete(messageId);
+    if (!retries.delete(messageId)) return;
     setQueuedMessageRetrying(messageId, false);
-  };
-
-  // A delivery that throws backs off like any failure. Releasing the slot
-  // without a retry would re-run the drain straight into the same message.
-  const settle = (messageId: MessageId, delivery: Promise<boolean>): void => {
-    void delivery
-      .then(
-        (sent) => (sent ? clearRetry(messageId) : scheduleRetry(messageId)),
-        (error: unknown) => {
-          console.warn("[thread-outbox] queued message delivery threw", { messageId, error });
-          scheduleRetry(messageId);
-        },
-      )
-      .finally(() => finishDispatchingQueuedMessage(messageId));
   };
 
   // An over-cap draft blocks recovery until the user changes its attachments;
@@ -800,7 +787,7 @@ export function createThreadOutboxDelivery(): {
       }
       blockedRecoveries.delete(queuedMessage.messageId);
       active.unsubscribe();
-      drain();
+      wakeThreads();
     });
     blockedRecoveries.set(queuedMessage.messageId, { message: queuedMessage, unsubscribe });
     return true;
@@ -1176,268 +1163,191 @@ export function createThreadOutboxDelivery(): {
     return outcome === "removed";
   };
 
-  // A pass writes atoms the pass reads (family mounts, the dispatch slot), and the registry
-  // notifies subscribers synchronously, so drain() can be called from inside a pass. That call
-  // only asks for another pass; a nested pass would decide from inputs the outer one is still
-  // acting on and could start a second delivery.
-  let draining = false;
-  let drainRequested = false;
-  function drain(): void {
-    if (disposed) return;
-    if (draining) {
-      drainRequested = true;
-      return;
-    }
-    draining = true;
-    try {
-      do {
-        if (disposed) return;
-        drainRequested = false;
-        drainPass();
-      } while (drainRequested);
-    } finally {
-      draining = false;
-    }
-  }
-
-  function drainPass(): void {
+  /** The head of one thread's queue, as the inputs stand now. */
+  function nextStep(
+    threadKey: string,
+    queuedMessages: ReadonlyArray<QueuedThreadMessage>,
+    inputs: Atom.Type<typeof deliveryInputsAtom>,
+  ): ThreadDeliveryStep {
     const {
-      dispatchingQueuedMessageId,
       editingQueuedMessageIds,
-      queuedMessagesByThreadKey,
       shellStatuses,
       threads,
       projects,
       serverConfigs,
       connectedEnvironments,
       operableEnvironments,
-    } = appAtomRegistry.get(deliveryInputsAtom);
-    // Failures while an environment was unreachable say nothing about it now; a backoff
-    // started then would hold a message for up to its full delay after reconnecting.
-    const ready = new Set(
-      connectedEnvironments
-        .filter(
-          (environment) =>
-            environment.connectionState === "connected" &&
-            serverConfigs.has(environment.environmentId),
-        )
-        .map((environment) => environment.environmentId),
-    );
-    for (const message of Object.values(queuedMessagesByThreadKey).flat()) {
-      if (ready.has(message.environmentId) && !readyEnvironmentIds.has(message.environmentId)) {
-        clearRetry(message.messageId);
-      }
+    } = inputs;
+    const nextQueuedMessage = queuedMessages[0];
+    if (!nextQueuedMessage) {
+      return { kind: "wait" };
     }
-    readyEnvironmentIds = ready;
-    if (dispatchingQueuedMessageId !== null) {
-      return;
-    }
-
-    const queuedMessageIds = new Set(
-      Object.values(queuedMessagesByThreadKey)
-        .flat()
-        .map((message) => message.messageId),
-    );
-    for (const messageId of acknowledgedExistingThreadMessageIds) {
-      if (!queuedMessageIds.has(messageId)) {
-        acknowledgedExistingThreadMessageIds.delete(messageId);
+    const messageId = nextQueuedMessage.messageId;
+    if (
+      nextQueuedMessage.creation === undefined &&
+      acknowledgedExistingThreadMessageIds.has(messageId)
+    ) {
+      if (retryNotBefore(messageId) > Date.now()) {
+        return { kind: "wait", until: retryNotBefore(messageId) };
       }
-    }
-    for (const messageId of launchedCreations.keys()) {
-      if (!queuedMessageIds.has(messageId)) {
-        launchedCreations.delete(messageId);
-      }
-    }
-    for (const [messageId, release] of familyMounts) {
-      if (!queuedMessageIds.has(messageId)) {
-        release();
-        familyMounts.delete(messageId);
-      }
-    }
-
-    for (const [threadKey, queuedMessages] of Object.entries(queuedMessagesByThreadKey)) {
-      const nextQueuedMessage = queuedMessages[0];
-      if (!nextQueuedMessage) {
-        continue;
-      }
-      const messageId = nextQueuedMessage.messageId;
-      if (
-        nextQueuedMessage.creation === undefined &&
-        acknowledgedExistingThreadMessageIds.has(messageId)
-      ) {
-        if (retryNotBefore(messageId) > Date.now()) {
-          continue;
-        }
-        beginDispatchingQueuedMessage(messageId);
-        settle(
-          messageId,
+      return {
+        kind: "dispatch",
+        messageId,
+        run: () =>
           removeAcknowledgedExistingThreadMessage(
             nextQueuedMessage,
             acknowledgedExistingThreadMessageIds,
           ),
-        );
-        return;
+      };
+    }
+    if (editingQueuedMessageIds[messageId]) {
+      return { kind: "wait" };
+    }
+    const blockedRecovery = blockedRecoveries.get(messageId);
+    if (blockedRecovery) {
+      if (blockedRecovery.message === nextQueuedMessage) {
+        return { kind: "wait" };
       }
-      if (editingQueuedMessageIds[messageId]) {
-        continue;
-      }
-      const blockedRecovery = blockedRecoveries.get(messageId);
-      if (blockedRecovery) {
-        if (blockedRecovery.message === nextQueuedMessage) {
-          continue;
-        }
-        blockedRecoveries.delete(messageId);
-        blockedRecovery.unsubscribe();
-      }
-      if (retryNotBefore(messageId) > Date.now()) {
-        continue;
-      }
-      if (
-        queuedAttachmentsStillUploading({
-          environmentId: nextQueuedMessage.environmentId,
-          attachments: nextQueuedMessage.attachments,
-          states: appAtomRegistry.get(composerAttachmentUploadsAtom),
-        })
-      ) {
-        continue;
-      }
+      blockedRecoveries.delete(messageId);
+      blockedRecovery.unsubscribe();
+    }
+    if (retryNotBefore(messageId) > Date.now()) {
+      return { kind: "wait", until: retryNotBefore(messageId) };
+    }
+    let thread = findThread(threads, nextQueuedMessage);
+    if (thread && scopedThreadKey(thread.environmentId, thread.id) !== threadKey) {
+      return { kind: "wait" };
+    }
 
-      let thread = findThread(threads, nextQueuedMessage);
-      if (thread && scopedThreadKey(thread.environmentId, thread.id) !== threadKey) {
-        continue;
-      }
-
-      const creation = nextQueuedMessage.creation;
-      const environment = connectedEnvironments.find(
-        (candidate) => candidate.environmentId === nextQueuedMessage.environmentId,
-      );
-      const shellStatus = shellStatuses.get(nextQueuedMessage.environmentId) ?? "empty";
-      const serverConfig = serverConfigs.get(nextQueuedMessage.environmentId);
-      let familyRead: ThreadFamilyRead | undefined;
-      if (
-        thread === undefined &&
-        creation === undefined &&
-        serverConfig?.shellThreadFamilies === true
-      ) {
-        // The family keeps the row readable through dispatch once it loads; the current shell
-        // generation's read decides whether the thread is gone.
-        if (!familyMounts.has(nextQueuedMessage.messageId)) {
-          familyMounts.set(
-            nextQueuedMessage.messageId,
-            threadFamilies.mount(
-              appAtomRegistry,
-              nextQueuedMessage.environmentId,
-              nextQueuedMessage.threadId,
-            ),
-          );
-        }
-        familyRead = threadFamilyRead(
-          appAtomRegistry.get(
-            threadFamilies.familyAtom(nextQueuedMessage.environmentId, nextQueuedMessage.threadId),
-          ),
-        );
-        if (familyRead === "settled") {
-          // The rows read at the start of this pass can lag the family that just settled;
-          // decide from the merged rows as they are now.
-          thread = findThread(
-            appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
-            nextQueuedMessage,
-          );
-        } else if (familyRead === "failed") {
-          threadFamilies.refresh(
+    const creation = nextQueuedMessage.creation;
+    const environment = connectedEnvironments.find(
+      (candidate) => candidate.environmentId === nextQueuedMessage.environmentId,
+    );
+    const shellStatus = shellStatuses.get(nextQueuedMessage.environmentId) ?? "empty";
+    const serverConfig = serverConfigs.get(nextQueuedMessage.environmentId);
+    let familyRead: ThreadFamilyRead | undefined;
+    if (
+      thread === undefined &&
+      creation === undefined &&
+      serverConfig?.shellThreadFamilies === true
+    ) {
+      // The family keeps the row readable through dispatch once it loads; the current shell
+      // generation's read decides whether the thread is gone.
+      if (!familyMounts.has(nextQueuedMessage.messageId)) {
+        familyMounts.set(
+          nextQueuedMessage.messageId,
+          threadFamilies.mount(
             appAtomRegistry,
             nextQueuedMessage.environmentId,
             nextQueuedMessage.threadId,
-          );
-        }
+          ),
+        );
       }
-      const resendLaunch =
-        creation !== undefined &&
-        launchedCreations.get(messageId)?.revision === threadOutboxRevision(messageId);
-      const deliveryAction = resolveThreadOutboxDeliveryAction({
-        isCreation: creation !== undefined,
-        // A resend goes through the same gates as the first launch.
-        threadExists: thread !== undefined && !resendLaunch,
-        shellStatus,
-        environmentConnected: environment?.connectionState === "connected",
-        ...(familyRead === undefined ? {} : { familyRead }),
-      });
-      if (
-        deliveryAction === "wait" &&
-        shellStatus === "live" &&
-        familyRead !== undefined &&
-        familyRead !== "settled"
-      ) {
-        // An empty family read changes no merged row, so nothing else would wake the drain.
-        scheduleRetry(messageId);
-        continue;
-      }
-      if (deliveryAction === "send" && !operableEnvironments.has(nextQueuedMessage.environmentId)) {
-        continue;
-      }
-      const dispatchStep = resolveThreadOutboxDispatchStep({
-        deliveryAction,
-        fileAttachments: nextQueuedMessage.attachments.filter(
-          (attachment) => attachment.type === "file",
+      familyRead = threadFamilyRead(
+        appAtomRegistry.get(
+          threadFamilies.familyAtom(nextQueuedMessage.environmentId, nextQueuedMessage.threadId),
         ),
-        serverConfig: serverConfig
-          ? {
-              maxFileUploadBytes:
-                serverConfig.environment.capabilities.fileAttachments?.maxUploadBytes,
-            }
-          : null,
-      });
-      if (dispatchStep.step === "wait") {
-        continue;
+      );
+      if (familyRead === "settled") {
+        // The rows read at the start of this pass can lag the family that just settled;
+        // decide from the merged rows as they are now.
+        thread = findThread(
+          appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
+          nextQueuedMessage,
+        );
+      } else if (familyRead === "failed") {
+        threadFamilies.refresh(
+          appAtomRegistry,
+          nextQueuedMessage.environmentId,
+          nextQueuedMessage.threadId,
+        );
       }
-      if (dispatchStep.step === "retry") {
-        scheduleRetry(messageId);
-        continue;
-      }
-      if (dispatchStep.step === "restore") {
-        const attachmentError = dispatchStep.reason;
-        beginDispatchingQueuedMessage(messageId);
-        settle(
-          messageId,
+    }
+    const resendLaunch =
+      creation !== undefined &&
+      launchedCreations.get(messageId)?.revision === threadOutboxRevision(messageId);
+    const deliveryAction = resolveThreadOutboxDeliveryAction({
+      isCreation: creation !== undefined,
+      // A resend goes through the same gates as the first launch.
+      threadExists: thread !== undefined && !resendLaunch,
+      shellStatus,
+      environmentConnected: environment?.connectionState === "connected",
+      ...(familyRead === undefined ? {} : { familyRead }),
+    });
+    if (
+      deliveryAction === "wait" &&
+      shellStatus === "live" &&
+      familyRead !== undefined &&
+      familyRead !== "settled"
+    ) {
+      // An empty family read changes no merged row, so nothing else would wake the thread.
+      return { kind: "backoff", messageId };
+    }
+    if (deliveryAction === "send" && !operableEnvironments.has(nextQueuedMessage.environmentId)) {
+      return { kind: "wait" };
+    }
+    const dispatchStep = resolveThreadOutboxDispatchStep({
+      deliveryAction,
+      fileAttachments: nextQueuedMessage.attachments.filter(
+        (attachment) => attachment.type === "file",
+      ),
+      serverConfig: serverConfig
+        ? {
+            maxFileUploadBytes:
+              serverConfig.environment.capabilities.fileAttachments?.maxUploadBytes,
+          }
+        : null,
+    });
+    if (dispatchStep.step === "wait") {
+      return { kind: "wait" };
+    }
+    if (dispatchStep.step === "retry") {
+      return { kind: "backoff", messageId };
+    }
+    if (dispatchStep.step === "restore") {
+      const attachmentError = dispatchStep.reason;
+      return {
+        kind: "dispatch",
+        messageId,
+        run: () =>
           confirmThreadOutboxMessageQueued(nextQueuedMessage).then((queued) =>
             !queued || appAtomRegistry.get(editingQueuedMessageIdsAtom)[messageId]
               ? true
               : restoreQueuedMessage(nextQueuedMessage, attachmentError),
           ),
-        );
-        return;
+      };
+    }
+    const creationProjectCwd =
+      creation !== undefined
+        ? (findCreationProject(projects, nextQueuedMessage)?.workspaceRoot ??
+          creation.projectCwd ??
+          null)
+        : null;
+    if (deliveryAction === "send" && creation !== undefined) {
+      if (!isQueuedThreadCreationSendable(nextQueuedMessage)) {
+        return { kind: "wait" };
       }
-      const creationProjectCwd =
-        creation !== undefined
-          ? (findCreationProject(projects, nextQueuedMessage)?.workspaceRoot ??
-            creation.projectCwd ??
-            null)
-          : null;
-      if (deliveryAction === "send" && creation !== undefined) {
-        if (!isQueuedThreadCreationSendable(nextQueuedMessage)) {
-          continue;
-        }
-        if (creationProjectCwd === null && shellStatus !== "live") {
-          continue;
-        }
+      if (creationProjectCwd === null && shellStatus !== "live") {
+        return { kind: "wait" };
       }
+    }
 
-      beginDispatchingQueuedMessage(messageId);
-      const removeQueuedMessage = (warning: string) =>
-        removeThreadOutboxMessage(nextQueuedMessage).then(
-          () => true,
-          (error) => {
-            console.warn(warning, {
-              environmentId: nextQueuedMessage.environmentId,
-              threadId: nextQueuedMessage.threadId,
-              messageId,
-              error,
-            });
-            return false;
-          },
-        );
-      // Confirm durability before sending; optimistic enqueue can still roll back on write failure.
-      const delivery = confirmThreadOutboxMessageQueued(nextQueuedMessage).then((queued) => {
+    const removeQueuedMessage = (warning: string) =>
+      removeThreadOutboxMessage(nextQueuedMessage).then(
+        () => true,
+        (error) => {
+          console.warn(warning, {
+            environmentId: nextQueuedMessage.environmentId,
+            threadId: nextQueuedMessage.threadId,
+            messageId,
+            error,
+          });
+          return false;
+        },
+      );
+    // Confirm durability before sending; optimistic enqueue can still roll back on write failure.
+    const run = () =>
+      confirmThreadOutboxMessageQueued(nextQueuedMessage).then((queued) => {
         if (!queued) {
           return true;
         }
@@ -1473,12 +1383,118 @@ export function createThreadOutboxDelivery(): {
               ? sendQueuedMessage(nextQueuedMessage, thread)
               : Promise.resolve(false);
       });
-      settle(messageId, delivery);
-      return;
-    }
+    return { kind: "dispatch", messageId, run };
   }
 
-  const stopDraining = appAtomRegistry.subscribe(deliveryInputsAtom, drain, { immediate: true });
+  // One fiber per thread with queued messages. Opening a thread's latch wakes its fiber to
+  // reconsider its head; the fiber closes it before reading the inputs, so no wake is lost.
+  const threadFibers = new Map<
+    string,
+    { readonly wake: Latch.Latch; readonly fiber: Fiber.Fiber<never> }
+  >();
+
+  const deliverThread = (threadKey: string, wake: Latch.Latch) =>
+    Effect.forever(
+      Effect.gen(function* () {
+        yield* wake.close;
+        const inputs = appAtomRegistry.get(deliveryInputsAtom);
+        const step = nextStep(threadKey, inputs.queuedMessagesByThreadKey[threadKey] ?? [], inputs);
+        if (step.kind === "backoff") {
+          scheduleRetry(step.messageId);
+          return;
+        }
+        if (step.kind === "wait") {
+          if (step.until === undefined) {
+            yield* wake.await;
+            return;
+          }
+          const now = yield* Clock.currentTimeMillis;
+          yield* wake.await.pipe(
+            Effect.timeoutOrElse({
+              duration: Math.max(0, step.until - now),
+              orElse: () => Effect.void,
+            }),
+          );
+          return;
+        }
+        // A send that started finishes, even when its thread leaves the queue meanwhile.
+        beginDispatchingQueuedMessage(step.messageId);
+        const sent = yield* Effect.promise(() =>
+          step.run().catch((error: unknown) => {
+            // A delivery that throws backs off like any failure, not straight back into the send.
+            console.warn("[thread-outbox] queued message delivery threw", {
+              messageId: step.messageId,
+              error,
+            });
+            return false;
+          }),
+        ).pipe(
+          Effect.ensuring(Effect.sync(() => finishDispatchingQueuedMessage(step.messageId))),
+          Effect.uninterruptible,
+        );
+        if (sent) clearRetry(step.messageId);
+        else scheduleRetry(step.messageId);
+      }),
+    );
+
+  function wakeThreads(): void {
+    for (const { wake } of threadFibers.values()) wake.openUnsafe();
+  }
+
+  /** Starts a fiber for each thread with queued messages, stops the rest, and wakes them all. */
+  function onInputs(): void {
+    if (disposed) return;
+    const { queuedMessagesByThreadKey, serverConfigs, connectedEnvironments } =
+      appAtomRegistry.get(deliveryInputsAtom);
+    const queued = Object.values(queuedMessagesByThreadKey).flat();
+    // Failures while an environment was unreachable say nothing about it now; a backoff
+    // started then would hold a message for up to its full delay after reconnecting.
+    const ready = new Set(
+      connectedEnvironments
+        .filter(
+          (environment) =>
+            environment.connectionState === "connected" &&
+            serverConfigs.has(environment.environmentId),
+        )
+        .map((environment) => environment.environmentId),
+    );
+    for (const message of queued) {
+      if (ready.has(message.environmentId) && !readyEnvironmentIds.has(message.environmentId)) {
+        clearRetry(message.messageId);
+      }
+    }
+    readyEnvironmentIds = ready;
+
+    const queuedMessageIds = new Set(queued.map((message) => message.messageId));
+    for (const messageId of acknowledgedExistingThreadMessageIds) {
+      if (!queuedMessageIds.has(messageId)) acknowledgedExistingThreadMessageIds.delete(messageId);
+    }
+    for (const messageId of launchedCreations.keys()) {
+      if (!queuedMessageIds.has(messageId)) launchedCreations.delete(messageId);
+    }
+    for (const [messageId, release] of familyMounts) {
+      if (!queuedMessageIds.has(messageId)) {
+        release();
+        familyMounts.delete(messageId);
+      }
+    }
+
+    for (const [threadKey, entry] of threadFibers) {
+      if ((queuedMessagesByThreadKey[threadKey]?.length ?? 0) > 0) continue;
+      threadFibers.delete(threadKey);
+      Effect.runFork(Fiber.interrupt(entry.fiber));
+    }
+    for (const [threadKey, messages] of Object.entries(queuedMessagesByThreadKey)) {
+      if (messages.length === 0 || threadFibers.has(threadKey)) continue;
+      const wake = Latch.makeUnsafe(true);
+      threadFibers.set(threadKey, { wake, fiber: Effect.runFork(deliverThread(threadKey, wake)) });
+    }
+    wakeThreads();
+  }
+
+  const stopDelivering = appAtomRegistry.subscribe(deliveryInputsAtom, onInputs, {
+    immediate: true,
+  });
   const stopCollectingOutcomes = appAtomRegistry.subscribe(
     settledCreationOutcomeKeysAtom,
     (threadKeys) => {
@@ -1488,12 +1504,13 @@ export function createThreadOutboxDelivery(): {
   );
 
   return {
-    drain,
+    drain: wakeThreads,
     dispose: () => {
       disposed = true;
-      stopDraining();
+      stopDelivering();
       stopCollectingOutcomes();
-      for (const retry of retries.values()) clearTimeout(retry.timer);
+      for (const { fiber } of threadFibers.values()) Effect.runFork(Fiber.interrupt(fiber));
+      threadFibers.clear();
       retries.clear();
       appAtomRegistry.set(retryingQueuedMessageIdsAtom, {});
       for (const blocked of blockedRecoveries.values()) blocked.unsubscribe();

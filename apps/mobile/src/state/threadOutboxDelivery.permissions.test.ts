@@ -138,7 +138,9 @@ vi.mock("./use-thread-outbox", async () => {
   const { Atom } = await import("effect/reactivity");
   return {
     editingQueuedMessageIdsAtom: Atom.make({}).pipe(Atom.keepAlive),
-    dispatchingQueuedMessageIdAtom: Atom.make<MessageId | null>(null).pipe(Atom.keepAlive),
+    dispatchingQueuedMessageIdsAtom: Atom.make<Readonly<Record<MessageId, true>>>({}).pipe(
+      Atom.keepAlive,
+    ),
     retryingQueuedMessageIdsAtom: Atom.make({}).pipe(Atom.keepAlive),
     threadOutboxShellStatusesAtom: Atom.make(new Map([["secondary", "live"]])),
   };
@@ -164,9 +166,10 @@ vi.mock("./use-composer-drafts", async () => {
 
 import { appAtomRegistry } from "./atom-registry";
 import { environmentSession } from "./session";
-import { dispatchingQueuedMessageIdAtom, editingQueuedMessageIdsAtom } from "./use-thread-outbox";
+import { dispatchingQueuedMessageIdsAtom, editingQueuedMessageIdsAtom } from "./use-thread-outbox";
+
+const sendingMessageIds = () => Object.keys(appAtomRegistry.get(dispatchingQueuedMessageIdsAtom));
 import { createThreadOutboxDelivery } from "./threadOutboxDelivery";
-import { composerAttachmentUploadsAtom } from "./composer-attachment-upload-states";
 import { workspaceConnections } from "./workspace";
 
 const message = (overrides: Partial<QueuedThreadMessage> = {}): QueuedThreadMessage => ({
@@ -190,8 +193,8 @@ function setOperateGrant(environmentId: string, granted: boolean): void {
 
 function runDrain() {
   const settled = Promise.withResolvers<void>();
-  const release = appAtomRegistry.subscribe(dispatchingQueuedMessageIdAtom, (id) => {
-    if (id === null) settled.resolve();
+  const release = appAtomRegistry.subscribe(dispatchingQueuedMessageIdsAtom, (ids) => {
+    if (Object.keys(ids).length === 0) settled.resolve();
   });
   startDelivery();
   return settled.promise.finally(release);
@@ -220,7 +223,7 @@ beforeEach(() => {
   state.familyMount.mockReset().mockReturnValue(() => {});
   appAtomRegistry.set(state.threadShells, [state.thread]);
   appAtomRegistry.set(state.manager.queuedMessagesByThreadKeyAtom, {});
-  appAtomRegistry.set(dispatchingQueuedMessageIdAtom, null);
+  appAtomRegistry.set(dispatchingQueuedMessageIdsAtom, {});
   appAtomRegistry.set(editingQueuedMessageIdsAtom, {});
   for (const command of [
     state.start,
@@ -361,7 +364,7 @@ describe("queued task operation access", () => {
     expect(state.modelUnavailable).toHaveBeenCalledOnce();
     expect(state.prepare).not.toHaveBeenCalled();
     expect(state.start).not.toHaveBeenCalled();
-    expect(appAtomRegistry.get(dispatchingQueuedMessageIdAtom)).toBeNull();
+    expect(sendingMessageIds()).toEqual([]);
     expect(remaining()).toEqual([queued]);
   });
 
@@ -378,17 +381,15 @@ describe("queued task operation access", () => {
     startDelivery();
     appAtomRegistry.set(editingQueuedMessageIdsAtom, { [queued.messageId]: true });
     await state.manager.enqueue(queued);
-    using confirm = vi.spyOn(state.manager, "confirmQueued");
     const delivered = Promise.withResolvers<void>();
-    const release = appAtomRegistry.subscribe(dispatchingQueuedMessageIdAtom, (id) => {
-      if (id === null) delivered.resolve();
+    const release = appAtomRegistry.subscribe(dispatchingQueuedMessageIdsAtom, (ids) => {
+      if (Object.keys(ids).length === 0) delivered.resolve();
     });
-    // Ending the edit wakes the drain through a registry notification, the path on which the
-    // mount's synchronous row change notifies the drain again mid-pass.
+    // Ending the edit wakes the thread through a registry notification, the path on which the
+    // mount's synchronous row change wakes it again while it is deciding.
     appAtomRegistry.set(editingQueuedMessageIdsAtom, {});
-    expect(state.familyMount).toHaveBeenCalledOnce();
-    expect(confirm).toHaveBeenCalledOnce();
     await delivered.promise.finally(release);
+    expect(state.familyMount).toHaveBeenCalledOnce();
     expect(state.start).toHaveBeenCalledOnce();
     expect(remaining()).toEqual([]);
   });
@@ -544,8 +545,8 @@ describe("queued task whose launch reply is lost", () => {
 
   async function fireRetry(): Promise<void> {
     const settled = Promise.withResolvers<void>();
-    const release = appAtomRegistry.subscribe(dispatchingQueuedMessageIdAtom, (id) => {
-      if (id === null) settled.resolve();
+    const release = appAtomRegistry.subscribe(dispatchingQueuedMessageIdsAtom, (ids) => {
+      if (Object.keys(ids).length === 0) settled.resolve();
     });
     vi.advanceTimersByTime(threadOutboxRetryDelayMs(1));
     await settled.promise.finally(release);
@@ -577,7 +578,7 @@ describe("queued task whose launch reply is lost", () => {
     await loseLaunchReply(queuedTask());
     setOperateGrant("secondary", false);
     vi.advanceTimersByTime(threadOutboxRetryDelayMs(1));
-    expect(appAtomRegistry.get(dispatchingQueuedMessageIdAtom)).toBeNull();
+    expect(sendingMessageIds()).toEqual([]);
     expect(state.start).toHaveBeenCalledOnce();
     expect(remaining()).toHaveLength(1);
 
@@ -665,42 +666,58 @@ describe("compaction before a queued send", () => {
 describe("queued delivery timing", () => {
   /** Runs `change`, then resolves once the delivery it starts has settled. */
   async function deliveryAfter(change: () => void): Promise<void> {
+    const started = Promise.withResolvers<void>();
     const settled = Promise.withResolvers<void>();
-    const release = appAtomRegistry.subscribe(dispatchingQueuedMessageIdAtom, (id) => {
-      if (id === null) settled.resolve();
+    const release = appAtomRegistry.subscribe(dispatchingQueuedMessageIdsAtom, (ids) => {
+      if (Object.keys(ids).length > 0) started.resolve();
+      else settled.resolve();
     });
     change();
-    expect(appAtomRegistry.get(dispatchingQueuedMessageIdAtom)).not.toBeNull();
+    await started.promise;
     await settled.promise.finally(release);
   }
 
-  it("waits for the composer's upload of a sent attachment instead of uploading it again", async () => {
+  it("sends another thread's message while one thread's send is still running", async () => {
     setOperateGrant("secondary", true);
-    const photo = {
-      id: "photo-1",
-      type: "image" as const,
-      name: "photo.png",
-      mimeType: "image/png",
-      sizeBytes: 3,
-      previewUri: "file:///photo.png",
-      fileUri: "file:///photo.png",
-    };
-    appAtomRegistry.set(composerAttachmentUploadsAtom, {
-      "secondary:photo-1": { status: "uploading", progress: 0.5 },
+    const other = { ...state.thread, id: "other" };
+    appAtomRegistry.set(state.threadShells, [state.thread, other]);
+    const slowStarted = Promise.withResolvers<void>();
+    const finishSlow = Promise.withResolvers<AsyncResult.AsyncResult<object, never>>();
+    state.start.mockImplementation(async ({ input }: { input: { threadId: string } }) => {
+      if (input.threadId !== "thread") return AsyncResult.success({});
+      slowStarted.resolve();
+      return finishSlow.promise;
     });
-    state.cleanups.push(() => appAtomRegistry.set(composerAttachmentUploadsAtom, {}));
-    await state.manager.enqueue(message({ attachments: [photo] }));
+    /** Resolves once only these message ids are still queued. */
+    const queuedBecomes = (ids: ReadonlyArray<string>) => {
+      const reached = Promise.withResolvers<void>();
+      const release = appAtomRegistry.subscribe(state.manager.queuedMessagesByThreadKeyAtom, () => {
+        if (
+          remaining()
+            .map((queued) => queued.messageId)
+            .join() === ids.join()
+        ) {
+          reached.resolve();
+        }
+      });
+      return reached.promise.finally(release);
+    };
+    await state.manager.enqueue(message());
     startDelivery();
-    expect(appAtomRegistry.get(dispatchingQueuedMessageIdAtom)).toBeNull();
-
-    await deliveryAfter(() =>
-      appAtomRegistry.set(composerAttachmentUploadsAtom, {
-        "secondary:photo-1": { status: "ready" },
+    await slowStarted.promise;
+    const otherDelivered = queuedBecomes(["message"]);
+    await state.manager.enqueue(
+      message({
+        threadId: ThreadId.make("other"),
+        messageId: MessageId.make("other-message"),
+        commandId: CommandId.make("other-command"),
       }),
     );
-    expect(state.prepare).toHaveBeenCalledOnce();
-    expect(state.start).toHaveBeenCalledOnce();
-    expect(remaining()).toEqual([]);
+    await otherDelivered;
+    const allDelivered = queuedBecomes([]);
+    finishSlow.resolve(AsyncResult.success({}));
+    await allDelivered;
+    expect(state.start).toHaveBeenCalledTimes(2);
   });
 
   it("sends at once when its environment reconnects instead of waiting out the backoff", async () => {

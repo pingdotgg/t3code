@@ -114,30 +114,6 @@ export function composerAttachmentsStillUploading(input: {
   });
 }
 
-/** Changes when an upload starts or settles, not on its progress ticks. */
-export function uploadingComposerAttachmentKeys(
-  states: Readonly<Record<string, ComposerAttachmentUploadState>>,
-): string {
-  return Object.keys(states)
-    .filter((key) => states[key]?.status === "uploading")
-    .sort()
-    .join("\n");
-}
-
-/** A queued message waits for the worker's upload instead of starting a second one. */
-export function queuedAttachmentsStillUploading(input: {
-  readonly environmentId: EnvironmentId;
-  readonly attachments: ReadonlyArray<DraftComposerAttachment>;
-  readonly states: Readonly<Record<string, ComposerAttachmentUploadState>>;
-}): boolean {
-  return input.attachments.some(
-    (attachment) =>
-      attachment.uploadedAttachmentId === undefined &&
-      input.states[composerAttachmentUploadKey(input.environmentId, attachment.id)]?.status ===
-        "uploading",
-  );
-}
-
 /** Equal by environment and attachment id; the request rides along for the upload. */
 class UploadKey implements Equal.Equal {
   constructor(
