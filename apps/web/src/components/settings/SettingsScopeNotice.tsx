@@ -185,11 +185,14 @@ export function SettingsScopeNotice({
             <InputGroupAddon>
               <SearchIcon aria-hidden className="size-3.5" />
             </InputGroupAddon>
+            {/* Native search inputs clear on Escape even during IME composition. */}
             <InputGroupInput
-              type="search"
+              type="text"
+              role="searchbox"
               value={projectQuery}
               onChange={(event) => setProjectQuery(event.currentTarget.value)}
               onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing || event.keyCode === 229) return;
                 if (event.key !== "Escape" || projectQuery.length === 0) return;
                 event.preventDefault();
                 event.stopPropagation();
