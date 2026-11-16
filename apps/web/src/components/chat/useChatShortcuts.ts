@@ -14,6 +14,9 @@ import type { BranchToolbarHandle } from "../BranchToolbar";
 import { shouldTypeToFocusComposer } from "./composerFocusRedirect";
 import { composerShortcutCommands } from "./composerShortcuts";
 
+// `:popover-open` throws in browsers without the Popover API.
+const popoverSupported = typeof HTMLElement !== "undefined" && "popover" in HTMLElement.prototype;
+
 /** Returning false lets the key event through untouched. */
 type ChatShortcutHandler = (context: {
   readonly event: KeyboardEvent;
@@ -135,7 +138,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       context.modelPickerOpen ||
       (context.editableFocus && !context.composerFocus) ||
       // A native popover, such as a full screen MCP app, closes on this Escape unless it is prevented.
-      document.querySelector(":popover-open") !== null
+      (popoverSupported && document.querySelector(":popover-open") !== null)
     )
       return;
     const command = resolveChatShortcutCommand(event, input.keybindings, input.scriptKeybindings, {
