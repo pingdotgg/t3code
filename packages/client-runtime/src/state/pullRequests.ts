@@ -357,14 +357,13 @@ function settleEdit(
   }
 }
 
-const CONNECTION_FAILURES: ReadonlySet<unknown> = new Set([
-  "ConnectionTransientError",
-  "ConnectionBlockedError",
-  "EnvironmentRpcUnavailableError",
-  "RpcClientError",
+// The host cannot list pull requests at all. A failed read (rate limit, timeout) is not this.
+const HOST_REFUSALS: ReadonlySet<unknown> = new Set([
+  "PullRequestUnavailableError",
+  "EnvironmentAuthorizationError",
 ]);
-const isConnectionFailure = (error: unknown) =>
-  Predicate.hasProperty(error, "_tag") && CONNECTION_FAILURES.has(error._tag);
+const isHostRefusal = (error: unknown) =>
+  Predicate.hasProperty(error, "_tag") && HOST_REFUSALS.has(error._tag);
 
 function pullRequestReference(input: PullRequestRef): PullRequestRef {
   const { projectId, host, repository, number, expectedAccountId } = input;
@@ -1246,7 +1245,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     },
   });
   // A first visit paints from a saved answer; with none saved, one read now fills it.
-  // Only a connection failure tries again; a host that cannot list them waits for the page.
+  // A failed read tries again next session; a host that cannot list them waits for the page.
   const refusedWarmups = new Set<string>();
   const listWarmups = Atom.family((key: string) => {
     const [environmentId, input] = JSON.parse(key) as [EnvironmentId, PullRequestListInput];
@@ -1268,7 +1267,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         }).pipe(
           Effect.tapError((error) =>
             Effect.sync(() => {
-              if (!isConnectionFailure(error)) refusedWarmups.add(key);
+              if (isHostRefusal(error)) refusedWarmups.add(key);
             }),
           ),
         );

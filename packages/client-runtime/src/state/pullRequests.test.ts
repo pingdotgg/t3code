@@ -2498,47 +2498,56 @@ it.effect("reads the list again when the page opens after the warm-up's read fai
   ),
 );
 
-it.effect("does not read a list ahead again after the host refused it", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
-      let reads = 0;
-      const client = actionReplyClient({
-        [WS_METHODS.pullRequestsList]: () =>
-          Effect.suspend(() => {
-            reads++;
-            return new PullRequestUnavailableError({ reason: "cli-unauthenticated" });
-          }),
-      });
-      const { atoms, registry, supervisor } = yield* makeTestRuntime(
-        client,
-        undefined,
-        false,
-        {},
-        { load: () => Effect.succeedNone, save: () => Effect.void },
-      );
-      const target = { environmentId: TARGET.environmentId, input: { state: "open" } } as const;
-      const warm = atoms.warmList(target);
-      const unmount = registry.mount(warm);
-      yield* Effect.addFinalizer(() => Effect.sync(unmount));
-      yield* AtomRegistry.getResult(registry, warm, { suspendOnWaiting: true });
-      expect(reads).toBe(1);
-      // The list's idle wait ends, so only the warm-up could read again.
-      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(11 * 60_000));
+it.effect.each([
+  { failure: "refused", readsAgain: false },
+  { failure: "failed", readsAgain: true },
+] as const)(
+  "reads a list ahead again next session only when the host did not refuse it ($failure)",
+  ({ failure, readsAgain }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+        let reads = 0;
+        const client = actionReplyClient({
+          [WS_METHODS.pullRequestsList]: () =>
+            Effect.suspend(() => {
+              reads++;
+              return Effect.fail<PullRequestUnavailableError | PullRequestOperationError>(
+                failure === "refused"
+                  ? new PullRequestUnavailableError({ reason: "cli-unauthenticated" })
+                  : new PullRequestOperationError({ operation: "list", detail: "rate limited" }),
+              );
+            }),
+        });
+        const { atoms, registry, supervisor } = yield* makeTestRuntime(
+          client,
+          undefined,
+          false,
+          {},
+          { load: () => Effect.succeedNone, save: () => Effect.void },
+        );
+        const target = { environmentId: TARGET.environmentId, input: { state: "open" } } as const;
+        const warm = atoms.warmList(target);
+        const unmount = registry.mount(warm);
+        yield* Effect.addFinalizer(() => Effect.sync(unmount));
+        yield* AtomRegistry.getResult(registry, warm, { suspendOnWaiting: true });
+        expect(reads).toBe(1);
+        // The list's idle wait ends, so only the warm-up could read again.
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(11 * 60_000));
 
-      // The next session runs the warm-up again; wait for it to settle anew.
-      const before = registry.get(warm);
-      const ranAgain = yield* Deferred.make<void>();
-      const unsubscribe = registry.subscribe(warm, (result) => {
-        if (result !== before && !result.waiting) Deferred.doneUnsafe(ranAgain, Effect.void);
-      });
-      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
-      yield* SubscriptionRef.set(supervisor.session, Option.some(session(client)));
-      yield* Deferred.await(ranAgain);
-      expect(reads).toBe(1);
-    }),
-  ),
+        // The next session runs the warm-up again; wait for it to settle anew.
+        const before = registry.get(warm);
+        const ranAgain = yield* Deferred.make<void>();
+        const unsubscribe = registry.subscribe(warm, (result) => {
+          if (result !== before && !result.waiting) Deferred.doneUnsafe(ranAgain, Effect.void);
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+        yield* SubscriptionRef.set(supervisor.session, Option.some(session(client)));
+        yield* Deferred.await(ranAgain);
+        expect(reads > 1).toBe(readsAgain);
+      }),
+    ),
 );
 
 it.effect("puts readers back when the host refuses an action, and saves nothing it guessed", () =>
