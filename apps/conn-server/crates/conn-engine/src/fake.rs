@@ -584,6 +584,12 @@ impl Session for FakeSession {
             let mut started = vec![provider_turn(&turn, "running")];
             self.stuck.store(text == "stuck", Ordering::SeqCst);
             match text.as_str() {
+                "mcp-app" => {
+                    let item = from_json(json!({"id":"app:item","threadId":turn.thread_id,"runId":turn.run_id,"providerThreadId":turn.provider_thread_id,"providerTurnId":null,"nodeId":null,"parentItemId":null,"ordinal":1,"status":"completed","startedAt":null,"completedAt":null,"updatedAt":now_iso(),"nativeItemRef":null,"title":null,"type":"dynamic_tool","toolName":"stub.show","input":{},"output":{"content":[{"type":"text","text":"Weather"}]}})).map_err(|e|ProviderError::Protocol {detail:e.to_string()})?;
+                    started.push(ProviderEvent::McpAppCapture {turn_item:item,source:conn_provider::mcp_apps::Source {server:"stub".into(),tool:"show".into(),resource_uri:"ui://stub".into()}});
+                    started.push(provider_turn(&turn,"completed"));
+                    started.push(terminal(&turn,TurnStatus::Completed,None));
+                }
                 "hang" | "stuck" => {}
                 t if t.starts_with("latestart") => {}
                 "ask" => started.push(event(json!({"type": "runtime_request.updated",
@@ -859,6 +865,26 @@ impl Session for FakeSession {
     ) -> BoxFuture<'_, ProviderResult<()>> {
         crate::lock(&self.applied_selections).push(conn_contract::to_json(&selection));
         Box::pin(async { Ok(()) })
+    }
+
+    fn mcp_app_request(
+        &self,
+        input: conn_provider::mcp_apps::Request,
+    ) -> BoxFuture<'_, ProviderResult<Value>> {
+        Box::pin(async move {
+            use conn_provider::mcp_apps::Operation;
+            Ok(match input.operation {
+                Operation::ListTools => {
+                    json!([{"name":"refresh","annotations":{"readOnlyHint":true,"title":"Refresh"}}, {"name":"hidden","_meta":{"ui":{"visibility":["model"]}}}])
+                }
+                Operation::CallTool { arguments, .. } => {
+                    json!({"content":[{"type":"text","text":arguments.get("city")}]})
+                }
+                Operation::ReadResource { uri } => {
+                    json!({"contents":[{"uri":uri,"mimeType":"text/html;profile=mcp-app","text":"<h1>App</h1>"}]})
+                }
+            })
+        })
     }
 
     fn set_mcp_servers(&self, servers: Vec<McpServer>) -> BoxFuture<'_, ProviderResult<()>> {

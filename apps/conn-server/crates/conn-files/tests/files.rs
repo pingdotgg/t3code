@@ -561,6 +561,26 @@ fn uploads_claims_and_deletes_attachments() {
     store.release(&[ChatAttachment::Image(claimed.clone())]);
     assert!(store.resolve(&claimed.id).is_none());
 
+    let missing = ChatAttachment::Image(ChatImageAttachment {
+        id: format!("pending-{}", conn_support::uuid_v4()),
+        ..match &attachment {
+            ChatAttachment::Image(a) => a.clone(),
+            _ => unreachable!(),
+        }
+    });
+    let before = fs::read_dir(store.dir()).unwrap().count();
+    assert!(
+        store
+            .claim_all("Thread 1", &[attachment.clone(), missing])
+            .unwrap_err()
+            .contains("not found")
+    );
+    assert_eq!(
+        fs::read_dir(store.dir()).unwrap().count(),
+        before,
+        "failed batch must release its claimed copies"
+    );
+
     // Delete removes pending uploads only.
     store.delete_pending(&id);
     assert!(store.resolve(&id).is_none());
@@ -754,6 +774,40 @@ fn signs_asset_urls_and_rechecks_them_when_served() {
     );
     let (token, name) = token_and_name(&asset.relative_url);
     assert!(served_path(f.files.resolve_asset(&token, &name, now)).is_some());
+    for extension in ["html", "pdf"] {
+        let id = upload(
+            &f,
+            Some("file"),
+            &format!("app.{extension}"),
+            "application/octet-stream",
+            b"capture",
+        );
+        for disposition in ["inline", "attachment"] {
+            let asset = mint(json!({"_tag":"attachment","attachmentId":id,"disposition":disposition,"renderIntent":"mcp-app"})).unwrap();
+            let (token, name) = token_and_name(&asset.relative_url);
+            let served = f.files.resolve_asset(&token, &name, now).unwrap();
+            let Served::File { render_intent, .. } = served else {
+                panic!("expected file");
+            };
+            assert_eq!(
+                render_intent.is_some(),
+                extension == "html" && disposition == "inline"
+            );
+            let (body, signature) = token.split_once('.').unwrap();
+            let mut claims: serde_json::Value =
+                serde_json::from_slice(&conn_support::base64::url_decode(body).unwrap()).unwrap();
+            claims["renderIntent"] = json!(if render_intent.is_some() {
+                "other"
+            } else {
+                "mcp-app"
+            });
+            let changed = format!(
+                "{}.{signature}",
+                conn_support::base64::url_encode(claims.to_string().as_bytes())
+            );
+            assert!(f.files.resolve_asset(&changed, &name, now).is_none());
+        }
+    }
     assert!(matches!(
         mint(json!({"_tag": "attachment", "attachmentId": "pending-../../x"})),
         Err(AssetsCreateUrlError::AssetAttachmentNotFoundError(_))

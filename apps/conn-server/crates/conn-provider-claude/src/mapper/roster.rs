@@ -504,3 +504,17 @@ impl<E: Env> Mapper<E> {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_started_monitor_is_awaited_once_across_upserts() {
+        let mut roster = Roster::default();
+        let task = json!({"taskId":"monitor-1", "kind":"monitor"});
+        roster.upsert(task.clone());
+        roster.upsert(task);
+        assert_eq!(roster.awaited, VecDeque::from(["monitor-1".to_owned()]));
+    }
+}

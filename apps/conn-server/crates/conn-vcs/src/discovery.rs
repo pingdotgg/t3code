@@ -190,16 +190,14 @@ mod tests {
     /// A CLI that writes more than a pipe holds must not stall the probe until its timeout.
     #[tokio::test(flavor = "current_thread")]
     async fn a_verbose_cli_does_not_stall_the_probe() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = std::env::temp_dir().join(format!("conn-vcs-probe-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let stub = dir.join("verbose");
-        std::fs::write(
+        conn_support::test_util::executable(
             &stub,
             "#!/bin/sh\necho 'verbose 1.0'\nhead -c 300000 /dev/zero | tr '\\0' x\nhead -c 300000 /dev/zero >&2\nexit 0\n",
         )
         .unwrap();
-        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
         let started = std::time::Instant::now();
         let result = probe(&dir, &stub.to_string_lossy(), &["--version"]).await;
         let elapsed = started.elapsed();

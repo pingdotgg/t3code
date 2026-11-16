@@ -314,7 +314,7 @@ impl Helper {
         if let Some(dir) = config_dir {
             command["configDir"] = json!(dir);
         }
-        let result = self.inner.request(&writer, command, timeout).await;
+        let result = self.inner.request(&writer, command, Some(timeout)).await;
         // Our stdin sender goes first: while a clone lives, the host never sees the end of its
         // input, and `stop_if_idle` would wait out the grace period and SIGKILL its group.
         drop(writer);
@@ -404,10 +404,13 @@ impl Inner {
         &self,
         writer: &mpsc::Sender<String>,
         mut command: Value,
-        timeout: Duration,
+        timeout: Option<Duration>,
     ) -> Result<Value, String> {
         let (id, rx) = {
             let mut state = self.lock();
+            if state.replies.len() >= 1024 {
+                return Err("too many pending SDK calls".into());
+            }
             state.next_id += 1;
             let id = state.next_id;
             let (tx, rx) = oneshot::channel();
@@ -421,10 +424,16 @@ impl Inner {
         if writer.send((self.driver.encode)(&command)).await.is_err() {
             return Err("the Claude helper stopped".into());
         }
-        match tokio::time::timeout(timeout, rx).await {
-            Ok(Ok(result)) => result,
-            Ok(Err(_)) => Err("the Claude helper stopped".into()),
-            Err(_) => Err("no answer in time".into()),
+        drop(command);
+        match timeout {
+            Some(timeout) => match tokio::time::timeout(timeout, rx).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(_)) => Err("the Claude helper stopped".into()),
+                Err(_) => Err("no answer in time".into()),
+            },
+            None => rx
+                .await
+                .map_err(|_| "the Claude helper stopped".to_owned())?,
         }
     }
 }
@@ -691,7 +700,7 @@ impl QueryHandle {
         let command = json!({"t": "input", "sessionId": self.id, "message": message});
         self.helper
             .inner
-            .request(&writer, command, timeout)
+            .request(&writer, command, Some(timeout))
             .await
             .map_err(|detail| ProviderError::Failed {
                 operation: "input",
@@ -705,6 +714,20 @@ impl QueryHandle {
         method: &str,
         args: Value,
         timeout: Duration,
+    ) -> ProviderResult<Value> {
+        self.call_with_deadline(method, args, Some(timeout)).await
+    }
+
+    /// MCP App callbacks keep the SDK's own lifetime; cancelling drops their reply slot.
+    pub async fn call_without_timeout(&self, method: &str, args: Value) -> ProviderResult<Value> {
+        self.call_with_deadline(method, args, None).await
+    }
+
+    async fn call_with_deadline(
+        &self,
+        method: &str,
+        args: Value,
+        timeout: Option<Duration>,
     ) -> ProviderResult<Value> {
         let Some(writer) = self.writer().filter(|_| self.is_open()) else {
             return Err(ProviderError::SessionStopped);
@@ -795,6 +818,42 @@ mod tests {
     /// `claude` child is stopped by its fd 3 watcher (SIGTERM, SIGKILL 5 s later). Needs `node`
     /// and `npm ci` in helpers/sdk-host; skipped without them.
     #[tokio::test(flavor = "current_thread")]
+    async fn sdk_calls_without_a_deadline_are_bounded_and_cancel_cleanly() {
+        let helper = Helper::new(
+            HelperCommand::from_path("/nonexistent/unused-sdk-host"),
+            "claudeAgent",
+            plain_driver("claude"),
+        );
+        let (tx, mut rx) = mpsc::channel(1);
+        {
+            let call = helper.inner.request(&tx, json!({"t":"call"}), None);
+            tokio::pin!(call);
+            tokio::select! {
+                _ = &mut call => panic!("a call waits for its reply"),
+                command = rx.recv() => assert!(command.is_some()),
+            }
+            assert_eq!(helper.inner.lock().replies.len(), 1);
+        }
+        assert!(helper.inner.lock().replies.is_empty());
+        {
+            let mut state = helper.inner.lock();
+            for id in 0..1024 {
+                let (reply, _rx) = oneshot::channel();
+                state.replies.insert(id, reply);
+            }
+        }
+        assert_eq!(
+            helper
+                .inner
+                .request(&tx, json!({"t":"call"}), None)
+                .await
+                .unwrap_err(),
+            "too many pending SDK calls"
+        );
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn host_death_ends_sessions_and_children() {
         // `CONN_SDK_HOST` runs it on that host, such as the single executable.
         let command = if std::env::var_os(HELPER_ENV).is_some_and(|p| !p.is_empty()) {
@@ -816,16 +875,14 @@ mod tests {
         // A CLI that ignores stdin and SIGTERM: only the watcher's SIGKILL can end it.
         let stub = dir.join("claude");
         let pid_file = dir.join("pid");
-        std::fs::write(
+        conn_support::test_util::executable(
             &stub,
-            format!(
+            &format!(
                 "#!/bin/sh\necho $$ > {}\ntrap '' TERM\nwhile :; do sleep 1; done\n",
                 pid_file.display()
             ),
         )
         .unwrap();
-        std::fs::set_permissions(&stub, std::os::unix::fs::PermissionsExt::from_mode(0o755))
-            .unwrap();
         let helper = Helper::new(command, "claudeAgent", plain_driver("claude"));
         let mut query = helper
             .open(
@@ -879,13 +936,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let fake = dir.join("host");
-        std::fs::write(
+        conn_support::test_util::executable(
             &fake,
             "#!/bin/sh\necho '{\"ch\":\"host\",\"t\":\"ready\",\"protocol\":99}'\nexec sleep 30\n",
         )
         .unwrap();
-        std::fs::set_permissions(&fake, std::os::unix::fs::PermissionsExt::from_mode(0o755))
-            .unwrap();
         let helper = Helper::new(
             HelperCommand::from_path(&fake),
             "claudeAgent",
@@ -962,15 +1017,13 @@ process.stdin.on("end", () => {{ fs.writeFileSync({marker:?}, "eof"); process.ex
         std::fs::create_dir_all(&dir).unwrap();
         // A host that never answers.
         let fake = dir.join("host");
-        std::fs::write(
+        conn_support::test_util::executable(
             &fake,
             "#!/bin/sh
 exec sleep 30
 ",
         )
         .unwrap();
-        std::fs::set_permissions(&fake, std::os::unix::fs::PermissionsExt::from_mode(0o755))
-            .unwrap();
         let helper = Helper::new(
             HelperCommand::from_path(&fake),
             "claudeAgent",

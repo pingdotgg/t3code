@@ -368,9 +368,9 @@ impl Fake {
         }
         let dir = Workspace::new(name);
         let binary = dir.0.join("codex");
-        std::fs::write(
+        conn_support::test_util::executable(
             &binary,
-            FAKE_CODEX
+            &FAKE_CODEX
                 .replace(
                     "__LOG__",
                     &serde_json::to_string(&dir.0.join("codex.log")).unwrap(),
@@ -380,10 +380,6 @@ impl Fake {
                 .replace("__DELAY__", &delay_ms.to_string()),
         )
         .unwrap();
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
         let config = CodexConfig {
             binary,
             home_path: Some(dir.0.join("codex-home")),

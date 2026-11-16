@@ -46,6 +46,20 @@ pub(crate) enum ToolError {
 
 pub(crate) type ToolResult = Result<Value, ToolError>;
 
+fn trim_non_blank(args: &mut Args, keys: &[&str]) -> Result<(), ToolError> {
+    for &key in keys {
+        if let Some(Value::String(value)) = args.get_mut(key) {
+            *value = value.trim().to_owned();
+            if value.is_empty() {
+                return Err(ToolError::InvalidParams(format!(
+                    "Expected a non-blank string\n  at [\"{key}\"]"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError {
     ToolError::Failure {
         code,
@@ -55,7 +69,9 @@ pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError 
 
 /// Every name in `tools.implemented` has an arm here; a test checks both ways.
 #[cfg(test)]
-pub(crate) const HANDLED: [&str; 43] = [
+pub(crate) const HANDLED: [&str; 45] = [
+    "mcp_call",
+    "mcp_connect",
     "create_threads",
     "t3_attachment_prepare_upload",
     "t3_attachment_discard",
@@ -146,6 +162,7 @@ pub(crate) async fn call(
         "t3_queue" => manage::queue(&cx, &args).await,
         "t3_thread_configure" => manage::configure(&cx, &args).await,
         "t3_thread_organize" => manage::organize(&cx, &args).await,
+        "mcp_call" | "mcp_connect" => panels::invoke(&cx, name, &args).await,
         "panel_open" => panels::open(&cx, &args).await,
         "request_secret" => secrets::request(&cx, &args).await,
         "send_to_user" => message::send_to_user(&cx, &args).await,

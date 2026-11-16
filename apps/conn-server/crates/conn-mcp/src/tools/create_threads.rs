@@ -109,7 +109,7 @@ pub(super) async fn create(cx: &Cx<'_>, args: &Args) -> ToolResult {
                 .unwrap_or("default"),
             request["interactionMode"].as_str(),
         )?;
-        assert_project_enabled(cx, &parent["thread"], &command_id, &selection).await?;
+        assert_project_enabled(cx, &parent["thread"], accepted, &selection)?;
         let mut command = json!({
             "type":"thread.create", "commandId":command_id, "threadId":thread_id,
             "projectId":parent["thread"]["projectId"],
@@ -143,10 +143,12 @@ pub(super) async fn create(cx: &Cx<'_>, args: &Args) -> ToolResult {
             assert_project_enabled(
                 cx,
                 &parent["thread"],
-                &dispatch_id,
+                cx.engine()
+                    .has_receipt(&dispatch_id)
+                    .await
+                    .map_err(internal)?,
                 &projection["thread"]["modelSelection"],
-            )
-            .await?;
+            )?;
             cx.dispatch(json!({
                 "type":"message.dispatch", "commandId":dispatch_id,
                 "threadId":thread_id,"messageId":message_id,"text":prompt,"attachments":[],
@@ -172,21 +174,15 @@ pub(super) async fn create(cx: &Cx<'_>, args: &Args) -> ToolResult {
     Ok(json!({"threads":created}))
 }
 
-async fn assert_project_enabled(
+fn assert_project_enabled(
     cx: &Cx<'_>,
     parent: &Value,
-    command_id: &str,
+    accepted: bool,
     selection: &Value,
 ) -> Result<(), super::ToolError> {
     let instance = selection["instanceId"].as_str().unwrap_or_default();
     let project = parent["projectId"].as_str().unwrap_or_default();
-    if !cx
-        .engine()
-        .has_receipt(command_id)
-        .await
-        .map_err(internal)?
-        && !cx.engine().provider_instance_enabled(project, instance)
-    {
+    if !accepted && !cx.engine().provider_instance_enabled(project, instance) {
         return Err(fail(
             "invalid_request",
             format!("Provider instance \"{instance}\" is disabled for project {project}."),

@@ -88,6 +88,7 @@ fn fields(rule: &Value) -> impl Iterator<Item = &Value> {
 
 fn fits(rule: &Value, value: &Value) -> bool {
     match rule["kind"].as_str().unwrap_or_default() {
+        "Unknown" => true,
         "String" => value.is_string(),
         "Number" => value.is_number(),
         "Boolean" => value.is_boolean(),
@@ -120,6 +121,9 @@ fn decode(
     patterns: &HashMap<String, Regex>,
 ) -> Result<(), String> {
     let expected = rule["expected"].as_str().unwrap_or("a valid value");
+    if rule["kind"] == "Unknown" {
+        return Ok(());
+    }
     if rule["kind"] == "Union" {
         let mut first_error = None;
         for member in rule["members"]
@@ -226,4 +230,15 @@ fn decode(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn every_generated_rule_compiles() {
+        assert!(
+            super::compiled().is_ok(),
+            "generated input patterns must compile"
+        );
+    }
 }

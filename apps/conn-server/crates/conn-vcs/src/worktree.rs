@@ -108,9 +108,7 @@ pub async fn managed_path(cwd: &Path, branch: &str, worktrees_dir: &Path) -> Vcs
         let mut n = 2_u64;
         while path.exists() {
             path = PathBuf::from(format!("{}-{n}", base.display()));
-            n = n
-                .checked_add(1)
-                .ok_or_else(|| invalid(&cwd, "Too many colliding worktree paths."))?;
+            n += 1;
         }
         Ok(path)
     })

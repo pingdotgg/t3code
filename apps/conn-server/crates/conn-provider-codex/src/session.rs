@@ -810,6 +810,73 @@ impl Session for CodexSession {
         &self.id
     }
 
+    fn mcp_app_request(
+        &self,
+        input: conn_provider::mcp_apps::Request,
+    ) -> BoxFuture<'_, ProviderResult<Value>> {
+        Box::pin(async move {
+            use conn_provider::mcp_apps::Operation;
+            if self.inner.lock().closed {
+                return Err(ProviderError::SessionStopped);
+            }
+            let native = native_thread_id(&input.provider_thread).ok_or_else(|| {
+                ProviderError::Protocol {
+                    detail: format!(
+                        "Provider thread {} is missing a native Codex thread id.",
+                        input.provider_thread.id
+                    ),
+                }
+            })?;
+            let (method, params) = match &input.operation {
+                Operation::ListTools => (
+                    "mcpServerStatus/list",
+                    json!({"threadId":native,"serverName":input.server,"detail":"toolsAndAuthOnly"}),
+                ),
+                Operation::CallTool { tool, arguments } => (
+                    "mcpServer/tool/call",
+                    json!({"threadId":native,"server":input.server,"tool":tool,"arguments":arguments}),
+                ),
+                Operation::ReadResource { uri } => (
+                    "mcpServer/resource/read",
+                    json!({"threadId":native,"server":input.server,"uri":uri}),
+                ),
+            };
+            let mut response = self.inner.server.request(method, params.clone()).await;
+            if matches!(&response, Err(CallError::Rpc(e)) if e.code == -32600 && e.message.starts_with("thread not found:"))
+            {
+                self.inner
+                    .resume(
+                        &native,
+                        input.provider_thread.app_thread_id.as_deref(),
+                        self.inner.open_cwd.as_deref(),
+                        self.inner.open_model.as_deref(),
+                        true,
+                    )
+                    .await?;
+                response = self.inner.server.request(method, params).await;
+            }
+            let response = response.map_err(call_failed("mcp_app_request"))?;
+            Ok(match input.operation {
+                Operation::ListTools => response
+                    .get("data")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .find(|s| s.get("name").and_then(Value::as_str) == Some(input.server.as_str()))
+                    .and_then(|s| s.get("tools"))
+                    .and_then(Value::as_object)
+                    .map_or_else(
+                        || json!([]),
+                        |tools| json!(tools.values().collect::<Vec<_>>()),
+                    ),
+                Operation::CallTool { .. } => conn_provider::mcp_apps::call_result(&response),
+                Operation::ReadResource { .. } => {
+                    json!({"contents":response.get("contents").cloned().unwrap_or_else(||json!([]))})
+                }
+            })
+        })
+    }
+
     fn thread_load_model_selection(
         &self,
         selection: &conn_contract::ModelSelection,
@@ -1329,6 +1396,12 @@ while IFS= read -r line; do
     *'"method":"initialize"'*) emit "{\"id\":$id,\"result\":{\"userAgent\":\"t3code_desktop/0.167.0 (x)\"}}" ;;
     *'"method":"model/list"'*) emit "{\"id\":$id,\"result\":{\"data\":[],\"nextCursor\":null}}" ;;
     *'"method":"thread/start"'*) emit "{\"id\":$id,\"result\":{\"thread\":{\"id\":\"th1\",\"createdAt\":1,\"updatedAt\":2}}}" ;;
+    *'"method":"mcpServerStatus/list"'*) emit "{\"id\":$id,\"result\":{\"data\":[{\"name\":\"apps-stub\",\"tools\":{\"refresh\":{\"name\":\"refresh\",\"annotations\":{\"readOnlyHint\":true}}}}]}}" ;;
+    *'"method":"mcpServer/tool/call"'*) emit "{\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}],\"structuredContent\":{\"ok\":true},\"isError\":false,\"_meta\":{\"stub\":true}}}" ;;
+    *'"method":"mcpServer/resource/read"'*'ui://unloaded'*)
+      if [ "${mcp_loaded:-0}" = 0 ]; then emit "{\"id\":$id,\"error\":{\"code\":-32600,\"message\":\"thread not found: th1\"}}"; else emit "{\"id\":$id,\"result\":{\"contents\":[]}}"; fi ;;
+    *'"method":"thread/resume"'*'th1'*) mcp_loaded=1; emit "{\"id\":$id,\"result\":{\"thread\":{\"id\":\"th1\"}}}" ;;
+    *'"method":"mcpServer/resource/read"'*) emit "{\"id\":$id,\"result\":{\"contents\":[{\"uri\":\"ui://stub\",\"text\":\"<h1>Stub</h1>\",\"mimeType\":\"text/html;profile=mcp-app\"}]}}" ;;
     *'"method":"config/read"'*) emit "{\"id\":$id,\"result\":{\"config\":{}}}" ;;
     *'"method":"turn/start"'*'approve me'*)
       emit "{\"id\":$id,\"result\":{\"turn\":{\"id\":\"tu1\",\"startedAt\":null}}}"
@@ -1370,9 +1443,8 @@ done
                     std::env::temp_dir().join(format!("conn-codex-fake-{}", std::process::id()));
                 std::fs::create_dir_all(&dir).unwrap();
                 let script = dir.join("codex");
-                std::fs::write(&script, format!("#!/bin/sh\n{FAKE}")).unwrap();
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+                conn_support::test_util::executable(&script, &format!("#!/bin/sh\n{FAKE}"))
+                    .unwrap();
                 script
             })
             .clone();
@@ -1429,6 +1501,103 @@ done
                 return seen;
             }
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn mcp_apps_forward_through_the_existing_app_server() {
+        use conn_provider::mcp_apps::{Operation, Request};
+        let provider = provider();
+        let opened = provider
+            .open_session(OpenSessionInput {
+                thread_id: "t1".into(),
+                provider_session_id: "apps-session".into(),
+                model_selection: from_json(json!({"instanceId":"codex","model":"gpt-6-luna"}))
+                    .unwrap(),
+                runtime_policy: policy(),
+                resume_from_session: None,
+                mcp_servers: vec![],
+                host: None,
+            })
+            .await
+            .unwrap();
+        let session = opened.session;
+        let thread = session
+            .ensure_thread(EnsureThreadInput {
+                thread_id: "t1".into(),
+                title: None,
+                model_selection: from_json(json!({"instanceId":"codex","model":"gpt-6-luna"}))
+                    .unwrap(),
+                runtime_policy: policy(),
+                existing_provider_thread: None,
+            })
+            .await
+            .unwrap();
+        let request = |operation| Request {
+            provider_thread: thread.clone(),
+            server: "apps-stub".into(),
+            operation,
+        };
+        let tools = session
+            .mcp_app_request(request(Operation::ListTools))
+            .await
+            .unwrap();
+        assert_eq!(tools[0]["name"], "refresh");
+        let result = session
+            .mcp_app_request(request(Operation::CallTool {
+                tool: "refresh".into(),
+                arguments: json!({"city":"Amsterdam"}),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(
+            result,
+            json!({"content":[{"type":"text","text":"ok"}],"structuredContent":{"ok":true},"_meta":{"stub":true}})
+        );
+        let result = session
+            .mcp_app_request(request(Operation::ReadResource {
+                uri: "ui://stub".into(),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(result["contents"][0]["uri"], "ui://stub");
+        let resumed = session
+            .mcp_app_request(request(Operation::ReadResource {
+                uri: "ui://unloaded".into(),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(resumed, json!({"contents":[]}));
+        let mut missing_native = conn_contract::to_json(&thread);
+        missing_native["nativeThreadRef"] = Value::Null;
+        let error = session
+            .mcp_app_request(Request {
+                provider_thread: from_json(missing_native).unwrap(),
+                server: "apps-stub".into(),
+                operation: Operation::ListTools,
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error,ProviderError::Protocol {ref detail} if detail == &format!("Provider thread {} is missing a native Codex thread id.",thread.id)),
+            "{error}"
+        );
+        let transcript =
+            std::fs::read_to_string(provider.config.binary.with_extension("stdin")).unwrap();
+        let calls: Vec<Value> = transcript
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .filter(|call| {
+                call["params"]["server"] == "apps-stub"
+                    || call["params"]["serverName"] == "apps-stub"
+            })
+            .collect();
+        assert!(calls.iter().any(|call| call["method"] == "mcpServerStatus/list" && call["params"] == json!({"threadId":"th1","serverName":"apps-stub","detail":"toolsAndAuthOnly"})));
+        assert!(calls.iter().any(|call| call["method"] == "mcpServer/tool/call" && call["params"] == json!({"threadId":"th1","server":"apps-stub","tool":"refresh","arguments":{"city":"Amsterdam"}})));
+        session.close().await;
+        assert!(matches!(
+            session.mcp_app_request(request(Operation::ListTools)).await,
+            Err(ProviderError::SessionStopped)
+        ));
     }
 
     /// A session dropped without `close` (a task ended early) still leaves the app-server, and
@@ -1671,9 +1840,7 @@ done
         let dir = std::env::temp_dir().join(format!("conn-codex-fork-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let script = dir.join("codex");
-        std::fs::write(&script, format!("#!/bin/sh\n{FAKE}")).unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        conn_support::test_util::executable(&script, &format!("#!/bin/sh\n{FAKE}")).unwrap();
         let log = dir.join("codex.stdin");
         let _ = std::fs::remove_file(&log);
         let provider = CodexProvider::new(
@@ -1804,9 +1971,7 @@ done
         let dir = std::env::temp_dir().join(format!("conn-codex-restart-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let script = dir.join("codex");
-        std::fs::write(&script, format!("#!/bin/sh\n{FAKE}")).unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        conn_support::test_util::executable(&script, &format!("#!/bin/sh\n{FAKE}")).unwrap();
         let log = dir.join("codex.stdin");
         let _ = std::fs::remove_file(&log);
         let provider = CodexProvider::new(

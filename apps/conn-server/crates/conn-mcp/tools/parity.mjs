@@ -12,6 +12,7 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { checkMcpApps } from "./mcp-apps-parity.mjs";
 import { McpSession, oauthMcpToken, pairBearer } from "./mcp-client.mjs";
 import { claudeStub, tsCredential, rustCredential, fileText, projectProviderPolicy } from "./handoff-fixture.mjs";
 import { monorepo } from "../../../tools/monorepo.mjs";
@@ -32,6 +33,7 @@ if (rustBinary === undefined) {
   process.exit(2);
 }
 monorepo();
+await checkMcpApps(NodePath.join(NodePath.dirname(rustBinary), "mcp_apps"));
 const implemented = NodeFS.readFileSync(new URL("../tools.implemented", import.meta.url), "utf8")
   .split("\n")
   .map((line) => line.trim())
@@ -291,6 +293,9 @@ const searchOrder = (value) => value.matches.map((match) => [match.title, match.
 // Per-server state the calls refer to: project and thread ids differ.
 const context = [{}, {}];
 const steps = [
+  ["mcp_call", () => ({ tool: "weather", arguments: {} })],
+  ["mcp_connect", () => ({ name: "stub", url: "http://127.0.0.1:1/mcp" })],
+  ["mcp_connect", () => ({ name: "stub" })],
   [
     "t3_project_list",
     () => ({}),
@@ -430,13 +435,18 @@ const steps = [
         "https://GitHub.com/O/R/pull/5",
         "https://github.com/o/r/pull/3",
         "not a url",
-        "https://github.com/g/s/pull/2",
+        // Match input and key order: the servers can assign different millisecond ties.
+        "https://github.com/z/s/pull/2",
       ],
     }),
     undefined,
     { same: (v) => v },
   ],
-  ["list_thread_pull_requests", (c) => ({ threadId: c.idleThreadId }), undefined, { same: (v) => v }],
+  // Batch links can tie on one server's millisecond clock but not the other's; unit tests
+  // check list order with fixed linkedAt values.
+  ["list_thread_pull_requests", (c) => ({ threadId: c.idleThreadId }), undefined, {
+    same: (v) => ({ ...v, pullRequests: v.pullRequests.toSorted((a, b) => canonical(a).localeCompare(canonical(b))) }),
+  }],
   [
     "list_thread_pull_requests",
     (c) => ({ threadId: c.idleThreadId, states: ["merged"] }),
@@ -659,6 +669,23 @@ if (noModel) {
   await Promise.all(agents.map((agent) => agent.initialize()));
   const state = [{},{}];
   const agentSteps = [
+    ...[
+      ["mcp_call",{tool:" "}], ["mcp_call",{tool:"x".repeat(201)}],
+      ["mcp_call",{tool:" weather ",server:" stub "}], ["mcp_call",{tool:"\uFEFFweather\n",server:null}],
+      ["mcp_call",{tool:"x".repeat(200)}], ["mcp_call",{tool:"🌦".repeat(101)}],
+      ["mcp_call",{tool:"weather",server:" "}], ["mcp_connect",{url:" "}],
+      ["mcp_connect",{command:"x".repeat(8193)}], ["mcp_connect",{url:"x".repeat(8192)}],
+      ["mcp_connect",{name:"x".repeat(201),url:"http://localhost"}],
+      ["mcp_connect",{url:"http://localhost",headers:{key:"x".repeat(8193)}}],
+      ["mcp_connect",{command:"node",env:{key:7}}],
+      ["mcp_connect",{command:" node ",env:{key:"  raw  "}}],
+      ["mcp_call",{tool:"weather",arguments:{}}],
+      ["mcp_connect",{name:"stub",url:"http://127.0.0.1:1/mcp"}],
+      ["mcp_connect",{name:"stub"}],
+      ["mcp_connect",{url:"http://localhost",command:"node"}],
+      ["mcp_connect",{command:"node",headers:{key:"value"}}],
+      ["mcp_connect",{url:"http://localhost",env:{key:"value"}}],
+    ].map(([tool,args]) => [tool,() => args]),
     ["t3_worktree_status", () => ({}), (v) => ({...v,projectWorkspaceRoot:"<project>"})],
     ["create_threads", () => ({threads:[{title:"Batch one"},{}],clientRequestId:"handoff-batch"}), (v) => v.threads.map((t) => ({title:t.title,status:t.status,createdBy:t.createdBy,creationSource:t.creationSource,providerInstanceId:t.providerInstanceId,model:t.model})), (c,v) => {c.targetThreadId=v.threads[0].threadId;}],
     ["create_threads", () => ({threads:[{title:"Batch one"},{}],clientRequestId:"handoff-batch"}), (v) => v.threads.map((t) => ({title:t.title,status:t.status}))],

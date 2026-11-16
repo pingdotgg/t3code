@@ -213,6 +213,14 @@ all 23 are.
 
 ## Memory
 
+MCP App bounds that differ from T3:
+
+- 256 context entries per conversation.
+- 16,384 fork ancestors per context lookup.
+- 1,024 pending SDK host replies.
+- 32 native App calls per SDK query.
+- 20 seconds for document capture.
+
 `examples/memory_load.rs` runs fake turns and prints RSS and live heap (`stats_alloc`, dev only):
 
 ```sh
