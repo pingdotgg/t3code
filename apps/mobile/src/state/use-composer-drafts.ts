@@ -32,6 +32,7 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import { draftModelPickMatchesThread } from "@t3tools/shared/model";
 
+import { forgetDraftImage } from "../lib/sentImageHandoff";
 import { writeFileAtomically } from "../lib/atomic-file";
 import { createComposerContextHistory, referencedComposerContext } from "../lib/composerContext";
 import { isQueuedEditDraftKey } from "./queued-edit-draft-key";
@@ -992,7 +993,8 @@ export async function releaseUnusedComposerAttachmentFiles(
     ids.add(attachment.uploadedAttachmentId);
     uploadCandidates.set(attachment.uploadEnvironmentId, ids);
   }
-  if (candidates.size === 0 && uploadCandidates.size === 0) {
+  const previewCandidates = attachments.filter((attachment) => attachment.type === "image");
+  if (candidates.size === 0 && uploadCandidates.size === 0 && previewCandidates.length === 0) {
     return;
   }
 
@@ -1004,6 +1006,16 @@ export async function releaseUnusedComposerAttachmentFiles(
     return;
   }
   await flushThreadOutbox();
+
+  const owners = [
+    ...Object.values(appAtomRegistry.get(composerDraftsAtom)),
+    ...Object.values(appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom)).flat(),
+    ...signedOutAttachmentOwners(),
+  ];
+  const retainedIds = new Set(owners.flatMap((owner) => owner.attachments.map(({ id }) => id)));
+  for (const attachment of previewCandidates) {
+    if (!retainedIds.has(attachment.id)) forgetDraftImage(attachment.id);
+  }
 
   const allFilesReferenced = [...candidates].every(isComposerAttachmentFileReferenced);
   const allUploadsReferenced = [...uploadCandidates].every(([environmentId, attachmentIds]) =>
@@ -1073,7 +1085,9 @@ export function scheduleUnusedComposerAttachmentCleanup(
   if (
     !attachments.some(
       (attachment) =>
-        attachment.fileUri !== undefined || attachment.uploadedAttachmentId !== undefined,
+        attachment.type === "image" ||
+        attachment.fileUri !== undefined ||
+        attachment.uploadedAttachmentId !== undefined,
     )
   ) {
     return;

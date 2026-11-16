@@ -31,6 +31,7 @@ import {
 import { onTestFinished, vi } from "vite-plus/test";
 
 import { buildIncomingShareDraft } from "../features/sharing/incoming-share-model";
+import { rememberDraftImage, sentImageHandoff } from "../lib/sentImageHandoff";
 import { composerContextSendBlockReason } from "../lib/composerContext";
 
 const composerDraftFileMocks = vi.hoisted(() => {
@@ -1172,6 +1173,48 @@ describe("mobile composer drafts", () => {
     appAtomRegistry.set(composerDraftsAtom, {});
     await releaseUnusedComposerAttachmentFiles([file]);
     expect(composerAttachmentCleanupMocks.remove).toHaveBeenCalledWith(file.fileUri);
+  });
+
+  it("releases a discarded paste's draft handoff after its draft and outbox let go", async () => {
+    const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    onTestFinished(() => outboxLoad.mockRestore());
+    const image = {
+      id: "loaded-discarded-paste",
+      type: "image" as const,
+      name: "pasted.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      previewUri: "data:image/png;base64,AAAA",
+    };
+    const handoff = { uri: "file:///cache/loaded-discarded-paste.png", aspectRatio: 1 };
+    rememberDraftImage(image.id, handoff);
+    appAtomRegistry.set(composerDraftsAtom, {
+      "environment-1:thread-1": { text: "", attachments: [image] },
+    });
+    await releaseUnusedComposerAttachmentFiles([image]);
+    expect(sentImageHandoff("missing", 0, image.id)).toEqual(handoff);
+    appAtomRegistry.set(composerDraftsAtom, {});
+    appAtomRegistry.set(threadOutboxManager.queuedMessagesByThreadKeyAtom, {
+      "environment-1:thread-1": [
+        {
+          environmentId: EnvironmentId.make("environment-1"),
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("queued-paste"),
+          commandId: CommandId.make("command-paste"),
+          text: "",
+          attachments: [image],
+          createdAt: "2026-08-31T12:00:00.000Z",
+        },
+      ],
+    });
+    await releaseUnusedComposerAttachmentFiles([image]);
+    expect(sentImageHandoff("missing", 0, image.id)).toEqual(handoff);
+    appAtomRegistry.set(threadOutboxManager.queuedMessagesByThreadKeyAtom, {});
+    appAtomRegistry.set(composerDraftsAtom, {
+      "environment-1:thread-1": { text: "", attachments: [image] },
+    });
+    clearComposerDraftContent("environment-1:thread-1");
+    await vi.waitFor(() => expect(sentImageHandoff("missing", 0, image.id)).toBeUndefined());
   });
 
   it("retains a referenced file-backed image and releases it once unreferenced", async () => {

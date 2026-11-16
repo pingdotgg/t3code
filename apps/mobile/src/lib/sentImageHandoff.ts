@@ -34,6 +34,10 @@ export function rememberDraftImage(attachmentId: string, image: SentImageHandoff
   remember(`draft:${attachmentId}`, image);
 }
 
+export function forgetDraftImage(attachmentId: string): void {
+  forget(`draft:${attachmentId}`);
+}
+
 export function rememberSentImage(messageId: string, index: number, image: SentImageHandoff): void {
   remember(`message:${messageId}:${index}`, image);
 }

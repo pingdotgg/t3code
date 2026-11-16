@@ -45,6 +45,13 @@ import { AsyncResult, AtomRegistry } from "effect/reactivity";
 import type { DraftComposerImageAttachment } from "./composerImages";
 import { MaterializedPreviewKey, materializedPreviewAtom } from "./composerImagePreview";
 
+import {
+  forgetDraftImage,
+  rememberDraftImage,
+  rememberSentImage,
+  sentImageHandoff,
+} from "./sentImageHandoff";
+
 describe("materializedPreviewAtom", () => {
   it("keeps the materialized preview when the upload reference lands", async () => {
     const registry = AtomRegistry.make();
@@ -166,4 +173,55 @@ describe("materializedPreviewAtom", () => {
       ).toEqual([]),
     );
   });
+  it.each([false, true])(
+    "releases a loaded draft preview after discard, preserving a sent handoff: %s",
+    async (sent) => {
+      const attachment: DraftComposerImageAttachment = {
+        id: `loaded-paste-${sent}`,
+        type: "image",
+        name: "pasted.png",
+        mimeType: "image/png",
+        sizeBytes: 3,
+        previewUri: "data:image/png;base64,AAAA",
+      };
+      const registry = AtomRegistry.make();
+      const atom = materializedPreviewAtom(new MaterializedPreviewKey(attachment));
+      const unmount = registry.mount(atom);
+      try {
+        await vi.waitFor(() => expect(AsyncResult.isSuccess(registry.get(atom))).toBe(true));
+        const uri = `file:///cache/t3-composer-previews/${attachment.id}.png`;
+        vi.useFakeTimers();
+        rememberDraftImage(attachment.id, { uri, aspectRatio: 1 });
+        unmount();
+        registry.dispose();
+        await vi.runAllTimersAsync();
+        expect(mocks.files.has(uri)).toBe(true);
+        // Replacing the same entry exercises release while retaining its file.
+        rememberDraftImage(attachment.id, { uri, aspectRatio: 2 });
+        await vi.runAllTimersAsync();
+        expect(mocks.files.has(uri)).toBe(true);
+        if (sent) rememberSentImage("sent-paste", 0, { uri, aspectRatio: 2 });
+        forgetDraftImage(attachment.id);
+        expect(sentImageHandoff("missing", 0, attachment.id)).toBeUndefined();
+        await vi.runAllTimersAsync();
+        if (sent) {
+          expect(mocks.files.has(uri)).toBe(true);
+          expect(sentImageHandoff("sent-paste", 0)).toEqual({ uri, aspectRatio: 2 });
+          for (let index = 0; index < 64; index += 1) {
+            rememberSentImage(`eviction-${index}`, 0, {
+              uri: "file:///external.png",
+              aspectRatio: 1,
+            });
+          }
+        }
+        await vi.runAllTimersAsync();
+        expect(mocks.files.has(uri)).toBe(false);
+      } finally {
+        unmount();
+        registry.dispose();
+        forgetDraftImage(attachment.id);
+        vi.useRealTimers();
+      }
+    },
+  );
 });
