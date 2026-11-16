@@ -497,15 +497,15 @@ export const SidebarThreadFolderEmptyRow = memo(function SidebarThreadFolderEmpt
       data-thread-folder-drop={props.folderKey}
       className={cn(
         threadFolderMemberClassName(props.folder.icon, props.style),
-        "list-none rounded-b-lg px-2.5 pb-2",
+        "list-none rounded-b-lg pb-1.5",
       )}
     >
       {props.folder.threadIds.length > 0 ? (
-        <span className="ps-6.5 text-xs text-sidebar-muted-foreground">
+        <span className="flex h-[30px] items-center ps-9 text-xs text-sidebar-muted-foreground">
           No threads in this view
         </span>
       ) : (
-        <span className="flex h-7 items-center justify-center rounded-md border border-dashed border-sidebar-foreground/18 text-xs text-sidebar-muted-foreground">
+        <span className="mx-(--sidebar-row-content-inset) mt-1 flex h-8 items-center justify-center rounded-md border border-dashed border-sidebar-foreground/18 text-xs text-sidebar-muted-foreground">
           Drag threads here
         </span>
       )}
@@ -513,7 +513,7 @@ export const SidebarThreadFolderEmptyRow = memo(function SidebarThreadFolderEmpt
   );
 });
 
-/** The last line of an open folder: its snoozed and settled members, folded until opened. */
+/** Heads an open folder's snoozed and settled members, folded until opened. */
 export const SidebarThreadFolderParkedRow = memo(function SidebarThreadFolderParkedRow(props: {
   folder: EnvironmentThreadFolder;
   folderKey: string;
@@ -521,6 +521,7 @@ export const SidebarThreadFolderParkedRow = memo(function SidebarThreadFolderPar
   label: string;
   snoozed: boolean;
   expanded: boolean;
+  closesCard: boolean;
   onToggle: (folderKey: string) => void;
 }) {
   const Icon = props.snoozed ? AlarmClockIcon : CheckIcon;
@@ -530,7 +531,8 @@ export const SidebarThreadFolderParkedRow = memo(function SidebarThreadFolderPar
       data-thread-folder-drop={props.folderKey}
       className={cn(
         threadFolderMemberClassName(props.folder.icon, props.style),
-        "list-none rounded-b-lg pb-1",
+        "list-none",
+        props.closesCard && "rounded-b-lg pb-1",
       )}
     >
       <button

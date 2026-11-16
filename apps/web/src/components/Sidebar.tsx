@@ -4321,17 +4321,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             block.settled ? null : block.folder.icon,
                             threadFolderStyle,
                           );
-                          for (const [index, row] of block.rows.entries()) {
-                            items.push(
-                              renderThreadRow(row.thread, row.section, undefined, {
-                                dropKey: block.key,
-                                parent: sidebarThreadFolderRowId(block.key),
-                                tintClassName: memberTint,
-                                isLast: block.parked === null && index === block.rows.length - 1,
-                              }),
-                            );
-                          }
-                          if (block.parked !== null) {
+                          const parkedStart =
+                            block.parked === null
+                              ? -1
+                              : block.rows.findIndex(
+                                  (row) => row.section === "snoozed" || row.section === "settled",
+                                );
+                          const pushParked = () => {
+                            if (block.parked === null) return;
                             items.push(
                               <SidebarThreadFolderParkedRow
                                 key={`parked:${block.key}`}
@@ -4341,10 +4338,25 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 label={threadFolderParkedLabel(block.parked, timestampFormat)}
                                 snoozed={block.parked.snoozedCount > 0}
                                 expanded={block.parked.expanded}
+                                closesCard={parkedStart === -1}
                                 onToggle={handleToggleThreadFolderParked}
                               />,
                             );
+                          };
+                          for (const [index, row] of block.rows.entries()) {
+                            if (index === parkedStart) pushParked();
+                            items.push(
+                              renderThreadRow(row.thread, row.section, undefined, {
+                                dropKey: block.key,
+                                parent: sidebarThreadFolderRowId(block.key),
+                                tintClassName: memberTint,
+                                isLast:
+                                  (block.parked === null || parkedStart !== -1) &&
+                                  index === block.rows.length - 1,
+                              }),
+                            );
                           }
+                          if (parkedStart === -1) pushParked();
                           if (!block.collapsed && block.threads.length === 0) {
                             items.push(
                               <SidebarThreadFolderEmptyRow

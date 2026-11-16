@@ -1931,14 +1931,23 @@ describe("thread folders", () => {
       parked: { snoozedCount: 1, settledCount: 1, expanded: false },
       nextWakeAt: snoozed.snoozedUntil,
     });
-    // Pressing the footer lists the parked members after the live ones.
+    // Pressing the footer lists the parked members under it, after the live ones.
     const parkedOpen = buildThreadListV2Items({
       ...input,
       collapsedFolderKeys: new Set([environmentId + ":folder:parked"]),
     });
     expect(
-      parkedOpen.items.filter((item) => item.variant === "slim").map((item) => item.thread.id),
-    ).toEqual([snoozed.id, settled.id]);
+      buildThreadListV2ListItems({ ...parkedOpen, pendingTasks: [] })
+        .map((item) => (item.type === "v2-thread" ? item.item.thread.id : item.type))
+        .slice(1, 7),
+    ).toEqual([
+      "v2-folder-header",
+      pinned.id,
+      filed.id,
+      "v2-folder-parked",
+      snoozed.id,
+      settled.id,
+    ]);
     expect(layout.snoozedCount).toBe(0);
     expect(layout.settledCount).toBe(0);
     const collapsed = buildThreadListV2Items({

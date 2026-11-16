@@ -815,7 +815,7 @@ export function buildThreadListV2ListItems(input: {
     });
     pushRange(foldersAt("settled"), settledShelfHeaderIndex, threadItems.length);
   }
-  // An open top folder ends with its parked footer, after its last shown member.
+  // An open top folder's parked footer heads its shown snoozed and settled members.
   for (const header of input.folderHeaders ?? []) {
     if (header.parked === null) continue;
     const headerIndex = result.findIndex(
@@ -826,7 +826,8 @@ export function buildThreadListV2ListItems(input: {
     while (
       end < result.length &&
       result[end]!.type === "v2-thread" &&
-      (result[end] as ThreadListV2ThreadListItem).item.folderKey === header.folderKey
+      (result[end] as ThreadListV2ThreadListItem).item.folderKey === header.folderKey &&
+      (result[end] as ThreadListV2ThreadListItem).item.variant !== "slim"
     ) {
       end += 1;
     }
