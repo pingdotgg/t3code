@@ -164,6 +164,28 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
     }).pipe(provideHost),
   );
 
+  it.live("leaves a leaderless group alone when it was recorded in an earlier boot", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-ledger-" });
+      const gate = path.join(stateDir, "gate");
+      NodeChildProcess.execFileSync("mkfifo", [gate]);
+      const unrelated = yield* spawnGroup(SERVE_ARGS, `sleep 600 & read _ < '${gate}'; exit 0`);
+      yield* recordFromDeadServer(stateDir, unrelated);
+      yield* fs.writeFileString(gate, "\n");
+      yield* unrelated.exited;
+
+      const restarted = yield* OpenCodeServerLedger.make({ stateDir }).pipe(
+        Effect.provideService(HostProcess.BootTime, (yield* HostProcess.BootTime) + 3600),
+      );
+      yield* restarted.reapOrphans;
+
+      expect(groupExists(unrelated.pid)).toBe(true);
+      expect(yield* fs.readDirectory(path.join(stateDir, "opencode-servers"))).toEqual([]);
+    }).pipe(provideHost),
+  );
+
   it.live("records a group whose spawned wrapper already exited", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

@@ -25,6 +25,7 @@ const OpenCodeServerEntry = Schema.Struct({
   port: Schema.Int,
   stateDir: Schema.String,
   owner: ProcessIdentity,
+  boot: Schema.optionalKey(Schema.Int),
 });
 type OpenCodeServerEntry = typeof OpenCodeServerEntry.Type;
 const OpenCodeServerEntryJson = Schema.fromJsonString(OpenCodeServerEntry);
@@ -46,6 +47,7 @@ const ENTRY_DIRECTORY = "opencode-servers";
 const ENTRY_FILE = /^\d+\.json$/;
 const STOP_POLL_INTERVAL = "50 millis";
 const STOP_POLL_ATTEMPTS = 40;
+const BOOT_TOLERANCE_SECONDS = 60;
 
 interface ObservedProcess {
   readonly pid: number;
@@ -184,6 +186,7 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
       ),
     );
 
+  const boot = yield* HostProcess.BootTime;
   const ownerPid = input.ownerPid ?? process.pid;
   const ownerProcess = yield* observe(ownerPid);
   const owner =
@@ -220,6 +223,7 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
         port: server.port,
         stateDir: input.stateDir,
         owner,
+        boot,
       };
       yield* writeFileStringAtomically({
         filePath: entryPath,
@@ -243,23 +247,39 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
     ),
   );
 
-  // Signals only a group whose recorded member still has the same pid, start
-  // time, and group and still has the same command line or serve arguments, so
-  // a recycled pid is never touched.
+  const recordedMemberRuns = (entry: OpenCodeServerEntry) =>
+    observe(entry.pid).pipe(
+      Effect.map(
+        (observed) =>
+          observed !== undefined &&
+          !observed.zombie &&
+          observed.startTime === entry.startTime &&
+          observed.pgid === entry.pgid &&
+          (observed.command === entry.command ||
+            (entry.args !== undefined && runsServe(observed, entry.args))),
+      ),
+    );
+
+  // Commands the server started can outlive it in its group. A reused pgid needs a new
+  // leader, which must exit too before its group is leaderless, so a leaderless group
+  // from the recorded boot is taken as the server's.
+  const leaderlessGroupRemains = Effect.fn("OpenCodeServerLedger.leaderlessGroupRemains")(
+    function* (entry: OpenCodeServerEntry) {
+      if (entry.boot === undefined || Math.abs(entry.boot - boot) > BOOT_TOLERANCE_SECONDS) {
+        return false;
+      }
+      const leader = yield* observe(entry.pgid);
+      if (leader !== undefined && !leader.zombie && leader.pgid === entry.pgid) return false;
+      return (yield* observeGroup(entry.pgid)).some((member) => !member.zombie);
+    },
+  );
+
+  // Signals a group only while its recorded member still runs as recorded, or while the
+  // group lives on without a leader, so a recycled pid that leads its own group is never touched.
   const stopOrphan = Effect.fn("OpenCodeServerLedger.stopOrphan")(function* (
     entry: OpenCodeServerEntry,
   ) {
-    const observed = yield* observe(entry.pid);
-    if (
-      observed === undefined ||
-      observed.zombie ||
-      observed.startTime !== entry.startTime ||
-      observed.pgid !== entry.pgid ||
-      (observed.command !== entry.command &&
-        (entry.args === undefined || !runsServe(observed, entry.args)))
-    ) {
-      return;
-    }
+    if (!(yield* recordedMemberRuns(entry)) && !(yield* leaderlessGroupRemains(entry))) return;
     yield* Effect.logInfo("Stopping an OpenCode server left by a previous T3 Code server", {
       pid: entry.pgid,
       port: entry.port,

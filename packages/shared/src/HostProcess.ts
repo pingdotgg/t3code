@@ -32,6 +32,13 @@ export const LinuxLibc = Context.Reference<"gnu" | "musl">(
   },
 );
 
+// Epoch seconds, derived from uptime, so it shifts with wall-clock changes: compare with a tolerance.
+export const BootTime = Context.Reference<number>("@t3tools/shared/HostProcess/BootTime", {
+  // A reference default runs outside any Effect, so it has no Clock to read.
+  // @effect-diagnostics-next-line globalDate:off
+  defaultValue: () => Math.round(Date.now() / 1000 - NodeOS.uptime()),
+});
+
 export const Hostname = Context.Reference<string>("@t3tools/shared/HostProcess/Hostname", {
   defaultValue: () => NodeOS.hostname(),
 });
