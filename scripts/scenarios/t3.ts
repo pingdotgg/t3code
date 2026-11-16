@@ -15,10 +15,14 @@ import { run } from "./shell.ts";
 
 export interface T3State {
   /** Creates a git repository holding `files` and adds it as a project. Returns its path. */
-  readonly project: (title: string, files?: Readonly<Record<string, string>>) => Promise<string>;
+  readonly project: (
+    title: string,
+    files?: Readonly<Record<string, string | Uint8Array>>,
+  ) => Promise<string>;
   /**
    * Starts a thread in a project and plays one replayed turn per message before returning.
-   * `model` is a dev replay recording: showcase, todo-list, approval, question, multi-turn.
+   * `model` is a dev replay recording: showcase, todo-list, approval, question, multi-turn,
+   * command-output.
    */
   readonly thread: (input: {
     readonly project: string;
@@ -69,7 +73,7 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
 
   const project = Effect.fn("scenario.project")(function* (
     title: string,
-    files: Readonly<Record<string, string>>,
+    files: Readonly<Record<string, string | Uint8Array>>,
   ) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -82,7 +86,9 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
     const workspace = path.join(parent, title);
     for (const [file, content] of Object.entries({ "README.md": "", ...files })) {
       yield* fs.makeDirectory(path.dirname(path.join(workspace, file)), { recursive: true });
-      yield* fs.writeFileString(path.join(workspace, file), content);
+      yield* typeof content === "string"
+        ? fs.writeFileString(path.join(workspace, file), content)
+        : fs.writeFile(path.join(workspace, file), content);
     }
     const git = (args: ReadonlyArray<string>) => run("git", args, { cwd: workspace });
     const author = ["-c", "user.name=Scenario", "-c", "user.email=scenario@example.invalid"];
