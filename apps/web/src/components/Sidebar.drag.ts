@@ -33,6 +33,7 @@ export function createSidebarCollisionDetection(
   options: {
     items?: readonly SidebarListItem[];
     activationY?: number | null;
+    independentShelves?: boolean;
   } = {},
 ): CollisionDetection {
   const validity = new Map<string, boolean>();
@@ -40,7 +41,27 @@ export function createSidebarCollisionDetection(
   let previousPointerY = options.activationY;
   let boundarySection: "pinned" | "active" | undefined;
   return (args) => {
-    let collisions = closestCenter(args);
+    const viewports = new Map<Element, DOMRect>();
+    const candidates = options.independentShelves
+      ? args.droppableContainers.filter((container) => {
+          const viewport = container.node.current?.closest('[data-slot="scroll-area-viewport"]');
+          const rect = args.droppableRects.get(container.id);
+          if (!viewport || !rect) return true;
+          let bounds = viewports.get(viewport);
+          if (!bounds) {
+            bounds = viewport.getBoundingClientRect();
+            viewports.set(viewport, bounds);
+          }
+          return (
+            rect.bottom > bounds.top &&
+            rect.top < bounds.bottom &&
+            (!args.pointerCoordinates ||
+              (args.pointerCoordinates.y >= bounds.top &&
+                args.pointerCoordinates.y <= bounds.bottom))
+          );
+        })
+      : args.droppableContainers;
+    let collisions = closestCenter({ ...args, droppableContainers: candidates });
     const pointer = args.pointerCoordinates;
     const items = options.items;
     const source = items?.find((item) => item.kind === "thread" && item.key === args.active.id);
@@ -95,6 +116,7 @@ export function createSidebarSortingStrategy(input: {
   settledOrder: readonly string[];
   activeOrder?: readonly string[];
   settledExpanded: boolean;
+  independentShelves?: boolean;
   settledVisibleCount?: number;
   routeThreadKey?: string | null;
   snoozedThreadCount?: number;
@@ -222,6 +244,19 @@ export function createSidebarSortingStrategy(input: {
     const result = items.map(() => hidden);
     let top = rects[0].top;
     for (const [projectedIndex, item] of projected.entries()) {
+      if (isShelfHeader(item) && input.independentShelves) {
+        const headerIndex = indices.get(sidebarListItemId(item));
+        const header = headerIndex === undefined ? undefined : rects[headerIndex];
+        if (header) {
+          top = header.top;
+          if (headerIndex !== undefined) result[headerIndex] = stationary;
+          const firstRow = headerIndex === undefined ? undefined : items[headerIndex + 1];
+          const firstRect = headerIndex === undefined ? undefined : rects[headerIndex + 1];
+          top =
+            firstRow && !isShelfHeader(firstRow) && firstRect ? firstRect.top : header.bottom + 1;
+          continue;
+        }
+      }
       if (isShelfHeader(item)) {
         top += shelfSpace;
         shelfSpace = 0;

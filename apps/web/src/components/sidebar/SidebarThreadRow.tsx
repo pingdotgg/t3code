@@ -1005,7 +1005,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           // A zero-height boundary also makes dnd-kit scale the source to
           // zero. Only projected peers use scaleY as a visibility sentinel.
           visibility:
-            !sortable.isDragging && sortable.transform?.scaleY === 0
+            sortable.isDragging || sortable.transform?.scaleY === 0
               ? ("hidden" as const)
               : undefined,
         },
