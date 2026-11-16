@@ -1158,7 +1158,7 @@ function markLiveActivityRegistered(activityId: string): Effect.Effect<void> {
   return Effect.suspend(() => {
     unregisteredStartedLiveActivities.delete(activityId);
     const waiter = liveActivityRegistrationWaiters.get(activityId);
-    return waiter ? Deferred.succeed(waiter, undefined) : Effect.void;
+    return waiter ? Effect.asVoid(Deferred.succeed(waiter, undefined)) : Effect.void;
   });
 }
 
