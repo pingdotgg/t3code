@@ -198,6 +198,14 @@ own reducers).
 `resolveTarget`, `resolveThreadPullRequestChains`, T3's paging). Proof: 26 `parity.mjs` steps
 against the T3 server, values compared, no differences.
 
+## PR panel differences
+
+- Reads use a bounded memory cache rather than T3's persistent stale reads; entries do not survive restart.
+- Listings read each repository separately. ETag revalidation, credential-token caching, quota reserve and Unix-socket transport remain absent.
+- Withheld whole-diff single-file extraction and automatic PR-link sync/watch reactors remain unbuilt.
+- The 15 actions, stack and guide methods remain unregistered here; the actions branch supplies them.
+- No live macOS/iPhone or signed-in Orbit proof has been run for the panel.
+
 ## What the next steps need
 
 The registry, detection and the GraphQL texts are built. What every remaining step still needs:

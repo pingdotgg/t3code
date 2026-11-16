@@ -45,6 +45,7 @@ export async function recordActions() {
     ["comment","commentOnPullRequest",{body:"missing nested"},{status:200,body:{errors:[{type:"NOT_FOUND",message:"Missing nested field",path:["addComment","commentEdge"]}]}}],
     ["submitReview","submitReview",{verdict:"approve",body:"",comments:[]},{status:422,body:{message:"Validation Failed",errors:[{field:"body",code:"missing"},"summary required",{message:"cannot approve"}]}}],
     ["setLabels","setLabels",{labels:["bug"],applied:true},{status:403,body:{message:"Resource not accessible by integration"}}],
+    ["setLabels","setLabels",{labels:["bug"],applied:true},{status:403,body:{message:"You have triggered an abuse detection mechanism."}}],
   ]) {
     const requests = [];
     const http = Layer.succeed(HttpClient.HttpClient,HttpClient.make(request=>Effect.sync(()=>{

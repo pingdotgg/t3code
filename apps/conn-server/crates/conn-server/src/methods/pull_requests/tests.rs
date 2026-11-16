@@ -1,19 +1,13 @@
 use super::*;
-
 use crate::table::{CallContext, Handler};
-
 use conn_contract::{
     Command, DispatchCommandError, DispatchCommandResult, GetShellSnapshotError,
     GetThreadProjectionError, ShellStreamItem, SubscribeShellInput, SubscribeThreadInput,
     ThreadStreamItem,
 };
-
 use conn_engine::{BoxFuture, EngineError, Subscription};
-
 use std::os::unix::fs::PermissionsExt;
-
 struct TestDir(PathBuf);
-
 impl TestDir {
     fn new() -> Self {
         let dir = std::env::temp_dir().join(format!(
@@ -21,9 +15,7 @@ impl TestDir {
             std::process::id(),
             conn_support::uuid_v4()
         ));
-
         std::fs::create_dir_all(&dir).expect("temp dir");
-
         Self(dir)
     }
 }
@@ -61,7 +53,6 @@ impl Engine for Shell {
     }
     fn call(&self, tag: &str, _: Value) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
         let archived = tag == "orchestration.getArchivedShellSnapshot";
-
         Box::pin(async move {
             if archived {
                 Ok(json!({"threads":[]}))
@@ -81,22 +72,18 @@ impl Engine for Shell {
         >,
     > {
         let mut live = self.live.subscribe();
-
         Box::pin(async move {
             assert_eq!(
                 input.request_completion_marker,
                 Some(true),
                 "need the synchronization marker"
             );
-
             let (tx, rx) = mpsc::channel(2);
-
             tx.send(Ok(
                 from_json(json!({"kind":"synchronized"})).expect("marker")
             ))
             .await
             .expect("marker delivered");
-
             tokio::spawn(async move {
                 while let Ok(item) = live.recv().await {
                     if tx.send(Ok(item)).await.is_err() {
@@ -104,7 +91,6 @@ impl Engine for Shell {
                     }
                 }
             });
-
             Ok(rx)
         })
     }
@@ -120,21 +106,16 @@ fn shell(root: &std::path::Path) -> Arc<Shell> {
 }
 fn panel(engine: Arc<Shell>, dir: &TestDir, endpoint: &str) -> Arc<Panel> {
     let gh = dir.0.join("gh");
-
     std::fs::write(&gh, "#!/bin/sh\nprintf '%s\\n' fake-pr-token\n").expect("stub gh");
-
     std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).expect("executable");
-
     let mut path = dir.0.as_os_str().to_os_string();
-
     path.push(":");
-
     path.push(std::env::var_os("PATH").unwrap_or_default());
-
     Arc::new(Panel {
         engine,
         environment: None,
         cache: TtlCache::new(32),
+        identities: TtlCache::new(8),
         endpoints: Endpoints {
             github_rest: Some(endpoint.into()),
         },
@@ -229,22 +210,43 @@ async fn github_actions_register_and_fail_unsigned_as_t3_does() {
             "{method}: {error:?}"
         );
     }
+    let mut routed = reference();
+    routed["expectedAccountId"] = json!("12");
+    routed["body"] = json!("hello");
+    let error = call(&table, "pullRequests.comment", routed)
+        .await
+        .expect_err("account unavailable");
+    assert!(
+        matches!(error, Failure::Fail(ref value) if value["_tag"] == "PullRequestOperationError" && value["operation"] == "routeIdentity" && value["detail"] == "The signed-in account could not be verified before starting the operation."),
+        "{error:?}"
+    );
 }
 
 async fn api() -> (String, tokio::task::JoinHandle<()>, Arc<AtomicU64>) {
+    let (base, task, calls, _) = counted_api(axum::http::StatusCode::OK).await;
+    (base, task, calls)
+}
+async fn counted_api(
+    status: axum::http::StatusCode,
+) -> (
+    String,
+    tokio::task::JoinHandle<()>,
+    Arc<AtomicU64>,
+    Arc<AtomicU64>,
+) {
     use axum::{Json, Router, routing::get};
-
     let calls = Arc::new(AtomicU64::new(0));
-
     let counter = calls.clone();
-
-    let router=Router::new().route("/user",get(||async{Json(json!({"id":12,"login":"nick"}))})).route("/graphql",axum::routing::post(move |Json(body):Json<Value>|{let counter=counter.clone();
+    let identities = Arc::new(AtomicU64::new(0));
+    let identity_calls = identities.clone();
+    let router=Router::new().route("/user",get(move || { identity_calls.fetch_add(1,Ordering::Relaxed); async move { (status,Json(json!({"id":12,"login":"nick"}))) } })).route("/graphql",axum::routing::post(move |Json(body):Json<Value>|{let counter=counter.clone();
 async move {
         counter.fetch_add(1,Ordering::Relaxed);
 let query=text(&body,"query");
 let mut pr:Value=serde_json::from_str(include_str!("../../../../conn-source-control/src/pull_requests/sample.json")).expect("sample");
 
-        let data=if query.contains("PullRequestStats") && body["variables"].get("_0_owner").is_some() {json!({"_0_repository":{"pullRequest":{"additions":10,"deletions":2}}})}
+        let data=if query.contains("RoutingIdentityViewer") { json!({"viewer":{"databaseId":12,"login":"nick"}}) }
+        else if query.contains("PullRequestStats") && body["variables"].get("_0_owner").is_some() {json!({"_0_repository":{"pullRequest":{"additions":10,"deletions":2}}})}
         else if query.starts_with("mutation ") {
             if body["variables"]["body"] == "fail" {return Json(json!({"errors":[{"message":"refused"}]}));}
             json!({})
@@ -263,37 +265,27 @@ pr["reviewThreads"]=json!({"nodes":[],"pageInfo":{"hasNextPage":false}});
 pr["reviewDismissals"]=json!({"nodes":[],"pageInfo":{"hasNextPage":false}});
 pr["commits"]=json!({"nodes":[]});
 json!({"viewer":{"login":"nick"},"repository":{"pullRequest":pr,"mergeCommitAllowed":true,"squashMergeAllowed":true,"rebaseMergeAllowed":true,"autoMergeAllowed":true,"viewerPermission":"WRITE"}})};
-
         Json(json!({"data":data}))
     }})).route("/repos/a/b/stacks",get(||async {Json(json!([]))})).fallback(||async {axum::http::StatusCode::NO_CONTENT});
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind");
-
     let base = format!("http://{}", listener.local_addr().expect("addr"));
-
     let task = tokio::spawn(async move {
         axum::serve(listener, router).await.expect("stub API");
     });
-
-    (base, task, calls)
+    (base, task, calls, identities)
 }
 
 #[tokio::test]
 async fn panel_reads_decode_and_refreshes_replace_cached_reads() {
     let dir = TestDir::new();
-
     let shell = shell(&dir.0);
-
     let (base, task, count) = api().await;
-
     let panel = panel(shell, &dir, &base);
-
     let mut table = MethodTable::new();
-
     register_panel(&mut table, panel.clone());
-
     for tag in [
         "pullRequests.summary",
         "pullRequests.detail",
@@ -305,25 +297,21 @@ async fn panel_reads_decode_and_refreshes_replace_cached_reads() {
         "pullRequests.routing",
     ] {
         let result = call(&table, tag, reference()).await.expect(tag);
-
         assert!(!result.is_null(), "{tag} decodes a value");
     }
     let list = call(&table, "pullRequests.list", json!({"state":"open"}))
         .await
         .expect("list");
-
     assert_eq!(
         list["entries"].as_array().expect("entries").len(),
         1,
         "listed"
     );
-
     assert_eq!(
         list["providers"][0]["detail"],
         Value::Null,
         "configured host has no error"
     );
-
     let stats = call(
         &table,
         "pullRequests.listStats",
@@ -331,9 +319,7 @@ async fn panel_reads_decode_and_refreshes_replace_cached_reads() {
     )
     .await
     .expect("stats");
-
     assert_eq!(stats["stats"][0]["additions"], 10, "stats");
-
     let options = call(
         &table,
         "pullRequests.filterOptions",
@@ -341,9 +327,7 @@ async fn panel_reads_decode_and_refreshes_replace_cached_reads() {
     )
     .await
     .expect("options");
-
     assert_eq!(options["labels"][0]["name"], "bug", "labels");
-
     assert_eq!(
         call(
             &table,
@@ -355,19 +339,15 @@ async fn panel_reads_decode_and_refreshes_replace_cached_reads() {
         "12",
         "stable account id"
     );
-
     let previous = count.load(Ordering::Relaxed);
-
     call(&table, "pullRequests.summary", reference())
         .await
         .expect("cached");
-
     assert_eq!(
         count.load(Ordering::Relaxed),
         previous,
         "warm cache shares a read"
     );
-
     call(
         &table,
         "pullRequests.invalidate",
@@ -375,19 +355,15 @@ async fn panel_reads_decode_and_refreshes_replace_cached_reads() {
     )
     .await
     .expect("invalidated");
-
     call(&table, "pullRequests.summary", reference())
         .await
         .expect("fresh");
-
     assert_eq!(
         count.load(Ordering::Relaxed),
         previous + 1,
         "refresh hits GitHub"
     );
-
     call(&table,"pullRequests.setFilesViewed",json!({"projectId":"p1","host":"github.com","repository":"a/b","number":7,"files":[{"path":"file.rs","viewed":false}]})).await.expect("unviewed");
-
     task.abort();
 }
 
@@ -503,11 +479,19 @@ async fn actions_decode_and_success_notifies_but_failure_still_invalidates() {
     );
     let before = count.load(Ordering::Relaxed);
     let cached = panel.cache.len();
-    for body in ["do not send", " \n"] {
+    for (method, fields) in [
+        ("comment", json!({"body":"do not send"})),
+        ("comment", json!({"body":" \n"})),
+        ("runAction", json!({"action":"close"})),
+        ("generateReviewGuide", json!({})),
+    ] {
         let mut input = reference();
         input["expectedAccountId"] = json!("wrong");
-        input["body"] = json!(body);
-        let error = call(&table, "pullRequests.comment", input)
+        input
+            .as_object_mut()
+            .expect("input")
+            .extend(fields.as_object().expect("fields").clone());
+        let error = call(&table, &format!("pullRequests.{method}"), input)
             .await
             .expect_err("wrong account");
         assert!(
@@ -621,6 +605,16 @@ async fn unavailable_actions_and_guide_generation_return_typed_refusals() {
             "{action}: {error:?}"
         );
     }
+    let mut stack = reference();
+    stack["action"] = json!("merge");
+    stack["stackNumber"] = json!(1);
+    let error = call(&table, "pullRequests.runAction", stack)
+        .await
+        .expect_err("stack action refused");
+    assert!(
+        matches!(error, Failure::Fail(ref value) if value["operation"] == "runAction" && value["detail"] == "This stack action is not supported or has no expected head revision."),
+        "{error:?}"
+    );
     assert_eq!(
         *panel.refreshes.borrow(),
         0,
@@ -662,7 +656,14 @@ async fn cancelling_a_write_discards_reads_started_while_it_was_in_flight() {
         ()=started.notified()=>{},
         result=&mut write=>panic!("write ended before gate: {result:?}"),
     }
-    let key = json!([1, "summary", "p1", "github.com", "a/b", 7, reference()]).to_string();
+    let key = ReadKey {
+        scope: 1,
+        method: "summary".into(),
+        host: "github.com".into(),
+        repo: "a/b".into(),
+        number: Some(7),
+        input: reference().to_string(),
+    };
     panel
         .cache
         .get_with(
@@ -805,144 +806,106 @@ async fn review_guide_reads_t3_storage_keeps_stale_head_and_survives_restart() {
 #[tokio::test]
 async fn routing_rejects_a_changed_account_before_reading_and_cache_is_bounded() {
     let dir = TestDir::new();
-
     let (base, task, count) = api().await;
-
     let panel = panel(shell(&dir.0), &dir, &base);
-
     let mut table = MethodTable::new();
-
     register_panel(&mut table, panel.clone());
-
     let mut input = reference();
-
     input["expectedAccountId"] = json!("13");
-
     let error = call(&table, "pullRequests.summary", input)
         .await
         .expect_err("wrong account");
-
     assert!(
         matches!(error,Failure::Fail(ref v) if v["operation"]=="routeIdentity"),
         "typed routing error"
     );
-
     assert_eq!(
         count.load(Ordering::Relaxed),
         0,
         "no PR read under another account"
     );
-
     let before = resident_kib();
-
     for number in 1..=40 {
         let mut input = reference();
-
         input["number"] = json!(number);
-
         call(&table, "pullRequests.summary", input)
             .await
             .expect("summary");
     }
     assert_eq!(panel.cache.len(), 32, "cache has a fixed capacity");
-
     println!(
         "PR panel cache: before {} KiB RSS, after {} KiB RSS, 40 reads, {} retained entries",
         before,
         resident_kib(),
         panel.cache.len()
     );
-
     task.abort();
 }
 
 #[tokio::test]
 async fn linked_threads_exclude_side_chats_and_dismissed_links_and_keep_archived_state() {
     let dir = TestDir::new();
-
     let engine = shell(&dir.0);
-
     let link = json!({"host":"GitHub.com","repository":"A/B","number":7,"source":"agent"});
-
     engine.snapshot.lock().expect("snapshot")["threads"] = json!([
         {"id":"first","projectId":"p2","title":"First","archivedAt":null,"settledAt":null,"settledOverride":null,"updatedAt":"2026-11-16T00:00:00Z","pullRequests":[link.clone()]},
         {"id":"side","lineage":{"sideChat":true},"pullRequests":[link.clone()]},
         {"id":"dismissed","pullRequests":[{"host":"github.com","repository":"a/b","number":7,"source":"stack-dismissed"}]},
         {"id":"second","projectId":"p1","title":"Second","archivedAt":"2026-11-15T00:00:00Z","settledAt":null,"settledOverride":"settled","updatedAt":"2026-11-15T00:00:00Z","pullRequests":[link]}
     ]);
-
     let panel = panel(engine, &dir, "http://127.0.0.1:1");
-
     let mut table = MethodTable::new();
-
     register_panel(&mut table, panel);
-
     let result = call(&table, "pullRequests.linkedThreads", reference())
         .await
         .expect("linked");
-
     assert_eq!(
         result["threads"].as_array().expect("threads").len(),
         2,
         "visible links only"
     );
-
     assert_eq!(result["threads"][0]["id"], "first", "newest first");
-
     assert_eq!(result["threads"][1]["settled"], true, "settled override");
 }
 
 #[tokio::test]
 async fn both_refresh_streams_deliver_initial_values_and_live_changes() {
     let dir = TestDir::new();
-
     let engine = shell(&dir.0);
-
     let panel = panel(engine.clone(), &dir, "http://127.0.0.1:1");
-
     let mut table = MethodTable::new();
-
     register_panel(&mut table, panel);
-
     let Some(Handler::Stream(open)) = table.get("pullRequests.subscribeRefreshes") else {
         panic!("refresh stream")
     };
-
     let mut refresh = open(CallContext::default(), json!({}))
         .await
         .expect("subscribe");
-
     assert_eq!(
         refresh.recv().await.expect("initial").expect("value"),
         json!(0),
         "initial refresh revision"
     );
-
     call(&table, "pullRequests.invalidate", json!({}))
         .await
         .expect("invalidate");
-
     assert_eq!(
         refresh.recv().await.expect("refreshed").expect("value"),
         json!(1),
         "refresh revision"
     );
-
     let Some(Handler::Stream(open)) = table.get("pullRequests.subscribeLinkedThreadRefreshes")
     else {
         panic!("linked stream")
     };
-
     let mut linked = open(CallContext::default(), json!({}))
         .await
         .expect("subscribe");
-
     assert_eq!(
         linked.recv().await.expect("initial").expect("value"),
         json!(0),
         "initial linked revision"
     );
-
     engine
         .live
         .send(
@@ -952,7 +915,6 @@ async fn both_refresh_streams_deliver_initial_values_and_live_changes() {
             .expect("event"),
         )
         .expect("monitor subscribed");
-
     assert_eq!(
         linked.recv().await.expect("changed").expect("value"),
         json!(1),
@@ -963,57 +925,42 @@ async fn both_refresh_streams_deliver_initial_values_and_live_changes() {
 #[tokio::test(start_paused = true)]
 async fn state_reports_dedupe_the_same_state_but_keep_transitions_and_expire() {
     let dir = TestDir::new();
-
     let panel = panel(shell(&dir.0), &dir, "http://127.0.0.1:1");
-
     let mut table = MethodTable::new();
-
     register_panel(&mut table, panel.clone());
-
     let report = |state: &str| json!({"reference":reference(),"state":state,"isDraft":false});
-
     call(&table, "pullRequests.reportState", report("open"))
         .await
         .expect("first");
-
     let first = *panel.refreshes.borrow();
-
     call(&table, "pullRequests.reportState", report("open"))
         .await
         .expect("duplicate");
-
     assert_eq!(
         *panel.refreshes.borrow(),
         first,
         "a repeat report spends no refresh"
     );
-
     call(&table, "pullRequests.reportState", report("closed"))
         .await
         .expect("transition");
-
     assert_eq!(
         *panel.refreshes.borrow(),
         first + 1,
         "state transitions notify"
     );
-
     call(&table, "pullRequests.reportState", report("open"))
         .await
         .expect("reopened");
-
     assert_eq!(
         *panel.refreshes.borrow(),
         first + 2,
         "a previous state may come back"
     );
-
     tokio::time::advance(Duration::from_secs(5 * 60)).await;
-
     call(&table, "pullRequests.reportState", report("open"))
         .await
         .expect("expired");
-
     assert_eq!(
         *panel.refreshes.borrow(),
         first + 3,
@@ -1036,25 +983,17 @@ async fn state_reports_dedupe_the_same_state_but_keep_transitions_and_expire() {
 #[tokio::test]
 async fn viewed_only_invalidation_keeps_other_reads_and_writes_require_the_write_scope() {
     let dir = TestDir::new();
-
     let (base, task, count) = api().await;
-
     let panel = panel(shell(&dir.0), &dir, &base);
-
     let mut table = MethodTable::new();
-
     register_panel(&mut table, panel.clone());
-
     call(&table, "pullRequests.summary", reference())
         .await
         .expect("summary");
-
     call(&table, "pullRequests.filesViewed", reference())
         .await
         .expect("viewed");
-
     let before = count.load(Ordering::Relaxed);
-
     call(
         &table,
         "pullRequests.invalidate",
@@ -1062,31 +1001,25 @@ async fn viewed_only_invalidation_keeps_other_reads_and_writes_require_the_write
     )
     .await
     .expect("invalidate viewed");
-
     call(&table, "pullRequests.summary", reference())
         .await
         .expect("held summary");
-
     assert_eq!(
         count.load(Ordering::Relaxed),
         before,
         "summary stays cached"
     );
-
     call(&table, "pullRequests.filesViewed", reference())
         .await
         .expect("fresh viewed");
-
     assert_eq!(
         count.load(Ordering::Relaxed),
         before + 1,
         "viewed list is refreshed"
     );
-
     let Some(Handler::Unary(write)) = table.get("pullRequests.setFilesViewed") else {
         panic!("write")
     };
-
     let context = CallContext {
         principal: Some(Arc::new(crate::auth::Principal {
             session_id: "test".into(),
@@ -1096,24 +1029,18 @@ async fn viewed_only_invalidation_keeps_other_reads_and_writes_require_the_write
         })),
         ..CallContext::default()
     };
-
     let mut input = reference();
-
     input["files"] = json!([]);
-
     let error = write(context, input).await.expect_err("read-only client");
-
     assert!(
         matches!(error,Failure::Fail(ref v) if v["_tag"]=="EnvironmentAuthorizationError"),
         "typed permission error"
     );
-
     assert_eq!(
         count.load(Ordering::Relaxed),
         before + 1,
         "authorization fails before any mutation"
     );
-
     task.abort();
 }
 
@@ -1411,4 +1338,109 @@ async fn http_diff_shares_the_rpc_panels_cache_and_skips_account_verification() 
     );
     server_task.abort();
     api_task.abort();
+}
+
+#[tokio::test]
+async fn identity_is_shared_by_credential_expires_and_routes_through_forbidden_user() {
+    let dir = TestDir::new();
+    let (base, task, _, identities) = counted_api(axum::http::StatusCode::FORBIDDEN).await;
+    let engine = shell(&dir.0);
+    let mut second = engine.snapshot.lock().expect("snapshot")["projects"][0].clone();
+    second["id"] = json!("p2");
+    second["repositoryIdentity"]["locator"]["remoteUrl"] = json!("git@github.com:a/c.git");
+    engine.snapshot.lock().expect("snapshot")["projects"]
+        .as_array_mut()
+        .expect("projects")
+        .push(second);
+    let panel = panel(engine, &dir, &base);
+    let (routing, identity) = tokio::join!(
+        panel.call("routing", reference()),
+        panel.call("routingIdentity", json!({"host":"github.com"}))
+    );
+    routing.expect("routing fallback");
+    identity.expect("identity fallback");
+    panel
+        .call("list", json!({"state":"open"}))
+        .await
+        .expect("both repositories");
+    panel.call("detail", reference()).await.expect("detail");
+    let mut expected = reference();
+    expected["expectedAccountId"] = json!("12");
+    panel
+        .call("summary", expected)
+        .await
+        .expect("verified read");
+    assert_eq!(
+        identities.load(Ordering::Relaxed),
+        1,
+        "all readers share the pinned identity"
+    );
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(599)).await;
+    tokio::time::resume();
+    panel
+        .call("routing", reference())
+        .await
+        .expect("warm identity");
+    assert_eq!(identities.load(Ordering::Relaxed), 1);
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(1)).await;
+    tokio::time::resume();
+    panel
+        .call("routing", reference())
+        .await
+        .expect("expired identity");
+    assert_eq!(identities.load(Ordering::Relaxed), 2, "ten-minute TTL");
+    std::fs::write(dir.0.join("gh"), "#!/bin/sh\necho switched-token\n")
+        .expect("switch credential");
+    panel
+        .call("routing", reference())
+        .await
+        .expect("new credential");
+    assert_eq!(
+        identities.load(Ordering::Relaxed),
+        3,
+        "another credential cannot reuse the identity"
+    );
+    let before = resident_kib();
+    for n in 0..10 {
+        std::fs::write(dir.0.join("gh"), format!("#!/bin/sh\necho identity-{n}\n"))
+            .expect("credential");
+        panel
+            .call("routing", reference())
+            .await
+            .expect("bounded identity");
+    }
+    assert_eq!(
+        panel.identities.len(),
+        8,
+        "identity cache stays bounded with credential scopes"
+    );
+    println!(
+        "identity cache RSS: {before} -> {} KiB; {} retained",
+        resident_kib(),
+        panel.identities.len()
+    );
+    task.abort();
+}
+
+#[test]
+fn observed_threads_evict_the_oldest_observation_and_keep_completion_together() {
+    let mut views = VecDeque::new();
+    for id in std::iter::once("z-oldest".into()).chain((0..2047).map(|n| format!("a-{n}"))) {
+        remember_view(
+            &mut views,
+            ObservedThread::new(&json!({"id":id,"latestRunCompletedAt":"done"})),
+        );
+    }
+    remember_view(&mut views, ObservedThread::new(&json!({"id":"new"})));
+    assert_eq!(views.len(), 2048);
+    assert!(
+        !views.iter().any(|v| v.id == "z-oldest"),
+        "evict by observation order, not identifier"
+    );
+    assert!(
+        views.iter().any(|v| v.id == "a-0" && v.completed == "done"),
+        "newer state remains intact"
+    );
 }
