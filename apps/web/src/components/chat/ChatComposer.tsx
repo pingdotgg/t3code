@@ -146,7 +146,11 @@ import { useDictationSubmissionShortcut } from "../../speech/useDictationSubmiss
 import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
 import { ComposerSpeechButton, ComposerSpeechRecordingPill } from "./ComposerSpeechButton";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
-import { shortcutLabelForCommand, type ShortcutMatchContext } from "../../keybindings";
+import {
+  resolveShortcutCommand,
+  shortcutLabelForCommand,
+  type ShortcutMatchContext,
+} from "../../keybindings";
 import {
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -1735,6 +1739,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     );
   };
   const onPromptChangeStable = useStableCallback(onPromptChange);
+  const stopShortcutLabel = shortcutLabelForCommand(keybindings, "thread.stop", {
+    context: { composerFocus: true, turnRunning: true },
+  });
+  const isStopShortcutEventStable = useStableCallback(
+    (event: KeyboardEvent) =>
+      resolveShortcutCommand(event, keybindings, {
+        context: { composerFocus: true, turnRunning: true },
+      }) === "thread.stop",
+  );
 
   const applyPromptReplacement = (
     rangeStart: number,
@@ -3539,6 +3552,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   hasSendableContent={composerSendState.hasSendableContent}
                   isEditingQueuedMessage={isEditingQueuedMessage}
                   onInterrupt={handleInterruptPrimaryActionStable}
+                  stopShortcutLabel={stopShortcutLabel}
+                  isStopShortcutEvent={isStopShortcutEventStable}
                 >
                   <button
                     type="button"
@@ -3829,6 +3844,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         },
                       },
                     )}
+                    stopShortcutLabel={stopShortcutLabel}
+                    isStopShortcutEvent={isStopShortcutEventStable}
                     voiceInputActive={voiceInputActive}
                     isSendBusy={isSendBusy}
                     sendDisabledReason={primaryActionSendDisabledReason}

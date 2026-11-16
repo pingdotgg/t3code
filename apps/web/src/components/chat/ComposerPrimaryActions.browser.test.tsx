@@ -2,6 +2,7 @@ import "~/index.css";
 
 import type { ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../../test/render";
 
 vi.mock("~/hooks/useSettings", () => ({
@@ -13,6 +14,7 @@ vi.mock("../SidebarStageBackdrop", () => ({
   useSidebarStageBackdropVariant: () => null,
 }));
 
+import { TooltipProvider } from "../ui/tooltip";
 import { CollapsedComposerStopAction, ComposerPrimaryActions } from "./ComposerPrimaryActions";
 
 function setup() {
@@ -193,4 +195,33 @@ it("swaps the collapsed composer's send button for Stop while a turn can be stop
     .toBeDisabled();
   await screen.rerender(collapsed({ canInterrupt: false }));
   await expect.element(screen.getByRole("button", { name: "Send message" })).toBeVisible();
+});
+
+it.each([
+  { name: "lets the stop shortcut through", stops: true, reachesWindow: 1, stillOpen: true },
+  { name: "closes on any other Escape", stops: false, reachesWindow: 0, stillOpen: false },
+])("$name while the tooltip is open", async ({ stops, reachesWindow, stillOpen }) => {
+  const isStopShortcutEvent = vi.fn((event: KeyboardEvent) => event.shiftKey === stops);
+  await using _screen = await render(
+    <TooltipProvider>
+      <ComposerPrimaryActions
+        {...setup()}
+        stopShortcutLabel="Shift+Esc"
+        isStopShortcutEvent={isStopShortcutEvent}
+      />
+    </TooltipProvider>,
+  );
+  await userEvent.hover(page.getByRole("button", { name: "Stop generation" }));
+  const tooltip = page.getByText("Interrupt (Shift+Esc)");
+  await expect.element(tooltip).toBeVisible();
+  const reachedWindow = vi.fn();
+  window.addEventListener("keydown", reachedWindow);
+
+  await userEvent.keyboard("{Shift>}{Escape}{/Shift}");
+
+  window.removeEventListener("keydown", reachedWindow);
+  const escapes = reachedWindow.mock.calls.filter(([event]) => event.key === "Escape");
+  expect(escapes).toHaveLength(reachesWindow);
+  if (stillOpen) await expect.element(tooltip).toBeVisible();
+  else await expect.element(tooltip).not.toBeInTheDocument();
 });

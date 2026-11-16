@@ -169,7 +169,11 @@ a shortcut.
 ## Commands with special behavior
 
 `thread.stop` interrupts the running turn in the focused thread. It has no default
-shortcut; assign one in **Settings → Keybindings**.
+shortcut; assign one in **Settings → Keybindings**. To stop with Esc, select
+**Add keybinding**, choose **Thread: Stop**, press Esc while recording, then select
+**Save**. Esc stops the turn only when nothing else uses it, such as a menu, dialog,
+or selection, and focus is not in a terminal, preview, or text field other than the
+composer.
 
 `thread.regenerateTitle` generates a new title for the focused thread, like
 **Regenerate title** in the thread menu. It has no default shortcut.

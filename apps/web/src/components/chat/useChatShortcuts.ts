@@ -14,6 +14,9 @@ import type { BranchToolbarHandle } from "../BranchToolbar";
 import { shouldTypeToFocusComposer } from "./composerFocusRedirect";
 import { composerShortcutCommands } from "./composerShortcuts";
 
+// `:popover-open` throws in browsers without the Popover API.
+const popoverSupported = typeof HTMLElement !== "undefined" && "popover" in HTMLElement.prototype;
+
 /** Returning false lets the key event through untouched. */
 type ChatShortcutHandler = (context: {
   readonly event: KeyboardEvent;
@@ -53,7 +56,7 @@ interface ChatShortcutsInput {
 }
 
 /**
- * The chat's window keyboard shortcuts, plus Escape closing thread find.
+ * The chat's window keyboard shortcuts, plus Escape closing thread find or stopping the turn.
  * Listeners attach once; the effect events read the latest input, so handlers
  * act on the current render without re-registering on every change.
  */
@@ -93,6 +96,8 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       context: shortcutContext,
     });
     if (!command || (inSideChatPane && !SIDE_CHAT_PANE_COMMANDS.has(command))) return;
+    // Waits for bubbling, so an Escape that closes a widget cannot also stop the agent.
+    if (command === "thread.stop" && event.key === "Escape") return;
     const run =
       input.commands[command] ??
       composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command] ??
@@ -101,11 +106,9 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     event.preventDefault();
     event.stopPropagation();
   });
-  const dismissFind = useEffectEvent((event: KeyboardEvent) => {
+  const handleUnclaimedEscape = useEffectEvent((event: KeyboardEvent) => {
     if (
       event.key !== "Escape" ||
-      !input.threadFindActive ||
-      event.defaultPrevented ||
       event.isComposing ||
       event.keyCode === 229 ||
       isCommandPaletteOpen() ||
@@ -113,9 +116,37 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     )
       return;
     const context = input.getShortcutContext(event.target);
-    if (context.terminalFocus || context.previewFocus || context.modelPickerOpen) return;
+    if (input.threadFindActive) {
+      if (
+        event.defaultPrevented ||
+        context.terminalFocus ||
+        context.previewFocus ||
+        context.modelPickerOpen
+      )
+        return;
+      event.preventDefault();
+      input.closeThreadFind();
+      return;
+    }
+    // ProseMirror prevents every Escape, so a claim made while the composer has focus must
+    // also stop propagation, as the composer's own claims do.
+    if (!input.enabled || (event.defaultPrevented && !context.composerFocus)) return;
+    // Bindings can omit a when clause, and these surfaces keep Escape for themselves.
+    if (
+      context.terminalFocus ||
+      context.previewFocus ||
+      context.modelPickerOpen ||
+      (context.editableFocus && !context.composerFocus) ||
+      // A native popover, such as a full screen MCP app, closes on this Escape unless it is prevented.
+      (popoverSupported && document.querySelector(":popover-open") !== null)
+    )
+      return;
+    const command = resolveChatShortcutCommand(event, input.keybindings, input.scriptKeybindings, {
+      context,
+    });
+    const stop = command === "thread.stop" ? input.commands["thread.stop"] : undefined;
+    if (!stop || stop({ event, terminalFocusOwner: getTerminalFocusOwner() }) === false) return;
     event.preventDefault();
-    input.closeThreadFind();
   });
   const handleComposerShortcut = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || isCommandPaletteOpen()) return;
@@ -129,7 +160,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     event.preventDefault();
     event.stopPropagation();
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches keydown listeners for chat shortcuts and find dismissal: on the window, or on an embedded chat's composer
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches keydown listeners for chat shortcuts and unclaimed Escape: on the window, or on an embedded chat's composer
   useEffect(() => {
     if (embedded) {
       if (composerElement === null) return;
@@ -138,7 +169,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       return () => composerElement.removeEventListener("keydown", onComposerKeyDown, true);
     }
     const onKeyDownCapture = (event: KeyboardEvent) => handleShortcut(event);
-    const onKeyDown = (event: KeyboardEvent) => dismissFind(event);
+    const onKeyDown = (event: KeyboardEvent) => handleUnclaimedEscape(event);
     window.addEventListener("keydown", onKeyDownCapture, true);
     window.addEventListener("keydown", onKeyDown);
     return () => {

@@ -47,6 +47,8 @@ interface ComposerPrimaryActionsProps {
   followUpBehavior?: "queue" | "steer";
   canSteer?: boolean;
   alternateShortcutLabel?: string | null;
+  stopShortcutLabel?: string | null;
+  isStopShortcutEvent?: (event: KeyboardEvent) => boolean;
   /** Dictation is running; Send finishes it and submits once the transcript lands. */
   voiceInputActive?: boolean;
   isSendBusy: boolean;
@@ -136,6 +138,8 @@ function StopGenerationButton({
   preserveComposerFocusOnPointerDown,
   onStopRequested,
   onInterrupt,
+  stopShortcutLabel = null,
+  isStopShortcutEvent,
 }: {
   stopPhase: StopPhase;
   canOperateThread: boolean;
@@ -143,10 +147,20 @@ function StopGenerationButton({
   preserveComposerFocusOnPointerDown: boolean;
   onStopRequested: () => void;
   onInterrupt: () => void;
+  stopShortcutLabel?: string | null;
+  isStopShortcutEvent?: ((event: KeyboardEvent) => boolean) | undefined;
 }) {
   const isStopDisabled = stopPhase === "pending";
   return (
-    <Tooltip>
+    <Tooltip
+      onOpenChange={(_open, eventDetails) => {
+        // The stop shortcut must reach the chat instead of only closing this tooltip.
+        if (eventDetails.reason !== "escape-key" || !isStopShortcutEvent?.(eventDetails.event))
+          return;
+        eventDetails.cancel();
+        eventDetails.allowPropagation();
+      }}
+    >
       <TooltipTrigger
         render={
           <button
@@ -170,7 +184,11 @@ function StopGenerationButton({
           <rect x="2" y="2" width="8" height="8" rx="1.5" />
         </svg>
       </TooltipTrigger>
-      <TooltipPopup>{stopPhase === "pending" ? "Stopping…" : "Interrupt"}</TooltipPopup>
+      <TooltipPopup>
+        {stopPhase === "pending"
+          ? "Stopping…"
+          : `Interrupt${stopShortcutLabel ? ` (${stopShortcutLabel})` : ""}`}
+      </TooltipPopup>
     </Tooltip>
   );
 }
@@ -184,6 +202,8 @@ export function CollapsedComposerStopAction({
   hasSendableContent,
   isEditingQueuedMessage,
   onInterrupt,
+  stopShortcutLabel = null,
+  isStopShortcutEvent,
 }: {
   children: ReactNode;
   canOperateThread: boolean;
@@ -192,6 +212,8 @@ export function CollapsedComposerStopAction({
   hasSendableContent: boolean;
   isEditingQueuedMessage: boolean;
   onInterrupt: () => void;
+  stopShortcutLabel?: string | null;
+  isStopShortcutEvent?: ((event: KeyboardEvent) => boolean) | undefined;
 }) {
   const [stopPhase, setStopPhase] = useStopPhase({ runId, canInterrupt, canOperateThread });
   if (
@@ -214,6 +236,8 @@ export function CollapsedComposerStopAction({
         preserveComposerFocusOnPointerDown
         onStopRequested={() => setStopPhase("pending")}
         onInterrupt={onInterrupt}
+        stopShortcutLabel={stopShortcutLabel}
+        isStopShortcutEvent={isStopShortcutEvent}
       />
     </span>
   );
@@ -230,6 +254,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   followUpBehavior = "steer",
   canSteer = true,
   alternateShortcutLabel = null,
+  stopShortcutLabel = null,
+  isStopShortcutEvent,
   voiceInputActive = false,
   isSendBusy,
   sendDisabledReason,
@@ -275,6 +301,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       preserveComposerFocusOnPointerDown={preserveComposerFocusOnPointerDown}
       onStopRequested={() => setStopPhase("pending")}
       onInterrupt={onInterrupt}
+      stopShortcutLabel={stopShortcutLabel}
+      isStopShortcutEvent={isStopShortcutEvent}
     />
   );
 
