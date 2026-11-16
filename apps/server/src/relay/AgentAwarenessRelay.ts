@@ -976,22 +976,24 @@ export const make = Effect.gen(function* () {
       scope,
     ).pipe(Effect.asVoid);
 
-  scheduleHeartbeat = Effect.fnUntraced(function* (threadId, dueAtMs) {
-    yield* cancelHeartbeat(threadId);
-    const timer = yield* Effect.forkIn(
-      Effect.sleep(RELAY_AGENT_ACTIVITY_HEARTBEAT_MS).pipe(
-        Effect.andThen(worker.enqueue(threadId)),
-        Effect.catchCause((cause) =>
-          Effect.logWarning("agent activity heartbeat failed", {
-            threadId,
-            cause: Cause.pretty(cause),
-          }),
+  scheduleHeartbeat = Effect.fn("AgentAwarenessRelay.scheduleHeartbeat")(
+    function* (threadId, dueAtMs) {
+      yield* cancelHeartbeat(threadId);
+      const timer = yield* Effect.forkIn(
+        Effect.sleep(RELAY_AGENT_ACTIVITY_HEARTBEAT_MS).pipe(
+          Effect.andThen(worker.enqueue(threadId)),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("agent activity heartbeat failed", {
+              threadId,
+              cause: Cause.pretty(cause),
+            }),
+          ),
         ),
-      ),
-      scope,
-    );
-    heartbeats.set(threadId, { dueAtMs, timer });
-  });
+        scope,
+      );
+      heartbeats.set(threadId, { dueAtMs, timer });
+    },
+  );
 
   const start: AgentAwarenessRelay["Service"]["start"] = Effect.fn("AgentAwarenessRelay.start")(
     function* () {
