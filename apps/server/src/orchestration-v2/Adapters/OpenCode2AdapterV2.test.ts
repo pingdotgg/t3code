@@ -738,6 +738,82 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }),
   );
 
+  // The delay counts from the event's own time (created = 1 ms), not the test clock (0 ms).
+  it.effect.each([
+    {
+      name: "resets after retryAfterMs",
+      retryAfterMs: 21_486_000,
+      resetAt: "1970-01-01T05:58:06.001Z",
+    },
+    {
+      name: "has no reset when retryAfterMs is past the date range",
+      retryAfterMs: Number.MAX_SAFE_INTEGER,
+    },
+    {
+      name: "has no reset when retryAfterMs is negative",
+      retryAfterMs: -1000,
+    },
+    {
+      name: "has no reset when retryAfterMs is nonfinite",
+      retryAfterMs: Number.POSITIVE_INFINITY,
+    },
+    {
+      name: "handles zero delay",
+      retryAfterMs: 0,
+      resetAt: "1970-01-01T00:00:00.001Z",
+    },
+  ] as const)("classifies a free-tier limit that $name", ({ retryAfterMs, ...rest }) =>
+    Effect.gen(function* () {
+      const message =
+        "Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models.";
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.failed", {
+          sessionID: SESSION,
+          error: { type: "provider.free-limit", message, status: 429, retryAfterMs },
+        }),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      const ended = yield* Fiber.join(terminal);
+      assert.equal(ended?.status, "failed");
+      assert.deepEqual(ended?.failure, {
+        class: "usage_limit",
+        code: "provider.free-limit",
+        message,
+        retryable: null,
+        ...("resetAt" in rest ? { resetAt: rest.resetAt } : {}),
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "classifies a free-tier limit without retryAfterMs as a usage limit with no reset time",
+    () =>
+      Effect.gen(function* () {
+        const message = "Free usage limit reached.";
+        const { runtime, thread } = yield* resumed([
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.failed", {
+            sessionID: SESSION,
+            error: { type: "provider.free-limit", message, status: 429 },
+          }),
+        ]);
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn(turnInput(thread));
+        const ended = yield* Fiber.join(terminal);
+        assert.equal(ended?.status, "failed");
+        assert.deepEqual(ended?.failure, {
+          class: "usage_limit",
+          code: "provider.free-limit",
+          message,
+          retryable: null,
+        });
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("ends the turn when its terminal event is one this build cannot decode", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
