@@ -9,6 +9,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import { toCustomModelSetting } from "@t3tools/shared/model";
 import { AcpRegistrySettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -102,6 +103,42 @@ function providerWithModels(
 }
 
 describe("acpRegistrySnapshotReadiness", () => {
+  const fastMode = { id: "fast", label: "Fast mode", type: "boolean" } as const;
+  it.each([
+    {
+      source: "local" as const,
+      sourceSettings: { commandPath: "example" },
+      inspection: { status: "ready", agentId: "example", version: null, distribution: "local" },
+      capabilities: null,
+    },
+    {
+      source: "registry" as const,
+      sourceSettings: { agentId: "test-agent" },
+      inspection: { status: "ready", agentId: "test-agent", version: "1.0.0", distribution: "npx" },
+      capabilities: { optionDescriptors: [fastMode] },
+    },
+  ] as const)(
+    "keeps the custom model display name and options saved by the Settings editor for a $source agent",
+    ({ source, sourceSettings, inspection, capabilities }) => {
+      const settings = decodeSettings({
+        source,
+        ...sourceSettings,
+        customModels: [
+          toCustomModelSetting({ slug: "gateway/my-model", name: "My local model", capabilities }),
+        ],
+      });
+      const snapshot = buildCheckedAcpRegistrySnapshot({
+        ...identity,
+        settings,
+        checkedAt: "2026-08-13T10:00:00.000Z",
+        inspection,
+      });
+      const model = snapshot.models.find((entry) => entry.slug === "gateway/my-model");
+      expect(model?.name).toBe("My local model");
+      expect(model?.capabilities?.optionDescriptors ?? []).toEqual(capabilities ? [fastMode] : []);
+    },
+  );
+
   it("shows the version reported by a local ACP agent", () => {
     const probe = acpRegistryProbeResult(identity.instanceId, {
       sessionId: "test-session",
