@@ -406,6 +406,7 @@ export const OpenCodeDriver: ProviderDriver<
       openCode2Server.withConnection(({ client }) =>
         client.agent.list({ location: { directory: host.paths.cwd } }).pipe(
           Effect.map((response) => response.data),
+          Effect.timeout(resolveProviderProbeTimeoutMs("opencode", 10_000, processEnv)),
           Effect.mapError(
             (cause) =>
               new OpenCodeRuntime.OpenCodeRuntimeError({
