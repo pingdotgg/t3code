@@ -18,7 +18,8 @@ async function bootThenFailLazyChunk(sessionStorage: Map<string, string>) {
     location: { reload },
   });
   vi.stubGlobal("window", page);
-  vi.stubGlobal("document", { getElementById: () => ({}) });
+  const entry = { getAttribute: () => "/assets/index-A.js" };
+  vi.stubGlobal("document", { getElementById: () => ({}), querySelectorAll: () => [entry] });
   try {
     const { startup } = await import("./main");
     await startup;

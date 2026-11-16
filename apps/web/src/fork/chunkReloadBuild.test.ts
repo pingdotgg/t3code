@@ -48,3 +48,13 @@ it("reloads once per deployed build while the app version stays the same", () =>
   }
   expect(reload).toHaveBeenCalledTimes(3);
 });
+
+it("keys on the build's own entry, so a script that changes on every load cannot loop", () => {
+  const storage = createStorage();
+  const reload = vi.fn().mockName("location.reload");
+
+  const page = (load: number) => [`blob:https://t3.example/${load}`, `${BUILD_A}?load=${load}`];
+  expect(failChunkOnPage(page(1), storage, reload)).toBe(true);
+  expect(failChunkOnPage(page(2), storage, reload)).toBe(false);
+  expect(reload).toHaveBeenCalledTimes(1);
+});
