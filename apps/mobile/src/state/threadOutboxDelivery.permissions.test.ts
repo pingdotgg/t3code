@@ -7,6 +7,8 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import { uploadError } from "../lib/composerAttachmentUploadQueue";
+import * as Effect from "effect/Effect";
 import * as Cause from "effect/Cause";
 import { AsyncResult, type Atom } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -107,6 +109,7 @@ vi.mock("./git", () => ({ gitEnvironment: { preparePullRequestThread: state.chec
 vi.mock("../lib/modelOptions", () => ({ isModelSelectionUnavailable: state.modelUnavailable }));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "abcd" }));
 vi.mock("../lib/attachmentUpload", () => ({ prepareTurnAttachments: state.prepare }));
+vi.mock("./composer-attachment-uploads", () => ({ uploadComposerAttachmentShared: vi.fn() }));
 vi.mock("./thread-outbox", async () => {
   const { createThreadOutboxManager } = await import("./thread-outbox-manager");
   const { appAtomRegistry } = await import("./atom-registry");
@@ -229,12 +232,14 @@ beforeEach(() => {
     command.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   }
   state.start.mockResolvedValue(AsyncResult.success({}));
-  state.prepare.mockReset().mockImplementation(async ({ attachments }) => ({
-    status: "ready",
-    attachments: [],
-    draftAttachments: attachments,
-    pendingAttachmentIds: [],
-  }));
+  state.prepare.mockReset().mockImplementation(({ attachments }) =>
+    Effect.succeed({
+      status: "ready",
+      attachments: [],
+      draftAttachments: attachments,
+      pendingAttachmentIds: [],
+    }),
+  );
 });
 
 describe("queued PR checkout", () => {
@@ -485,16 +490,19 @@ describe("queued task operation access", () => {
           : {},
       );
       await state.manager.enqueue(queued);
-      state.prepare.mockImplementationOnce(async ({ attachments }) => {
-        setOperateGrant("secondary", false);
-        if (uploadFails) throw new Error("This connection cannot upload attachments.");
-        return {
-          status: "ready",
-          attachments: [],
-          draftAttachments: attachments,
-          pendingAttachmentIds: [],
-        };
-      });
+      state.prepare.mockImplementationOnce(({ attachments }) =>
+        Effect.suspend(() => {
+          setOperateGrant("secondary", false);
+          return uploadFails
+            ? Effect.fail(uploadError(new Error("This connection cannot upload attachments.")))
+            : Effect.succeed({
+                status: "ready",
+                attachments: [],
+                draftAttachments: attachments,
+                pendingAttachmentIds: [],
+              });
+        }),
+      );
       await runDrain();
       expect(state.prepare).toHaveBeenCalledOnce();
       expect(state.start).not.toHaveBeenCalled();

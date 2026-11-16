@@ -1,4 +1,5 @@
 import { useComposerAttachmentActions } from "./use-composer-attachment-actions";
+import * as Effect from "effect/Effect";
 import * as Dialog from "../components/ui/Dialog";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { readEnvironmentScope } from "./session";
@@ -72,6 +73,7 @@ import { pendingThreadCreationMessage } from "./pending-thread-creation";
 import {
   composerAttachmentUploadBlockReason,
   composerAttachmentUploadsAtom,
+  uploadComposerAttachmentShared,
 } from "./composer-attachment-uploads";
 import {
   appendComposerDraftAttachments,
@@ -510,11 +512,15 @@ export function useThreadComposerState(input: {
     setIsSavingQueuedEdit(true);
     const capabilities = selectedEnvironmentRuntime?.serverConfig?.environment.capabilities;
     const prepared = await settlePromise(() =>
-      prepareTurnAttachments({
-        environmentId: thread.environmentId,
-        attachments: draft.attachments,
-        supportsImageUploads: capabilities !== undefined,
-      }),
+      Effect.runPromise(
+        prepareTurnAttachments({
+          environmentId: thread.environmentId,
+          attachments: draft.attachments,
+          supportsImageUploads: capabilities !== undefined,
+          uploadAttachment: (attachment) =>
+            uploadComposerAttachmentShared(thread.environmentId, attachment),
+        }),
+      ),
     );
     if (AsyncResult.isFailure(prepared)) {
       savingQueuedEditRef.current = false;

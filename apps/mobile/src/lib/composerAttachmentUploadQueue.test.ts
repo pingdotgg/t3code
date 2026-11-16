@@ -1,5 +1,8 @@
 import { ApprovalRequestId, EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { describe, expect, it, vi } from "vite-plus/test";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import {
   questionAttachmentDraftKey,
   questionAttachmentDraftPrefix,
@@ -33,7 +36,7 @@ function request(id: string, environment = environmentId): ComposerAttachmentUpl
 
 describe("composer attachment upload queue", () => {
   it("bounds concurrency, deduplicates updates, and drains all attachments", async () => {
-    const gates = new Map<string, ReturnType<typeof Promise.withResolvers<boolean>>>();
+    const gates = new Map<string, ReturnType<typeof Promise.withResolvers<string>>>();
     const fourthStarted = Promise.withResolvers<void>();
     const firstThreeStarted = Promise.withResolvers<void>();
     let active = 0;
@@ -41,7 +44,7 @@ describe("composer attachment upload queue", () => {
     const upload = vi.fn(async (input: ComposerAttachmentUploadRequest) => {
       active += 1;
       maximum = Math.max(maximum, active);
-      const gate = Promise.withResolvers<boolean>();
+      const gate = Promise.withResolvers<string>();
       gates.set(input.attachment.id, gate);
       if (gates.size === 3) firstThreeStarted.resolve();
       if (gates.size === 4) fourthStarted.resolve();
@@ -57,9 +60,9 @@ describe("composer attachment upload queue", () => {
     queue.sync(requests);
     await firstThreeStarted.promise;
     expect(upload).toHaveBeenCalledTimes(3);
-    gates.get("one")!.resolve(true);
+    gates.get("one")!.resolve("uploaded");
     await fourthStarted.promise;
-    for (const gate of gates.values()) gate.resolve(true);
+    for (const gate of gates.values()) gate.resolve("uploaded");
     await queue.settled();
     queue.sync(requests);
     await queue.settled();
@@ -76,8 +79,8 @@ describe("composer attachment upload queue", () => {
       async (_request: ComposerAttachmentUploadRequest, currentSignal: AbortSignal) => {
         signal = currentSignal;
         started.resolve();
-        return new Promise<boolean>((resolve) =>
-          currentSignal.addEventListener("abort", () => resolve(false), { once: true }),
+        return new Promise<string>((resolve) =>
+          currentSignal.addEventListener("abort", () => resolve("aborted"), { once: true }),
         );
       },
     );
@@ -94,7 +97,7 @@ describe("composer attachment upload queue", () => {
     await queue.settled();
     expect(signal?.aborted).toBe(true);
     expect(states).toEqual({});
-    upload.mockResolvedValueOnce(true);
+    upload.mockResolvedValueOnce("uploaded");
     queue.sync([local]);
     await queue.settled();
     expect(upload.mock.calls[1]?.[0]).toBe(local);
@@ -107,7 +110,10 @@ describe("composer attachment upload queue", () => {
 
   it("retries a failed attachment when the worker restores requests after reconnect", async () => {
     let states: Readonly<Record<string, ComposerAttachmentUploadState>> = {};
-    const upload = vi.fn().mockRejectedValueOnce(new Error("Disconnected")).mockResolvedValue(true);
+    const upload = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Disconnected"))
+      .mockResolvedValue("uploaded");
     const queue = createComposerAttachmentUploadQueue({
       upload,
       onChange: (next) => {
@@ -131,7 +137,7 @@ describe("composer attachment upload queue", () => {
   });
 
   it("ignores a late completion after removal or environment switch", async () => {
-    const gate = Promise.withResolvers<boolean>();
+    const gate = Promise.withResolvers<string>();
     const started = Promise.withResolvers<void>();
     let states: Readonly<Record<string, ComposerAttachmentUploadState>> = {};
     const upload = vi.fn(async () => {
@@ -146,10 +152,10 @@ describe("composer attachment upload queue", () => {
     });
     queue.sync([request("photo")]);
     await started.promise;
-    upload.mockResolvedValueOnce(true);
+    upload.mockResolvedValueOnce("uploaded");
     const other = EnvironmentId.make("environment-2");
     queue.sync([request("photo", other)]);
-    gate.resolve(true);
+    gate.resolve("uploaded");
     await queue.settled();
     expect(states).toEqual({ [composerAttachmentUploadKey(other, "photo")]: { status: "ready" } });
     queue.sync([]);
@@ -159,9 +165,9 @@ describe("composer attachment upload queue", () => {
 
   it("restarts a re-added attachment after its aborted transfer finishes settling", async () => {
     const firstStarted = Promise.withResolvers<void>();
-    const firstSettled = Promise.withResolvers<boolean>();
+    const firstSettled = Promise.withResolvers<string>();
     const secondStarted = Promise.withResolvers<void>();
-    const secondSettled = Promise.withResolvers<boolean>();
+    const secondSettled = Promise.withResolvers<string>();
     let states: Readonly<Record<string, ComposerAttachmentUploadState>> = {};
     let firstSignal: AbortSignal | undefined;
     const upload = vi.fn(async (_request: ComposerAttachmentUploadRequest, signal: AbortSignal) => {
@@ -186,10 +192,10 @@ describe("composer attachment upload queue", () => {
     queue.sync([local]);
     expect(firstSignal?.aborted).toBe(true);
     expect(upload).toHaveBeenCalledOnce();
-    firstSettled.resolve(false);
+    firstSettled.resolve("aborted");
     await secondStarted.promise;
     expect(upload).toHaveBeenCalledTimes(2);
-    secondSettled.resolve(true);
+    secondSettled.resolve("uploaded");
     await queue.settled();
     expect(states[composerAttachmentUploadKey(environmentId, local.attachment.id)]).toEqual({
       status: "ready",
@@ -205,7 +211,7 @@ describe("composer attachment upload queue", () => {
         _request: ComposerAttachmentUploadRequest,
         _signal: AbortSignal,
         report: (value: number) => void,
-      ): Promise<boolean> => {
+      ): Promise<string> => {
         report(0.12);
         report(0.13);
         report(1.1);
@@ -229,21 +235,45 @@ describe("composer attachment upload queue", () => {
       reason: "Server unavailable",
     });
     expect(progress).toEqual([0, 0.1, 1]);
-    upload.mockImplementationOnce(async () => true);
+    upload.mockImplementationOnce(async () => "uploaded");
     queue.retry(environmentId, "file");
     await queue.settled();
     expect(states[composerAttachmentUploadKey(environmentId, "file")]).toEqual({ status: "ready" });
     queue.dispose();
   });
 
-  it("does not spin when an upload's draft was abandoned before persistence", async () => {
-    const upload = vi.fn(async () => false);
-    const queue = createComposerAttachmentUploadQueue({ upload, onChange: () => {} });
-    queue.sync([request("discarded")]);
-    await queue.settled();
-    expect(upload).toHaveBeenCalledOnce();
-    queue.dispose();
-  });
+  it.effect("joins a send to the running upload instead of uploading again", () =>
+    Effect.gen(function* () {
+      const gate = Promise.withResolvers<string>();
+      const started = Promise.withResolvers<void>();
+      const uploaded = vi.fn();
+      const upload = vi.fn(async () => {
+        started.resolve();
+        return gate.promise;
+      });
+      let states: Readonly<Record<string, ComposerAttachmentUploadState>> = {};
+      const queue = createComposerAttachmentUploadQueue({
+        upload,
+        onUploaded: uploaded,
+        onChange: (next) => {
+          states = next;
+        },
+      });
+      const local = request("video");
+      queue.sync([local]);
+      yield* Effect.promise(() => started.promise);
+      // Sending hands the attachment from the draft to the outbox, which uploads it too.
+      const sent = yield* Effect.forkChild(queue.upload(local), { startImmediately: true });
+      queue.sync([]);
+      gate.resolve("uploaded-1");
+      expect(yield* Fiber.join(sent)).toBe("uploaded-1");
+      expect(upload).toHaveBeenCalledOnce();
+      expect(uploaded).toHaveBeenCalledExactlyOnceWith(local, "uploaded-1");
+      yield* Effect.promise(() => queue.settled());
+      expect(states).toEqual({});
+      queue.dispose();
+    }),
+  );
 });
 
 describe("draft upload scope and offline submission", () => {
