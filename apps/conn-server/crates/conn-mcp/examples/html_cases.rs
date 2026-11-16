@@ -63,6 +63,8 @@ async fn run(state: PathBuf, cases: Vec<Value>) -> Result<Vec<Value>, Error> {
     })
     .await??;
     let service = McpService::new(McpConfig {
+        refresh_provider: None,
+        worktrees: None,
         engine,
         environment_id: "html-parity".into(),
         label: "HTML".into(),

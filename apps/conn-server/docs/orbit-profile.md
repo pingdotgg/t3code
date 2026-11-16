@@ -1184,7 +1184,7 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `annotations_complete` | yes | U | U |  | agents work through review notes |
 | `annotations_list` | yes | U | U |  | agents work through review notes |
 | `annotations_release` | yes | U | U |  | agents work through review notes |
-| `create_threads` | no | U | N | S | new top-level threads |
+| `create_threads` | yes | U | N | S | new top-level threads |
 | `database_query` | no | U | U | M | Conn database panel |
 | `delegate_task` | yes | N | N |  | core orchestration |
 | `delete_scheduled_task` | yes | U | N |  | scheduled tasks |
@@ -1223,8 +1223,8 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `save_test_login` | no | X | U | M | test logins |
 | `schedule_task` | yes | U | N |  | scheduled tasks |
 | `send_to_user` | yes | N | N |  | core orchestration |
-| `t3_attachment_discard` | no | U | N | M | attachments between threads |
-| `t3_attachment_prepare_upload` | no | U | N | M | attachments between threads |
+| `t3_attachment_discard` | yes | U | N | M | attachments between threads |
+| `t3_attachment_prepare_upload` | yes | U | N | M | attachments between threads |
 | `t3_background_wait` | yes (2026-11-14) | N | N | M | agents wait on background commands; named in T3's instructions |
 | `t3_environment_link` | no | X | N | L | linked machines |
 | `t3_environment_links` | no | X | N | L | linked machines |
@@ -1251,14 +1251,14 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `t3_thread_read` | yes | N | N |  | core orchestration; Swamp's service calls |
 | `t3_thread_search` | yes | N | N |  | core orchestration; Swamp's service calls |
 | `t3_thread_send` | yes | N | N |  | core orchestration; Swamp's service calls |
-| `t3_thread_send_attachments` | no | U | N | M | attachments between threads |
+| `t3_thread_send_attachments` | yes | U | N | M | attachments between threads |
 | `t3_thread_transfer` | no | X | U | L | move a thread between machines |
 | `t3_thread_update` | yes | N | N |  | core orchestration; Swamp's service calls |
 | `t3_thread_wait` | yes | N | N |  | core orchestration; Swamp's service calls |
 | `t3_workflow_stop` | no | U | U | S |  |
-| `t3_worktree_handoff` | no | U | N | M | worktree hand-off |
-| `t3_worktree_list` | no | U | N | M | worktree hand-off |
-| `t3_worktree_status` | no | U | N | M | worktree hand-off |
+| `t3_worktree_handoff` | yes | U | N | M | worktree hand-off |
+| `t3_worktree_list` | yes | U | N | M | worktree hand-off |
+| `t3_worktree_status` | yes | U | N | M | worktree hand-off |
 | `task_cancel` | yes | N | N |  | core orchestration |
 | `task_status` | yes | N | N |  | core orchestration |
 | `tool_search` | no | U | U | S |  |

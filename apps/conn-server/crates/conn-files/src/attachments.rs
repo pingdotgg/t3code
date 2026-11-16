@@ -47,6 +47,34 @@ const IMAGE_EXTENSIONS: &[&str] = &[
 ];
 const UPLOAD_IMAGE_MIME_TYPES: &[&str] = &["image/gif", "image/jpeg", "image/png", "image/webp"];
 
+/// T3's image budget and duplicate check, before copying any pending upload.
+pub fn validate_claims(attachments: &[ChatAttachment]) -> Result<(), String> {
+    let mut image_bytes = 0_u64;
+    let mut ids = std::collections::HashSet::with_capacity(attachments.len());
+    for attachment in attachments {
+        let (id, mime, size, image) = match attachment {
+            ChatAttachment::Image(a) => (&a.id, &a.mime_type, a.size_bytes, true),
+            ChatAttachment::File(a) => (&a.id, &a.mime_type, a.size_bytes, false),
+            ChatAttachment::Unknown(a) => (&a.id, &a.mime_type, a.size_bytes, false),
+        };
+        ids.insert(id);
+        if image
+            || UPLOAD_IMAGE_MIME_TYPES
+                .iter()
+                .any(|m| mime.eq_ignore_ascii_case(m))
+        {
+            image_bytes = image_bytes.saturating_add(u64::try_from(size).unwrap_or_default());
+        }
+    }
+    if image_bytes > 80 * 1024 * 1024 {
+        return Err("Images can total up to 80 MiB per message or question response. Use smaller images or send fewer at once.".into());
+    }
+    if ids.len() != attachments.len() {
+        return Err("Duplicate attachment ids are not allowed.".into());
+    }
+    Ok(())
+}
+
 pub fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

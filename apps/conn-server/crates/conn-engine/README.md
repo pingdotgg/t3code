@@ -33,7 +33,7 @@ decode is a defect, not a broken client.
 
 ## dispatchCommand
 
-43 of the 56 command types are handled. The other 13 answer `OrchestrationV2DispatchCommandError`
+44 of the 56 command types are handled. The other 12 answer `OrchestrationV2DispatchCommandError`
 with a reason the client shows (`commands::refusal`).
 
 | Handled                                                                                                                                                             | Refused, and why                                                                             |
@@ -43,8 +43,8 @@ with a reason the client shows (`commands::refusal`).
 | `thread.archive`, `unarchive`, `delete`, `visit`, `mark-unread`, `metadata.update` (`regenerateTitle`), `title.regeneration.complete`                               | `prepared-run.release`, `.progress`, `.fail`, `.retry`: no worktree preparation              |
 | `thread.settle`, `auto-settle`, `unsettle`, `snooze`, `unsnooze`, `auto-settle.set`, `pin`, `unpin`, `pin.reorder`, `active.reorder`, `tag.set`                     | `thread.pull-request-link.sync`, `.pull-request.watch`, `.pull-request.sync`: no PR watching |
 | `thread.pull-request.link`, `.unlink`                                                                                                                               | `thread.guest-share.close`, `thread.guest-message.dismiss`: no guest sharing                 |
-| `thread.runtime-mode.set`, `interaction-mode.set`, `model-selection.set`, `provider.switch`, `provider-session.detach`                                              | `notification.delivery.accept`, `subagent.stop`, `thread.created.record`                     |
-| `delegated_task.request`, `.wake-policy`, `.completion-delivery.acknowledge`, `.dispose`, `checkpoint.rollback`, `thread.fork`                                                                            |                                                                                              |
+| `thread.runtime-mode.set`, `interaction-mode.set`, `model-selection.set`, `provider.switch`, `provider-session.detach`                                              | `notification.delivery.accept`, `subagent.stop`                     |
+| `delegated_task.request`, `.wake-policy`, `.completion-delivery.acknowledge`, `.dispose`, `checkpoint.rollback`, `thread.fork`, `thread.created.record` |                                                                                              |
 
 ## The refused commands: a map
 
@@ -61,7 +61,6 @@ The T3 sources are under `apps/server/src/orchestration-v2/` unless a path says 
 | `thread.guest-share.close`, `thread.guest-message.dismiss` | `GuestShareDecider.ts` | Guest sharing | guest share | other |
 | `notification.delivery.accept` | `Orchestrator.ts` `dispatchNotificationAccepted`, `NotificationMailbox.ts` | Marks a background notification delivered to a run | a notification mailbox (not built) | later |
 | `subagent.stop` | `Orchestrator.ts` `dispatchSubagentStop` | Stops one subagent of a run | `Session::stop_task` in the providers (in the trait, not built) | later |
-| `thread.created.record` | `Orchestrator.ts` `dispatchCreatedThreadRecord` | Records a thread made in a linked environment | linked environments | later |
 
 `orchestration.getTurnDiff` and `orchestration.getFullThreadDiff` were the two unserved
 `orchestration.*` methods (`checkpointing/CheckpointDiffQuery.ts`); both are served now, so

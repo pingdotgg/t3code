@@ -191,14 +191,20 @@ pub(crate) async fn handle(
                 .get_mut("params")
                 .map(Value::take)
                 .unwrap_or_default();
-            call(service, &caller, &rpc_id, params).await
+            call(service, &caller, &rpc_id, params, headers).await
         }
         other => rpc_error(&rpc_id, -32601, &format!("Method not found: {other}")),
     };
     Reply::json(StatusCode::OK, format!("{body}\n")).with(PROTOCOL_HEADER, PROTOCOL_VERSION.into())
 }
 
-async fn call(service: &Arc<McpService>, caller: &Caller, id: &Value, mut params: Value) -> String {
+async fn call(
+    service: &Arc<McpService>,
+    caller: &Caller,
+    id: &Value,
+    mut params: Value,
+    headers: &HeaderMap,
+) -> String {
     let mut arguments = match params["arguments"].take() {
         Value::Object(map) => map,
         Value::Null => Map::new(),
@@ -221,7 +227,26 @@ async fn call(service: &Arc<McpService>, caller: &Caller, id: &Value, mut params
             &format!("Invalid parameters for tool '{name}': {problem}"),
         );
     }
-    let result = match tools::call(service, caller, name, arguments).await {
+    if let Err(problem) = crate::input::check(name, &mut arguments) {
+        return rpc_error(
+            id,
+            -32602,
+            &format!("Invalid parameters for tool '{name}': {problem}"),
+        );
+    }
+    let origin = header(headers, "host")
+        .filter(|host| !host.contains(['/', '\\', ' ']))
+        .map(|host| {
+            format!(
+                "{}://{host}",
+                if header(headers, "x-forwarded-proto") == Some("https") {
+                    "https"
+                } else {
+                    "http"
+                }
+            )
+        });
+    let result = match tools::call(service, caller, name, arguments, origin.as_deref()).await {
         Ok(value) => json!({
             "content": [{"type": "text", "text": value.to_string()}],
             "structuredContent": value,
@@ -231,6 +256,10 @@ async fn call(service: &Arc<McpService>, caller: &Caller, id: &Value, mut params
             let failure =
                 json!({"_tag": "OrchestratorMcpFailure", "code": code, "message": message});
             json!({"content": [{"type": "text", "text": failure.to_string()}], "isError": true})
+        }
+        Err(tools::ToolError::Worktree { code, message }) => {
+            let failure = json!({"_tag":"WorktreeMcpFailure", "code":code, "message":message});
+            json!({"content":[{"type":"text", "text":failure.to_string()}], "isError":true})
         }
         Err(tools::ToolError::Message(message)) => {
             json!({"content": [{"type": "text", "text": message}], "isError": true})

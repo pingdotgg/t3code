@@ -10,3 +10,6 @@ t3_background_wait
 html_render
 request_secret
 panel_open
+create_threads
+t3_worktree_handoff
+t3_worktree_status

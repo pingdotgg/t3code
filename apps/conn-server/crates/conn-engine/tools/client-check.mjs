@@ -423,4 +423,17 @@ check("pull requests: link, unlink and relink as T3 writes them", () => {
   ]);
 });
 
+check("batch threads: creation appears in the parent timeline and keeps sender provenance", () => {
+  const parent = followThread(exported.createdThreadItems);
+  assert.equal(parent.status,"live");
+  const created = parent.projection.turnItems.find((item) => item.type === "thread_created");
+  assert.equal(created.targetThreadId,"thread-created");
+  assert.equal(created.targetRunId,"run:thread-created:1");
+  assert.equal(created.status,"completed");
+  const child = decodeDetailSnapshot(exported.createdThreadSnapshot).projection;
+  assert.equal(child.thread.lineage.parentThreadId,null);
+  assert.equal(child.messages[0].senderThreadId,"thread-1");
+  assert.equal(child.messages[0].creationSource,"mcp");
+});
+
 console.log(`\n${checks} checks passed against the client's own decoders and reducers.`);

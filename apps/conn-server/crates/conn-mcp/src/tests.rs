@@ -43,15 +43,27 @@ fn fixture_with(
     let dir = std::env::temp_dir().join(format!("conn-mcp-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
+    let files = Arc::new(conn_files::Files::open(&dir).unwrap());
     let mut config = EngineConfig::new(dir.join("engine.sqlite"));
     config.projects = vec![ProjectConfig {
         title: "Project".into(),
         workspace_root: ROOT.into(),
     }];
     config.providers = vec![Arc::new(provider)];
-    config.host = host;
+    config.host = host.or_else(|| Some(Arc::new(threads_handoff::FilesHost(files.clone()))));
     let engine = Arc::new(SqliteEngine::open(config).unwrap());
     let service = McpService::new(McpConfig {
+        refresh_provider: None,
+        files: Some(files),
+        worktrees: Some(crate::WorktreeConfig {
+            directory: Arc::new({
+                let dir = dir.clone();
+                move || dir.join("worktrees")
+            }),
+            settings: Arc::new(|| json!({})),
+            terminals: None,
+            hub: conn_vcs::VcsHub::default(),
+        }),
         panels: Some(conn_features::panels::PanelBroker::default()),
         secrets: Some(conn_features::secrets::SecretRequests::new(
             &dir,
@@ -73,7 +85,6 @@ fn fixture_with(
         hosted_app_url: crate::DEFAULT_HOSTED_APP_URL.into(),
         scheduled_tasks: None,
         annotations: None,
-        files: Some(Arc::new(conn_files::Files::open(&dir).unwrap())),
     });
     service.set_listen_address("0.0.0.0:4711".parse().unwrap());
     Fixture { service, dir }
@@ -194,7 +205,10 @@ impl<'a> Client<'a> {
         assert_eq!(reply["result"]["isError"], true, "{tool}: {reply}");
         let failure: Value =
             serde_json::from_str(reply["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(failure["_tag"], "OrchestratorMcpFailure");
+        assert!(matches!(
+            failure["_tag"].as_str(),
+            Some("OrchestratorMcpFailure" | "WorktreeMcpFailure")
+        ));
         (
             failure["code"].as_str().unwrap().to_owned(),
             failure["message"].as_str().unwrap().to_owned(),
@@ -1683,8 +1697,7 @@ async fn search_puts_titles_first_and_keeps_slots_for_messages() {
 /// Tools that a text we send to an agent names and that this server does not serve. An agent
 /// told to call one finds no such tool. Serve one, and this test makes you strike it here.
 /// `preview_*` in the orchestration text also names all 13 preview tools.
-const NAMED_NOT_SERVED: [&str; 13] = [
-    "create_threads",
+const NAMED_NOT_SERVED: [&str; 12] = [
     "device_list",
     "device_open",
     "device_screenshot",
@@ -1760,6 +1773,8 @@ async fn fixture_with_tasks(name: &str) -> Fixture {
     .await;
     let config = &base.service.config;
     let service = McpService::new(McpConfig {
+        refresh_provider: None,
+        worktrees: None,
         panels: Some(conn_features::panels::PanelBroker::default()),
         secrets: config.secrets.clone(),
         engine,
@@ -2247,6 +2262,8 @@ async fn annotation_tools_report_a_conflict_and_refuse_callers_outside_a_thread(
     // Reading needs no live run.
     idle_agent.ok("annotations_list", json!({})).await;
 }
+
+mod threads_handoff;
 
 #[tokio::test(flavor = "current_thread")]
 async fn secret_request_requires_an_active_owned_run_and_stays_hidden() {
