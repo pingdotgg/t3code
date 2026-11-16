@@ -917,6 +917,28 @@ it.effect("ranks scored guidance ahead of newer single samples and drops unscore
   );
 });
 
+it.effect("leaves an already scored automated wake out of guidance", () =>
+  Effect.gen(function* () {
+    yield* seed();
+    const service = yield* ModelEvaluations.ModelEvaluations;
+    yield* service.evaluateRun(input);
+    assert.equal((yield* service.list(scope)).guidance[0]?.sampleCount, 1);
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      UPDATE orchestration_v2_projection_messages
+      SET payload_json = json_set(
+        payload_json,
+        '$.notification',
+        json('{"source":{"kind":"command"},"outcome":"completed","summary":"Background work finished"}')
+      )
+      WHERE message_id = ${`${runId}:user`}
+    `;
+    const report = yield* service.list(scope);
+    assert.deepEqual(report.guidance, []);
+    assert.deepEqual(report.records, []);
+  }).pipe(Effect.provide(makeLayer((request) => Effect.succeed(verdict(request.packet))))),
+);
+
 it.effect.each(["command", "monitor", "group", "delegated_task"] as const)(
   "records a %s wake as skipped and does not judge it",
   (kind) => {
