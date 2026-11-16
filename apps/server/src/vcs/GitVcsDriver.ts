@@ -6,6 +6,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Hash from "effect/Hash";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -1079,6 +1080,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "core.splitIndex=false",
         "-c",
         "splitIndex.sharedIndexExpire=never",
+        // core.ignorestat would mark entries assume-unchanged, hiding edits from add -A.
+        "-c",
+        "core.ignorestat=false",
       ];
       const { gitCommonDir, indexPath, topLevel, prefix, headExists, head } =
         yield* resolveCaptureRepository(input.cwd);
@@ -1093,6 +1097,15 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           : undefined;
       const indexId = yield* random.uuidV4();
       const tempIndexPath = path.join(gitCommonDir, `t3-checkpoint-index-${indexId}`);
+      // Keeps the stat data of untracked files between captures, so unchanged ones are not rehashed.
+      const cachedIndexPath =
+        indexPath === undefined
+          ? undefined
+          : path.join(
+              path.dirname(indexPath),
+              // Workspaces whose hashes collide share a cache, which only costs a rehash.
+              `t3-checkpoint-index-cache-${(Hash.string(prefix) >>> 0).toString(16)}`,
+            );
       const hostEnv = yield* HostProcess.Environment;
       // VcsProcess clears inherited object selectors, so every other command uses this store.
       const sharedObjects = path.join(gitCommonDir, "objects");
@@ -1159,7 +1172,96 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
           sparseCheckout = /--(?:\[no-\])?sparse\b/.test(`${help.stdout}${help.stderr}`);
         }
-        if (headExists) {
+        // Sparse flags can go stale between captures, so sparse checkouts always rebuild.
+        const cachePath = headExists && !sparseCheckout ? cachedIndexPath : undefined;
+        const cachedIndex =
+          cachePath !== undefined &&
+          (yield* Effect.gen(function* () {
+            const { mtime } = yield* fileSystem.stat(cachePath);
+            if (Option.isNone(mtime)) return false;
+            // Stay below the cache's timestamp, preserving Git's racy check.
+            const indexTime = (mtime.value.getTime() - 1) / 1000;
+            yield* fileSystem.copyFile(cachePath, tempIndexPath);
+            yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
+            const changes = yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: [
+                ...indexConfig,
+                "diff-index",
+                "--cached",
+                "--raw",
+                "-z",
+                "--no-abbrev",
+                "--no-renames",
+                "--no-relative",
+                "--ignore-submodules=none",
+                "HEAD",
+              ],
+              env: commitEnv,
+              maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+              outputMode: "error",
+            });
+            // Non-UTF-8 paths cannot round-trip through a decoded string.
+            if (changes.stdout.includes("\uFFFD")) return false;
+            // The result must stage exactly what a fresh index from HEAD would. Outside the
+            // workspace that is HEAD; inside it, add -A settles tracked paths either way, so only
+            // paths missing from the cache, and cached paths absent from HEAD, need checking.
+            const fields = changes.stdout.split("\0");
+            const resets: string[] = [];
+            const untracked: Array<{ file: string; oid: string; reset: string }> = [];
+            const changed: Array<{ oid: string; reset: string }> = [];
+            for (let index = 0; index + 1 < fields.length; index += 2) {
+              const [srcMode = "", dstMode = "", srcOid = "", dstOid = "", status = ""] =
+                fields[index]!.slice(1).split(" ");
+              const file = fields[index + 1]!;
+              const reset = `${srcMode} ${srcOid}\t${file}`;
+              if (status === "U") return false;
+              if (!file.startsWith(prefix) || status === "D") resets.push(reset);
+              else if (status === "A") untracked.push({ file, oid: dstOid, reset });
+              else if (dstMode !== "160000") changed.push({ oid: dstOid, reset });
+            }
+            const kept = new Set(
+              yield* filterIgnoredPaths(
+                input.cwd,
+                untracked.map(({ file }) => file.slice(prefix.length)),
+              ),
+            );
+            const reused = [...changed];
+            for (const entry of untracked) {
+              if (!kept.has(entry.file.slice(prefix.length))) resets.push(entry.reset);
+              else if (!entry.reset.startsWith("160000 ")) reused.push(entry);
+            }
+            // Cached entries skip rehashing, so their objects must still exist, e.g. after a prune.
+            if (reused.length > 0) {
+              const stdin = reused.map(({ oid }) => oid).join("\n") + "\n";
+              const objects = yield* execute({
+                operation,
+                cwd: input.cwd,
+                args: ["cat-file", "--batch-check=%(objectname)"],
+                stdin,
+                env: commitEnv,
+                maxOutputBytes: Buffer.byteLength(stdin) * 2,
+                outputMode: "error",
+              });
+              const present = new Set(objects.stdout.split("\n"));
+              for (const entry of reused) {
+                if (!present.has(entry.oid)) resets.push(entry.reset);
+              }
+            }
+            if (resets.length > 0) {
+              yield* execute({
+                operation,
+                cwd: input.cwd,
+                args: [...indexConfig, "update-index", "-z", "--index-info"],
+                stdin: resets.join("\0") + "\0",
+                env: commitEnv,
+              });
+              yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
+            }
+            return true;
+          }).pipe(Effect.orElseSucceed(() => false)));
+        if (headExists && !cachedIndex) {
           const reusedIndex = yield* Effect.gen(function* () {
             const userIndexPath =
               indexPath ??
@@ -1269,15 +1371,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               yield* execute({
                 operation,
                 cwd: input.cwd,
-                // core.ignorestat would mark these assume-unchanged, hiding edits from add -A.
-                args: [
-                  ...indexConfig,
-                  "-c",
-                  "core.ignorestat=false",
-                  "update-index",
-                  "-z",
-                  "--index-info",
-                ],
+                args: [...indexConfig, "update-index", "-z", "--index-info"],
                 stdin: flagged.join("\0") + "\0",
                 env: commitEnv,
               });
@@ -1473,6 +1567,20 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             exitCode: 0,
             detail: "git write-tree returned an empty tree oid.",
           });
+        }
+        if (cachePath !== undefined) {
+          // The copy keeps Git's index timestamp for the racy check; the rename replaces atomically.
+          const stagedCache = `${cachePath}.${indexId}`;
+          yield* Effect.gen(function* () {
+            const { mtime } = yield* fileSystem.stat(tempIndexPath);
+            if (Option.isNone(mtime)) return;
+            yield* fileSystem.copyFile(tempIndexPath, stagedCache);
+            yield* fileSystem.utimes(stagedCache, mtime.value, mtime.value);
+            yield* fileSystem.rename(stagedCache, cachePath);
+          }).pipe(
+            Effect.ensuring(fileSystem.remove(stagedCache, { force: true }).pipe(Effect.ignore)),
+            Effect.ignore,
+          );
         }
 
         // Switching branches rewrites files the turn never wrote, and only HEAD's reflog tells a

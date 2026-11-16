@@ -1349,6 +1349,36 @@ it.effect("checkpoint capture preserves racy edits made after resetting the inde
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect("a reused checkpoint index drops newly ignored files and restores pruned objects", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-reuse-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    yield* fileSystem.writeFileString(path.join(cwd, "ignored.txt"), "untracked\n");
+    yield* fileSystem.writeFileString(path.join(cwd, "kept.txt"), "kept\n");
+    // An old mtime keeps the cached entry stat-clean, so Git would not rehash it on its own.
+    yield* fileSystem.utimes(path.join(cwd, "kept.txt"), 1_700_000_000, 1_700_000_000);
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+    yield* fileSystem.writeFileString(path.join(cwd, ".gitignore"), "ignored.txt\n");
+
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+    const tree = yield* git(["ls-tree", "--name-only", checkpointRef]);
+    assert.deepEqual(tree.stdout.split("\n").filter(Boolean), [
+      ".gitignore",
+      "file.txt",
+      "kept.txt",
+    ]);
+
+    yield* git(["update-ref", "-d", checkpointRef]);
+    yield* git(["gc", "--quiet", "--prune=now"]);
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+    assert.strictEqual((yield* git(["show", `${checkpointRef}:kept.txt`])).stdout, "kept\n");
+    yield* git(["fsck", "--full"]);
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 it.effect.each(
   [false, true].flatMap((nested) =>
     (["normal", "flags", "split"] as const).map((indexMode) => ({ nested, indexMode })),
