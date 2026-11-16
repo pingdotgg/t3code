@@ -175,6 +175,44 @@ describe("threadHistoryMerge", () => {
     ]);
   });
 
+  it("keeps an older answer before a full page that only covers the later part of a conversation page", () => {
+    const [question, olderAnswer, reasoningA, reasoningB, reasoningC, newerAnswer] = [
+      row(0),
+      row(1),
+      row(2),
+      row(3),
+      row(4),
+      row(5),
+    ];
+    const window = [row(6), row(7)];
+    const projection = {
+      ...v2Projection,
+      turnItems: window.map((entry) => entry.item),
+      visibleTurnItems: window.map((entry, position) => ({ ...entry, position })),
+    };
+    const conversation = mergeOlderHistoryIntoProjection(projection, [
+      question,
+      olderAnswer,
+      newerAnswer,
+    ]);
+    const full = mergeOlderHistoryIntoProjection(conversation, [
+      reasoningA,
+      reasoningB,
+      reasoningC,
+      newerAnswer,
+    ]);
+    expect(full.visibleTurnItems.map((entry) => entry.sourceItemId)).toEqual([
+      "item-0",
+      "item-1",
+      "item-2",
+      "item-3",
+      "item-4",
+      "item-5",
+      "item-6",
+      "item-7",
+    ]);
+  });
+
   it("does not resurrect a local item hidden while an older page was in flight", () => {
     const stalePageRow = row(1);
     const currentItem = {
