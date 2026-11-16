@@ -3342,6 +3342,9 @@ describe("AcpAdapterV2", () => {
       );
       type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
       let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      let pendingHandoff: string | undefined;
+      let previousRoot = "mock-session-1";
       const instanceId = ProviderInstanceId.make("acp-test-v2-replay-order");
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
@@ -3366,12 +3369,45 @@ describe("AcpAdapterV2", () => {
                       content: { type: "text", text: `${otherSessionId} during load` },
                     },
                   }),
-                ).pipe(Effect.andThen(runtime.loadSession(sessionId, activationOptions))),
+                ).pipe(
+                  Effect.andThen(runtime.loadSession(sessionId, activationOptions)),
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      pendingHandoff = sessionId;
+                    }),
+                  ),
+                ),
             }),
           }),
         },
         selfInvocation,
-      });
+      }).pipe(
+        Effect.provideService(McpProviderSessions.McpProviderSessions, {
+          ...mcpSessions,
+          read: (threadId) =>
+            Effect.gen(function* () {
+              // Context refresh after load is externally controlled, so native updates can arrive here.
+              const incomingRoot = pendingHandoff;
+              if (incomingRoot !== undefined) {
+                pendingHandoff = undefined;
+                for (const [sessionId, text] of [
+                  [previousRoot, "late old root"],
+                  [incomingRoot, "new root after load"],
+                ] as const) {
+                  yield* sessionUpdateHandler!({
+                    sessionId,
+                    update: {
+                      sessionUpdate: "agent_message_chunk",
+                      content: { type: "text", text },
+                    },
+                  });
+                }
+                previousRoot = incomingRoot;
+              }
+              return yield* mcpSessions.read(threadId);
+            }),
+        }),
+      );
       const threadId = ThreadId.make("thread-acp-v2-replay-order");
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
@@ -3463,9 +3499,98 @@ describe("AcpAdapterV2", () => {
         "assistant:\tcode",
         "assistant:done",
       ]);
-      assert.deepEqual(texts(loaded), ["user:replay"]);
-      assert.deepEqual(texts(resumed), ["user:replay"]);
+      assert.deepEqual(texts(loaded), ["user:replay", "assistant:new root after load"]);
+      assert.deepEqual(texts(resumed), ["user:replay", "assistant:new root after load"]);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect.each(["failed", "interrupted"] as const)(
+    "keeps the previous snapshot owner after %s activation",
+    (outcome) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const activationStarted = yield* Deferred.make<void>();
+        type Runtime = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let handler: Parameters<Runtime["handleSessionUpdate"]>[0] | undefined;
+        const instanceId = ProviderInstanceId.make(`acp-activation-${outcome}`);
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath: yield* bundledMockAgentPath,
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                handleSessionUpdate: (onUpdate) =>
+                  Effect.sync(() => {
+                    handler = onUpdate;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(onUpdate))),
+                loadSession: () =>
+                  Deferred.succeed(activationStarted, undefined).pipe(
+                    Effect.andThen(
+                      outcome === "failed"
+                        ? Effect.fail(
+                            EffectAcpErrors.AcpRequestError.invalidParams("Load rejected"),
+                          )
+                        : Effect.never,
+                    ),
+                  ),
+              }),
+            }),
+          },
+        });
+        const threadId = ThreadId.make(`thread-acp-activation-${outcome}`);
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(`session-acp-activation-${outcome}`),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const activation = runtime.readThreadSnapshot({
+          providerThread: {
+            ...providerThread,
+            nativeThreadRef: {
+              ...providerThread.nativeThreadRef!,
+              nativeId: "unavailable-session",
+            },
+          },
+        });
+        if (outcome === "failed") {
+          assert.isTrue(Exit.isFailure(yield* Effect.exit(activation)));
+        } else {
+          const fiber = yield* Effect.forkChild(activation);
+          yield* Deferred.await(activationStarted);
+          yield* Fiber.interrupt(fiber);
+        }
+        for (const sessionId of ["unavailable-session", "mock-session-1"]) {
+          yield* handler!({
+            sessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: sessionId },
+            },
+          });
+        }
+        const snapshot = yield* runtime.readThreadSnapshot({ providerThread });
+        assert.deepEqual(
+          snapshot.messages.map((message) => message.text),
+          ["mock-session-1"],
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("persists a bounded subset of streamed root and child tool updates", () =>

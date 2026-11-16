@@ -2063,10 +2063,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const activeSessionId = yield* Ref.make<string | null>(null);
         // session/load and session/resume deliver a session's history before activeSessionId names it.
         const activatingSessionId = yield* Ref.make<string | null>(null);
-        const whileActivating = <A, E, R>(sessionId: string, activation: Effect.Effect<A, E, R>) =>
-          Ref.set(activatingSessionId, sessionId).pipe(
-            Effect.andThen(activation),
-            Effect.ensuring(Ref.set(activatingSessionId, null)),
+        const whileActivating = <A extends { readonly sessionId: string }, E, R>(
+          sessionId: string,
+          activation: Effect.Effect<A, E, R>,
+        ) =>
+          Effect.uninterruptibleMask((restore) =>
+            Ref.set(activatingSessionId, sessionId).pipe(
+              Effect.andThen(restore(activation)),
+              Effect.tap((activated) => Ref.set(activeSessionId, activated.sessionId)),
+              Effect.ensuring(Ref.set(activatingSessionId, null)),
+            ),
           );
         // Child sessions and a replaced root share the runtime; only the root's history is the snapshot.
         const ownsSnapshotHistory = (sessionId: string) =>
@@ -8536,7 +8542,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               (yield* Ref.get(activeSessionId)) !== requestedSessionId || restartAfterInterrupt;
             if (needsSessionActivation) {
               const activated = yield* activateSession(requestedSessionId, turnInput.threadId);
-              yield* Ref.set(activeSessionId, activated.sessionId);
               yield* setActiveSessionSetup(activated);
               yield* configureSession(activated, turnInput.modelSelection, turnInput.runtimePolicy);
               yield* Ref.set(activeSelection, turnInput.modelSelection);
@@ -9254,7 +9259,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       sessionId,
                       threadInput.providerThread.appThreadId,
                     ).pipe(Effect.tapError(() => restorePreviousItemIdentity));
-                    yield* Ref.set(activeSessionId, activated.sessionId);
                     yield* setActiveSessionSetup(activated);
                     const nextSelection = threadInput.modelSelection ?? input.modelSelection;
                     const nextRuntimePolicy = threadInput.runtimePolicy ?? input.runtimePolicy;
@@ -9775,7 +9779,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       activated.sessionId,
                       yield* readMcpContext(snapshotInput.providerThread.appThreadId),
                     );
-                    yield* Ref.set(activeSessionId, activated.sessionId);
                     yield* setActiveSessionSetup(activated);
                     yield* Ref.set(activeSelection, null);
                     yield* Ref.set(activeInteractionMode, null);
