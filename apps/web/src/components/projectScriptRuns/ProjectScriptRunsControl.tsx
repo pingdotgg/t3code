@@ -1,7 +1,11 @@
 import { HistoryIcon, PlayIcon } from "lucide-react";
 import { useState } from "react";
 
-import { isProjectScriptRunActive, projectScriptRunStatusLabel } from "../../projectScriptRuns";
+import {
+  isProjectScriptRunActive,
+  projectScriptLaunchKey,
+  projectScriptRunStatusLabel,
+} from "../../projectScriptRuns";
 import {
   useProjectScriptMenuEntries,
   useProjectScriptRunActions,
@@ -53,7 +57,8 @@ export function ProjectScriptRunsControl() {
 
 function ProjectScriptRunsMenu({ onClose }: { readonly onClose: () => void }) {
   const { entries, showEnvironmentLabel } = useProjectScriptMenuEntries();
-  const { runsList, runScript, stopRun, selectRun } = useProjectScriptRunActions();
+  const { runsList, pendingLaunchKeys, runScript, stopRun, selectRun } =
+    useProjectScriptRunActions();
 
   if (entries.length === 0) {
     return (
@@ -85,6 +90,12 @@ function ProjectScriptRunsMenu({ onClose }: { readonly onClose: () => void }) {
           </span>
         </MenuGroupLabel>
         {entry.scripts.map((script) => {
+          const launchKey = projectScriptLaunchKey(
+            entry.project.environmentId,
+            entry.project.id,
+            script.id,
+          );
+          const launchPending = pendingLaunchKeys.has(launchKey);
           const activeRun = runsList.find(
             (run) =>
               run.environmentId === entry.project.environmentId &&
@@ -101,7 +112,10 @@ function ProjectScriptRunsMenu({ onClose }: { readonly onClose: () => void }) {
                 !isProjectScriptRunActive(run),
             )
             .sort((left, right) => right.startedAt - left.startedAt)[0];
-          const canRun = entry.canOperate;
+          const canRun = entry.canOperate && !launchPending;
+          const displayStatus = launchPending
+            ? "starting"
+            : (activeRun?.status ?? latestRun?.status ?? null);
           return (
             <MenuItem
               key={`${projectKey}:${script.id}`}
@@ -113,14 +127,18 @@ function ProjectScriptRunsMenu({ onClose }: { readonly onClose: () => void }) {
             >
               <MenuItemLabel>{projectScriptMenuLabel(script)}</MenuItemLabel>
               <span className="ms-auto flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-                {activeRun !== undefined ? (
-                  <span>{projectScriptRunStatusLabel(activeRun.status)}</span>
+                {displayStatus !== null ? (
+                  <span>{projectScriptRunStatusLabel(displayStatus)}</span>
                 ) : null}
                 <ProjectScriptRunStatusIcon
-                  status={activeRun?.status ?? latestRun?.status ?? null}
-                  className={activeRun !== undefined ? "size-3.5 text-destructive" : undefined}
+                  status={displayStatus}
+                  className={
+                    activeRun !== undefined && !launchPending
+                      ? "size-3.5 text-destructive"
+                      : undefined
+                  }
                 />
-                {activeRun === undefined && latestRun !== undefined ? (
+                {!launchPending && activeRun === undefined && latestRun !== undefined ? (
                   <Button
                     type="button"
                     variant="ghost"

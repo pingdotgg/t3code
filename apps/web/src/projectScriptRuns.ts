@@ -64,6 +64,14 @@ export function projectActionsThreadId(
   return `${PROJECT_ACTIONS_THREAD_PREFIX}${environmentId}:${projectId}` as ThreadId;
 }
 
+export function projectScriptLaunchKey(
+  environmentId: EnvironmentId,
+  projectId: ProjectId,
+  scriptId: string,
+): string {
+  return `${environmentId}\u0000${projectId}\u0000${scriptId}`;
+}
+
 const RUN_STATUS_RANK: Record<ProjectScriptRunStatus, number> = {
   failed: 0,
   running: 1,

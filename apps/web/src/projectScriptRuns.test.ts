@@ -21,6 +21,7 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
 import {
   isProjectScriptWrapperLine,
   projectScriptBeginMarker,
+  projectScriptLaunchKey,
   projectScriptOutputTail,
   projectScriptSentinelPattern,
   projectScriptStopRollbackPatch,
@@ -242,6 +243,23 @@ describe("project script runs", () => {
     expect(
       projectScriptStopRollbackPatch({ ...activeRun, status: "succeeded" }, activeRun),
     ).toBeNull();
+  });
+
+  it("claims only one pending launch for a project action", () => {
+    const key = projectScriptLaunchKey(environmentId, projectId, "dev");
+    const store = useProjectScriptRunsStore.getState();
+
+    expect(store.beginLaunch(key)).toBe(true);
+    expect(useProjectScriptRunsStore.getState().beginLaunch(key)).toBe(false);
+
+    store.endLaunch(key);
+    expect(useProjectScriptRunsStore.getState().pendingLaunchKeys.has(key)).toBe(false);
+    expect(useProjectScriptRunsStore.getState().beginLaunch(key)).toBe(true);
+    useProjectScriptRunsStore.getState().endLaunch(key);
+  });
+
+  it("wraps headless actions in a shell-portable child shell", () => {
+    expect(wrapProjectScriptCommand("pnpm dev", false)).toMatch(/^sh -c /);
   });
 });
 

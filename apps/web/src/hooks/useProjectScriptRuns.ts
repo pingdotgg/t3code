@@ -31,6 +31,7 @@ import {
   projectActionsThreadId,
   projectLastActivityTimestamp,
   projectScriptBeginMarker,
+  projectScriptLaunchKey,
   projectScriptStopRollbackPatch,
   resolveProjectAnchorThread,
   sortProjectScriptMenuEntries,
@@ -75,6 +76,9 @@ export function useProjectScriptRunActions() {
   const selectRun = useProjectScriptRunsStore((state) => state.selectRun);
   const beginStop = useProjectScriptRunsStore((state) => state.beginStop);
   const endStop = useProjectScriptRunsStore((state) => state.endStop);
+  const pendingLaunchKeys = useProjectScriptRunsStore((state) => state.pendingLaunchKeys);
+  const beginLaunch = useProjectScriptRunsStore((state) => state.beginLaunch);
+  const endLaunch = useProjectScriptRunsStore((state) => state.endLaunch);
 
   const runsList = sortProjectScriptRuns(Object.values(runs));
   const selectedRun = selectedRunId === null ? null : (runs[selectedRunId] ?? null);
@@ -109,6 +113,17 @@ export function useProjectScriptRunActions() {
       return;
     }
 
+    const launchKey = projectScriptLaunchKey(project.environmentId, project.id, script.id);
+    const alreadyActive = Object.values(useProjectScriptRunsStore.getState().runs).some(
+      (run) =>
+        run.environmentId === project.environmentId &&
+        run.projectId === project.id &&
+        run.scriptId === script.id &&
+        isProjectScriptRunActive(run),
+    );
+    if (alreadyActive) return;
+    if (!beginLaunch(launchKey)) return;
+
     const runId = randomUUID();
     const terminalId = `script-${script.id}-${runId.slice(0, 8)}`;
     const sentinel = `${PROJECT_SCRIPT_SENTINEL_PREFIX}${runId.replaceAll("-", "")}:`;
@@ -139,61 +154,72 @@ export function useProjectScriptRunActions() {
       endedAt: null,
     };
 
-    const wrappedCommand = wrapProjectScriptCommand(script.command);
-    const openResult = await openTerminal({
-      environmentId: project.environmentId,
-      input: {
-        threadId,
-        terminalId,
-        cwd,
-        ...(worktreePath !== null ? { worktreePath } : {}),
-        cols: SCRIPT_TERMINAL_COLS,
-        rows: SCRIPT_TERMINAL_ROWS,
-        env: projectScriptRuntimeEnv({
-          project: { cwd: project.workspaceRoot },
-          worktreePath,
-          extraEnv: {
-            [PROJECT_SCRIPT_BEGIN_ENV]: projectScriptBeginMarker(sentinel),
-            [PROJECT_SCRIPT_SENTINEL_ENV]: sentinel,
-            COLORTERM: "",
-          },
-        }),
-      },
-    });
-    if (openResult._tag === "Failure") {
-      const message = isAtomCommandInterrupted(openResult)
-        ? "The run was interrupted."
-        : commandFailureMessage(openResult);
-      startRun({ ...run, status: "failed", errorMessage: message, endedAt: Date.now() });
-      toastManager.add({
-        type: "error",
-        title: `Could not run ${script.name}`,
-        description: message,
+    const launch = async () => {
+      const openResult = await openTerminal({
+        environmentId: project.environmentId,
+        input: {
+          threadId,
+          terminalId,
+          cwd,
+          ...(worktreePath !== null ? { worktreePath } : {}),
+          cols: SCRIPT_TERMINAL_COLS,
+          rows: SCRIPT_TERMINAL_ROWS,
+          env: projectScriptRuntimeEnv({
+            project: { cwd: project.workspaceRoot },
+            worktreePath,
+            extraEnv: {
+              [PROJECT_SCRIPT_BEGIN_ENV]: projectScriptBeginMarker(sentinel),
+              [PROJECT_SCRIPT_SENTINEL_ENV]: sentinel,
+              COLORTERM: "",
+            },
+          }),
+        },
       });
-      return;
-    }
+      if (openResult._tag === "Failure") {
+        const message = isAtomCommandInterrupted(openResult)
+          ? "The run was interrupted."
+          : commandFailureMessage(openResult);
+        startRun({ ...run, status: "failed", errorMessage: message, endedAt: Date.now() });
+        toastManager.add({
+          type: "error",
+          title: `Could not run ${script.name}`,
+          description: message,
+        });
+        return;
+      }
 
-    startRun(run);
-    const writeResult = await writeTerminal({
-      environmentId: project.environmentId,
-      input: {
-        threadId,
-        terminalId,
-        data: projectScriptTerminalInput(wrappedCommand),
-        afterShellStartup: true,
-      },
-    });
-    if (writeResult._tag === "Failure") {
-      const message = isAtomCommandInterrupted(writeResult)
-        ? "The run was interrupted."
-        : commandFailureMessage(writeResult);
-      updateRun(runId, { status: "failed", errorMessage: message, endedAt: Date.now() });
-      toastManager.add({
-        type: "error",
-        title: `Could not run ${script.name}`,
-        description: message,
+      startRun(run);
+      // The typed command must parse in fish as well as POSIX shells.
+      const wrappedCommand = wrapProjectScriptCommand(script.command, false);
+      const writeResult = await writeTerminal({
+        environmentId: project.environmentId,
+        input: {
+          threadId,
+          terminalId,
+          data: projectScriptTerminalInput(wrappedCommand),
+          afterShellStartup: true,
+        },
       });
+      if (writeResult._tag === "Failure") {
+        const message = isAtomCommandInterrupted(writeResult)
+          ? "The run was interrupted."
+          : commandFailureMessage(writeResult);
+        updateRun(runId, { status: "failed", errorMessage: message, endedAt: Date.now() });
+        toastManager.add({
+          type: "error",
+          title: `Could not run ${script.name}`,
+          description: message,
+        });
+      }
+    };
+
+    try {
+      await launch();
+    } catch (error) {
+      endLaunch(launchKey);
+      throw error;
     }
+    endLaunch(launchKey);
   };
 
   const stopRun = async (run: ProjectScriptRun) => {
@@ -258,6 +284,7 @@ export function useProjectScriptRunActions() {
   return {
     runs,
     runsList,
+    pendingLaunchKeys,
     selectedRun,
     activeRunCount: runsList.filter(isProjectScriptRunActive).length,
     canOperate,
