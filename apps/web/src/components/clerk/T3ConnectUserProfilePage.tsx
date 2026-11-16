@@ -184,7 +184,7 @@ export function T3ConnectUserProfilePage() {
 
   const handleDeregister = async (
     environment: RelayClientEnvironmentRecord,
-    cleanup?: { generation: number; toastId: ReturnType<typeof toastManager.add> },
+    cleanup?: { toastId: ReturnType<typeof toastManager.add> },
   ) => {
     const accountId = environmentsState.accountId;
     if (!accountId || mutationPendingRef.current) return;
@@ -194,7 +194,7 @@ export function T3ConnectUserProfilePage() {
     const result = await deregisterEnvironment({
       accountId,
       environmentId: environment.environmentId,
-      cleanupGeneration: cleanup?.generation,
+      retryCleanup: cleanup !== undefined,
     });
     mutationPendingRef.current = false;
     setDeregisteringEnvironmentId(null);
@@ -216,12 +216,8 @@ export function T3ConnectUserProfilePage() {
           traceId,
           cause,
         });
-        const generation = result.value.cleanupGeneration;
         const description =
-          "The server was removed from your account, but tunnel cleanup could not be confirmed. " +
-          (generation === undefined
-            ? "Update the relay before retrying cleanup."
-            : "Retry to finish cleanup.") +
+          "The server was removed from your account, but tunnel cleanup could not be confirmed. Retry to finish cleanup." +
           (traceId ? ` Trace ID: ${traceId}` : "");
         const toastId =
           cleanup?.toastId ??
@@ -233,13 +229,10 @@ export function T3ConnectUserProfilePage() {
           });
         toastManager.update(toastId, {
           description,
-          actionProps:
-            generation === undefined
-              ? undefined
-              : {
-                  children: "Retry cleanup",
-                  onClick: () => void handleDeregister(environment, { generation, toastId }),
-                },
+          actionProps: {
+            children: "Retry cleanup",
+            onClick: () => void handleDeregister(environment, { toastId }),
+          },
         });
         return;
       }

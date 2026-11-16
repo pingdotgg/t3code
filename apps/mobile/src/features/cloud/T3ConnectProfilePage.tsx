@@ -62,7 +62,7 @@ export function T3ConnectProfilePage() {
 
   const handleDeregister = async (
     environment: RelayClientEnvironmentRecord,
-    cleanupGeneration?: number,
+    retryCleanup = false,
   ) => {
     const accountId = environmentsState.accountId;
     if (!accountId || mutationPendingRef.current) return;
@@ -72,7 +72,7 @@ export function T3ConnectProfilePage() {
     const result = await deregisterEnvironment({
       accountId,
       environmentId: environment.environmentId,
-      cleanupGeneration,
+      retryCleanup,
     });
     mutationPendingRef.current = false;
     setDeregisteringEnvironmentId(null);
@@ -87,7 +87,6 @@ export function T3ConnectProfilePage() {
       void refreshRelayEnvironments();
       if (result.value.cleanup === "unconfirmed") {
         const cause = result.value.cause;
-        const generation = result.value.cleanupGeneration;
         const traceId = findErrorTraceId(cause);
         console.warn("[t3-connect] Server removed but deregistration cleanup is unconfirmed", {
           environmentId: environment.environmentId,
@@ -96,20 +95,10 @@ export function T3ConnectProfilePage() {
         });
         Dialog.alert(
           "Server removed; cleanup unconfirmed",
-          "The server was removed from your account, but tunnel cleanup could not be confirmed. " +
-            (generation === undefined
-              ? "Update the relay before retrying cleanup."
-              : "Retry to finish cleanup.") +
+          "The server was removed from your account, but tunnel cleanup could not be confirmed. Retry to finish cleanup." +
             (traceId ? `\n\nTrace ID: ${traceId}` : ""),
           [
-            ...(generation === undefined
-              ? []
-              : [
-                  {
-                    text: "Retry cleanup",
-                    onPress: () => void handleDeregister(environment, generation),
-                  },
-                ]),
+            { text: "Retry cleanup", onPress: () => void handleDeregister(environment, true) },
             ...(traceId
               ? [
                   {
@@ -126,7 +115,7 @@ export function T3ConnectProfilePage() {
     }
     if (isAtomCommandInterrupted(result)) return;
 
-    if (cleanupGeneration !== undefined) {
+    if (retryCleanup) {
       setRemovedEnvironments((current) => {
         if (current.accountId !== accountId) return current;
         const linkedAtById = new Map(current.linkedAtById);
@@ -145,19 +134,12 @@ export function T3ConnectProfilePage() {
       cause,
     });
     Dialog.alert(
-      cleanupGeneration === undefined
-        ? "Could not deregister server"
-        : "Could not finish tunnel cleanup",
+      retryCleanup ? "Could not finish tunnel cleanup" : "Could not deregister server",
       traceId ? `${message}\n\nTrace ID: ${traceId}` : message,
       [
-        ...(cleanupGeneration === undefined
-          ? []
-          : [
-              {
-                text: "Retry cleanup",
-                onPress: () => void handleDeregister(environment, cleanupGeneration),
-              },
-            ]),
+        ...(retryCleanup
+          ? [{ text: "Retry cleanup", onPress: () => void handleDeregister(environment, true) }]
+          : []),
         ...(traceId
           ? [
               {

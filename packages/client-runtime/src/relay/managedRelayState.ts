@@ -219,7 +219,7 @@ export const deregisterManagedRelayEnvironment = Effect.fn(
   input: {
     readonly accountId: string;
     readonly environmentId: EnvironmentId;
-    readonly cleanupGeneration?: number | undefined;
+    readonly retryCleanup?: boolean | undefined;
   },
 ) {
   const clerkToken = yield* requireSessionClerkToken(
@@ -232,26 +232,17 @@ export const deregisterManagedRelayEnvironment = Effect.fn(
     .unlinkEnvironment({
       clerkToken,
       environmentId: input.environmentId,
-      cleanupGeneration: input.cleanupGeneration,
+      cleanupOnly: input.retryCleanup,
     })
     .pipe(
       Effect.map(() => ({ cleanup: "complete" as const })),
       Effect.catch((cause) => {
-        const generation =
-          isManagedRelayRequestFailedError(cause) && cause.relayError?._tag === "RelayInternalError"
-            ? (cause.relayError.cleanupGeneration ?? input.cleanupGeneration)
-            : input.cleanupGeneration;
-        const unconfirmed = {
-          cleanup: "unconfirmed" as const,
-          cause,
-          ...(generation === undefined ? {} : { cleanupGeneration: generation }),
-        };
+        const unconfirmed = { cleanup: "unconfirmed" as const, cause };
+        // The account's list is authoritative: a link that is gone leaves only cleanup to retry.
         return relay.listEnvironments({ clerkToken }).pipe(
           Effect.matchEffect({
             onFailure: () =>
-              input.cleanupGeneration === undefined
-                ? Effect.fail(cause)
-                : Effect.succeed(unconfirmed),
+              input.retryCleanup ? Effect.succeed(unconfirmed) : Effect.fail(cause),
             onSuccess: (environments) =>
               environments.some((environment) => environment.environmentId === input.environmentId)
                 ? Effect.fail(cause)

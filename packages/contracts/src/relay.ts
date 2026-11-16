@@ -599,7 +599,6 @@ export class RelayInternalError extends Schema.TaggedError<RelayInternalError>()
     code: Schema.Literal("internal_error"),
     reason: RelayInternalErrorReason,
     traceId: TrimmedNonEmptyString,
-    cleanupGeneration: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   },
   { httpApiStatus: 500 },
 ) {
@@ -1128,9 +1127,6 @@ const RelayClientGroup = HttpApiGroup.make("client")
       {
         headers: RelayBearerRequestHeaders,
         params: RelayEnvironmentUnlinkParams,
-        payload: Schema.Struct({
-          generation: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-        }),
         success: RelayOkResponse,
         error: [...RelayAuthAndInternalErrors, HttpApiError.Conflict],
       },

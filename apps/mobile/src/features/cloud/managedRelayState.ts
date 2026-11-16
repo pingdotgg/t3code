@@ -32,7 +32,7 @@ export const deregisterManagedRelayEnvironmentCommand = createRuntimeCommand(
       key: (input: {
         readonly accountId: string;
         readonly environmentId: EnvironmentId;
-        readonly cleanupGeneration?: number | undefined;
+        readonly retryCleanup?: boolean | undefined;
       }) => input.accountId,
     },
     execute: (input, registry) => deregisterManagedRelayEnvironment(registry, input),

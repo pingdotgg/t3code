@@ -40,7 +40,7 @@ function clerkToken(subject: string, nonce: string): string {
 }
 
 describe("ManagedRelayClient", () => {
-  it.effect("sends fenced cleanup requests without falling back to destructive unlink", () => {
+  it.effect("sends cleanup retries to the cleanup endpoint, never the destructive unlink", () => {
     const requests: Array<Request> = [];
     const fetchFn = ((input, init) => {
       requests.push(new Request(input, init));
@@ -52,7 +52,7 @@ describe("ManagedRelayClient", () => {
         .unlinkEnvironment({
           clerkToken: "clerk-token",
           environmentId: EnvironmentId.make("environment-1"),
-          cleanupGeneration: 7,
+          cleanupOnly: true,
         })
         .pipe(Effect.flip);
       expect(requests).toHaveLength(1);
@@ -60,7 +60,6 @@ describe("ManagedRelayClient", () => {
       expect(new URL(requests[0]!.url).pathname).toBe(
         "/v1/client/environment-links/environment-1/cleanup",
       );
-      expect(yield* Effect.promise(() => requests[0]!.json())).toEqual({ generation: 7 });
     }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
   });
 

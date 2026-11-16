@@ -195,10 +195,10 @@ describe("createManagedRelayQueryManager", () => {
       let linked = true;
       let attempts = 0;
       const client = createClient({
-        unlinkEnvironment: ({ cleanupGeneration }) =>
+        unlinkEnvironment: ({ cleanupOnly }) =>
           Effect.suspend(() => {
             attempts++;
-            expect(cleanupGeneration).toBe(attempts === 1 ? undefined : attempts);
+            expect(cleanupOnly).toBe(attempts > 1);
             const wasLinked = linked;
             linked = false;
             return attempts < 3
@@ -211,7 +211,6 @@ describe("createManagedRelayQueryManager", () => {
                       code: "internal_error",
                       reason: "upstream_unavailable",
                       traceId: "cleanup-failed",
-                      cleanupGeneration: attempts + 1,
                     }),
                   }),
                 )
@@ -227,16 +226,16 @@ describe("createManagedRelayQueryManager", () => {
               )
             : Effect.sync(() => (linked ? [environment] : [])),
       });
-      const deregister = (cleanupGeneration?: number) =>
+      const deregister = (retryCleanup: boolean) =>
         deregisterManagedRelayEnvironment(registry, {
           accountId: "account-1",
           environmentId: environment.environmentId,
-          cleanupGeneration,
+          retryCleanup,
         }).pipe(Effect.provideService(ManagedRelay.ManagedRelayClient, client));
 
-      expect(yield* deregister()).toMatchObject({ cleanup: "unconfirmed", cleanupGeneration: 2 });
-      expect(yield* deregister(2)).toMatchObject({ cleanup: "unconfirmed", cleanupGeneration: 3 });
-      expect(yield* deregister(3)).toEqual({ cleanup: "complete" });
+      expect(yield* deregister(false)).toMatchObject({ cleanup: "unconfirmed" });
+      expect(yield* deregister(true)).toMatchObject({ cleanup: "unconfirmed" });
+      expect(yield* deregister(true)).toEqual({ cleanup: "complete" });
     }),
   );
 

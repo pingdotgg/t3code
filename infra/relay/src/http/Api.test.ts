@@ -1079,13 +1079,13 @@ describe("relay managed tunnel recovery", () => {
 });
 
 describe("relay environment unlink", () => {
-  it.effect("cleanup retries cannot revoke a relink or delete a replacement allocation", () =>
+  it.effect("cleanup retries finish deprovisioning but never revoke a re-link", () =>
     Effect.gen(function* () {
-      for (const state of ["relinked", "reprovisioned", "claim-lost", "revoked"] as const) {
+      for (const state of ["relinked", "revoked"] as const) {
         const result = yield* unlinkEnvironmentRecord({
           userId: "user-1",
           environmentId: "environment-1",
-          cleanupGeneration: 2,
+          cleanupOnly: true,
         }).pipe(
           Effect.provide(
             layerRelayUnlinkTest({
@@ -1102,7 +1102,7 @@ describe("relay environment unlink", () => {
                   readyAt: "2026-07-28T00:00:00.000Z",
                   origin: null,
                   updatedAt: "2026-07-28T00:00:00.000Z",
-                  generation: state === "reprovisioned" ? 3 : 2,
+                  generation: 2,
                   tunnelReleasedAt: null,
                 }),
               revokeForUser: () => Effect.die("cleanup must never revoke a link"),
@@ -1110,9 +1110,7 @@ describe("relay environment unlink", () => {
               deprovision: () =>
                 state === "revoked"
                   ? Effect.succeed(true)
-                  : state === "claim-lost"
-                    ? Effect.succeed(false)
-                    : Effect.die("cleanup must spare the replacement"),
+                  : Effect.die("cleanup must spare the re-linked tunnel"),
             }),
           ),
           Effect.match({ onFailure: (error) => error._tag, onSuccess: () => "cleaned" }),

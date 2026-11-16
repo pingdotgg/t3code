@@ -107,7 +107,6 @@ export class ManagedEndpointDeprovisioningFailed extends Schema.TaggedError<Mana
     stage: ManagedEndpointDeprovisioningStage,
     userId: Schema.String,
     environmentId: Schema.String,
-    cleanupGeneration: Schema.optionalKey(Schema.Number),
     tunnelId: Schema.optionalKey(Schema.String),
     dnsRecordId: Schema.optionalKey(Schema.String),
     cause: Schema.Defect(),
@@ -912,13 +911,6 @@ const make = Effect.gen(function* () {
         return false;
       }
       const tunnelId = allocation.tunnelId;
-      let cleanupGeneration = claimedGeneration;
-      const cleanupFailure = (error: ManagedEndpointDeprovisioningFailed) =>
-        new ManagedEndpointDeprovisioningFailed({
-          ...error,
-          cause: error.cause,
-          cleanupGeneration,
-        });
       let tunnelDeleted = false;
       const deprovision = Effect.gen(function* () {
         const dnsRecordId = allocation.dnsRecordId;
@@ -971,7 +963,7 @@ const make = Effect.gen(function* () {
           );
       });
       if (tunnelId === null) {
-        return yield* deprovision.pipe(Effect.mapError(cleanupFailure));
+        return yield* deprovision;
       }
       const removed = yield* allocations
         .withClaimedTunnel(
@@ -1008,11 +1000,6 @@ const make = Effect.gen(function* () {
                     markReleased: true,
                   })
                   .pipe(
-                    Effect.tap((generation) =>
-                      Effect.sync(() => {
-                        if (generation !== null) cleanupGeneration = generation;
-                      }),
-                    ),
                     Effect.catch((error) =>
                       Effect.logWarning("Failed to mark a deleted managed tunnel released", {
                         userId: input.userId,
@@ -1024,7 +1011,6 @@ const make = Effect.gen(function* () {
                   )
               : Effect.void,
           ),
-          Effect.mapError(cleanupFailure),
         );
       return Option.getOrElse(removed, () => false);
     }),

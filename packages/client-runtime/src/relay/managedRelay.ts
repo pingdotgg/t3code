@@ -283,7 +283,8 @@ export class ManagedRelayClient extends Context.Service<
     readonly unlinkEnvironment: (input: {
       readonly clerkToken: string;
       readonly environmentId: RelayClientEnvironmentRecord["environmentId"];
-      readonly cleanupGeneration?: number | undefined;
+      /** Finish cleanup of an already revoked link without revoking a newer one. */
+      readonly cleanupOnly?: boolean | undefined;
     }) => Effect.Effect<RelayOkResponse, ManagedRelayClientError>;
     readonly getT3ChatLink: (input: {
       readonly clerkToken: string;
@@ -806,13 +807,9 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
           headers: bearerHeaders(input.clerkToken),
           params: { environmentId: input.environmentId },
         };
-        const response: Effect.Effect<RelayOkResponse, RelayHttpRequestError> =
-          input.cleanupGeneration === undefined
-            ? client.client.unlinkEnvironment(request)
-            : client.client.cleanupEnvironment({
-                ...request,
-                payload: { generation: input.cleanupGeneration },
-              });
+        const response: Effect.Effect<RelayOkResponse, RelayHttpRequestError> = input.cleanupOnly
+          ? client.client.cleanupEnvironment(request)
+          : client.client.unlinkEnvironment(request);
         return yield* response.pipe(
           Effect.mapError(relayRequestError("unlink relay environment")),
           timeoutRelayRequest("Relay environment unlinking"),

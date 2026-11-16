@@ -508,7 +508,8 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
     readonly userId: string;
     readonly environmentId: string;
     readonly managedEndpointNamespace?: string | undefined;
-    readonly cleanupGeneration?: number | undefined;
+    /** Finish cleanup of a revoked link; refuses while a link exists so a re-link survives. */
+    readonly cleanupOnly?: boolean | undefined;
   }) {
     const links = yield* EnvironmentLinks.EnvironmentLinks;
     const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
@@ -520,11 +521,7 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
       userId: input.userId,
       environmentId: input.environmentId,
     });
-    if (
-      input.cleanupGeneration !== undefined &&
-      (link !== null ||
-        (deprovisionTarget !== null && deprovisionTarget.generation !== input.cleanupGeneration))
-    ) {
+    if (input.cleanupOnly && link !== null) {
       return yield* new HttpApiError.Conflict({});
     }
     const unlinked =
@@ -541,9 +538,6 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
       environmentId: input.environmentId,
       target: deprovisionTarget,
     });
-    if (!deprovisioned && input.cleanupGeneration !== undefined) {
-      return yield* new HttpApiError.Conflict({});
-    }
     const endpointKey =
       deprovisionTarget && input.managedEndpointNamespace
         ? HeldHooks.endpointKeyForTunnelName(
@@ -969,8 +963,8 @@ export const layerClientApi = HttpApiBuilder.group(
             Effect.catchTags({
               SqlError: () => relayInternalErrorResponse("internal_error"),
               Conflict: () => relayInternalErrorResponse("internal_error"),
-              ManagedEndpointDeprovisioningFailed: (error) =>
-                relayInternalErrorResponse("upstream_unavailable", error.cleanupGeneration),
+              ManagedEndpointDeprovisioningFailed: () =>
+                relayInternalErrorResponse("upstream_unavailable"),
             }),
           );
           return { ok: unlinked };
@@ -978,18 +972,18 @@ export const layerClientApi = HttpApiBuilder.group(
       )
       .handle(
         "cleanupEnvironment",
-        Effect.fn("relay.api.client.cleanupEnvironment")(function* ({ params, payload }) {
+        Effect.fn("relay.api.client.cleanupEnvironment")(function* ({ params }) {
           const { userId } = yield* RelayClientPrincipal;
           const unlinked = yield* unlinkEnvironmentRecord({
             userId,
             environmentId: params.environmentId,
             managedEndpointNamespace: config.managedEndpointNamespace,
-            cleanupGeneration: payload.generation,
+            cleanupOnly: true,
           }).pipe(
             Effect.catchTags({
               SqlError: () => relayInternalErrorResponse("internal_error"),
-              ManagedEndpointDeprovisioningFailed: (error) =>
-                relayInternalErrorResponse("upstream_unavailable", error.cleanupGeneration),
+              ManagedEndpointDeprovisioningFailed: () =>
+                relayInternalErrorResponse("upstream_unavailable"),
             }),
           );
           return { ok: unlinked };
@@ -1548,20 +1542,10 @@ export function relayDpopFailureReason(
   }
 }
 
-function relayInternalErrorResponse(
-  reason: RelayInternalError["reason"],
-  cleanupGeneration?: number,
-) {
+function relayInternalErrorResponse(reason: RelayInternalError["reason"]) {
   return currentTraceId.pipe(
     Effect.flatMap((traceId) =>
-      Effect.fail(
-        new RelayInternalError({
-          code: "internal_error",
-          reason,
-          traceId,
-          ...(cleanupGeneration === undefined ? {} : { cleanupGeneration }),
-        }),
-      ),
+      Effect.fail(new RelayInternalError({ code: "internal_error", reason, traceId })),
     ),
   );
 }

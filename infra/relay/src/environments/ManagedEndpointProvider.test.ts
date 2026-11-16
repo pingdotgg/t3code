@@ -1560,9 +1560,6 @@ describe("ManagedEndpointProvider", () => {
           tunnelId: "tunnel-id",
         });
         expect(first.failure.cause).toBe(failure);
-        expect(first.failure.cleanupGeneration).toBe(
-          (yield* provider.prepareDeprovision(key))?.generation,
-        );
       }
       yield* provider.deprovision(key);
 
@@ -1573,7 +1570,6 @@ describe("ManagedEndpointProvider", () => {
         "markReady",
         "get",
         "claimDeprovision",
-        "get",
         "get",
         "claimDeprovision",
         "removeClaimed",
@@ -1624,9 +1620,6 @@ describe("ManagedEndpointProvider", () => {
           markReleased: true,
         },
       });
-      if (result._tag === "Failure") {
-        expect(result.failure.cleanupGeneration).toBe((yield* allocations.get(key))?.generation);
-      }
     }).pipe(Effect.provide(layer));
   });
 
