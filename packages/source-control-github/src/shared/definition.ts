@@ -152,6 +152,9 @@ export const definition = defineSourceControl({
           baseUrl: `https://${host}`,
         }
       : null,
+  // `ssh.github.com` is GitHub's SSH-over-443 host; it serves github.com's repositories.
+  repositoryKeyFromRemote: (key) =>
+    key.startsWith("ssh.github.com/") ? key.slice("ssh.".length) : null,
   isChangeRequestInRepository: (identity, link) =>
     isChangeRequestInProjectRepository(projectChangeRequestHost(identity, KIND), identity, link),
   canReadChangeRequestOnHost: (identity, link) =>
