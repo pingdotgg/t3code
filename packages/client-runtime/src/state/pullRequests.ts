@@ -35,7 +35,6 @@ import * as Schema from "effect/Schema";
 import { persistPullRequestStats } from "./pullRequestStatsPersistence.ts";
 import { persistQuery, type QueryPersistence } from "./queryPersistence.ts";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
@@ -46,7 +45,6 @@ import {
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentQueryAtomFamily,
-  environmentSessionGenerationAtom,
   queryPersistenceKey,
   type QueryAnswerHandler,
 } from "./runtime.ts";
@@ -356,14 +354,6 @@ function settleEdit(
     );
   }
 }
-
-// The host cannot list pull requests at all. A failed read (rate limit, timeout) is not this.
-const HOST_REFUSALS: ReadonlySet<unknown> = new Set([
-  "PullRequestUnavailableError",
-  "EnvironmentAuthorizationError",
-]);
-const isHostRefusal = (error: unknown) =>
-  Predicate.hasProperty(error, "_tag") && HOST_REFUSALS.has(error._tag);
 
 function pullRequestReference(input: PullRequestRef): PullRequestRef {
   const { projectId, host, repository, number, expectedAccountId } = input;
@@ -1216,65 +1206,6 @@ export function createPullRequestEnvironmentAtoms<R, E>(
   const listLabel = "environment-data:pull-requests:list";
   const listPersistence = persistQuery(PullRequestListResult);
 
-  const listQuery = createEnvironmentRpcQueryAtomFamily(runtime, {
-    label: listLabel,
-    persistence: listPersistence,
-    tag: WS_METHODS.pullRequestsList,
-    staleTimeMs: 30_000,
-    refreshTrigger: ({ environmentId, input }) =>
-      input.cursors === undefined ? refreshes({ environmentId, input: {} }) : undefined,
-    ...(onAnswer.list === undefined ? {} : { onAnswer: onAnswer.list }),
-  });
-  const list = actionPatchedQuery(listQuery, {
-    label: listLabel,
-    persistence: listPersistence,
-    onAnswer: onAnswer.list,
-    // Rows carry no account scope, so a reply read through another account leaves them alone.
-    concerns: (input, reference) =>
-      reference.expectedAccountId === undefined &&
-      (input.projectId === undefined || input.projectId === reference.projectId) &&
-      (input.projectIds === undefined || input.projectIds.includes(reference.projectId)) &&
-      (input.host === undefined ||
-        reference.host === undefined ||
-        input.host.toLowerCase() === reference.host.toLowerCase()),
-    refreshedByServer: (input) => input.cursors === undefined,
-    patch: patchListWithReply,
-    edit: (input, value, edits, pending) => {
-      const entries = editPullRequestListEntries(input, value.entries, edits, pending);
-      return entries === value.entries ? value : { ...value, entries };
-    },
-  });
-  // A first visit paints from a saved answer; with none saved, one read now fills it.
-  // A failed read tries again next session; a host that cannot list them waits for the page.
-  const refusedWarmups = new Set<string>();
-  const listWarmups = Atom.family((key: string) => {
-    const [environmentId, input] = JSON.parse(key) as [EnvironmentId, PullRequestListInput];
-    const target = { environmentId, input };
-    return runtime.atom((get) => {
-      get(environmentSessionGenerationAtom(runtime, environmentId));
-      return Effect.gen(function* () {
-        if (refusedWarmups.has(key)) return;
-        const saved = yield* listPersistence.load(
-          environmentId,
-          queryPersistenceKey(listLabel, input),
-        );
-        if (Option.isSome(saved)) return;
-        // The bare query, not the page's wrapped reader: the wrappers stay cached after this lets
-        // go and would keep a failed read on screen, while the bare one re-reads it on mount.
-        yield* AtomRegistry.mount(get.registry, listQuery(target));
-        yield* AtomRegistry.getResult(get.registry, listQuery(target), {
-          suspendOnWaiting: true,
-        }).pipe(
-          Effect.tapError((error) =>
-            Effect.sync(() => {
-              if (isHostRefusal(error)) refusedWarmups.add(key);
-            }),
-          ),
-        );
-      }).pipe(Effect.scoped, Effect.ignore);
-    });
-  });
-
   return {
     refreshes,
     linkedThreads: createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -1292,11 +1223,36 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       staleTimeMs: 0,
       idleTtlMs: 0,
     }),
-    list,
-    warmList: (target: {
-      readonly environmentId: EnvironmentId;
-      readonly input: PullRequestListInput;
-    }) => listWarmups(JSON.stringify([target.environmentId, target.input])),
+    list: actionPatchedQuery(
+      createEnvironmentRpcQueryAtomFamily(runtime, {
+        label: listLabel,
+        persistence: listPersistence,
+        tag: WS_METHODS.pullRequestsList,
+        staleTimeMs: 30_000,
+        refreshTrigger: ({ environmentId, input }) =>
+          input.cursors === undefined ? refreshes({ environmentId, input: {} }) : undefined,
+        ...(onAnswer.list === undefined ? {} : { onAnswer: onAnswer.list }),
+      }),
+      {
+        label: listLabel,
+        persistence: listPersistence,
+        onAnswer: onAnswer.list,
+        // Rows carry no account scope, so a reply read through another account leaves them alone.
+        concerns: (input, reference) =>
+          reference.expectedAccountId === undefined &&
+          (input.projectId === undefined || input.projectId === reference.projectId) &&
+          (input.projectIds === undefined || input.projectIds.includes(reference.projectId)) &&
+          (input.host === undefined ||
+            reference.host === undefined ||
+            input.host.toLowerCase() === reference.host.toLowerCase()),
+        refreshedByServer: (input) => input.cursors === undefined,
+        patch: patchListWithReply,
+        edit: (input, value, edits, pending) => {
+          const entries = editPullRequestListEntries(input, value.entries, edits, pending);
+          return entries === value.entries ? value : { ...value, entries };
+        },
+      },
+    ),
     /**
      * Its own query because the listing is quicker without them — measured over twelve
      * repositories, ~4.0s against ~7.1s — so the rows arrive first and their stats a moment

@@ -1,4 +1,4 @@
-import type { EnvironmentId, ProjectId, PullRequestRef } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -34,7 +34,19 @@ export function usePullRequestIntentPrefetch(
     target === null || !listed
       ? null
       : pullRequestPanelReference({ ...target, host: target.host.toLowerCase() });
-  usePullRequestPanelReads(target?.environmentId ?? null, reference);
+  useEnvironmentQuery(
+    target === null || reference === null
+      ? null
+      : pullRequestEnvironment.detail({
+          environmentId: target.environmentId,
+          input: { ...reference, allowStale: false },
+        }),
+  );
+  useEnvironmentQuery(
+    target === null || reference === null
+      ? null
+      : pullRequestEnvironment.activity({ environmentId: target.environmentId, input: reference }),
+  );
   return useStableCallback((next: PullRequestIntentTarget | null) => {
     clearTimeout(timer.current);
     if (next === null) {
@@ -43,20 +55,4 @@ export function usePullRequestIntentPrefetch(
     }
     timer.current = setTimeout(() => setTarget(next), INTENT_DELAY_MS);
   });
-}
-
-/** Reads the detail and activity the panel opens with, keyed as the panel reads them. */
-export function usePullRequestPanelReads(
-  environmentId: EnvironmentId | null,
-  reference: PullRequestRef | null,
-) {
-  const ready = environmentId !== null && reference !== null;
-  useEnvironmentQuery(
-    ready
-      ? pullRequestEnvironment.detail({ environmentId, input: { ...reference, allowStale: false } })
-      : null,
-  );
-  useEnvironmentQuery(
-    ready ? pullRequestEnvironment.activity({ environmentId, input: reference }) : null,
-  );
 }
