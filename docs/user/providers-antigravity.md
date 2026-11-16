@@ -58,9 +58,9 @@ space for downloading and staging an update.
 ### Use a manual installation
 
 Install [Antigravity CLI](https://antigravity.google/docs/getting-started) on the environment.
-Set **Binary path** to its `agy` executable and update it yourself.
-Leave the field blank to use the managed runtime, or a compatible executable on
-`PATH` if no managed runtime is installed.
+With **Binary path** blank, T3 uses the managed runtime, or `agy` on `PATH` if no
+managed runtime is installed. Otherwise set **Binary path** to the `agy`
+executable. Update a manual installation yourself.
 
 ## Update the managed runtime
 

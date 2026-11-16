@@ -1032,11 +1032,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
           executablePath: alias,
           harnessPath: null,
         });
-        expect(
-          yield* installation.resolve(undefined, { PATH: cliDirectory }).pipe(Effect.option),
-        ).toMatchObject({
-          _tag: "Some",
-          value: { source: "path", harnessPath: null },
+        expect(yield* installation.resolve(undefined, { PATH: cliDirectory })).toMatchObject({
+          executablePath: alias,
+          harnessPath: null,
+          source: "path",
         });
         expect(yield* installation.resolve(other).pipe(Effect.flip)).toMatchObject({
           operation: "resolve",
