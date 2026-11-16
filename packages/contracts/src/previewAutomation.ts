@@ -569,10 +569,18 @@ export const PreviewAutomationSnapshot = Schema.Struct({
 });
 export type PreviewAutomationSnapshot = typeof PreviewAutomationSnapshot.Type;
 
+// pixelsRequired is false when the caller discards the screenshot; hosts that ignore it still return a PNG.
 export const PreviewAutomationSnapshotInput = Schema.Struct({
   fullScreenshot: Schema.optional(Schema.Boolean),
+  pixelsRequired: Schema.optional(Schema.Boolean),
 });
 export type PreviewAutomationSnapshotInput = typeof PreviewAutomationSnapshotInput.Type;
+
+export const PreviewAutomationSnapshotMetadata = Schema.Struct({
+  ...PreviewAutomationSnapshot.fields,
+  screenshot: Schema.Struct({ width: Schema.Int, height: Schema.Int }),
+});
+export type PreviewAutomationSnapshotMetadata = typeof PreviewAutomationSnapshotMetadata.Type;
 
 export const PreviewAutomationRecordingStatus = Schema.Struct({
   tabId: PreviewTabId,
