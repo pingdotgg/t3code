@@ -3,6 +3,7 @@ import { PullRequestContextMetadata, type PullRequestReviewPosition } from "@t3t
 import * as Schema from "effect/Schema";
 
 import { isLineInFileDiff } from "./components/pullRequest/pullRequestDiff.logic";
+import { getFullDiffLines } from "./lib/longDiffLines";
 
 const ReviewCommentSelectionSchema = Schema.Struct({
   start: Schema.Number,
@@ -106,6 +107,7 @@ function buildDiffReviewLines(
   slice?: { readonly startIndex: number; readonly endIndex: number },
 ): ReadonlyArray<DiffReviewLine> {
   const rows: DiffReviewLine[] = [];
+  const { additionLines, deletionLines } = getFullDiffLines(fileDiff);
   let rowIndex = 0;
   let oldContextStart = 1;
   let newContextStart = 1;
@@ -124,7 +126,7 @@ function buildDiffReviewLines(
         change: "context",
         oldLineNumber: oldStart + offset,
         newLineNumber: newStart + offset,
-        content: stripTrailingNewline(fileDiff.additionLines[newStart + offset - 1] ?? ""),
+        content: stripTrailingNewline(additionLines[newStart + offset - 1] ?? ""),
       });
     }
     rowIndex += count;
@@ -151,9 +153,7 @@ function buildDiffReviewLines(
             oldLineNumber,
             newLineNumber,
             content: stripTrailingNewline(
-              fileDiff.additionLines[additionLineIndex] ??
-                fileDiff.deletionLines[deletionLineIndex] ??
-                "",
+              additionLines[additionLineIndex] ?? deletionLines[deletionLineIndex] ?? "",
             ),
           });
           oldLineNumber += 1;
@@ -169,7 +169,7 @@ function buildDiffReviewLines(
           change: "delete",
           oldLineNumber,
           newLineNumber: null,
-          content: stripTrailingNewline(fileDiff.deletionLines[deletionLineIndex] ?? ""),
+          content: stripTrailingNewline(deletionLines[deletionLineIndex] ?? ""),
         });
         oldLineNumber += 1;
         deletionLineIndex += 1;
@@ -180,7 +180,7 @@ function buildDiffReviewLines(
           change: "add",
           oldLineNumber: null,
           newLineNumber,
-          content: stripTrailingNewline(fileDiff.additionLines[additionLineIndex] ?? ""),
+          content: stripTrailingNewline(additionLines[additionLineIndex] ?? ""),
         });
         newLineNumber += 1;
         additionLineIndex += 1;
@@ -195,8 +195,8 @@ function buildDiffReviewLines(
 
   if (includeExpandedContext) {
     const trailingLines = Math.min(
-      fileDiff.deletionLines.length - oldContextStart + 1,
-      fileDiff.additionLines.length - newContextStart + 1,
+      deletionLines.length - oldContextStart + 1,
+      additionLines.length - newContextStart + 1,
     );
     pushContextGap(oldContextStart, newContextStart, trailingLines);
   }

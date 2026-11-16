@@ -1,8 +1,9 @@
-import type { FileDiffMetadata } from "@pierre/diffs";
+import { hydratePartialDiff, type FileDiffMetadata } from "@pierre/diffs";
 import { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
+import { buildDiffReviewComment } from "../reviewCommentContext";
 import { createGitDiffFileContentsLoader } from "./diffFileContents";
 import { getRenderablePatch } from "./diffRendering";
 
@@ -63,6 +64,56 @@ describe("createGitDiffFileContentsLoader", () => {
     )(partialFileDiff());
 
     expect(loaded.newFile.contents).toBe(toContents(changedLines));
+  });
+
+  it("cuts very long lines for rendering and keeps their full text for review comments", async () => {
+    const longChange = `${"x".repeat(20_000)}CRITICAL_TAIL`;
+    const longContext = `${"y".repeat(20_000)}CONTEXT_TAIL`;
+    const oldLines = originalLines.map((line, index) => (index === 4 ? longContext : line));
+    const newLines = oldLines.map((line, index) => (index === 29 ? longChange : line));
+    const fileDiff = parsePartialFileDiff(
+      [
+        "diff --git a/src/file01.ts b/src/file01.ts",
+        "index 1111111..2222222 100644",
+        "--- a/src/file01.ts",
+        "+++ b/src/file01.ts",
+        "@@ -27,7 +27,7 @@",
+        " line 27",
+        " line 28",
+        " line 29",
+        "-line 30",
+        `+${longChange}`,
+        " line 31",
+        " line 32",
+        " line 33",
+        "",
+      ].join("\n"),
+    );
+    const commentOn = (line: number) =>
+      buildDiffReviewComment({
+        id: "comment",
+        sectionId: "section",
+        sectionTitle: "Section",
+        filePath: "src/file01.ts",
+        fileDiff,
+        range: { start: line, side: "additions", end: line, endSide: "additions" },
+        text: "",
+      })?.diff;
+
+    expect(fileDiff.additionLines[3]).toBe(
+      `${"x".repeat(10_000)} … 10013 more characters not shown\n`,
+    );
+    expect(commentOn(30)).toBe(`@@ -0,0 +30,1 @@\n+${longChange}`);
+
+    const loaded = await loaderReturning(toContents(oldLines), toContents(newLines))(fileDiff);
+    expect(commentOn(30)).toBe(`@@ -0,0 +30,1 @@\n+${longChange}`);
+
+    // A virtualized view hydrates a copy, then assigns it over the file the host last supplied.
+    Object.assign(fileDiff, hydratePartialDiff("clone", fileDiff, loaded));
+    expect(fileDiff.additionLines).toHaveLength(40);
+    expect(Math.max(...fileDiff.additionLines.map((line) => line.length))).toBeLessThan(10_100);
+    expect(commentOn(30)).toBe(`@@ -0,0 +30,1 @@\n+${longChange}`);
+    expect(commentOn(5)).toBe(`@@ -5,1 +5,1 @@\n ${longContext}`);
   });
 
   it.each([

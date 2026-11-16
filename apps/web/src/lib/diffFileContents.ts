@@ -14,6 +14,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { resolveFileDiffPath } from "./diffRendering";
+import { clampHydrationLines, getFullDiffLines } from "./longDiffLines";
 
 interface GitDiffFileContentsSource {
   readonly environmentId: EnvironmentId;
@@ -42,7 +43,7 @@ type GetPullRequestDiffFileContents<E> = (request: {
 }) => Promise<AtomCommandResult<PullRequestDiffFileContentsResult, E>>;
 
 // Mirrors Pierre's splitFileContents so line counts match its hydration.
-function splitLines(contents: string): ReadonlyArray<string> {
+function splitLines(contents: string): string[] {
   return contents === "" ? [] : contents.split(/(?<=\n)/);
 }
 
@@ -75,22 +76,25 @@ function hunkSideMatches(
 
 // Pierre hydrates a partial patch by trusting its hunk positions, so contents that
 // changed since the patch was computed make it render corrupt hunks or throw.
-function reproducesPatch(fileDiff: FileDiffMetadata, oldContents: string, newContents: string) {
+function reproducesPatch(
+  fileDiff: FileDiffMetadata,
+  oldLines: ReadonlyArray<string>,
+  newLines: ReadonlyArray<string>,
+) {
   const lastHunk = fileDiff.hunks.at(-1);
   if (lastHunk === undefined) return true;
-  const oldLines = splitLines(oldContents);
-  const newLines = splitLines(newContents);
+  const patchLines = getFullDiffLines(fileDiff);
   const hunksMatch = fileDiff.hunks.every(
     (hunk) =>
       hunkSideMatches(
-        fileDiff.deletionLines,
+        patchLines.deletionLines,
         hunk.deletionLineIndex,
         oldLines,
         hunk.deletionStart,
         hunk.deletionCount,
       ) &&
       hunkSideMatches(
-        fileDiff.additionLines,
+        patchLines.additionLines,
         hunk.additionLineIndex,
         newLines,
         hunk.additionStart,
@@ -118,26 +122,37 @@ function createDiffFileContentsLoader(
       ? resolveFileDiffPath({ ...fileDiff, name: fileDiff.prevName })
       : newPath;
     const contents = await load({ changeType: fileDiff.type, oldPath, newPath });
-    const newFile = {
+    const newLines = splitLines(contents.newContents);
+    const newFile = (lines: ReadonlyArray<string>) => ({
       name: newPath,
-      contents: contents.newContents,
+      contents: lines === newLines ? contents.newContents : lines.join(""),
       cacheKey: `${cacheKey}:new:${newPath}`,
-    };
+    });
     if (fileDiff.type === "rename-pure") {
-      return { oldFile: null, newFile };
+      const shown = clampHydrationLines(fileDiff, {
+        additionLines: newLines,
+        deletionLines: newLines,
+      });
+      return { oldFile: null, newFile: newFile(shown.additionLines) };
     }
-    if (!reproducesPatch(fileDiff, contents.oldContents, contents.newContents)) {
+    const oldLines = splitLines(contents.oldContents);
+    if (!reproducesPatch(fileDiff, oldLines, newLines)) {
       throw new Error(
         "This file changed since the diff was loaded. Refresh the diff to expand it.",
       );
     }
+    const shown = clampHydrationLines(fileDiff, {
+      additionLines: newLines,
+      deletionLines: oldLines,
+    });
     return {
       oldFile: {
         name: oldPath,
-        contents: contents.oldContents,
+        contents:
+          shown.deletionLines === oldLines ? contents.oldContents : shown.deletionLines.join(""),
         cacheKey: `${cacheKey}:old:${oldPath}`,
       },
-      newFile,
+      newFile: newFile(shown.additionLines),
     };
   };
 }
