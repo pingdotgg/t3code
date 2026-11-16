@@ -444,6 +444,38 @@ it.effect("lists a peer as reachable at another address while its first one slee
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("resolves a link at its answering address without waiting out a sleeping first", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const described = yield* HttpClient.get(`${b.url}/.well-known/t3/environment`).pipe(
+        Effect.flatMap((response) => response.text),
+        Effect.provide(FetchHttpClient.layer),
+      );
+      const elsewhere = yield* serveRaw(() =>
+        Effect.succeed(HttpServerResponse.text(described, { contentType: "application/json" })),
+      );
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({
+        url: b.url,
+        alternateUrls: [elsewhere],
+        pairingCode: pairing.credential,
+        access: "auto",
+      });
+
+      yield* Ref.set(b.asleep, true);
+      const first = yield* a.links.resolve(box.environmentId).pipe(Effect.forkScoped);
+      yield* Queue.take(b.unanswered);
+      yield* TestClock.adjust(Duration.seconds(3));
+      expect((yield* Fiber.join(first)).url).toBe(elsewhere);
+
+      // The clock no longer moves: a resolve that probes the sleeping address first never returns.
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(elsewhere);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("cancelling a descriptor probe aborts its request and leaves later resolves fresh", () =>
   Effect.scoped(
     Effect.gen(function* () {
