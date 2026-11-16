@@ -499,8 +499,14 @@ function useSidebarThreads(input: {
     clockKey: `${nowMinute}:${snoozeWakeClock}:${inboxReturnsVersion}`,
   });
 
-  const { pinnedThreads, activeThreads, workingThreads, snoozedThreads, settledThreads } =
-    partition;
+  const {
+    pinnedThreads,
+    activeThreads,
+    workingThreads,
+    snoozedThreads,
+    settledThreads,
+    runningAmongIdle,
+  } = partition;
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const olderSettledShelf = useOlderSettledShelf({
     scopes: olderSettledScopes([...serverConfigs.keys()], scopedProjectKeys),
@@ -535,10 +541,15 @@ function useSidebarThreads(input: {
     : routeThreadOnly(workingThreads, routeRowThreadKey);
   // Folders list the idle threads inside each project, so they need no shelf.
   const idleShelfEnabled = folderGroups === null;
+  const routedActiveThreads = new Set(routeThreadOnly(activeThreads, routeRowThreadKey));
   const visibleActiveThreads = idleShelfEnabled
     ? idleShelfExpanded
       ? activeThreads
-      : routeThreadOnly(activeThreads, routeRowThreadKey)
+      : // Folding the shelf keeps the thread on screen and the threads an agent
+        // is working on, which are not idle at all.
+        activeThreads.filter(
+          (thread) => runningAmongIdle.has(thread) || routedActiveThreads.has(thread),
+        )
     : activeThreads;
   const projectFolders =
     folderGroups === null
@@ -649,11 +660,18 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
   const working: EnvironmentThreadShell[] = [];
-  const inbox = (thread: EnvironmentThreadShell, manuallyMoved = false) =>
-    workingShelfEnabled &&
-    (manuallyMoved ? isThreadWorking(thread) : inboxObservation.isWorking(thread))
-      ? working
-      : active;
+  // Without a Working shelf the running threads sit among the idle ones, so
+  // they are tracked to stay visible when the Idle shelf folds.
+  const runningAmongIdle = new Set<EnvironmentThreadShell>();
+  const inbox = (thread: EnvironmentThreadShell, manuallyMoved = false) => {
+    if (
+      workingShelfEnabled &&
+      (manuallyMoved ? isThreadWorking(thread) : inboxObservation.isWorking(thread))
+    )
+      return working;
+    if (!workingShelfEnabled && isThreadWorking(thread)) runningAmongIdle.add(thread);
+    return active;
+  };
   const snoozed: EnvironmentThreadShell[] = [];
   const settled: EnvironmentThreadShell[] = [];
   const { draggableThreadKeys, activeReorderableThreadKeys } = resolveSidebarReorderableThreadKeys({
@@ -724,6 +742,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
             getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
           }),
     workingThreads: sortWorkingThreadsBySend(working),
+    runningAmongIdle,
     snoozedThreads: snoozed.toSorted(
       (left, right) =>
         firstValidTimestampMs(left.snoozedUntil ?? null) -
