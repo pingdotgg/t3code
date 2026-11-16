@@ -4949,7 +4949,7 @@ function formatClaudeUsageLimitWait(waitMs: number): string {
 
 interface ActiveClaudeTurnContext {
   retryBudgetFailure?: OrchestrationV2ProviderFailure;
-  // Set by a `requesting` status and cleared by the turn's next frame.
+  // Set when the prompt starts or a request goes out; cleared by the turn's next frame.
   unansweredRequestSince?: DateTime.Utc | undefined;
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
@@ -6408,8 +6408,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           },
         );
 
-        // Partial messages are on, so a live request streams within seconds of `requesting`.
-        // A gateway can hold it open without ever letting the CLI time out and retry.
+        // Partial messages are on, so a started prompt or a sent request streams within seconds.
+        // A gateway can hold the request open without ever letting the CLI time out and retry.
         const failUnansweredRequest = Effect.fn("ClaudeAdapterV2.failUnansweredRequest")(function* (
           context: ActiveClaudeTurnContext,
           since: DateTime.Utc,
@@ -6424,7 +6424,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             makeProviderFailure({
               class: "transport_error",
               code: "claude_request_unanswered",
-              message: `Claude sent nothing for ${PROVIDER_RETRY_BUDGET_MS / 60_000} minutes after sending its request. The API or a gateway in front of it is not responding.`,
+              message: `Claude sent nothing for ${PROVIDER_RETRY_BUDGET_MS / 60_000} minutes. The API or a gateway in front of it is not responding.`,
               retryable: false,
             }),
             isUnanswered,
@@ -10591,10 +10591,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
           if (context === (yield* Ref.get(activeTurn))) {
+            const lifecycle = claudePromptLifecycle(message);
             if (
-              message.type === "system" &&
-              message.subtype === "status" &&
-              message.status === "requesting"
+              (message.type === "system" &&
+                message.subtype === "status" &&
+                message.status === "requesting") ||
+              (lifecycle?.state === "started" && lifecycle.uuid === context.promptUuid)
             ) {
               const since = yield* DateTime.now;
               context.unansweredRequestSince = since;

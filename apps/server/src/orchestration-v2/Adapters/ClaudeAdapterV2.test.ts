@@ -15225,34 +15225,36 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   // regression: #37708 a gateway that holds the request open leaves Claude silent after "requesting"
-  it.effect(
-    "does not keep a turn silently running after Claude accepts its prompt and goes quiet",
-    () =>
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
-        const now = yield* DateTime.now;
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: RunAttemptId.make("attempt-claude-silent-after-started"),
-            text: "start again",
-            attachments: [],
+  it.effect.each([
+    { case: "after the prompt starts", requesting: false },
+    { case: "after a request goes out", requesting: true },
+  ])("does not keep a turn silently running when Claude goes quiet $case", ({ requesting }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-silent-after-started"),
+          text: "start again",
+          attachments: [],
+        }),
+      );
+      // Captured from Claude Code 2.1.325 against a gateway that never answers /v1/messages.
+      for (const [index, state] of (["queued", "started"] as const).entries()) {
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "command_lifecycle",
+            command_uuid: harness.promptUuid(0),
+            state,
+            uuid: `00000000-0000-4000-8000-00000000079${index}`,
+            session_id: WAKE_NATIVE_SESSION,
           }),
         );
-        // Captured from Claude Code 2.1.325 against a gateway that never answers /v1/messages.
-        for (const [index, state] of (["queued", "started"] as const).entries()) {
-          yield* harness.offerAndWait(
-            claudeSdkFrame({
-              type: "command_lifecycle",
-              command_uuid: harness.promptUuid(0),
-              state,
-              uuid: `00000000-0000-4000-8000-00000000079${index}`,
-              session_id: WAKE_NATIVE_SESSION,
-            }),
-          );
-        }
+      }
+      if (requesting) {
         yield* harness.offerAndWait(
           claudeSdkFrame({
             type: "system",
@@ -15262,28 +15264,29 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             session_id: WAKE_NATIVE_SESSION,
           }),
         );
-        assert.lengthOf(harness.terminalEvents(), 0);
+      }
+      assert.lengthOf(harness.terminalEvents(), 0);
 
-        yield* TestClock.adjust("1 hour");
-        yield* yieldTicks(50);
-        const surfaced =
-          harness.terminalEvents().length > 0 ||
-          harness.events.some(
-            (event) =>
-              event.type === "turn_item.updated" &&
-              (event.turnItem.type === "system_notice" || event.turnItem.type === "error"),
-          );
-        assert.isTrue(surfaced, "an hour of silence after the prompt started surfaced nothing");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-          ),
+      yield* TestClock.adjust("1 hour");
+      yield* yieldTicks(50);
+      const surfaced =
+        harness.terminalEvents().length > 0 ||
+        harness.events.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            (event.turnItem.type === "system_notice" || event.turnItem.type === "error"),
+        );
+      assert.isTrue(surfaced, "an hour of silence after the prompt started surfaced nothing");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
         ),
       ),
+    ),
   );
 
   // regression: #17531 a mod that holds a tool behind a focused pane must fail the turn, not hang it
