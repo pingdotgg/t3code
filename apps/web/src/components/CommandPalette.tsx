@@ -2062,11 +2062,23 @@ function OpenCommandPaletteDialog(props: {
   };
 
   const changeProjectFolder = async (
-    project: NonNullable<typeof changeFolderProject>,
+    project: typeof changeFolderProject,
     rawCwd: string,
     platform: string,
   ) => {
     const failureTitle = "Failed to change project folder";
+    // The project can be removed while the browser is open; never add one in its place.
+    if (project === null) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: failureTitle,
+          description: "This project is no longer available.",
+        }),
+      );
+      setOpen(false);
+      return;
+    }
     if (isUnsupportedWindowsProjectPath(rawCwd.trim(), platform)) {
       toastManager.add(
         stackedThreadToast({
@@ -2116,7 +2128,7 @@ function OpenCommandPaletteDialog(props: {
 
   const handleAddProject = async (rawCwd: string) => {
     if (!browseEnvironmentId) return;
-    if (changeFolderProject) {
+    if (changeFolderProjectRef !== null) {
       await changeProjectFolder(changeFolderProject, rawCwd, browseEnvironmentPlatform);
       return;
     }
@@ -2609,7 +2621,7 @@ function OpenCommandPaletteDialog(props: {
     (!isCloneDestinationStep || canCloneProject) &&
     canCreateProjectInEnvironment(browseEnvironment?.connection.phase);
   const willCreateProjectPath =
-    changeFolderProject === null &&
+    changeFolderProjectRef === null &&
     canSubmitBrowsePath &&
     !isBrowsePending &&
     browseAccessError === null &&
@@ -2622,7 +2634,7 @@ function OpenCommandPaletteDialog(props: {
     ? willCreateProjectPath
       ? "Create & Clone"
       : "Clone"
-    : changeFolderProject
+    : changeFolderProjectRef !== null
       ? "Use folder"
       : willCreateProjectPath
         ? "Create & Add"
@@ -2971,8 +2983,8 @@ function OpenCommandPaletteDialog(props: {
         );
         return;
       }
-      if (changeFolderProject) {
-        if (selection.environmentId === changeFolderProject.environmentId) {
+      if (changeFolderProjectRef !== null) {
+        if (selection.environmentId === changeFolderProjectRef.environmentId) {
           await changeProjectFolder(changeFolderProject, selection.linuxPath, "Linux");
         } else {
           toastManager.add(
@@ -3107,7 +3119,7 @@ function OpenCommandPaletteDialog(props: {
             ? "*:data-[slot=autocomplete-input]:pe-32!"
             : isBrowsing
               ? browseInputEndPaddingClass({
-                  hasWideSubmitLabel: willCreateProjectPath || changeFolderProject !== null,
+                  hasWideSubmitLabel: willCreateProjectPath || changeFolderProjectRef !== null,
                   hasHighlightedBrowseItem,
                 })
               : undefined,
