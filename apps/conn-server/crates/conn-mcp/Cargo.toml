@@ -9,6 +9,7 @@ rust-version.workspace = true
 
 [dependencies]
 conn-support.workspace = true
+conn-preview.workspace = true
 conn-files.workspace = true
 conn-contract.workspace = true
 conn-engine.workspace = true

@@ -90,6 +90,7 @@ impl std::fmt::Debug for Handler {
 #[derive(Default)]
 pub struct MethodTable {
     handlers: HashMap<&'static str, Handler>,
+    disconnect: Vec<Arc<dyn Fn(u64) + Send + Sync>>,
 }
 
 impl std::fmt::Debug for MethodTable {
@@ -101,6 +102,15 @@ impl std::fmt::Debug for MethodTable {
 }
 
 impl MethodTable {
+    pub fn on_disconnect(&mut self, handler: impl Fn(u64) + Send + Sync + 'static) {
+        self.disconnect.push(Arc::new(handler));
+    }
+    pub fn disconnect(&self, connection: u64) {
+        for handler in &self.disconnect {
+            handler(connection);
+        }
+    }
+
     pub fn new() -> Self {
         Self::default()
     }

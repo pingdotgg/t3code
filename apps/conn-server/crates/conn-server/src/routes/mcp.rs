@@ -34,6 +34,8 @@ pub fn service(deps: &Deps) -> Option<Arc<McpService>> {
     let descriptor = &environment.descriptor;
     let providers = deps.providers.clone();
     Some(McpService::new(McpConfig {
+        preview: deps.preview.clone(),
+        html_preview: deps.html_preview.clone(),
         engine,
         environment_id: environment.environment_id().to_owned(),
         label: descriptor["label"].as_str().unwrap_or_default().to_owned(),

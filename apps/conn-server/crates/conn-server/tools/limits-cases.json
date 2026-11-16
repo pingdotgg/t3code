@@ -1119,6 +1119,49 @@
     "ok": true
    },
    "ok": false
+  },
+  {
+   "name": "preview viewport dimensions use generated range",
+   "tag": "preview.resize",
+   "payload": {
+    "threadId": "t",
+    "tabId": "tab",
+    "viewport": {
+     "_tag": "freeform",
+     "width": 1000000,
+     "height": 480
+    }
+   },
+   "ok": false
+  },
+  {
+   "name": "preview viewport area cap",
+   "tag": "preview.open",
+   "payload": {
+    "threadId": "t",
+    "runtime": "server",
+    "viewport": {
+     "_tag": "freeform",
+     "width": 3840,
+     "height": 3840
+    }
+   },
+   "ok": false
+  },
+  {
+   "name": "preview report profile name cap",
+   "tag": "preview.reportProfiles",
+   "payload": {
+    "profiles": [
+     {
+      "id": "work",
+      "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "kind": "persistent"
+     }
+    ],
+    "defaultProfileId": "work"
+   },
+   "ok": false
   }
  ]
 }

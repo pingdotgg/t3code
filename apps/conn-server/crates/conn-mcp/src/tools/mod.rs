@@ -17,6 +17,7 @@ mod html;
 mod manage;
 mod message;
 mod panels;
+mod preview;
 mod projects;
 mod pull_requests;
 mod scheduled;
@@ -38,6 +39,8 @@ pub(crate) enum ToolError {
     /// a declared `Error` with a message), as the annotation toolkit's failures are.
     #[error("{0}")]
     Message(String),
+    #[error("{message}")]
+    Preview { tag: &'static str, message: String },
 }
 
 pub(crate) type ToolResult = Result<Value, ToolError>;
@@ -51,8 +54,24 @@ pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError 
 
 /// Every name in `tools.implemented` has an arm here; a test checks both ways.
 #[cfg(test)]
-pub(crate) const HANDLED: [&str; 37] = [
+pub(crate) const HANDLED: [&str; 53] = [
     "html_render",
+    "html_preview",
+    "preview_snapshot",
+    "preview_act",
+    "preview_wait_for",
+    "preview_recording_start",
+    "preview_recording_stop",
+    "preview_open",
+    "preview_status",
+    "preview_navigate",
+    "preview_resize",
+    "preview_set_appearance",
+    "preview_evaluate",
+    "preview_dialog",
+    "preview_cdp_endpoint",
+    "t3_preview_close",
+    "t3_preview_list",
     "panel_open",
     "request_secret",
     "t3_background_wait",
@@ -109,6 +128,22 @@ pub(crate) async fn call(
     let cx = Cx { service, caller };
     match name {
         "html_render" => html::render(&cx, &args).await,
+        "html_preview" => html::preview(&cx, &args).await,
+        "preview_open"
+        | "preview_status"
+        | "preview_navigate"
+        | "preview_resize"
+        | "preview_set_appearance"
+        | "preview_evaluate"
+        | "preview_dialog"
+        | "preview_cdp_endpoint"
+        | "t3_preview_close"
+        | "t3_preview_list" => preview::call(&cx, name, &args).await,
+        "preview_snapshot"
+        | "preview_act"
+        | "preview_wait_for"
+        | "preview_recording_start"
+        | "preview_recording_stop" => preview::call(&cx, name, &args).await,
         "orchestrator_capabilities" => projects::capabilities(&cx, &args).await,
         "t3_project_list" => projects::list(&cx, &args).await,
         "t3_project_read" => projects::read(&cx, &args).await,

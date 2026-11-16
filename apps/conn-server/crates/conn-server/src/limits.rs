@@ -30,6 +30,7 @@ struct RawLimit {
     #[serde(default)]
     fields: HashMap<String, RawLimit>,
     keys: Option<Box<RawLimit>>,
+    items: Option<Box<RawLimit>>,
     values: Option<Box<RawLimit>>,
     #[serde(default)]
     variants: HashMap<String, RawLimit>,
@@ -42,11 +43,13 @@ struct RawLimit {
     int: bool,
     minimum: Option<f64>,
     maximum: Option<f64>,
+    max_area: Option<u64>,
 }
 
 struct Limit {
     fields: Vec<(String, Limit)>,
     keys: Option<Box<Limit>>,
+    items: Option<Box<Limit>>,
     values: Option<Box<Limit>>,
     variants: Vec<(String, Limit)>,
     non_blank: bool,
@@ -56,6 +59,7 @@ struct Limit {
     int: bool,
     minimum: Option<f64>,
     maximum: Option<f64>,
+    max_area: Option<u64>,
 }
 
 impl Limit {
@@ -83,6 +87,7 @@ impl Limit {
         variants.sort_by(|a, b| a.0.cmp(&b.0));
         Self {
             fields,
+            items: raw.items.map(|i| Box::new(Self::build(*i))),
             keys: raw.keys.map(|k| Box::new(Self::build(*k))),
             values: raw.values.map(|v| Box::new(Self::build(*v))),
             variants,
@@ -93,6 +98,7 @@ impl Limit {
             int: raw.int,
             minimum: raw.minimum,
             maximum: raw.maximum,
+            max_area: raw.max_area,
         }
     }
 
@@ -111,6 +117,24 @@ impl Limit {
                 self.text_problem(text, path)
             }
             Value::Number(number) => self.number_problem(number.as_f64()?, path),
+            Value::Array(items) => {
+                if let Some(max) = self.max_length
+                    && items.len() > max
+                {
+                    return Some(at(format!("an array of at most {max} entries"), path));
+                }
+                if let Some(limit) = &self.items {
+                    for (index, item) in items.iter_mut().enumerate() {
+                        path.push(index.to_string());
+                        let found = limit.problem(item, path);
+                        path.pop();
+                        if found.is_some() {
+                            return found;
+                        }
+                    }
+                }
+                None
+            }
             Value::Object(map) => {
                 if let Some(Value::String(tag)) = map.get("_tag")
                     && let Some((_, variant)) = self.variants.iter().find(|(t, _)| t == tag)
@@ -125,6 +149,16 @@ impl Limit {
                         if found.is_some() {
                             return found;
                         }
+                    }
+                }
+                if let Some(max) = self.max_area {
+                    let area = map
+                        .get("width")
+                        .and_then(Value::as_u64)
+                        .zip(map.get("height").and_then(Value::as_u64))
+                        .map(|(w, h)| w.saturating_mul(h));
+                    if area.is_some_and(|area| area > max) {
+                        return Some(at(format!("a viewport area at most {max} pixels"), path));
                     }
                 }
                 if let Some(keys) = &self.keys {
@@ -249,6 +283,7 @@ mod tests {
             }
             limit.fields.values().for_each(walk);
             limit.variants.values().for_each(walk);
+            limit.items.iter().for_each(|i| walk(i));
             limit.keys.iter().for_each(|k| walk(k));
             limit.values.iter().for_each(|v| walk(v));
         }

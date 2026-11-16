@@ -404,6 +404,8 @@ const modelManifestRs = rustfmt(
 // to cover one more.
 
 const LIMITED_METHODS = [
+  "preview.open", "preview.list", "preview.close", "preview.resize", "preview.adjust",
+  "preview.clearProfile", "preview.reportStatus", "preview.reportProfiles",
   "assets.createUrl",
   "secrets.answerRequest",
   "panels.respond",
@@ -451,7 +453,9 @@ function limitNode(ast) {
     else if (r.id === "effect/schema/isInt") node.int = true;
     else if (r.id === "effect/schema/isGreaterThanOrEqualTo") node.minimum = p.minimum;
     else if (r.id === "effect/schema/isLessThanOrEqualTo") node.maximum = p.maximum;
+    else if (r.id === "effect/schema/isBetween") { node.minimum=p.minimum;node.maximum=p.maximum; }
   }
+  if (ast._tag === "Arrays" && ast.rest?.length === 1) { const item=limitNode(ast.rest[0]); if(item)node.items=item; }
   if (ast._tag === "Objects") {
     const fields = {};
     for (const p of ast.propertySignatures) {
@@ -470,6 +474,10 @@ function limitNode(ast) {
   return Object.keys(node).length ? node : null;
 }
 const limits = Object.fromEntries(LIMITED_METHODS.map((tag) => [tag, limitNode(payloadOf(tag).ast) ?? {}]));
+const previewLimits=await importSource("packages/contracts/src/preview.ts");
+for(const tag of ["preview.open","preview.resize"]) {
+  for(const variant of Object.values(limits[tag].fields.viewport.variants)) variant.maxArea=previewLimits.PREVIEW_VIEWPORT_MAX_AREA;
+}
 // Review-requested caps reuse PanelName/PanelText; upstream leaves response text unbounded.
 const panelInputs = await importSource("packages/contracts/src/agentPanels.ts");
 const panelLimits = limitNode(panelInputs.AgentPanelMcpServer.ast);

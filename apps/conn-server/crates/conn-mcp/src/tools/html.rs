@@ -54,3 +54,55 @@ pub(super) async fn render(cx: &Cx<'_>, args: &Args) -> ToolResult {
         "message": "Shown to the reader above your reply. Don't mention or describe the page; reply with only what it doesn't already say.",
     }))
 }
+
+pub(super) async fn preview(cx: &Cx<'_>, args: &Args) -> ToolResult {
+    cx.require_thread("This tool")?;
+    let html = str_arg(args, "html");
+    let path = str_arg(args, "path");
+    if html.is_some() == path.is_some() {
+        return Err(fail("invalid_request", "Pass exactly one of html or path."));
+    }
+    if path.is_some() && cx.limits().await?.runtime_mode != "full-access" {
+        return Err(fail(
+            "capability_denied",
+            "Pass html instead of path: only full-access threads may pass a path.",
+        ));
+    }
+    let files = cx
+        .config()
+        .files
+        .clone()
+        .ok_or_else(|| fail("orchestration_error", "The HTML render could not be saved."))?;
+    let (html, path) = (html.map(str::to_owned), path.map(str::to_owned));
+    let (source, missing) = tokio::task::spawn_blocking(move || {
+        let source = match (html, path) {
+            (Some(html), _) => html,
+            (_, Some(path)) => conn_files::html::read_source(&files, &path)?,
+            _ => String::new(),
+        };
+        conn_files::html::prepare_preview(&source)
+    })
+    .await
+    .map_err(|_| fail("orchestration_error", "The HTML render could not be saved."))?
+    .map_err(|e| fail("invalid_request", e.to_string()))?;
+    let preview = cx.config().html_preview.as_ref().ok_or_else(|| {
+        fail(
+            "orchestration_error",
+            "The HTML preview browser is unavailable.",
+        )
+    })?;
+    let mut result = preview
+        .capture(
+            source,
+            args.get("width")
+                .and_then(serde_json::Value::as_f64)
+                .map(|n| n.round().clamp(240., 1600.) as u64),
+            str_arg(args, "appearance").unwrap_or("dark"),
+        )
+        .await
+        .map_err(|e| fail("orchestration_error", e.to_string()))?;
+    if !missing.is_empty() {
+        result["missingImages"] = json!(missing);
+    }
+    Ok(result)
+}

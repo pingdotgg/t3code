@@ -32,10 +32,11 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         status.report_activity(&input);
         async { Ok(Value::Null) }
     });
-    // No server browser here; the profiles have no use.
-    table.unary("preview.reportProfiles", |_, _: Value| async {
-        Ok(Value::Null)
-    });
+    if deps.preview.is_none() {
+        table.unary("preview.reportProfiles", |_, _: Value| async {
+            Ok(Value::Null)
+        });
+    }
 
     table.stream("subscribeProjectClones", |_, _: Value| async {
         Ok(open_stream(vec![json!([])]))

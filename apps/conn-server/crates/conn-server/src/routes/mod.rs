@@ -9,10 +9,12 @@ use crate::AppState;
 mod assets;
 mod hooks;
 pub mod mcp;
+mod preview;
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .merge(mcp::router())
         .merge(assets::router())
         .merge(hooks::router())
+        .merge(preview::router())
 }

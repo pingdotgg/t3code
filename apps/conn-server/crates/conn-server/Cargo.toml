@@ -15,6 +15,7 @@ path = "src/main.rs"
 # Decodes compressed text generator answers (text_generation/drivers.rs).
 flate2.workspace = true
 conn-support.workspace = true
+conn-preview.workspace = true
 conn-wire.workspace = true
 conn-contract.workspace = true
 conn-engine.workspace = true

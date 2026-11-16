@@ -156,6 +156,7 @@ pub fn capabilities() -> ExecutionEnvironmentCapabilities {
     let mut capabilities: ExecutionEnvironmentCapabilities =
         conn_contract::from_json(json!({})).expect("every capability is optional");
     capabilities.repository_identity = Some(false);
+    capabilities.server_browser = Some(true);
     // Uploads are claimed by the message that sends them (`host.rs`).
     capabilities.attachment_uploads = Some(true);
     capabilities.file_attachments = Some(ExecutionEnvironmentCapabilitiesFileAttachments {
@@ -242,6 +243,7 @@ mod tests {
                 "fileAttachments",
                 "ignoredFileListing",
                 "ignoredFileSearch",
+                "serverBrowser",
                 "shellOlderSettled",
                 "shellThreadFamilies",
                 "threadForceStop"

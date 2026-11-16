@@ -227,7 +227,10 @@ pub async fn serve_with_instances(
         })
         .await;
     let _ = host.scheduled_tasks.set(scheduled_tasks.clone());
+    let preview = conn_preview::tabs::Preview::new(state_dir.clone());
     let mut deps = Deps {
+        preview: Some(preview.clone()),
+        html_preview: Some(Arc::new(preview.html_preview())),
         panels: Some(conn_features::panels::PanelBroker::default()),
         secrets: Some(secrets),
         engine: Some(engine.clone()),
@@ -326,6 +329,7 @@ pub async fn serve_with_instances(
     // started outlives the server.
     terminals.shutdown().await;
     engine.shutdown().await;
+    preview.shutdown().await;
     let _ = tokio::task::spawn_blocking(move || runtime.clear(&state_dir)).await;
 }
 

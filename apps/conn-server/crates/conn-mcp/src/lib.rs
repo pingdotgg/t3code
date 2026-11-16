@@ -22,6 +22,7 @@ mod catalog;
 mod credentials;
 mod links;
 mod sessions;
+pub mod snapshot;
 mod time;
 mod tools;
 mod transport;
@@ -32,6 +33,8 @@ pub use transport::Reply;
 
 /// What the service needs from the server around it.
 pub struct McpConfig {
+    pub preview: Option<conn_preview::tabs::Preview>,
+    pub html_preview: Option<Arc<conn_preview::html::HtmlPreview>>,
     pub engine: Arc<dyn Engine>,
     pub environment_id: String,
     pub label: String,

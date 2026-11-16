@@ -76,6 +76,11 @@ fn main() {
             Ok(rx)
         }
     });
+    table.stream("subscribePreviewEvents", |_, _: Value| async {
+        let (tx,rx)=mpsc::channel(1);
+        tx.send(Ok(json!({"type":"closed","threadId":"fixture","tabId":"tab_1_fixture","createdAt":"2026-11-16T00:00:00.000Z","serverEpoch":"fixture","revision":1}))).await.unwrap();
+        Ok(rx)
+    });
     let auth = AuthStore::in_memory();
     let state = AppState {
         table: Arc::new(table),

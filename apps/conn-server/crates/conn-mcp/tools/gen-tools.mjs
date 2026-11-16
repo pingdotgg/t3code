@@ -276,6 +276,7 @@ const failureMessages = /const SECRET_REQUEST_FAILURE_MESSAGES = \{([\s\S]+?)\} 
 if (!failureMessages) throw new Error("Secret request failure messages moved");
 const reasons = [...failureMessages.matchAll(/^  (\w+):/gm)].map((m) => m[1]);
 const secretTexts = JSON.stringify({ notes: secretContracts.SECRET_REQUEST_UNSAVED_NOTE, errors: Object.fromEntries(reasons.map((reason) => [reason, new secretContracts.SecretRequestError({reason}).message])) }) + "\n";
+await import("../../conn-preview/gen-spec.mjs");
 const outputs = [
   [htmlOut, htmlText, "HTML render bootstrap and height limits"],
   [NodePath.join(here, "..", "..", "conn-features", "src", "secret-texts.json"), secretTexts, "secret request texts"],

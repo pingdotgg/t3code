@@ -52,6 +52,8 @@ fn fixture_with(
     config.host = host;
     let engine = Arc::new(SqliteEngine::open(config).unwrap());
     let service = McpService::new(McpConfig {
+        preview: Some(conn_preview::tabs::Preview::new(dir.clone())),
+        html_preview: Some(Arc::new(conn_preview::html::HtmlPreview::new(dir.clone()))),
         panels: Some(conn_features::panels::PanelBroker::default()),
         secrets: Some(conn_features::secrets::SecretRequests::new(
             &dir,
@@ -1683,15 +1685,12 @@ async fn search_puts_titles_first_and_keeps_slots_for_messages() {
 /// Tools that a text we send to an agent names and that this server does not serve. An agent
 /// told to call one finds no such tool. Serve one, and this test makes you strike it here.
 /// `preview_*` in the orchestration text also names all 13 preview tools.
-const NAMED_NOT_SERVED: [&str; 13] = [
+const NAMED_NOT_SERVED: [&str; 10] = [
     "create_threads",
     "device_list",
     "device_open",
     "device_screenshot",
     "fill_credential",
-    "html_preview",
-    "preview_open",
-    "preview_status",
     "request_credentials",
     "t3_environment_link",
     "t3_environment_links",
@@ -1760,6 +1759,8 @@ async fn fixture_with_tasks(name: &str) -> Fixture {
     .await;
     let config = &base.service.config;
     let service = McpService::new(McpConfig {
+        preview: None,
+        html_preview: None,
         panels: Some(conn_features::panels::PanelBroker::default()),
         secrets: config.secrets.clone(),
         engine,
@@ -2781,4 +2782,120 @@ async fn html_render_publishes_for_live_callers_and_guards_file_access() {
         )
         .await;
     assert_eq!(code, "parent_not_active");
+}
+
+#[tokio::test]
+async fn html_preview_validates_before_launch_and_reads_without_a_live_turn() {
+    let f = fixture("html-preview");
+    let mut client = Client::open(&f.service, client(true)).await;
+    let launched=client.ok("t3_thread_launch",json!({"projectId":project_id(),"message":"hang","title":"Preview","runtimeMode":"approval-required"})).await;
+    let thread = launched["threadId"].as_str().unwrap();
+    let caller = Caller::Thread(ThreadCaller {
+        thread_id: thread.into(),
+        provider_session_id: "preview-agent".into(),
+        provider_instance_id: "claudeAgent".into(),
+        subagent: false,
+    });
+    let mut agent = Client::open(&f.service, caller).await;
+    client
+        .ok("t3_thread_interrupt", json!({"threadId":thread}))
+        .await;
+    for (args, message) in [
+        (json!({}), "Pass exactly one of html or path."),
+        (
+            json!({"html":"a","path":"/x.html"}),
+            "Pass exactly one of html or path.",
+        ),
+        (
+            json!({"path":"/unreadable.html"}),
+            "Pass html instead of path: only full-access threads may pass a path.",
+        ),
+    ] {
+        let reply = agent
+            .request(
+                "tools/call",
+                json!({"name":"html_preview","arguments":args}),
+            )
+            .await;
+        assert_eq!(
+            reply["result"],
+            json!({"isError":true,"content":[{"type":"text","text":message}],"structuredContent":{"error":{"_tag":"OrchestratorMcpFailure","operation":"preview","failureCount":1,"message":message}}})
+        );
+    }
+    let reply = agent
+        .request(
+            "tools/call",
+            json!({"name":"html_preview","arguments":{"html":"<div style='height:100vh'>"}}),
+        )
+        .await;
+    assert_eq!(reply["result"]["isError"], true);
+    assert!(
+        reply["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("viewport height unit (100vh)")
+    );
+}
+
+#[tokio::test]
+async fn browser_tools_share_t3_empty_results_and_failures_without_launching_chrome() {
+    let f = fixture("browser-tools");
+    let mut client = Client::open(&f.service, client(true)).await;
+    let launched=client.ok("t3_thread_launch",json!({"projectId":project_id(),"message":"hang","title":"Preview tools","runtimeMode":"full-access"})).await;
+    let mut agent = Client::open(
+        &f.service,
+        agent_of(&f, launched["threadId"].as_str().unwrap()),
+    )
+    .await;
+    let status = agent.ok("preview_status", json!({})).await;
+    assert_eq!(status["available"], false);
+    assert_eq!(status["tabs"], json!([]));
+    assert_eq!(
+        agent.ok("t3_preview_list", json!({})).await["sessions"],
+        json!([])
+    );
+    assert_eq!(
+        agent
+            .ok("t3_preview_close", json!({"tabId":"missing"}))
+            .await,
+        json!({})
+    );
+    for (name, args) in [
+        ("preview_open", json!({"tabId":"missing"})),
+        ("preview_navigate", json!({"url":"http://localhost:3000"})),
+        ("preview_resize", json!({"mode":"fill"})),
+        ("preview_set_appearance", json!({"colorScheme":"dark"})),
+        ("preview_evaluate", json!({"expression":"1+1"})),
+        ("preview_dialog", json!({"accept":true})),
+        ("preview_cdp_endpoint", json!({})),
+        ("preview_snapshot", json!({})),
+        ("preview_act", json!({"action":"click","x":1,"y":1})),
+        ("preview_wait_for", json!({"text":"Ready"})),
+        ("preview_recording_start", json!({})),
+        ("preview_recording_stop", json!({})),
+    ] {
+        let reply = agent
+            .request("tools/call", json!({"name":name,"arguments":args}))
+            .await;
+        assert_eq!(reply["result"]["isError"], true, "{name}: {reply}");
+        let text = reply["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(!text.contains("Tool '"), "{name} must be registered");
+        if name == "preview_snapshot" {
+            assert_eq!(
+                reply["result"]["structuredContent"]["error"]["_tag"],
+                "PreviewAutomationTabNotFoundError"
+            );
+        } else if name == "preview_recording_stop" {
+            assert!(text.contains("No recording is active"));
+        } else {
+            assert!(
+                text.contains("was found") || text.contains("was not found"),
+                "{name}: {text}"
+            );
+        }
+    }
+    assert!(
+        !f.dir.join("tools").exists(),
+        "unavailable status must never download Chrome"
+    );
 }

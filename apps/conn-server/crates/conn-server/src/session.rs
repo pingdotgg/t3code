@@ -156,6 +156,13 @@ pub async fn run<T: Transport>(mut socket: T, table: Arc<MethodTable>, options: 
         connection_id: next_connection_id(),
         ..options.context.clone()
     };
+    struct Disconnect(Arc<MethodTable>, u64);
+    impl Drop for Disconnect {
+        fn drop(&mut self) {
+            self.0.disconnect(self.1);
+        }
+    }
+    let _disconnect = Disconnect(table.clone(), context.connection_id);
     let (outbox, mut out) = mpsc::channel::<Out>(OUTBOX);
     let mut calls = Calls::default();
     let mut joiner = frame_parts::Joiner::new(options.max_message_bytes);

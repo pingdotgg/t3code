@@ -12,6 +12,7 @@ mod annotations;
 mod files;
 mod orchestration;
 mod panels;
+mod preview;
 mod projects;
 pub mod provider;
 mod scheduled;
@@ -25,6 +26,8 @@ pub mod vcs;
 /// Services handlers may use. `None` until the owning track wires it in `main.rs`.
 #[derive(Clone, Default)]
 pub struct Deps {
+    pub preview: Option<conn_preview::tabs::Preview>,
+    pub html_preview: Option<Arc<conn_preview::html::HtmlPreview>>,
     pub engine: Option<Arc<dyn Engine>>,
     /// The provider instances; `instances` changes them as the settings change.
     pub providers: conn_provider::ProviderSet,
@@ -67,6 +70,7 @@ pub fn register_all(table: &mut MethodTable, deps: &Deps) {
     server::register(table, deps);
     orchestration::register(table, deps);
     projects::register(table, deps);
+    preview::register(table, deps);
     provider::register(table, deps);
     vcs::register(table, deps);
     files::register(table, deps);

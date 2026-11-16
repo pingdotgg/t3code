@@ -826,6 +826,53 @@ mod tests {
     const UPGRADE: &str = "connection: upgrade\r\nupgrade: websocket\r\nsec-websocket-version: 13\r\nsec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==";
 
     #[tokio::test(flavor = "current_thread")]
+    async fn preview_stream_requires_read_scope_and_a_media_ticket() {
+        let (addr, auth) = serve().await;
+        let url = "/api/preview-stream/ws?threadId=thread&tabId=missing";
+        let request = |credential: &str| format!("GET {url} HTTP/1.1\r\n{UPGRADE}\r\n{credential}");
+        assert_eq!(call(addr, &request(""), "").await.0, 401);
+        let session = |scopes: Vec<String>| {
+            auth.issue_session(auth::SessionRequest {
+                scopes,
+                label: None,
+                subject: None,
+                ttl_ms: auth::SESSION_TTL_MS,
+            })
+            .unwrap()
+            .token
+        };
+        let terminal = session(vec!["terminal:operate".into()]);
+        assert_eq!(
+            call(
+                addr,
+                &request(&format!("authorization: Bearer {terminal}")),
+                ""
+            )
+            .await
+            .0,
+            403
+        );
+        let read = session(vec!["orchestration:read".into()]);
+        assert_eq!(
+            call(addr, &request(&format!("authorization: Bearer {read}")), "")
+                .await
+                .0,
+            404
+        );
+        let ticket = auth.issue_ticket(&read, Some("rpc")).unwrap().0;
+        let head = format!("GET {url}&wsTicket={ticket} HTTP/1.1\r\n{UPGRADE}");
+        assert_eq!(call(addr, &head, "").await.0, 401);
+        let ticket = auth.issue_ticket(&read, Some("media")).unwrap().0;
+        let head = format!("GET {url}&wsTicket={ticket} HTTP/1.1\r\n{UPGRADE}");
+        assert_eq!(call(addr, &head, "").await.0, 404);
+        assert_eq!(
+            call(addr, &head, "").await.0,
+            404,
+            "media tickets remain usable for reconnects"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn pairs_and_authenticates_the_socket() {
         let (addr, auth) = serve().await;
         let (status, body) = call(addr, "GET /.well-known/t3/environment HTTP/1.1", "").await;
