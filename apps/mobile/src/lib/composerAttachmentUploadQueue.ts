@@ -169,11 +169,11 @@ export function createComposerAttachmentUploadQueue(options: {
     signal: AbortSignal,
     onProgress: (progress: number) => void,
   ) => Promise<string>;
-  /** Saves a finished upload's id; the upload is ready once this resolves. */
+  /** Saves a finished upload's id; the upload is ready once this succeeds. */
   readonly onUploaded?: (
     request: ComposerAttachmentUploadRequest,
     uploadedId: string,
-  ) => Promise<void>;
+  ) => Effect.Effect<void, ComposerAttachmentUploadError>;
   readonly onChange: (states: Readonly<Record<string, ComposerAttachmentUploadState>>) => void;
 }) {
   let states: Readonly<Record<string, ComposerAttachmentUploadState>> = {};
@@ -194,55 +194,43 @@ export function createComposerAttachmentUploadQueue(options: {
   }
 
   const permits = Semaphore.makeUnsafe(3);
-  // An interrupted transfer settles before its attachment can upload again.
-  const settling = new Map<string, Promise<void>>();
   const running = new Set<Fiber.Fiber<string, ComposerAttachmentUploadError>>();
+  // The latest transfer per attachment: a re-added attachment waits for an aborted one to settle.
+  const transfers = new Map<string, Fiber.Fiber<string, ComposerAttachmentUploadError>>();
 
-  const transfer = (key: UploadKey) =>
+  /** The native transfer; interrupting it aborts the request and waits for it to settle. */
+  const nativeTransfer = (key: UploadKey) =>
     Effect.suspend(() => {
-      const previous = settling.get(key.id);
       const controller = new AbortController();
-      let done: Promise<string> | undefined;
-      const start = () => {
-        if (states[key.id]?.status !== "uploading")
-          setState(key.id, { status: "uploading", progress: 0 });
-        done = options.upload(key.request!, controller.signal, (progress) => {
-          if (controller.signal.aborted) return;
-          setState(key.id, {
-            status: "uploading",
-            progress: Math.floor(Math.max(0, Math.min(1, progress)) * 20) / 20,
-          });
+      if (states[key.id]?.status !== "uploading") {
+        setState(key.id, { status: "uploading", progress: 0 });
+      }
+      const done = options.upload(key.request!, controller.signal, (progress) => {
+        if (controller.signal.aborted) return;
+        setState(key.id, {
+          status: "uploading",
+          progress: Math.floor(Math.max(0, Math.min(1, progress)) * 20) / 20,
         });
-        return done;
-      };
-      return Effect.promise(() => previous ?? Promise.resolve()).pipe(
-        Effect.andThen(Effect.tryPromise({ try: start, catch: uploadError })),
-        Semaphore.withPermits(permits, 1),
-        Effect.tap((uploadedId) =>
-          Effect.tryPromise({
-            try: () => options.onUploaded?.(key.request!, uploadedId) ?? Promise.resolve(),
-            catch: uploadError,
-          }),
-        ),
-        Effect.tap(() => Effect.sync(() => setState(key.id, { status: "ready" }))),
-        Effect.tapError((error) =>
-          Effect.sync(() => setState(key.id, { status: "failed", reason: error.message })),
-        ),
+      });
+      return Effect.tryPromise({ try: () => done, catch: uploadError }).pipe(
         Effect.onInterrupt(() =>
-          Effect.sync(() => {
-            controller.abort();
-            const settled = (done ?? Promise.resolve("")).then(
-              () => undefined,
-              () => undefined,
-            );
-            settling.set(key.id, settled);
-            void settled.then(() => {
-              if (settling.get(key.id) === settled) settling.delete(key.id);
-            });
-          }),
+          Effect.sync(() => controller.abort()).pipe(
+            Effect.andThen(Effect.tryPromise({ try: () => done, catch: uploadError })),
+            Effect.ignore,
+          ),
         ),
       );
     });
+
+  const transfer = (key: UploadKey, previous: Fiber.Fiber<string, unknown> | undefined) =>
+    (previous === undefined ? Effect.void : Fiber.await(previous)).pipe(
+      Effect.andThen(nativeTransfer(key).pipe(Semaphore.withPermits(permits, 1))),
+      Effect.tap((uploadedId) => options.onUploaded?.(key.request!, uploadedId) ?? Effect.void),
+      Effect.tap(() => Effect.sync(() => setState(key.id, { status: "ready" }))),
+      Effect.tapError((error) =>
+        Effect.sync(() => setState(key.id, { status: "failed", reason: error.message })),
+      ),
+    );
 
   const scope = Scope.makeUnsafe();
   const uploads = Effect.runSync(
@@ -251,9 +239,13 @@ export function createComposerAttachmentUploadQueue(options: {
         lookup: Effect.fn("ComposerAttachmentUploads.lookup")(function* (key: UploadKey) {
           setState(key.id, { status: "uploading", progress: 0 });
           yield* Effect.addFinalizer(() => Effect.sync(() => setState(key.id, undefined)));
-          const fiber = yield* Effect.forkScoped(transfer(key));
+          const fiber = yield* Effect.forkScoped(transfer(key, transfers.get(key.id)));
+          transfers.set(key.id, fiber);
           running.add(fiber);
-          fiber.addObserver(() => running.delete(fiber));
+          fiber.addObserver(() => {
+            running.delete(fiber);
+            if (transfers.get(key.id) === fiber) transfers.delete(key.id);
+          });
           return fiber;
         }),
       }),

@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 
@@ -10,6 +11,7 @@ import {
   type DraftComposerAttachment,
 } from "../lib/composerImages";
 import {
+  uploadError,
   composerAttachmentUploadKey,
   composerDraftEnvironmentId,
   canUploadComposerAttachment,
@@ -134,10 +136,10 @@ function withUploadedAttachment(
   };
 }
 
-async function recordQueuedAttachmentUpload(
+const recordQueuedAttachmentUpload = Effect.fn("ComposerAttachments.recordQueuedUpload")(function* (
   environmentId: EnvironmentId,
   uploaded: DraftComposerAttachment,
-): Promise<void> {
+) {
   const editing = appAtomRegistry.get(editingQueuedMessageIdsAtom);
   const holders = flattenQueuedThreadMessages(
     appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
@@ -147,17 +149,22 @@ async function recordQueuedAttachmentUpload(
       !editing[message.messageId] &&
       withUploadedAttachment(message, uploaded) !== null,
   );
-  await Promise.all(
-    holders.map((message) =>
-      // An editor that opened meanwhile owns the message; its draft records the upload.
-      modifyThreadOutboxMessage(message.messageId, (current) =>
-        appAtomRegistry.get(editingQueuedMessageIdsAtom)[current.messageId]
-          ? null
-          : withUploadedAttachment(current, uploaded),
-      ),
-    ),
+  yield* Effect.forEach(
+    holders,
+    (message) =>
+      Effect.tryPromise({
+        // An editor that opened meanwhile owns the message; its draft records the upload.
+        try: () =>
+          modifyThreadOutboxMessage(message.messageId, (current) =>
+            appAtomRegistry.get(editingQueuedMessageIdsAtom)[current.messageId]
+              ? null
+              : withUploadedAttachment(current, uploaded),
+          ),
+        catch: uploadError,
+      }),
+    { concurrency: "unbounded", discard: true },
   );
-}
+});
 
 // Each connected environment's session is read here so a granted or revoked
 // operate scope re-syncs the queue.
@@ -189,10 +196,10 @@ const composerAttachmentUploadRequestsAtom = Atom.make((get) => {
 }).pipe(Atom.withLabel("mobile:composer-attachment-upload-requests"));
 
 /** Saves a finished upload's id on every draft and queued message holding the attachment. */
-async function recordComposerAttachmentUpload(
+const recordComposerAttachmentUpload = Effect.fn("ComposerAttachments.recordUpload")(function* (
   request: ComposerAttachmentUploadRequest,
   uploadedId: string,
-): Promise<void> {
+) {
   const { environmentId, attachment } = request;
   const uploaded: DraftComposerAttachment = {
     ...attachment,
@@ -214,14 +221,20 @@ async function recordComposerAttachmentUpload(
       draftsChanged = setComposerDraftAttachmentUpload(key, uploaded) || draftsChanged;
     }
   }
-  await recordQueuedAttachmentUpload(environmentId, uploaded);
+  yield* recordQueuedAttachmentUpload(environmentId, uploaded);
   if (!draftsChanged) return;
   // A failed draft save only costs a re-upload after restart; the outbox saves its own references.
-  await flushComposerDrafts().catch((error: unknown) => {
-    if (!isComposerDraftPersistenceError(error)) throw error;
-    console.warn("[composer-attachments] could not save the uploaded reference", error);
-  });
-}
+  yield* Effect.tryPromise({ try: () => flushComposerDrafts(), catch: uploadError }).pipe(
+    Effect.catchIf(
+      (error) => isComposerDraftPersistenceError(error.cause),
+      (error) =>
+        Effect.logWarning(
+          "[composer-attachments] could not save the uploaded reference",
+          error.cause,
+        ),
+    ),
+  );
+});
 
 function composerAttachmentUploads() {
   uploadQueue ??= createComposerAttachmentUploadQueue({
