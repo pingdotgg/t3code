@@ -220,12 +220,11 @@ export function WorkspaceNativeTabs(props: {
             const tab = workspaceTabForNativeSlot(primaryTabs, nativeEvent.selectedScreenKey);
             // The list sits too deep for react-native-screens to find, so a re-tap scrolls it here.
             if (
-              tab &&
-              tab !== "settings" &&
+              tab === "threads" &&
               nativeEvent.isRepeated &&
               !nativeEvent.hasTriggeredSpecialEffect
             )
-              workspace.requestScrollToTop(tab);
+              workspace.requestThreadsScrollToTop();
             if (tab) selectTab(tab);
           }}
         >

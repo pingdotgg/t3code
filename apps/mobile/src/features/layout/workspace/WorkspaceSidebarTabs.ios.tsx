@@ -51,8 +51,8 @@ export function WorkspaceSidebarTabs(props: {
         const tab = tabs.find((candidate) => candidate === nativeEvent.tab);
         if (tab === "settings") selectTab("settings");
         else if (tab) {
-          if (!workspace.settingsOpen && tab === workspace.state.selectedTab)
-            workspace.requestScrollToTop(tab);
+          if (tab === "threads" && !workspace.settingsOpen && tab === workspace.state.selectedTab)
+            workspace.requestThreadsScrollToTop();
           selectTab(tab);
         }
       }}
