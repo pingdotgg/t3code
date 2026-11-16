@@ -1,0 +1,19 @@
+{
+  "src/components/chat/ChatComposer.tsx": {
+    "hardcoded: ⇥ Tab": 1
+  },
+  "src/components/chat/ThreadServersPanel.tsx": {
+    "hardcoded: localhost:": 1
+  },
+  "src/components/CommandPaletteContent.tsx": {
+    "hardcoded: Backspace": 1,
+    "hardcoded: Enter": 1,
+    "hardcoded: Esc": 1
+  },
+  "src/components/search/ProjectContentSearchDialog.tsx": {
+    "hardcoded: ab": 1
+  },
+  "src/components/usage/UsageLimitsPooled.tsx": {
+    "hardcoded: ↻ +": 1
+  }
+}

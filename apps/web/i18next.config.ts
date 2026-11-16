@@ -16,4 +16,8 @@ export default defineConfig({
     removeUnusedKeys: false,
     extractFromComments: false,
   },
+  // Test fixtures assert on en copy by design; they are not translatable UI.
+  lint: {
+    ignore: ["**/*.test.ts", "**/*.test.tsx"],
+  },
 });
