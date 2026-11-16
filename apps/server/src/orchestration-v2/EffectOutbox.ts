@@ -232,6 +232,7 @@ export const OrchestrationEffectStatusV2 = Schema.Literals([
 export type OrchestrationEffectStatusV2 = typeof OrchestrationEffectStatusV2.Type;
 
 /** Receipts deduplicate retries, and restart re-enqueues need far less than a week. Retain failed rows to keep deleted-thread worktrees. */
+const SUMMARY_PASS_SUPERSEDED = "Superseded by a pending summary pass for the same thread.";
 export const SETTLED_EFFECT_RETENTION = Duration.days(7);
 const PRUNE_BATCH_SIZE = 500;
 
@@ -406,6 +407,17 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
       ).pipe(Effect.uninterruptible);
     };
     // Retry backoff must block later effects so turns cannot race a pending rollback.
+    // A pending pass for the same thread re-reads the whole thread, so this row has nothing left to do.
+    const summaryPassHasPendingSuccessor = sql`
+      orchestration_v2_effect_outbox.effect_type = 'conversation-summary.generate'
+      AND EXISTS (
+        SELECT 1 FROM orchestration_v2_effect_outbox AS pending_summary
+        WHERE pending_summary.thread_id = orchestration_v2_effect_outbox.thread_id
+          AND pending_summary.effect_type = 'conversation-summary.generate'
+          AND pending_summary.status = 'pending'
+      )
+    `;
+
     const claimableCandidatePredicate = (
       availableBefore?: string,
       excludeRestartContinuations = false,
@@ -516,6 +528,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
                 )
               )
               -- A running pass may enqueue its successor. Another pending pass would rehash the thread.
+              -- A retrying pass can still exhaust its attempts, so it does not stand in for this one.
               AND ${
                 effect.request.type === "conversation-summary.generate"
                   ? sql`NOT EXISTS (
@@ -523,6 +536,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
                       WHERE pending_summary.thread_id = ${effect.threadId}
                         AND pending_summary.effect_type = 'conversation-summary.generate'
                         AND pending_summary.status = 'pending'
+                        AND pending_summary.attempt_count = 0
                     )`
                   : sql`1 = 1`
               }
@@ -631,19 +645,13 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         const coveredRows = yield* sql<{ readonly effect_id: string }>`
           UPDATE orchestration_v2_effect_outbox
           SET
-            status = 'succeeded',
+            status = 'cancelled',
             lease_owner = NULL,
             completed_at = ${now},
             updated_at = ${now},
-            last_error = NULL
+            last_error = ${SUMMARY_PASS_SUPERSEDED}
           WHERE status = 'running'
-            AND effect_type = 'conversation-summary.generate'
-            AND EXISTS (
-              SELECT 1 FROM orchestration_v2_effect_outbox AS pending_summary
-              WHERE pending_summary.thread_id = orchestration_v2_effect_outbox.thread_id
-                AND pending_summary.effect_type = 'conversation-summary.generate'
-                AND pending_summary.status = 'pending'
-            )
+            AND ${summaryPassHasPendingSuccessor}
           RETURNING effect_id
         `;
         const requeuedRows = yield* sql<{ readonly effect_id: string }>`
@@ -792,21 +800,15 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           const yielded = yield* sql<{ readonly effect_id: string }>`
             UPDATE orchestration_v2_effect_outbox
             SET
-              status = 'failed',
+              status = 'cancelled',
               lease_owner = NULL,
               completed_at = ${nowIso},
               updated_at = ${nowIso},
-              last_error = ${error}
+              last_error = ${SUMMARY_PASS_SUPERSEDED}
             WHERE effect_id = ${effectId}
               AND status = 'running'
               AND lease_owner = ${workerId}
-              AND effect_type = 'conversation-summary.generate'
-              AND EXISTS (
-                SELECT 1 FROM orchestration_v2_effect_outbox AS pending_summary
-                WHERE pending_summary.thread_id = orchestration_v2_effect_outbox.thread_id
-                  AND pending_summary.effect_type = 'conversation-summary.generate'
-                  AND pending_summary.status = 'pending'
-              )
+              AND ${summaryPassHasPendingSuccessor}
             RETURNING effect_id
           `;
           if (yielded.length === 1) {
