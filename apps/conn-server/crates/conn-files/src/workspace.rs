@@ -27,15 +27,15 @@ use crate::{
 pub const READ_FILE_MAX_BYTES: u64 = 1024 * 1024;
 
 #[cfg(target_os = "linux")]
-mod flags {
-    pub(super) const O_NONBLOCK: i32 = 0o4000;
-    pub(super) const O_NOFOLLOW: i32 = 0o400000;
+pub(crate) mod flags {
+    pub(crate) const O_NONBLOCK: i32 = 0o4000;
+    pub(crate) const O_NOFOLLOW: i32 = 0o400000;
 }
 #[cfg(not(target_os = "linux"))]
-mod flags {
+pub(crate) mod flags {
     // macOS and the BSDs.
-    pub(super) const O_NONBLOCK: i32 = 0x0004;
-    pub(super) const O_NOFOLLOW: i32 = 0x0100;
+    pub(crate) const O_NONBLOCK: i32 = 0x0004;
+    pub(crate) const O_NOFOLLOW: i32 = 0x0100;
 }
 
 /// Opens for reading without blocking on a FIFO swapped in after a check.

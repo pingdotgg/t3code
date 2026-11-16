@@ -13,7 +13,7 @@ use std::sync::Arc;
 use axum::{
     Router,
     body::{Body, Bytes},
-    extract::State,
+    extract::{DefaultBodyLimit, State},
     http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     response::{IntoResponse, Response},
     routing::any,
@@ -24,7 +24,10 @@ use serde_json::json;
 use crate::{AppState, methods::Deps};
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/mcp", any(mcp))
+    Router::new().route(
+        "/mcp",
+        any(mcp).layer(DefaultBodyLimit::max(conn_mcp::MAX_MCP_BODY_BYTES)),
+    )
 }
 
 /// The service for these deps, or `None` without an engine and environment.

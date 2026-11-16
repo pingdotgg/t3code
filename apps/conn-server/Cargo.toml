@@ -61,6 +61,8 @@ uuid = { version = "1.29", default-features = false, features = ["std"] }
 # Text generator answers that the endpoint compresses: the T3 server's fetch asks for gzip and
 # deflate, so this server asks for them too and must decode them. Pure Rust (miniz_oxide).
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+# Already used by conn-server and grep-regex; shared for HTML pattern scans, no new features.
+regex-automata = { version = "0.4", default-features = false, features = ["std", "syntax", "meta", "nfa-pikevm", "nfa-backtrack", "hybrid", "dfa-onepass", "perf", "unicode"] }
 axum = { version = "0.8", default-features = false, features = [
   "http1",
   "json",

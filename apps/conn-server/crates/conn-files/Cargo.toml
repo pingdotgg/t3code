@@ -27,6 +27,10 @@ nucleo-matcher = "0.3"
 # Escapes a literal query; already in the tree through grep-regex.
 regex-syntax = { version = "0.8", default-features = false, features = ["std"] }
 
+# Already in conn-server and grep-regex, with the same features: bounded HTML pattern scans.
+regex-automata.workspace = true
+thiserror.workspace = true
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros", "process", "io-util", "time"] }
 

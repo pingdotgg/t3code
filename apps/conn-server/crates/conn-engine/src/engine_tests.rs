@@ -2549,6 +2549,8 @@ struct RecordingHost {
     revoked: Mutex<Vec<String>>,
     released: Mutex<Vec<Value>>,
     closed: Mutex<Vec<(String, crate::ThreadClose)>>,
+    html_cleanup: Mutex<Vec<(String, String)>>,
+    closed_event: tokio::sync::Notify,
 }
 
 impl crate::EngineHost for RecordingHost {
@@ -2593,11 +2595,16 @@ impl crate::EngineHost for RecordingHost {
         self.released.lock().unwrap().push(attachments);
         Box::pin(async {})
     }
+    fn cleanup_html_attachments(&self, ids: Vec<(String, String)>) -> crate::BoxFuture<'_, ()> {
+        self.html_cleanup.lock().unwrap().extend(ids);
+        Box::pin(async {})
+    }
     fn thread_closed(&self, thread_id: &str, reason: crate::ThreadClose) {
         self.closed
             .lock()
             .unwrap()
             .push((thread_id.to_owned(), reason));
+        self.closed_event.notify_one();
     }
 }
 
@@ -2634,6 +2641,11 @@ async fn the_host_grants_tools_claims_attachments_and_hears_closes() {
     assert!(engine.dispatch(from_json(refused).unwrap()).await.is_err());
     assert_eq!(host.released.lock().unwrap()[0][0]["id"], "missing-1");
 
+    engine.inner().db(|store| {
+        let mut tx = store.tx()?;
+        tx.append(crate::store::Draft::new("t1", "turn-item.updated", json!({"id":"page", "type":"dynamic_tool", "toolName":"html_render", "output":{"htmlRender":{"attachmentId":"t1-00000000-0000-4000-8000-000000000001-html", "title":"Page", "height":100}}})))?;
+        tx.commit(None)
+    }).await.unwrap();
     dispatch(
         &engine,
         json!({"type": "thread.archive", "commandId": "c4", "threadId": "t1"}),
@@ -2644,12 +2656,8 @@ async fn the_host_grants_tools_claims_attachments_and_hears_closes() {
         json!({"type": "thread.delete", "commandId": "c5", "threadId": "t1"}),
     )
     .await;
-    // Effects run on spawned tasks, one after another per thread; let them finish.
-    for _ in 0..200 {
-        if host.closed.lock().unwrap().len() == 2 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
+    while host.closed.lock().unwrap().len() < 2 {
+        host.closed_event.notified().await;
     }
     assert_eq!(
         *host.closed.lock().unwrap(),
@@ -2657,6 +2665,13 @@ async fn the_host_grants_tools_claims_attachments_and_hears_closes() {
             ("t1".to_owned(), crate::ThreadClose::Archived),
             ("t1".to_owned(), crate::ThreadClose::Deleted)
         ]
+    );
+    assert_eq!(
+        *host.html_cleanup.lock().unwrap(),
+        [(
+            "t1".into(),
+            "t1-00000000-0000-4000-8000-000000000001-html".into()
+        )]
     );
     assert_eq!(*host.revoked.lock().unwrap(), ["key:t1"]);
 }
@@ -3989,6 +4004,11 @@ async fn a_turn_accepted_after_stop_is_interrupted() {
     dispatch(&engine, create("t1", "c1")).await;
     dispatch(&engine, message("t1", "c2", "hello")).await;
     run_to_end(&engine, "t1", "run:t1:1").await;
+    let mut changes = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut changes).await;
     dispatch(&engine, message("t1", "c3", "latestart")).await;
     tokio::time::sleep(Duration::from_millis(100)).await;
     dispatch(&engine, stop("t1", "c4")).await;
@@ -3996,7 +4016,16 @@ async fn a_turn_accepted_after_stop_is_interrupted() {
         run_of(&projection(&engine, "t1").await, "run:t1:2")["status"],
         "interrupted"
     );
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    loop {
+        let item = next(&mut changes).await;
+        let event = &item["event"];
+        if event["type"] == "provider-turn.updated"
+            && event["payload"]["runAttemptId"] == "run:t1:2:attempt:1"
+            && event["payload"]["status"] == "interrupted"
+        {
+            break;
+        }
+    }
     let calls = crate::lock(&provider.calls).clone();
     assert!(calls.contains(&"abandon run:t1:2".to_owned()), "{calls:?}");
     assert!(
