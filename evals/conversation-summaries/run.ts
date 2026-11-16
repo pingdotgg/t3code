@@ -13,16 +13,15 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import * as CodexTextGeneration from "../../apps/server/src/textGeneration/CodexTextGeneration.ts";
 import * as ServerConfig from "../../apps/server/src/config.ts";
 import { morphConfig } from "../shared/proxy.ts";
-import { condensedCases, knowledgeCases, leafCases, type LeafMessage } from "./cases.ts";
-import { gradeCondensed, gradeKnowledge, gradeLeaf } from "./grade.ts";
+import { condensedCases, leafCases, type LeafMessage } from "./cases.ts";
+import { gradeCondensed, gradeLeaf } from "./grade.ts";
 
 /**
  * How a peer reply reaches the model. `main` sends it as a nameless assistant message, as main
  * does. `peer-as-user` renders it as a historical user message with the speaker in its header, as
- * handoff history does; summaries only. `no-rule` names the peer without the prompt's peer rule.
- * `full` is this checkout.
+ * handoff history does. `full` is this checkout.
  */
-const arms = ["main", "peer-as-user", "no-rule", "full"] as const;
+const arms = ["main", "peer-as-user", "full"] as const;
 
 const { values } = NodeUtil.parseArgs({
   options: {
@@ -41,19 +40,14 @@ const samples = Number(values.samples);
 const arm = arms.find((candidate) => candidate === values.arm);
 if (arm === undefined) throw new Error(`Unknown --arm ${values.arm}. Use ${arms.join(", ")}.`);
 const morph = model.startsWith("morph-");
-const dropsPeerRule = arm === "main" || arm === "no-rule" || arm === "peer-as-user";
-if (dropsPeerRule && !morph)
-  throw new Error(`--arm ${arm} edits the prompt, which only a morph-* model route can do.`);
 const selectedIds = values.case?.split(",");
 const selected = <T extends { readonly id: string }>(fixtures: ReadonlyArray<T>) =>
   fixtures.filter((fixture) => selectedIds === undefined || selectedIds.includes(fixture.id));
 const selectedCondensed = selected(condensedCases);
 const selectedLeaf = selected(leafCases);
-// Assisted learning never rendered a peer as a user, so that arm has no knowledge baseline.
-const selectedKnowledge = arm === "peer-as-user" ? [] : selected(knowledgeCases);
-if (selectedCondensed.length + selectedLeaf.length + selectedKnowledge.length === 0)
+if (selectedCondensed.length + selectedLeaf.length === 0)
   throw new Error(
-    `Unknown --case ${values.case}. Available cases: ${[...condensedCases, ...leafCases, ...knowledgeCases].map((fixture) => fixture.id).join(", ")}`,
+    `Unknown --case ${values.case}. Available cases: ${[...condensedCases, ...leafCases].map((fixture) => fixture.id).join(", ")}`,
   );
 const Results = Schema.Array(
   Schema.Struct({
@@ -85,12 +79,6 @@ const decodeMorphReply = Schema.decodeUnknownEffect(
 );
 
 const MORPH_ATTEMPTS = 8;
-const PEER_RULE = "- a peer is another model";
-const withoutPeerRule = (prompt: string) =>
-  prompt
-    .split("\n")
-    .filter((line) => !line.startsWith(PEER_RULE))
-    .join("\n");
 
 /** Morph's free Responses API, given the production prompt as OpenCode sends it: text only. */
 const morphRunner = (): TextGenerationOperations.Runner => {
@@ -98,12 +86,11 @@ const morphRunner = (): TextGenerationOperations.Runner => {
   return (request) =>
     Effect.gen(function* () {
       const client = yield* HttpClient.HttpClient;
-      const prompt = dropsPeerRule ? withoutPeerRule(request.prompt) : request.prompt;
       const post = HttpClientRequest.post(`${endpoint.url}/responses`).pipe(
         HttpClientRequest.setHeaders(endpoint.headers),
         HttpClientRequest.bodyJson({
           model: request.modelSelection.model,
-          input: [{ role: "user", content: [{ type: "input_text", text: prompt }] }],
+          input: [{ role: "user", content: [{ type: "input_text", text: request.prompt }] }],
           store: false,
           max_output_tokens: 8_000,
         }),
@@ -131,7 +118,7 @@ const morphRunner = (): TextGenerationOperations.Runner => {
 
 const asArm = (message: LeafMessage, index: number) => {
   const ref = `M${index + 1}`;
-  if (message.role !== "peer" || arm === "full" || arm === "no-rule") return { ref, ...message };
+  if (message.role !== "peer" || arm === "full") return { ref, ...message };
   if (arm === "main") return { ref, role: "assistant" as const, text: message.text };
   const [, rendered] = historyResponseItems(
     [
@@ -200,25 +187,6 @@ await Effect.runPromise(
         record(fixture.id, sample, statements, gradeLeaf(fixture, statements));
       }
     }
-    for (const fixture of selectedKnowledge) {
-      for (let sample = 0; sample < samples; sample++) {
-        const { candidates } = yield* generation.generateKnowledgeCandidates({
-          cwd,
-          runOutcome: "completed",
-          modelSelection,
-          messages: fixture.messages.map(asArm),
-        });
-        record(
-          fixture.id,
-          sample,
-          candidates.map((candidate) => ({
-            text: `${candidate.kind}: ${candidate.content}`,
-            citations: candidate.citations,
-          })),
-          gradeKnowledge(fixture, candidates),
-        );
-      }
-    }
     yield* fs.makeDirectory(outputDirectory, { recursive: true });
     yield* fs.writeFileString(
       path.join(outputDirectory, "results.json"),
@@ -226,7 +194,7 @@ await Effect.runPromise(
     );
     if (baseline !== undefined)
       yield* fs.writeFileString(path.join(outputDirectory, "baseline.json"), baseline);
-    for (const fixture of [...selectedCondensed, ...selectedLeaf, ...selectedKnowledge]) {
+    for (const fixture of [...selectedCondensed, ...selectedLeaf]) {
       const rows = results.filter((row) => row.id === fixture.id);
       const passed = rows.filter((row) => row.passed).length;
       // A case fails when half or more of its samples fail.

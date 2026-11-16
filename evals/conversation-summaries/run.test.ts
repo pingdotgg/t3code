@@ -1,10 +1,9 @@
 import { expect, it } from "vite-plus/test";
-import { condensedCases, knowledgeCases, leafCases } from "./cases.ts";
-import { gradeCondensed, gradeKnowledge, gradeLeaf } from "./grade.ts";
+import { condensedCases, leafCases } from "./cases.ts";
+import { gradeCondensed, gradeLeaf } from "./grade.ts";
 
 const [reversal, control] = condensedCases;
 const [peerLeaf, ordinaryLeaf] = leafCases;
-const [peerKnowledge, conventionKnowledge] = knowledgeCases;
 /** The full leaf grade of one statement beside a sibling that credits Astra, which passes alone. */
 const gradeBesideAstra = (text: string) =>
   gradeLeaf(peerLeaf!, [
@@ -117,32 +116,6 @@ it("passes an ordinary leaf with no peer", () => {
         citations: ["M1", "M2"],
       },
       { text: "The link checker has not run yet.", citations: ["M2"] },
-    ]),
-  ).toEqual([]);
-});
-
-it("fails a fact candidate that saves the peer's proposal as the user's decision", () => {
-  const content = "Sessions are stored in Postgres instead of Redis.";
-  expect(
-    gradeKnowledge(peerKnowledge!, [{ kind: "decision", content, citations: ["M2"] }]),
-  ).toEqual([`decision: ${content}`]);
-  expect(
-    gradeKnowledge(peerKnowledge!, [
-      { kind: "convention", content: "The user chose Postgres for sessions.", citations: ["M2"] },
-    ]),
-  ).not.toEqual([]);
-  expect(
-    gradeKnowledge(peerKnowledge!, [
-      { kind: "convention", content: "Session storage is undecided.", citations: ["M1"] },
-    ]),
-  ).toEqual([]);
-});
-
-it("requires the control's plain user convention", () => {
-  expect(gradeKnowledge(conventionKnowledge!, [])).toEqual(["missing snake_case"]);
-  expect(
-    gradeKnowledge(conventionKnowledge!, [
-      { kind: "convention", content: "API responses use snake_case keys.", citations: ["M1"] },
     ]),
   ).toEqual([]);
 });

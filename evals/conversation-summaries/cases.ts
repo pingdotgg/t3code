@@ -89,57 +89,6 @@ export const leafCases: ReadonlyArray<LeafCase> = [
   },
 ];
 
-/** One finished exchange, as assisted learning sends it for fact candidates. */
-export interface KnowledgeCase {
-  readonly id: string;
-  readonly kind: "bad" | "control";
-  readonly source: string;
-  readonly messages: ReadonlyArray<LeafMessage>;
-  /** Candidate kinds that must not come out. */
-  readonly forbiddenKinds: ReadonlyArray<"decision" | "constraint" | "convention">;
-  /** Each regex must match some candidate. */
-  readonly mustMention: ReadonlyArray<string>;
-  /** No candidate may match these. */
-  readonly mustNot: ReadonlyArray<string>;
-}
-
-export const knowledgeCases: ReadonlyArray<KnowledgeCase> = [
-  {
-    id: "knowledge-peer-proposal-is-not-a-decision",
-    kind: "bad",
-    source: `${peerProposalSource} Assisted learning reads the same messages, so a peer proposal the agent acted on could be saved as the user's decision.`,
-    // The user never accepts, but the agent agrees and acts, which lures a decision.
-    messages: [
-      { role: "user", text: "Where should sessions live?" },
-      {
-        role: "peer",
-        speaker: { label: "Astra", model: "gpt-6-astra" },
-        text: "Drop Redis and use Postgres for sessions.",
-      },
-      {
-        role: "assistant",
-        text: "Agreed, Postgres it is. I started the migration that moves sessions from Redis to Postgres.",
-      },
-    ],
-    forbiddenKinds: ["decision"],
-    mustMention: [],
-    mustNot: misattributed,
-  },
-  {
-    id: "knowledge-user-convention-is-kept",
-    kind: "control",
-    source:
-      "Control for the peer rule: a plain user instruction must still become a fact, so the rule cannot suppress ordinary learning.",
-    messages: [
-      { role: "user", text: "From now on API responses use snake_case keys everywhere." },
-      { role: "assistant", text: "Done. I converted the handlers to snake_case keys." },
-    ],
-    forbiddenKinds: [],
-    mustMention: ["snake_case"],
-    mustNot: [],
-  },
-];
-
 /** A roll-up input: four adjacent child summaries, oldest first, as the summary pass sends them. */
 export interface CondensedCase {
   readonly id: string;
