@@ -6117,6 +6117,60 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  // Streamed text is published on a real timer, so this runs on the live clock.
+  it.live("shows only the new reasoning when Pi starts a streaming block again", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
+      // A provider that reconnects mid-reasoning streams the same block from its start.
+      const thinking = (event: Record<string, unknown>) =>
+        fake.emit({
+          type: "message_update",
+          assistantMessageEvent: { contentIndex: 0, ...event },
+        });
+      const reasoningUpdate = Effect.fnUntraced(function* (
+        wanted: (item: { readonly status: string; readonly text: string }) => boolean,
+      ) {
+        const update = yield* takeEvent(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "reasoning" &&
+            wanted(event.turnItem),
+        );
+        return update.type === "turn_item.updated" && update.turnItem.type === "reasoning"
+          ? { status: update.turnItem.status, text: update.turnItem.text }
+          : null;
+      });
+      yield* thinking({ type: "thinking_start" });
+      yield* thinking({ type: "thinking_delta", delta: "Abandoned attempt" });
+      yield* thinking({ type: "thinking_start" });
+      yield* thinking({ type: "thinking_delta", delta: "Replacement attempt" });
+      assert.deepEqual(
+        yield* reasoningUpdate((item) => item.text.endsWith("Replacement attempt")),
+        {
+          status: "running",
+          text: "Replacement attempt",
+        },
+      );
+      // A third attempt that ends with no reasoning leaves nothing of the second on screen.
+      yield* thinking({ type: "thinking_start" });
+      yield* thinking({ type: "thinking_end" });
+      assert.deepEqual(yield* reasoningUpdate((item) => item.status === "completed"), {
+        status: "completed",
+        text: "",
+      });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each([
     {
       pi: "clears its native queue",
