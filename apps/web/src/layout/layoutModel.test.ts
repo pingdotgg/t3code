@@ -470,6 +470,26 @@ describe("replaceLayoutTabContent", () => {
   });
 });
 
+describe("selectLayoutPaneSlots", () => {
+  it("keeps a full-width column on screen when the strip narrows after it was arranged", () => {
+    // Arranged with the sidebar closed, then the sidebar opens and the strip narrows.
+    const state: LayoutState = {
+      focusedWorkspaceId: "workspace",
+      workspaces: [
+        {
+          id: "workspace",
+          name: null,
+          focusedPaneId: null,
+          cameraWidth: 1300,
+          columns: [column("chat", 1), column("terminal", 0.5)],
+        },
+      ],
+    };
+    expect(drawnRightEdges(state, 1300)).toEqual([1300, 1950]);
+    expect(drawnRightEdges(state, 1000)).toEqual([1000, 1500]);
+  });
+});
+
 describe("resizeLayoutColumnEdge", () => {
   it("keeps the dragged edge under the pointer when the strip was arranged wider than the window", () => {
     const viewportWidth = 1000;
@@ -551,6 +571,8 @@ describe("selectLayoutStripSize", () => {
       { cameraWidth: 1200, widths: [0.5, 0.55] },
       { cameraWidth: 1400, widths: [0.4, 0.4] },
       { cameraWidth: 900, widths: [1] },
+      { cameraWidth: 1600, widths: [1, 0.5] },
+      { cameraWidth: 1700, widths: [0.5, 0.5, 0.5] },
     ];
     const modes: LayoutWhenNoRoom[] = ["shrink-then-scroll", "always-scroll", "always-shrink"];
     for (const { cameraWidth, widths } of workspaces) {
@@ -562,10 +584,13 @@ describe("selectLayoutStripSize", () => {
         columns: widths.map((width, index) => column(`c${index}`, width)),
       };
       for (const whenNoRoom of modes) {
-        const { share, minPx } = selectLayoutStripSize(workspace, whenNoRoom);
+        const { share, minPx, maxShare } = selectLayoutStripSize(workspace, whenNoRoom);
         for (let width = 700; width <= 2200; width += 25) {
           const { stripWidth } = selectLayoutPaneSlots(workspace, { width, whenNoRoom });
-          expect(Math.max(share * width, minPx)).toBeCloseTo(stripWidth * width, 6);
+          expect(Math.min(maxShare * width, Math.max(share * width, minPx))).toBeCloseTo(
+            stripWidth * width,
+            6,
+          );
         }
       }
     }
