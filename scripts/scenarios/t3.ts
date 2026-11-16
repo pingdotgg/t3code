@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 
@@ -57,7 +58,7 @@ const decodeLaunched = Schema.decodeUnknownEffect(
 );
 
 const decodeRuntimeState = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.Struct({ origin: Schema.String })),
+  Schema.fromJsonString(Schema.Struct({ origin: Schema.String, startedAt: Schema.String })),
 );
 
 type ServerApi = {
@@ -66,8 +67,9 @@ type ServerApi = {
 };
 
 /**
- * One API client per T3 home, signed in once per run. Each CLI call starts a process that takes
- * about 0.7 s before it does anything, so per-test state goes through the server's HTTP API.
+ * One API client per running server, signed in once. Each CLI call starts a process that takes
+ * about 0.7 s before it does anything, so per-test state goes through the server's HTTP API. A
+ * server started again on the same home, as the second server is for each test, gets a new one.
  */
 const serverApis = new Map<string, Promise<ServerApi>>();
 
@@ -94,28 +96,41 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
     );
   });
 
-  // The server writes its origin beside its database once it listens.
-  const connect = Effect.gen(function* () {
+  // The server writes its origin beside its database once it listens. It also prints its pairing
+  // token, which can come first, so a missing file is read again.
+  const runtimeState = Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const { origin } = yield* decodeRuntimeState(
+    return yield* decodeRuntimeState(
       yield* fs.readFileString(path.join(home, "userdata", "server-runtime.json")),
     );
+  }).pipe(
+    Effect.retry({
+      schedule: Schedule.spaced("50 millis"),
+      times: 100,
+      while: (error) => error._tag === "PlatformError" && error.reason._tag === "NotFound",
+    }),
+  );
+  const connect = Effect.fn("scenario.connect")(function* (origin: string) {
     const issued = yield* cli(["auth", "session", "issue", "--token-only", "--label", "scenario"]);
     const client = yield* HttpApiClient.make(EnvironmentHttpApi, { baseUrl: origin });
     return { client, headers: { authorization: `Bearer ${issued.stdout.trim()}` } };
-  }).pipe(Effect.provide(FetchHttpClient.layer));
-  const api = Effect.tryPromise({
-    try: () => {
-      const known = serverApis.get(home);
-      if (known !== undefined) return known;
-      const connecting = runPromise(connect);
-      serverApis.set(home, connecting);
-      // A failed sign-in is not kept: the next test tries again.
-      connecting.catch(() => serverApis.delete(home));
-      return connecting;
-    },
-    catch: (cause) => new ScenarioError({ message: `Could not reach the server API: ${cause}` }),
+  }, Effect.provide(FetchHttpClient.layer));
+  const api = Effect.gen(function* () {
+    const { origin, startedAt } = yield* runtimeState;
+    const key = `${home}\n${origin}\n${startedAt}`;
+    return yield* Effect.tryPromise({
+      try: () => {
+        const known = serverApis.get(key);
+        if (known !== undefined) return known;
+        const connecting = runPromise(connect(origin));
+        serverApis.set(key, connecting);
+        // A failed sign-in is not kept: the next test tries again.
+        connecting.catch(() => serverApis.delete(key));
+        return connecting;
+      },
+      catch: (cause) => new ScenarioError({ message: `Could not reach the server API: ${cause}` }),
+    });
   });
   const mutate = Effect.fn("scenario.mutate")(function* (mutation: ProjectMutation) {
     const { client, headers } = yield* api;
