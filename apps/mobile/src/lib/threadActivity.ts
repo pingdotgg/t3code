@@ -1244,23 +1244,8 @@ function deriveThreadFeedRunFolds(
           (entry) =>
             entry.id !== terminalAssistantId &&
             !(entry.type === "message" && retainedAnswerIds.has(entry.message.id)) &&
-            entry.type !== "html-render" &&
-            entry.type !== "sent-message" &&
-            entry.type !== "mcp-app" &&
             entry.id !== visibleCompactionId &&
-            !(
-              entry.type === "activity-group" &&
-              entry.activities.some(
-                (activity) =>
-                  activity.prominent ||
-                  activity.workEntry.questionAnswer !== undefined ||
-                  activity.projectedItem.item.type === "notification" ||
-                  activity.projectedItem.item.type === "handoff" ||
-                  // A child still working outlives its settled launching run;
-                  // its group stays visible while any member is live.
-                  isLiveSubagentTurnItem(activity.projectedItem.item),
-              )
-            ),
+            !staysOutOfFold(entry),
         )
         .map((entry) => entry.id),
     );
@@ -1425,6 +1410,26 @@ function latestRunsEqual(left: ThreadFeedLatestRun | null, right: ThreadFeedLate
       left.completedAt === right.completedAt &&
       left.turnEnded === right.turnEnded &&
       left.providerStartingLabel === right.providerStartingLabel)
+  );
+}
+
+/** Rows a fold leaves in view; the live fold skips them too, so settling keeps its place. */
+function staysOutOfFold(entry: ThreadFeedEntry): boolean {
+  return (
+    entry.type === "html-render" ||
+    entry.type === "sent-message" ||
+    entry.type === "mcp-app" ||
+    (entry.type === "activity-group" &&
+      entry.activities.some(
+        (activity) =>
+          activity.prominent ||
+          activity.workEntry.questionAnswer !== undefined ||
+          activity.projectedItem.item.type === "notification" ||
+          activity.projectedItem.item.type === "handoff" ||
+          // A child still working outlives its settled launching run;
+          // its group stays visible while any member is live.
+          isLiveSubagentTurnItem(activity.projectedItem.item),
+      ))
   );
 }
 
@@ -1729,28 +1734,38 @@ export function deriveThreadFeedPresentation(
   }
   // The working run's fold row shows its live timer where "Worked for" lands once it settles.
   // Zen never folds, so it keeps only the Thinking row.
+  // Runless work folds under its prompt's key once it settles, so the live row takes that key.
+  const runlessPrompt =
+    activeRunId === null && runlessWorkActive
+      ? sourceFeed.findLast((entry) => isUserMessageEntry(entry) && feedEntryRunId(entry) === null)
+      : undefined;
+  const liveRunId =
+    activeRunId ?? (runlessPrompt ? RunId.make(`runless:${runlessPrompt.id}`) : null);
   const liveFold =
     !zen &&
     isWorking &&
     activeWorkStartedAt !== null &&
-    activeRunId !== null &&
-    !compactionCommandRunIds.has(activeRunId)
-      ? liveRunFoldRow(activeRunId, activeWorkStartedAt)
+    liveRunId !== null &&
+    !compactionCommandRunIds.has(liveRunId)
+      ? liveRunFoldRow(liveRunId, activeWorkStartedAt)
       : null;
   let liveFoldPlaced = false;
   // Earlier turns can hold the run's own items (a subagent it continued), so wait for its prompt.
   let liveFoldReady =
     liveFold !== null &&
-    !sourceFeed.some(
-      (entry) => isUserMessageEntry(entry) && feedEntryRunId(entry) === liveFold.runId,
-    );
+    activeRunId !== null &&
+    !sourceFeed.some((entry) => isUserMessageEntry(entry) && feedEntryRunId(entry) === activeRunId);
   for (let sourceIndex = 0; sourceIndex < sourceFeed.length; sourceIndex += 1) {
     const entry = sourceFeed[sourceIndex]!;
     const feedIndex = retainedFeedIndices[sourceIndex]!;
-    if (liveFold !== null && !liveFoldPlaced && feedEntryRunId(entry) === liveFold.runId) {
+    if (liveFold !== null && !liveFoldPlaced && feedEntryRunId(entry) === activeRunId) {
       if (isUserMessageEntry(entry)) {
-        liveFoldReady = true;
-      } else if (liveFoldReady) {
+        liveFoldReady = activeRunId !== null || entry === runlessPrompt;
+      } else if (
+        liveFoldReady &&
+        !staysOutOfFold(entry) &&
+        !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry))
+      ) {
         result.push(liveFold);
         liveFoldPlaced = true;
       }
