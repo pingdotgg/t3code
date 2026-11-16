@@ -6,10 +6,12 @@ import * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeChildProcessSpawner from "@effect/platform-node-shared/NodeChildProcessSpawner";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { supportsEnvChdir } from "@t3tools/shared/envTrampoline";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 // Windows runs CreateProcess synchronously on the calling thread, and antivirus or a busy disk can
-// hold it for seconds. Workers own the children, so only the worker waits.
+// hold it for seconds; Linux's spawn waits for chdir and the PATH search, which a hung mount
+// stalls. Workers own the children, so only the worker waits.
 const MAX_WORKERS = 4;
 const MAX_IDLE_WORKERS = 1;
 
@@ -58,10 +60,27 @@ type FromWorker =
     }
   | { readonly type: "close"; readonly id: number };
 
+// Windows makes a child's stdio pipes inheritable for the length of its CreateProcess, so a child
+// another worker launches meanwhile inherits them and holds the first child's output open. Every
+// pool's workers take this lock around spawn(); it holds the owning worker's threadId.
+const windowsSpawnLock = new Int32Array(new SharedArrayBuffer(4));
+
 // Inline source runs from bundles, asar archives and single-executable builds without module files.
 const workerSource = `
-const { parentPort } = require("node:worker_threads");
+const { parentPort, threadId, workerData } = require("node:worker_threads");
 const { spawn } = require("node:child_process");
+const { lock } = workerData;
+const locked = (launch) => {
+  if (lock === undefined) return launch();
+  // Wait on the owner compareExchange saw: an unlock after it changes the value, so no wakeup is lost.
+  for (let owner; (owner = Atomics.compareExchange(lock, 0, 0, threadId)) !== 0; ) Atomics.wait(lock, 0, owner);
+  try {
+    return launch();
+  } finally {
+    Atomics.store(lock, 0, 0);
+    Atomics.notify(lock, 0, 1);
+  }
+};
 const children = new Map();
 const post = (message, transfer) => parentPort.postMessage(message, transfer);
 const serialize = (error) => {
@@ -76,7 +95,7 @@ parentPort.on("message", (request) => {
   if (request.type === "spawn") {
     let child;
     try {
-      child = spawn(request.command, request.args, request.options);
+      child = locked(() => spawn(request.command, request.args, request.options));
     } catch (error) {
       post({ type: "error", id, error: serialize(error) });
       return;
@@ -288,13 +307,19 @@ class SpawnWorker {
   readonly worker: NodeWorkerThreads.Worker;
   readonly children = new Map<number, WorkerChild>();
   readonly pool: SpawnWorkerPool;
+  /** Node sets `worker.threadId` to -1 once the thread exits, so keep the id the lock holds. */
+  readonly threadId: number;
   /** Launches sent but not yet answered; the worker is inside CreateProcess for one of them. */
   launching = 0;
   closed = false;
 
   constructor(pool: SpawnWorkerPool) {
     this.pool = pool;
-    this.worker = new NodeWorkerThreads.Worker(workerSource, { eval: true });
+    this.worker = new NodeWorkerThreads.Worker(workerSource, {
+      eval: true,
+      workerData: { lock: pool.platform === "win32" ? windowsSpawnLock : undefined },
+    });
+    this.threadId = this.worker.threadId;
     this.worker.on("message", (message: FromWorker) => this.onMessage(message));
     this.worker.on("error", (error) => this.fail(error));
     this.worker.on("exit", () => this.fail(new Error("The process launcher thread exited.")));
@@ -424,7 +449,12 @@ class SpawnWorker {
     if (this.closed) return;
     this.closed = true;
     this.pool.workers.delete(this);
-    void this.worker.terminate();
+    void this.worker.terminate().then(() => {
+      // The thread may have died holding the lock, or between its unlock and notify, or after
+      // a notify woke it: free the lock and wake every waiter so none sleeps on a free lock.
+      Atomics.compareExchange(windowsSpawnLock, 0, this.threadId, 0);
+      Atomics.notify(windowsSpawnLock, 0);
+    });
   }
 }
 
@@ -528,9 +558,12 @@ export const layer = Layer.unwrap(
   }),
 );
 
-/** Only Windows creates processes slowly enough on the calling thread to need workers. */
+/** Workers on Windows, and on Linux where `NonBlockingSpawner` has no GNU `env -C` to use. */
 export const layerServer = Layer.unwrap(
-  Effect.map(HostProcess.Platform, (platform) =>
-    platform === "win32" ? layer : NodeChildProcessSpawner.layer,
-  ),
+  Effect.gen(function* () {
+    const platform = yield* HostProcess.Platform;
+    if (platform === "win32") return layer;
+    if (platform === "linux" && !(yield* Effect.promise(supportsEnvChdir))) return layer;
+    return NodeChildProcessSpawner.layer;
+  }),
 );
