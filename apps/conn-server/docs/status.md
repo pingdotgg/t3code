@@ -77,6 +77,10 @@ builder with a test that fails without the fix.
   commit step of `git.runStackedAction` with a generated message. Push and PR creation answer
   T3's typed `GitManagerError`: in a container they are Orbit's. Known difference: no hook
   progress events.
+- **HTML renders** (PR #105): `html_render` as T3 publishes it: a validated page with local
+  images inlined, the shared bootstrap, a thread attachment and signed delivery with T3's CSP.
+  A deleted thread's renders are removed with it. T3's `toolOutput.ts` is ported once
+  (`conn_provider::tool_output`) and shared with MCP App parsing.
 - **Clients** (VMPal macOS VM, Conn `c969c3ebd1`): the web client (through a host T3 as a
   remote environment) and the iOS dev client in a simulator (paired straight to the Conn
   Server) each ran a Haiku turn against the Conn Server on macOS.
