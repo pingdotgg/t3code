@@ -1,6 +1,6 @@
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import { WorkLogButton, WorkLogList, WorkLogRow } from "./WorkLog";
-import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
+import type { OrchestrationV2CommandProgress, WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { type ToolActivityIcon } from "@t3tools/contracts";
 import {
   liveThoughtLine,
@@ -62,6 +62,8 @@ import {
   workEntryIconName,
 } from "./TimelineWorkEntryRow.logic";
 import { formatWorkingTimerNow } from "./TimelineWorkGroupRows.logic";
+import { CommandProgressMeter } from "./CommandProgressMeter";
+import { useCommandProgress } from "./useCommandProgress";
 
 export const WorkGroupSection = memo(function WorkGroupSection({
   anchorKey,
@@ -463,6 +465,7 @@ function LiveActivityRow({
   failed = false,
   active = false,
   shimmer = false,
+  progress = undefined,
 }: {
   label: ReactNode;
   iconName?: WorkEntryIconName;
@@ -470,6 +473,7 @@ function LiveActivityRow({
   failed?: boolean;
   active?: boolean;
   shimmer?: boolean;
+  progress?: OrchestrationV2CommandProgress | undefined;
 }) {
   const animated = active && !failed;
   const showShimmer = animated && shimmer;
@@ -485,6 +489,7 @@ function LiveActivityRow({
         failed={failed}
         announceFailure={failed}
         active={animated && !shimmer}
+        progress={progress}
       />
       {showShimmer ? (
         <ActivityShimmerOverlay>
@@ -503,6 +508,7 @@ function LiveActivityContent({
   announceFailure = false,
   active = false,
   highlighted = false,
+  progress = undefined,
 }: {
   label: ReactNode;
   iconName: WorkEntryIconName | undefined;
@@ -511,6 +517,7 @@ function LiveActivityContent({
   announceFailure?: boolean;
   active?: boolean;
   highlighted?: boolean;
+  progress?: OrchestrationV2CommandProgress | undefined;
 }) {
   const showTrailingFailureMark =
     failed && iconName !== undefined && !toolIconAcceptsTint(toolIcon);
@@ -552,9 +559,12 @@ function LiveActivityContent({
         </span>
       }
       trailing={
-        showTrailingFailureMark ? (
-          <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
-        ) : null
+        <>
+          {progress ? <CommandProgressMeter progress={progress} /> : null}
+          {showTrailingFailureMark ? (
+            <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
+          ) : null}
+        </>
       }
     />
   );
@@ -571,6 +581,13 @@ export function LiveWorkEntryTimelineRow({
   const threadLabel = threadReadLabel(label, threadTarget);
 
   const item = row.entry.projectedItem?.item;
+  const runningCommandId =
+    item?.type === "command_execution" && item.status === "running" ? item.id : null;
+  // Guest pages read turn items over HTTP and cannot subscribe.
+  const commandProgress = useCommandProgress(
+    ctx.threadRef,
+    runningCommandId !== null && ctx.turnItemSource === undefined,
+  ).find((progress) => progress.itemId === runningCommandId);
   const pendingApproval =
     item?.type === "approval_request" ? ctx.pendingApprovals.get(item.requestId) : undefined;
   if (pendingApproval) return <TimelinePendingApprovalRow approval={pendingApproval} />;
@@ -653,6 +670,7 @@ export function LiveWorkEntryTimelineRow({
         toolIcon={row.entry.toolIcon ?? row.entry.toolSource?.icon}
         failed={failed}
         active={row.active}
+        progress={commandProgress}
       />
     </button>
   );

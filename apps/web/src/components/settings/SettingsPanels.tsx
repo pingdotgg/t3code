@@ -460,6 +460,16 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? ["Contrast"]
       : []),
     ...(settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? ["Glass opacity"] : []),
+    ...(settings.wallpaper !== DEFAULT_UNIFIED_SETTINGS.wallpaper ? ["Wallpaper"] : []),
+    ...(settings.wallpaperBlur !== DEFAULT_UNIFIED_SETTINGS.wallpaperBlur
+      ? ["Wallpaper blur"]
+      : []),
+    ...(settings.wallpaperDim !== DEFAULT_UNIFIED_SETTINGS.wallpaperDim
+      ? ["Wallpaper dimming"]
+      : []),
+    ...(settings.threadDetailsInSidebar !== DEFAULT_UNIFIED_SETTINGS.threadDetailsInSidebar
+      ? ["Thread details in sidebar"]
+      : []),
     ...(settings.diffColorScheme !== DEFAULT_UNIFIED_SETTINGS.diffColorScheme
       ? ["Diff colors"]
       : []),
@@ -677,6 +687,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       screenReaderWindowTitle: DEFAULT_UNIFIED_SETTINGS.screenReaderWindowTitle,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
+      wallpaper: DEFAULT_UNIFIED_SETTINGS.wallpaper,
+      wallpaperBlur: DEFAULT_UNIFIED_SETTINGS.wallpaperBlur,
+      wallpaperDim: DEFAULT_UNIFIED_SETTINGS.wallpaperDim,
+      threadDetailsInSidebar: DEFAULT_UNIFIED_SETTINGS.threadDetailsInSidebar,
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,

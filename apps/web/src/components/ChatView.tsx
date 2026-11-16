@@ -314,6 +314,12 @@ import {
 } from "./chat/PanelLayoutControls";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { ThreadDetailsPanel } from "./chat/ThreadDetailsPanel";
+import { useThreadDetailsSidebarSlot } from "./chat/threadDetailsSidebarSlot";
+import {
+  formatCommandProgress,
+  truncateCommandLabel,
+  useCommandProgress,
+} from "./chat/useCommandProgress";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
   resolveEffectiveEnvMode,
@@ -1976,9 +1982,10 @@ export default function ChatView(props: ChatViewProps) {
   const threadPanelInlineOpen = useRightPanelStore((state) =>
     selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, activeThreadRef, "inline"),
   );
+  const threadDetailsSidebarSlot = useThreadDetailsSidebarSlot(activeThreadRef);
   // Selects only the mode, so canvas resizes rerender the chat view only when the
   // card switches presentation.
-  const threadPanelPresentation = useStore(
+  const threadPanelCanvasPresentation = useStore(
     chatCanvasStore,
     (state) =>
       resolveChatCanvasModel({
@@ -1986,9 +1993,12 @@ export default function ChatView(props: ChatViewProps) {
         detailsCardMeasurement: state.detailsCardMeasurement,
         threadRef: activeThreadRef,
         preview: canvasPreview,
-        detailsCardInlineOpen: threadPanelInlineOpen,
+        detailsCardInlineOpen: threadPanelInlineOpen && threadDetailsSidebarSlot === null,
       }).detailsCardMode,
   );
+  // Details in the sidebar open and close with the inline flag, whatever room the canvas has.
+  const threadPanelPresentation =
+    threadDetailsSidebarSlot === null ? threadPanelCanvasPresentation : "inline";
   const threadPanelOpen = useRightPanelStore((state) =>
     selectThreadPanelOpen(
       state.threadPanelVisibilityByThreadKey,
@@ -3137,8 +3147,24 @@ export default function ChatView(props: ChatViewProps) {
         message.inputIntent === "queued_turn" &&
         !serverProjection?.messages.some((committed) => committed.id === message.id),
     );
+  const runningCommands = (serverProjection?.turnItems ?? []).filter(
+    (item) => item.type === "command_execution" && item.status === "running",
+  );
+  const runningCommandProgress = useCommandProgress(
+    activeThreadRef,
+    isServerThread && runningCommands.length > 0,
+  ).find((progress) => runningCommands.some((item) => item.id === progress.itemId));
+  const runningCommand = runningCommands.find((item) => item.id === runningCommandProgress?.itemId);
+  const commandProgressSummary =
+    runningCommand?.type === "command_execution" && runningCommandProgress
+      ? `${truncateCommandLabel(runningCommand.input)} ${formatCommandProgress(runningCommandProgress)}`
+      : null;
   const scrollToEndSummary =
-    [childInputNow?.waitingLabel ?? null, queuedRunCount === 0 ? null : `${queuedRunCount} queued`]
+    [
+      commandProgressSummary,
+      childInputNow?.waitingLabel ?? null,
+      queuedRunCount === 0 ? null : `${queuedRunCount} queued`,
+    ]
       .filter((part) => part !== null)
       .join(" · ") || null;
   // The end of the timeline holds the thread's present and next turns: what it is doing now,
@@ -3326,6 +3352,7 @@ export default function ChatView(props: ChatViewProps) {
     <div
       ref={setWorkspaceLayoutElement}
       className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
+      data-wallpaper-surface={embedded ? undefined : ""}
     >
       {embedded ? null : (
         <DeviceSetupDialogHost
@@ -3430,6 +3457,7 @@ export default function ChatView(props: ChatViewProps) {
             <div
               {...conversationArea}
               className="relative flex min-h-0 flex-1 flex-col bg-background"
+              data-wallpaper-surface={embedded ? undefined : ""}
             >
               <WorkspaceMutationIdContext value={workspaceMutationId}>
                 <ThreadTimeline

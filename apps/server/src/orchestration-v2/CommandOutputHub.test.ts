@@ -3,6 +3,7 @@ import {
   type ModelSelection,
   type OrchestrationV2AppThread,
   type OrchestrationV2CommandOutputFrame,
+  type OrchestrationV2CommandProgressFrame,
   type OrchestrationV2TurnItem,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -261,6 +262,33 @@ layer("CommandOutputHub", (it) => {
       assert.equal(next.kind, "replace");
       client = applyFrame(client, next);
       assert.equal(client.text, "X");
+    }),
+  );
+
+  it.effect("a thread's progress follows the counts its running commands print", () =>
+    Effect.gen(function* () {
+      const hub = yield* CommandOutputHub.CommandOutputHub;
+      const threadId = yield* seedThread;
+      const frames = yield* Queue.unbounded<OrchestrationV2CommandProgressFrame>();
+      yield* hub.subscribeProgress(threadId).pipe(
+        Stream.runForEach((frame) => Queue.offer(frames, frame)),
+        Effect.forkScoped,
+      );
+      assert.deepStrictEqual(yield* Queue.take(frames), { items: [] });
+
+      yield* TestClock.adjust("1 second");
+      yield* hub.append({
+        threadId,
+        itemId: ITEM_ID,
+        chunk: " ✓ guard.spec.ts (4)\n❯ refresh.spec.ts 24/31",
+      });
+      assert.deepStrictEqual(yield* Queue.take(frames), {
+        items: [{ itemId: ITEM_ID, completed: 24, total: 31 }],
+      });
+
+      yield* TestClock.adjust("1 second");
+      yield* hub.finish({ threadId, itemId: ITEM_ID });
+      assert.deepStrictEqual(yield* Queue.take(frames), { items: [] });
     }),
   );
 

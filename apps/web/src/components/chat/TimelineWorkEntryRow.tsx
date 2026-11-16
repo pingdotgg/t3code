@@ -57,6 +57,8 @@ import {
   type TimelineWorkEntry,
 } from "./timelineRowContext";
 import { MESSAGE_HEADING_LEVEL, TimelineRowTimestamp } from "./TimelineRowParts";
+import { CommandProgressMeter } from "./CommandProgressMeter";
+import { useCommandProgress } from "./useCommandProgress";
 import {
   failedToolIconClassName,
   toolIconAcceptsTint,
@@ -241,6 +243,15 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     setExpanded(next);
   };
   const failureItem = workEntry.projectedItem?.item;
+  const runningCommandId =
+    failureItem?.type === "command_execution" && failureItem.status === "running"
+      ? failureItem.id
+      : null;
+  // Guest pages read turn items over HTTP and cannot subscribe.
+  const commandProgress = useCommandProgress(
+    threadRef,
+    runningCommandId !== null && ctx.turnItemSource === undefined,
+  ).find((progress) => progress.itemId === runningCommandId);
   const pendingApproval =
     failureItem?.type === "approval_request"
       ? ctx.pendingApprovals.get(failureItem.requestId)
@@ -539,6 +550,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               Open subagent
             </InlineButton>
           ) : null}
+          {commandProgress ? <CommandProgressMeter progress={commandProgress} /> : null}
           {showFailedIndicator &&
           !showDestructiveRowStyle &&
           !toolIconAcceptsTint(entryToolIcon) ? (

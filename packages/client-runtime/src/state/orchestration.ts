@@ -173,6 +173,12 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
             Stream.filter((view) => view !== EMPTY_COMMAND_OUTPUT),
           ),
       }),
+      // Counts that the open thread's running commands print, such as `24/31` or `42%`.
+      commandProgress: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+        label: "environment-data:orchestration-v2:command-progress",
+        tag: ORCHESTRATION_V2_WS_METHODS.subscribeCommandProgress,
+        idleTtlMs: 0,
+      }),
       // The open thread's predicted next prompt, while its composer is mounted.
       promptSuggestion: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
         label: "environment-data:orchestration-v2:prompt-suggestion",

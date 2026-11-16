@@ -35,7 +35,8 @@ import { searchableSetting } from "./settingsSearch";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { TypographySection } from "./TypographySettings";
-import { ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
+import { ThreadDetailsInSidebarRow, ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
+import { WallpaperSettingsRows } from "./WallpaperSettingsRows";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -257,6 +258,8 @@ export function AppearanceSettingsPanel() {
           }
         />
 
+        <WallpaperSettingsRows />
+
         <SettingsRow
           {...searchableSetting("chat-width")}
           description="Set how wide messages and the composer can grow on large screens."
@@ -290,6 +293,7 @@ export function AppearanceSettingsPanel() {
           }
         />
         <ThreadDetailsItemsRow />
+        <ThreadDetailsInSidebarRow />
         <SettingsRow
           {...searchableSetting("effort-display")}
           description="Show reasoning effort in the composer as its name, such as High, or as bars."

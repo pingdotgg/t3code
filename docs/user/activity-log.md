@@ -5,6 +5,11 @@ commands, tool inputs, status, and exit codes. Expand a tool call to see its out
 command's output updates live, and long output shows only its most recent part. Use **Open diff** on
 a file change to review its contents.
 
+When a running command prints a count, such as a test runner's `24/31` or a build's `42%`, its row
+shows a progress bar. If you scroll up while it runs, **Scroll to end** shows the command and its
+count. Commands that print no count, or whose provider reports output only when they finish, show no
+bar.
+
 T3 Orchestrator summaries describe the actions taken, such as **Ran 2 commands and sent messages
 to 3 threads**. Repeated messages to the same destinations show both counts: **Sent 5 messages to
 2 threads**. Thread creation counts the threads returned by the tool, including batches.
