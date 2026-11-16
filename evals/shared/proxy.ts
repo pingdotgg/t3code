@@ -32,12 +32,32 @@ print(json.dumps({'url': p['base_url'].rstrip('/'), 'headers': h}))
     ),
   );
 
-/** Morph's Anthropic-compatible API, so a run never reaches a paid provider API. */
-export const morphProxyConfig = () => {
-  const key = process.env.MORPH_API_KEY;
-  if (!key) throw new Error("Set MORPH_API_KEY to run on a Morph model.");
-  return {
-    url: "https://api.morphllm.com/v1",
-    headers: { "x-api-key": key, Authorization: `Bearer ${key}` },
-  };
-};
+/**
+ * Morph's free OpenAI-compatible API, for evals that should not spend on paid models. The key is
+ * `MORPH_API_KEY`, else the `morph` provider in OpenCode's config (`$XDG_CONFIG_HOME` or `~/.config`).
+ */
+export const morphConfig = () =>
+  decodeProxyConfig(
+    JSON.parse(
+      NodeChildProcess.execFileSync(
+        "python3",
+        [
+          "-c",
+          `
+import json, os, pathlib
+key = os.environ.get('MORPH_API_KEY')
+url = os.environ.get('MORPH_BASE_URL', 'https://api.morphllm.com/v1')
+if not key:
+    home = pathlib.Path(os.environ.get('XDG_CONFIG_HOME') or pathlib.Path.home() / '.config')
+    # OpenCode writes literal control characters inside strings, which strict parsing rejects.
+    settings = json.loads((home / 'opencode' / 'opencode.json').read_text(), strict=False)['providers']['morph']['settings']
+    key, url = settings.get('apiKey'), settings.get('baseURL', url)
+if not key:
+    raise SystemExit('no morph key')
+print(json.dumps({'url': url.rstrip('/'), 'headers': {'Authorization': 'Bearer ' + key}}))
+`,
+        ],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+      ),
+    ),
+  );

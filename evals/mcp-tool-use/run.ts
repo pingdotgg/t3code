@@ -80,7 +80,7 @@ import {
   CLAUDE_PROVIDER,
   makeClaudeQueryOptions,
 } from "../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts";
-import { morphProxyConfig, proxyConfig } from "../shared/proxy.ts";
+import { morphConfig, proxyConfig } from "../shared/proxy.ts";
 import { changeRequestsCreatedBy } from "../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts";
 import {
   decideGitHubArguments,
@@ -2778,7 +2778,7 @@ const main = Effect.gen(function* () {
     apiKey,
     model: flags.model,
     ...(morph
-      ? { proxy: morphProxyConfig() }
+      ? { proxy: morphConfig() }
       : codex || !isPricedModel(flags["shell-model"])
         ? { proxy: proxyConfig() }
         : {}),
