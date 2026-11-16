@@ -292,6 +292,21 @@ it.effect("keeps one queued occurrence of a recurring task while its bound threa
         Date.parse("2026-07-01T09:03:03.000Z"),
       );
 
+      yield* Ref.update(thread, (current) => ({
+        ...current,
+        runs: current.runs.map((run) =>
+          run.status === "queued" ? { ...run, queueHeld: true } : run,
+        ),
+      }));
+      yield* TestClock.adjust("61 seconds");
+      yield* Effect.flatten(Ref.get(runDueWork));
+      const [blocked] = (yield* service.list()).tasks;
+      expect(blocked?.lastRunStatus).toBe("failed");
+      expect(blocked?.lastRunError).toBe(
+        "A previous occurrence is held in the thread queue. Resume or remove it to run this task again.",
+      );
+      expect(yield* queuedOccurrences).toBe(1);
+
       // Run now is an explicit request, so it still queues behind the held one.
       yield* service.runNow({ id: task.id });
       expect(yield* queuedOccurrences).toBe(2);
@@ -306,6 +321,9 @@ it.effect("keeps one queued occurrence of a recurring task while its bound threa
       yield* TestClock.adjust("61 seconds");
       yield* Effect.flatten(Ref.get(runDueWork));
       expect(yield* queuedOccurrences).toBe(1);
+      const [resumed] = (yield* service.list()).tasks;
+      expect(resumed?.lastRunStatus).toBe("succeeded");
+      expect(resumed?.lastRunError).toBeNull();
 
       // A one-time task's only scheduled occurrence still sends behind a queued Run now.
       const { task: once } = yield* service.upsert(
@@ -314,7 +332,7 @@ it.effect("keeps one queued occurrence of a recurring task while its bound threa
           title: "Check once",
           prompt: "Check once",
           enabled: true,
-          schedule: { type: "once", runAt: "2026-07-01T09:05:00.000Z" },
+          schedule: { type: "once", runAt: "2026-07-01T09:06:00.000Z" },
           projectId: "project-busy-thread",
           threadId: "thread:busy",
           workspaceStrategy: { type: "root" },
