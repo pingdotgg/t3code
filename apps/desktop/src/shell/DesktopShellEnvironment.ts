@@ -8,6 +8,7 @@ import {
   setWindowsPath,
   windowsEnvironmentValueCommand,
 } from "@t3tools/shared/shell";
+import { isRelayTracingEnabled } from "@t3tools/shared/otelEnvironment";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -656,6 +657,20 @@ const CACHED_ENV_NAMES = [
   "T3CODE_TELEMETRY_ENABLED",
 ] as const;
 
+/**
+ * A login shell's `T3CODE_TELEMETRY_ENABLED` can only turn telemetry off, so a value that would turn it
+ * on gives way to what the app was launched with and the `telemetryEnabled` setting decides.
+ */
+const onlyTelemetryOptOut = (
+  patch: ShellEnvironmentPatch,
+  inherited: NodeJS.ProcessEnv,
+): ShellEnvironmentPatch => {
+  const value = patch.T3CODE_TELEMETRY_ENABLED;
+  if (!value || value === inherited.T3CODE_TELEMETRY_ENABLED) return patch;
+  if (!isRelayTracingEnabled({ T3CODE_TELEMETRY_ENABLED: value }, false)) return patch;
+  return { ...patch, T3CODE_TELEMETRY_ENABLED: inherited.T3CODE_TELEMETRY_ENABLED ?? null };
+};
+
 /** @public */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -677,9 +692,10 @@ export const make = Effect.gen(function* () {
   const discovered = yield* Deferred.make<ShellDiscovery>();
   const settledDiscovery = yield* Deferred.make<void>();
   const publish = Effect.fn("desktop.shellEnvironment.publish")(function* (
-    patch: ShellEnvironmentPatch,
+    shellPatch: ShellEnvironmentPatch,
     discovered = false,
   ) {
+    const patch = onlyTelemetryOptOut(shellPatch, inherited);
     applyShellEnvironment(env, patch, environment.platform);
     const message: DesktopShellEnvironmentSnapshot = {
       version: 1,

@@ -402,6 +402,31 @@ describe("DesktopShellEnvironment", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("does not let a login shell value turn telemetry on", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const stateDir = yield* fs.makeTempDirectoryScoped();
+      yield* fs.writeFileString(
+        `${stateDir}/shell-environment-cache.json`,
+        encodeCache({
+          version: 1,
+          key: '["darwin","/test-home","/bin/zsh",""]',
+          environment: { PATH: "/cached/bin", T3CODE_TELEMETRY_ENABLED: "true" },
+        }),
+      );
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+      yield* runShellEnvironment({
+        env,
+        stateDir,
+        platform: "darwin",
+        handler: () => "",
+        use: (service) => service.installIntoProcess,
+      });
+      assert.equal(env.PATH, "/cached/bin:/usr/bin");
+      assert.isUndefined(env.T3CODE_TELEMETRY_ENABLED);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("cancels background discovery when the application scope closes", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
