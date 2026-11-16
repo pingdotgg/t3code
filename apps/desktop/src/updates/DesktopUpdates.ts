@@ -557,6 +557,15 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  // The flag is shared updater state, so callers flip it only while holding a reservation.
+  const runUpdaterCheck = Effect.fnUntraced(function* (allowDowngrade: boolean) {
+    const restoreDowngrade = yield* electronUpdater.allowDowngrade;
+    if (allowDowngrade) yield* electronUpdater.setAllowDowngrade(true);
+    return yield* electronUpdater.checkForUpdates.pipe(
+      Effect.ensuring(electronUpdater.setAllowDowngrade(restoreDowngrade).pipe(Effect.ignore)),
+    );
+  });
+
   const checkForUpdates = Effect.fn("desktop.updates.checkForUpdates")(function* (
     reason: string,
     actionReservation: "acquire" | "held" = "acquire",
@@ -586,11 +595,7 @@ export const make = Effect.gen(function* () {
       }
       yield* logUpdaterInfo("checking for updates", { reason });
 
-      // The flag is shared updater state, so it flips only while this check holds the reservation.
-      const restoreDowngrade = yield* electronUpdater.allowDowngrade;
-      if (allowDowngrade) yield* electronUpdater.setAllowDowngrade(true);
-      return yield* electronUpdater.checkForUpdates.pipe(
-        Effect.ensuring(electronUpdater.setAllowDowngrade(restoreDowngrade).pipe(Effect.ignore)),
+      return yield* runUpdaterCheck(allowDowngrade).pipe(
         Effect.as(true),
         Effect.catchTags({
           ElectronUpdaterCheckForUpdatesError: Effect.fn(
@@ -647,16 +652,21 @@ export const make = Effect.gen(function* () {
     let state = offered;
     return yield* Effect.gen(function* () {
       // electron-updater downloads what its last check found, which can be hours old.
-      yield* checkForUpdates(
-        "download",
-        "held",
+      yield* logUpdaterInfo("checking for updates", { reason: "download" });
+      yield* runUpdaterCheck(
         offered.channel !== desktopUpdateChannelOf(environment.appVersion),
+      ).pipe(
+        // A failed check keeps electron-updater's earlier result, so the known offer still downloads.
+        Effect.catchTags({
+          ElectronUpdaterCheckForUpdatesError: (error) =>
+            logUpdaterWarning(error.message, {
+              errorTag: error._tag,
+              cause: describeUpdateErrorCause(error.cause),
+            }),
+        }),
       );
       state = yield* Ref.get(updateStateRef);
-      if (state.status === "error") {
-        // A failed check keeps electron-updater's earlier result, so the known offer still downloads.
-        state = offered;
-      } else if (state.status !== "available") {
+      if (state.status !== "available") {
         return { accepted: true, completed: false };
       }
       yield* setState(reduceDesktopUpdateStateOnDownloadStart(state));
@@ -975,17 +985,26 @@ export const make = Effect.gen(function* () {
       )) &&
       (yield* Ref.get(updateStateRef)).status === "available"
     ) {
-      const download = yield* downloadAvailableUpdate;
-      if (!download.completed) {
-        return {
-          accepted: download.accepted,
-          completed: false,
-          failed: download.accepted,
-          state: yield* Ref.get(updateStateRef),
-        };
-      }
-      if (expectedVersion !== undefined) {
-        installVersion = (yield* Ref.get(updateStateRef)).downloadedVersion ?? expectedVersion;
+      const refreshed = yield* Ref.get(updateStateRef);
+      // electron-updater compares a stale feed with the running build, not the retained download.
+      if (
+        refreshed.availableVersion === null ||
+        compareSemverVersions(refreshed.availableVersion, retained.downloadedVersion) <= 0
+      ) {
+        yield* setState(retained);
+      } else {
+        const download = yield* downloadAvailableUpdate;
+        if (!download.completed) {
+          return {
+            accepted: download.accepted,
+            completed: false,
+            failed: download.accepted,
+            state: yield* Ref.get(updateStateRef),
+          };
+        }
+        if (expectedVersion !== undefined) {
+          installVersion = (yield* Ref.get(updateStateRef)).downloadedVersion ?? expectedVersion;
+        }
       }
     }
     const result = yield* installDownloadedUpdate(installVersion);
