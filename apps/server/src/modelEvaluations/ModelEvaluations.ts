@@ -359,7 +359,7 @@ const make = Effect.gen(function* () {
           WHERE source.application_event_version = 2 AND source.aggregate_kind = 'thread'
             AND source.stream_id = evaluation.thread_id AND source.sequence > evaluation.source_sequence
             AND source.event_type IN ('message.updated', 'turn-item.updated')
-            AND json_extract(source.payload_json, '$.runId') = evaluation.run_id
+            AND json_extract(source.payload_json, '$.runId') = +evaluation.run_id
             AND (source.event_type = 'message.updated' OR json_extract(source.payload_json, '$.type') IN ('user_message', 'assistant_message', 'command_execution', 'file_change', 'dynamic_tool', 'subagent'))
         )
         AND NOT EXISTS (
@@ -403,9 +403,10 @@ const make = Effect.gen(function* () {
               FROM orchestration_events AS source INDEXED BY model_evaluation_source_revision
               WHERE source.application_event_version = 2 AND source.aggregate_kind = 'thread'
                 AND source.stream_id = evaluation.thread_id AND source.sequence > evaluation.source_sequence
+                -- Matches the partial index's predicate; INDEXED BY fails without it.
                 AND source.event_type IN ('message.updated', 'turn-item.updated')
                 AND source.event_type = 'turn-item.updated'
-                AND json_extract(source.payload_json, '$.runId') = evaluation.run_id
+                AND json_extract(source.payload_json, '$.runId') = +evaluation.run_id
                 AND json_extract(source.payload_json, '$.type') = 'subagent'
             ) AS subagent_revision
           FROM model_evaluations AS evaluation
@@ -419,7 +420,7 @@ const make = Effect.gen(function* () {
               WHERE source.application_event_version = 2 AND source.aggregate_kind = 'thread'
                 AND source.stream_id = evaluation.thread_id AND source.sequence > evaluation.source_sequence
                 AND source.event_type IN ('message.updated', 'turn-item.updated')
-                AND json_extract(source.payload_json, '$.runId') = evaluation.run_id
+                AND json_extract(source.payload_json, '$.runId') = +evaluation.run_id
                 AND (
                   source.event_type = 'message.updated'
                   OR json_extract(source.payload_json, '$.type') IN (
@@ -429,8 +430,8 @@ const make = Effect.gen(function* () {
             )
             AND NOT EXISTS (
               SELECT 1 FROM json_each(evaluation.source_message_ids) AS message
-              JOIN orchestration_events AS source INDEXED BY model_evaluation_message_revision
-                ON json_extract(source.payload_json, '$.id') = message.value
+              CROSS JOIN orchestration_events AS source INDEXED BY model_evaluation_message_revision
+                ON json_extract(source.payload_json, '$.id') = +message.value
               WHERE source.application_event_version = 2 AND source.aggregate_kind = 'thread'
                 AND source.stream_id = evaluation.thread_id AND source.event_type = 'message.updated'
                 AND source.sequence > evaluation.source_sequence
