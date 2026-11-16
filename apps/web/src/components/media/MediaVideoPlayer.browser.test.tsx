@@ -319,6 +319,11 @@ describe("MediaVideoPlayer", () => {
     const scroller = screen.getByTestId("scroller").element().getBoundingClientRect();
     const video = screen.getByLabelText("clip").element() as HTMLVideoElement;
     using pause = vi.spyOn(video, "pause");
+
+    // The video starts inside the box the container shows.
+    await vi.waitFor(() => expect(lastReports.get(video)?.isIntersecting).toBe(true));
+    expect(pause).not.toHaveBeenCalled();
+
     Object.defineProperty(video, "webkitDisplayingFullscreen", { value: true, configurable: true });
 
     // The container scrolls the video out of its box while the fullscreen player is up.
