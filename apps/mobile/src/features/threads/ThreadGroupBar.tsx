@@ -5,7 +5,7 @@ import { isGroupActive } from "@t3tools/client-runtime/state/thread-group";
 import { Pressable, ScrollView, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
-import { Button } from "../../components/ui/Button";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { Menu } from "../../components/ui/Menu";
 import { useEnvironmentServerConfig } from "../../state/entities";
 import { orchestrationEnvironment } from "../../state/orchestration";
@@ -83,30 +83,36 @@ export function ThreadGroupBar({ thread }: { readonly thread: EnvironmentThreadS
               ))}
           </View>
         </ScrollView>
-        {inviteAvailable ? (
-          <Button
-            label="Invite"
-            accessibilityLabel="Invite a model"
-            size="compact"
-            tone="text"
-            onPress={() =>
-              navigation.navigate("ThreadGroupInvite", { environmentId, threadId: thread.id })
-            }
-          />
-        ) : null}
         {/* Invite and the way out stay on screen however many members the row scrolls past. */}
-        <Button
-          label="End group"
-          accessibilityLabel={`End group and continue with ${group.primary.label}`}
-          size="compact"
-          tone="text"
-          disabled={!canEnd}
-          onPress={() =>
-            void end({ environmentId, input: { threadId: thread.id } }).then((result) =>
-              alertGroupCommandFailure("Could not end the group", result),
-            )
-          }
-        />
+        <Menu
+          actions={[
+            ...(inviteAvailable
+              ? [{ id: "invite", title: "Invite a model", image: "person.badge.plus" }]
+              : []),
+            {
+              id: "end",
+              title: `End group · Continue with ${group.primary.label}`,
+              image: "rectangle.portrait.and.arrow.right",
+              attributes: { disabled: !canEnd },
+            },
+          ]}
+          onPressAction={({ nativeEvent }) => {
+            if (nativeEvent.event === "invite")
+              navigation.navigate("ThreadGroupInvite", { environmentId, threadId: thread.id });
+            if (nativeEvent.event === "end")
+              void end({ environmentId, input: { threadId: thread.id } }).then((result) =>
+                alertGroupCommandFailure("Could not end the group", result),
+              );
+          }}
+        >
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Group actions"
+            className="rounded-full p-2"
+          >
+            <SymbolView name="ellipsis" size={16} tintColorClassName="accent-foreground" />
+          </Pressable>
+        </Menu>
       </View>
       {group.discussion === null && group.closedBecause === "budget" ? (
         <Text accessibilityRole="text" className="text-xs text-foreground-muted">
