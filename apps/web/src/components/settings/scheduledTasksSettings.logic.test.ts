@@ -18,6 +18,7 @@ import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope"
 
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
+  copyTaskToDraft,
   scheduledTaskDefaultModel,
   defaultScheduledTaskProjectId,
   matchesScheduledTaskScope,
@@ -348,6 +349,27 @@ describe("webhook scheduled tasks", () => {
         filters: [{ id: "f1", path: "body.action", op: "in", value: " , " }],
       }),
     ).toBeNull();
+  });
+
+  it("copies to a new task with its filters, leaving the thread and secret behind", () => {
+    const filters = [{ path: "body.action", op: "equals", value: "opened" }] as const;
+    const draft = copyTaskToDraft(
+      {
+        ...webhookTask,
+        threadId: ThreadId.make("thread:source"),
+        schedule: { type: "webhook", signature, filters },
+      },
+      "project:target",
+    );
+    expect(draft).toMatchObject({ editingId: null, threadId: "", projectId: "project:target" });
+    // The target has no stored secret, so the form must ask for one before saving.
+    expect(scheduleFromDraft(draft)).toEqual({
+      type: "webhook",
+      signature,
+      maxDeliveryAgeMinutes: null,
+      dedupe: {},
+      filters,
+    });
   });
 });
 

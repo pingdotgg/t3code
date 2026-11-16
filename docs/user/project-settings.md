@@ -111,7 +111,9 @@ as a task's schedule to run it whenever another service calls its URL, such as
 GitHub on a new pull request or a CI job that failed. A public URL needs a
 [T3 Connect](remote-access.md) managed tunnel; after you save the task, copy
 its URL from the editor. Without one, the editor shows only the URL's path.
-**Rotate** replaces the URL and the old one stops working.
+**Rotate** replaces the URL and the old one stops working. A task copied to
+another machine with **Copy to…** gets its own URL, and you enter its signing
+secret again.
 
 The prompt decides what the agent sees. Placeholders pull values out of the
 request: `{{body.path}}` for a JSON or form field, `{{headers.name}}`,

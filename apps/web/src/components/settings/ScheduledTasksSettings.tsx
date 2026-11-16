@@ -57,10 +57,12 @@ import { requestConfirmDialog } from "../../confirmDialog";
 import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { useLogicalProjectEnvironments } from "../../hooks/useLogicalProjectEnvironments";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import {
   useEnvironment,
   useEnvironmentHttpBaseUrl,
+  useEnvironments,
   type EnvironmentPresentation,
 } from "../../state/environments";
 import {
@@ -92,10 +94,12 @@ import { readEnvironmentScope } from "~/state/session";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
+import { isConnectedWithConfig } from "./scopedSettings";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import {
   WEBHOOK_SIGNATURE_DEFAULTS,
   changeDraftProject,
+  copyTaskToDraft,
   moveDraftToThread,
   scheduleDraftErrors,
   scheduledTaskDestinationThreads,
@@ -369,6 +373,16 @@ function statusVariant(status: ScheduledTask["lastRunStatus"]) {
   return "outline";
 }
 
+interface ScheduledTaskCopySource {
+  readonly environmentId: EnvironmentId;
+  readonly task: ScheduledTask;
+}
+
+interface ScheduledTaskRowActions {
+  readonly onEdit: (environmentId: EnvironmentId, task: ScheduledTask) => void;
+  readonly onCopy: (source: ScheduledTaskCopySource, targetEnvironmentId: EnvironmentId) => void;
+}
+
 export function ScheduledTasksSettings(target: {
   readonly environmentId?: EnvironmentId;
   readonly taskId?: ScheduledTaskId | undefined;
@@ -377,10 +391,8 @@ export function ScheduledTasksSettings(target: {
   const [editor, setEditor] = useState<{
     environmentId: EnvironmentId;
     task: ScheduledTask | null;
+    copyFrom?: ScheduledTaskCopySource;
   } | null>(null);
-  const openForEdit = (environmentId: EnvironmentId, task: ScheduledTask) => {
-    setEditor({ environmentId, task });
-  };
   const defaultEnvironment = environment ?? connectedEnvironments[0];
   const linkedEnvironmentId = target.environmentId ?? defaultEnvironment?.environmentId;
   const linkedEnvironmentConnected = environments.some(
@@ -429,6 +441,13 @@ export function ScheduledTasksSettings(target: {
   const permittedEnvironments = connectedEnvironments.filter(
     (_entry, index) => createPermissions[index],
   );
+  const rowActions: ScheduledTaskRowActions = {
+    onEdit: (environmentId, task) => setEditor({ environmentId, task }),
+    onCopy: (copyFrom, environmentId) => setEditor({ environmentId, task: null, copyFrom }),
+  };
+  const editorTaskKey = editor?.copyFrom
+    ? `copy:${editor.copyFrom.task.id}`
+    : (editor?.task?.id ?? "new");
   const creationEnvironment =
     permittedEnvironments.find(
       (entry) => entry.environmentId === defaultEnvironment?.environmentId,
@@ -471,7 +490,7 @@ export function ScheduledTasksSettings(target: {
           <ScheduledTaskEnvironmentList
             environmentId={linkedEnvironmentId}
             taskId={target.taskId}
-            onEdit={openForEdit}
+            actions={rowActions}
           />
         ) : (
           <div className="space-y-8">
@@ -480,7 +499,7 @@ export function ScheduledTasksSettings(target: {
                 key={entry.environmentId}
                 environment={entry}
                 taskId={linkedEnvironmentId === entry.environmentId ? target.taskId : undefined}
-                onEdit={openForEdit}
+                actions={rowActions}
               />
             ))}
           </div>
@@ -488,9 +507,10 @@ export function ScheduledTasksSettings(target: {
       </SettingsSection>
       {editor ? (
         <ScheduledTaskEditorDialog
-          key={`${editor.environmentId}:${editor.task?.id ?? "new"}`}
+          key={`${editor.environmentId}:${editorTaskKey}`}
           initialEnvironmentId={editor.environmentId}
           task={editor.task}
+          copyFrom={editor.copyFrom ?? null}
           onClose={closeEditor}
         />
       ) : null}
@@ -503,6 +523,22 @@ const scheduledTaskCreatePermissionsAtom = environmentAtomList(
   serverEnvironment.upsertScheduledTask.permissionAtom,
 );
 
+/**
+ * Other connected machines that can create tasks, where a task on `source` can be copied.
+ * The page filter limits viewing, not copying.
+ */
+function useScheduledTaskCopyDestinations(
+  source: EnvironmentId | null,
+): ReadonlyArray<EnvironmentPresentation> {
+  const connected = useEnvironments().environments.filter(isConnectedWithConfig);
+  const permissions = useAtomValue(
+    scheduledTaskCreatePermissionsAtom(
+      environmentIdsKey(connected.map((entry) => entry.environmentId)),
+    ),
+  );
+  return connected.filter((entry, index) => permissions[index] && entry.environmentId !== source);
+}
+
 const scheduledTasksListAtom = environmentAtomList("web-scheduled-tasks-list", (environmentId) =>
   serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
 );
@@ -510,11 +546,11 @@ const scheduledTasksListAtom = environmentAtomList("web-scheduled-tasks-list", (
 function ScheduledTaskEnvironmentList({
   environmentId,
   taskId,
-  onEdit,
+  actions,
 }: {
   readonly environmentId: EnvironmentId | undefined;
   readonly taskId: ScheduledTaskId | undefined;
-  readonly onEdit: (environmentId: EnvironmentId, task: ScheduledTask) => void;
+  readonly actions: ScheduledTaskRowActions;
 }) {
   const { scope, environments } = useSettingsScope();
   const connectedIds = environments.flatMap((environment) =>
@@ -590,7 +626,7 @@ function ScheduledTaskEnvironmentList({
                 environmentId={environment.environmentId}
                 task={task}
                 timeZone={timeZone}
-                onEdit={() => onEdit(environment.environmentId, task)}
+                actions={actions}
               />
             ))}
           </div>
@@ -653,11 +689,11 @@ function ScheduledTaskEnvironmentSubtitle({
 function ScheduledTaskEnvironmentSection({
   environment,
   taskId,
-  onEdit,
+  actions,
 }: {
   readonly environment: EnvironmentPresentation;
   readonly taskId?: ScheduledTaskId | undefined;
-  readonly onEdit: (environmentId: EnvironmentId, task: ScheduledTask) => void;
+  readonly actions: ScheduledTaskRowActions;
 }) {
   const { scope } = useSettingsScope();
   const connected =
@@ -715,7 +751,7 @@ function ScheduledTaskEnvironmentSection({
                 environmentId={environment.environmentId}
                 task={task}
                 timeZone={tasksQuery.data?.timeZone}
-                onEdit={() => onEdit(environment.environmentId, task)}
+                actions={actions}
               />
             ))
           )}
@@ -729,16 +765,17 @@ function ScheduledTaskRow({
   environmentId,
   task,
   timeZone,
-  onEdit,
+  actions,
 }: {
   readonly environmentId: EnvironmentId;
   readonly task: ScheduledTask;
   readonly timeZone: string | undefined;
-  readonly onEdit: () => void;
+  readonly actions: ScheduledTaskRowActions;
 }) {
   const canOperate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
   );
+  const copyDestination = useScheduledTaskCopyDestinations(environmentId)[0];
   const [busy, setBusy] = useState(false);
   const [deliveriesOpen, setDeliveriesOpen] = useState(false);
   const isWebhook = task.schedule.type === "webhook";
@@ -831,7 +868,7 @@ function ScheduledTaskRow({
               <MoreHorizontalIcon className="size-4" />
             </MenuTrigger>
             <MenuPopup align="end">
-              <MenuItem onClick={onEdit}>
+              <MenuItem onClick={() => actions.onEdit(environmentId, task)}>
                 <PencilIcon />
                 Edit
               </MenuItem>
@@ -846,6 +883,16 @@ function ScheduledTaskRow({
                   Run now
                 </MenuItem>
               )}
+              {copyDestination ? (
+                <MenuItem
+                  onClick={() =>
+                    actions.onCopy({ environmentId, task }, copyDestination.environmentId)
+                  }
+                >
+                  <CopyIcon />
+                  Copy to…
+                </MenuItem>
+              ) : null}
               <MenuSeparator />
               <MenuItem onClick={() => void act("delete")}>
                 <Trash2Icon />
@@ -1154,10 +1201,12 @@ function WebhookDeliveryMode({ environmentId }: { readonly environmentId: Enviro
 function ScheduledTaskEditorDialog({
   initialEnvironmentId,
   task,
+  copyFrom,
   onClose,
 }: {
   readonly initialEnvironmentId: EnvironmentId;
   readonly task: ScheduledTask | null;
+  readonly copyFrom: ScheduledTaskCopySource | null;
   readonly onClose: () => void;
 }) {
   const [saving, setSaving] = useState(false);
@@ -1173,6 +1222,7 @@ function ScheduledTaskEditorDialog({
         <ScheduledTaskEditorForm
           initialEnvironmentId={initialEnvironmentId}
           task={task}
+          copyFrom={copyFrom}
           saving={saving}
           onSavingChange={setSaving}
           onClose={onClose}
@@ -1349,12 +1399,14 @@ function ScheduledTaskDestination({
 function ScheduledTaskEditorForm({
   initialEnvironmentId,
   task,
+  copyFrom,
   saving,
   onSavingChange: setSaving,
   onClose,
 }: {
   readonly initialEnvironmentId: EnvironmentId;
   readonly task: ScheduledTask | null;
+  readonly copyFrom: ScheduledTaskCopySource | null;
   readonly saving: boolean;
   readonly onSavingChange: (saving: boolean) => void;
   readonly onClose: () => void;
@@ -1362,6 +1414,7 @@ function ScheduledTaskEditorForm({
   const { scope, connectedEnvironments } = useSettingsScope();
   const [environmentId, setEnvironmentId] = useState(initialEnvironmentId);
   const environment = useEnvironment(environmentId);
+  const copySourceEnvironment = useEnvironment(copyFrom?.environmentId ?? null);
   // Older servers reject one-time schedules, so offer Once only where it can save.
   const offersOnce =
     environment?.serverConfig?.environment.capabilities.oneTimeSchedules === true ||
@@ -1374,11 +1427,29 @@ function ScheduledTaskEditorForm({
     connected ? serverEnvironment.scheduledTasksLive({ environmentId, input: {} }) : null,
   );
   const allProjects = useProjects();
+  // A copy can go to a machine outside the page's filter.
   const projectsOn = (id: EnvironmentId) =>
     allProjects.filter(
-      (project) => project.environmentId === id && matchesScheduledTaskScope(scope, id, project.id),
+      (project) =>
+        project.environmentId === id &&
+        (copyFrom !== null || matchesScheduledTaskScope(scope, id, project.id)),
     );
   const scopedProjects = projectsOn(environmentId);
+  const copySourceProject =
+    copyFrom === null
+      ? null
+      : (allProjects.find(
+          (project) =>
+            project.environmentId === copyFrom.environmentId &&
+            project.id === copyFrom.task.projectId,
+        ) ?? null);
+  const copyProjects = useLogicalProjectEnvironments(copySourceProject, false);
+  // The same repository on that machine, else its default project.
+  const copyProjectIdOn = (id: EnvironmentId) =>
+    copyProjects.find((entry) => entry.environmentId === id)?.projectId ??
+    defaultScheduledTaskProjectId(projectsOn(id), scope);
+  const copyDestinations = useScheduledTaskCopyDestinations(copyFrom?.environmentId ?? null);
+  const environmentOptions = copyFrom ? copyDestinations : connectedEnvironments;
   const settings = useEnvironmentSettings(environmentId);
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
@@ -1389,14 +1460,11 @@ function ScheduledTaskEditorForm({
     label: "scheduled task upsert",
   });
   const webhookDenial = managedCapabilityDenial(useManagedPolicy(environmentId), "webhookTasks");
-  const [draft, setDraft] = useState<DraftState>(() =>
-    task
-      ? taskToDraft(task)
-      : {
-          ...EMPTY_DRAFT,
-          projectId: defaultScheduledTaskProjectId(scopedProjects, scope),
-        },
-  );
+  const [draft, setDraft] = useState<DraftState>(() => {
+    if (task) return taskToDraft(task);
+    if (copyFrom) return copyTaskToDraft(copyFrom.task, copyProjectIdOn(environmentId));
+    return { ...EMPTY_DRAFT, projectId: defaultScheduledTaskProjectId(scopedProjects, scope) };
+  });
   // Pinned first. The chosen project stays listed after it is archived.
   const projects = scopedProjects
     .filter(
@@ -1564,16 +1632,22 @@ function ScheduledTaskEditorForm({
       }
       return;
     }
+    if (copyFrom) {
+      toastManager.add({ type: "success", title: `Copied to ${environment?.label ?? "machine"}` });
+    }
     onClose();
   };
 
   return (
     <>
       <DialogHeader>
-        <DialogTitle>{draft.editingId ? "Edit task" : "New task"}</DialogTitle>
+        <DialogTitle>
+          {draft.editingId ? "Edit task" : copyFrom ? "Copy task" : "New task"}
+        </DialogTitle>
         <DialogDescription>
-          Run a prompt automatically on an interval, at a fixed time, once at a set date, or when a
-          webhook is called.
+          {copyFrom
+            ? `Copy “${copyFrom.task.title}” from ${copySourceEnvironment?.label ?? "this machine"}. Choose where it runs, then check the project, model, and paths there.`
+            : "Run a prompt automatically on an interval, at a fixed time, once at a set date, or when a webhook is called."}
         </DialogDescription>
       </DialogHeader>
 
@@ -1588,18 +1662,26 @@ function ScheduledTaskEditorForm({
               value={environmentId}
               disabled={task !== null || saving}
               onValueChange={(id) => {
-                const next = connectedEnvironments.find((entry) => entry.environmentId === id);
+                const next = environmentOptions.find((entry) => entry.environmentId === id);
                 if (!next) return;
                 setEnvironmentId(next.environmentId);
-                setDraft((current) => ({
-                  ...unbindDraftFromThread(current),
-                  projectId: defaultScheduledTaskProjectId(projectsOn(next.environmentId), scope),
-                  modelKey: "",
-                  baseModelSelection: null,
-                  baseRef: "main",
-                  startFromOrigin: true,
-                  existingWorktreePath: "",
-                }));
+                // A copy keeps its settings on any machine; only its project is per machine.
+                setDraft((current) =>
+                  copyFrom
+                    ? { ...current, projectId: copyProjectIdOn(next.environmentId) }
+                    : {
+                        ...unbindDraftFromThread(current),
+                        projectId: defaultScheduledTaskProjectId(
+                          projectsOn(next.environmentId),
+                          scope,
+                        ),
+                        modelKey: "",
+                        baseModelSelection: null,
+                        baseRef: "main",
+                        startFromOrigin: true,
+                        existingWorktreePath: "",
+                      },
+                );
               }}
             >
               <SelectTrigger id="scheduled-task-environment" size="sm">
@@ -1614,11 +1696,8 @@ function ScheduledTaskEditorForm({
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup>
-                {connectedEnvironments.map((entry) => {
-                  const { secondary } = settingsScopeEnvironmentLabels(
-                    entry,
-                    connectedEnvironments,
-                  );
+                {environmentOptions.map((entry) => {
+                  const { secondary } = settingsScopeEnvironmentLabels(entry, environmentOptions);
                   return (
                     <SelectItem
                       key={entry.environmentId}

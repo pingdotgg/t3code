@@ -334,6 +334,19 @@ export function taskToDraft(task: ScheduledTask): DraftState {
   };
 }
 
+/**
+ * A new-task draft from another task, usually on another machine. The thread and webhook secret
+ * stay with the source, and saved filters are cleared so the copy sends its filters on create.
+ */
+export function copyTaskToDraft(task: ScheduledTask, projectId: string): DraftState {
+  return {
+    ...unbindDraftFromThread(taskToDraft(task)),
+    editingId: null,
+    projectId,
+    savedFilters: [],
+  };
+}
+
 export function moveDraftToThread(
   draft: DraftState,
   thread: { readonly id: ThreadId; readonly projectId: ProjectId },
