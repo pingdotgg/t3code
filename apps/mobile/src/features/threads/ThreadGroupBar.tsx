@@ -81,20 +81,20 @@ export function ThreadGroupBar({ thread }: { readonly thread: EnvironmentThreadS
                   </Pressable>
                 </Menu>
               ))}
-            {inviteAvailable ? (
-              <Button
-                label="Invite"
-                accessibilityLabel="Invite a model"
-                size="compact"
-                tone="text"
-                onPress={() =>
-                  navigation.navigate("ThreadGroupInvite", { environmentId, threadId: thread.id })
-                }
-              />
-            ) : null}
           </View>
         </ScrollView>
-        {/* The way out stays on screen however many members the row scrolls past. */}
+        {inviteAvailable ? (
+          <Button
+            label="Invite"
+            accessibilityLabel="Invite a model"
+            size="compact"
+            tone="text"
+            onPress={() =>
+              navigation.navigate("ThreadGroupInvite", { environmentId, threadId: thread.id })
+            }
+          />
+        ) : null}
+        {/* Invite and the way out stay on screen however many members the row scrolls past. */}
         <Button
           label="End group"
           accessibilityLabel={`End group and continue with ${group.primary.label}`}

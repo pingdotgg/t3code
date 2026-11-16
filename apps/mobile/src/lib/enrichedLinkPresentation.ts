@@ -9,6 +9,7 @@ import {
 } from "./composerChipPresentation";
 import { formatComposerModelMention } from "@t3tools/client-runtime/composer-model-mentions";
 import type {
+  SelectableMarkdownGroupMember,
   SelectableMarkdownModel,
   SelectableMarkdownSkill,
 } from "../native/SelectableMarkdownText.types";
@@ -191,14 +192,8 @@ export function enrichedModelDetails(model: SelectableMarkdownModel) {
   return `${model.providerLabel}\n${model.source}`;
 }
 
-export interface EnrichedGroupMemberMention {
-  readonly source: string;
-  readonly label: string;
-  readonly isPrimary: boolean;
-}
-
 export function enrichedGroupMemberLinkRegex(
-  members?: ReadonlyArray<Pick<EnrichedGroupMemberMention, "source">>,
+  members?: ReadonlyArray<Pick<SelectableMarkdownGroupMember, "source">>,
 ) {
   if (!members?.length) return null;
   const alternatives = [...new Set(members.map((member) => member.source))]
@@ -215,7 +210,7 @@ export function enrichedGroupMemberLinkRegex(
 export function enrichedTextLinkRegex(
   skills?: ReadonlyArray<SelectableMarkdownSkill>,
   models?: ReadonlyArray<SelectableMarkdownModel>,
-  groupMembers?: ReadonlyArray<Pick<EnrichedGroupMemberMention, "source">>,
+  groupMembers?: ReadonlyArray<Pick<SelectableMarkdownGroupMember, "source">>,
 ) {
   const patterns = [
     enrichedSkillLinkRegex(skills),
