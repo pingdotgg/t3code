@@ -21,6 +21,10 @@ impl Settings {
         Self { root }
     }
 
+    pub(crate) fn worktree_submodules(&self) -> Option<&str> {
+        self.root.get("worktreeSubmodules").and_then(Value::as_str)
+    }
+
     /// `sourceControlHosts.<kind>`, or an empty object.
     pub fn host(&self, kind: &str) -> HostSettings<'_> {
         HostSettings {

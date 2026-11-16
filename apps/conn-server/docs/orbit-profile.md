@@ -964,9 +964,9 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `device.testHost` | no | X | N | L | iOS simulators on the Mac (device/ is about 8,400 lines in T3) |
 | `filesystem.browse` | yes | N | N |  | project and file pickers |
 | `filesystem.getMetadata` | yes | N | N |  | project and file pickers |
-| `git.preparePullRequestThread` | no | O | N | M | pull request checkout into a thread |
-| `git.resolvePullRequest` | no | O | N | M | pull request checkout into a thread |
-| `git.runStackedAction` | no | U | N | M | commit/push/PR action; in a container only the commit step is ours, push and PR are Orbit's |
+| `git.preparePullRequestThread` | yes | O | N | M | pull request checkout into a thread |
+| `git.resolvePullRequest` | yes | O | N | M | pull request checkout into a thread |
+| `git.runStackedAction` | commit only | U | N | M | commit/push/PR action; in a container only the commit step is ours, push and PR are Orbit's |
 | `guestShare.create` | no | X | X | L | guest link through T3 Connect |
 | `mcpApps.callTool` | no | U | U | M | MCP App UIs inside a thread |
 | `mcpApps.readResource` | no | U | U | M | MCP App UIs inside a thread |

@@ -24,7 +24,7 @@ mod scheduled;
 mod secrets;
 mod tasks;
 mod threads;
-mod worktree;
+pub(crate) mod worktree;
 
 pub(crate) type Args = Map<String, Value>;
 

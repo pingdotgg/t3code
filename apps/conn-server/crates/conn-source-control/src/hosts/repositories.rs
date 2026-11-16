@@ -128,10 +128,10 @@ async fn run_cli(
 
 /// `GitHubRepositoryLocator`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Locator {
-    host: String,
-    owner: String,
-    name: String,
+pub(crate) struct Locator {
+    pub(crate) host: String,
+    pub(crate) owner: String,
+    pub(crate) name: String,
 }
 
 /// `.git` off the end of a path, before trailing slashes (`/\.git\/*$/i`).
@@ -168,7 +168,7 @@ fn http_url_parts(text: &str) -> Option<(String, &str)> {
 }
 
 /// `parseGitHubRepositorySelector`.
-fn parse_selector(selector: &str, default_host: &str) -> Option<Locator> {
+pub(crate) fn parse_selector(selector: &str, default_host: &str) -> Option<Locator> {
     let trimmed = selector.trim();
     if let Some((host, path)) = http_url_parts(trimmed) {
         let parts: Vec<&str> = without_git_suffix(path)

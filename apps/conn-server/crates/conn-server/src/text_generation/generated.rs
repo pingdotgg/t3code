@@ -57,3 +57,15 @@ pub(super) const REGENERATE_WITHOUT_PROJECT: &[Part] = &[
 
 /// The title's output schema, as T3 writes it for a CLI (`JSON.stringify(toJsonSchemaObject(...))`).
 pub(crate) const TITLE_OUTPUT_SCHEMA: &str = "{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\"},\"needsRefinement\":{\"type\":\"boolean\"}},\"required\":[\"title\",\"needsRefinement\"],\"additionalProperties\":false}";
+pub(crate) const COMMIT_POLICIES: [&str; 2] = [
+    "Use Conventional Commits when generating commit subjects. Prefer the narrowest accurate type and include a scope only when it is obvious from the diff. Start the description after the colon with a lowercase word, never a proper noun or acronym, because commitlint rejects a capitalized description.",
+    "Follow the repository's established commit message style when examples are available.",
+];
+pub(crate) const COMMIT_PROMPTS: [&str; 2] = [
+    "You write concise git commit messages.\nReturn a JSON object with keys: subject, body.\nRules:\n- subject must be imperative, <= 72 chars, and no trailing period\n- body can be empty string or short bullet points\n- capture the primary user-visible or developer-visible change\n\nAdditional instructions:\n@@POLICY@@\n\nBranch: @@BRANCH@@\n\nStaged files:\n@@SUMMARY@@\n\nStaged patch:\n@@PATCH@@",
+    "You write concise git commit messages.\nReturn a JSON object with keys: subject, body, branch.\nRules:\n- subject must be imperative, <= 72 chars, and no trailing period\n- body can be empty string or short bullet points\n- branch must be a short semantic git branch fragment for this change\n- capture the primary user-visible or developer-visible change\n\nAdditional instructions:\n@@POLICY@@\n\nBranch: @@BRANCH@@\n\nStaged files:\n@@SUMMARY@@\n\nStaged patch:\n@@PATCH@@",
+];
+pub(crate) const COMMIT_SCHEMAS: [&str; 2] = [
+    "{\"type\":\"object\",\"properties\":{\"subject\":{\"type\":\"string\"},\"body\":{\"type\":\"string\"}},\"required\":[\"subject\",\"body\"],\"additionalProperties\":false}",
+    "{\"type\":\"object\",\"properties\":{\"subject\":{\"type\":\"string\"},\"body\":{\"type\":\"string\"},\"branch\":{\"type\":\"string\"}},\"required\":[\"subject\",\"body\",\"branch\"],\"additionalProperties\":false}",
+];

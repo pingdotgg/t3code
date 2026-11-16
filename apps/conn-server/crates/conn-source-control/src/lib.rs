@@ -4,6 +4,7 @@
 //! served.
 
 pub mod cache;
+pub mod checkout;
 pub mod cli;
 pub mod detect;
 pub mod discovery;

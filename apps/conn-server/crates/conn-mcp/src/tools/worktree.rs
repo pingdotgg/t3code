@@ -326,7 +326,7 @@ async fn perform(cx: &Cx<'_>, args: &Args) -> ToolResult {
     )
 }
 
-async fn setup(
+pub(crate) async fn setup(
     config: &WorktreeConfig,
     thread: &str,
     project: &Value,

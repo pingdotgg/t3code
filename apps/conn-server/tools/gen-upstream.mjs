@@ -523,6 +523,7 @@ const titleOutputSchema = JSON.stringify(
     prompts.buildThreadTitlePrompt({ message: "" }).outputSchema,
   ),
 );
+const presets = await importSource("apps/server/src/textGeneration/TextGenerationPresets.ts");
 const titlePromptsRs = rustfmt(
   [
     ...HEADER,
@@ -547,6 +548,9 @@ const titlePromptsRs = rustfmt(
     "",
     "/// The title's output schema, as T3 writes it for a CLI (`JSON.stringify(toJsonSchemaObject(...))`).",
     `pub(crate) const TITLE_OUTPUT_SCHEMA: &str = ${str(titleOutputSchema)};`,
+    `pub(crate) const COMMIT_POLICIES: [&str; 2] = [${str(presets.conventionalCommitsTextGenerationPolicy.commitInstructions)},${str(presets.repositoryConventionsTextGenerationPolicy.commitInstructions)}];`,
+    `pub(crate) const COMMIT_PROMPTS: [&str; 2] = [${[false,true].map(includeBranch => str(prompts.buildCommitMessagePrompt({branch:"@@BRANCH@@",stagedSummary:"@@SUMMARY@@",stagedPatch:"@@PATCH@@",includeBranch,policy:{commitInstructions:"@@POLICY@@"}}).prompt)).join(",")}];`,
+    `pub(crate) const COMMIT_SCHEMAS: [&str; 2] = [${[false,true].map(includeBranch => str(JSON.stringify(textGenerationUtils.toJsonSchemaObject(prompts.buildCommitMessagePrompt({branch:null,stagedSummary:"",stagedPatch:"",includeBranch}).outputSchema)))).join(",")}];`,
     "",
   ].join("\n"),
 );

@@ -601,6 +601,31 @@ async fn handoff_setup_runs_in_a_thread_terminal_with_the_project_environment() 
         std::fs::read_to_string(PathBuf::from(path).join("setup-proof.txt")).unwrap(),
         format!("{}\n{path}\n", root.display())
     );
+    std::fs::remove_file(PathBuf::from(path).join("setup-proof.txt")).unwrap();
+    terminals.close(
+        conn_contract::from_json(json!({"threadId":thread,"terminalId":"setup-setup"})).unwrap(),
+    );
+    f.service.run_worktree_setup(thread, path).await.unwrap();
+    let mut output = terminals
+        .observe(
+            conn_contract::from_json(json!({"threadId":thread,"terminalId":"setup-setup"}))
+                .unwrap(),
+        )
+        .unwrap();
+    let mut text = String::new();
+    while !text.contains("SETUP-done") {
+        match output.next().await {
+            conn_contract::TerminalAttachStreamEvent::Output(event) => text.push_str(&event.data),
+            conn_contract::TerminalAttachStreamEvent::Snapshot(event) => {
+                text.push_str(&event.snapshot.history)
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(
+        std::fs::read_to_string(PathBuf::from(path).join("setup-proof.txt")).unwrap(),
+        format!("{}\n{path}\n", root.display())
+    );
     terminals.shutdown().await;
 }
 

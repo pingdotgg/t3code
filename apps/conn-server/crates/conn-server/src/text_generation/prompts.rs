@@ -15,7 +15,7 @@ use super::js::{self, char_code_at, is_high_surrogate, is_low_surrogate, len16, 
 #[path = "generated.rs"]
 mod generated;
 use generated::Part;
-pub(crate) use generated::TITLE_OUTPUT_SCHEMA;
+pub(crate) use generated::{COMMIT_POLICIES, COMMIT_PROMPTS, COMMIT_SCHEMAS, TITLE_OUTPUT_SCHEMA};
 
 /// `EARLIER_CONTENT_TRUNCATION_MARKER` and `OMITTED`.
 const OMITTED: &str = "[Earlier content truncated]\n\n";
@@ -496,6 +496,30 @@ pub fn decode_title_reply(text: &str) -> Option<TitleReply> {
         title,
         needs_refinement,
     })
+}
+
+/// The generated commit prompt with bounded diff and policy context.
+pub fn commit_message_prompt(
+    branch: Option<&str>,
+    summary: &str,
+    patch: &str,
+    policy: &str,
+    feature: bool,
+) -> String {
+    let template = COMMIT_PROMPTS
+        .get(usize::from(feature))
+        .copied()
+        .unwrap_or_default();
+    let prompt = template
+        .replace("@@BRANCH@@", branch.unwrap_or("(detached)"))
+        .replace("@@SUMMARY@@", &limit_section(summary, 6000))
+        .replace("@@PATCH@@", &limit_section(patch, 40000))
+        .replace("@@POLICY@@", &limit_section(policy.trim(), 20_000));
+    if policy.trim().is_empty() {
+        prompt.replace("\nAdditional instructions:\n\n", "")
+    } else {
+        prompt
+    }
 }
 
 #[cfg(test)]

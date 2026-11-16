@@ -9,6 +9,7 @@ why the CLI and not `gix` or `git2`, with numbers.
 | Module                    | Holds                                                                                |
 | ------------------------- | ------------------------------------------------------------------------------------ |
 | `process.rs`              | Every `git` child: a timeout, bounded stdout and stderr, killed on drop              |
+| `commit.rs`              | Commit preview in a scratch index and all-file or selected-file commits |
 | `repo.rs`                 | Shared lookups: top level, current branch, remotes, default branch, base, merge base |
 | `status.rs`               | `vcs.refreshStatus` local and remote parts, the branch status                        |
 | `hub.rs`                  | `subscribeVcsStatus`, `subscribeVcsBranch`: one entry per watched repository          |

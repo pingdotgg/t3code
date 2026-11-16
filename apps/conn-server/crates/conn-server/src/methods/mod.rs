@@ -10,6 +10,8 @@ use crate::table::MethodTable;
 
 mod annotations;
 mod files;
+mod git;
+mod git_message;
 mod orchestration;
 mod panels;
 mod projects;
@@ -69,6 +71,7 @@ pub fn register_all(table: &mut MethodTable, deps: &Deps) {
     projects::register(table, deps);
     provider::register(table, deps);
     vcs::register(table, deps);
+    git::register(table, deps);
     files::register(table, deps);
     terminal::register(table, deps);
     scheduled::register(table, deps);

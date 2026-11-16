@@ -143,6 +143,16 @@ async function t3(testCase) {
 
 // ---- Cases -------------------------------------------------------------------------------
 
+for (const includeBranch of [false, true]) {
+  for (const policy of ["", "Use direct words.", "A".repeat(21000)]) {
+    const input = {branch: "feature/fix", stagedSummary: "M\tfile", stagedPatch: "diff\n".repeat(9000), policy, includeBranch};
+    const actual = await rust({op: "commitPrompt", input});
+    const expected = Prompts.buildCommitMessagePrompt({...input, policy: {commitInstructions: policy}}).prompt;
+    if (actual.ok !== expected) throw new Error("commit prompt differs from T3");
+  }
+}
+
+
 const failures = [];
 const transportSeen = { t3: new Set(), rust: new Set() };
 // Key order does not count (serde_json writes keys sorted); strings are compared whole.

@@ -18,7 +18,7 @@ use conn_contract::{
     VcsPullResultStatus, VcsSwitchRefInput,
 };
 use conn_vcs::{
-    refs, review, status,
+    commit, refs, review, status,
     worktree::{self, CreateWorktree, Removal},
 };
 use support::{Fixture, TempDir, commit_all, git, write};
@@ -799,4 +799,117 @@ async fn worktree_base_fetch_skips_tags_and_deleted_tracking_refs() {
             "{name}"
         );
     }
+}
+
+#[tokio::test]
+async fn commits_selected_paths_without_staged_bystanders() {
+    let fx = Fixture::new("commit-selected");
+    git(&fx.work, &["config", "user.name", "test"]);
+    git(&fx.work, &["config", "user.email", "test@example.com"]);
+    write(&fx.work, "README.md", "changed\n");
+    write(&fx.work, "other", "keep staged\n");
+    write(&fx.work, "-option", "literal\n");
+    git(&fx.work, &["add", "other"]);
+    let paths = vec!["README.md".into(), "-option".into()];
+    let context = commit::prepare(&fx.work, Some(&paths))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(context.summary.contains("README.md"));
+    assert!(!context.summary.contains("other"));
+    assert_eq!(
+        git(&fx.work, &["diff", "--cached", "--name-only"]).trim(),
+        "other"
+    );
+    let sha = commit::create(&fx.work, "Selected changes", "Body", Some(&paths))
+        .await
+        .unwrap();
+    assert_eq!(sha, git(&fx.work, &["rev-parse", "HEAD"]).trim());
+    assert_eq!(
+        git(&fx.work, &["show", "--format=", "--name-only", "HEAD"]).trim(),
+        "-option\nREADME.md"
+    );
+    assert!(
+        commit::prepare(&fx.work, Some(&paths))
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn all_files_commit_and_clean_repositories_skip() {
+    let fx = Fixture::new("commit-all");
+    assert!(commit::prepare(&fx.work, None).await.unwrap().is_none());
+    write(&fx.work, "new", "new\n");
+    let objects = git(&fx.work, &["count-objects", "-v"]);
+    assert!(commit::prepare(&fx.work, None).await.unwrap().is_some());
+    assert_eq!(git(&fx.work, &["count-objects", "-v"]), objects);
+    assert!(git(&fx.work, &["diff", "--cached", "--name-only"]).is_empty());
+    git(&fx.work, &["config", "user.name", "test"]);
+    git(&fx.work, &["config", "user.email", "test@example.com"]);
+    commit::create(&fx.work, "All changes", "", None)
+        .await
+        .unwrap();
+    assert!(commit::prepare(&fx.work, None).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn partial_commit_does_not_clear_merge_state() {
+    let fx = Fixture::new("commit-merge");
+    git(&fx.work, &["config", "user.name", "test"]);
+    git(&fx.work, &["config", "user.email", "test@example.com"]);
+    let head = git(&fx.work, &["rev-parse", "HEAD"]);
+    let merge = fx.work.join(".git/MERGE_HEAD");
+    std::fs::write(&merge, head).unwrap();
+    write(&fx.work, "README.md", "resolved\n");
+    let selected = vec!["README.md".into()];
+    assert!(
+        commit::prepare(&fx.work, Some(&selected))
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(merge.exists());
+    let err = commit::create(&fx.work, "Partial", "", Some(&selected))
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("Cannot commit selected files during a merge")
+    );
+    assert!(merge.exists());
+    let base = git(&fx.work, &["rev-parse", "HEAD:README.md"]);
+    let info = format!(
+        "100644 {} 1\tREADME.md\n100644 {} 2\tREADME.md\n100644 {} 3\tREADME.md\n",
+        base.trim(),
+        base.trim(),
+        base.trim()
+    );
+    let feed = fx.work.join("stages");
+    std::fs::write(&feed, info).unwrap();
+    let script = format!("git update-index --index-info < '{}'", feed.display());
+    assert!(
+        std::process::Command::new("sh")
+            .args(["-c", &script])
+            .current_dir(&fx.work)
+            .status()
+            .unwrap()
+            .success()
+    );
+    std::fs::remove_file(feed).unwrap();
+    write(
+        &fx.work,
+        "README.md",
+        "<<<<<<< ours\nours\n=======\ntheirs\n>>>>>>> theirs\n",
+    );
+    assert!(
+        commit::prepare(&fx.work, None)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("unresolved merge conflicts")
+    );
+    write(&fx.work, "README.md", "Heading\n=======\nresolved\n");
+    assert!(commit::prepare(&fx.work, None).await.unwrap().is_some());
 }

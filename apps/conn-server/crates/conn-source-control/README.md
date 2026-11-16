@@ -15,8 +15,8 @@ monorepo.
 | `sourceControl.*` (9) | All 9 served: `signInStart`, `signInWait`, `signInCancel`, `appAccess` (as a T3 server without `T3CODE_GITHUB_APP_CLIENT_ID`), `starred`, `star` (GitHub REST, any other host `false`); `lookupRepository`, `cloneRepository`, `publishRepository` for all 7 hosts (see "Repositories") |
 | The host definition registry | Built (part 4): remotes, change request URLs, canonical keys, the project predicates, thread link keys (see "Registry") |
 | Provider detection | Built (part 4), not yet called by a method (see "Provider detection") |
-| GitHub's GraphQL operations | Generated from the monorepo (part 4); no request sends one yet (see "GitHub GraphQL") |
-| `git.*` (3) | Not served |
+| GitHub's GraphQL operations | Generated from the monorepo; PR resolution sends the lookup queries (see "GitHub GraphQL") |
+| `git.*` (3) | GitHub PR resolution and checkout; commit-only stacked actions in `conn-server` |
 | `pr` in VCS status | Not served (always `null`) |
 | `pullRequests.*` (35) | Not served |
 | Engine commands for linked pull requests (7) | `thread.pull-request.link` and `unlink` as T3's decider (part 4); the other 5 refused |
@@ -26,6 +26,7 @@ monorepo.
 
 | Module | Holds |
 | --- | --- |
+| `checkout.rs` | GitHub PR resolution, local checkout and worktree reuse |
 | `secret.rs` | `Secret`: a token with a redacted `Debug` and `Display` |
 | `http.rs` | One HTTPS request per connection (hyper + rustls), bounded answer, local fake server for tests |
 | `settings.rs` | A host's saved fields (`hosts`, `tokens`, Bitbucket's and GitCafe's), secret references |
