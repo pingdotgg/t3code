@@ -485,8 +485,17 @@ export const make = Effect.gen(function* () {
   // Threads whose confirmation holds a completion, so a thread that settles during the hold still alerts.
   const heldCompletions = new Set<ThreadId>();
   let schedulePublishConfirm: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
-  const heartbeatDueAt = new Map<ThreadId, number>();
-  let scheduleHeartbeat: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
+  const heartbeats = new Map<
+    ThreadId,
+    { readonly dueAtMs: number; readonly timer: Fiber.Fiber<void> }
+  >();
+  const cancelHeartbeat = Effect.fnUntraced(function* (threadId: ThreadId) {
+    const heartbeat = heartbeats.get(threadId);
+    heartbeats.delete(threadId);
+    if (heartbeat !== undefined) yield* Fiber.interrupt(heartbeat.timer);
+  });
+  let scheduleHeartbeat: (threadId: ThreadId, dueAtMs: number) => Effect.Effect<void> = () =>
+    Effect.void;
   const publishRetries = new Map<
     ThreadId,
     { readonly attempts: number; timer: Fiber.Fiber<void> | undefined }
@@ -506,7 +515,7 @@ export const make = Effect.gen(function* () {
     cachedRelayClient = undefined;
     publishConfirmDeadlines.clear();
     heldCompletions.clear();
-    heartbeatDueAt.clear();
+    yield* Effect.forEach([...heartbeats.keys()], cancelHeartbeat, { discard: true });
     yield* Ref.set(publishedStateByThreadRef, new Map());
   });
 
@@ -619,7 +628,7 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt)) return;
     }
     const heartbeatDue =
-      (heartbeatDueAt.get(threadId) ?? Number.POSITIVE_INFINITY) <=
+      (heartbeats.get(threadId)?.dueAtMs ?? Number.POSITIVE_INFINITY) <=
       (yield* DateTime.now).epochMilliseconds;
     if (
       publishedStateByThread.get(threadId) === publishIdentity &&
@@ -690,7 +699,7 @@ export const make = Effect.gen(function* () {
           reason: unsettled.reason,
         }).pipe(withRelayClientTracing);
         heldCompletions.delete(threadId);
-        heartbeatDueAt.delete(threadId);
+        yield* cancelHeartbeat(threadId);
         publishConfirmDeadlines.set(threadId, nowMs + 5_000);
         yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
           new Map(publishedStates).set(threadId, agentAwarenessPublishIdentity(completion)),
@@ -736,15 +745,12 @@ export const make = Effect.gen(function* () {
     if (state !== null && childRequestId !== undefined) {
       childAlertByThread.set(threadId, { requestId: childRequestId, updatedAt: state.updatedAt });
     }
-    if (heartbeatAt === null) {
-      heartbeatDueAt.delete(threadId);
-    } else {
-      heartbeatDueAt.set(
-        threadId,
-        heartbeatAt.epochMilliseconds + RELAY_AGENT_ACTIVITY_HEARTBEAT_MS,
-      );
-      yield* scheduleHeartbeat(threadId);
-    }
+    yield* heartbeatAt === null
+      ? cancelHeartbeat(threadId)
+      : scheduleHeartbeat(
+          threadId,
+          heartbeatAt.epochMilliseconds + RELAY_AGENT_ACTIVITY_HEARTBEAT_MS,
+        );
     publishConfirmDeadlines.delete(threadId);
     heldCompletions.delete(threadId);
     yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
@@ -970,20 +976,22 @@ export const make = Effect.gen(function* () {
       scope,
     ).pipe(Effect.asVoid);
 
-  // An earlier timer for the same thread finds the heartbeat not yet due and publishes nothing.
-  scheduleHeartbeat = (threadId) =>
-    Effect.forkIn(
+  scheduleHeartbeat = Effect.fnUntraced(function* (threadId, dueAtMs) {
+    yield* cancelHeartbeat(threadId);
+    const timer = yield* Effect.forkIn(
       Effect.sleep(RELAY_AGENT_ACTIVITY_HEARTBEAT_MS).pipe(
         Effect.andThen(worker.enqueue(threadId)),
         Effect.catchCause((cause) =>
           Effect.logWarning("agent activity heartbeat failed", {
             threadId,
-            cause,
+            cause: Cause.pretty(cause),
           }),
         ),
       ),
       scope,
-    ).pipe(Effect.asVoid);
+    );
+    heartbeats.set(threadId, { dueAtMs, timer });
+  });
 
   const start: AgentAwarenessRelay["Service"]["start"] = Effect.fn("AgentAwarenessRelay.start")(
     function* () {
