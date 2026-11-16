@@ -1282,10 +1282,14 @@
   },
   "font": {
     "default": "default",
+    "interfaceFontDescription": "Everything outside code blocks and the terminal.",
+    "monospaceDescription": "Code blocks, diffs, file previews, and the terminal.",
+    "monospaceFont": "Monospace font",
     "noFonts": "No fonts found.",
     "notMonospace": "\"{{font}}\" isn't monospace",
     "notMonospaceDescription": "Code and terminal need a fixed-width font, so the current font was kept.",
     "searchPlaceholder": "Search fonts…",
+    "sectionTitle": "Typography",
     "terminalPreviewAria": "Terminal font preview"
   },
   "general": {
@@ -1826,6 +1830,7 @@
     "archiveDescription": "Hides the project from project pickers. Threads and files are kept.",
     "archiveFailed": "Failed to archive project",
     "cannotChange": "This connection cannot change this project.",
+    "chooseNotice": "Choose a project to manage its name, icon, checkouts and actions.",
     "checkouts": "Checkouts",
     "checkoutUnavailable": "This checkout is no longer available in the selected project and environment.",
     "chooseFile": "Choose file",
@@ -2952,6 +2957,8 @@
     "allowCapture": "Allow capture",
     "allowTitle": "Allow snapshots",
     "back": "Back",
+    "captureWindowDescription": "Capture a window and attach it to your current draft.",
+    "desktopOnly": "Only available in the desktop app.",
     "captureNeedsAttention": "Capture needs attention. Go back to check access.",
     "check": {
       "notReady": "Not ready yet. Finish the step above.",
@@ -3040,6 +3047,7 @@
     "description": "Choices in every snooze menu, listed soonest first. Weekdays mean the next one after today.",
     "duplicate": "Duplicate of an option above",
     "friday": "Friday",
+    "nextWeek": "Next week",
     "hour": "hour",
     "hours": "hours",
     "in": "In",
@@ -3049,6 +3057,7 @@
     "maxOptions_other": "Up to {{count}} options",
     "menuNow": "Menu now: {{items}}",
     "menusCustom": "Menus offer only Custom…",
+    "nextWeekday": "Next {{day}}",
     "minute": "minute",
     "minutes": "minutes",
     "monday": "Monday",
@@ -3059,6 +3068,9 @@
     "sameTime": "Same time as an option above",
     "saturday": "Saturday",
     "sunday": "Sunday",
+    "thisAfternoon": "This afternoon",
+    "thisEvening": "This evening",
+    "thisMorning": "This morning",
     "thursday": "Thursday",
     "time": "Time",
     "today": "Today",
@@ -3076,11 +3088,14 @@
     "appSignInBenefit": "A far higher GitHub API rate limit than a personal token or gh login.",
     "as": "as",
     "authenticated": "Authenticated",
+    "authNotAuthenticated": "Not authenticated",
+    "authStatusUnknown": "Status unknown",
     "available": "Available",
     "availableWithHint": "Available. {{hint}}",
     "chooseLogin": "Choose which <code>{{cliName}}</code> login each {{label}} host uses, or turn a host off.",
     "chosenLoginSignedOut": "The chosen login is no longer signed in, so the active {{cliName}} login is used.",
     "comingSoon": "Support for {{label}} is coming soon.",
+    "comingSoonBadge": "Coming Soon",
     "connectToInspect": "Connect an environment to inspect its version control tools and hosting integrations.",
     "copyCode": "Copy code",
     "copyCodeOpenHost": "Copy code & open GitHub",
@@ -3500,6 +3515,11 @@
     "updating": "Updating",
     "viewSourceAria": "View source for {{name}}"
   },
+  "threadDetails": {
+    "description": "Choose what the thread details card shows. You can also right-click the card.",
+    "statusAria": "Thread details: {{enabled}} of {{total}} on",
+    "statusOn": "{{enabled}} of {{total}} on"
+  },
   "threadsPanel": {
     "addProjectAria": "Add project base directory",
     "addProjectDescription": "Leave empty to use “~/” when the Add Project browser opens.",
@@ -3694,6 +3714,7 @@
   "voiceOptions": {
     "builtIn": "Built-in",
     "cleanupInstructions": "Cleanup instructions",
+    "transcriptionOptions": "Transcription options",
     "cleanupInstructionsDescription": "Use the built-in instructions or write your own.",
     "cleanupSection": "Cleanup",
     "cleanupTranscripts": "Clean up transcripts",

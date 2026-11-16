@@ -1580,7 +1580,7 @@ export function VoiceSettingsPanel() {
         ) : null}
         {prepared && <AdvancedSpeechSettings prepared={prepared} catalog={catalog} />}
       </SettingsSection>
-      <SettingsSection id="voice-recognition" title="Transcription options">
+      <SettingsSection id="voice-recognition" title={t("voiceOptions.transcriptionOptions")}>
         <SettingsRow
           {...searchableSetting("speech-silence-filtering")}
           title={t("voiceOptions.silenceFiltering")}

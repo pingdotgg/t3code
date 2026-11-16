@@ -48,9 +48,7 @@ export function ProjectsSettings() {
       ) : unavailable ? (
         unavailable
       ) : (
-        <SettingsScopeNotice target="project">
-          Choose a project to manage its name, icon, checkouts and actions.
-        </SettingsScopeNotice>
+        <SettingsScopeNotice target="project">{t("project.chooseNotice")}</SettingsScopeNotice>
       )}
     </div>
   );
