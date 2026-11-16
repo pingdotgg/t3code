@@ -200,8 +200,9 @@ export interface StartThreadTurnInput extends ThreadCommandInput {
   };
   readonly modelSelection?: ModelSelection;
   readonly titleSeed?: string;
-  readonly runtimeMode: RuntimeMode;
-  readonly interactionMode: ProviderInteractionMode;
+  /** Omitted, a launch takes the thread's; a message to an existing thread never carries them. */
+  readonly runtimeMode?: RuntimeMode;
+  readonly interactionMode?: ProviderInteractionMode;
   readonly bootstrap?: StartThreadBootstrap;
   readonly sourceProposedPlan?: { readonly threadId: ThreadId; readonly planId: PlanId };
   readonly dispatchMode?: "auto" | "queue" | "steer" | "restart" | "start";
@@ -812,6 +813,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
     const profileSelection = yield* synchronizedProfileSelection(bootstrap?.profileSelection);
     return yield* request(ORCHESTRATION_V2_WS_METHODS.launchThread, {
       commandId,
+      ...(input.createdBy === undefined ? {} : { createdBy: input.createdBy }),
       creationSource: input.creationSource ?? "web",
       threadId: input.threadId,
       ...(bootstrap === undefined ? { reuseExistingThread: true } : {}),
@@ -820,8 +822,8 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       title: input.titleSeed ?? thread.title,
       generateTitle: input.titleSeed !== undefined,
       modelSelection: input.modelSelection ?? thread.modelSelection,
-      runtimeMode: input.runtimeMode,
-      interactionMode: input.interactionMode,
+      runtimeMode: input.runtimeMode ?? thread.runtimeMode,
+      interactionMode: input.interactionMode ?? thread.interactionMode,
       workspaceStrategy,
       initialMessage: {
         messageId: input.message.messageId,

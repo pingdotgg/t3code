@@ -428,6 +428,7 @@ it.effect(
       const launches: Array<{ environmentId: string; input: OrchestrationV2ThreadLaunchInput }> =
         [];
       const supervisors = new Map<string, EnvironmentSupervisor["Service"]>();
+      let shellReads = 0;
       const repositoryIdentity = {
         canonicalKey: "github.com/acme/app",
         locator: {
@@ -455,12 +456,15 @@ it.effect(
                   return { threadId: input.threadId, projection: v2Projection, resumed: false };
                 }),
               [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () =>
-                Stream.make({
-                  kind: "snapshot",
-                  snapshot: {
-                    threads: [{ ...v2ThreadShell, title: environmentId }],
-                    projects: [{ ...v2Project, repositoryIdentity }],
-                  },
+                Stream.suspend(() => {
+                  shellReads += 1;
+                  return Stream.make({
+                    kind: "snapshot",
+                    snapshot: {
+                      threads: [{ ...v2ThreadShell, title: environmentId }],
+                      projects: [{ ...v2Project, repositoryIdentity }],
+                    },
+                  });
                 }),
               [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
                 Effect.sync(() => {
@@ -494,6 +498,7 @@ it.effect(
           (yield* Effect.promise(() => port.listProjects("machine-b"))).items[0]
             ?.repositoryIdentity,
         ).toEqual(repositoryIdentity);
+        const shellReadsBeforeSend = shellReads;
         yield* Effect.promise(() =>
           port.sendMessage({
             environmentId: "machine-b",
@@ -503,6 +508,8 @@ it.effect(
             text: "Remote follow-up",
           }),
         );
+        // A message needs no snapshot of every chat there, whose read can time out.
+        expect(shellReads).toBe(shellReadsBeforeSend);
         yield* Effect.promise(() =>
           port.createThread({
             environmentId: "machine-b",
@@ -522,6 +529,8 @@ it.effect(
               projectId: "shared-project",
               threadId: "shared-thread",
               workspaceStrategy: { type: "worktree", baseRef: "main" },
+              createdBy: "agent",
+              creationSource: "mcp",
             }),
           },
         ]);

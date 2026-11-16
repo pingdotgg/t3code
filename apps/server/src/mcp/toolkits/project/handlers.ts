@@ -7,6 +7,7 @@ import {
   ThreadId,
   OrchestratorMcpFailure,
   ProjectId,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
@@ -30,6 +31,7 @@ import * as ServerSettings from "../../../serverSettings.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as DateTime from "effect/DateTime";
+import { resolveGatewayProfileModelSelection } from "@t3tools/client-runtime/gateway";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveRuntimeMode, resolveInteractionMode } from "../../delegatedTaskModes.ts";
@@ -304,9 +306,31 @@ export const layer = McpToolAccess.toLayer(
                     ),
                   )
                 : undefined;
+            // An agent runs on its own model, so a project without a default still launches it.
+            const labelledModel =
+              profile === undefined ||
+              profile.profile.modelSelection !== undefined ||
+              input.modelSelection !== undefined ||
+              replaying
+                ? undefined
+                : resolveGatewayProfileModelSelection(
+                    profile.profile,
+                    yield* ProviderRegistry.ProviderRegistry.pipe(
+                      Effect.flatMap((registry) => registry.getProviders),
+                    ),
+                  );
+            const profileModel =
+              profile?.profile.modelSelection ??
+              (labelledModel === undefined
+                ? undefined
+                : {
+                    instanceId: ProviderInstanceId.make(labelledModel.instanceId),
+                    model: labelledModel.model,
+                  });
             const modelSelection =
               input.modelSelection ??
               launchedModel ??
+              profileModel ??
               caller?.modelSelection ??
               (projectDefaults
                 ? resolveNewThreadModelSelection({

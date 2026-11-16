@@ -10,6 +10,7 @@ import {
   ProviderDriverKind,
   type ServerProvider,
   type Project as ProjectRecord,
+  type McpGatewayProfile,
   type ModelSelection,
   type RuntimeMode,
 } from "@t3tools/contracts";
@@ -233,6 +234,7 @@ const clientLaunchHarness = (input: {
   readonly hostedAppUrl?: string;
   /** The orchestrator refuses the new thread's mode, as under a managed ceiling. */
   readonly refusedByCeiling?: true;
+  readonly profiles?: ReadonlyArray<McpGatewayProfile>;
 }) => {
   const projectId = ProjectId.make("project:client-target");
   const modelSelection = {
@@ -249,6 +251,7 @@ const clientLaunchHarness = (input: {
     }),
     ServerSettings.layerTest({
       fallbackModelSelection: input.fallbackModel ?? null,
+      ...(input.profiles === undefined ? {} : { mcpGatewayProfiles: input.profiles }),
       ...(input.defaultRuntimeMode === undefined
         ? {}
         : { defaultRuntimeMode: input.defaultRuntimeMode }),
@@ -671,6 +674,40 @@ it.effect("a retried launch replays after the project loses its default model", 
       launched[0]?.threadId,
       launched[0]?.threadId,
     ]);
+  }),
+);
+
+it.effect("a client launches an agent on its own model when the project has no default", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const agentModel = { instanceId: ProviderInstanceId.make("opencode"), model: "deepseek" };
+    const { projectId, projectDefaults, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "full-access",
+      launched,
+      profiles: [
+        {
+          profileId: "danny",
+          name: "Danny",
+          revision: 1,
+          createdAt: "2026-10-03T00:00:00.000Z",
+          updatedAt: "2026-10-03T00:00:00.000Z",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          modelSelection: agentModel,
+        },
+      ],
+    });
+    projectDefaults.model = null;
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const result = yield* toolkit
+      .handle("t3_thread_launch", { projectId, title: "Harden", profileId: "danny" })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(result.at(-1)?.result).toMatchObject({ modelSelection: agentModel });
+    expect(launched.map((input) => input.profileSelection?.profileId)).toEqual(["danny"]);
   }),
 );
 

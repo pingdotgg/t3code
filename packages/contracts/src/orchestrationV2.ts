@@ -3957,6 +3957,8 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   parentThreadId: Schema.optional(ThreadId),
   parentEnvironmentId: Schema.optional(EnvironmentId),
   commandId: CommandId,
+  /** `agent` when an agent launched it through T3 tools; a person otherwise. */
+  createdBy: Schema.optional(Schema.Literals(["user", "agent"])),
   creationSource: Schema.optional(OrchestrationV2CreationSource),
   threadId: Schema.optional(ThreadId),
   reuseExistingThread: Schema.optional(Schema.Boolean),

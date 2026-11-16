@@ -1217,6 +1217,8 @@ export function createGatewayRuntimePort(
                 ? {}
                 : { parentEnvironmentId: EnvironmentId.make(input.parentEnvironmentId) }),
               commandId: CommandId.make(input.requestId),
+              createdBy: "agent",
+              creationSource: "mcp",
               threadId: ThreadId.make(input.threadId),
               projectId: ProjectId.make(input.projectId),
               title: input.title,
@@ -1259,10 +1261,9 @@ export function createGatewayRuntimePort(
         Effect.gen(function* () {
           const environmentId = EnvironmentId.make(input.environmentId);
           const threadId = ThreadId.make(input.threadId);
-          const shell = yield* shellSnapshot(environmentId);
-          const thread = shell.threads.find((candidate) => candidate.id === threadId);
-          if (thread === undefined) throw new Error(`Thread ${input.threadId} was not found.`);
           const registry = yield* EnvironmentRegistry;
+          // The server sends it with the thread's own model and modes, so no slow snapshot
+          // read can drop the message.
           yield* registry.run(
             environmentId,
             startThreadTurn({
@@ -1274,9 +1275,6 @@ export function createGatewayRuntimePort(
                 text: input.text,
                 attachments: [],
               },
-              modelSelection: thread.modelSelection,
-              runtimeMode: thread.runtimeMode,
-              interactionMode: thread.interactionMode,
               // Gateway messages come from agents, never from the user typing.
               createdBy: "agent",
               creationSource: "mcp",
