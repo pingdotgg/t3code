@@ -507,7 +507,18 @@ describe("evaluatePullRequestWatch", () => {
         evaluatePullRequestWatch(again.next, detail({ checks: [run(job)] }), noRemarks).changes,
         [],
       );
-    }
+    } // A GitLab pipeline retry keeps its URL; only when it finished tells the runs apart.
+    const pipeline = (finishedAt: string) => ({ ...run(2), finishedAt });
+    const told = evaluatePullRequestWatch(
+      again.next,
+      detail({ checks: [pipeline("00:01")] }),
+      noRemarks,
+    );
+    assert.deepEqual(
+      evaluatePullRequestWatch(told.next, detail({ checks: [pipeline("00:03")] }), noRemarks)
+        .changes,
+      [{ kind: "checks-failed", failed: [pipeline("00:03")] }],
+    );
   });
 
   it("does not repeat a failure an older watch told by name", () => {

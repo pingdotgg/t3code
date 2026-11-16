@@ -81,7 +81,13 @@ export function evaluatePullRequestWatch(
     // A new run URL under a failing name is a rerun that failed again between reads.
     const toldRuns = failedRuns;
     const runOf = (check: PullRequestCheck) =>
-      check.url === null ? null : JSON.stringify([check.name, check.url]);
+      check.url === null
+        ? null
+        : JSON.stringify(
+            check.finishedAt === undefined
+              ? [check.name, check.url]
+              : [check.name, check.url, check.finishedAt],
+          );
     const newlyFailed = failed.filter((check) => {
       const run = runOf(check);
       return (

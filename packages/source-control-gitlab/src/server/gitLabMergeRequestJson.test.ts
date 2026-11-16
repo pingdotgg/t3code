@@ -168,6 +168,7 @@ describe("decodeMergeRequestDetailJson", () => {
             status: "success",
             web_url: "https://gitlab.com/acme/web/-/pipelines/9",
             source: "merge_request_event",
+            finished_at: "2026-11-10T00:39:53.753Z",
           },
         }),
       ),
@@ -182,6 +183,7 @@ describe("decodeMergeRequestDetailJson", () => {
         status: "success",
         description: "merge_request_event",
         url: "https://gitlab.com/acme/web/-/pipelines/9",
+        finishedAt: "2026-11-10T00:39:53.753Z",
       },
     ]);
   });
