@@ -9061,6 +9061,89 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("starts a buffered provider wake on a model picked later on the same provider", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-buffered-wake-same-provider-model-pick");
+      const newerSelection = { ...modelSelection, model: "gpt-5.5" };
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        createdBy: "user",
+        creationSource: "web",
+        title: "Buffered wake after a model pick",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`${threadId}:active`),
+        threadId,
+        messageId: MessageId.make(`${threadId}:active`),
+        text: "active",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`${threadId}:wake`),
+        threadId,
+        messageId: MessageId.make(`${threadId}:wake`),
+        text: "Background command finished",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "provider",
+        notification: {
+          source: { kind: "command" },
+          outcome: "completed",
+          summary: "Background command finished",
+        },
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.model-selection.set",
+        commandId: CommandId.make(`${threadId}:select-newer`),
+        threadId,
+        modelSelection: newerSelection,
+      });
+      const waiting = yield* orchestrator.getThreadProjection(threadId);
+      const active = waiting.runs.find(
+        (run) => run.userMessageId === MessageId.make(`${threadId}:active`),
+      )!;
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:completed`),
+            type: "run.updated",
+            threadId,
+            runId: active.id,
+            occurredAt: now,
+            payload: { ...active, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      yield* orchestrator.resumeQueuedRuns;
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      const delivered = after.runs.find(
+        (run) => run.userMessageId === MessageId.make(`${threadId}:wake`),
+      )!;
+      assert.equal(delivered.status, "starting");
+      assert.equal(delivered.providerThreadId, active.providerThreadId);
+      assert.deepEqual(delivered.modelSelection, newerSelection);
+      assert.deepEqual(after.thread.modelSelection, newerSelection);
+    }),
+  );
+
   it.effect.each(["", "pause", "resume", "clear", "edit"])(
     "refuses unsupported Antigravity goal controls: %s",
     (control) =>
