@@ -8,7 +8,7 @@ export function animateDetails(details: HTMLDetailsElement) {
   let expanded = details.open;
   // A native toggle, taken while reduced motion is on, bypasses the click handler below.
   details.addEventListener("toggle", () => {
-    expanded = details.open;
+    if (animation?.playState !== "running") expanded = details.open;
   });
 
   summary.addEventListener("click", (event) => {

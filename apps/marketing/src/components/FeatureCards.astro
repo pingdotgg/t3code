@@ -400,6 +400,7 @@ const repoFiles = [
         const name = run.querySelector("[data-run-name]");
         if (name) name.textContent = option.textContent?.trim() ?? "";
         setRunMenu(false);
+        runToggle.focus();
       });
     }
   }
@@ -432,6 +433,7 @@ const repoFiles = [
         if (name) name.textContent = option.dataset.label ?? "";
         if (effort) effort.textContent = option.dataset.effort ?? "";
         setMenu(false);
+        modelToggle.focus();
       });
     }
   }
