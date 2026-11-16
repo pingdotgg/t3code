@@ -259,9 +259,10 @@ it.effect("keeps at most one pending summary pass per thread", () =>
         delayMs: 0,
       });
       assert.isTrue(retried);
-      const settled = yield* outbox.get(first.id);
-      assert.isTrue(Option.isSome(settled));
-      if (Option.isSome(settled)) assert.notEqual(settled.value.status, "pending");
+      assert.equal(
+        Option.map(yield* outbox.get(first.id), (row) => row.status).pipe(Option.getOrNull),
+        "cancelled",
+      );
       const pendingContinuation = yield* outbox.get(continuation.id);
       assert.isTrue(Option.isSome(pendingContinuation));
       if (Option.isSome(pendingContinuation))
@@ -279,12 +280,62 @@ it.effect("keeps at most one pending summary pass per thread", () =>
       });
       yield* outbox.enqueue([successor]);
       assert.deepEqual(yield* outbox.reconcileAfterProcessLoss, { requeued: 0, cancelled: 0 });
-      const restarted = yield* outbox.get(continuation.id);
-      assert.isTrue(Option.isSome(restarted));
-      if (Option.isSome(restarted)) assert.notEqual(restarted.value.status, "pending");
+      assert.equal(
+        Option.map(yield* outbox.get(continuation.id), (row) => row.status).pipe(Option.getOrNull),
+        "cancelled",
+      );
       const pendingSuccessor = yield* outbox.get(successor.id);
       assert.isTrue(Option.isSome(pendingSuccessor));
       if (Option.isSome(pendingSuccessor)) assert.equal(pendingSuccessor.value.status, "pending");
+
+      yield* TestClock.adjust(
+        Duration.sum(EffectOutbox.SETTLED_EFFECT_RETENTION, Duration.days(1)),
+      );
+      yield* outbox.pruneSettled;
+      assert.isTrue(Option.isNone(yield* outbox.get(first.id)));
+      assert.isTrue(Option.isNone(yield* outbox.get(continuation.id)));
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("hands a later run's summary pass to a fresh row when the queued pass is retrying", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:summary-retrying");
+    const first = conversationSummaryEffect({
+      threadId,
+      runId: RunId.make("run:summary-retrying-a"),
+    });
+    const later = conversationSummaryEffect({
+      threadId,
+      runId: RunId.make("run:summary-retrying-b"),
+    });
+    const layer = EffectOutbox.layer.pipe(Layer.provide(SqlitePersistence.layerMemory));
+    yield* Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const workerId = "summary-retrying";
+      yield* outbox.enqueue([first]);
+      yield* outbox.claimNext({ workerId, lane: "maintenance" });
+      assert.isTrue(
+        yield* outbox.retry({ effectId: first.id, workerId, error: "Timed out.", delayMs: 0 }),
+      );
+
+      // The retrying row may exhaust its attempts, so it cannot stand in for this run's pass.
+      yield* outbox.enqueue([later]);
+      assert.isTrue(Option.isSome(yield* outbox.get(later.id)));
+
+      const retried = yield* outbox.claimNext({ workerId, lane: "maintenance" });
+      assert.deepEqual(
+        Option.map(retried, (effect) => effect.id),
+        Option.some(first.id),
+      );
+      assert.isTrue(
+        yield* outbox.retry({ effectId: first.id, workerId, error: "Timed out.", delayMs: 0 }),
+      );
+      const next = yield* outbox.claimNext({ workerId, lane: "maintenance" });
+      assert.deepEqual(
+        Option.map(next, (effect) => effect.id),
+        Option.some(later.id),
+      );
     }).pipe(Effect.provide(layer));
   }),
 );
