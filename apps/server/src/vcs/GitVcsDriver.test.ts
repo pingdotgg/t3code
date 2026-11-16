@@ -154,6 +154,15 @@ it.effect.each([
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+interface UntrackedBlobChange {
+  readonly git: Effect.Success<ReturnType<typeof makeCheckpointFixture>>["git"];
+  readonly write: (
+    relativePath: string,
+    contents: string,
+  ) => Effect.Effect<void, PlatformError.PlatformError>;
+  readonly checkpointRef: CheckpointRef;
+}
+
 const makeCheckpointFixture = Effect.fn("makeCheckpointFixture")(function* (
   driver: Effect.Success<ReturnType<typeof GitVcsDriver.makeVcsDriverShape>>,
   cwd: string,
@@ -527,6 +536,103 @@ it.effect("checkpoint capture ignores an inherited object directory", () =>
     );
     yield* git(["fsck", "--full"]);
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect.each([
+  { name: "nothing changed", reuses: true, change: () => Effect.void },
+  {
+    name: "its conversion attributes changed",
+    reuses: false,
+    change: ({ write }: UntrackedBlobChange) => write(".gitattributes", "*.txt text eol=lf\n"),
+  },
+  {
+    name: "its conversion config changed",
+    reuses: false,
+    change: ({ git }: UntrackedBlobChange) => git(["config", "core.autocrlf", "true"]),
+  },
+  {
+    name: "it was rewritten at the same size",
+    reuses: false,
+    change: ({ write }: UntrackedBlobChange) =>
+      write("nested/large.txt", "LINE\r\n".repeat(3 * 1024 * 1024)),
+  },
+  {
+    name: "it became ignored",
+    reuses: false,
+    change: ({ write }: UntrackedBlobChange) => write(".gitignore", "nested/\n"),
+  },
+  {
+    name: "HEAD now tracks it",
+    reuses: false,
+    change: ({ git }: UntrackedBlobChange) =>
+      git(["add", "nested/large.txt"]).pipe(Effect.andThen(git(["commit", "-m", "track"]))),
+  },
+  {
+    name: "its directory became a repository",
+    reuses: false,
+    change: ({ git }: UntrackedBlobChange) =>
+      git(["init", "nested"]).pipe(
+        Effect.andThen(
+          git(
+            ["-C", "nested", "-c", "user.name=Test", "-c", "user.email=test@test.com"].concat([
+              "commit",
+              "--allow-empty",
+              "-m",
+              "nested",
+            ]),
+          ),
+        ),
+      ),
+  },
+  {
+    name: "its blob was pruned",
+    reuses: false,
+    change: ({ git, checkpointRef }: UntrackedBlobChange) =>
+      git(["update-ref", "-d", checkpointRef]).pipe(Effect.andThen(git(["prune", "--expire=now"]))),
+  },
+])(
+  "checkpoint capture skips hashing an untracked file only while a fresh hash would match: $name",
+  ({ reuses, change }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const liveProcess = yield* VcsProcess.VcsProcess;
+      let reused = 0;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: (input) => {
+            if (input.args.includes("core.ignorestat=true")) reused++;
+            // Only a capture whose staging took real time looks for files to remember.
+            return input.args.includes("add")
+              ? liveProcess.run(input).pipe(Effect.tap(() => TestClock.adjust("1 second")))
+              : liveProcess.run(input);
+          },
+        }),
+      );
+      // A driver that has never captured this workspace hashes every file, as a first capture does.
+      const fresh = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-untracked-blobs-" });
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      const write = (relativePath: string, contents: string) =>
+        fs.writeFileString(path.join(cwd, relativePath), contents);
+      yield* fs.makeDirectory(path.join(cwd, "nested"));
+      yield* write("nested/large.txt", "line\r\n".repeat(3 * 1024 * 1024));
+      // Only files left alone for a few seconds before a capture are remembered.
+      yield* TestClock.adjust("36500 days");
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+      yield* change({ git, write, checkpointRef });
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      const freshRef = CheckpointRef.make("refs/t3/checkpoints/fresh");
+      yield* fresh.checkpoints.captureCheckpoint({ cwd, checkpointRef: freshRef });
+
+      assert.strictEqual(reused, reuses ? 1 : 0);
+      assert.strictEqual(
+        (yield* git(["rev-parse", `${checkpointRef}^{tree}`])).stdout,
+        (yield* git(["rev-parse", `${freshRef}^{tree}`])).stdout,
+      );
+      yield* git(["fsck", "--connectivity-only"]);
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 it.effect.each(["sha1", "sha256"] as const)(
