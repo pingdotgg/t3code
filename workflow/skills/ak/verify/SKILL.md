@@ -60,7 +60,7 @@ Total: [N] items ([X] direct, [Y] related)
 
 ## Phase 2: user approval
 
-Present the checklist and ask:
+Present the checklist, then ask (as structured questions if your harness offers them):
 
 - "Anything missing from this list?"
 - "Any items you want to skip?"

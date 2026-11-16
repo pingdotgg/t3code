@@ -14,7 +14,7 @@ If this thread was started with "run as the maestro dispatcher", skip to [Dispat
 
 ### Start the maestro
 
-Ask the user once: how many workers at once (default 2; use 1 if the project cannot run two dev stacks, for shared ports or one database), and confirm before starting. Check `t3_thread_list` for an existing `maestro <owner/repo>` thread first and nudge it instead of starting a second. Otherwise start it with `t3_thread_launch` (or ask the user to create the thread by hand) on the project root, titled `maestro <owner/repo>`, with this message:
+Ask the user once, as a structured question if your harness offers one: how many workers at once (default 2; use 1 if the project cannot run two dev stacks, for shared ports or one database), and confirm before starting. Check `t3_thread_list` for an existing `maestro <owner/repo>` thread first and nudge it instead of starting a second. Otherwise start it with `t3_thread_launch` (or ask the user to create the thread by hand) on the project root, titled `maestro <owner/repo>`, with this message:
 
 ```
 Use the `maestro` skill and run as the maestro dispatcher for <owner/repo>. Master thread: <master thread id>. Max workers: <N>.

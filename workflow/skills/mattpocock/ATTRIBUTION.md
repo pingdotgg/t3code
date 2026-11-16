@@ -53,6 +53,10 @@ and `writing-for-agents`.
     session logs on disk.
   - `CLAUDE.md` mentions in `setup-matt-pocock-skills`, `retro`, and `writing-for-agents` are
     unchanged. They mean the repo's instruction file, which is real for Claude projects.
+- Questions go through the harness's structured question tool where it has one, so T3 Code shows a
+  question card and notifies the user instead of leaving the question in plain text. `grilling`
+  asks each round that way and keeps upstream's text format as the fallback; `to-tickets`,
+  `wayfinder`, and `improve-codebase-architecture` ask their approval and pick questions the same way.
 
 ## Upstream sync
 
