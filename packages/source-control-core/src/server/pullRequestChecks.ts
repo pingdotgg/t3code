@@ -117,6 +117,10 @@ export const CHECK_LOG_EXCERPT_BUDGET = {
 } as const;
 type Line = { index: number; text: string };
 
+const isLogNoise = (text: string) =>
+  (text.trimStart().startsWith("❯") && text.includes("node_modules")) ||
+  /^(?:##\[(?:start|end)-action |Post job cleanup\.|Cleaning up orphan processes)/.test(text);
+
 export class CheckLogExcerpt {
   private pending = "";
   private totalLines = 0;
@@ -150,6 +154,7 @@ export class CheckLogExcerpt {
         .replace(/^\d{4}-\d\d-\d\dT[\d:.]+Z\s?/, "")
         .replace(/\r$/, ""),
     };
+    if (isLogNoise(line.text)) return;
     // Step names do not appear in the log; a section failed when it carries ##[error].
     if (line.text.startsWith("##[group]Run ")) {
       if (this.failedSection) this.failedTail = this.tail;
