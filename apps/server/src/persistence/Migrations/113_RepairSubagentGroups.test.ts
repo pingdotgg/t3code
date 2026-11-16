@@ -90,6 +90,18 @@ layer("113_RepairSubagentGroups", (it) => {
             },
           ),
         ],
+        [
+          "subagent-null",
+          threadPayload(
+            "subagent-null",
+            {
+              parentThreadId: "owner",
+              relationshipToParent: "subagent",
+              rootThreadId: "owner",
+            },
+            { group: null },
+          ),
+        ],
       ];
       for (const [id, payload] of rows) {
         yield* sql`
@@ -119,15 +131,15 @@ layer("113_RepairSubagentGroups", (it) => {
           ["owner", "object"],
           ["seat", "object"],
           ["subagent", "object"],
+          ["subagent-null", "null"],
         ],
       );
 
       yield* runMigrations({ toMigrationInclusive: 113 });
       const after = new Map((yield* read).map((row) => [row.thread_id, row]));
-      for (const id of ["owner", "seat"]) {
+      for (const id of ["owner", "seat", "subagent-null"]) {
         const earlier = before.find((row) => row.thread_id === id);
         assert.strictEqual(after.get(id)?.payload_json, earlier?.payload_json);
-        assert.strictEqual(after.get(id)?.group_type, "object");
       }
       const subagent = after.get("subagent");
       assert.strictEqual(subagent?.group_type, null);
