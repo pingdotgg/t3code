@@ -30,6 +30,25 @@ function ListProbe({
   );
 }
 
+it("stacks rows by their layout height while an ancestor is scaled", async () => {
+  const items = Array.from({ length: 6 }, (_, index) => `Row ${index}`);
+  // Dialogs and popovers mount their content at scale 0.98 and grow to 1.
+  await using screen = await render(
+    <div style={{ scale: "0.98" }}>
+      <LegendList
+        data={items}
+        keyExtractor={(item) => item}
+        renderItem={({ item }) => <div style={{ height: 40 }}>{item}</div>}
+        style={{ height: 300, width: 300 }}
+      />
+    </div>,
+  );
+  await expect.element(screen.getByText("Row 5")).toBeVisible();
+  const first = screen.getByText("Row 0").element().getBoundingClientRect();
+  const last = screen.getByText("Row 5").element().getBoundingClientRect();
+  expect((last.top - first.top) / 0.98).toBeCloseTo(200, 0);
+});
+
 it("refreshes list edges after content shrinks without scrolling and after the list reopens", async () => {
   const listRef = createRef<LegendListRef | null>();
   const items = Array.from({ length: 20 }, (_, index) => `Row ${index}`);
