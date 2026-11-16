@@ -14,6 +14,7 @@ const status = (overrides: Partial<ServerSourceUpdateStatus> = {}): ServerSource
   head: { sha: "abc1234", subject: "feat: thing" },
   behindOrigin: 0,
   upstreamAhead: 0,
+  unbuiltCommits: 0,
   fetchedAt: "2026-11-14T10:00:00.000Z",
   updateRunning: false,
   lastRunId: null,
@@ -44,7 +45,15 @@ describe("resolveSourceUpdatePhase", () => {
       null,
       null,
       1_000,
-      { kind: "available", behindOrigin: 3, upstreamAhead: 2 },
+      { kind: "available", behindOrigin: 3, upstreamAhead: 2, unbuilt: 0 },
+    ],
+    [
+      "the checkout moved past the running build",
+      status({ unbuiltCommits: 2 }),
+      null,
+      null,
+      1_000,
+      { kind: "available", behindOrigin: 0, upstreamAhead: 0, unbuilt: 2 },
     ],
     [
       "missing remote counts as none",
@@ -52,13 +61,14 @@ describe("resolveSourceUpdatePhase", () => {
       null,
       null,
       1_000,
-      { kind: "available", behindOrigin: 0, upstreamAhead: 4 },
+      { kind: "available", behindOrigin: 0, upstreamAhead: 4, unbuilt: 0 },
     ],
     [
       "actions the server cannot run are not offered",
       status({
         behindOrigin: 3,
         upstreamAhead: 2,
+        unbuiltCommits: 2,
         updateUnavailableReason: "no systemd",
         pullUpstreamUnavailableReason: "no Claude",
       }),
@@ -166,7 +176,7 @@ describe("resolveSourceUpdatePhase", () => {
       null,
       "theirs",
       1_000,
-      { kind: "available", behindOrigin: 1, upstreamAhead: 0 },
+      { kind: "available", behindOrigin: 1, upstreamAhead: 0, unbuilt: 0 },
     ],
   ] as const)("%s", (_name, input, current, dismissedRunId, nowMs, expected) => {
     expect(
@@ -178,8 +188,21 @@ describe("resolveSourceUpdatePhase", () => {
 describe("source update actions", () => {
   it.each([
     [{ kind: "idle" }, null, false],
-    [{ kind: "available", behindOrigin: 1, upstreamAhead: 0 }, "Update · 1 new commit", true],
-    [{ kind: "available", behindOrigin: 0, upstreamAhead: 5 }, "Upstream · 5 new commits", false],
+    [
+      { kind: "available", behindOrigin: 1, upstreamAhead: 0, unbuilt: 0 },
+      "Update · 1 new commit",
+      true,
+    ],
+    [
+      { kind: "available", behindOrigin: 0, upstreamAhead: 5, unbuilt: 0 },
+      "Upstream · 5 new commits",
+      false,
+    ],
+    [
+      { kind: "available", behindOrigin: 0, upstreamAhead: 0, unbuilt: 2 },
+      "Rebuild · 2 commits not built",
+      true,
+    ],
     [{ kind: "running", cancellable: true }, "Updating…", false],
     [{ kind: "succeeded", runId: "r", sha: "def5678", message: "" }, "Updated · def5678", false],
     [{ kind: "failed", runId: "r", message: "x" }, "Update failed", true],

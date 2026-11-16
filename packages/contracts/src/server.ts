@@ -432,6 +432,10 @@ export const ServerSourceUpdateStatus = Schema.Struct({
   behindOrigin: Schema.NullOr(NonNegativeInt),
   /** Commits `upstream/main` has that HEAD lacks; null when the remote branch is missing. */
   upstreamAhead: Schema.NullOr(NonNegativeInt),
+  /** Commits HEAD has that the running server was not built from; null when unknown. */
+  unbuiltCommits: Schema.NullOr(NonNegativeInt).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   /** When the remotes were last fetched successfully. */
   fetchedAt: Schema.NullOr(IsoDateTime),
   updateRunning: Schema.Boolean,

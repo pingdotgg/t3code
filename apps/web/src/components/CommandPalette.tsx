@@ -134,6 +134,7 @@ import {
   canPullUpstream,
   canRunSourceUpdate,
   newCommitsLabel,
+  unbuiltCommitsLabel,
 } from "./sourceUpdate/sourceUpdate.logic";
 import {
   useSourceUpdateActions,
@@ -1406,7 +1407,9 @@ function OpenCommandPaletteDialog(props: {
       title: "Update from source",
       description: sourceUpdate.status?.behindOrigin
         ? `Fast-forward to origin/main (${newCommitsLabel(sourceUpdate.status.behindOrigin)}), rebuild, and restart`
-        : "Fast-forward to origin/main, rebuild, and restart",
+        : sourceUpdate.status?.unbuiltCommits
+          ? `Rebuild (${unbuiltCommitsLabel(sourceUpdate.status.unbuiltCommits)}) and restart`
+          : "Fast-forward to origin/main, rebuild, and restart",
       icon: <CircleArrowUpIcon className={ITEM_ICON_CLASS} />,
       run: () => sourceUpdateActions.update(sourceUpdateEnvironmentId),
     });

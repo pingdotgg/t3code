@@ -189,6 +189,12 @@ const make = Effect.gen(function* () {
   const git = (args: ReadonlyArray<string>, timeout: Duration.Input = "30 seconds") =>
     runner.run({ command: "git", args: ["-C", checkout, ...args], env: GIT_ENV, timeout });
 
+  // Update builds HEAD right before it restarts the server, so HEAD at startup is what runs.
+  const builtHead = yield* git(["rev-parse", "HEAD"]).pipe(
+    Effect.map((output) => (output.code === 0 ? output.stdout.trim() : null)),
+    Effect.orElseSucceed(() => null),
+  );
+
   const systemdUnavailableReason = yield* Effect.cached(
     Effect.gen(function* () {
       const probes = yield* Effect.all(
@@ -261,30 +267,39 @@ const make = Effect.gen(function* () {
       ),
       Effect.mapError(failed(`Could not read the checkout at ${checkout}.`)),
     );
-    const count = (ref: string) =>
-      git(["rev-list", "--count", `HEAD..${ref}`]).pipe(
+    const count = (range: string) =>
+      git(["rev-list", "--count", range]).pipe(
         Effect.map(parseCommitCount),
         Effect.orElseSucceed(() => null),
       );
     const running = yield* updateRunning;
     // The update fetches origin itself.
     if (!running) yield* fetchRemotesInBackground;
-    const [headOutput, behindOrigin, upstreamAhead, run, updateUnavailable, claude] =
-      yield* Effect.all(
-        [
-          head,
-          count("origin/main"),
-          count("upstream/main"),
-          lastRun,
-          systemdUnavailableReason,
-          claudeProvider,
-        ],
-        { concurrency: "unbounded" },
-      );
+    const [
+      headOutput,
+      behindOrigin,
+      upstreamAhead,
+      unbuiltCommits,
+      run,
+      updateUnavailable,
+      claude,
+    ] = yield* Effect.all(
+      [
+        head,
+        count("HEAD..origin/main"),
+        count("HEAD..upstream/main"),
+        builtHead === null ? Effect.succeed(null) : count(`${builtHead}..HEAD`),
+        lastRun,
+        systemdUnavailableReason,
+        claudeProvider,
+      ],
+      { concurrency: "unbounded" },
+    );
     return {
       head: parseHeadCommit(headOutput.stdout),
       behindOrigin,
       upstreamAhead,
+      unbuiltCommits,
       fetchedAt: yield* Ref.get(fetchedAt),
       updateRunning: running,
       lastRunId: run.lastRunId,

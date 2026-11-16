@@ -8,6 +8,7 @@ import {
   canRunSourceUpdate,
   isSourceUpdateSettled,
   newCommitsLabel,
+  unbuiltCommitsLabel,
 } from "./sourceUpdate.logic";
 import {
   dismissSourceUpdateOutcome,
@@ -36,7 +37,10 @@ function SourceUpdateRow({ environmentId }: { readonly environmentId: Environmen
               ? "Could not read the source checkout. Check the server log."
               : "Checking the checkout…"
             : [
-                `Running ${status.head.sha} ${status.head.subject}.`,
+                `Checkout at ${status.head.sha} ${status.head.subject}.`,
+                status.unbuiltCommits
+                  ? `${unbuiltCommitsLabel(status.unbuiltCommits)} into the running server yet.`
+                  : null,
                 status.behindOrigin
                   ? `origin/main has ${newCommitsLabel(status.behindOrigin)}.`
                   : null,

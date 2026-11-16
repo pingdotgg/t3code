@@ -12,6 +12,7 @@ import {
   newCommitsLabel,
   type SourceUpdatePhase,
   sourceUpdatePillLabel,
+  unbuiltCommitsLabel,
 } from "./sourceUpdate.logic";
 import {
   dismissSourceUpdateOutcome,
@@ -26,7 +27,7 @@ function PhaseIcon({ phase }: { readonly phase: SourceUpdatePhase }) {
   if (phase.kind === "failed")
     return <CircleAlertIcon className={cn(className, "text-destructive")} />;
   if (phase.kind === "succeeded") return <CircleCheckIcon className={className} />;
-  if (phase.kind === "available" && phase.behindOrigin === 0) {
+  if (phase.kind === "available" && phase.behindOrigin === 0 && phase.unbuilt === 0) {
     return <GitForkIcon className={className} />;
   }
   return <CircleArrowUpIcon className={cn(className, phase.kind === "running" && "opacity-60")} />;
@@ -68,7 +69,7 @@ function SourceUpdatePill({ environmentId }: { readonly environmentId: Environme
         <MenuPopup side="top" align="end">
           {status ? (
             <div className="max-w-64 truncate px-2 py-1.5 text-muted-foreground text-xs">
-              Running {status.head.sha} {status.head.subject}
+              Checkout at {status.head.sha} {status.head.subject}
             </div>
           ) : null}
           {phase.kind === "failed" ? (
@@ -87,6 +88,8 @@ function SourceUpdatePill({ environmentId }: { readonly environmentId: Environme
               {phase.kind === "failed" ? "Retry update" : "Update and restart"}
               {status?.behindOrigin ? (
                 <MenuItemDetail>{newCommitsLabel(status.behindOrigin)}</MenuItemDetail>
+              ) : status?.unbuiltCommits ? (
+                <MenuItemDetail>{unbuiltCommitsLabel(status.unbuiltCommits)}</MenuItemDetail>
               ) : null}
             </MenuItem>
           ) : null}

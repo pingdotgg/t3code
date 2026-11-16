@@ -98,6 +98,8 @@ const makeService = (
             if (args.includes("log -1")) return Effect.succeed(output("abc1234\0Add a thing\n"));
             if (args.includes("HEAD..origin/main")) return Effect.succeed(output("3\n"));
             if (args.includes("HEAD..upstream/main")) return Effect.succeed(output("", 128));
+            if (args.includes("rev-parse HEAD")) return Effect.succeed(output("built0\n"));
+            if (args.includes("built0..HEAD")) return Effect.succeed(output("2\n"));
             return Effect.succeed(output(""));
           },
         }),
@@ -195,21 +197,25 @@ describe("SourceUpdateService", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("reports HEAD and how far each remote moved, null for a missing remote", () => {
-    const { layer } = makeService();
-    return Effect.gen(function* () {
-      const service = yield* SourceUpdateService.SourceUpdateService;
-      const status = yield* service.status;
-      assert.deepEqual(status.head, { sha: "abc1234", subject: "Add a thing" });
-      assert.equal(status.behindOrigin, 3);
-      assert.isNull(status.upstreamAhead);
-      assert.isFalse(status.updateRunning);
-      assert.isNull(status.lastRunId);
-      assert.isNull(status.lastResult);
-      assert.isNull(status.updateUnavailableReason);
-      assert.isNull(status.pullUpstreamUnavailableReason);
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "reports HEAD, how far each remote and the running build lag it, null for a missing remote",
+    () => {
+      const { layer } = makeService();
+      return Effect.gen(function* () {
+        const service = yield* SourceUpdateService.SourceUpdateService;
+        const status = yield* service.status;
+        assert.deepEqual(status.head, { sha: "abc1234", subject: "Add a thing" });
+        assert.equal(status.behindOrigin, 3);
+        assert.isNull(status.upstreamAhead);
+        assert.equal(status.unbuiltCommits, 2);
+        assert.isFalse(status.updateRunning);
+        assert.isNull(status.lastRunId);
+        assert.isNull(status.lastResult);
+        assert.isNull(status.updateUnavailableReason);
+        assert.isNull(status.pullUpstreamUnavailableReason);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("answers status without waiting on the remote fetch, and runs one at a time", () => {
     const fetchGate = Deferred.makeUnsafe<void>();

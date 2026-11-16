@@ -7,6 +7,8 @@ export type SourceUpdatePhase =
       readonly kind: "available";
       readonly behindOrigin: number;
       readonly upstreamAhead: number;
+      /** Checkout commits the running server was not built from. */
+      readonly unbuilt: number;
     }
   /** `cancellable` once the server confirms the update is running. */
   | { readonly kind: "running"; readonly cancellable: boolean }
@@ -74,11 +76,13 @@ export function resolveSourceUpdatePhase(input: {
   if (run !== null && settled?.runId !== run.runId) return { kind: "running", cancellable: false };
   if (settled !== null && settled.runId !== input.dismissedRunId) return settled;
   if (status === null) return IDLE;
-  const behindOrigin = status.updateUnavailableReason === null ? (status.behindOrigin ?? 0) : 0;
+  const canUpdate = status.updateUnavailableReason === null;
+  const behindOrigin = canUpdate ? (status.behindOrigin ?? 0) : 0;
+  const unbuilt = canUpdate ? (status.unbuiltCommits ?? 0) : 0;
   const upstreamAhead =
     status.pullUpstreamUnavailableReason === null ? (status.upstreamAhead ?? 0) : 0;
-  return behindOrigin > 0 || upstreamAhead > 0
-    ? { kind: "available", behindOrigin, upstreamAhead }
+  return behindOrigin > 0 || unbuilt > 0 || upstreamAhead > 0
+    ? { kind: "available", behindOrigin, upstreamAhead, unbuilt }
     : IDLE;
 }
 
@@ -86,14 +90,18 @@ export function newCommitsLabel(count: number): string {
   return `${count} new commit${count === 1 ? "" : "s"}`;
 }
 
+export function unbuiltCommitsLabel(count: number): string {
+  return `${count} commit${count === 1 ? "" : "s"} not built`;
+}
+
 export function sourceUpdatePillLabel(phase: SourceUpdatePhase): string | null {
   switch (phase.kind) {
     case "idle":
       return null;
     case "available":
-      return phase.behindOrigin > 0
-        ? `Update · ${newCommitsLabel(phase.behindOrigin)}`
-        : `Upstream · ${newCommitsLabel(phase.upstreamAhead)}`;
+      if (phase.behindOrigin > 0) return `Update · ${newCommitsLabel(phase.behindOrigin)}`;
+      if (phase.unbuilt > 0) return `Rebuild · ${unbuiltCommitsLabel(phase.unbuilt)}`;
+      return `Upstream · ${newCommitsLabel(phase.upstreamAhead)}`;
     case "running":
       return "Updating…";
     case "succeeded":
@@ -108,7 +116,10 @@ export function canRunSourceUpdate(
   phase: SourceUpdatePhase,
 ): boolean {
   if (status === null || status.updateUnavailableReason !== null) return false;
-  return (phase.kind === "available" && phase.behindOrigin > 0) || phase.kind === "failed";
+  return (
+    (phase.kind === "available" && (phase.behindOrigin > 0 || phase.unbuilt > 0)) ||
+    phase.kind === "failed"
+  );
 }
 
 export function canCancelSourceUpdate(phase: SourceUpdatePhase): boolean {
