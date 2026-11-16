@@ -18,6 +18,17 @@ export interface ThreadNotificationObservation {
   readonly backgroundWake: boolean;
 }
 
+/** setTimeout fires at once for longer delays. */
+export const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+/**
+ * Statuses that still wait on the user. Only these announce when a mute ends; a run that
+ * failed or hit a limit while muted stays quiet, like a completion from the mute.
+ */
+export function waitsOnUser(status: string): boolean {
+  return status === "input" || status === "request" || status === "approval";
+}
+
 /** Matches the push relay's completion confirmation: a final wake can start right after a progress wake. */
 export const RELEASED_COMPLETION_GRACE_MS = 5_000;
 
@@ -88,7 +99,7 @@ export function createThreadNotificationGate<Key>(
         readonly archived: boolean;
         readonly quiet: boolean;
         readonly snoozed: boolean;
-        /** The thread's mute just ended: a request still waiting announces now. */
+        /** The thread's mute just ended while it waits on the user, so the wait announces now. */
         readonly muteEnded?: boolean;
       },
     ): void {

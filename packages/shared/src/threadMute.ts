@@ -22,10 +22,27 @@ export function isThreadMuted(thread: ThreadMuteFields, nowMs: number): boolean 
 }
 
 /**
- * A run that finished before the latest mute ended never alerts or shows Done, so ending a mute
- * cannot replay what it silenced. Unmuting records its time as the end instead of clearing it.
+ * The run finished inside the latest mute, so it never alerts or shows Done. A run that finished
+ * before the mute began keeps its Done marker. Unmuting records its time as the end, so the
+ * window survives the unmute.
  */
 export function isMutedCompletion(thread: ThreadMuteFields, completedAt: Instant): boolean {
+  return isDuringMute(thread, completedAt);
+}
+
+/** The instant falls inside the latest mute, from its start up to its end. */
+export function isDuringMute(thread: ThreadMuteFields, at: Instant): boolean {
+  const atMs = toMillis(at);
+  const mutedAtMs = toMillis(thread.mutedAt);
+  if (atMs === null || mutedAtMs === null) return false;
+  return atMs >= mutedAtMs && finishedBeforeMuteEnd(thread, at);
+}
+
+/**
+ * The run finished before the latest mute ended, inside it or earlier. Push alerts use this,
+ * so ending a mute never re-sends an alert the mute cleared.
+ */
+export function finishedBeforeMuteEnd(thread: ThreadMuteFields, completedAt: Instant): boolean {
   const completedAtMs = toMillis(completedAt);
   if (completedAtMs === null || toMillis(thread.mutedAt) === null) return false;
   const untilMs = toMillis(thread.mutedUntil);

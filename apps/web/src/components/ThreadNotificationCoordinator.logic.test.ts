@@ -4,6 +4,7 @@ import {
   createThreadNotificationGate,
   isSnoozedForNotification,
   RELEASED_COMPLETION_GRACE_MS,
+  waitsOnUser,
   type ThreadNotificationObservation,
 } from "./ThreadNotificationCoordinator.logic";
 
@@ -140,6 +141,21 @@ describe("createThreadNotificationGate", () => {
     expect(notify.mock.calls).toEqual([["thread", "input"]]);
     observe({ ...asking });
     expect(notify).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a run that failed while muted quiet when the mute ends", () => {
+    const { notify, observe } = harness();
+    const failed = { ...working, attention: "run-2:failed" };
+    observe(working);
+    observe(failed, { ...visible, archived: true });
+    // A failure does not wait on the user, so the coordinator ends the mute without muteEnded.
+    expect(waitsOnUser("failed")).toBe(false);
+    expect(waitsOnUser("limited")).toBe(false);
+    observe({ ...failed });
+    expect(notify).not.toHaveBeenCalled();
+    expect(waitsOnUser("approval")).toBe(true);
+    expect(waitsOnUser("input")).toBe(true);
+    expect(waitsOnUser("request")).toBe(true);
   });
 
   it("stays quiet when a mute ends with nothing waiting", () => {

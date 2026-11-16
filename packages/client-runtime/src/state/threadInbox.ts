@@ -1,6 +1,7 @@
 // @effect-diagnostics globalTimers:off - Shelf placement timers run in web and native clients, outside an Effect runtime.
 import { threadRuntimeIsActive, type EnvironmentThreadShell } from "./models.ts";
 import { toSortableTimestamp } from "./threadSort.ts";
+import { isDuringMute, isThreadMuted } from "@t3tools/shared/threadMute";
 import { effectiveSnoozed } from "./threadSettled.ts";
 
 type WorkingThreadInput = Pick<
@@ -12,9 +13,20 @@ type WorkingThreadInput = Pick<
   | "interactionMode"
   | "latestRun"
   | "runtime"
->;
+> &
+  Partial<Pick<EnvironmentThreadShell, "mutedAt" | "mutedUntil">>;
 
-export function isThreadWorking(thread: WorkingThreadInput): boolean {
+const wallClockNow = () => {
+  // @effect-diagnostics-next-line globalDate:off - Mute windows are wall-clock time shared by web and native clients.
+  return Date.now();
+};
+
+/**
+ * Whether the thread belongs on the Working shelf. A muted thread never does: its
+ * scheduled runs keep working out of sight, in the place the user left it.
+ */
+export function isThreadWorking(thread: WorkingThreadInput, nowMs = wallClockNow()): boolean {
+  if (isThreadMuted(thread, nowMs)) return false;
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
   if (thread.pendingSubagentRequest != null) return false;
   if (!threadRuntimeIsActive(thread.runtime) && thread.runtime?.status !== "idle") return false;
@@ -52,7 +64,14 @@ export function asLaunchingThread<T extends EnvironmentThreadShell>(thread: T): 
 type InboxThreadInput = Pick<
   EnvironmentThreadShell,
   "id" | "environmentId" | "createdAt" | "unsettledAt" | "latestRun"
->;
+> &
+  Partial<Pick<EnvironmentThreadShell, "mutedAt" | "mutedUntil">>;
+
+// A run started or finished while muted does not move its thread up the list.
+function unmutedRunTimestamp(thread: InboxThreadInput, at: string | null | undefined): number {
+  if (at == null || isDuringMute(thread, at)) return 0;
+  return toSortableTimestamp(at) ?? 0;
+}
 
 export function sortInboxThreadsByReturn<T extends InboxThreadInput>(
   threads: readonly T[],
@@ -64,8 +83,8 @@ export function sortInboxThreadsByReturn<T extends InboxThreadInput>(
       Math.max(
         toSortableTimestamp(thread.createdAt) ?? 0,
         toSortableTimestamp(thread.unsettledAt ?? undefined) ?? 0,
-        toSortableTimestamp(thread.latestRun?.requestedAt ?? undefined) ?? 0,
-        toSortableTimestamp(thread.latestRun?.completedAt ?? undefined) ?? 0,
+        unmutedRunTimestamp(thread, thread.latestRun?.requestedAt),
+        unmutedRunTimestamp(thread, thread.latestRun?.completedAt),
         observedReturnAt?.(thread) ?? 0,
       ),
     ]),
@@ -211,7 +230,8 @@ export function createInboxReturnTracker() {
         const key = keyOf(thread);
         present.add(key);
         const previous = states.get(key);
-        const actual = isThreadWorking(thread);
+        const actual = isThreadWorking(thread, at);
+        const muted = isThreadMuted(thread, at);
         const placement =
           actual || previous?.working
             ? JSON.stringify([
@@ -239,6 +259,7 @@ export function createInboxReturnTracker() {
           thread.deletedAt != null ||
           thread.pinnedAt != null ||
           thread.settledOverride === "settled" ||
+          muted ||
           effectiveSnoozed(thread, { now: observedAt });
         // Only shelf placement is held: execution state and attention requests stay authoritative.
         const endedAt = toSortableTimestamp(thread.latestRun?.completedAt ?? undefined);
@@ -248,7 +269,8 @@ export function createInboxReturnTracker() {
             ? (previous.deadline ?? at + WORKING_EXIT_GRACE_MS)
             : null;
         const working = actual || (deadline !== null && deadline > at);
-        if (previous?.working && !working) returns.set(key, at);
+        // Leaving the shelf because of a mute is not a return, so it does not move the thread up.
+        if (previous?.working && !working && !muted) returns.set(key, at);
         states.set(key, { working, deadline: working ? deadline : null, placement });
       }
       for (const key of states.keys()) {

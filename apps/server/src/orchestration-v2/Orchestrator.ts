@@ -7007,7 +7007,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : run.id === command.restartContinuationOfRunId,
     )?.delegatedTaskId;
 
-    if (projection.thread.settledOverride !== null) {
+    // A scheduled or automated message to a muted thread keeps it where the user left it, so
+    // its runs stay out of sight. A message the user sends brings it back as usual.
+    const keepsPlacement =
+      (command.createdBy !== "user" || command.scheduledTaskId !== undefined) &&
+      isThreadMuted(projection.thread, (yield* DateTime.now).epochMilliseconds);
+    if (projection.thread.settledOverride !== null && !keepsPlacement) {
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {
         ...projection.thread,

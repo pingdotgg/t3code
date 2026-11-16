@@ -37,6 +37,8 @@ import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "./Sidebar.
 import {
   createThreadNotificationGate,
   isSnoozedForNotification,
+  MAX_TIMER_DELAY_MS,
+  waitsOnUser,
   type ThreadNotificationKind,
   type ThreadNotificationObservation,
 } from "./ThreadNotificationCoordinator.logic";
@@ -318,7 +320,8 @@ export function startThreadNotifications(
         // A muted thread is silent like an archived one. Completions from the mute stay
         // quiet when it ends, but a request still waiting announces then.
         archived: state.thread.archivedAt !== null || muted,
-        muteEnded,
+        // Only a wait on the user re-announces. A run that failed while muted stays quiet.
+        muteEnded: muteEnded && waitsOnUser(state.status),
         quiet:
           state.raw.latestRunStopRequested === true ||
           isMutedCompletion(state.raw, state.raw.latestRunCompletedAt),
@@ -337,7 +340,12 @@ export function startThreadNotifications(
       if (typeof end === "number" && end < nextEnd) nextEnd = end;
     }
     if (nextEnd === Infinity) return;
-    entry.muteEndTimer = setTimeout(entry.reobserve, nextEnd - now + 1);
+    // Look reobserve up when the timer fires: the first observation runs before it is assigned.
+    // Longer delays overflow setTimeout, so a far end wakes early and reschedules.
+    entry.muteEndTimer = setTimeout(
+      () => entry.reobserve(),
+      Math.min(nextEnd - now + 1, MAX_TIMER_DELAY_MS),
+    );
   };
 
   const watchEnvironment = (environmentId: EnvironmentId): WatchedEnvironment => {

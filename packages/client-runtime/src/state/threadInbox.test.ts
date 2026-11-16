@@ -261,3 +261,57 @@ describe("sortWorkingThreadsBySend", () => {
     ).toEqual(["sent-last", "sent-first", "launched"]);
   });
 });
+
+describe("muted threads", () => {
+  const mutedAt = "2026-06-01T00:30:00.000Z";
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.parse("2026-06-01T03:00:00.000Z"));
+  });
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("keeps a muted thread's scheduled run off the Working shelf without moving it", () => {
+    const tracker = createInboxReturnTracker();
+    const muted = { ...thread("muted", true), mutedAt };
+    expect(isThreadWorking(muted)).toBe(false);
+    expect(isThreadWorking({ ...muted, mutedUntil: "2026-06-01T02:00:00.000Z" })).toBe(true);
+    // Muting a thread mid-run takes it off the shelf at once, with no return stamp.
+    expect(tracker.observe([thread("muted", true)]).isWorking(muted)).toBe(true);
+    const after = tracker.observe([muted]);
+    expect(after.isWorking(muted)).toBe(false);
+    vi.advanceTimersByTime(5_000);
+    expect(tracker.observe([muted]).returnedAt(muted)).toBeUndefined();
+  });
+
+  it("does not move a thread up for runs started or finished while it is muted", () => {
+    const run = (at: string) => ({
+      runId: RunId.make(`run:${at}`),
+      status: "completed" as const,
+      requestedAt: at,
+      startedAt: at,
+      completedAt: at,
+      assistantMessageId: null,
+    });
+    const quiet = {
+      ...thread("quiet", false),
+      createdAt: "2026-06-01T00:10:00.000Z",
+      latestRun: run("2026-06-01T02:00:00.000Z"),
+      mutedAt,
+    };
+    const other = {
+      ...thread("other", false),
+      latestRun: run("2026-06-01T01:00:00.000Z"),
+    };
+    expect(sortInboxThreadsByReturn([quiet, other]).map((entry) => entry.id)).toEqual([
+      "other",
+      "quiet",
+    ]);
+    // Without the mute, the later run puts it first.
+    expect(
+      sortInboxThreadsByReturn([{ ...quiet, mutedAt: null }, other]).map((entry) => entry.id),
+    ).toEqual(["quiet", "other"]);
+  });
+});
