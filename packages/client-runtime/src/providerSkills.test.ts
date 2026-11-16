@@ -176,16 +176,25 @@ describe("provider workspace snapshot refresh atom", () => {
     | null
     | Promise<ReadonlyArray<ServerProvider> | null>;
 
-  function setup(initialProviders: ReadonlyArray<ServerProvider>, initialResponses?: Response[]) {
+  function setup(
+    initialProviders: ReadonlyArray<ServerProvider>,
+    initialResponses?: Response[],
+    // The client drops a reply whose provider changed while it was in flight.
+    options?: { readonly droppedReplies?: number },
+  ) {
+    let droppedReplies = options?.droppedReplies ?? 0;
     const providersAtom = Atom.make<ReadonlyArray<ServerProvider> | null>(initialProviders);
     const responses: Response[] = [...(initialResponses ?? [])];
     const run = vi.fn(async () => {
       const providers = await (responses.shift() ?? (() => null))();
-      return providers === null
-        ? AsyncResult.failure<{ providers: ReadonlyArray<ServerProvider> }, string>(
-            Cause.fail("offline"),
-          )
-        : AsyncResult.success({ providers });
+      if (providers === null) {
+        return AsyncResult.failure<{ providers: ReadonlyArray<ServerProvider> }, string>(
+          Cause.fail("offline"),
+        );
+      }
+      if (droppedReplies > 0) droppedReplies -= 1;
+      else registry.set(providersAtom, providers);
+      return AsyncResult.success({ providers });
     });
     const family = createProviderWorkspaceSnapshotRefreshAtomFamily({
       providers: () => providersAtom,
@@ -242,6 +251,20 @@ describe("provider workspace snapshot refresh atom", () => {
       unmount();
     },
   );
+
+  it("asks again at once when the client dropped a complete reply", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:00:00.000Z") });
+    const scanned = withSnapshot("2026-01-01T00:00:00.000Z");
+    const { registry, atom, run, unmount } = setup(noSnapshot, [() => scanned, () => scanned], {
+      droppedReplies: 1,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(isProviderWorkspaceSnapshotScanning(registry.get(atom))).toBe(false);
+    registry.refresh(atom);
+    expect(run).toHaveBeenCalledTimes(2);
+    unmount();
+  });
 
   it("keeps the TTL guard for a newly scanned catalog when the client clock is ahead", async () => {
     vi.useFakeTimers({ now: Date.parse("2026-01-01T01:00:00.000Z") });
