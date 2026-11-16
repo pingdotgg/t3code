@@ -33,6 +33,8 @@ internal class TerminalTextWatcher(
     if (!isComposing(editable)) clear(editable)
   }
 
+  fun reset(editable: Editable) = clear(editable)
+
   private fun sendDifference(text: String) {
     val prefix = sentComposing.commonPrefixWith(text).length
     val removed = sentComposing.codePointCount(prefix, sentComposing.length)

@@ -291,7 +291,10 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
         onInput(mapOf("data" to "\r"))
       },
     )
-    val navigationKeys = TerminalNavigationKeyListener { onInput(mapOf("data" to it)) }
+    val navigationKeys = TerminalNavigationKeyListener {
+      resetInput()
+      onInput(mapOf("data" to it))
+    }
     inputView.setOnKeyListener { _, keyCode, event ->
       if (readOnly) return@setOnKeyListener true
       if (navigationKeys.onKey(inputView, keyCode, event)) return@setOnKeyListener true
@@ -396,6 +399,14 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     terminalHandle = 0L
     fedBuffer = ""
     terminalCanvas.resetSelectionState()
+  }
+
+  // Input sent around the field moves the terminal cursor, so the IME must not
+  // keep editing a word it is still composing there.
+  fun resetInput() {
+    if (inputView.text.isEmpty()) return
+    textWatcher.reset(inputView.text)
+    context.getSystemService(InputMethodManager::class.java)?.restartInput(inputView)
   }
 
   fun applyPendingBuffer() {

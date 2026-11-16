@@ -43,15 +43,17 @@ class TerminalInputConnectionTest {
     connection.setComposingText("😀", 1)
     connection.setComposingText("😁", 1)
     connection.commitText("😁", 1)
+    connection.setComposingText("ab", 1)
+    watcher.reset(input.text)
+    connection.commitText("c", 1)
 
     assertEquals(
-      listOf("j", "\u007F", "fo", "n", "i", "\u007F\u007F", "你", "😀", "\u007F", "😁"),
+      listOf("j", "\u007F", "fo", "n", "i", "\u007F\u007F", "你", "😀", "\u007F", "😁", "ab", "c"),
       sent
     )
     assertEquals("", input.text.toString())
-    connection.deleteSurroundingText(2, 0)
     connection.deleteSurroundingText(1, 0)
-    assertEquals(listOf(1, 1), deletes)
+    assertEquals(listOf(1), deletes)
   }
 
   @Test
