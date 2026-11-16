@@ -123,6 +123,7 @@ import {
   resolveExternalWebLinkHost,
   showExternalLinkContextMenu,
 } from "./chat/externalLinkContextMenu";
+import { SharedTooltipProvider, useSharedTooltip, withSharedTooltip } from "./ui/shared-tooltip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -200,6 +201,15 @@ import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 import { MarkdownCodeBlock, SuspenseShikiCodeBlock } from "./chat/MarkdownCodeBlock";
 import { createMarkdownRenderer } from "./chat/markdownRenderer";
+import { chatRenderHast } from "../markdown/chatHast";
+import {
+  type MarkdownIslandOptions,
+  renderHastWithIslands,
+  withProperties,
+} from "./chat/markdownIslands";
+import type { Element as HastElement } from "hast";
+import { matchInlineSkills } from "@t3tools/shared/inlineSkills";
+import { collectComposerModelMentions } from "@t3tools/client-runtime/composer-model-mentions";
 import { splitMarkdownBlocks } from "./chat/markdownStreamBlocks";
 import { MarkdownMermaidCodeBlock } from "./chat/MarkdownMermaidCodeBlock";
 import { MarkdownTable } from "./chat/MarkdownTable";
@@ -467,11 +477,16 @@ const markdownServerConfigFieldsAtom = Atom.family((environmentId: EnvironmentId
   }).pipe(Atom.withLabel("markdown-server-config-fields")),
 );
 
-function fileLinkSourcesKey(
+interface BlockFileLinkSources {
+  readonly hrefs: ReadonlyArray<string>;
+  readonly spans: ReadonlyArray<string>;
+}
+
+function blockFileLinkSources(
   text: string,
   cwd: string | undefined,
   imageBaseDir: string | undefined,
-): string {
+): BlockFileLinkSources {
   const hrefs = extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(text))
     .filter((href) => !parseComposerContextHref(href))
     .map(decodeMarkdownLinkEscapes)
@@ -480,7 +495,39 @@ function fileLinkSourcesKey(
   const spans = extractInlineCodeSpans(text).filter((span) =>
     resolveInlineCodeFileLinkMeta(span, cwd, imageBaseDir ?? cwd),
   );
-  return JSON.stringify([[...new Set(hrefs)], [...new Set(spans)]]);
+  return { hrefs, spans };
+}
+
+// Links and code spans never cross blocks: a streamed reply rescans only its open last block.
+const MAX_CACHED_BLOCKS = 2_000;
+const blockFileLinkSourcesByConfig = new Map<string, Map<string, BlockFileLinkSources>>();
+
+function fileLinkSourcesKey(
+  text: string,
+  cwd: string | undefined,
+  imageBaseDir: string | undefined,
+  streamingBlocks: ReadonlyArray<string> | null,
+): string {
+  if (!streamingBlocks) {
+    const { hrefs, spans } = blockFileLinkSources(text, cwd, imageBaseDir);
+    return JSON.stringify([[...new Set(hrefs)], [...new Set(spans)]]);
+  }
+  const config = `${cwd ?? ""}\u0000${imageBaseDir ?? ""}`;
+  let cache = blockFileLinkSourcesByConfig.get(config);
+  if (!cache) blockFileLinkSourcesByConfig.set(config, (cache = new Map()));
+  const hrefs = new Set<string>();
+  const spans = new Set<string>();
+  for (const block of streamingBlocks) {
+    let sources = cache.get(block);
+    if (!sources) {
+      if (cache.size >= MAX_CACHED_BLOCKS) cache.clear();
+      sources = blockFileLinkSources(block, cwd, imageBaseDir);
+      cache.set(block, sources);
+    }
+    for (const href of sources.hrefs) hrefs.add(href);
+    for (const span of sources.spans) spans.add(span);
+  }
+  return JSON.stringify([[...hrefs], [...spans]]);
 }
 
 function resolveFileLinkSources(
@@ -506,27 +553,30 @@ function resolveFileLinkSources(
   return { markdownFileLinkMetaByHref, inlineCodeFileLinkMetaByText, fileLinkParentSuffixByPath };
 }
 
-function useChatMarkdownState({
-  text,
-  inline = false,
-  cwd,
-  agentDirectories,
-  threadRef,
-  pullRequestPanelRef,
-  environmentId: explicitEnvironmentId,
-  onTaskListChange,
-  isStreaming = false,
-  skills = EMPTY_MARKDOWN_SKILLS,
-  onUseArtifactTemplate,
-  onRunShellCommand,
-  imageBaseDir,
-  workspaceMutationId,
-  onImageExpand,
-  renderContextReference,
-  headingLevelOffset = 0,
-  sourceControlMedia = false,
-  sourceControlMediaRepository,
-}: ChatMarkdownProps) {
+function useChatMarkdownState(
+  {
+    text,
+    inline = false,
+    cwd,
+    agentDirectories,
+    threadRef,
+    pullRequestPanelRef,
+    environmentId: explicitEnvironmentId,
+    onTaskListChange,
+    isStreaming = false,
+    skills = EMPTY_MARKDOWN_SKILLS,
+    onUseArtifactTemplate,
+    onRunShellCommand,
+    imageBaseDir,
+    workspaceMutationId,
+    onImageExpand,
+    renderContextReference,
+    headingLevelOffset = 0,
+    sourceControlMedia = false,
+    sourceControlMediaRepository,
+  }: ChatMarkdownProps,
+  streamingBlocks: ReadonlyArray<string> | null,
+) {
   const resolvedTheme = useRenderedAppearance();
   const markdownRef = useRef<HTMLElement>(null);
   const mediaRequestId = useRef(0);
@@ -704,7 +754,7 @@ function useChatMarkdownState({
   // Keyed by the file links found, not the text, so streamed text that adds none keeps the
   // renderer context, and every block reading it, unchanged.
   // A template literal marks the key as a string, so the compiler memoizes the maps on its value.
-  const fileLinksKey = `${fileLinkSourcesKey(text, cwd, imageBaseDir)}`;
+  const fileLinksKey = `${fileLinkSourcesKey(text, cwd, imageBaseDir, isStreaming ? (streamingBlocks ?? splitMarkdownBlocks(text) ?? [text]) : null)}`;
   const { markdownFileLinkMetaByHref, inlineCodeFileLinkMetaByText, fileLinkParentSuffixByPath } =
     resolveFileLinkSources(fileLinksKey, cwd, imageBaseDir);
   const resolveThreadPullRequest = (
@@ -1044,6 +1094,17 @@ function markdownHeadingRenderer(level: 1 | 2 | 3 | 4 | 5 | 6) {
       />
     );
   };
+}
+
+function MarkdownLinkTooltip({ link, href }: { link: React.ReactElement; href: string }) {
+  const sharedTooltip = useSharedTooltip({ render: () => href });
+  if (sharedTooltip) return withSharedTooltip(link, sharedTooltip);
+  return (
+    <Tooltip>
+      <TooltipTrigger render={link} />
+      <TooltipPopup side="top">{href}</TooltipPopup>
+    </Tooltip>
+  );
 }
 
 const CHAT_MARKDOWN_COMPONENTS = {
@@ -1402,12 +1463,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           />
         );
       }
-      return (
-        <Tooltip>
-          <TooltipTrigger render={link} />
-          <TooltipPopup side="top">{href}</TooltipPopup>
-        </Tooltip>
-      );
+      return <MarkdownLinkTooltip link={link} href={href} />;
     }
 
     const label = nodeToPlainText(children);
@@ -1778,6 +1834,9 @@ function withExtraPlugins(shared: PluggableList, extra: PluggableList): Pluggabl
   return combined;
 }
 
+const directHastFor = (rehypePlugins: PluggableList) =>
+  rehypePlugins === CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS ? chatRenderHast : undefined;
+
 const markdownRenderers = new WeakMap<
   PluggableList,
   WeakMap<PluggableList, ReturnType<typeof createMarkdownRenderer>>
@@ -1791,12 +1850,126 @@ function markdownRenderer(remarkPlugins: PluggableList, rehypePlugins: Pluggable
     renderer = createMarkdownRenderer({
       remarkPlugins,
       rehypePlugins,
+      directHast: directHastFor(rehypePlugins),
       components: CHAT_MARKDOWN_COMPONENTS,
       urlTransform: markdownUrlTransform,
     });
     byRehype.set(rehypePlugins, renderer);
   }
   return renderer;
+}
+
+// VITE_T3_MARKDOWN_ISLANDS=0 measures against rendering every element with React.
+const MARKDOWN_ISLANDS = import.meta.env.VITE_T3_MARKDOWN_ISLANDS !== "0";
+
+type ChatMarkdownComponentState = ReturnType<typeof useChatMarkdownState>["componentState"];
+
+function hastClassName(node: HastElement): string | undefined {
+  const { className } = node.properties;
+  return Array.isArray(className) ? className.join(" ") : (className as string | undefined);
+}
+
+// Paragraphs and list items turn skill and model mentions in their text into chips, except in
+// code and links, as SkillInlineText does.
+function hastTextHasChip(node: HastElement, skills: ReadonlyArray<ServerProviderSkill>): boolean {
+  return node.children.some((child) =>
+    child.type === "text"
+      ? (skills.length > 0 && !matchInlineSkills(child.value, skills).next().done) ||
+        collectComposerModelMentions(child.value).length > 0
+      : child.type === "element" &&
+        child.tagName !== "code" &&
+        child.tagName !== "a" &&
+        hastTextHasChip(child, skills),
+  );
+}
+
+const HEADING_LEVELS: Record<string, number> = { h1: 1, h2: 2, h3: 3, h4: 4, h5: 5, h6: 6 };
+
+const markdownIslandOptionsByState = new WeakMap<
+  ChatMarkdownComponentState,
+  MarkdownIslandOptions
+>();
+
+/** Which elements need CHAT_MARKDOWN_COMPONENTS, and what the others' components add. */
+function markdownIslandOptions(state: ChatMarkdownComponentState): MarkdownIslandOptions {
+  const cached = markdownIslandOptionsByState.get(state);
+  if (cached) return cached;
+  const {
+    cwd,
+    headingLevelOffset,
+    imageBaseDir,
+    inlineCodeFileLinkMetaByText,
+    mathEnabled,
+    onTaskListChange,
+    skills,
+  } = state;
+  const options: MarkdownIslandOptions = {
+    components: CHAT_MARKDOWN_COMPONENTS,
+    variant: String(headingLevelOffset),
+    isIsland: (node) => {
+      switch (node.tagName) {
+        case "a":
+        case "img":
+        case "pre":
+        case "details":
+        case "table":
+          return true;
+        case "blockquote":
+          return GITHUB_ALERT_PRESENTATIONS[String(node.properties.dataAlert ?? "")] !== undefined;
+        case "div":
+          return artifactTemplateFromHastProperties(node.properties) !== null;
+        case "input":
+          return node.properties.type === "checkbox" && onTaskListChange !== undefined;
+        case "code": {
+          if (mathEnabled && mathKind(hastClassName(node))) return true;
+          if (node.properties.dataInlineCode == null) return false;
+          const codeText = hastPlainTextDeep(node);
+          return (
+            (inlineCodeFileLinkMetaByText.get(codeText.trim()) ??
+              resolveInlineCodeFileLinkMeta(codeText, cwd, imageBaseDir ?? cwd)) != null
+          );
+        }
+        case "p":
+        case "li":
+          return hastTextHasChip(node, skills);
+        default:
+          return false;
+      }
+    },
+    staticElement: (node) => {
+      const level = HEADING_LEVELS[node.tagName];
+      if (level !== undefined) {
+        return headingLevelOffset > 0
+          ? withProperties(node, { ariaLevel: Math.min(level + headingLevelOffset, 6) })
+          : node;
+      }
+      switch (node.tagName) {
+        case "ol": {
+          const itemValues = node.children.flatMap((child) =>
+            child.type === "element" && child.tagName === "li" ? [child.properties.value] : [],
+          );
+          const gutter = orderedListGutterStyle(itemValues, node.properties.start);
+          if (!gutter) return node;
+          const authored = typeof node.properties.style === "string" ? node.properties.style : "";
+          return withProperties(node, {
+            style: `${authored}${authored ? ";" : ""}--list-gutter:${gutter["--list-gutter"]}`,
+          });
+        }
+        case "li":
+          return hastClassName(node)?.includes("task-list-item")
+            ? withProperties(node, { dataListItemOffset: node.position?.start.offset })
+            : node;
+        case "input":
+          return node.properties.type === "checkbox"
+            ? withProperties(node, { readOnly: true })
+            : node;
+        default:
+          return node;
+      }
+    },
+  };
+  markdownIslandOptionsByState.set(state, options);
+  return options;
 }
 
 const MarkdownSource = memo(function MarkdownSource({
@@ -1820,15 +1993,23 @@ const MarkdownSource = memo(function MarkdownSource({
     : createMarkdownRenderer({
         remarkPlugins,
         rehypePlugins,
+        directHast: directHastFor(rehypePlugins),
         components: CHAT_MARKDOWN_COMPONENTS,
         urlTransform: markdownUrlTransform,
       });
-  const element = render(text);
+  const entry = render.parse(text);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Caching during render would make React Compiler rebuild the element when `cache` flips.
   useEffect(() => {
-    if (shared && cache) render.remember(text, element);
-  }, [render, text, element, shared, cache]);
-  return <ChatMarkdownTextContext value={text}>{element}</ChatMarkdownTextContext>;
+    if (shared && cache) render.remember(text, entry);
+  }, [render, text, entry, shared, cache]);
+  const islandState = MARKDOWN_ISLANDS ? use(ChatMarkdownRendererContext) : null;
+  return (
+    <ChatMarkdownTextContext value={text}>
+      {islandState
+        ? renderHastWithIslands(entry.tree, markdownIslandOptions(islandState))
+        : render.element(entry)}
+    </ChatMarkdownTextContext>
+  );
 });
 
 function ChatMarkdown({
@@ -1841,8 +2022,6 @@ function ChatMarkdown({
   renderInsights = false,
   ...props
 }: ChatMarkdownProps) {
-  const { componentState, handleCopy, markdownRef, localMediaPreview, closeLocalMediaPreview } =
-    useChatMarkdownState({ text, inline, ...props });
   const hasInsights = renderInsights && text.includes("★ Insight");
   // Streaming re-renders only the last block; offsets for task edits need the whole text.
   const streamingBlocks =
@@ -1852,6 +2031,8 @@ function ChatMarkdown({
     !props.onTaskListChange
       ? splitMarkdownBlocks(text)
       : null;
+  const { componentState, handleCopy, markdownRef, localMediaPreview, closeLocalMediaPreview } =
+    useChatMarkdownState({ text, inline, ...props }, streamingBlocks);
   const incrementalParsing =
     props.isStreaming === true &&
     !hasInsights &&
@@ -1897,22 +2078,24 @@ function ChatMarkdown({
       onCopy={handleCopy}
     >
       <ChatMarkdownRendererContext value={componentState}>
-        {blocks.map((source, index) => (
-          <MarkdownSource
-            // oxlint-disable-next-line react/no-array-index-key -- streamed blocks only change at the end
-            key={index}
-            text={source}
-            remarkPlugins={remarkPlugins}
-            rehypePlugins={
-              parseRawHtml
-                ? CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS
-                : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS
-            }
-            shared={!uncachedPlugins}
-            // Every block before the last is finished, so its parse can be reused.
-            cache={!props.isStreaming || index < blocks.length - 1}
-          />
-        ))}
+        <SharedTooltipProvider>
+          {blocks.map((source, index) => (
+            <MarkdownSource
+              // oxlint-disable-next-line react/no-array-index-key -- streamed blocks only change at the end
+              key={index}
+              text={source}
+              remarkPlugins={remarkPlugins}
+              rehypePlugins={
+                parseRawHtml
+                  ? CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS
+                  : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS
+              }
+              shared={!uncachedPlugins}
+              // Every block before the last is finished, so its parse can be reused.
+              cache={!props.isStreaming || index < blocks.length - 1}
+            />
+          ))}
+        </SharedTooltipProvider>
       </ChatMarkdownRendererContext>
       {localMediaPreview ? (
         <ExpandedImageDialog preview={localMediaPreview} onClose={closeLocalMediaPreview} />

@@ -13,12 +13,18 @@ import { createMarkdownRenderer } from "./markdownRenderer";
 const urlTransform = (url: string) => `${url}#seen`;
 
 describe("createMarkdownRenderer", () => {
-  const render = createMarkdownRenderer({
+  const renderer = createMarkdownRenderer({
     remarkPlugins: CHAT_MARKDOWN_REMARK_PLUGINS,
     rehypePlugins: CHAT_MARKDOWN_REHYPE_PLUGINS,
     components: {},
     urlTransform,
   });
+  const render = (text: string) => renderer.element(renderer.parse(text));
+  const renderAndRemember = (text: string) => {
+    const entry = renderer.parse(text);
+    renderer.remember(text, entry);
+    return renderer.element(entry);
+  };
 
   it.each([
     '# Title\n\nText with `code`, **bold**, [a link](https://example.com "t") and https://bare.example.com.',
@@ -45,9 +51,8 @@ describe("createMarkdownRenderer", () => {
         {source}
       </ReactMarkdown>,
     );
-    const element = render(source);
-    expect(renderToStaticMarkup(element)).toBe(expected);
-    render.remember(source, element);
+    expect(renderToStaticMarkup(render(source))).toBe(expected);
+    const element = renderAndRemember(source);
     expect(render(source)).toBe(element);
   });
 
@@ -63,8 +68,9 @@ describe("createMarkdownRenderer", () => {
         rehypePlugins: CHAT_MARKDOWN_REHYPE_PLUGINS,
         components: {},
         urlTransform,
-      })(source);
-      expect(renderToStaticMarkup(streamed)).toBe(
+      });
+      const element = streamed.element(streamed.parse(source));
+      expect(renderToStaticMarkup(element)).toBe(
         renderToStaticMarkup(
           <ReactMarkdown
             remarkPlugins={CHAT_MARKDOWN_REMARK_PLUGINS}
@@ -79,10 +85,8 @@ describe("createMarkdownRenderer", () => {
   });
 
   it("keeps cached messages when one far larger than the cache is rendered", () => {
-    const element = render("Kept *message*");
-    render.remember("Kept *message*", element);
-    const large = "x".repeat(600_000);
-    render.remember(large, render(large));
+    const element = renderAndRemember("Kept *message*");
+    renderAndRemember("x".repeat(600_000));
     expect(render("Kept *message*")).toBe(element);
   });
 });

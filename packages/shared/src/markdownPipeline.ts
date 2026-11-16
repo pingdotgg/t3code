@@ -84,7 +84,7 @@ function markStandaloneImages(node: MarkdownImageHastNode) {
 // Whole tags, attributes, and comments, so closing-anchor text inside them never counts as a tag.
 const RAW_HTML_TAG_PATTERN = /<!--[\s\S]*?(?:-->|$)|<\/?[A-Za-z](?:[^"'<>]|"[^"]*"|'[^']*')*>/g;
 
-function rehypePreserveBareAnchorPlaceholders() {
+export function rehypePreserveBareAnchorPlaceholders() {
   return (tree: MarkdownImageHastNode) => {
     const anchors: Array<MarkdownImageHastNode | null> = [];
     let rawTextTag: string | undefined;
@@ -159,7 +159,7 @@ function moveColorSchemeSourcesToImage(picture: MarkdownImageHastNode) {
   picture.children = picture.children.filter((child) => child.tagName !== "source");
 }
 
-function rehypePreserveImageSourceMeta() {
+export function rehypePreserveImageSourceMeta() {
   return (tree: MarkdownImageHastNode) => {
     const visit = (node: MarkdownImageHastNode) => {
       const src = node.properties?.src;
@@ -185,17 +185,23 @@ function rehypePreserveImageSourceMeta() {
 const IMAGE_SRC_PROTOCOLS = [...(defaultSchema.protocols?.src ?? []), "file", "t3-context"];
 
 // The sanitizer compares schemes case-sensitively, so lowercase accepted editor links first.
+export function normalizeLocalEditorHref(href: string): string {
+  try {
+    const url = new URL(href);
+    return isLocalEditorFileUrl(url) ? url.href : href;
+  } catch {
+    // Not an absolute URL; the sanitizer decides.
+    return href;
+  }
+}
+
 function rehypeNormalizeLocalEditorLinks() {
   return (tree: MarkdownImageHastNode) => {
     const visit = (node: MarkdownImageHastNode) => {
       const href = node.properties?.href;
       if (node.type === "element" && node.tagName === "a" && typeof href === "string") {
-        try {
-          const url = new URL(href);
-          if (isLocalEditorFileUrl(url)) node.properties = { ...node.properties, href: url.href };
-        } catch {
-          // Not an absolute URL; the sanitizer decides.
-        }
+        const normalized = normalizeLocalEditorHref(href);
+        if (normalized !== href) node.properties = { ...node.properties, href: normalized };
       }
       node.children?.forEach(visit);
     };
@@ -350,6 +356,11 @@ function rehypeRawWhenPresent(this: Processor) {
   return (tree: MarkdownImageHastNode, file: unknown) =>
     needsHtmlParser(tree, TOP_SCOPE) ? transform(tree, file) : undefined;
 }
+
+/** Sanitizes one tree with the chat's schema, as the last rehype plugin does. */
+export const sanitizeChatHast = rehypeSanitize(CHAT_MARKDOWN_SANITIZE_SCHEMA) as unknown as (
+  tree: MarkdownImageHastNode,
+) => MarkdownImageHastNode;
 
 export const CHAT_MARKDOWN_REHYPE_PLUGINS: PluggableList = [
   rehypePreserveBareAnchorPlaceholders,
