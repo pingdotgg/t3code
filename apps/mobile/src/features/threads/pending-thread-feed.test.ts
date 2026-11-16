@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import {
+  appendAcceptedThreadMessages,
   appendPendingThreadMessages,
   createThreadFeedGrouping,
   isCompactionCommandFeedEntry,
@@ -136,6 +137,36 @@ describe("pending timeline messages", () => {
     expect(result).toHaveLength(1);
     expect(result[0]?.pendingMessage).toEqual(queued);
     expect(result[0]?.acknowledged).toBe(false);
+  });
+
+  it("keeps a new thread's first message attachments after delivery until the server copy loads", () => {
+    const video = {
+      id: "video-1",
+      type: "file" as const,
+      name: "clip.mp4",
+      mimeType: "video/mp4",
+      sizeBytes: 3,
+      fileUri: "file:///documents/clip.mp4",
+    };
+    const creation = {
+      ...pending("creation"),
+      attachments: [video],
+      creation: {
+        projectId: ProjectId.make("project"),
+        workspaceMode: "worktree" as const,
+        branch: "main",
+        worktreePath: null,
+      },
+    };
+    const synthetic = {
+      ...appendPendingThreadMessages([], [], [creation])[0]!,
+      pendingMessage: undefined,
+    };
+    // Delivered and caught up by sequence, but the server's copy is not projected yet.
+    const result = appendAcceptedThreadMessages([synthetic], [], creation);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.pendingMessage?.attachments).toEqual([video]);
+    expect(result[0]?.acknowledged).toBe(true);
   });
 
   it("retains context records while a message is waiting for delivery", () => {
