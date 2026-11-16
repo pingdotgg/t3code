@@ -237,6 +237,8 @@ function UsageScreen(props: {
       {headerOnly ? null : (
         <ScrollView
           ref={scrollRef}
+          // The top sits above the automatic inset, which React Native's scrollTo would clamp away.
+          scrollToOverflowEnabled
           contentInsetAdjustmentBehavior="automatic"
           showsVerticalScrollIndicator={false}
           className="flex-1"
