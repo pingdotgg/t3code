@@ -2,7 +2,7 @@
 
 use conn_contract::from_json;
 use conn_engine::Engine;
-use conn_features::secrets::{SecretError, SecretRequests, terminal, unsaved_note};
+use conn_features::secrets::{SecretError, SecretRequests, terminal, turn_item, unsaved_note};
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
 
@@ -143,12 +143,10 @@ pub(super) async fn request(cx: &Cx<'_>, args: &Args) -> ToolResult {
         if let Some(state) = card_status(&projection, &item_id).filter(|s| *s != "pending") {
             break state.to_owned();
         }
-        let running = projection
-            .get("runs")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .find(|r| r.get("id") == run.get("id"));
+        let running = run
+            .get("id")
+            .and_then(Value::as_str)
+            .and_then(|id| conn_features::secrets::run(&projection, id));
         if running.is_none_or(|r| terminal(r.get("status").and_then(Value::as_str))) {
             card.close().await.map_err(super::internal)?;
             break "cancelled".into();
@@ -185,13 +183,7 @@ pub(super) async fn request(cx: &Cx<'_>, args: &Args) -> ToolResult {
 }
 
 fn card_status<'a>(projection: &'a Value, id: &str) -> Option<&'a str> {
-    projection
-        .get("turnItems")?
-        .as_array()?
-        .iter()
-        .find(|i| i.get("id").and_then(Value::as_str) == Some(id))?
-        .get("secretStatus")?
-        .as_str()
+    turn_item(projection, id)?.get("secretStatus")?.as_str()
 }
 async fn deliver(
     secrets: &SecretRequests,
@@ -210,16 +202,7 @@ async fn deliver(
 
 fn decode(input: &Args) -> Result<Args, super::ToolError> {
     let mut args = input.clone();
-    for key in ["label", "reason", "url", "placeholder"] {
-        if let Some(Value::String(value)) = args.get_mut(key) {
-            *value = value.trim().to_owned();
-            if value.is_empty() {
-                return Err(super::ToolError::InvalidParams(format!(
-                    "Expected a non-blank string\n  at [\"{key}\"]"
-                )));
-            }
-        }
-    }
+    super::trim_non_blank(&mut args, &["label", "reason", "url", "placeholder"])?;
     if str_arg(&args, "value") == Some("") {
         return Err(super::ToolError::InvalidParams(
             "Expected a non-empty string\n  at [\"value\"]".into(),
