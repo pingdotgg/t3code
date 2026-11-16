@@ -832,10 +832,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const hasInlineAndroidCompactControl =
     Platform.OS === "android" && compactBeforeSend !== null && !compactEditor.isExpanded;
   const modelControl = (
-    <View
-      className="min-w-0 shrink"
-      style={hasInlineAndroidCompactControl ? { flexShrink: 0 } : undefined}
-    >
+    <View className={hasInlineAndroidCompactControl ? "min-w-0 shrink-0" : "min-w-0 shrink"}>
       <ComposerModelControl
         size={usesLargeControls ? "large" : "regular"}
         modelOption={currentModelOption}
@@ -857,6 +854,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         size={usesLargeControls ? "large" : "regular"}
         icon="arrow.down.right.and.arrow.up.left"
         label={compactTokens}
+        hideOverflowingLabel={hasInlineAndroidCompactControl}
         selected={!compactBeforeSend.keepFullHistory}
         showChevron={false}
         disabled={!props.canOperateThread}
