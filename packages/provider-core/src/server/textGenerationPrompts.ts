@@ -504,6 +504,15 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
   return { prompt, outputSchema };
 }
 
+type PeerSpeaker = { readonly label: string; readonly model: string };
+
+/** A seat without a label is named by its model; say it once. */
+const peerDetails = (speaker: PeerSpeaker, extra?: string) =>
+  [
+    ...(speaker.label === speaker.model ? [] : [speaker.model]),
+    ...(extra === undefined ? [] : [extra]),
+  ].join(", ");
+
 export type KnowledgeCandidatesPromptMessage = {
   readonly ref: string;
   readonly threadId?: string;
@@ -512,7 +521,7 @@ export type KnowledgeCandidatesPromptMessage = {
   readonly text: string;
 } & (
   | { readonly role: "user" | "assistant" }
-  | { readonly role: "peer"; readonly speaker: { readonly label: string; readonly model: string } }
+  | { readonly role: "peer"; readonly speaker: PeerSpeaker }
 );
 
 export interface KnowledgeCandidatesPromptInput {
@@ -555,11 +564,9 @@ export function buildKnowledgeCandidatesPrompt(input: KnowledgeCandidatesPromptI
         message.runId === undefined
           ? undefined
           : `${threads.get(message.threadId ?? "") ?? "T?"}/${runs.get(message.runId)}, ${message.runOutcome ?? input.runOutcome}`;
-      const role =
-        message.role === "peer"
-          ? `peer ${message.speaker.label} (${message.speaker.model}${run === undefined ? "" : `, ${run}`})`
-          : `${message.role}${run === undefined ? "" : ` (${run})`}`;
-      return `[${message.ref}] ${role}:\n${message.text}\n`;
+      const role = message.role === "peer" ? `peer ${message.speaker.label}` : message.role;
+      const details = message.role === "peer" ? peerDetails(message.speaker, run) : run;
+      return `[${message.ref}] ${role}${details ? ` (${details})` : ""}:\n${message.text}\n`;
     }),
   ].join("\n");
   const outputSchema = Schema.Struct({
@@ -584,7 +591,7 @@ export type ConversationSummaryPromptMessage = {
   readonly range?: { readonly start: number; readonly end: number; readonly total: number };
 } & (
   | { readonly role: "user" | "assistant" | "tool" | "summary" }
-  | { readonly role: "peer"; readonly speaker: { readonly label: string; readonly model: string } }
+  | { readonly role: "peer"; readonly speaker: PeerSpeaker }
 );
 
 export interface ConversationSummaryPromptInput {
@@ -613,9 +620,10 @@ export function buildConversationSummaryPrompt(input: ConversationSummaryPromptI
     "",
     "Sources:",
     ...input.messages.map((message) => {
+      const details = message.role === "peer" ? peerDetails(message.speaker) : "";
       const role =
         message.role === "peer"
-          ? `peer ${message.speaker.label} (${message.speaker.model})`
+          ? `peer ${message.speaker.label}${details ? ` (${details})` : ""}`
           : message.role;
       const range =
         message.range === undefined

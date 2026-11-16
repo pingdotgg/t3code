@@ -59,8 +59,10 @@ export function conversationSummarySourceLabel(
     case "user":
       return "User";
     case "assistant":
-      return result.speaker === undefined
-        ? "Assistant"
+      if (result.speaker === undefined) return "Assistant";
+      // A seat without a label is named by its model.
+      return result.speaker.label === result.speaker.model
+        ? result.speaker.label
         : `${result.speaker.label} (${result.speaker.model})`;
     case "tool":
       return "Tool";
