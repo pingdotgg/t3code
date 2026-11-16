@@ -35,6 +35,10 @@ const SCALARS: Record<string, { readonly type: Scalar; readonly bytes: number }>
   float64: { type: "float64", bytes: 8 },
 };
 
+/** Looks up a header type name; own keys only, so names like `toString` stay unknown. */
+const scalar = (name: string | undefined) =>
+  name !== undefined && Object.hasOwn(SCALARS, name) ? SCALARS[name] : undefined;
+
 interface Property {
   readonly name: string;
   readonly type: Scalar;
@@ -79,8 +83,8 @@ function parseHeader(bytes: Uint8Array): Header | null {
     } else if (words[0] === "property") {
       const element = elements.at(-1);
       const list = words[1] === "list";
-      const countType = list ? SCALARS[words[2] ?? ""] : undefined;
-      const type = SCALARS[words[list ? 3 : 1] ?? ""];
+      const countType = list ? scalar(words[2]) : undefined;
+      const type = scalar(words[list ? 3 : 1]);
       if (!element || !type || (list && !countType)) return null;
       element.properties.push({
         name: words[list ? 4 : 2] ?? "",
