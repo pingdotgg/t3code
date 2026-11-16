@@ -172,13 +172,21 @@ describe("trailBodyMarkdown", () => {
     const content_json = {
       type: "doc",
       content: [
-        paragraph(text("a`b", [{ type: "code" }]), text(" and "), text("`x", [{ type: "code" }])),
+        paragraph(
+          text("a`b", [{ type: "code" }]),
+          text(" and "),
+          text("`x", [{ type: "code" }]),
+          text(" and "),
+          text(" y ", [{ type: "code" }]),
+        ),
         { type: "codeBlock", content: [text("````\ninner\n````")] },
       ],
     };
     const markdown = trailBodyMarkdown({ text_snapshot: "", content_json });
     expect(markdown).toBe(
-      ["``a`b`` and `` `x ``", "", "`````", "````", "inner", "````", "`````"].join("\n"),
+      ["``a`b`` and `` `x `` and `  y  `", "", "`````", "````", "inner", "````", "`````"].join(
+        "\n",
+      ),
     );
     expect(unpreservedMarkdown("``a`b`` and more")).toBe("code containing backticks");
     expect(unpreservedMarkdown("`````\n````\n`````")).toBe("code blocks containing fences");
@@ -204,6 +212,15 @@ describe("trailBodyMarkdown", () => {
       ],
     };
     expect(trailBodyMarkdown({ text_snapshot: "", content_json })).toBe("click");
+    const bracketed = {
+      type: "doc",
+      content: [
+        paragraph(text("docs]beta", [{ type: "link", attrs: { href: "https://example.com" } }])),
+      ],
+    };
+    expect(trailBodyMarkdown({ text_snapshot: "", content_json: bracketed })).toBe(
+      "[docs\\]beta](https://example.com)",
+    );
   });
 
   it.each([
@@ -236,6 +253,16 @@ describe("trailBodyMarkdown", () => {
       "formatting on code",
       paragraph(text("x", [{ type: "code" }, { type: "bold" }])),
       "formatted or linked code",
+    ],
+    [
+      "code with spaces at both ends",
+      paragraph(text(" x ", [{ type: "code" }])),
+      "code with spaces at both ends",
+    ],
+    [
+      "link text containing brackets",
+      paragraph(text("docs]beta", [{ type: "link", attrs: { href: "https://example.com" } }])),
+      "link text containing brackets",
     ],
   ] as const)("reports %s as left out", (_, block, lost) => {
     const document = { text_snapshot: "", content_json: { type: "doc", content: [block] } };

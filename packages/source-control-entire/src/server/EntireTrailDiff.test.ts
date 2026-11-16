@@ -1,11 +1,13 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as EntirePullRequestProvider from "./EntirePullRequestProvider.ts";
 import * as Fixtures from "./entireFixtures.ts";
 import { commit, makeTrailRepository, realGit, run } from "./entireGitFixture.ts";
-import { fakeEntire, type SentRequest } from "./entireTestServer.ts";
+import { fakeEntire, REMOTE_URL, type SentRequest } from "./entireTestServer.ts";
 
 const target = { cwd: "", host: "entire.io", repository: "gh/acme/web", number: 7 };
 
@@ -23,6 +25,24 @@ function timeline(commits: ReadonlyArray<string>) {
 function changedPaths(patch: string): ReadonlyArray<string> {
   return [...patch.matchAll(/^diff --git a\/(\S+) b\//gmu)].map((match) => match[1] ?? "");
 }
+
+/** The checkout's remotes by name; the first is the primary one. */
+const listRemotes = (urls: Record<string, string>) => () =>
+  Effect.succeed(
+    Effect.succeed({
+      remotes: Object.entries(urls).map(([name, url], index) => ({
+        name,
+        url,
+        pushUrl: Option.none(),
+        isPrimary: index === 0,
+      })),
+      freshness: {
+        source: "live-local" as const,
+        observedAt: DateTime.makeUnsafe("1970-01-01T00:00:00.000Z"),
+        expiresAt: Option.none(),
+      },
+    }),
+  );
 
 describe("Entire trail diffs", () => {
   it.effect("diff an open trail from where it left its base, fetching the head", () => {
@@ -283,12 +303,40 @@ describe("Entire trail diffs", () => {
     }).pipe(Effect.provide(server.layer), Effect.ensuring(repository.cleanup));
   });
 
+  it.effect("fetch the trail from an entire:// remote that isn't the primary one", () => {
+    const repository = makeTrailRepository();
+    const checkout = repository.clone();
+    run(checkout, "remote", "add", "entire", run(checkout, "remote", "get-url", "origin"));
+    const server = fakeEntire(
+      { "GET /trails/7": { ...Fixtures.detail, head_sha: repository.head } },
+      {
+        remoteUrl: "https://gitlab.example/acme/web.git",
+        git: {
+          ...realGit,
+          remotes: listRemotes({
+            origin: "https://gitlab.example/acme/web.git",
+            entire: REMOTE_URL,
+          }),
+        },
+      },
+    );
+    return Effect.gen(function* () {
+      const provider = yield* EntirePullRequestProvider.make;
+      const diff = yield* provider.getDiff({ ...target, cwd: checkout });
+      assert.deepStrictEqual(changedPaths(diff.patch), ["a.txt", "b.txt"]);
+      assert.include(run(checkout, "branch", "--remotes"), "entire/feature");
+    }).pipe(Effect.provide(server.layer), Effect.ensuring(repository.cleanup));
+  });
+
   it.effect("refuse a checkout whose remote is not the trail's repository", () => {
     const repository = makeTrailRepository();
     const checkout = repository.clone();
     const server = fakeEntire(
       { "GET /trails/7": { ...Fixtures.detail, head_sha: repository.head } },
-      { remoteUrl: "git@github.com:acme/web.git", git: realGit },
+      {
+        remoteUrl: "git@github.com:acme/web.git",
+        git: { ...realGit, remotes: listRemotes({ origin: "git@github.com:acme/web.git" }) },
+      },
     );
     return Effect.gen(function* () {
       const provider = yield* EntirePullRequestProvider.make;

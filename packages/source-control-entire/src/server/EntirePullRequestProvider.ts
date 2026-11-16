@@ -24,7 +24,7 @@ import * as EntireCli from "./EntireCli.ts";
 import * as EntireTrailBody from "./entireTrailBody.ts";
 import * as Json from "./entireTrailJson.ts";
 import { definition } from "../shared/definition.ts";
-import { ENTIRE_WEB_HOST } from "../shared/entireUrls.ts";
+import { ENTIRE_WEB_HOST, parseEntireRemote } from "../shared/entireUrls.ts";
 
 const KIND = SourceControlProviderKind.make("entire");
 
@@ -222,15 +222,23 @@ export const make = Effect.gen(function* () {
   const entireRemote = Effect.fn("EntirePullRequestProvider.entireRemote")(function* (
     input: ProviderRepositoryRef,
   ) {
-    const remote = yield* EntireApi.checkoutEntireRemote(git, input.cwd).pipe(
+    const matches = (url: string) =>
+      parseEntireRemote(url)?.repository.toLowerCase() === input.repository.toLowerCase();
+    const primary = yield* EntireApi.checkoutEntireRemote(git, input.cwd).pipe(
       Effect.orElseSucceed(() => null),
     );
-    if (remote?.repository.toLowerCase() !== input.repository.toLowerCase())
-      return yield* failure(
-        "getDiff",
-        `This checkout has no entire:// remote for ${input.repository} to fetch the trail from.`,
-      );
-    return remote.name;
+    if (primary && matches(primary.remoteUrl)) return primary.name;
+    // Entire can be chosen from a second remote when the primary one names no host.
+    const listed = yield* git.remotes(input.cwd).pipe(
+      Effect.flatten,
+      Effect.map(({ remotes }) => remotes.find((remote) => matches(remote.url))),
+      Effect.orElseSucceed(() => undefined),
+    );
+    if (listed) return listed.name;
+    return yield* failure(
+      "getDiff",
+      `This checkout has no entire:// remote for ${input.repository} to fetch the trail from.`,
+    );
   });
 
   const fetchBranch = (cwd: string, remoteName: string, branch: string) =>

@@ -45,11 +45,15 @@ const cliDiscovery = {
       });
     if (status.logged_in && status.user)
       return providerAuth({ status: "authenticated", account: status.user, host: status.server });
+    // `logged_in: false` with an `error` can be an unreachable login server, not a sign-out.
+    // The CLI's own error text is only read here, never shown.
+    const unreachable = status.error ? !/entire login/u.test(status.error) : false;
     return providerAuth({
-      // `logged_in: false` with an `error` can be an unreachable login server, not a sign-out.
-      status: status.error && !/entire login/u.test(status.error) ? "unknown" : "unauthenticated",
+      status: unreachable ? "unknown" : "unauthenticated",
       host: status.server,
-      detail: status.error ?? "Run `entire login` on the server.",
+      detail: unreachable
+        ? "Entire couldn't confirm the sign-in. Run `entire auth status` on the server."
+        : "Run `entire login` on the server.",
     });
   },
   installHint: "Install the Entire CLI from https://entire.com, then run `entire login`.",

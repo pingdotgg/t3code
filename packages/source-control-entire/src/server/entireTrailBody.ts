@@ -49,13 +49,14 @@ function delimiterCounts(text: string): ReadonlyMap<string, number> {
   return counts;
 }
 
-function escapeText(text: string, counts = delimiterCounts(text)): string {
+function escapeText(text: string, counts = delimiterCounts(text), linkText = false): string {
   const paired = (char: string) => (counts.get(char) ?? 0) > 1;
   return text
     .replace(/\\(?=[!-/:-@[-`{-~])/gu, "\\\\")
     .replace(/[`*~]/gu, (char) => (paired(char) ? `\\${char}` : char))
     .replace(/(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])/gu, (char) => (paired(char) ? "\\_" : char))
-    .replace(/\[/gu, (char) => (counts.has("[") ? "\\[" : char));
+    .replace(/\[/gu, (char) => (linkText || counts.has("[") ? "\\[" : char))
+    .replace(/\]/gu, (char) => (linkText ? "\\]" : char));
 }
 
 function renderText(
@@ -72,15 +73,20 @@ function renderText(
   if (has("code")) {
     if (marks.some((mark) => mark?.type !== "code")) lose("formatted or linked code");
     const delimiter = "`".repeat(longestBacktickRun(raw) + 1);
-    const pad = raw.startsWith("`") || raw.endsWith("`") ? " " : "";
+    // Markdown strips one space from each end of padded code; Entire's converter doesn't.
+    const spaced = raw.startsWith(" ") && raw.endsWith(" ") && /[^ ]/u.test(raw);
+    if (spaced) lose("code with spaces at both ends");
+    const pad = spaced || raw.startsWith("`") || raw.endsWith("`") ? " " : "";
     return `${delimiter}${pad}${raw}${pad}${delimiter}`;
   }
-  let text = escapeText(raw, counts);
+  const link = marks.find((mark) => mark?.type === "link");
+  // Entire's converter reads a link's text only up to its first `]`.
+  if (link && /[[\]]/u.test(raw)) lose("link text containing brackets");
+  let text = escapeText(raw, counts, link !== undefined);
   if (has("bold")) text = `**${text}**`;
   // `*`, not `_`: Entire's markdown converter reads only `*` emphasis back.
   if (has("italic")) text = `*${text}*`;
   if (has("strike")) text = `~~${text}~~`;
-  const link = marks.find((mark) => mark?.type === "link");
   const href = link ? safeHref(link.attrs?.href) : null;
   if (link && href === null) lose("links that aren't web or mail links");
   if (href && /[()\\<>\s]/u.test(href)) lose("link destinations containing markdown delimiters");

@@ -32,9 +32,14 @@ describe("EntireSourceControlProvider", () => {
     assert.strictEqual(signedIn.status, "authenticated");
     assert.deepStrictEqual(signedIn.account, Option.some("github:alice"));
     assert.strictEqual(auth({ logged_in: false }, 1).status, "unauthenticated");
-    assert.strictEqual(
-      auth({ logged_in: false, error: "dial tcp: connection refused" }, 1).status,
-      "unknown",
+    const unreachable = auth(
+      { logged_in: false, error: "dial tcp 10.0.0.1:443: connection refused" },
+      1,
+    );
+    assert.strictEqual(unreachable.status, "unknown");
+    assert.notInclude(
+      Option.getOrElse(unreachable.detail, () => ""),
+      "10.0.0.1",
     );
     assert.strictEqual(
       EntireSourceControlProvider.parseAuth({
