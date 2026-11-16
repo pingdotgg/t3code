@@ -31,9 +31,11 @@ import {
   projectActionsThreadId,
   projectLastActivityTimestamp,
   projectScriptBeginMarker,
+  projectScriptStopRollbackPatch,
   resolveProjectAnchorThread,
   sortProjectScriptMenuEntries,
   sortProjectScriptRuns,
+  projectScriptStoppedPatch,
   wrapProjectScriptCommand,
   type ProjectScriptMenuEntry,
   type ProjectScriptRun,
@@ -57,6 +59,7 @@ function commandFailureMessage(result: Parameters<typeof squashAtomCommandFailur
 
 export function useProjectScriptRunActions() {
   const projects = useProjects();
+  const configs = useServerConfigs();
   const operateScopes = useEnvironmentsWithScope(projects, AuthTerminalOperateScope);
   const readScopes = useEnvironmentsWithScope(projects, AuthTerminalReadScope);
   const openTerminal = useAtomCommand(terminalEnvironment.open, "project action open");
@@ -70,6 +73,8 @@ export function useProjectScriptRunActions() {
   const removeRun = useProjectScriptRunsStore((state) => state.removeRun);
   const clearFinished = useProjectScriptRunsStore((state) => state.clearFinished);
   const selectRun = useProjectScriptRunsStore((state) => state.selectRun);
+  const beginStop = useProjectScriptRunsStore((state) => state.beginStop);
+  const endStop = useProjectScriptRunsStore((state) => state.endStop);
 
   const runsList = sortProjectScriptRuns(Object.values(runs));
   const selectedRun = selectedRunId === null ? null : (runs[selectedRunId] ?? null);
@@ -90,6 +95,16 @@ export function useProjectScriptRunActions() {
         type: "error",
         title: "Cannot run project actions",
         description: "This connection needs terminal read and operate permissions.",
+      });
+      return;
+    }
+
+    if (configs.get(project.environmentId)?.environment.platform.os === "windows") {
+      toastManager.add({
+        type: "error",
+        title: "Cannot run project actions",
+        description:
+          "Sidebar actions are not supported on Windows. Run this action from its thread instead.",
       });
       return;
     }
@@ -124,6 +139,7 @@ export function useProjectScriptRunActions() {
       endedAt: null,
     };
 
+    const wrappedCommand = wrapProjectScriptCommand(script.command);
     const openResult = await openTerminal({
       environmentId: project.environmentId,
       input: {
@@ -163,7 +179,8 @@ export function useProjectScriptRunActions() {
       input: {
         threadId,
         terminalId,
-        data: projectScriptTerminalInput(wrapProjectScriptCommand(script.command)),
+        data: projectScriptTerminalInput(wrappedCommand),
+        afterShellStartup: true,
       },
     });
     if (writeResult._tag === "Failure") {
@@ -180,18 +197,31 @@ export function useProjectScriptRunActions() {
   };
 
   const stopRun = async (run: ProjectScriptRun) => {
-    if (!isProjectScriptRunActive(run)) return;
-    updateRun(run.id, { status: "stopped", endedAt: Date.now() });
+    const previousRun = useProjectScriptRunsStore.getState().runs[run.id];
+    if (
+      previousRun === undefined ||
+      !isProjectScriptRunActive(previousRun) ||
+      useProjectScriptRunsStore.getState().pendingStopRunIds.has(run.id)
+    ) {
+      return;
+    }
+
+    beginStop(run.id);
     const closeResult = await closeTerminal({
       environmentId: run.environmentId,
       input: { threadId: run.threadId, terminalId: run.terminalId, deleteHistory: false },
     });
-    if (closeResult._tag === "Failure" && !isAtomCommandInterrupted(closeResult)) {
-      await writeTerminal({
-        environmentId: run.environmentId,
-        input: { threadId: run.threadId, terminalId: run.terminalId, data: "exit\n" },
-      });
+    const currentRun = useProjectScriptRunsStore.getState().runs[run.id];
+    if (currentRun !== undefined) {
+      if (closeResult._tag === "Success") {
+        const stoppedPatch = projectScriptStoppedPatch(currentRun, Date.now());
+        if (stoppedPatch !== null) updateRun(run.id, stoppedPatch);
+      } else {
+        const rollbackPatch = projectScriptStopRollbackPatch(currentRun, previousRun);
+        if (rollbackPatch !== null) updateRun(run.id, rollbackPatch);
+      }
     }
+    endStop(run.id);
   };
 
   const dismissRun = (run: ProjectScriptRun) => {

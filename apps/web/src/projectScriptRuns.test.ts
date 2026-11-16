@@ -1,15 +1,30 @@
+// @effect-diagnostics nodeBuiltinImport:off - executes the wrapper in a real shell.
+import * as NodeChildProcess from "node:child_process";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
+import { EMPTY_TERMINAL_BUFFER_STATE } from "@t3tools/client-runtime/state/terminal";
+import { startProjectScriptRunCoordinator } from "./components/projectScriptRuns/ProjectScriptRunCoordinator";
+import { terminalEnvironment } from "./state/terminal";
+import { useProjectScriptRunsStore } from "./projectScriptRunsStore";
+
+vi.mock("./state/terminal", () => ({ terminalEnvironment: { observe: vi.fn(), close: {} } }));
+vi.mock("@t3tools/client-runtime/state/runtime", () => ({
+  runAtomCommand: vi.fn().mockResolvedValue({ _tag: "Success", value: undefined }),
+}));
 
 import {
   isProjectScriptWrapperLine,
   projectScriptBeginMarker,
   projectScriptOutputTail,
   projectScriptSentinelPattern,
+  projectScriptStopRollbackPatch,
+  projectScriptStoppedPatch,
   projectScriptVisibleOutput,
   resolveProjectAnchorThread,
   sortProjectScriptMenuEntries,
@@ -82,21 +97,6 @@ function run(
 }
 
 describe("project script runs", () => {
-  it("wraps a command with a sentinel read from the environment", () => {
-    const wrapped = wrapProjectScriptCommand("pnpm test");
-
-    expect(wrapped).toBe(
-      'sh -c \'printf "\\n%s\\n" "$__T3_SCRIPT_BEGIN"\r(\rpnpm test\r)\r__t3_status=$?\rprintf "\\n%s%s\\n" "$__T3_SCRIPT_SENTINEL" "$__t3_status"\'',
-    );
-  });
-
-  it("escapes single quotes and keeps multi-line commands", () => {
-    const wrapped = wrapProjectScriptCommand("echo 'hi'\npnpm build");
-
-    expect(wrapped).toContain("echo '\\''hi'\\''");
-    expect(wrapped).toContain("echo '\\''hi'\\''\rpnpm build");
-  });
-
   it("parses only the sentinel with its token", () => {
     const pattern = projectScriptSentinelPattern("__T3_SCRIPT_DONE__abc:");
 
@@ -199,5 +199,185 @@ describe("project script runs", () => {
       "starting",
       "succeeded",
     ]);
+  });
+
+  it("does not replace completion recorded while Stop is pending", () => {
+    const runId = "stop-race";
+    const activeRun = run({ id: runId, status: "running", startedAt: 0 });
+    useProjectScriptRunsStore.setState({ runs: { [runId]: activeRun } });
+    useProjectScriptRunsStore.getState().updateRun(runId, {
+      status: "succeeded",
+      exitCode: 0,
+      endedAt: 10,
+    });
+
+    const currentRun = useProjectScriptRunsStore.getState().runs[runId]!;
+    const stoppedPatch = projectScriptStoppedPatch(currentRun, 20);
+    if (stoppedPatch !== null) {
+      useProjectScriptRunsStore.getState().updateRun(runId, stoppedPatch);
+    }
+
+    expect(useProjectScriptRunsStore.getState().runs[runId]).toMatchObject({
+      status: "succeeded",
+      exitCode: 0,
+      endedAt: 10,
+    });
+    useProjectScriptRunsStore.setState({ runs: {} });
+  });
+
+  it("restores the active run if terminal close fails", () => {
+    const activeRun = run({ id: "stop-failure", status: "running", startedAt: 0 });
+    const stoppedRun = {
+      ...activeRun,
+      status: "stopped" as const,
+      endedAt: 20,
+    };
+
+    expect(projectScriptStopRollbackPatch(stoppedRun, activeRun)).toEqual({
+      status: "running",
+      errorMessage: null,
+      exitCode: null,
+      endedAt: null,
+    });
+    expect(
+      projectScriptStopRollbackPatch({ ...activeRun, status: "succeeded" }, activeRun),
+    ).toBeNull();
+  });
+});
+
+it.each([0, 7, null])("reads buffered completion before shell exit (%s)", (exitCode) => {
+  const registry = AtomRegistry.make();
+  const currentRun = run({ id: "buffered", status: "starting", startedAt: 0 });
+  const text =
+    projectScriptBeginMarker(currentRun.sentinel) +
+    "\noutput\n" +
+    (exitCode === null ? "" : currentRun.sentinel + exitCode + "\n");
+  const atom = Atom.make(
+    AsyncResult.success({
+      ...EMPTY_TERMINAL_BUFFER_STATE,
+      status: "exited" as const,
+      output: {
+        ...EMPTY_TERMINAL_BUFFER_STATE.output,
+        chunks: [{ startOffset: 0, data: text, byteLength: text.length }],
+        retainedBytes: text.length,
+        nextOffset: text.length,
+      },
+    }),
+  );
+  vi.mocked(terminalEnvironment.observe).mockReturnValue(atom);
+  useProjectScriptRunsStore.setState({ runs: { [currentRun.id]: currentRun } });
+  const stop = startProjectScriptRunCoordinator(registry);
+  try {
+    expect(useProjectScriptRunsStore.getState().runs[currentRun.id]).toMatchObject({
+      status: exitCode === 0 ? "succeeded" : "failed",
+      exitCode,
+      outputTail: "output",
+    });
+  } finally {
+    stop();
+    registry.dispose();
+    useProjectScriptRunsStore.setState({ runs: {}, pendingStopRunIds: new Set() });
+  }
+});
+
+it("records a requested stop when the terminal closes", () => {
+  const registry = AtomRegistry.make();
+  const currentRun = run({ id: "requested-stop", status: "running", startedAt: 0 });
+  const atom = Atom.make(
+    AsyncResult.success({
+      ...EMPTY_TERMINAL_BUFFER_STATE,
+      status: "closed" as const,
+    }),
+  );
+  vi.mocked(terminalEnvironment.observe).mockReturnValue(atom);
+  useProjectScriptRunsStore.setState({
+    runs: { [currentRun.id]: currentRun },
+    pendingStopRunIds: new Set([currentRun.id]),
+  });
+  const stop = startProjectScriptRunCoordinator(registry);
+  try {
+    expect(useProjectScriptRunsStore.getState().runs[currentRun.id]).toMatchObject({
+      status: "stopped",
+      exitCode: null,
+      errorMessage: null,
+    });
+  } finally {
+    stop();
+    registry.dispose();
+    useProjectScriptRunsStore.setState({ runs: {}, pendingStopRunIds: new Set() });
+  }
+});
+
+it("keeps completion observed while a requested stop is pending", () => {
+  const registry = AtomRegistry.make();
+  const currentRun = run({ id: "stop-completion", status: "running", startedAt: 0 });
+  const text =
+    projectScriptBeginMarker(currentRun.sentinel) + "\noutput\n" + currentRun.sentinel + "0\n";
+  const atom = Atom.make(
+    AsyncResult.success({
+      ...EMPTY_TERMINAL_BUFFER_STATE,
+      status: "closed" as const,
+      output: {
+        ...EMPTY_TERMINAL_BUFFER_STATE.output,
+        chunks: [{ startOffset: 0, data: text, byteLength: text.length }],
+        retainedBytes: text.length,
+        nextOffset: text.length,
+      },
+    }),
+  );
+  vi.mocked(terminalEnvironment.observe).mockReturnValue(atom);
+  useProjectScriptRunsStore.setState({
+    runs: { [currentRun.id]: currentRun },
+    pendingStopRunIds: new Set([currentRun.id]),
+  });
+  const stop = startProjectScriptRunCoordinator(registry);
+  try {
+    expect(useProjectScriptRunsStore.getState().runs[currentRun.id]).toMatchObject({
+      status: "succeeded",
+      exitCode: 0,
+      outputTail: "output",
+    });
+  } finally {
+    stop();
+    registry.dispose();
+    useProjectScriptRunsStore.setState({ runs: {}, pendingStopRunIds: new Set() });
+  }
+});
+
+describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("POSIX project commands", () => {
+  it("runs commands in the user's shell and reports the exit code", () => {
+    const wrapped = wrapProjectScriptCommand("greet; [[ 1 == 1 ]]; exit 7");
+    const output = NodeChildProcess.execFileSync(
+      "bash",
+      ["-c", "greet() { printf 'hello\\n'; };\n" + wrapped],
+      {
+        env: {
+          PATH: HostProcess.Environment.defaultValue().PATH,
+          __T3_SCRIPT_BEGIN: "begin",
+          __T3_SCRIPT_SENTINEL: "done:",
+        },
+        encoding: "utf8",
+      },
+    );
+
+    expect(output).toContain("hello");
+    expect(output).toContain("done:7");
+  });
+
+  it("runs quoted commands through the fallback shell", () => {
+    const output = NodeChildProcess.execFileSync(
+      "sh",
+      ["-c", wrapProjectScriptCommand("printf '%s' \"it's working\"", false)],
+      {
+        env: {
+          PATH: HostProcess.Environment.defaultValue().PATH,
+          __T3_SCRIPT_BEGIN: "begin",
+          __T3_SCRIPT_SENTINEL: "done:",
+        },
+        encoding: "utf8",
+      },
+    );
+    expect(output).toContain("it's working");
+    expect(output).toContain("done:0");
   });
 });

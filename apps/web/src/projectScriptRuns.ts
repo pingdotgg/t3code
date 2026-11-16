@@ -81,6 +81,32 @@ export function isProjectScriptRunActive(run: ProjectScriptRun): boolean {
   return run.status === "starting" || run.status === "running";
 }
 
+export function projectScriptStoppedPatch(
+  run: ProjectScriptRun,
+  endedAt: number,
+): ProjectScriptRunPatch | null {
+  if (!isProjectScriptRunActive(run)) return null;
+  return {
+    status: "stopped",
+    errorMessage: null,
+    exitCode: null,
+    endedAt,
+  };
+}
+
+export function projectScriptStopRollbackPatch(
+  currentRun: ProjectScriptRun,
+  previousRun: ProjectScriptRun,
+): ProjectScriptRunPatch | null {
+  if (currentRun.status !== "stopped" || !isProjectScriptRunActive(previousRun)) return null;
+  return {
+    status: previousRun.status,
+    errorMessage: previousRun.errorMessage,
+    exitCode: previousRun.exitCode,
+    endedAt: previousRun.endedAt,
+  };
+}
+
 export function projectScriptRunStatusLabel(status: ProjectScriptRunStatus): string {
   switch (status) {
     case "starting":
@@ -108,17 +134,15 @@ export function sortProjectScriptRuns(
   );
 }
 
-function shellSingleQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
 /**
- * Runs the command in a child POSIX shell and prints a begin marker and an exit-code
+ * Runs the command in the current shell and prints a begin marker and an exit-code
  * sentinel that the run coordinator parses from the terminal stream. The tokens travel
  * in the environment, so the echoed command line never contains them.
  */
-export function wrapProjectScriptCommand(command: string): string {
-  const body = command.replace(/\r?\n/g, "\r");
+export function wrapProjectScriptCommand(command: string, useCurrentShell = true): string {
+  // The wrapper may be typed into a shell or passed as an initial command to a
+  // shell's -c, so every separator has to be a real line break.
+  const body = command.replace(/\r\n|\r/g, "\n");
   const script = [
     `printf "\\n%s\\n" "$${PROJECT_SCRIPT_BEGIN_ENV}"`,
     "(",
@@ -126,8 +150,8 @@ export function wrapProjectScriptCommand(command: string): string {
     ")",
     "__t3_status=$?",
     `printf "\\n%s%s\\n" "$${PROJECT_SCRIPT_SENTINEL_ENV}" "$__t3_status"`,
-  ].join("\r");
-  return `sh -c ${shellSingleQuote(script)}`;
+  ].join("\n");
+  return useCurrentShell ? script : `sh -c '${script.replaceAll("'", "'\\''")}'`;
 }
 
 export function projectScriptBeginMarker(sentinel: string): string {

@@ -1,3 +1,4 @@
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import type { TerminalBufferState } from "@t3tools/client-runtime/state/terminal";
 import {
   INITIAL_TERMINAL_OUTPUT_CURSOR,
@@ -11,6 +12,7 @@ import {
   PROJECT_SCRIPT_OUTPUT_TAIL_LINES,
   projectScriptBeginMarker,
   projectScriptSentinelPattern,
+  projectScriptStoppedPatch,
   stripProjectScriptOutput,
   type ProjectScriptRun,
   type ProjectScriptRunPatch,
@@ -76,7 +78,7 @@ function watchProjectScriptRun(
     unsubscribe?.();
   };
 
-  const settle = (patch: ProjectScriptRunPatch) => {
+  const settle = (patch: ProjectScriptRunPatch, closeTerminal = true) => {
     if (stopped) return;
     useProjectScriptRunsStore.getState().updateRun(run.id, {
       ...patch,
@@ -84,11 +86,26 @@ function watchProjectScriptRun(
       endedAt: Date.now(),
     });
     stop();
+    if (!closeTerminal) return;
+    void runAtomCommand(registry, terminalEnvironment.close, {
+      environmentId: run.environmentId,
+      input: { threadId: run.threadId, terminalId: run.terminalId, deleteHistory: false },
+    });
+  };
+
+  const stopPending = () => useProjectScriptRunsStore.getState().pendingStopRunIds.has(run.id);
+
+  const settleRequestedStop = () => {
+    const currentRun = useProjectScriptRunsStore.getState().runs[run.id];
+    const stoppedPatch =
+      currentRun === undefined ? null : projectScriptStoppedPatch(currentRun, Date.now());
+    if (stoppedPatch !== null) settle(stoppedPatch, false);
   };
 
   lostTimer = setTimeout(() => {
     if (!stopped && !sawLive) {
-      settle({ status: "lost", errorMessage: "The terminal is no longer available." });
+      if (stopPending()) settleRequestedStop();
+      else settle({ status: "lost", errorMessage: "The terminal is no longer available." });
     }
   }, LOST_TERMINAL_GRACE_MS);
 
@@ -126,6 +143,21 @@ function watchProjectScriptRun(
     }
     if (result._tag !== "Success") return;
     const state = result.value;
+
+    const update = readTerminalOutputUpdate(state.output, cursor);
+    cursor = update.cursor;
+    if (update.type === "reset") {
+      lineBuffer = "";
+      tail = [];
+    }
+    if (update.type !== "none") {
+      lineBuffer += update.data;
+      const lines = lineBuffer.split(/\r\n|\r|\n/);
+      lineBuffer = (lines.pop() ?? "").slice(-4096);
+      for (const line of lines) {
+        if (handleLine(line)) return;
+      }
+    }
     if (state.status === "error") {
       settle({
         status: "failed",
@@ -141,7 +173,9 @@ function watchProjectScriptRun(
       return;
     }
     if (state.status === "closed") {
-      if (sawLive) {
+      if (stopPending()) {
+        settleRequestedStop();
+      } else if (sawLive) {
         settle({
           status: "lost",
           errorMessage: "The terminal closed before the command reported a result.",
@@ -149,7 +183,6 @@ function watchProjectScriptRun(
       }
       return;
     }
-
     sawLive = true;
     if (lostTimer !== null) {
       clearTimeout(lostTimer);
@@ -160,20 +193,6 @@ function watchProjectScriptRun(
       useProjectScriptRunsStore.getState().runs[run.id]?.status === "starting"
     ) {
       useProjectScriptRunsStore.getState().updateRun(run.id, { status: "running" });
-    }
-
-    const update = readTerminalOutputUpdate(state.output, cursor);
-    cursor = update.cursor;
-    if (update.type === "reset") {
-      lineBuffer = "";
-      tail = [];
-    }
-    if (update.type === "none") return;
-    lineBuffer += update.data;
-    const lines = lineBuffer.split(/\r\n|\r|\n/);
-    lineBuffer = lines.pop() ?? "";
-    for (const line of lines) {
-      if (handleLine(line)) return;
     }
   };
 

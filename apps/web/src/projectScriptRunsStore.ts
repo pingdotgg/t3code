@@ -7,11 +7,14 @@ import type { ProjectScriptRun, ProjectScriptRunPatch } from "./projectScriptRun
 interface ProjectScriptRunsStore {
   readonly runs: Record<string, ProjectScriptRun>;
   readonly selectedRunId: string | null;
+  readonly pendingStopRunIds: ReadonlySet<string>;
   readonly startRun: (run: ProjectScriptRun) => void;
   readonly updateRun: (runId: string, patch: ProjectScriptRunPatch) => void;
   readonly removeRun: (runId: string) => void;
   readonly clearFinished: () => void;
   readonly selectRun: (runId: string | null) => void;
+  readonly beginStop: (runId: string) => void;
+  readonly endStop: (runId: string) => void;
 }
 
 const PROJECT_SCRIPT_RUNS_STORAGE_KEY = "t3code:project-script-runs:v1";
@@ -21,6 +24,7 @@ export const useProjectScriptRunsStore = create<ProjectScriptRunsStore>()(
     (set) => ({
       runs: {},
       selectedRunId: null,
+      pendingStopRunIds: new Set(),
       startRun: (run) => set((state) => ({ runs: { ...state.runs, [run.id]: run } })),
       updateRun: (runId, patch) =>
         set((state) => {
@@ -54,6 +58,20 @@ export const useProjectScriptRunsStore = create<ProjectScriptRunsStore>()(
               : null,
         })),
       selectRun: (runId) => set({ selectedRunId: runId }),
+      beginStop: (runId) =>
+        set((state) => {
+          if (state.pendingStopRunIds.has(runId)) return state;
+          const pendingStopRunIds = new Set(state.pendingStopRunIds);
+          pendingStopRunIds.add(runId);
+          return { pendingStopRunIds };
+        }),
+      endStop: (runId) =>
+        set((state) => {
+          if (!state.pendingStopRunIds.has(runId)) return state;
+          const pendingStopRunIds = new Set(state.pendingStopRunIds);
+          pendingStopRunIds.delete(runId);
+          return { pendingStopRunIds };
+        }),
     }),
     {
       name: PROJECT_SCRIPT_RUNS_STORAGE_KEY,
