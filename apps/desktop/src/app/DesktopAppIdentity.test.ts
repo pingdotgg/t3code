@@ -1,6 +1,7 @@
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -10,6 +11,7 @@ import * as PlatformError from "effect/PlatformError";
 import type * as Electron from "electron";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
@@ -33,8 +35,9 @@ type TestEnvironmentInput = Partial<DesktopEnvironment.MakeDesktopEnvironmentInp
 
 interface ElectronAppCalls {
   readonly setAboutPanelOptions: Array<Electron.AboutPanelOptionsOptions>;
-  readonly setDockIcon: string[];
+  readonly setDockIcon: Array<string | null>;
   readonly setName: string[];
+  readonly setWindowIcons?: string[];
 }
 
 const layerElectronApp = (calls: ElectronAppCalls) =>
@@ -65,21 +68,27 @@ const layerElectronApp = (calls: ElectronAppCalls) =>
       Effect.sync(() => {
         calls.setDockIcon.push(iconPath);
       }),
+    setWindowIcons: (iconPath) =>
+      Effect.sync(() => {
+        calls.setWindowIcons?.push(iconPath);
+      }),
     appendCommandLineSwitch: () => Effect.void,
     onBeforeQuitForUpdate: () => Effect.void,
     removeCommandLineSwitch: () => Effect.void,
     on: () => Effect.void,
   } satisfies ElectronApp.ElectronApp["Service"]);
 
+// The real service, so app icon choices resolve to real paths, with the build icon fixed.
 const layerAssets = (png: Option.Option<string>) =>
-  Layer.succeed(DesktopAssets.DesktopAssets, {
-    iconPaths: Effect.succeed({
-      ico: Option.none(),
-      icns: Option.none(),
-      png,
-    }),
-    resolveResourcePath: () => Effect.succeedNone,
-  } satisfies DesktopAssets.DesktopAssets["Service"]);
+  Layer.effect(
+    DesktopAssets.DesktopAssets,
+    Effect.map(DesktopAssets.make, (assets) =>
+      DesktopAssets.DesktopAssets.of({
+        ...assets,
+        iconPaths: Effect.succeed({ ico: Option.none(), icns: Option.none(), png }),
+      }),
+    ),
+  );
 
 const layerEnvironment = (overrides: TestEnvironmentInput = {}) => {
   const { env, ...environmentOverrides } = overrides;
@@ -115,6 +124,7 @@ const withIdentity = <A, E, R>(
     readonly legacyPathProbeError?: PlatformError.PlatformError;
     readonly packageJson?: string;
     readonly pngIconPath?: Option.Option<string>;
+    readonly savedAppIcon?: string;
   } = {},
 ) => {
   const calls: ElectronAppCalls = input.calls ?? {
@@ -128,18 +138,26 @@ const withIdentity = <A, E, R>(
       DesktopAppIdentity.layer.pipe(
         Layer.provide(NodePath.layerPosix),
         Layer.provideMerge(
+          DesktopClientSettings.layerTest(
+            input.savedAppIcon === undefined
+              ? Option.none()
+              : Option.some({ ...DEFAULT_CLIENT_SETTINGS, appIcon: input.savedAppIcon }),
+          ),
+        ),
+        Layer.provideMerge(layerAssets(input.pngIconPath ?? Option.none())),
+        Layer.provideMerge(
           FileSystem.layerNoop({
             exists: (path) =>
               input.legacyPathProbeError
                 ? Effect.fail(input.legacyPathProbeError)
                 : Effect.succeed(
-                    input.legacyPathExists === true && /T3 Code \((Alpha|Dev)\)/.test(path),
+                    path.includes("/app-icons/") ||
+                      (input.legacyPathExists === true && /T3 Code \((Alpha|Dev)\)/.test(path)),
                   ),
             readFileString: () =>
               Effect.succeed(input.packageJson ?? '{"t3codeCommitHash":"abcdef1234567890"}'),
           }),
         ),
-        Layer.provideMerge(layerAssets(input.pngIconPath ?? Option.none())),
         Layer.provideMerge(layerElectronApp(calls)),
         Layer.provideMerge(layerEnvironment(input.environment)),
       ),
@@ -205,6 +223,97 @@ describe("DesktopAppIdentity", () => {
         assert.equal(calls.setAboutPanelOptions[0]?.applicationName, `T3 Code (${stage})`);
       }),
       { calls, environment },
+    );
+  });
+
+  const PACKAGED_MAC_ICONS =
+    "/Applications/T3 Code.app/Contents/Resources/app.asar/apps/server/dist/client/app-icons";
+
+  it.effect.each([
+    {
+      name: "a saved icon",
+      savedAppIcon: "classic-blueprint",
+      dock: [`${PACKAGED_MAC_ICONS}/classic-blueprint-macos.png`],
+    },
+    { name: "Default", savedAppIcon: "default", dock: [] },
+    { name: "an unknown icon", savedAppIcon: "retired-icon", dock: [] },
+    { name: "no saved settings", savedAppIcon: undefined, dock: [] },
+  ])("sets the packaged macOS Dock icon on launch only for $name", ({ savedAppIcon, dock }) => {
+    const calls: ElectronAppCalls = { setAboutPanelOptions: [], setDockIcon: [], setName: [] };
+    return withIdentity(
+      Effect.gen(function* () {
+        yield* (yield* DesktopAppIdentity.DesktopAppIdentity).configure;
+        assert.deepStrictEqual(calls.setDockIcon, dock);
+      }),
+      { calls, ...(savedAppIcon === undefined ? {} : { savedAppIcon }) },
+    );
+  });
+
+  it.effect("restores the bundle's Dock icon when switching back to Default", () => {
+    const calls: ElectronAppCalls = { setAboutPanelOptions: [], setDockIcon: [], setName: [] };
+    return withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        yield* identity.applyAppIcon("default");
+        yield* identity.applyAppIcon("sunrise");
+        yield* identity.applyAppIcon("default");
+        yield* identity.applyAppIcon("default");
+        assert.deepStrictEqual(calls.setDockIcon, [
+          `${PACKAGED_MAC_ICONS}/sunrise-macos.png`,
+          null,
+        ]);
+      }),
+      { calls },
+    );
+  });
+
+  it.effect("keeps the development Dock icon for Default", () => {
+    const calls: ElectronAppCalls = { setAboutPanelOptions: [], setDockIcon: [], setName: [] };
+    return withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        yield* identity.applyAppIcon("black");
+        yield* identity.applyAppIcon("default");
+        assert.deepStrictEqual(calls.setDockIcon, [
+          "/repo/apps/web/public/app-icons/black-macos.png",
+          "/repo/assets/dev/blueprint-macos-1024.png",
+        ]);
+      }),
+      {
+        calls,
+        environment: { isPackaged: false },
+        pngIconPath: Option.some("/repo/assets/dev/blueprint-macos-1024.png"),
+      },
+    );
+  });
+
+  it.effect("swaps the Linux window icon and restores the build icon", () => {
+    const calls: ElectronAppCalls = {
+      setAboutPanelOptions: [],
+      setDockIcon: [],
+      setName: [],
+      setWindowIcons: [],
+    };
+    return withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        yield* identity.applyAppIcon("classic-dev");
+        yield* identity.applyAppIcon("default");
+        assert.deepStrictEqual(calls.setDockIcon, []);
+        assert.deepStrictEqual(calls.setWindowIcons, [
+          "/opt/T3 Code/resources/app.asar/apps/server/dist/client/app-icons/classic-dev.png",
+          "/opt/T3 Code/resources/app.asar/apps/desktop/resources/icon.png",
+        ]);
+      }),
+      {
+        calls,
+        environment: {
+          platform: "linux",
+          appPath: "/opt/T3 Code/resources/app.asar",
+          resourcesPath: "/opt/T3 Code/resources",
+        },
+        pngIconPath: Option.some("/opt/T3 Code/resources/app.asar/apps/desktop/resources/icon.png"),
+      },
     );
   });
 });
