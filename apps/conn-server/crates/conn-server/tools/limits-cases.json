@@ -1119,6 +1119,61 @@
     "ok": true
    },
    "ok": false
+  },
+  {
+   "name": "workflow script path is trimmed",
+   "tag": "orchestration.getWorkflowScript",
+   "payload": {
+    "scriptPath": " /tmp/run.js ",
+    "threadId": "t"
+   },
+   "ok": true,
+   "after": {
+    "scriptPath": "/tmp/run.js"
+   }
+  },
+  {
+   "name": "workflow script path cannot be blank",
+   "tag": "orchestration.getWorkflowScript",
+   "payload": {
+    "scriptPath": " ",
+    "threadId": "t"
+   },
+   "ok": false
+  },
+  {
+   "name": "workflow stop ids are trimmed",
+   "tag": "orchestration.stopWorkflow",
+   "payload": {
+    "threadId": " t ",
+    "subagentId": " s "
+   },
+   "ok": true,
+   "after": {
+    "threadId": "t",
+    "subagentId": "s"
+   }
+  },
+  {
+   "name": "workflow stop thread cannot be blank",
+   "tag": "orchestration.stopWorkflow",
+   "payload": {
+    "threadId": " ",
+    "subagentId": "s"
+   },
+   "ok": false
+  },
+  {
+   "name": "workflow script path trims JavaScript BOM whitespace",
+   "tag": "orchestration.getWorkflowScript",
+   "payload": {
+    "scriptPath": "﻿ /tmp/run.js ﻿",
+    "threadId": "t"
+   },
+   "ok": true,
+   "after": {
+    "scriptPath": "/tmp/run.js"
+   }
   }
  ]
 }

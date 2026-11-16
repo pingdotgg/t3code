@@ -13,6 +13,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { McpSession, oauthMcpToken, pairBearer } from "./mcp-client.mjs";
+import { claudeStub, tsCredential, rustCredential, fileText, projectProviderPolicy } from "./handoff-fixture.mjs";
 import { monorepo } from "../../../tools/monorepo.mjs";
 import { canaryEnv, gitEnv, sealedEnv, sealedPath } from "../../../tools/sealed-env.mjs";
 import { GUARD_ARG } from "../../../tools/no-outside-fetch.mjs";
@@ -99,9 +100,12 @@ async function startTs() {
   NodeFS.mkdirSync(tsHome);
   // The T3 server fetches model-manifest.json from GitHub while this is on (its default).
   NodeFS.mkdirSync(NodePath.join(base, "userdata"));
+  const stub = noModel ? claudeStub(NodePath.join(root,"ts")) : undefined;
   NodeFS.writeFileSync(
     NodePath.join(base, "userdata", "settings.json"),
-    JSON.stringify({ enableProviderUpdateChecks: false }),
+    JSON.stringify({ enableProviderUpdateChecks: false,
+      ...(stub === undefined ? {} : {providerInstances:{claudeAgent:{driver:"claudeAgent",enabled:true,config:{binaryPath:stub.binary}}}}),
+    }),
   );
   const port = await freePort();
   const node = process.execPath;
@@ -113,7 +117,7 @@ async function startTs() {
   ];
   // Without --model, no provider or host CLI is on the T3 server's PATH, so its provider and
   // source control probes can start none of this machine's (they find nothing, as on a host
-  // without them). A folder that holds one (a CI image's /usr/bin has gh and az) is replaced
+  // without them). A folder that holds one (a CI image's /usr/bin has gh) is replaced
   // by links to the rest (`sealedPath`).
   const tsPathText = noModel ? sealedPath(NodePath.join(root, "ts"), tsPath.join(":")) : tsPath.join(":");
   const { origin, code } = await start(
@@ -150,6 +154,8 @@ async function startTs() {
   );
   const bearer = await pairBearer(origin, code);
   return {
+    bearer,
+    records: stub?.records,
     name: "T3 server",
     origin,
     authorization: `Bearer ${await oauthMcpToken(origin, bearer)}`,
@@ -160,13 +166,16 @@ async function startRust() {
   const project = scratchProject("rust");
   const port = await freePort();
   const state = NodePath.join(root, "rust", "state");
+  NodeFS.mkdirSync(state,{recursive:true});
+  const capture = NodePath.join(state,"mcp-capture.json");
   const { origin, code } = await start(
     rustBinary,
     ["--listen", `127.0.0.1:${port}`, "--state-dir", state, "--project", project],
-    { env: sealedEnv(NodePath.join(root, "rust")) },
+    { env: {...sealedEnv(NodePath.join(root, "rust")), REPLAY_MCP_CAPTURE:capture} },
     port,
   );
-  return { name: "Conn Server", origin, authorization: `Bearer ${await pairBearer(origin, code)}` };
+  const bearer = await pairBearer(origin,code);
+  return { name: "Conn Server", capture, origin, bearer, authorization: `Bearer ${bearer}` };
 }
 
 /** A value's shape: types, object keys, the first array item's shape. */
@@ -283,6 +292,7 @@ const searchOrder = (value) => value.matches.map((match) => [match.title, match.
 const context = [{}, {}];
 const steps = [
   ["t3_workflow_stop", () => ({ threadId: "thread:none", subagentId: "workflow:none" })],
+  ["t3_workflow_stop", () => ({ threadId: " ", subagentId: "workflow:none" })],
   ["tool_search", () => ({ query: "t3_workflow_stop" })],
   [
     "t3_project_list",
@@ -324,6 +334,20 @@ const steps = [
     undefined,
     { noTurn: true },
   ],
+  ["t3_worktree_list", (c) => ({threadId:c.idleThreadId, refKind:"local"})],
+  ["t3_worktree_list", () => ({threadId:"thread:none"})],
+  ["t3_worktree_list", () => ({})],
+  ["t3_worktree_status", () => ({})],
+  ["t3_worktree_handoff", () => ({branch:"parity/hidden"})],
+  ["create_threads", () => ({threads:[{title:"Hidden"}]})],
+  ["t3_attachment_prepare_upload", () => ({upload:{type:"file",name:"note.txt",mimeType:"text/plain",sizeBytes:3}}), async (c,v,server) => {
+    c.upload = v;
+    const uploaded = await fetch(`${server.origin}${v.relativeUrl}`,{method:"POST",body:"abc"});
+    if (!uploaded.ok) throw new Error(`fixture upload: ${uploaded.status} ${await uploaded.text()}`);
+  }],
+  ["t3_attachment_discard", (c) => ({attachmentId:c.upload?.attachmentId ?? "pending-00000000-0000-4000-8000-000000000001-txt"})],
+  ["t3_attachment_discard", (c) => ({attachmentId:c.upload?.attachmentId ?? "pending-00000000-0000-4000-8000-000000000001-txt"})],
+  ["t3_thread_send_attachments", (c) => ({threadId:c.idleThreadId,attachments:[{type:"file",id:"other-00000000-0000-4000-8000-000000000001-txt",name:"note.txt",mimeType:"text/plain",sizeBytes:3}]})],
   // t3_thread_organize on the idle worktree thread: every action, then the refusals.
   ...[
     "pin",
@@ -393,10 +417,10 @@ const steps = [
   ["t3_queue", () => ({ action: 5 })],
   // Pull request links on the idle thread: values compared, not only shapes.
   ...[
-    (c) => ({ threadId: c.idleThreadId, url: "https://git.cafe/O/R/pull/4" }),
-    (c) => ({ threadId: c.idleThreadId, url: "https://git.cafe/o/r/pulls/4" }),
+    (c) => ({ threadId: c.idleThreadId, url: "https://github.com/O/R/pull/4" }),
+    (c) => ({ threadId: c.idleThreadId, url: "https://github.com/o/r/pull/4" }),
     (c) => ({ threadId: c.idleThreadId, repository: "O/R", number: 3, host: "GitHub.com" }),
-    (c) => ({ threadId: c.idleThreadId, url: "http://forge.example:3000/a/b/pulls/7" }),
+    (c) => ({ threadId: c.idleThreadId, url: "https://github.example:8443/a/b/pull/7" }),
   ].map((input) => ["link_pull_request", input, undefined, { same: (v) => v }]),
   ...[
     (c) => ({ threadId: c.idleThreadId, url: "https://example.com/team/x" }),
@@ -415,7 +439,7 @@ const steps = [
         "https://GitHub.com/O/R/pull/5",
         "https://github.com/o/r/pull/3",
         "not a url",
-        "https://gitlab.com/g/s/p/-/merge_requests/2",
+        "https://github.com/g/s/pull/2",
       ],
     }),
     undefined,
@@ -572,7 +596,7 @@ for (const [tool, input, after, options] of run) {
     sessions.map(async (session, i) => {
       const reply = await session.callTool(tool, input(context[i]));
       const result = outcome(reply);
-      if (result.kind === "ok" && after !== undefined) after(context[i], result.value);
+      if (result.kind === "ok" && after !== undefined) await after(context[i], result.value, servers[i]);
       return result;
     }),
   );
@@ -611,6 +635,107 @@ for (const [tool, input, after, options] of run) {
     `${label}${diff.length === 0 ? "" : `\n       ${diff.join("\n       ")}`}`,
     diff.length === 0,
   );
+}
+if (noModel) {
+  const setupScript = {
+        id:"parity-setup",name:"Parity setup",icon:"play",runOnWorktreeCreate:true,
+        command: String.raw`printf '%s\n%s\n' "$T3CODE_PROJECT_ROOT" "$T3CODE_WORKTREE_PATH" > handoff-setup.txt`,
+      };
+  await Promise.all(servers.map(async (server,i) => {
+    const response = await fetch(`${server.origin}/api/projects/mutate`,{
+      method:"POST",headers:{authorization:`Bearer ${server.bearer}`,"content-type":"application/json"},
+      body:JSON.stringify({type:"project.update",commandId:"parity-setup-script",projectId:context[i].projectId,scripts:[setupScript]}),
+    });
+    if (!response.ok) throw new Error(`fixture project scripts ${response.status}: ${await response.text()}`);
+  }));
+  // Keep a stale tracking ref after deleting the remote branch. Handoff must use the local
+  // base and report startedFromOrigin:false, as T3's scoped fetch does.
+  for (const side of ["ts","rust"]) {
+    const project = NodePath.join(root,side,"parity");
+    const remote = NodePath.join(root,side,"origin.git");
+    const git = (cwd,...args) => NodeChildProcess.execFileSync("git",args,{cwd,env:gitEnv(),stdio:["ignore","pipe","pipe"]}).toString().trim();
+    git(project,"clone","--bare",project,remote);
+    git(project,"remote","add","origin",remote);
+    git(project,"fetch","--no-tags","origin");
+    const branch=git(project,"symbolic-ref","--short","HEAD");
+    git(remote,"update-ref","-d",`refs/heads/${branch}`);
+  }
+  const launched = await Promise.all(sessions.map((session,i) => session.callTool("t3_thread_launch",{
+    projectId:context[i].projectId,title:"Handoff parent",message:"hang",
+    modelSelection:{instanceId:"claudeAgent",model:"claude-haiku-5-5"},runtimeMode:"auto",
+    workspaceStrategy:{type:"root"},clientRequestId:"handoff-parent",
+  }).then(outcome)));
+  if (launched.some((r) => r.kind !== "ok")) throw new Error(`fixture parent launch: ${JSON.stringify(launched)}`);
+  const credentials = await Promise.all([tsCredential(servers[0].records),rustCredential(servers[1].capture)]);
+  const agents = credentials.map((entry) => new McpSession(new URL(entry.url).origin,entry.headers.Authorization));
+  await Promise.all(agents.map((agent) => agent.initialize()));
+  const state = [{},{}];
+  const agentSteps = [
+    ["t3_worktree_status", () => ({}), (v) => ({...v,projectWorkspaceRoot:"<project>"})],
+    ["create_threads", () => ({threads:[{title:"Batch one"},{}],clientRequestId:"handoff-batch"}), (v) => v.threads.map((t) => ({title:t.title,status:t.status,createdBy:t.createdBy,creationSource:t.creationSource,providerInstanceId:t.providerInstanceId,model:t.model})), (c,v) => {c.targetThreadId=v.threads[0].threadId;}],
+    ["create_threads", () => ({threads:[{title:"Batch one"},{}],clientRequestId:"handoff-batch"}), (v) => v.threads.map((t) => ({title:t.title,status:t.status}))],
+    ...[0,1].map(() => ["create_threads", () => ({threads:[{prompt:"hang"}],clientRequestId:"prompt-retry"}), (v) => ({hasRun:v.threads[0].runId !== null}), (c,v) => {
+      const run = v.threads[0].runId;
+      if (c.promptRun !== undefined && c.promptRun !== run) throw new Error("A prompted retry created another run");
+      c.promptRun = run;
+    }]),
+    ["create_threads", () => ({threads:[{title:null}]}), (v) => ({title:v.threads[0].title,model:v.threads[0].model,status:v.threads[0].status})],
+    ["create_threads", () => ({threads:[{target:{providerInstanceId:null}}]}), (v) => ({title:v.threads[0].title,model:v.threads[0].model,status:v.threads[0].status})],
+    ["t3_worktree_list", () => ({threadId:" "})],
+    ["t3_worktree_list", () => ({query:"x".repeat(257)})],
+    ["create_threads", () => ({threads:[{runtimeMode:"full-access"}]})],
+    ["create_threads", () => ({threads:[]})],
+    ["create_threads", () => ({threads:[{title:"   "}]})],
+    ["create_threads", () => ({threads:[{prompt:"x".repeat(120001)}]})],
+    ["create_threads", () => ({threads:[{target:{providerInstanceId:"missing"}}]})],
+    ["create_threads", () => ({threads:[{target:{driverKind:"parity-missing"}}]})],
+    ["create_threads", () => ({threads:[{target:{options:[{id:"effort",value:"bad"}]}}]})],
+    ["t3_worktree_handoff", () => ({branch:"   "})],
+    ["t3_attachment_prepare_upload", () => ({upload:{name:"shot.png",mimeType:"image/png",sizeBytes:0}})],
+    ["t3_attachment_prepare_upload", () => ({upload:{type:"file",name:"note.txt",mimeType:"text/plain",sizeBytes:3}}), () => "prepared", async (c,v,server) => {
+      c.attachment={type:"file",id:v.attachmentId,name:"note.txt",mimeType:"text/plain",sizeBytes:3};
+      const response = await fetch(`${server.origin}${v.relativeUrl}`,{method:"POST",body:"abc"});
+      if (!response.ok) throw new Error(`agent fixture upload ${response.status}`);
+    }],
+    ["t3_thread_send_attachments", (c) => ({threadId:c.targetThreadId,attachments:[c.attachment,c.attachment]})],
+    ["t3_thread_send_attachments", (c) => ({threadId:c.targetThreadId,attachments:[0,1].map((n) => ({type:"file",id:`pending-00000000-0000-4000-8000-${String(n).padStart(12,"0")}-png`,name:"large.png",mimeType:"image/png",sizeBytes:50*1024*1024}))})],
+    ["t3_thread_send_attachments", (c) => ({threadId:c.targetThreadId,attachments:[c.attachment],message:"hang"}), (v) => ({status:v.status})],
+    ["t3_worktree_handoff", () => ({branch:"parity/handoff",startFromOrigin:true,continuationPrompt:"hang"}), (v) => ({...v,worktreePath:"<worktree>"}), (c,v) => {c.worktreePath=v.worktreePath;}],
+    ["t3_worktree_status", () => ({}), (v) => ({...v,worktreePath:v.worktreePath === null ? null : "<worktree>",projectWorkspaceRoot:"<project>"})],
+  ];
+  for (const [tool,input,normalize = (v) => v,after] of agentSteps) {
+    if (tool === "t3_worktree_handoff" && input({}).branch === "parity/handoff") {
+      await Promise.all(servers.map((server,i) => projectProviderPolicy(server,context[i].projectId,false,[setupScript])));
+      for (const target of [{},{providerInstanceId:"claudeAgent"}]) {
+        const denied = await Promise.all(agents.map((agent) => agent.callTool("create_threads",{threads:[{target}]}).then(outcome)));
+        report("calling thread create_threads: disabled project provider refused",denied.every((r) => r.kind === "failure" && r.code === "invalid_request"));
+      }
+      const retries = await Promise.all(agents.map((agent) => agent.callTool("create_threads",{threads:[{prompt:"hang"}],clientRequestId:"prompt-retry"}).then(outcome)));
+      report("calling thread create_threads: accepted retry survives policy change",retries.every((r,i) => r.kind === "ok" && r.value.threads[0].runId === state[i].promptRun));
+      await Promise.all(servers.map((server,i) => projectProviderPolicy(server,context[i].projectId,true,[setupScript])));
+      const discards = await Promise.all(agents.map((agent,i) => agent.callTool("t3_attachment_discard",{attachmentId:state[i].attachment.id}).then(outcome)));
+      report("accepted difference: successful send reclaims Conn's pending owner slot",discards[0].kind === "ok" && discards[1].kind === "failure" && discards[1].code === "invalid_request");
+    }
+    const values = await Promise.all(agents.map(async (agent,i) => {
+      const result=outcome(await agent.callTool(tool,input(state[i])));
+      if (result.kind === "ok") { await after?.(state[i],result.value,servers[i]); return {kind:"ok",value:normalize(result.value)}; }
+      return result;
+    }));
+    report(`calling thread ${tool}: ${canonical(values[0]) === canonical(values[1]) ? "same outcome" : JSON.stringify(values)}`, canonical(values[0]) === canonical(values[1]));
+  }
+  const setup = await Promise.all(state.map(async (c,i) => {
+    const text = await fileText(NodePath.join(c.worktreePath,"handoff-setup.txt"));
+    const lines = text.trimEnd().split("\n");
+    return lines.length === 2 && lines[0] === NodePath.join(root,i === 0 ? "ts" : "rust","parity") && lines[1] === c.worktreePath;
+  }));
+  report("calling thread handoff setup: project and worktree environment",setup.every(Boolean));
+  const ended = await Promise.all(sessions.map((session,i) => session.callTool("t3_thread_wait",{
+    threadId:launched[i].value.threadId,runId:launched[i].value.runId,timeoutMs:10_000,
+  }).then(outcome)));
+  const endedStates = ended.map((r) => r.kind === "ok" ? {status:r.value.status,timedOut:r.value.timedOut} : r);
+  report(`calling thread handoff ends old run: ${canonical(endedStates[0])}`,canonical(endedStates[0]) === canonical(endedStates[1]));
+
+
 }
 console.log(failed === 0 ? "\nparity: no differences" : `\nparity: ${failed} differences`);
 process.exit(failed === 0 ? 0 : 1);

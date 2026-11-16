@@ -106,7 +106,7 @@ impl Limit {
         match value {
             Value::String(text) => {
                 if self.non_blank {
-                    *text = text.trim().to_owned();
+                    *text = conn_support::text::js_trim(text).to_owned();
                 }
                 self.text_problem(text, path)
             }

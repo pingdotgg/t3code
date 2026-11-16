@@ -21,19 +21,26 @@ use serde_json::Value;
 mod catalog;
 mod credentials;
 mod exposure;
+mod input;
 mod links;
 mod sessions;
 mod time;
 mod tools;
 mod transport;
 mod view;
+mod worktrees;
 
 pub use credentials::ThreadCredentialRequest;
 pub use transport::Reply;
+pub use worktrees::WorktreeConfig;
 
 /// What the service needs from the server around it.
 pub struct McpConfig {
     pub engine: Arc<dyn Engine>,
+    /// The same attachment store used by client RPC and HTTP uploads.
+    pub files: Option<Arc<conn_files::Files>>,
+    /// Worktree defaults, git status and setup terminals.
+    pub worktrees: Option<WorktreeConfig>,
     pub environment_id: String,
     pub label: String,
     pub server_version: String,
@@ -41,6 +48,8 @@ pub struct McpConfig {
     pub platform: Value,
     /// `ServerProvider` entries (`ServerConfig.providers`), read on each capabilities call.
     pub providers: Arc<dyn Fn() -> Vec<Value> + Send + Sync>,
+    /// Recheck an instance when its model or availability snapshot refuses a batch target.
+    pub refresh_provider: Option<ProviderRefresh>,
     /// Outside callers get thread links through this app, as Copy thread's do.
     pub hosted_app_url: String,
     /// Scheduled tasks; without it the scheduled task tools answer that they are not served.
@@ -52,6 +61,8 @@ pub struct McpConfig {
     /// The broker also used by panels.requests and panels.respond.
     pub panels: Option<conn_features::panels::PanelBroker>,
 }
+
+pub type ProviderRefresh = Arc<dyn Fn(String) -> conn_engine::BoxFuture<'static, ()> + Send + Sync>;
 
 impl std::fmt::Debug for McpConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -168,6 +179,8 @@ pub struct McpService {
     /// Threads whose own agent asked to settle them when the active run completes.
     settling: Mutex<std::collections::HashSet<String>>,
     endpoint: OnceLock<String>,
+    upload_owners: Mutex<tools::attachments::UploadOwners>,
+    handoffs: Mutex<std::collections::HashSet<String>>,
 }
 
 impl std::fmt::Debug for McpService {
@@ -189,6 +202,8 @@ impl McpService {
             exposure: Mutex::new(exposure::Exposure::default()),
             settling: Mutex::new(std::collections::HashSet::new()),
             endpoint: OnceLock::new(),
+            upload_owners: Mutex::new(tools::attachments::UploadOwners::default()),
+            handoffs: Mutex::new(std::collections::HashSet::new()),
         })
     }
 

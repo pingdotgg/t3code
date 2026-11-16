@@ -4,15 +4,10 @@ use crate::catalog;
 use serde_json::{Value, json};
 use std::collections::{HashSet, VecDeque};
 
-const MAX_SESSIONS: usize = 256;
-const MAX_RESULTS: usize = 10;
+mod generated;
+use generated::{DIRECT, MAX_RESULTS, MAX_SESSIONS};
+
 const SEARCH_ORDER: &str = include_str!("../fixtures/t3-tool-names.txt");
-const DIRECT: &[&str] = &[
-    "orchestrator_capabilities",
-    "delegate_task",
-    "task_status",
-    "tool_search",
-];
 
 #[derive(Default)]
 pub(crate) struct Exposure {

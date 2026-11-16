@@ -4,11 +4,7 @@
 //!
 //! - The checkout's remotes come from `git remote -v`; the registry recognises each one, and
 //!   `origin` wins, then the first known host, then the first remote.
-//! - A remote on a host no definition claims is asked of the host integrations, one after
-//!   another in driver order: GitHub (a credential for that host), GitLab
-//!   (`glab auth status --hostname <host>`) and Forgejo (fj's logins, then tea's). The first
-//!   that claims it wins. Cursor Origin and GitCafe never claim one; Bitbucket and Azure DevOps
-//!   have no refinement.
+//! - A remote on an unknown host is refined only by GitHub credentials for that host.
 //! - Caches, as T3's: a checkout's answer 5 s (2,048 checkouts; failures not kept), an unknown
 //!   server's verdict 5 minutes when every integration answered (512 servers), cleared when
 //!   the settings change.
@@ -26,13 +22,9 @@ use conn_vcs::process::{GitCommand, OnLimit, ProcessError};
 
 use crate::{
     cache::TtlCache,
-    discovery::{ProbeCommand, ProbeFailure, run_probe},
     hosts::{
         DiscoveryContext,
-        forgejo::{self, MatchOptions},
-        forgejo_cli::{Program, Reason, Session},
         github::{self, CredentialError},
-        gitlab,
     },
     registry::{self, ProviderInfo},
 };
@@ -41,9 +33,6 @@ const DETECTION_CAPACITY: usize = 2_048;
 const DETECTION_TTL: Duration = Duration::from_secs(5);
 const UNKNOWN_REMOTE_CAPACITY: usize = 512;
 const UNKNOWN_REMOTE_TTL: Duration = Duration::from_secs(5 * 60);
-/// `probeTimeoutMs` for a CLI spec without its own.
-const REFINE_TIMEOUT: Duration = Duration::from_secs(5);
-
 /// `SourceControlProviderContext`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProviderContext {
@@ -264,7 +253,7 @@ impl Detector {
         context: Option<ProviderContext>,
     ) -> Result<Option<ProviderContext>, DetectError> {
         match context {
-            Some(context) => Ok(Some(self.refine(ctx, cwd, context).await)),
+            Some(context) => Ok(Some(self.refine(ctx, context).await)),
             None => {
                 self.detection
                     .get_with(
@@ -279,7 +268,7 @@ impl Detector {
                         || async {
                             let remotes = list_remotes(cwd, ctx.child_env).await?;
                             match select_provider_context(&remotes) {
-                                Some(context) => Ok(Some(self.refine(ctx, cwd, context).await)),
+                                Some(context) => Ok(Some(self.refine(ctx, context).await)),
                                 None => Ok(None),
                             }
                         },
@@ -295,12 +284,7 @@ impl Detector {
     }
 
     /// `refineContext`.
-    async fn refine(
-        &self,
-        ctx: DiscoveryContext<'_>,
-        cwd: &Path,
-        context: ProviderContext,
-    ) -> ProviderContext {
+    async fn refine(&self, ctx: DiscoveryContext<'_>, context: ProviderContext) -> ProviderContext {
         if context.provider.kind != "unknown" {
             return context;
         }
@@ -315,7 +299,7 @@ impl Detector {
                         Duration::ZERO
                     }
                 },
-                || refine_unknown_remote(ctx, cwd, &context),
+                || refine_unknown_remote(ctx, &context),
             )
             .await;
         match verdict.provider {
@@ -331,33 +315,17 @@ impl Detector {
 /// One integration's answer: a claim, no claim, or no answer (not kept).
 type Answer = Result<Option<ProviderInfo>, ()>;
 
-/// `refineUnknownRemoteProvider`: every integration in driver order, one after another.
-async fn refine_unknown_remote(
-    ctx: DiscoveryContext<'_>,
-    cwd: &Path,
-    context: &ProviderContext,
-) -> Verdict {
-    let answers: [Answer; 3] = [
-        refine_github(ctx, context).await,
-        refine_gitlab(ctx, cwd, context).await,
-        refine_forgejo(ctx, cwd, context).await,
-    ];
-    let mut settled = true;
-    for answer in answers {
-        match answer {
-            Err(()) => settled = false,
-            Ok(Some(provider)) => {
-                return Verdict {
-                    provider: Some(provider),
-                    settled,
-                };
-            }
-            Ok(None) => {}
-        }
-    }
-    Verdict {
-        provider: None,
-        settled,
+/// The only integration that can refine an unknown remote is GitHub.
+async fn refine_unknown_remote(ctx: DiscoveryContext<'_>, context: &ProviderContext) -> Verdict {
+    match refine_github(ctx, context).await {
+        Ok(provider) => Verdict {
+            provider,
+            settled: true,
+        },
+        Err(()) => Verdict {
+            provider: None,
+            settled: false,
+        },
     }
 }
 
@@ -393,136 +361,6 @@ async fn refine_github(ctx: DiscoveryContext<'_>, context: &ProviderContext) -> 
             format!("https://{host}")
         },
     }))
-}
-
-/// GitLab's `remoteRefinementArgs`: glab matches hosts by the remote's exact spelling.
-fn gitlab_refinement_host(context: &ProviderContext) -> String {
-    let remote = context.remote_url.trim();
-    let authority = remote.split_once("://").and_then(|(scheme, rest)| {
-        let valid = scheme
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_alphabetic())
-            && scheme
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'));
-        let end = rest.find('/').unwrap_or(rest.len());
-        let authority = rest.get(..end)?;
-        (valid && !authority.is_empty()).then_some(authority)
-    });
-    let remote_host = match authority {
-        Some(a) => a.rsplit_once('@').map_or(a, |(_, h)| h).to_owned(),
-        None => match remote.split_once('@') {
-            Some((user, rest)) if !user.is_empty() && !user.contains([':', '/']) => rest.to_owned(),
-            _ => remote.to_owned(),
-        },
-    };
-    let name = &context.provider.name;
-    if remote_host.to_lowercase().starts_with(&name.to_lowercase()) {
-        remote_host.get(..name.len()).unwrap_or(name).to_owned()
-    } else {
-        name.clone()
-    }
-}
-
-/// `GITLAB_HOST_NOT_LOGGED_IN_PATTERN`: `\bnot (?:been )?authenticated with glab\b` or
-/// `\bno gitlab instances? ha(?:s|ve) been authenticated\b`, case-insensitive.
-fn gitlab_not_logged_in(text: &str) -> bool {
-    let lower = text.to_lowercase();
-    let word = |c: char| c.is_alphanumeric() || c == '_';
-    let bounded = |phrase: &str| {
-        lower.match_indices(phrase).any(|(index, _)| {
-            let before = lower.get(..index).and_then(|s| s.chars().next_back());
-            let after = lower
-                .get(index + phrase.len()..)
-                .and_then(|s| s.chars().next());
-            !before.is_some_and(word) && !after.is_some_and(word)
-        })
-    };
-    [
-        "not authenticated with glab",
-        "not been authenticated with glab",
-        "no gitlab instance has been authenticated",
-        "no gitlab instance have been authenticated",
-        "no gitlab instances has been authenticated",
-        "no gitlab instances have been authenticated",
-    ]
-    .into_iter()
-    .any(bounded)
-}
-
-/// GitLab's CLI refinement: a glab login for the server claims it.
-async fn refine_gitlab(ctx: DiscoveryContext<'_>, cwd: &Path, context: &ProviderContext) -> Answer {
-    let host = gitlab_refinement_host(context);
-    let mut command = ProbeCommand::new(
-        "source-control.discovery.refine-unknown-remote",
-        "glab",
-        &["auth", "status", "--hostname", &host],
-        cwd,
-    );
-    command.timeout = REFINE_TIMEOUT;
-    command.allow_non_zero_exit = true;
-    command.env = ctx.probe_env(&[]);
-    let output = match run_probe(command).await {
-        Ok(output) => output,
-        Err(ProbeFailure::Missing { .. }) => return Ok(None),
-        Err(_) => return Err(()),
-    };
-    let wanted = context.provider.name.to_lowercase();
-    let combined = output.combined();
-    let authenticated = gitlab::parse_auth_status_hosts(&combined)
-        .iter()
-        .any(|entry| entry.account.is_some() && entry.host == wanted);
-    if !authenticated {
-        return if gitlab_not_logged_in(&combined) {
-            Ok(None)
-        } else {
-            Err(())
-        };
-    }
-    Ok(Some(ProviderInfo {
-        kind: "gitlab".to_owned(),
-        name: "GitLab Self-Hosted".to_owned(),
-        base_url: context.provider.base_url.clone(),
-    }))
-}
-
-/// Forgejo's managed refinement: a fj login, else a tea login, for the server claims it.
-async fn refine_forgejo(
-    ctx: DiscoveryContext<'_>,
-    cwd: &Path,
-    context: &ProviderContext,
-) -> Answer {
-    let Some(remote) = forgejo::parse_remote(&context.remote_url) else {
-        return Ok(None);
-    };
-    let session = Session::new(DiscoveryContext { cwd, ..ctx });
-    let mut failed = false;
-    for program in [Program::Fj, Program::Tea] {
-        let logins = match session
-            .list_logins(program, Some(&context.remote_url))
-            .await
-        {
-            Ok(logins) => logins,
-            Err(error) if error.reason == Some(Reason::MissingCli) => Vec::new(),
-            Err(_) => {
-                failed = true;
-                continue;
-            }
-        };
-        let options = MatchOptions {
-            requested_host: context.requested_host.as_deref(),
-            host_only: false,
-        };
-        if let Some(login) = forgejo::match_login(&logins, &remote, options) {
-            return Ok(Some(ProviderInfo {
-                kind: "forgejo".to_owned(),
-                name: "Forgejo / Gitea".to_owned(),
-                base_url: login.url.clone(),
-            }));
-        }
-    }
-    if failed { Err(()) } else { Ok(None) }
 }
 
 #[cfg(test)]

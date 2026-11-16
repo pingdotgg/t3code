@@ -16,6 +16,7 @@
     {
       "query": "thread",
       "names": [
+        "create_threads",
         "t3_thread_list",
         "t3_thread_read",
         "t3_thread_update",
@@ -24,8 +25,7 @@
         "t3_thread_interrupt",
         "t3_thread_search",
         "t3_thread_configure",
-        "t3_thread_organize",
-        "t3_thread_launch"
+        "t3_thread_organize"
       ]
     },
     {
@@ -35,14 +35,17 @@
         "t3_project_read",
         "annotations_list",
         "list_scheduled_tasks",
+        "create_threads",
         "t3_thread_list",
         "t3_thread_search",
-        "t3_thread_launch"
+        "t3_thread_launch",
+        "t3_worktree_status"
       ]
     },
     {
       "query": "thread thread",
       "names": [
+        "create_threads",
         "t3_thread_list",
         "t3_thread_read",
         "t3_thread_update",
@@ -51,8 +54,7 @@
         "t3_thread_interrupt",
         "t3_thread_search",
         "t3_thread_configure",
-        "t3_thread_organize",
-        "t3_thread_launch"
+        "t3_thread_organize"
       ]
     },
     {

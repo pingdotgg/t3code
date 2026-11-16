@@ -4,6 +4,8 @@
 
 use std::sync::Arc;
 
+use conn_support::ids::encode_component as encode;
+
 use conn_contract::{Command, ThreadId, from_json};
 use conn_engine::EngineError;
 use serde_json::{Map, Value, json};
@@ -12,7 +14,9 @@ use sha2::{Digest, Sha256};
 use crate::{Caller, McpConfig, McpService};
 
 mod annotations;
+pub(crate) mod attachments;
 mod background;
+mod create_threads;
 mod manage;
 mod message;
 mod panels;
@@ -23,6 +27,7 @@ mod secrets;
 mod tasks;
 mod threads;
 mod workflows;
+mod worktree;
 
 pub(crate) type Args = Map<String, Value>;
 
@@ -31,6 +36,8 @@ pub(crate) enum ToolError {
     /// `OrchestratorMcpFailure`: a tool result with `isError: true`.
     #[error("{code}: {message}")]
     Failure { code: &'static str, message: String },
+    #[error("{code}: {message}")]
+    Worktree { code: &'static str, message: String },
     /// Arguments the schema allows but the call cannot use: JSON-RPC -32602, as TS decoding.
     #[error("invalid params: {0}")]
     InvalidParams(String),
@@ -51,9 +58,16 @@ pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError 
 
 /// Every name in `tools.implemented` has an arm here; a test checks both ways.
 #[cfg(test)]
-pub(crate) const HANDLED: [&str; 38] = [
+pub(crate) const HANDLED: &[&str] = &[
     "tool_search",
     "t3_workflow_stop",
+    "create_threads",
+    "t3_attachment_prepare_upload",
+    "t3_attachment_discard",
+    "t3_thread_send_attachments",
+    "t3_worktree_handoff",
+    "t3_worktree_list",
+    "t3_worktree_status",
     "panel_open",
     "request_secret",
     "t3_background_wait",
@@ -97,6 +111,7 @@ pub(crate) async fn call(
     caller: &Caller,
     name: &str,
     mut args: Args,
+    origin: Option<&str>,
 ) -> ToolResult {
     // Linked environments are not served: only this environment's own id is accepted.
     if let Some(environment) = args.remove("environmentId")
@@ -107,7 +122,11 @@ pub(crate) async fn call(
             "Linked environments is off on this machine, so no tool can act on another machine. Leave out environmentId to work here; the user can turn it on in Settings → Labs.",
         ));
     }
-    let cx = Cx { service, caller };
+    let cx = Cx {
+        service,
+        caller,
+        origin,
+    };
     match name {
         "t3_workflow_stop" => workflows::stop(&cx, &args).await,
         "tool_search" => {
@@ -116,6 +135,13 @@ pub(crate) async fn call(
                 serde_json::json!({"tools":crate::lock(&service.exposure).search(&caller.provider_session_id, args.get("query").and_then(Value::as_str).unwrap_or_default())}),
             )
         }
+        "create_threads" => create_threads::create(&cx, &args).await,
+        "t3_attachment_prepare_upload" => attachments::prepare(&cx, &args).await,
+        "t3_attachment_discard" => attachments::discard(&cx, &args).await,
+        "t3_thread_send_attachments" => attachments::send(&cx, &args).await,
+        "t3_worktree_handoff" => worktree::handoff(&cx, &args).await,
+        "t3_worktree_list" => worktree::list(&cx, &args).await,
+        "t3_worktree_status" => worktree::status(&cx).await,
         "orchestrator_capabilities" => projects::capabilities(&cx, &args).await,
         "t3_project_list" => projects::list(&cx, &args).await,
         "t3_project_read" => projects::read(&cx, &args).await,
@@ -163,6 +189,7 @@ pub(crate) async fn call(
 pub(crate) struct Cx<'a> {
     service: &'a Arc<McpService>,
     caller: &'a Caller,
+    origin: Option<&'a str>,
 }
 
 pub(crate) const RUNTIME_MODES: [&str; 4] = [
@@ -474,19 +501,6 @@ fn is_live_caller(
     thread["archivedAt"].is_null()
         && thread["providerInstanceId"] == provider_instance_id
         && (has_active_run(projection) || background)
-}
-
-/// `encodeURIComponent`.
-fn encode(part: &str) -> String {
-    let mut out = String::with_capacity(part.len());
-    for byte in part.bytes() {
-        if byte.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&byte) {
-            out.push(byte as char);
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
 }
 
 fn internal(message: impl std::fmt::Display) -> ToolError {

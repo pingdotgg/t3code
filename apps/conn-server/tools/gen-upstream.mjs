@@ -243,8 +243,9 @@ for (const name of Object.keys(GROUPS)) {
 for (const name of groupFields.keys()) {
   if (!(name in GROUPS)) throw new Error(`${SECRETS_FILE} has a new secret group ${name}SecretFields: map it here and in settings.rs`);
 }
-const hostSecrets = await importSource("apps/server/src/sourceControl/sourceControlHostSecrets.ts");
-const hostFields = [...hostSecrets.SOURCE_CONTROL_HOST_SECRET_FIELDS].sort(([a], [b]) => (a < b ? -1 : 1));
+const { definition: githubDefinition } = await importSource("packages/source-control-github/src/shared/definition.ts");
+if (githubDefinition.settings === undefined) throw new Error("GitHub has no settings schema");
+const hostFields = [[githubDefinition.kind, [...contracts.secretSettingsFields(githubDefinition.settings)]]];
 const secretProviders = await importSource("apps/server/src/secrets/secretProviderDefinitions.ts");
 const secretProviderKinds = secretProviders.secretProviderDefinitions.definitions.map((d) => d.kind).sort();
 
@@ -286,7 +287,7 @@ const strs = (list) => `&[${list.map(str).join(", ")}]`;
 const secretsRs = rustfmt(
   [
     ...HEADER,
-    `// Source: ${SECRETS_FILE} (secretSettingsFields per group), sourceControlHostSecrets.ts,`,
+    `// Source: ${SECRETS_FILE} (secretSettingsFields per group), packages/source-control-github/src/shared/definition.ts,`,
     "// secrets/secretProviderDefinitions.ts.",
     "",
     "/// Secret fields of `providerInstances.*.config`, by the instance's `driver`.",
@@ -405,6 +406,8 @@ const modelManifestRs = rustfmt(
 
 const LIMITED_METHODS = [
   "assets.createUrl",
+  "orchestration.getWorkflowScript",
+  "orchestration.stopWorkflow",
   "secrets.answerRequest",
   "panels.respond",
   "server.listTextGeneratorModels",

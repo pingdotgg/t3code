@@ -86,7 +86,7 @@ hidden while linked environments are off; `watch_pull_request`/`unwatch_pull_req
 from delegated children. Preview, device and panel tools are listed to everyone and fail without
 the capability.
 
-**Served: 36 of 87.** Definitions come byte for byte from `apps/server`. Each served tool has
+Served tool definitions come byte for byte from `apps/server`. Each served tool has
 a unit test and `parity.mjs` steps.
 
 Where they differ, because the engine does not do it yet:
@@ -101,7 +101,7 @@ Where they differ, because the engine does not do it yet:
   turn, else starts; `queue`, `steer`, `restart`). `freshContext` starts a new provider session and never steers.
 - `t3_thread_launch`: `root`, `existing_worktree` and `worktree` (the engine makes the worktree
   through the server's host before the thread exists; `parity.mjs` compares the result). No
-  `scratch`, no attachments (`t3_attachment_prepare_upload` is not served). The thread
+  `scratch`, no attachments on launch (the three attachment tools are served). The thread
   is recorded as `createdBy: user` (the engine's `launch` sets it). Without `modelSelection`
   a client gets the first ready provider's first model.
 - `t3_thread_wait` ends on `waiting` too, as Orbit's driver expects; no restart chains, since the
@@ -161,19 +161,19 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `t3_project_list` | served | reads | | |
 | `t3_project_read` | served | reads | | |
 | `t3_environment_read` | served | reads | | |
-| `create_threads` | not served | actsAsCaller | nothing new: the engine's `launchThread` per entry, `thread.delete` to roll back | O |
+| `create_threads` | served | actsAsCaller | top-level creation and parent timeline, with receipt replay | O |
 | `t3_project_create` | not served | writesEnvironment | nothing new: the engine's `projects.createNew` / `projects.mutate` | |
 | `t3_project_update` | not served | writesEnvironment | nothing new: `projects.mutate` | |
 | `t3_project_delete` | not served | writesEnvironment | nothing new: `projects.mutate` | |
-| `t3_worktree_status` | not served | readsAsCaller | nothing new: `conn-vcs` and the settings default; `/mcp` has no VCS handle yet | |
-| `t3_worktree_list` | not served | reads (needs the `worktree` capability) | nothing new: `conn-vcs::refs::list_refs`; `/mcp` has no VCS handle yet | |
-| `t3_attachment_prepare_upload` | not served | writes | nothing new: the server's upload route (`attachments.createUploadUrl`); `/mcp` has no handle to it yet | |
-| `t3_attachment_discard` | not served | writes | nothing new: as above | |
-| `t3_thread_send_attachments` | not served | writesThreads | nothing new: as above, then `message.dispatch` with attachments | |
+| `t3_worktree_status` | served | readsAsCaller | thread binding and project defaults | |
+| `t3_worktree_list` | served | reads (needs the `worktree` capability) | shared git refs, with project-root fallback for removed worktrees | |
+| `t3_attachment_prepare_upload` | served | writes | shared client upload store; caller owns pending uploads | |
+| `t3_attachment_discard` | served | writes | only the preparing caller may discard a pending upload | |
+| `t3_thread_send_attachments` | served | writesThreads | canonical references and the engine attachment claims | |
 | `t3_environment_preferences_update` | not served | writesEnvironment | nothing new: the server's settings store (`settings.rs`); `/mcp` reads defaults today | |
 | `tool_search` | served | readsAsCaller | lists the four direct tools plus searched tools to deferred clients; at most 10 matches and 256 provider sessions | |
 | `t3_thread_transfer` | not served | either(reads, writesThreads) | engine: `thread.fork`, `thread.merge_back`, context transfers | |
-| `t3_worktree_handoff` | not served | actsAsCaller | engine: bind a new worktree to a live thread and end its session; server: setup scripts the T3 way | |
+| `t3_worktree_handoff` | served | actsAsCaller | guarded binding, continuation, session detach and setup terminal | |
 | `t3_workflow_stop` | served | writesThreads | same workflow Stop as the client RPC | |
 | `t3_background_wait` | served (new) | actsAsCaller | | C |
 | `link_pull_request` | served (part 4) | writesWithCapability | | P |
@@ -220,23 +220,8 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `t3_theme_set` | not served | writesEnvironment | server: themes | |
 | `t3_project_clone` | not served | writesEnvironment | server: project clone tracking (`ProjectCloneTracker`, source control repositories) | |
 
-Totals: served 34 (the five pull request link tools since source control part 4,
-`t3_background_wait` since 2026-11-14); needs nothing new 11; needs an engine or provider
-feature 3; needs a part of the server or a client we do not have 52. (`schedule_task` and
-three more scheduled task tools, and the four annotation tools, are served too but still
-counted in the rows above; the table's State column is behind for them.)
-
-**Named but not served (13):** `create_threads`, `device_list`, `device_open`,
-`device_screenshot`, `html_preview`, `html_render`, `preview_open`, `preview_status` (and the
-other 11 through `preview_*`), `request_secret`, `t3_environment_link`,
-`t3_environment_links`, `unwatch_pull_request`, `watch_pull_request`. Earlier batches took
-`send_to_user`, `t3_thread_organize`, `schedule_task`, `link_pull_request`,
-`link_pull_requests` and `t3_background_wait` off it. The texts checked: the orchestration
-and Claude texts, the running task `next` text, Codex's texts, Claude's pull request text, the
-ACP prompt prefixes (`conn-provider-acp/src/instructions.rs`, added 2026-11-14; it names
-nothing new) and the served tools' descriptions. The test
-`agent_texts_name_only_known_unserved_tools` holds this list: it fails when a text names a new
-unserved tool, and when a listed tool becomes served.
+`tools.implemented` is the served set. `agent_texts_name_only_known_unserved_tools` checks
+which unserved tools the agent instructions mention.
 
 **`t3_background_wait`** (`tools/background.rs`; T3: `toolkits/orchestrator/handlers.ts`,
 `ThreadManagementService.awaitBackgroundTasks`): `actsAsCaller`, so a live thread caller only.
@@ -323,8 +308,7 @@ is the cost that grows. It also always answers over SSE. Ours is about 300 lines
   `--check`, read the diff, and fix the handler if a schema changed.
 - `node crates/conn-mcp/tools/parity.mjs [--model] target/debug/examples/replay_server`:
   both servers on throwaway state (the T3 server gets a temp `T3CODE_HOME` and a free port),
-  same inputs, outcomes and result shapes compared. By default it calls no model: it skips the thread launch
-  and every step on that thread. `--model` runs them too, with one Haiku turn on the T3 server.
+  same inputs, outcomes and result shapes compared. By default it calls no model. Calling-thread proofs use the existing Claude CLI stand-in on T3 and the fake provider here; both use temporary homes. `--model` runs them too, with one Haiku turn on the T3 server.
 - The tools read the Conn monorepo two levels above `apps/conn-server`
   (`tools/monorepo.mjs`). Run them from `apps/conn-server`.
 
