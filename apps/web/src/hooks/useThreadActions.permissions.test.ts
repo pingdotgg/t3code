@@ -454,6 +454,10 @@ describe("thread action permissions", () => {
       "removeWorktree",
       "refreshStatus",
     ]);
+    // Uncommitted edits must reach Git's own dirty check before anything forces removal.
+    expect(
+      state.requests.find((request) => request.action === "removeWorktree")?.input,
+    ).not.toHaveProperty("force", true);
   });
 
   it("clears the drafts of the side chats deleted with it", async () => {
