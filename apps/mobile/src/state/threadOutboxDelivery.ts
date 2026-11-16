@@ -20,6 +20,7 @@ import {
   managedRuntimeModeDenial,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type EnvironmentId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
@@ -78,6 +79,7 @@ import {
   type ComposerDraft,
   getComposerDraftSnapshot,
   mergeComposerDraftContent,
+  releaseComposerDraftRuntimeMode,
   replaceComposerDraftAttachments,
   removeDeliveredCloudQueuedMessage,
   undoComposerDraftMerge,
@@ -592,7 +594,9 @@ async function preserveUploadedAttachmentsForEditor(
 const deliveryInputsAtom = Atom.make((get) => {
   const connectedEnvironments = get(workspaceConnections.environmentsAtom);
   const operableEnvironments = new Set<EnvironmentId>();
+  const pendingThreadIds = new Map<EnvironmentId, ReadonlySet<ThreadId>>();
   for (const { environmentId } of connectedEnvironments) {
+    pendingThreadIds.set(environmentId, get(threadEnvironment.pendingThreadIdsAtom(environmentId)));
     if (
       sessionHasScope(
         get(environmentSession.sessionStateAtom(environmentId)),
@@ -612,6 +616,7 @@ const deliveryInputsAtom = Atom.make((get) => {
     serverConfigs: get(environmentServerConfigsAtom),
     connectedEnvironments,
     operableEnvironments,
+    pendingThreadIds,
   };
 }).pipe(Atom.withLabel("mobile:thread-outbox:delivery-inputs"));
 
@@ -830,6 +835,24 @@ export function createThreadOutboxDelivery(): {
         reportCommandFailure(queuedMessage, runtimeResult, "settings-sync");
         return false;
       }
+    }
+    // Loading restores the saved draft for a key this release empties, so it must finish first.
+    const draftsLoaded = await waitForComposerDraftsLoaded().then(
+      () => true,
+      () => false,
+    );
+    const threadKey = scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId);
+    // A newer pick can share this mode while another queued message still moves the thread off it.
+    const modeChangeQueued = (
+      appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom)[threadKey] ?? []
+    ).some(
+      (message) =>
+        message.messageId !== queuedMessage.messageId &&
+        message.runtimeMode !== undefined &&
+        message.runtimeMode !== settings.runtimeMode,
+    );
+    if (draftsLoaded && !modeChangeQueued) {
+      releaseComposerDraftRuntimeMode(threadKey, settings.runtimeMode);
     }
 
     if (settings.interactionMode !== thread.interactionMode) {
@@ -1191,6 +1214,7 @@ export function createThreadOutboxDelivery(): {
       serverConfigs,
       connectedEnvironments,
       operableEnvironments,
+      pendingThreadIds,
     } = appAtomRegistry.get(deliveryInputsAtom);
     if (dispatchingQueuedMessageId !== null) {
       return;
@@ -1327,6 +1351,15 @@ export function createThreadOutboxDelivery(): {
         continue;
       }
       if (deliveryAction === "send" && !operableEnvironments.has(nextQueuedMessage.environmentId)) {
+        continue;
+      }
+      // An unconfirmed optimistic change, such as Resume's mode, can still be refused; the send
+      // must compare against what the server holds, or it skips a mode change it still needs.
+      if (
+        deliveryAction === "send" &&
+        creation === undefined &&
+        pendingThreadIds.get(nextQueuedMessage.environmentId)?.has(nextQueuedMessage.threadId)
+      ) {
         continue;
       }
       const dispatchStep = resolveThreadOutboxDispatchStep({

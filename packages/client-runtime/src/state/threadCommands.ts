@@ -556,5 +556,9 @@ export function createThreadEnvironmentAtoms<R, E>(
       ...thread,
       modelSelection: input.modelSelection,
     })),
+    setRuntimeMode: optimistic.wrap(commands.setRuntimeMode, (thread, input) => ({
+      ...thread,
+      runtimeMode: input.runtimeMode,
+    })),
   };
 }
