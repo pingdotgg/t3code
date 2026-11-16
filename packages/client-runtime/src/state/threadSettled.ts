@@ -155,6 +155,16 @@ export function canSnooze(
   return true;
 }
 
+const SETTLE_BLOCKING_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
+
+// Mirrors the server's thread.settle guard; background work alone does not block settling.
+export function hasSettleBlockingRun(shell: Pick<QueuedThreadShell, "latestRun" | "runtime">) {
+  return (
+    SETTLE_BLOCKING_RUN_STATUSES.has(shell.latestRun?.status ?? "") ||
+    SETTLE_BLOCKING_RUN_STATUSES.has(shell.runtime?.status ?? "")
+  );
+}
+
 export function effectiveSnoozed(
   shell: ThreadSnoozeShell,
   options: { readonly now: string },

@@ -32,8 +32,7 @@ import {
 } from "@t3tools/contracts";
 import { toServerClock } from "@t3tools/client-runtime/clock";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
-import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
-import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
+import { canSnooze, hasSettleBlockingRun } from "@t3tools/client-runtime/state/thread-settled";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useNavigation } from "@react-navigation/native";
@@ -1003,7 +1002,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     snoozable: canSnooze(thread, { now: snoozeGateNow }),
     snoozed: snoozedRow,
   });
-  const hideSettleAction = swipeActions.primary === "settle" && isThreadWorking(thread);
+  const hideSettleAction = swipeActions.primary === "settle" && hasSettleBlockingRun(thread);
   const snoozePresets = resolveThreadListV2SnoozePresets(
     {
       secondary: swipeActions.secondary,
