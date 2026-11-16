@@ -380,8 +380,13 @@ function useStripResizeScroll(
     let offset = 0;
     let owed = 0;
     let owedStage = 0;
-    let clientWidth = scroller.clientWidth;
     let { left, right, width } = scroller.getBoundingClientRect();
+    const content = () => stageRef.current?.getBoundingClientRect().width ?? scroller.scrollWidth;
+    let slack = 0;
+    const measureSlack = () => {
+      slack = Math.max(0, target - (content() - width));
+    };
+    measureSlack();
     const place = (next: number) => {
       if (next === offset) return;
       offset = next;
@@ -390,12 +395,14 @@ function useStripResizeScroll(
     const adopt = () => {
       target = landed = scroller.scrollLeft;
       owed = 0;
+      measureSlack();
       place(0);
     };
+    const moved = () => Math.abs(scroller.scrollLeft - landed) >= 1;
     const onScroll = () => {
       // The clamp of a resize the observer has not seen yet: it starts from before it.
-      if (scroller.clientWidth !== clientWidth) return;
-      if (scroller.scrollLeft !== landed) adopt();
+      if (scroller.getBoundingClientRect().width !== width) return;
+      if (moved()) adopt();
     };
     // Runs after layout and before paint.
     const stopObserving = observeResize(scroller, () => {
@@ -409,14 +416,14 @@ function useStripResizeScroll(
       left = boxLeft;
       right = boxRight;
       width = box.width;
-      clientWidth = scroller.clientWidth;
       const now = scroller.scrollLeft;
       // Grown past the strip's end, the browser clamped the scroll before this ran.
-      const clamped = grew && now < landed && now >= scroller.scrollWidth - clientWidth - 1;
-      if (now !== landed && !clamped) adopt();
-      const stage = stageRef.current?.offsetWidth ?? 0;
+      const clamped =
+        grew && now < landed && now >= scroller.scrollWidth - scroller.clientWidth - 1;
+      if (moved() && !clamped) adopt();
+      const stage = content();
       if (owed > 0 && stage !== owedStage) owed = 0;
-      const room = Math.max(0, scroller.scrollWidth - width);
+      const room = Math.max(0, stage - width) + slack;
       const wanted = target > 0 || owed > 0 ? target - owed + shift : 0;
       let next = Math.min(Math.max(0, wanted), room);
       owed = Math.max(0, -wanted);

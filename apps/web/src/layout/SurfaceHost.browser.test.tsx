@@ -59,10 +59,10 @@ function Host() {
   return <LayoutSurfaceHost layout={layout} />;
 }
 
-async function renderHost({ insetSidebar = false } = {}) {
+async function renderHost({ insetSidebar = false, edges = [0, 0] } = {}) {
   await page.viewport(900, 600);
   const container = document.createElement("div");
-  container.style.cssText = "position:fixed;inset:0;display:flex;";
+  container.style.cssText = `position:fixed;inset:0;display:flex;padding:0 ${edges[1]}px 0 ${edges[0]}px;`;
   // The pane chrome (index.css) styles an inset that follows the app's inset sidebar.
   const sidebar = insetSidebar ? <div data-slot="sidebar" data-variant="inset" hidden /> : null;
   return render(
@@ -106,11 +106,11 @@ it("shows a tab in an unfocused pane that runs off screen with one click on it",
   await vi.waitFor(() => expect(focusedTabId()).toBe(tabs.second.id));
 });
 
-async function renderStrip() {
+async function renderStrip(edges = [0, 0]) {
   setLayoutStripViewportWidth(900);
   await using stack = new AsyncDisposableStack();
   stack.use(setup());
-  const screen = stack.use(await renderHost());
+  const screen = stack.use(await renderHost({ edges }));
   const strip = screen.container.querySelector<HTMLElement>("[data-layout-strip]")!;
   const gap = screen.container.querySelector<HTMLElement>("[data-sidebar-gap]")!;
   const settled = async (width: number) => {
@@ -162,14 +162,16 @@ async function renderStrip() {
 const STILL = 0.01;
 
 it.each([
-  ["at the strip's end", 247.6, 1],
-  ["midway along the strip", 247.6, 0.5],
-  ["at the strip's end beside a resized sidebar", 300.5, 1],
-  ["midway along the strip beside a resized sidebar", 300.5, 0.6],
+  ["at the strip's end", 247.6, 1, [0, 0]],
+  ["midway along the strip", 247.6, 0.5, [0, 0]],
+  ["at the strip's end beside a resized sidebar", 300.5, 1, [0, 0]],
+  ["midway along the strip beside a resized sidebar", 300.5, 0.6, [0, 0]],
+  ["at the end of a strip with fractional edges", 256, 1, [9.25, 0.3]],
+  ["at the end of a strip with fractional edges beside a resized sidebar", 247.5, 1, [8.5, 9.4]],
 ])(
   "keeps the panes in place on screen while the sidebar opens and closes %s",
-  async (_, sidebar, along) => {
-    await using host = await renderStrip();
+  async (_, sidebar, along, edges) => {
+    await using host = await renderStrip(edges);
     const { strip } = host;
     await host.scrollTo(Math.round((strip.scrollWidth - strip.clientWidth) * along));
     const resting = host.paneLeft();
