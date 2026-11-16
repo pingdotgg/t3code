@@ -77,6 +77,7 @@ import {
   NativePrimaryColumnContext,
   NativeWorkspaceInspectorContext,
   NativeWorkspaceModeContext,
+  NativeWorkspaceTabActivityContext,
   WorkspaceSlotOptionsContext,
   slotScreenOptions,
 } from "../../native/v5-workspace-context";
@@ -104,6 +105,7 @@ function ColumnScreen(props: {
   readonly screenKey?: string;
   readonly primary?: boolean;
   readonly attached?: boolean;
+  readonly animatesPush?: boolean;
   readonly selectedThreadKey?: string | null;
   readonly selectedPullRequestKey?: string | null;
   readonly onDismiss: (routeKey: string, native: boolean) => void;
@@ -138,6 +140,7 @@ function ColumnScreen(props: {
     <Split.Screen
       screenKey={props.screenKey ?? key}
       activityMode={props.attached === false ? "detached" : "attached"}
+      animatesPush={props.animatesPush}
       onDismiss={(event) => {
         props.onDismiss(key, event.nativeEvent.isNativeDismiss);
       }}
@@ -265,6 +268,14 @@ function WorkspaceColumns(
     deviceType === "duo-unfolded" && selectedTab !== "pullRequests" && !settingsOpen
       ? openNewTask
       : undefined;
+  // Pages a hidden tab opens as it's shown belong to the tab, so they appear in place.
+  const headerOnly = use(NativeWorkspaceTabActivityContext)?.headerOnly === true;
+  const [shownPages, setShownPages] = useState({ headerOnly, keys: new Set<string>() });
+  if (shownPages.headerOnly !== headerOnly)
+    setShownPages({
+      headerOnly,
+      keys: headerOnly ? new Set() : new Set(props.detail.map((route) => route.key)),
+    });
   const inspector = use(NativeWorkspaceInspectorContext);
   const hideInspector = () => {
     if (inspector.visible) toggleAuxiliaryPane();
@@ -455,6 +466,7 @@ function WorkspaceColumns(
                 screenKey={screenKey}
                 descriptor={descriptor}
                 attached={props.detail.some((current) => current.key === route.key)}
+                animatesPush={!shownPages.keys.has(route.key)}
                 onDismiss={handleNativeDismiss}
                 onAppearance={followCollapsedSplit}
                 onCompose={isPullRequestRoute(route) ? undefined : detailCompose}
