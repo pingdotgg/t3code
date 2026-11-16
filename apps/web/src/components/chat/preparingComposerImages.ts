@@ -1,4 +1,7 @@
+import { useEffect, useRef } from "react";
 import { create } from "zustand";
+
+import { useStableCallback } from "../../hooks/useStableCallback";
 
 export interface PreparingComposerImage {
   readonly id: string;
@@ -89,5 +92,29 @@ export function cancelPreparingComposerImages(targetKey: string): void {
     const byTargetKey = { ...state.byTargetKey };
     delete byTargetKey[targetKey];
     return { byTargetKey };
+  });
+}
+
+/**
+ * Holds a send made while the target still has images compressing, and runs it once they finish,
+ * so the turn includes them. Returns false when nothing is compressing and the caller should send.
+ */
+export function useSubmitAfterPreparingImages(targetKey: string) {
+  const preparing = usePreparingComposerImages(targetKey);
+  const pendingRef = useRef<{ readonly targetKey: string; readonly submit: () => void } | null>(
+    null,
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sends only after the render where the compressed images joined the draft
+  useEffect(() => {
+    const pending = pendingRef.current;
+    if (!pending || preparing.length > 0) return;
+    pendingRef.current = null;
+    // After the composer's later effects have synced its draft refs to this render.
+    if (pending.targetKey === targetKey) queueMicrotask(pending.submit);
+  }, [preparing, targetKey]);
+  return useStableCallback((submit: () => void) => {
+    if (countPreparingComposerImages(targetKey) === 0) return false;
+    pendingRef.current = { targetKey, submit };
+    return true;
   });
 }
