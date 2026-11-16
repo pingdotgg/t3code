@@ -141,10 +141,9 @@ export function AndroidWorkspaceNavigation(props: {
           // that stack's current state.
           const rootState = rootNavigationRef.getRootState();
           // Like iOS, a re-tap over an open page only returns to the list; the next one scrolls it.
-          // Split view lists threads in the sidebar, which keeps its own scroll.
-          const listShown = layout.usesSplitView
-            ? tab !== "threads"
-            : rootState?.routes[rootState.index]?.name === "Home";
+          // Split view keeps the list in the sidebar, beside whatever page is open.
+          const listShown =
+            layout.usesSplitView || rootState?.routes[rootState.index]?.name === "Home";
           if (tab !== "settings" && tab === selectedTab && listShown)
             workspace.requestScrollToTop(tab);
           if (tab !== "settings") workspace.dispatch({ type: "select", tab });
