@@ -78,7 +78,7 @@ it("sends after pasted images finish compressing, with the compressed image in t
   expect(submit.mock.results[0]?.value).toEqual(["second"]);
 });
 
-it("drops a waiting send when the composer moves to another draft", async () => {
+it("drops a waiting send when the composer moves to another draft or discards it", async () => {
   const target = "submit-after-preparing-old";
   const otherTarget = "submit-after-preparing-new";
   using _store = {
@@ -112,5 +112,11 @@ it("drops a waiting send when the composer moves to another draft", async () => 
   await screen.rerender(
     <Probe targetKey={target} draftImagesStore={draftImagesStore} onReady={onReady} />,
   );
+  expect(submit).not.toHaveBeenCalled();
+
+  // Discarding the draft cancels its compression, which must not release the held send.
+  await act(() => addPreparingComposerImages(target, [preparingImage("discarded")]));
+  expect(queueSubmit?.(submit)).toBe(true);
+  await act(() => cancelPreparingComposerImages(target));
   expect(submit).not.toHaveBeenCalled();
 });

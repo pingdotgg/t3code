@@ -85,8 +85,12 @@ export function removePreparingComposerImages(
   return removed;
 }
 
+// Bumped on cancel so a send held for the cancelled images is dropped rather than released.
+const cancelGenerations = new Map<string, number>();
+
 /** Drops every image still preparing for the target, so its compression result is discarded. */
 export function cancelPreparingComposerImages(targetKey: string): void {
+  cancelGenerations.set(targetKey, (cancelGenerations.get(targetKey) ?? 0) + 1);
   if (!usePreparingComposerImageStore.getState().byTargetKey[targetKey]) return;
   usePreparingComposerImageStore.setState((state) => {
     const byTargetKey = { ...state.byTargetKey };
@@ -101,14 +105,19 @@ export function cancelPreparingComposerImages(targetKey: string): void {
  */
 export function useSubmitAfterPreparingImages(targetKey: string) {
   const preparing = usePreparingComposerImages(targetKey);
-  const pendingRef = useRef<{ readonly targetKey: string; readonly submit: () => void } | null>(
-    null,
-  );
+  const pendingRef = useRef<{
+    readonly targetKey: string;
+    readonly cancelGeneration: number;
+    readonly submit: () => void;
+  } | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sends only after the render where the compressed images joined the draft
   useEffect(() => {
     const pending = pendingRef.current;
     if (!pending) return;
-    if (pending.targetKey !== targetKey) {
+    if (
+      pending.targetKey !== targetKey ||
+      pending.cancelGeneration !== (cancelGenerations.get(targetKey) ?? 0)
+    ) {
       pendingRef.current = null;
       return;
     }
@@ -119,7 +128,11 @@ export function useSubmitAfterPreparingImages(targetKey: string) {
   }, [preparing, targetKey]);
   return useStableCallback((submit: () => void) => {
     if (countPreparingComposerImages(targetKey) === 0) return false;
-    pendingRef.current = { targetKey, submit };
+    pendingRef.current = {
+      targetKey,
+      cancelGeneration: cancelGenerations.get(targetKey) ?? 0,
+      submit,
+    };
     return true;
   });
 }
