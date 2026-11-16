@@ -171,7 +171,7 @@ export function SettingsScopeNotice({
       <div className="space-y-4">
         {choiceGroups.map((group) =>
           group?.displayName ? (
-            <SettingsSection key={group.projectKey} title={group.displayName}>
+            <SettingsSection key={group.projectKey} title={<span>{group.displayName}</span>}>
               {renderChoices(group)}
             </SettingsSection>
           ) : (

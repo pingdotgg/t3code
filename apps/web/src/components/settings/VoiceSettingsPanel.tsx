@@ -483,9 +483,15 @@ function ProjectDictionaryRow() {
       {...searchableSetting("speech-project-dictionary")}
       title={m(isProjectScope ? msg("Project dictionary") : msg("Shared dictionary"))}
       description={
-        isProjectScope
-          ? `${m(msg("Used by everyone who dictates in"))} ${scope.scope.label}.`
-          : m(msg("Used by everyone who dictates on this environment."))
+        isProjectScope ? (
+          <span>
+            {m(msg("Used by everyone who dictates in {project}."), {
+              project: scope.scope.label,
+            })}
+          </span>
+        ) : (
+          msg("Used by everyone who dictates on this environment.")
+        )
       }
     >
       <div className="mt-3 pb-2">

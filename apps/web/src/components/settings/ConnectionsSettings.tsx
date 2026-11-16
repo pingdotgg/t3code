@@ -33,9 +33,12 @@ import {
   connectDeviceName,
   isWslSettingsRowVisible,
   missingTailscaleEndpointDescription,
-  resolveLocalVersionStatusLabel,
   resolveTailscaleServeBaseUrl,
 } from "./ConnectionsSettings.logic";
+import {
+  getDesktopUpdateDownloadedVersion,
+  resolveDesktopUpdateButtonAction,
+} from "../desktopUpdate.logic";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 import { useAccessEnvironment } from "./useAccessEnvironment";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
@@ -161,10 +164,35 @@ const BACKEND_VALUE_WSL_OFF = "backend:wsl-off";
 function LocalVersionStatusLabel() {
   const m = useMessages();
   const updateState = useDesktopUpdateState();
-  const label = resolveLocalVersionStatusLabel(updateState);
+  const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : null;
+  const downloading = updateState?.status === "downloading";
+  const downloaded =
+    updateState !== null &&
+    (action === "install" ||
+      updateState.status === "downloaded" ||
+      (updateState.status === "checking" && updateState.downloadedVersion !== null));
+  const version = !updateState
+    ? undefined
+    : downloading
+      ? updateState.availableVersion
+      : downloaded
+        ? getDesktopUpdateDownloadedVersion(updateState)
+        : updateState.availableVersion;
   return (
     <span className="text-xs text-muted-foreground">
-      {label === "Up to date" ? m(msg("Up to date")) : label}
+      {downloading
+        ? version
+          ? m(msg("Downloading update {version}"), { version })
+          : m(msg("Downloading update"))
+        : downloaded
+          ? version
+            ? m(msg("Update {version} downloaded"), { version })
+            : m(msg("Update downloaded"))
+          : action === "download" && updateState?.availableVersion
+            ? m(msg("Update {version} available"), { version: updateState.availableVersion })
+            : action === "download"
+              ? m(msg("Update available"))
+              : m(msg("Up to date"))}
     </span>
   );
 }

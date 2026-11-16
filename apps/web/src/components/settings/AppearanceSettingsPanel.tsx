@@ -40,11 +40,11 @@ import { TypographySection } from "./TypographySettings";
 import { ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
-  artwork: "Artwork",
-  "nightly-artwork": "Nightly artwork",
-  "dev-artwork": "Dev artwork",
-  pill: "Version pill",
-  none: "None",
+  artwork: msg("Artwork"),
+  "nightly-artwork": msg("Nightly artwork"),
+  "dev-artwork": msg("Dev artwork"),
+  pill: msg("Version pill"),
+  none: msg("None"),
 };
 
 // The default "artwork" follows the running channel, so it is labeled as that channel's art,
@@ -54,36 +54,36 @@ function environmentIdentificationOptions(
 ): ReadonlyArray<readonly [EnvironmentIdentificationMode, string]> {
   if (stageVariant === "dev") {
     return [
-      ["artwork", "Dev artwork"],
-      ["nightly-artwork", "Nightly artwork"],
-      ["pill", "Version pill"],
-      ["none", "None"],
+      ["artwork", msg("Dev artwork")],
+      ["nightly-artwork", msg("Nightly artwork")],
+      ["pill", msg("Version pill")],
+      ["none", msg("None")],
     ];
   }
   if (stageVariant === "nightly") {
     return [
-      ["artwork", "Nightly artwork"],
-      ["dev-artwork", "Dev artwork"],
-      ["pill", "Version pill"],
-      ["none", "None"],
+      ["artwork", msg("Nightly artwork")],
+      ["dev-artwork", msg("Dev artwork")],
+      ["pill", msg("Version pill")],
+      ["none", msg("None")],
     ];
   }
   return [
-    ["artwork", "None"],
-    ["nightly-artwork", "Nightly artwork"],
-    ["dev-artwork", "Dev artwork"],
+    ["artwork", msg("None")],
+    ["nightly-artwork", msg("Nightly artwork")],
+    ["dev-artwork", msg("Dev artwork")],
   ];
 }
 
 const CHAT_WIDTH_LABELS: Record<ChatWidth, string> = {
-  comfortable: "Comfortable",
-  wide: "Wide",
-  full: "Full",
+  comfortable: msg("Comfortable"),
+  wide: msg("Wide"),
+  full: msg("Full"),
 };
 
 const EFFORT_DISPLAY_LABELS: Record<EffortDisplay, string> = {
-  label: "Word",
-  bars: "Bars",
+  label: msg("Word"),
+  bars: msg("Bars"),
 };
 
 export function AppearanceSettingsPanel() {

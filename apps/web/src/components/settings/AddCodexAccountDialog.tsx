@@ -1,4 +1,4 @@
-import { msg } from "gt-react";
+import { msg, useMessages } from "gt-react";
 import { AuthProvidersManageScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomValue } from "@effect/atom-react";
@@ -38,6 +38,7 @@ export function AddCodexAccountDialog({
     | undefined;
   readonly renderSetup: (instanceId: ProviderInstanceId, provider: ServerProvider) => ReactNode;
 }) {
+  const m = useMessages();
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const settings = useEnvironmentSettings(environmentId);
   const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
@@ -91,9 +92,11 @@ export function AddCodexAccountDialog({
     >
       <WizardPopup size="wide">
         <WizardHeader
-          title={instanceId ? displayName : "Add ChatGPT account"}
-          description={msg(
-            "Each account has its own Codex instance and sign-in. Choose the other account on the sign-in page.",
+          title={instanceId ? displayName : m(msg("Add ChatGPT account"))}
+          description={m(
+            msg(
+              "Each account has its own Codex instance and sign-in. Choose the other account on the sign-in page.",
+            ),
           )}
         />
         <WizardPanel>

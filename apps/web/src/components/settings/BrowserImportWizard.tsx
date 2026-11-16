@@ -1,4 +1,4 @@
-import { msg } from "gt-react";
+import { msg, useMessages } from "gt-react";
 import { PermissionChecklist, PermissionContinueButton } from "../permissions/PermissionChecklist";
 import { usePermissionStatus } from "../permissions/usePermissionStatus";
 import type { BrowserImportSource } from "@t3tools/contracts";
@@ -67,6 +67,7 @@ export function BrowserImportWizard({
   onCheckFullDiskAccess,
   onClose,
 }: BrowserImportWizardProps) {
+  const m = useMessages();
   const [source, setSource] = useState(initialSource);
   const [step, setStep] = useState<WizardStep>(() => initialWizardStep(initialSource));
   const [sourceProfileDirectory, setSourceProfileDirectory] = useState(
@@ -378,8 +379,8 @@ function ConfigureStep({
             {canCreateProfile ? (
               <SelectableTile
                 selected={target.kind === "new"}
-                title="New profile"
-                subtitle={msg("Created for these cookies")}
+                title={m(msg("New profile"))}
+                subtitle={m(msg("Created for these cookies"))}
                 onSelect={() => onTargetChange({ kind: "new" })}
               />
             ) : null}
@@ -388,7 +389,7 @@ function ConfigureStep({
                 key={profile.id}
                 selected={target.kind === "existing" && target.profileId === profile.id}
                 title={profile.name}
-                subtitle={msg("Existing profile")}
+                subtitle={m(msg("Existing profile"))}
                 onSelect={() => onTargetChange({ kind: "existing", profileId: profile.id })}
               />
             ))}

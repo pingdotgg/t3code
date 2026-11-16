@@ -55,7 +55,7 @@ export function UsageProviderSettings({
             return (
               <SettingsRow
                 key={id}
-                title={label}
+                title={<span>{label}</span>}
                 description={
                   <span className="break-all">
                     CLI Proxy{source.enabled ? "" : " · Disabled"}
@@ -95,24 +95,29 @@ function RemoveUsageProviderButton({
   readonly label: string;
   readonly onConfirm: () => void;
 }) {
+  const m = useMessages();
   const [open, setOpen] = useState(false);
   return (
     <>
       <Button size="xs" variant="ghost" onClick={() => setOpen(true)}>
-        Remove
+        {m(msg("Remove"))}
       </Button>
       <AlertDialog open={open} onOpenChange={setOpen}>
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove {label}?</AlertDialogTitle>
+            <AlertDialogTitle>{m(msg("Remove {label}?"), { label })}</AlertDialogTitle>
             <AlertDialogDescription>
-              The hub's management key is deleted from this server. Its accounts leave the Limits
-              view; the hub itself is untouched. Add it again with the URL and key to bring them
-              back.
+              {m(
+                msg(
+                  "The hub's management key is deleted from this server. Its accounts leave the Limits view; the hub itself is untouched. Add it again with the URL and key to bring them back.",
+                ),
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              {m(msg("Cancel"))}
+            </AlertDialogClose>
             <Button
               variant="destructive"
               onClick={() => {
@@ -120,7 +125,7 @@ function RemoveUsageProviderButton({
                 onConfirm();
               }}
             >
-              Remove hub
+              {m(msg("Remove hub"))}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

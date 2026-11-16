@@ -1,4 +1,4 @@
-import { msg } from "gt-react";
+import { msg, useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import { ANOTHER_ADDRESS, linkRequestFailureMessage } from "@t3tools/client-runtime/link-request";
 import {
@@ -60,6 +60,7 @@ export function LinkedEnvironmentsSettings({
   readonly environmentLabel: string | null;
   readonly isSearchTarget: boolean;
 }) {
+  const m = useMessages();
   const links = useEnvironmentQuery(peerLinkEnvironment.list({ environmentId, input: {} }));
   // Links made outside this client bump nothing the shared list reads, so showing the panel
   // asks again. Listing probes every linked environment, too costly for a timer nobody asked for.
@@ -79,11 +80,22 @@ export function LinkedEnvironmentsSettings({
   return (
     <SettingsSection
       {...(isSearchTarget ? { id: search.id } : {})}
-      title={environmentLabel === null ? search.title : `${search.title} · ${environmentLabel}`}
+      title={
+        environmentLabel === null ? (
+          search.title
+        ) : (
+          <>
+            {m(search.title)} · {environmentLabel}
+          </>
+        )
+      }
       headerAction={canLink ? <LinkEnvironmentAction environmentId={environmentId} /> : null}
     >
       {links.error ? (
-        <SettingsRow title={msg("Could not load linked environments")} description={links.error} />
+        <SettingsRow
+          title={msg("Could not load linked environments")}
+          description={<span>{links.error}</span>}
+        />
       ) : !links.data ? (
         <SettingsRow title={msg("Loading linked environments…")} role="status" />
       ) : links.data.links.length === 0 ? (

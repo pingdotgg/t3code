@@ -1107,9 +1107,9 @@ export function CodexManagedRuntimeFields({
               aria-label={m(msg("Codex binary path"))}
               value={executablePath}
               title={executablePath}
-              placeholder={m(
-                msg(installation.error ? "Could not read runtime path" : "Not installed"),
-              )}
+              placeholder={
+                installation.error ? m(msg("Could not read runtime path")) : m(msg("Not installed"))
+              }
               disabled
             />
           </div>

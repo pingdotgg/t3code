@@ -40,27 +40,27 @@ import {
 const UNIT_MINUTES = { minutes: 1, hours: 60, days: 24 * 60 } as const;
 type DurationUnit = keyof typeof UNIT_MINUTES;
 const UNIT_LABELS: Record<DurationUnit, string> = {
-  minutes: "minutes",
-  hours: "hours",
-  days: "days",
+  minutes: msg("minutes"),
+  hours: msg("hours"),
+  days: msg("days"),
 };
 const SINGULAR_UNIT_LABELS: Record<DurationUnit, string> = {
-  minutes: "minute",
-  hours: "hour",
-  days: "day",
+  minutes: msg("minute"),
+  hours: msg("hour"),
+  days: msg("day"),
 };
 
 const WHEN_LABELS: Record<"after" | SnoozePresetDay, string> = {
-  after: "In",
-  today: "Today",
-  tomorrow: "Tomorrow",
-  monday: "Monday",
-  tuesday: "Tuesday",
-  wednesday: "Wednesday",
-  thursday: "Thursday",
-  friday: "Friday",
-  saturday: "Saturday",
-  sunday: "Sunday",
+  after: msg("In"),
+  today: msg("Today"),
+  tomorrow: msg("Tomorrow"),
+  monday: msg("Monday"),
+  tuesday: msg("Tuesday"),
+  wednesday: msg("Wednesday"),
+  thursday: msg("Thursday"),
+  friday: msg("Friday"),
+  saturday: msg("Saturday"),
+  sunday: msg("Sunday"),
 };
 const WHEN_VALUES = ["after", ...SnoozePresetDay.literals] as const;
 
@@ -68,10 +68,26 @@ function translateSnoozeLabel(label: string, m: ReturnType<typeof useMessages>):
   const duration = /^In (\d+) (minute|hour|day)s?$/.exec(label);
   if (duration) {
     const [, amount, unit] = duration;
-    const unitSource = `${unit}${amount === "1" ? "" : "s"}`;
-    return `${amount} ${m(msg(unitSource))} ${m(msg("later"))}`;
+    const units = {
+      minute: { one: msg("minute"), many: msg("minutes") },
+      hour: { one: msg("hour"), many: msg("hours") },
+      day: { one: msg("day"), many: msg("days") },
+    } as const;
+    const unitMessage = units[unit as keyof typeof units];
+    return `${m(msg("In"))} ${amount} ${m(amount === "1" ? unitMessage.one : unitMessage.many)}`;
   }
-  return m(msg(label));
+  const labelMessages = {
+    Today: msg("Today"),
+    Tomorrow: msg("Tomorrow"),
+    Monday: msg("Monday"),
+    Tuesday: msg("Tuesday"),
+    Wednesday: msg("Wednesday"),
+    Thursday: msg("Thursday"),
+    Friday: msg("Friday"),
+    Saturday: msg("Saturday"),
+    Sunday: msg("Sunday"),
+  } as const;
+  return label in labelMessages ? m(labelMessages[label as keyof typeof labelMessages]) : label;
 }
 
 // Offered in order when adding, skipping any already in the list.
@@ -362,7 +378,7 @@ function SnoozePresetFields(props: {
       <Select
         value={when}
         items={Object.fromEntries(
-          Object.entries(WHEN_LABELS).map(([value, label]) => [value, m(msg(label))]),
+          Object.entries(WHEN_LABELS).map(([value, label]) => [value, m(label)]),
         )}
         onValueChange={(value) => {
           const next = value === null ? null : withWhen(preset, value, memory);
@@ -383,7 +399,7 @@ function SnoozePresetFields(props: {
         <SelectPopup>
           {WHEN_VALUES.map((value) => (
             <SelectItem hideIndicator key={value} value={value}>
-              {m(msg(WHEN_LABELS[value]))}
+              {m(WHEN_LABELS[value])}
             </SelectItem>
           ))}
         </SelectPopup>
@@ -470,7 +486,7 @@ function DurationFields(props: { minutes: number; onChange: (minutes: number) =>
         value={unit}
         items={Object.fromEntries(
           Object.entries(amount === 1 ? SINGULAR_UNIT_LABELS : UNIT_LABELS).map(
-            ([value, label]) => [value, m(msg(label))],
+            ([value, label]) => [value, m(label)],
           ),
         )}
         onValueChange={(value) => {
@@ -486,7 +502,7 @@ function DurationFields(props: { minutes: number; onChange: (minutes: number) =>
         <SelectPopup>
           {(Object.keys(UNIT_LABELS) as DurationUnit[]).map((value) => (
             <SelectItem hideIndicator key={value} value={value}>
-              {m(msg((amount === 1 ? SINGULAR_UNIT_LABELS : UNIT_LABELS)[value]))}
+              {m((amount === 1 ? SINGULAR_UNIT_LABELS : UNIT_LABELS)[value])}
             </SelectItem>
           ))}
         </SelectPopup>

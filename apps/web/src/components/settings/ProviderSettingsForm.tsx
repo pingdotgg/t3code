@@ -32,6 +32,10 @@ export type SettingsFormDefinition = Pick<ProviderClientDefinition, "settingsSch
 import { SettingsRow } from "./settingsLayout";
 
 const PROVIDER_FIELD_MESSAGES: Readonly<Record<string, string>> = {
+  Executable: msg("Executable"),
+  "Executable name or path on this environment.": msg(
+    "Executable name or path on this environment.",
+  ),
   "Launch arguments": msg("Launch arguments"),
   "Additional CLI arguments passed to codex app-server on session start.": msg(
     "Additional CLI arguments passed to codex app-server on session start.",

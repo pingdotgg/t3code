@@ -82,7 +82,7 @@ function AccessScopeSummary({
   readonly label: string;
 }) {
   const m = useMessages();
-  const scopeCountLabel = `${scopes.length} ${m(msg(scopes.length === 1 ? "scope" : "scopes"))}`;
+  const scopeCountLabel = `${scopes.length} ${scopes.length === 1 ? m(msg("scope")) : m(msg("scopes"))}`;
 
   return (
     <Popover>

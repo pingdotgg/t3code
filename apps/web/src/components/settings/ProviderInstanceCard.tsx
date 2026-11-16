@@ -1379,7 +1379,11 @@ export function ProviderInstanceCard({
 
   return (
     <>
-      <SettingsSection title={displayName} icon={titleIconNode} headerAction={editorHeaderAction}>
+      <SettingsSection
+        title={<span>{displayName}</span>}
+        icon={titleIconNode}
+        headerAction={editorHeaderAction}
+      >
         <SettingsRow title={msg("Status")} status={statusContent} />
         <SettingsRow
           title={msg("Display name")}

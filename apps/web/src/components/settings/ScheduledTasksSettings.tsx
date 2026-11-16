@@ -1,4 +1,4 @@
-import { msg } from "gt-react";
+import { msg, useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import { AsyncResult } from "effect/reactivity";
@@ -456,7 +456,7 @@ export function ScheduledTasksSettings(target: {
       >
         {scope.kind === "unavailable" ? (
           <SettingsSection title={msg("Unavailable selection")}>
-            <SettingsRow title={scope.message} />
+            <SettingsRow title={<span>{scope.message}</span>} />
           </SettingsSection>
         ) : environments.length === 0 ? (
           <Empty>
@@ -662,6 +662,7 @@ function ScheduledTaskEnvironmentSection({
   readonly taskId?: ScheduledTaskId | undefined;
   readonly onEdit: (environmentId: EnvironmentId, task: ScheduledTask) => void;
 }) {
+  const m = useMessages();
   const { scope } = useSettingsScope();
   const connected =
     environment.connection.phase === "connected" && environment.serverConfig !== null;
@@ -679,7 +680,7 @@ function ScheduledTaskEnvironmentSection({
   const linkedTask = tasks?.find((task) => task.id === taskId);
   return (
     <SettingsSection
-      title={environment.label}
+      title={<span>{environment.label}</span>}
       hideTitle
       icon={
         <EnvironmentMachineIcon
@@ -691,10 +692,19 @@ function ScheduledTaskEnvironmentSection({
       {!connected ? (
         <SettingsRow
           title={msg("Environment disconnected")}
-          description={`Reconnect ${environment.label} to view its scheduled tasks.`}
+          description={
+            <span>
+              {m(msg("Reconnect {environment} to view its scheduled tasks."), {
+                environment: environment.label,
+              })}
+            </span>
+          }
         />
       ) : tasksQuery.error ? (
-        <SettingsRow title={msg("Could not load scheduled tasks")} description={tasksQuery.error} />
+        <SettingsRow
+          title={msg("Could not load scheduled tasks")}
+          description={<span>{tasksQuery.error}</span>}
+        />
       ) : !tasks ? (
         <SettingsRow title={msg("Loading scheduled tasks…")} role="status" />
       ) : (
@@ -785,7 +795,7 @@ function ScheduledTaskRow({
   };
   return (
     <SettingsRow
-      title={task.title}
+      title={<span>{task.title}</span>}
       description={<span className="line-clamp-2">{task.prompt}</span>}
       status={
         <div className="flex flex-wrap items-center gap-2">

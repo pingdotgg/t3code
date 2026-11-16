@@ -1221,14 +1221,19 @@ function ResourceTelemetryDiagnosticsBody({
                 />
                 <DetailRow
                   label={msg("Idle")}
-                  value={`${booleanStateLabel(snapshot.power.idle, {
-                    true: msg("Idle"),
-                    false: msg("Active"),
-                  })}${
-                    snapshot.power.idleSeconds === null
-                      ? ""
-                      : ` · ${Math.round(snapshot.power.idleSeconds)}s`
-                  }`}
+                  value={
+                    <>
+                      {m(
+                        booleanStateLabel(snapshot.power.idle, {
+                          true: msg("Idle"),
+                          false: msg("Active"),
+                        }),
+                      )}
+                      {snapshot.power.idleSeconds === null
+                        ? ""
+                        : ` · ${Math.round(snapshot.power.idleSeconds)}s`}
+                    </>
+                  }
                 />
                 <DetailRow
                   label={msg("Session")}

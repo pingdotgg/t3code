@@ -20,14 +20,18 @@ import {
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
 import { SettingsSection } from "./settingsLayout";
 
-function reportFailure(title: string, result: Parameters<typeof isAtomCommandInterrupted>[0]) {
+function reportFailure(
+  title: string,
+  result: Parameters<typeof isAtomCommandInterrupted>[0],
+  fallbackDescription: string,
+) {
   if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
   const error = squashAtomCommandFailure(result);
   toastManager.add(
     stackedThreadToast({
       type: "error",
       title,
-      description: error instanceof Error ? error.message : msg("An error occurred."),
+      description: error instanceof Error ? error.message : fallbackDescription,
     }),
   );
 }
@@ -87,6 +91,7 @@ export function ConnectDeviceApprovalSettings({
                       reportFailure(
                         m(msg("Could not deny the device")),
                         await deny({ environmentId, input: { id: request.id } }),
+                        m(msg("An error occurred.")),
                       ),
                     )
                   }
@@ -101,6 +106,7 @@ export function ConnectDeviceApprovalSettings({
                       reportFailure(
                         m(msg("Could not approve the device")),
                         await approve({ environmentId, input: { pairingLinkId: request.id } }),
+                        m(msg("An error occurred.")),
                       ),
                     )
                   }
@@ -142,6 +148,7 @@ export function ConnectDeviceApprovalSettings({
                             environmentId,
                             input: { proofKeyThumbprint: device.proofKeyThumbprint },
                           }),
+                          m(msg("An error occurred.")),
                         ),
                       ),
                     )

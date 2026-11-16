@@ -77,12 +77,13 @@ const TELEMETRY_EXPORT_MESSAGES = {
 } as const;
 
 function telemetryExportText(text: string, m: ReturnType<typeof useMessages>): string {
-  const connected = /^Connected · (.+)$/.exec(text);
-  if (connected) return `${m(TELEMETRY_EXPORT_MESSAGES.Connected)} · ${connected[1]}`;
-  const rejected = /^Rejected · (.+)$/.exec(text);
-  if (rejected) return `${m(TELEMETRY_EXPORT_MESSAGES.Rejected)} · ${rejected[1]}`;
-  const message = TELEMETRY_EXPORT_MESSAGES[text as keyof typeof TELEMETRY_EXPORT_MESSAGES];
-  return message ? m(message) : text;
+  return text
+    .split(" · ")
+    .map((part) => {
+      const message = TELEMETRY_EXPORT_MESSAGES[part as keyof typeof TELEMETRY_EXPORT_MESSAGES];
+      return message ? m(message) : part;
+    })
+    .join(" · ");
 }
 
 type SignalDescriptor = (typeof SIGNALS)[number];

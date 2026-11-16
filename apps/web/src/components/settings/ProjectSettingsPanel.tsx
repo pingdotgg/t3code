@@ -454,8 +454,14 @@ function ProjectDetail({
           return members.map((member) => (
             <SettingsRow
               key={member.physicalProjectKey}
-              title={member.environmentLabel ?? "Environment"}
-              description={member.workspaceRoot}
+              title={
+                member.environmentLabel ? (
+                  <span>{member.environmentLabel}</span>
+                ) : (
+                  msg("Environment")
+                )
+              }
+              description={<span>{member.workspaceRoot}</span>}
               control={checkoutControls(member)}
             />
           ));
@@ -466,10 +472,11 @@ function ProjectDetail({
         const labels = environment
           ? settingsScopeEnvironmentLabels(environment, environments)
           : { primary: firstMember.environmentLabel ?? "Environment", secondary: environmentId };
+        const primaryLabelIsFallback = !environment && !firstMember.environmentLabel;
         return (
           <SettingsRow
             key={environmentId}
-            title={labels.primary}
+            title={primaryLabelIsFallback ? msg("Environment") : <span>{labels.primary}</span>}
             description={
               <>
                 {labels.secondary ? (

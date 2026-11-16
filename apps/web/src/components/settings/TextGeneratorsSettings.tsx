@@ -264,6 +264,7 @@ function TextGeneratorWizard({
   readonly onSave: (id: ProviderInstanceId, config: TextGeneratorConfig) => void;
   readonly newId: (preset: TextGeneratorPreset) => ProviderInstanceId;
 }) {
+  const m = useMessages();
   const existing = editing === "new" ? null : editing.config;
   const [step, setStep] = useState(0);
   const [preset, setPreset] = useState(TEXT_GENERATOR_PRESETS[0]!);
@@ -329,9 +330,15 @@ function TextGeneratorWizard({
     >
       <WizardPopup>
         <WizardHeader
-          title={existing ? `Edit ${textGeneratorDisplayName(existing)}` : "Add a text generator"}
-          description={msg(
-            "Writes thread titles, commit messages, and other short text without starting a coding agent. Your API key is stored on this environment.",
+          title={
+            existing
+              ? m(msg("Edit {name}"), { name: textGeneratorDisplayName(existing) })
+              : m(msg("Add a text generator"))
+          }
+          description={m(
+            msg(
+              "Writes thread titles, commit messages, and other short text without starting a coding agent. Your API key is stored on this environment.",
+            ),
           )}
         >
           <WizardSteps

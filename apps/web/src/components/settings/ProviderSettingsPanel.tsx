@@ -202,11 +202,11 @@ function ProviderLastChecked({ environmentId }: { environmentId: EnvironmentId }
         <>
           {m(msg("Checked"))}{" "}
           <span className="font-mono tabular-nums">{lastCheckedRelative.value}</span>{" "}
-          {m(msg(lastCheckedRelative.suffix))}
+          {m(msg("ago"))}
         </>
       ) : (
         <>
-          {m(msg("Checked"))} {lastCheckedRelative.value}
+          {m(msg("Checked"))} {m(msg("just now"))}
         </>
       )}
     </span>
@@ -324,6 +324,7 @@ export function ProviderSettingsPanel(target: ProviderSettingsTarget) {
 }
 
 function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
+  const m = useMessages();
   const { environments, isReady } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const searchTargetId = useSettingsSearchTargetId();
@@ -434,8 +435,8 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
           deviceTabs={deviceTabs}
           icon={<EnvironmentMachineIcon kind={resolveEnvironmentMachineKind(null)} />}
           title="Device unavailable"
-          description={msg(
-            "Reconnect this device to set up its provider, or select another device.",
+          description={m(
+            msg("Reconnect this device to set up its provider, or select another device."),
           )}
         />
       ) : null}

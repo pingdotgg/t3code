@@ -1,4 +1,4 @@
-import { msg } from "gt-react";
+import { msg, useMessages } from "gt-react";
 import { useRef } from "react";
 
 import { Textarea } from "../ui/textarea";
@@ -12,6 +12,7 @@ import {
 } from "./useScopedSettings";
 
 export function ThreadTitleInstructionsSettings() {
+  const m = useMessages();
   const settings = useScopedSettings();
   const { targets } = useSettingsScope();
   const scopeKey = targets.map((target) => `${target.environmentId}:${target.projectId}`).join(",");
@@ -45,8 +46,8 @@ export function ThreadTitleInstructionsSettings() {
           defaultValue={mixed ? "" : settings.threadTitleInstructions}
           placeholder={
             mixed
-              ? "Mixed. Enter instructions to apply to all selected targets."
-              : "Keep titles to a few words. Lead with the main subject."
+              ? m(msg("Mixed. Enter instructions to apply to all selected targets."))
+              : m(msg("Keep titles to a few words. Lead with the main subject."))
           }
           onBlur={(event) => {
             const value = event.target.value.trim();

@@ -222,7 +222,7 @@ export function ArchivedThreadsPanel() {
           <SettingsSection
             key={key}
             id={index === 0 ? searchableSetting("archive").id : undefined}
-            title={title}
+            title={<span>{title}</span>}
             icon={<ProjectFavicon project={project} />}
           >
             {projectThreads.map((thread) => {
@@ -234,7 +234,7 @@ export function ArchivedThreadsPanel() {
                     event.preventDefault();
                     void handleContextMenu(thread, { x: event.clientX, y: event.clientY });
                   }}
-                  title={thread.title}
+                  title={<span>{thread.title}</span>}
                   description={
                     <span className={hasMultipleEnvironments ? "block truncate" : undefined}>
                       {hasMultipleEnvironments ? `${thread.environmentLabel} · ` : null}

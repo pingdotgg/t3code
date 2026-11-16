@@ -1356,7 +1356,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
           <MenuPopup align="end">
             <MenuItem
               disabled={!settingsHydrated || atProfileLimit}
-              onClick={() => createProfile(m(msg("New profile")))}
+              onClick={() => createProfile("New profile")}
             >
               {m(msg("Blank profile"))}
             </MenuItem>

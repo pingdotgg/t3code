@@ -262,7 +262,7 @@ function EnvironmentScopeMenu({
     : environments;
   return (
     <ScopeMenu
-      ariaLabel="Environment scope"
+      ariaLabel={msg("Environment scope")}
       icon={
         selected ? (
           <EnvironmentMachineIcon
