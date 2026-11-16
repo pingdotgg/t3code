@@ -650,14 +650,14 @@ useLayoutStore.subscribe(({ layout }, previous) => {
   }
 });
 
-/** The stage must be a stacking context. Workspace or viewport changes move panes 1:1, except a
- * sidebar toggle's; unframed lone panes never animate independently. */
 const shownScrolls = new WeakMap<Element, number>();
 
 export function noteStripScroll(scroller: Element): void {
   shownScrolls.set(scroller, scroller.scrollLeft);
 }
 
+/** The stage must be a stacking context. Workspace or viewport changes move panes 1:1, except a
+ * sidebar toggle's; unframed lone panes never animate independently. */
 export function usePaneMotion(
   stageRef: React.RefObject<HTMLElement | null>,
   key: string | null,

@@ -1412,8 +1412,14 @@ export function appendComposerDraftText(draftKey: string, value: string): void {
   });
 }
 
-function attachmentDedupKey(attachment: DraftComposerAttachment): string {
-  return `${attachment.mimeType}\u0000${attachment.sizeBytes}\u0000${attachment.name}`;
+// Pasted images all share one name, so an image's inline bytes decide whether it is a repeat.
+function isSameAttachment(a: DraftComposerAttachment, b: DraftComposerAttachment): boolean {
+  return (
+    a.mimeType === b.mimeType &&
+    a.sizeBytes === b.sizeBytes &&
+    a.name === b.name &&
+    (a.type !== "image" || b.type !== "image" || a.dataUrl === b.dataUrl)
+  );
 }
 
 /**
@@ -1441,13 +1447,12 @@ export function appendComposerDraftAttachments(
     const retained = options?.appendReference
       ? draftWithoutInsertionSelection(draftKey, existing, options.insertion)
       : existing;
-    const keys = new Set(retained.attachments.map(attachmentDedupKey));
+    const seen = [...retained.attachments];
     const attachments = options?.restore
       ? incoming
       : incoming.filter((attachment) => {
-          const key = attachmentDedupKey(attachment);
-          if (keys.has(key)) return false;
-          keys.add(key);
+          if (seen.some((other) => isSameAttachment(other, attachment))) return false;
+          seen.push(attachment);
           return true;
         });
     duplicates = incoming.filter((attachment) => !attachments.includes(attachment));
