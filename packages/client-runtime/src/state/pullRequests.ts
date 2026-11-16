@@ -35,6 +35,7 @@ import * as Schema from "effect/Schema";
 import { persistPullRequestStats } from "./pullRequestStatsPersistence.ts";
 import { persistQuery, type QueryPersistence } from "./queryPersistence.ts";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
@@ -355,6 +356,15 @@ function settleEdit(
     );
   }
 }
+
+const CONNECTION_FAILURES: ReadonlySet<unknown> = new Set([
+  "ConnectionTransientError",
+  "ConnectionBlockedError",
+  "EnvironmentRpcUnavailableError",
+  "RpcClientError",
+]);
+const isConnectionFailure = (error: unknown) =>
+  Predicate.hasProperty(error, "_tag") && CONNECTION_FAILURES.has(error._tag);
 
 function pullRequestReference(input: PullRequestRef): PullRequestRef {
   const { projectId, host, repository, number, expectedAccountId } = input;
@@ -1236,13 +1246,15 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     },
   });
   // A first visit paints from a saved answer; with none saved, one read now fills it.
+  // Only a connection failure tries again; a host that cannot list them waits for the page.
+  const refusedWarmups = new Set<string>();
   const listWarmups = Atom.family((key: string) => {
     const [environmentId, input] = JSON.parse(key) as [EnvironmentId, PullRequestListInput];
     const target = { environmentId, input };
     return runtime.atom((get) => {
-      // A read that failed offline tries again on the next session.
       get(environmentSessionGenerationAtom(runtime, environmentId));
       return Effect.gen(function* () {
+        if (refusedWarmups.has(key)) return;
         const saved = yield* listPersistence.load(
           environmentId,
           queryPersistenceKey(listLabel, input),
@@ -1251,7 +1263,15 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         // The bare query, not the page's wrapped reader: the wrappers stay cached after this lets
         // go and would keep a failed read on screen, while the bare one re-reads it on mount.
         yield* AtomRegistry.mount(get.registry, listQuery(target));
-        yield* AtomRegistry.getResult(get.registry, listQuery(target), { suspendOnWaiting: true });
+        yield* AtomRegistry.getResult(get.registry, listQuery(target), {
+          suspendOnWaiting: true,
+        }).pipe(
+          Effect.tapError((error) =>
+            Effect.sync(() => {
+              if (!isConnectionFailure(error)) refusedWarmups.add(key);
+            }),
+          ),
+        );
       }).pipe(Effect.scoped, Effect.ignore);
     });
   });
