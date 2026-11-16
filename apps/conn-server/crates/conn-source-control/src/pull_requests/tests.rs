@@ -1,3 +1,4 @@
+use super::normalize::text;
 use super::*;
 use crate::{
     discovery::stub::StubDir,
@@ -103,6 +104,16 @@ fn t3_characterizations_match_the_current_upstream_functions() {
     for case in cases {
         let input = &case["input"];
         let actual = match case["kind"].as_str().expect("kind") {
+            "reviewSubmission" => actions::review_submission(input).expect("review submission"),
+            "subject" => json!(actions::subject_belongs(input)),
+            "reviewerCandidates" => {
+                actions::reviewer_candidates(&input["result"], input["query"].as_str())
+                    .unwrap_or(Value::Null)
+            }
+            "reviewerRequest" => actions::reviewer_request(input.as_array().expect("reviewers")),
+            "labelCandidates" => actions::label_candidates(input).unwrap_or(Value::Null),
+            "stack" => stack::decode(input).expect("stack"),
+            "stackError" => json!(stack::decode(input).is_err()),
             "provider-failure" | "access-hint" => continue,
             "github-host" => json!(github::is_github_host(input.as_str().expect("host"))),
             "summary" => normalize::summary(input, "github.com"),
@@ -141,6 +152,387 @@ async fn connect(stubs: &StubDir, base: &str) -> Client {
     )
     .await
     .expect("stub credential")
+}
+
+#[tokio::test]
+async fn actions_send_t3_documents_and_rest_bodies_and_keep_one_credential() {
+    use crate::http::fake;
+    let server = fake::serve(|request| {
+        if request.path != "/graphql" {return (204,String::new());}
+        let body: Value = serde_json::from_str(&request.body).expect("request");
+        let query = body["query"].as_str().expect("query");
+        let data = if query.contains("query PullRequestSubject") {
+            json!({"repository":{"pullRequest":{"id":"PR7"}},"node":{"__typename":"IssueComment","id":"C7","pullRequest":{"id":"PR7"}}})
+        } else if query.contains("query ViewerPermissions") {
+            json!({"repository":{"viewerPermission":"WRITE","pullRequest":{"viewerDidAuthor":false}}})
+        } else if query.contains("query PullRequestNodeId") {
+            json!({"repository":{"pullRequest":{"id":"PR7"}}})
+        } else {json!({})};
+        (200,json!({"data":data}).to_string())
+    }).await;
+    let stubs = StubDir::new("pr-actions");
+    stubs.executable("gh", &[], "printf '%s\\n' fake-pr-token");
+    let client = connect(&stubs, &server.base).await;
+    let lookup = Lookup::new("a/b", 7).expect("lookup");
+    let mutations = [
+        ("comment", json!({"body":"a } mutation { \n"})),
+        ("replyToThread", json!({"threadId":"T7","body":"reply"})),
+        (
+            "setThreadResolution",
+            json!({"threadId":"T7","resolved":true}),
+        ),
+        (
+            "setThreadResolution",
+            json!({"threadId":"T7","resolved":false}),
+        ),
+        ("setReaction", json!({"content":"thumbs-up","reacted":true})),
+        (
+            "setReaction",
+            json!({"subjectId":"C7","content":"heart","reacted":false}),
+        ),
+        (
+            "updateComment",
+            json!({"commentId":"C7","kind":"issue-comment","body":"issue"}),
+        ),
+        (
+            "updateComment",
+            json!({"commentId":"C7","kind":"review-comment","body":"review"}),
+        ),
+        ("update", json!({"body":"","maintainerCanModify":false})),
+        (
+            "submitReview",
+            json!({"verdict":"approve","body":"","comments":[]}),
+        ),
+        (
+            "requestReviewers",
+            json!({"requested":true,"reviewers":[{"id":"reader","kind":"user"},{"id":"core","kind":"team"}]}),
+        ),
+        (
+            "requestReviewers",
+            json!({"requested":false,"reviewers":[{"id":"reader","kind":"user"}]}),
+        ),
+        ("setLabels", json!({"labels":["bug"],"applied":true})),
+        (
+            "setLabels",
+            json!({"labels":["good first issue","area/web"],"applied":false}),
+        ),
+    ];
+    for (method, input) in mutations {
+        assert_eq!(
+            client.action(&lookup, method, &input).await.expect(method),
+            Value::Null,
+            "{method}"
+        );
+    }
+    let requests = server.requests.lock().expect("requests");
+    let graphql: Vec<Value> = requests
+        .iter()
+        .filter(|r| r.path == "/graphql")
+        .map(|r| serde_json::from_str(&r.body).expect("graphql"))
+        .collect();
+    let writes: Vec<_> = graphql
+        .iter()
+        .filter(|r| text(r, "query").starts_with("mutation "))
+        .map(|r| (text(r, "query"), r.get("variables").expect("variables")))
+        .collect();
+    assert_eq!(
+        writes,
+        vec![
+            (
+                generated::ADD_COMMENT.document,
+                &json!({"subjectId":"PR7","body":"a } mutation { \n"})
+            ),
+            (
+                generated::ADD_REVIEW_THREAD_REPLY.document,
+                &json!({"threadId":"T7","body":"reply"})
+            ),
+            (
+                generated::RESOLVE_REVIEW_THREAD.document,
+                &json!({"threadId":"T7"})
+            ),
+            (
+                generated::UNRESOLVE_REVIEW_THREAD.document,
+                &json!({"threadId":"T7"})
+            ),
+            (
+                generated::ADD_REACTION.document,
+                &json!({"subjectId":"PR7","content":"THUMBS_UP"})
+            ),
+            (
+                generated::REMOVE_REACTION.document,
+                &json!({"subjectId":"C7","content":"HEART"})
+            ),
+            (
+                generated::UPDATE_ISSUE_COMMENT.document,
+                &json!({"commentId":"C7","body":"issue"})
+            ),
+            (
+                generated::UPDATE_REVIEW_COMMENT.document,
+                &json!({"commentId":"C7","body":"review"})
+            ),
+            (
+                generated::UPDATE_PULL_REQUEST.document,
+                &json!({"pullRequestId":"PR7","body":"","maintainerCanModify":false})
+            ),
+        ],
+        "generated documents and variables; omitted update fields stay omitted"
+    );
+    let rest: Vec<_> = requests
+        .iter()
+        .filter(|r| r.path != "/graphql")
+        .map(|r| {
+            (
+                r.method.as_str(),
+                r.path.as_str(),
+                if r.body.is_empty() {
+                    Value::Null
+                } else {
+                    serde_json::from_str::<Value>(&r.body).expect("body")
+                },
+            )
+        })
+        .collect();
+    assert_eq!(
+        rest,
+        vec![
+            (
+                "POST",
+                "/repos/a/b/pulls/7/reviews",
+                json!({"event":"APPROVE","body":"","comments":[]})
+            ),
+            (
+                "POST",
+                "/repos/a/b/pulls/7/requested_reviewers",
+                json!({"reviewers":["reader"],"team_reviewers":["core"]})
+            ),
+            (
+                "DELETE",
+                "/repos/a/b/pulls/7/requested_reviewers",
+                json!({"reviewers":["reader"],"team_reviewers":[]})
+            ),
+            (
+                "POST",
+                "/repos/a/b/issues/7/labels",
+                json!({"labels":["bug"]})
+            ),
+            (
+                "DELETE",
+                "/repos/a/b/issues/7/labels/good%20first%20issue",
+                Value::Null
+            ),
+            (
+                "DELETE",
+                "/repos/a/b/issues/7/labels/area%2Fweb",
+                Value::Null
+            ),
+        ],
+        "T3 REST paths, order and payloads"
+    );
+    for request in requests.iter() {
+        assert!(
+            request
+                .headers
+                .iter()
+                .any(|(key, value)| key == "authorization" && value == "Bearer fake-pr-token"),
+            "one credential throughout"
+        );
+    }
+}
+
+#[tokio::test]
+async fn actions_match_t3s_recorded_http_requests() {
+    let cases: Vec<Value> =
+        serde_json::from_str(include_str!("action-cases.json")).expect("T3 recordings");
+    for case in cases {
+        let refusal = case.get("refusal").cloned();
+        let server=crate::http::fake::serve(move |request| {
+            let body:Value=serde_json::from_str(&request.body).unwrap_or(Value::Null);
+            let query=text(&body,"query");
+            if let Some(refusal)=&refusal && (request.path!="/graphql" || query.starts_with("mutation ")) {
+                return (refusal["status"].as_u64().expect("status") as u16,refusal["body"].to_string());
+            }
+            let data=if query.contains("query PullRequestSubject"){json!({"repository":{"pullRequest":{"id":"PR7"}},"node":{"__typename":"IssueComment","id":"C7","pullRequest":{"id":"PR7"}}})}
+                else if query.contains("query ViewerPermissions"){json!({"repository":{"viewerPermission":"WRITE","pullRequest":{"viewerDidAuthor":false}}})}
+                else if query.contains("query PullRequestNodeId"){json!({"repository":{"pullRequest":{"id":"PR7"}}})}
+                else {json!({})};
+            (200,json!({"data":data}).to_string())
+        }).await;
+        let stubs = StubDir::new("pr-action-recording");
+        stubs.executable("gh", &[], "printf '%s\\n' fake-pr-token");
+        let client = connect(&stubs, &server.base).await;
+        let result = client
+            .action(
+                &Lookup::new("a/b", 7).expect("lookup"),
+                text(&case, "method"),
+                &case["input"],
+            )
+            .await;
+        if let Some(expected) = case.get("error") {
+            let error = result.expect_err("T3 refuses this action");
+            assert_eq!(
+                error.to_contract(text(&case, "method"))["detail"],
+                expected["detail"],
+                "T3 error for {}",
+                case["method"]
+            );
+            assert_eq!(
+                matches!(error, Error::NotFound(_) | Error::RepositoryNotFound(_, _)),
+                expected["tag"] == "GitHubApiNotFoundError",
+                "not-found classification"
+            );
+            assert_eq!(
+                matches!(error, Error::RateLimited),
+                expected["tag"] == "GitHubApiRateLimitError",
+                "rate-limit classification"
+            );
+        } else {
+            assert_eq!(result.expect("action"), Value::Null, "write result");
+        }
+        let actual:Vec<_>=server.requests.lock().expect("requests").iter().filter(|r|!r.body.contains("query ViewerPermissions")).map(|r|json!({"method":r.method,"path":r.path,"body":if r.body.is_empty(){Value::Null}else{serde_json::from_str::<Value>(&r.body).expect("JSON")}})).collect();
+        assert_eq!(
+            json!(actual),
+            case["requests"],
+            "T3 API trace for {} {:?}",
+            case["method"],
+            case["input"]
+        );
+    }
+}
+
+#[tokio::test]
+async fn fresh_permissions_refuse_writes_and_subjects_from_another_pr() {
+    use crate::http::fake;
+    let permission = std::sync::Arc::new(std::sync::Mutex::new(json!("READ")));
+    let author = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let server = fake::serve({let permission=permission.clone();let author=author.clone(); move |request| {
+        let body: Value = serde_json::from_str(&request.body).expect("request");
+        let data = if text(&body,"query").contains("ViewerPermissions") {
+            json!({"repository":{"viewerPermission":permission.lock().expect("permission").clone(),"pullRequest":{"viewerDidAuthor":author.load(std::sync::atomic::Ordering::Relaxed)}}})
+        } else {
+            json!({"repository":{"pullRequest":{"id":"PR7"}},"node":{"__typename":"PullRequestReviewComment","id":"C8","reviewCommentPullRequest":{"id":"PR8"}}})
+        };
+        (200,json!({"data":data}).to_string())
+    }}).await;
+    let stubs = StubDir::new("pr-access");
+    stubs.executable("gh", &[], "printf '%s\\n' fake-pr-token");
+    let client = connect(&stubs, &server.base).await;
+    let lookup = Lookup::new("a/b", 7).expect("lookup");
+    for method in [
+        "requestReviewers",
+        "reviewerCandidates",
+        "labelCandidates",
+        "setLabels",
+        "setThreadResolution",
+    ] {
+        let error = client
+            .action(&lookup, method, &json!({"threadId":"T7","resolved":true}))
+            .await
+            .expect_err(method);
+        let detail = match method {
+            "requestReviewers" | "reviewerCandidates" => {
+                "You need write access on this repository to ask for a review."
+            }
+            "setLabels" | "labelCandidates" => {
+                "You need triage access on this repository to change its labels."
+            }
+            _ => {
+                "You need write access on this repository, or to have opened this change request, to resolve a review conversation."
+            }
+        };
+        assert_eq!(error, Error::Failed(detail.into()), "{method}");
+    }
+    *permission.lock().expect("permission") = json!("WRITE");
+    author.store(true, std::sync::atomic::Ordering::Relaxed);
+    for (verdict, label) in [
+        ("approve", "approve"),
+        ("request-changes", "request changes on"),
+    ] {
+        assert_eq!(
+            client
+                .action(
+                    &lookup,
+                    "submitReview",
+                    &json!({"verdict":verdict,"body":"summary","comments":[]})
+                )
+                .await
+                .expect_err("author cannot review"),
+            Error::Failed(format!(
+                "You need write access on this repository to {label} a change request."
+            )),
+            "author has write access but cannot approve self"
+        );
+    }
+    for (method, input) in [
+        (
+            "setReaction",
+            json!({"subjectId":"C8","content":"heart","reacted":true}),
+        ),
+        (
+            "updateComment",
+            json!({"commentId":"C8","body":"new","kind":"review-comment"}),
+        ),
+    ] {
+        assert_eq!(
+            client
+                .action(&lookup, method, &input)
+                .await
+                .expect_err("other PR"),
+            Error::Failed("The named subject did not belong to the named pull request.".into()),
+            "{method}"
+        );
+    }
+    assert!(
+        server
+            .requests
+            .lock()
+            .expect("requests")
+            .iter()
+            .all(|r| !r.body.contains("mutation ")),
+        "refusals send no mutation"
+    );
+}
+
+#[tokio::test]
+async fn stack_reads_details_and_only_not_found_means_no_stack() {
+    use crate::http::fake;
+    let server = fake::serve(|request| {
+        match request.path.as_str() {
+            "/repos/a/b/stacks?pull_request=7" => (200,json!([{"number":3,"url":"api","base":"main","pull_requests":[]}]).to_string()),
+            "/repos/a/b/stacks/3" => (200,json!({"number":3,"url":"api","base":"main","pull_requests":[{"number":7,"head":{"ref":"branch","sha":"abc"}}]}).to_string()),
+            "/repos/a/b/stacks?pull_request=8" => (404,"{}".into()),
+            _ => (500,"{}".into()),
+        }
+    }).await;
+    let stubs = StubDir::new("pr-stack");
+    stubs.executable("gh", &[], "printf '%s\\n' fake-pr-token");
+    let client = connect(&stubs, &server.base).await;
+    assert_eq!(
+        client
+            .stack(&Lookup::new("a/b", 7).expect("lookup"))
+            .await
+            .expect("stack")["layers"][0]["headSha"],
+        "abc",
+        "detailed stack"
+    );
+    assert_eq!(
+        client
+            .stack(&Lookup::new("a/b", 8).expect("lookup"))
+            .await
+            .expect("no stack"),
+        Value::Null,
+        "404 is unsupported"
+    );
+    assert!(
+        client
+            .stack(&Lookup::new("a/b", 9).expect("lookup"))
+            .await
+            .is_err(),
+        "outage must not erase stacks"
+    );
+    assert!(
+        stack::decode(&json!([{"number":"bad"}])).is_err(),
+        "malformed host output fails"
+    );
 }
 
 #[tokio::test]
@@ -340,7 +732,12 @@ async fn diff_expansion_checks_membership_and_reads_the_merge_base_not_the_base_
         )
         .await
         .expect_err("not changed");
-    assert!(matches!(error, Error::NotFound(_)), "typed not-found");
+
+    assert!(
+        matches!(error, Error::NotFound(_) | Error::RepositoryNotFound(_, _)),
+        "typed not-found"
+    );
+
     assert_eq!(
         server.requests.lock().expect("requests").len(),
         previous + 1,
@@ -361,6 +758,7 @@ async fn diff_expansion_checks_membership_and_reads_the_merge_base_not_the_base_
 async fn missing_pull_refs_and_forbidden_team_reviewers_do_not_hide_core_detail() {
     use crate::http::fake;
     let server=fake::serve(|r| {
+        if r.path != "/graphql" { return (404,"{}".into()); }
         let body:Value=serde_json::from_str(&r.body).expect("JSON");
 let requested=body["variables"]["requestedReviewers"].as_u64().unwrap_or(0);
         let mut data=json!({"repository":{"pullRequest":sample_pr(),"viewerPermission":"READ"}});

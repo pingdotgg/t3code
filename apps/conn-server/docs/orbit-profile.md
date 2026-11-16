@@ -1044,38 +1044,38 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `pullRequests.activity` | yes | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.changeBreakdown` | yes | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.checks` | yes | U | N | L | read-only PR view; in a container the data would come from the Gateway |
-| `pullRequests.comment` | no | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.comment` | yes | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.detail` | yes | U | N | L | read-only PR view; in a container the data would come from the Gateway |
 | `pullRequests.diffFileContents` | yes | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.filesViewed` | yes | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.filterOptions` | yes | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.generateReviewGuide` | no | X | U | M | AI review guide |
 | `pullRequests.invalidate` | yes | U | N | L | read-only PR view; in a container the data would come from the Gateway |
-| `pullRequests.labelCandidates` | no | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.labelCandidates` | yes | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.linkedThreads` | yes | U | N | L | read-only PR view; in a container the data would come from the Gateway |
 | `pullRequests.list` | yes | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.listStats` | yes | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.preview` | yes | O | N | L | PR panel: list, review, comment, merge |
-| `pullRequests.replyToThread` | no | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.replyToThread` | yes | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.reportState` | yes | U | N | L | read-only PR view; in a container the data would come from the Gateway |
-| `pullRequests.requestReviewers` | no | O | N | L | PR panel: list, review, comment, merge |
-| `pullRequests.reviewGuide` | no | X | U | M | AI review guide |
-| `pullRequests.reviewerCandidates` | no | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.requestReviewers` | yes | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.reviewGuide` | yes | X | U | M | AI review guide |
+| `pullRequests.reviewerCandidates` | yes | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.routing` | yes | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.routingIdentity` | yes | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.runAction` | no | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.setFilesViewed` | yes | O | N | L | PR panel: list, review, comment, merge |
-| `pullRequests.setLabels` | no | O | N | L | PR panel: list, review, comment, merge |
-| `pullRequests.setReaction` | no | O | N | L | PR panel: list, review, comment, merge |
-| `pullRequests.setThreadResolution` | no | O | N | L | PR panel: list, review, comment, merge |
-| `pullRequests.stack` | no | O | N | L | PR panel: list, review, comment, merge |
-| `pullRequests.submitReview` | no | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.setLabels` | yes | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.setReaction` | yes | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.setThreadResolution` | yes | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.stack` | yes | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.submitReview` | yes | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.subscribeLinkedThreadRefreshes` | yes | U | N | L | read-only PR view; in a container the data would come from the Gateway |
 | `pullRequests.subscribeRefreshes` | yes | U | N | L | read-only PR view; in a container the data would come from the Gateway |
 | `pullRequests.summary` | yes | U | N | L | read-only PR view; in a container the data would come from the Gateway |
 | `pullRequests.threadComments` | yes | O | N | L | PR panel: list, review, comment, merge |
-| `pullRequests.update` | no | O | N | L | PR panel: list, review, comment, merge |
-| `pullRequests.updateComment` | no | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.update` | yes | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.updateComment` | yes | O | N | L | PR panel: list, review, comment, merge |
 | `review.getBranchCommits` | yes | N | N |  | changed files and diffs |
 | `review.getDiffFileContents` | yes | N | N |  | changed files and diffs |
 | `review.getDiffPreview` | yes | N | N |  | changed files and diffs |

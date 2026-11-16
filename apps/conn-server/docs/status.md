@@ -63,12 +63,24 @@ builder with a test that fails without the fix.
 - **Cleanup** (PR #110): one root fix for the stub ETXTBSY race; thread launch uses
   `fetch_base`; pull requests run the Conn Server checks on the same paths as pushes; trims
   from a retrospective review of #96-#103.
+- **Pull request panel** (PRs #106, #109), GitHub only: the panel's reads and refreshes (20
+  `pullRequests.*` methods and `POST /api/pull-requests/diff`) and its actions (comments,
+  replies, edits, reactions, thread resolution, reviews, reviewers, labels, `update`, the
+  detailed `stack`, stored review guides). GitHub goes through `gh`'s login, as in T3; 403 falls
+  back to the GraphQL viewer. `generateReviewGuide` and `runAction` are registered and answer
+  T3's typed `PullRequestOperationError` (guides off, or the action not available here), so the
+  Mac and iPhone controls show a clear error. Known differences: no ETag revalidation,
+  persistent read cache or GitHub quota reserve yet.
 - **Pull request checkout** (PR #108), GitHub only: `git.resolvePullRequest` and
   `git.preparePullRequestThread` (in place or in a worktree; fork heads, deleted forks through
   `refs/pull/<n>/head`, `owner:branch` through REST, upstream tracking as T3 sets it), and the
   commit step of `git.runStackedAction` with a generated message. Push and PR creation answer
   T3's typed `GitManagerError`: in a container they are Orbit's. Known difference: no hook
   progress events.
+- **HTML renders** (PR #105): `html_render` as T3 publishes it: a validated page with local
+  images inlined, the shared bootstrap, a thread attachment and signed delivery with T3's CSP.
+  A deleted thread's renders are removed with it. T3's `toolOutput.ts` is ported once
+  (`conn_provider::tool_output`) and shared with MCP App parsing.
 - **Clients** (VMPal macOS VM, Conn `c969c3ebd1`): the web client (through a host T3 as a
   remote environment) and the iOS dev client in a simulator (paired straight to the Conn
   Server) each ran a Haiku turn against the Conn Server on macOS.

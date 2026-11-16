@@ -9,11 +9,13 @@ use crate::{
     http::{self, Method},
 };
 use serde_json::{Value, json};
+pub mod actions;
 mod activity;
 mod detail;
 pub mod diff;
 pub mod listing;
 pub mod normalize;
+mod stack;
 #[cfg(test)]
 mod tests;
 static CLI_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
@@ -224,16 +226,18 @@ impl Client {
         mut variables: Value,
     ) -> Result<Value, Error> {
         let path = self.graphql_path();
+
         for attempt in 0..2 {
             let response = self
                 .request(
                     Method::Post,
                     path,
-                    Some(json!({"query":operation.document,"variables":variables})),
+                    Some(json!({"query":operation.document,"operationName":operation.name,"variables":variables})),
                     "application/vnd.github+json",
                     8 * 1024 * 1024,
                 )
                 .await?;
+
             if response.truncated {
                 return Err(Error::Failed(
                     "GitHub's response was too large to read.".into(),
@@ -241,14 +245,18 @@ impl Client {
             }
             let raw: Value = serde_json::from_slice(&response.body)
                 .map_err(|_| Error::Failed("Could not read GitHub's response.".into()))?;
+
             let errors = normalize::array(raw.get("errors"));
+
             let missing_pull_ref = |error: &Value| {
                 normalize::text(error, "type") == "NOT_FOUND"
                     && error.get("path")
                         == Some(&json!(["repository", "pullRequest", "baseRef", "compare"]))
             };
+
             let refused_reviewer = |error: &Value| {
                 let path = normalize::array(error.get("path"));
+
                 normalize::text(error, "type") == "FORBIDDEN"
                     && path.len() == 6
                     && path.first().and_then(Value::as_str) == Some("repository")
@@ -258,6 +266,7 @@ impl Client {
                     && path.get(4).and_then(Value::as_u64).is_some()
                     && path.get(5).and_then(Value::as_str) == Some("requestedReviewer")
             };
+
             if !errors.is_empty() && !errors.iter().all(missing_pull_ref) {
                 if attempt == 0
                     && variables
@@ -269,24 +278,57 @@ impl Client {
                         .all(|e| missing_pull_ref(e) || refused_reviewer(e))
                 {
                     variables["requestedReviewers"] = json!(0);
+
                     continue;
                 }
-                if errors
+                let messages: Vec<_> = errors
                     .iter()
-                    .all(|e| normalize::text(e, "type") == "NOT_FOUND")
-                {
-                    return Err(Error::RepositoryNotFound("GitHub could not find the requested resource, or the credential cannot see it.".into(), self.credential_source.access_hint()));
+                    .filter_map(|e| {
+                        let message = e.get("message")?.as_str()?;
+                        let path = normalize::array(e.get("path"));
+                        if path.is_empty() {
+                            Some(message.to_owned())
+                        } else {
+                            Some(format!(
+                                "{message} (at {})",
+                                path.iter()
+                                    .map(|part| part
+                                        .as_str()
+                                        .map(str::to_owned)
+                                        .unwrap_or_else(|| part.to_string()))
+                                    .collect::<Vec<_>>()
+                                    .join(".")
+                            ))
+                        }
+                    })
+                    .collect();
+                if errors.iter().all(is_not_found_lookup) {
+                    let missing = "GitHub could not find the requested resource, or the credential cannot see it.";
+                    return Err(Error::RepositoryNotFound(
+                        if messages.is_empty() {
+                            missing.into()
+                        } else {
+                            format!("{missing} GitHub said: {}", messages.join("; "))
+                        },
+                        self.credential_source.access_hint(),
+                    ));
                 }
-                if errors
+                let forbidden = errors
                     .iter()
                     .any(|e| normalize::text(e, "type") == "FORBIDDEN")
                     && errors
                         .iter()
-                        .all(|e| matches!(normalize::text(e, "type"), "FORBIDDEN" | "NOT_FOUND"))
-                {
-                    return Err(Error::Forbidden("GitHub returned an error.".into()));
-                }
-                return Err(Error::Failed("GitHub returned an error.".into()));
+                        .all(|e| matches!(normalize::text(e, "type"), "FORBIDDEN" | "NOT_FOUND"));
+                let detail = if messages.is_empty() {
+                    format!("GitHub returned HTTP {}.", response.status)
+                } else {
+                    format!("GitHub returned an error: {}", messages.join("; "))
+                };
+                return Err(if forbidden {
+                    Error::Forbidden(detail)
+                } else {
+                    Error::Failed(detail)
+                });
             }
             return raw
                 .get("data")
@@ -502,4 +544,21 @@ fn file_entry(file: &Value, viewed: bool) -> Option<Value> {
     } else {
         json!({"path":file.get("path"),"additions":file.get("additions"),"deletions":file.get("deletions")})
     })
+}
+
+fn is_not_found_lookup(error: &Value) -> bool {
+    if normalize::text(error, "type") != "NOT_FOUND" {
+        return false;
+    }
+    let Some(path) = error.get("path") else {
+        return true;
+    };
+    let path = normalize::array(Some(path));
+    path.iter().skip(1).all(Value::is_number)
+        || (path.len() == 2
+            && path.first().and_then(Value::as_str) == Some("repository")
+            && matches!(
+                path.get(1).and_then(Value::as_str),
+                Some("pullRequest" | "issueOrPullRequest")
+            ))
 }
