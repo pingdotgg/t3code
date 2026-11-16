@@ -308,61 +308,57 @@ export const layer: Layer.Layer<
       );
 
     const materializeBaselineCheckpoint: CheckpointServiceV2Shape["materializeBaselineCheckpoint"] =
-      (input) =>
-        withWorkspaceLock(
-          input.scope.cwd,
-          Effect.gen(function* () {
-            const checkpointRef = yield* checkpointRefFor({
-              scopeId: input.scope.id,
-              ordinalWithinScope: input.ordinalWithinScope,
-            });
-            const checkpointId = yield* checkpointIdForScopeOrdinal(idAllocator, {
-              scopeId: input.scope.id,
-              ordinalWithinScope: input.ordinalWithinScope,
-            });
-            const repository =
-              input.forceMissing === true ? "missing" : yield* probeRepository(input.scope);
-            const status =
-              repository === "repository"
-                ? yield* checkpointStore
-                    .hasCheckpointRef({
-                      cwd: input.scope.cwd,
-                      checkpointRef,
-                    })
-                    .pipe(
-                      Effect.map((exists) => (exists ? ("ready" as const) : ("missing" as const))),
-                      Effect.catch((cause) =>
-                        Effect.logWarning("orchestration V2 baseline ref lookup failed", {
-                          scopeId: input.scope.id,
-                          checkpointRef,
-                          cause: String(cause),
-                        }).pipe(Effect.as("error" as const)),
-                      ),
-                    )
-                : repository;
-            return makeCheckpoint({
-              id: checkpointId,
-              scope: input.scope,
-              runId: null,
-              nodeId: input.nodeId,
-              parentCheckpointId: null,
-              ordinalWithinScope: input.ordinalWithinScope,
-              appRunOrdinal: null,
-              ref: checkpointRef,
-              status,
-              files: [],
-              capturedAt: input.capturedAt,
-            });
-          }),
-        ).pipe(
+      // Only reads a ref: its own run awaited the baseline capture, and a ref read is atomic.
+      Effect.fn("CheckpointService.materializeBaselineCheckpoint")(
+        function* (input) {
+          const checkpointRef = yield* checkpointRefFor({
+            scopeId: input.scope.id,
+            ordinalWithinScope: input.ordinalWithinScope,
+          });
+          const checkpointId = yield* checkpointIdForScopeOrdinal(idAllocator, {
+            scopeId: input.scope.id,
+            ordinalWithinScope: input.ordinalWithinScope,
+          });
+          const repository =
+            input.forceMissing === true ? "missing" : yield* probeRepository(input.scope);
+          const status =
+            repository === "repository"
+              ? yield* checkpointStore
+                  .hasCheckpointRef({
+                    cwd: input.scope.cwd,
+                    checkpointRef,
+                  })
+                  .pipe(
+                    Effect.map((exists) => (exists ? ("ready" as const) : ("missing" as const))),
+                    Effect.catch((cause) =>
+                      Effect.logWarning("orchestration V2 baseline ref lookup failed", {
+                        scopeId: input.scope.id,
+                        checkpointRef,
+                        cause: String(cause),
+                      }).pipe(Effect.as("error" as const)),
+                    ),
+                  )
+              : repository;
+          return makeCheckpoint({
+            id: checkpointId,
+            scope: input.scope,
+            runId: null,
+            nodeId: input.nodeId,
+            parentCheckpointId: null,
+            ordinalWithinScope: input.ordinalWithinScope,
+            appRunOrdinal: null,
+            ref: checkpointRef,
+            status,
+            files: [],
+            capturedAt: input.capturedAt,
+          });
+        },
+        (effect, input) =>
           Effect.mapError(
-            (cause) =>
-              new CheckpointCaptureError({
-                scopeId: input.scope.id,
-                cause,
-              }),
+            effect,
+            (cause) => new CheckpointCaptureError({ scopeId: input.scope.id, cause }),
           ),
-        );
+      );
 
     const capture: CheckpointServiceV2Shape["capture"] = (input) =>
       withWorkspaceLock(

@@ -157,6 +157,14 @@ it.effect(
           })
           .pipe(Effect.forkChild);
         yield* Deferred.await(firstSnapshotStarted);
+        // A ref lookup does not queue behind another thread's capture of the same workspace.
+        const lookup = yield* checkpoints.materializeBaselineCheckpoint({
+          scope,
+          ordinalWithinScope: 0,
+          nodeId: scope.nodeId,
+          capturedAt: scope.createdAt,
+        });
+        assert.strictEqual(lookup.status, "missing");
         const waitingBaseline = yield* checkpoints
           .captureBaseline({ scope, ordinalWithinScope: 1 })
           .pipe(Effect.result, Effect.forkChild);
