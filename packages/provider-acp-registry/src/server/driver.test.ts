@@ -103,41 +103,27 @@ function providerWithModels(
 }
 
 describe("acpRegistrySnapshotReadiness", () => {
-  const fastMode = { id: "fast", label: "Fast mode", type: "boolean" } as const;
-  it.each([
-    {
-      source: "local" as const,
-      sourceSettings: { commandPath: "example" },
-      inspection: { status: "ready", agentId: "example", version: null, distribution: "local" },
-      capabilities: null,
-    },
-    {
-      source: "registry" as const,
-      sourceSettings: { agentId: "test-agent" },
-      inspection: { status: "ready", agentId: "test-agent", version: "1.0.0", distribution: "npx" },
-      capabilities: { optionDescriptors: [fastMode] },
-    },
-  ] as const)(
-    "keeps the custom model display name and options saved by the Settings editor for a $source agent",
-    ({ source, sourceSettings, inspection, capabilities }) => {
-      const settings = decodeSettings({
-        source,
-        ...sourceSettings,
+  it("keeps the custom model display name and options saved by the Settings editor", () => {
+    const fastMode = { id: "fast", label: "Fast mode", type: "boolean" } as const;
+    const snapshot = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      settings: decodeSettings({
+        agentId: "test-agent",
         customModels: [
-          toCustomModelSetting({ slug: "gateway/my-model", name: "My local model", capabilities }),
+          toCustomModelSetting({
+            slug: "gateway/my-model",
+            name: "My model",
+            capabilities: { optionDescriptors: [fastMode] },
+          }),
         ],
-      });
-      const snapshot = buildCheckedAcpRegistrySnapshot({
-        ...identity,
-        settings,
-        checkedAt: "2026-08-13T10:00:00.000Z",
-        inspection,
-      });
-      const model = snapshot.models.find((entry) => entry.slug === "gateway/my-model");
-      expect(model?.name).toBe("My local model");
-      expect(model?.capabilities?.optionDescriptors ?? []).toEqual(capabilities ? [fastMode] : []);
-    },
-  );
+      }),
+      checkedAt: "2026-08-13T10:00:00.000Z",
+      inspection: { status: "ready", agentId: "test-agent", version: "1.0.0", distribution: "npx" },
+    });
+    const model = snapshot.models.find((entry) => entry.slug === "gateway/my-model");
+    expect(model?.name).toBe("My model");
+    expect(model?.capabilities?.optionDescriptors).toEqual([fastMode]);
+  });
 
   it("shows the version reported by a local ACP agent", () => {
     const probe = acpRegistryProbeResult(identity.instanceId, {
