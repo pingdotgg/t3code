@@ -16,7 +16,7 @@ const TERMINATE_GRACE_MS = 5_000;
 
 function t3Home() {
   const raw = (process.env.T3CODE_HOME || "").trim();
-  if (raw === "") return path.join(os.homedir(), ".t3");
+  if (raw === "") return path.join(os.homedir(), ".exploro");
   if (raw === "~") return os.homedir();
   if (raw.startsWith("~/") || raw.startsWith("~\\")) return path.join(os.homedir(), raw.slice(2));
   return path.resolve(raw);
