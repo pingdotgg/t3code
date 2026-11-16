@@ -58,6 +58,8 @@ const ACTION_LABEL_OFFSET = 2;
 const THREAD_SWIPE_ACTIONS_WIDTH = ACTION_ITEM_WIDTH * 2;
 // RNGH's DRAG_TOSS: its open/close decision projects the release by this many seconds of velocity.
 const FULL_SWIPE_DRAG_TOSS = 0.05;
+// Keeps a full swipe within one-handed thumb reach on wide phones.
+const FULL_SWIPE_MAX_THRESHOLD = 180;
 const THREAD_SWIPE_SPRING = {
   damping: 26,
   mass: 0.7,
@@ -259,7 +261,10 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   const swipeableRef = useRef<SwipeableMethods | null>(null);
   const hasSecondaryAction = props.secondaryAction !== null;
   const actionsWidth = swipeActionsWidth(hasSecondaryAction);
-  const fullSwipeThreshold = Math.max(actionsWidth + 44, props.fullSwipeWidth * 0.58);
+  const fullSwipeThreshold = Math.max(
+    actionsWidth + 44,
+    Math.min(props.fullSwipeWidth * 0.58, FULL_SWIPE_MAX_THRESHOLD),
+  );
   const fullSwipeAction =
     props.fullSwipeAction ?? (props.secondaryAction === undefined ? "delete" : "primary");
   const close = useCallback(() => swipeableRef.current?.close(), []);
