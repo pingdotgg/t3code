@@ -1,0 +1,128 @@
+name: Fork release
+
+# Signed, notarized macOS arm64 build for this fork, published as a GitHub
+# release whose latest-mac.yml the app's updater reads. Push a plain x.y.z tag
+# (v0.1.902) or run it by hand with a version.
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, plain x.y.z (for example 0.1.902)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fork-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish macOS arm64
+    if: github.repository == '0x1f320/t3code'
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Resolve version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version="${INPUT_VERSION:-$GITHUB_REF_NAME}"
+          version="${version#v}"
+          # The updater only compares plain versions reliably on the stable channel.
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version must be plain x.y.z, got '$version'."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin
+
+      - name: Align package versions to release version
+        run: node scripts/update-release-package-versions.ts "${{ steps.version.outputs.version }}"
+
+      # Public T3 Connect identifiers, as in a source build.
+      - name: Enable T3 Connect
+        run: cp .env.example .env
+
+      - name: Build signed desktop artifact
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing secret $name."
+              exit 1
+            fi
+          done
+          key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          printf '%s' "$APPLE_API_KEY" > "$key_path"
+          export APPLE_API_KEY="$key_path"
+          vp run dist:desktop:artifact \
+            --platform mac --target dmg --arch arm64 \
+            --build-version "${{ steps.version.outputs.version }}" \
+            --signed --verbose
+
+      - name: Verify signature and notarization
+        shell: bash
+        run: |
+          set -euo pipefail
+          mount="$RUNNER_TEMP/dmg"
+          mkdir -p "$mount"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" release/*.dmg
+          app="$(ls -d "$mount"/*.app | head -n 1)"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl -a -vv -t exec "$app"
+          xcrun stapler validate "$app"
+          grep -q "repo: ${GITHUB_REPOSITORY#*/}" "$app/Contents/Resources/app-update.yml"
+          hdiutil detach "$mount"
+          test -f release/latest-mac.yml
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          (cd release && shasum -a 256 *.dmg *.zip *.blockmap latest-mac.yml > SHA256SUMS)
+          gh release create "v$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "T3 Code $VERSION (fork)" \
+            --generate-notes \
+            --latest \
+            release/*.dmg release/*.zip release/*.blockmap release/latest-mac.yml release/SHA256SUMS
