@@ -1290,7 +1290,7 @@ describe("handoff delivery", () => {
           }),
       });
       yield* delivery.delivered;
-      const line = `Omitted items have conversation summaries; read one with ${summaryTools}.`;
+      const line = `Some omitted items have conversation summaries; read one with ${summaryTools}.`;
       assert.isUndefined(durable.delivery?.summaryIds);
       assert.isAbove(delivery.uncoveredItems, 0);
       assert.equal(durable.summaryText, `Coverage.\n${line}`);
@@ -1298,5 +1298,76 @@ describe("handoff delivery", () => {
       assert.include(context, line);
       assert.notInclude(context, "SSSS");
     }),
+  );
+
+  it.effect(
+    "replaces the receipt when the same handoff is delivered again with a different summary",
+    () =>
+      Effect.gen(function* () {
+        const history = Array.from({ length: 30 }, (_, index) =>
+          message(
+            `item:redeliver-${index}`,
+            index % 2 === 0 ? "user" : "assistant",
+            "x".repeat(700),
+          ),
+        );
+        const firstId = `summary:${"c".repeat(64)}` as const;
+        const secondId = `summary:${"d".repeat(64)}` as const;
+        let durable: OrchestrationV2ContextHandoff = {
+          ...handoff,
+          id: ContextHandoffId.make("handoff:redeliver"),
+          summaryText: "Coverage.",
+          history: { messages: history, coverage: "Coverage.", omittedItems: 0 },
+        };
+        const deliver = (
+          summaryId: typeof firstId,
+          covered: ReadonlyArray<TurnItemId>,
+          nativeId: string,
+        ) =>
+          Effect.gen(function* () {
+            const delivery = yield* deliverContextHandoffs({
+              handoffs: [durable],
+              providerThread: {
+                ...providerThread,
+                nativeThreadRef: {
+                  driver: ProviderDriverKind.make("codex"),
+                  strength: "strong",
+                  nativeId,
+                },
+              },
+              budget: 16_000,
+              alreadyDeliveredItemIds: new Set(),
+              summaries: () =>
+                Effect.succeed([
+                  {
+                    id: summaryId,
+                    coveredItemIds: covered,
+                    text: `OFFER ${"r".repeat(1_200)}`,
+                  },
+                ]),
+              inject: () => Effect.succeed(true),
+              persist: (value) =>
+                Effect.sync(() => {
+                  durable = value;
+                }),
+            });
+            yield* delivery.delivered;
+          });
+        yield* deliver(
+          firstId,
+          history.slice(4, 12).map((entry) => entry.itemId),
+          "native:first",
+        );
+        assert.deepEqual(durable.delivery?.summaryIds, [firstId]);
+        yield* deliver(
+          secondId,
+          history.slice(16, 24).map((entry) => entry.itemId),
+          "native:second",
+        );
+        const line = `Replaced earlier spans with ${secondId}; read one with ${summaryTools}.`;
+        assert.equal(durable.summaryText, `Coverage.\n${line}`);
+        assert.deepEqual(durable.delivery?.summaryIds, [secondId]);
+        assert.notInclude(durable.summaryText, firstId);
+      }),
   );
 });
