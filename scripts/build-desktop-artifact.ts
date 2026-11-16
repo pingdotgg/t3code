@@ -2825,6 +2825,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         {
           provider: "generic",
           url: resolveMockUpdateServerUrl(mockUpdateServerPort),
+          channel: updateChannel,
         },
       ];
     } else {
