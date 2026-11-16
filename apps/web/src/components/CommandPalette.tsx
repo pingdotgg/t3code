@@ -577,7 +577,8 @@ function OpenCommandPaletteDialog(props: {
   );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const providersByEnvironment = useEnvironmentProviders();
-  const { changeThemeItem, changeAppearanceItem, themeEditorItem } = useCommandPaletteThemeItems();
+  const { changeThemeItem, changeAppearanceItem, changeAppIconItem, themeEditorItem } =
+    useCommandPaletteThemeItems();
   const currentView = viewStack.at(-1)?.view ?? null;
   const threadSearchQuery = currentView === null && !isActionsOnly ? deferredQuery : "";
   const [browseGeneration, setBrowseGeneration] = useState(0);
@@ -1782,6 +1783,7 @@ function OpenCommandPaletteDialog(props: {
 
   actionItems.push(changeThemeItem);
   actionItems.push(changeAppearanceItem);
+  actionItems.push(changeAppIconItem);
 
   actionItems.push(themeEditorItem);
 
@@ -1996,7 +1998,9 @@ function OpenCommandPaletteDialog(props: {
             ? changeThemeItem.groups
             : currentView?.groups[0]?.value === "appearance"
               ? changeAppearanceItem.groups
-              : (currentView?.groups ?? rootGroups);
+              : currentView?.groups[0]?.value === "app-icons"
+                ? changeAppIconItem.groups
+                : (currentView?.groups ?? rootGroups);
 
   const isLinkedThreadSearch =
     linkedThreadSearch?.linkedThreads !== undefined && deferredQuery === linkedThreadSearch.query;

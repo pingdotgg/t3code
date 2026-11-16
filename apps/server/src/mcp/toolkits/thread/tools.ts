@@ -232,6 +232,7 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
     threadId: ScheduledTask.fields.threadId,
     link: Schema.optional(Schema.String),
     lastRunStatus: ScheduledTask.fields.lastRunStatus,
+    lastRunError: ScheduledTask.fields.lastRunError,
     runCount: NonNegativeInt,
     nextRunAt: ScheduledTask.fields.nextRunAt,
   }),

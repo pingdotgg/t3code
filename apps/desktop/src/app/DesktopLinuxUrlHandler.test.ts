@@ -92,6 +92,7 @@ const layerHandler = (
             icns: Option.none(),
           }),
           resolveResourcePath: () => Effect.succeedNone,
+          resolveAppIconPath: () => Effect.succeedNone,
         }),
         FileSystem.layerNoop({
           copyFile: (source, destination) =>
@@ -532,6 +533,7 @@ const registerWithRealFileSystem = (run: ThemeIconRun) =>
                           )
                         : Option.none(),
                     ),
+                  resolveAppIconPath: () => Effect.succeedNone,
                 })),
               ),
             ),
