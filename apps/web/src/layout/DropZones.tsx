@@ -4,10 +4,12 @@ import { createPortal } from "react-dom";
 
 import { PANE_TAB_SHAPE_CLASS } from "../components/PaneNotch";
 import { ThreadSurfaceTabIcon } from "../components/SurfaceTabIcon";
+import { useThreadContextDragGhost } from "../components/chat/threadContextDrag";
 import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
 import { cn } from "../lib/utils";
 import {
   LAYOUT_DROP_CHROME_HEIGHT,
+  layoutDragContent,
   layoutDropLabel,
   useLayoutDragState,
   type LayoutDragContentSource,
@@ -275,13 +277,10 @@ function LayoutTabGhostLabel({ tab }: { tab: LayoutTab }) {
   return <GhostLabel icon={label.icon} title={label.title} />;
 }
 
-const PULL_REQUESTS_PAGE_TAB: LayoutTab = {
-  id: "pull-requests",
-  content: { kind: "pull-requests" },
-};
-
 function DraggedContentLabel({ source }: { source: LayoutDragContentSource }) {
-  if (source.kind === "pull-requests") return <LayoutTabGhostLabel tab={PULL_REQUESTS_PAGE_TAB} />;
+  if (source.kind !== "surface" || source.surface.kind === "thread-terminal") {
+    return <LayoutTabGhostLabel tab={{ id: "dragged", content: layoutDragContent(source) }} />;
+  }
   return (
     <GhostLabel
       icon={<ThreadSurfaceTabIcon threadRef={source.threadRef} surface={source.surface} />}
@@ -314,6 +313,7 @@ function DropPill({ x, y, children }: { x: number; y: number; children: ReactNod
 /** A window overlay keeps webviews and iframes from swallowing layout drags. */
 export function LayoutDropZones() {
   const state = useLayoutDragState();
+  const threadGhost = useThreadContextDragGhost();
   if (!state) return null;
   const zone = state.target ? targetZone(state, state.target) : null;
   const into = state.target ? intoTabs(state, state.target) : null;
@@ -338,7 +338,7 @@ export function LayoutDropZones() {
         </div>
         {state.source.kind === "tab" ? (
           <DraggedTabGhost tabId={state.source.tabId} point={state.point} />
-        ) : state.source.kind === "thread" ? null : (
+        ) : state.source.kind === "thread" && threadGhost ? null : (
           <DraggedTabGhostBody point={state.point}>
             <DraggedContentLabel source={state.source} />
           </DraggedTabGhostBody>

@@ -6,9 +6,14 @@ import "~/index.css";
 
 import { act, render } from "../../test/render";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
-import { pullRequestSurface, useRightPanelStore } from "../rightPanelStore";
+import { fileSurface, pullRequestSurface, useRightPanelStore } from "../rightPanelStore";
 import { useLayoutBehaviorStore } from "./layoutBehavior";
-import { commitLayoutDrop, isLayoutDropUseful, type LayoutDragSource } from "./layoutDrag";
+import {
+  commitLayoutDrop,
+  isLayoutDropUseful,
+  type LayoutDragSource,
+  type LayoutDragSurface,
+} from "./layoutDrag";
 import {
   createLayoutLauncherContent,
   createLayoutState,
@@ -283,37 +288,47 @@ it("opens a thread's pull request beside a chat of another thread, and it surviv
   ).toHaveLength(1);
 });
 
-it("drops only the dragged pull request where it lands when the thread's panel hides other surfaces", async () => {
-  using fixture = setupPullRequestDrop();
-  const { chatPaneId } = fixture;
-  useRightPanelStore.setState({
-    byThreadKey: {
-      [scopedThreadKey(pullRequestThreadRef)]: {
-        isOpen: false,
-        activeSurfaceId: "files",
-        surfaces: [{ id: "files", kind: "files" }],
+it.each<{ name: string; surface: LayoutDragSurface }>([
+  {
+    name: "pull request",
+    surface: pullRequestSurface({
+      projectId: "project",
+      repository: "owner/repo",
+      number: 7,
+      url: "https://github.com/owner/repo/pull/7",
+    }),
+  },
+  { name: "file", surface: fileSurface("src/app.ts", 12, 0) },
+])(
+  "drops only the dragged $name where it lands when the thread's panel hides other surfaces",
+  async ({ surface }) => {
+    using fixture = setupPullRequestDrop();
+    const { chatPaneId } = fixture;
+    useRightPanelStore.setState({
+      byThreadKey: {
+        [scopedThreadKey(pullRequestThreadRef)]: {
+          isOpen: false,
+          activeSurfaceId: "diff",
+          surfaces: [{ id: "diff", kind: "diff" }],
+        },
       },
-    },
-  });
-  const surface = pullRequestSurface({
-    projectId: "project",
-    repository: "owner/repo",
-    number: 7,
-    url: "https://github.com/owner/repo/pull/7",
-  });
-  const source: LayoutDragSource = { kind: "surface", threadRef: pullRequestThreadRef, surface };
-  const tabFor = (surfaceId: string) =>
-    findLayoutSurfaceTabs(useLayoutStore.getState().layout, pullRequestThreadRef).find(
-      ({ tab }) => tab.content.kind === "surface" && tab.content.surfaceId === surfaceId,
-    );
-  await using _screen = await render(<SurfaceSync />);
+    });
+    const source: LayoutDragSource = { kind: "surface", threadRef: pullRequestThreadRef, surface };
+    const tabFor = (surfaceId: string) =>
+      findLayoutSurfaceTabs(useLayoutStore.getState().layout, pullRequestThreadRef).find(
+        ({ tab }) => tab.content.kind === "surface" && tab.content.surfaceId === surfaceId,
+      );
+    await using _screen = await render(<SurfaceSync />);
 
-  await act(() => {
-    expect(commitLayoutDrop(source, { kind: "side", paneId: chatPaneId, side: "down" })).toBe(true);
-  });
-  const dropped = tabFor(surface.id)!;
-  const chatColumn = findLayoutChatForThread(useLayoutStore.getState().layout, threadRef)!.column;
-  expect(chatColumn.panes.map((pane) => pane.id)).toEqual([chatPaneId, dropped.pane.id]);
-  expect(dropped.pane.tabs.map((tab) => tab.id)).toEqual([dropped.tab.id]);
-  expect(tabFor("files")?.pane.id).toBe(chatPaneId);
-});
+    await act(() => {
+      expect(commitLayoutDrop(source, { kind: "side", paneId: chatPaneId, side: "down" })).toBe(
+        true,
+      );
+    });
+    const dropped = tabFor(surface.id)!;
+    const chatColumn = findLayoutChatForThread(useLayoutStore.getState().layout, threadRef)!.column;
+    expect(chatColumn.panes.map((pane) => pane.id)).toEqual([chatPaneId, dropped.pane.id]);
+    expect(dropped.pane.tabs.map((tab) => tab.id)).toEqual([dropped.tab.id]);
+    expect(tabFor("diff")?.pane.id).toBe(chatPaneId);
+  },
+);
