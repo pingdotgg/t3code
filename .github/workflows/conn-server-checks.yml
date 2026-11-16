@@ -50,10 +50,7 @@ jobs:
       - name: Restore Rust source timestamps
         run: |
           git ls-files -z apps/conn-server | while IFS= read -r -d '' file; do
-            case "$file" in
-              *.rs|*/Cargo.toml|*/Cargo.lock|*/.cargo/config.toml)
-                touch -d "$(git log -1 --format=%cI -- "$file")" "$file" ;;
-            esac
+            touch -d "$(git log -1 --format=%cI -- "$file")" "$file"
           done
 
       - name: Setup Vite+
@@ -149,10 +146,7 @@ jobs:
       - name: Restore Rust source timestamps
         run: |
           git ls-files -z apps/conn-server | while IFS= read -r -d '' file; do
-            case "$file" in
-              *.rs|*/Cargo.toml|*/Cargo.lock|*/.cargo/config.toml)
-                touch -d "$(git log -1 --format=%cI -- "$file")" "$file" ;;
-            esac
+            touch -d "$(git log -1 --format=%cI -- "$file")" "$file"
           done
 
       - name: Setup Vite+
