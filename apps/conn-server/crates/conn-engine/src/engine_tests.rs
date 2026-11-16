@@ -2549,6 +2549,7 @@ struct RecordingHost {
     revoked: Mutex<Vec<String>>,
     released: Mutex<Vec<Value>>,
     closed: Mutex<Vec<(String, crate::ThreadClose)>>,
+    html_cleanup: Mutex<Vec<(String, String)>>,
     closed_event: tokio::sync::Notify,
 }
 
@@ -2594,6 +2595,10 @@ impl crate::EngineHost for RecordingHost {
         self.released.lock().unwrap().push(attachments);
         Box::pin(async {})
     }
+    fn cleanup_html_attachments(&self, ids: Vec<(String, String)>) -> crate::BoxFuture<'_, ()> {
+        self.html_cleanup.lock().unwrap().extend(ids);
+        Box::pin(async {})
+    }
     fn thread_closed(&self, thread_id: &str, reason: crate::ThreadClose) {
         self.closed
             .lock()
@@ -2636,6 +2641,11 @@ async fn the_host_grants_tools_claims_attachments_and_hears_closes() {
     assert!(engine.dispatch(from_json(refused).unwrap()).await.is_err());
     assert_eq!(host.released.lock().unwrap()[0][0]["id"], "missing-1");
 
+    engine.inner().db(|store| {
+        let mut tx = store.tx()?;
+        tx.append(crate::store::Draft::new("t1", "turn-item.updated", json!({"id":"page", "type":"dynamic_tool", "toolName":"html_render", "output":{"htmlRender":{"attachmentId":"t1-00000000-0000-4000-8000-000000000001-html", "title":"Page", "height":100}}})))?;
+        tx.commit(None)
+    }).await.unwrap();
     dispatch(
         &engine,
         json!({"type": "thread.archive", "commandId": "c4", "threadId": "t1"}),
@@ -2655,6 +2665,13 @@ async fn the_host_grants_tools_claims_attachments_and_hears_closes() {
             ("t1".to_owned(), crate::ThreadClose::Archived),
             ("t1".to_owned(), crate::ThreadClose::Deleted)
         ]
+    );
+    assert_eq!(
+        *host.html_cleanup.lock().unwrap(),
+        [(
+            "t1".into(),
+            "t1-00000000-0000-4000-8000-000000000001-html".into()
+        )]
     );
     assert_eq!(*host.revoked.lock().unwrap(), ["key:t1"]);
 }

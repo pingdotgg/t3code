@@ -823,6 +823,34 @@ mod tests {
         (status, head.to_ascii_lowercase(), body.to_owned())
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn mcp_accepts_maximum_escaped_inline_html_but_bounds_the_body() {
+        let tool: Value = include_str!("../../conn-mcp/src/catalog.jsonl")
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .find(|tool| tool["name"] == "html_render")
+            .unwrap();
+        let max = tool["inputSchema"]["properties"]["html"]["maxLength"]
+            .as_u64()
+            .unwrap() as usize;
+        let title_max = tool["inputSchema"]["properties"]["title"]["maxLength"]
+            .as_u64()
+            .unwrap() as usize;
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"html_render","arguments":{{"html":"{}","title":"{}","height":100}}}}}}"#,
+            "\\u0061".repeat(max),
+            "\\u0061".repeat(title_max)
+        );
+        let (addr, _) = serve().await;
+        assert_eq!(
+            call(addr, "POST /mcp HTTP/1.1", &body).await.0,
+            404,
+            "valid HTML must reach the handler"
+        );
+        let over_limit = " ".repeat(body.len() + 64 * 1024);
+        assert_eq!(call(addr, "POST /mcp HTTP/1.1", &over_limit).await.0, 413);
+    }
+
     const UPGRADE: &str = "connection: upgrade\r\nupgrade: websocket\r\nsec-websocket-version: 13\r\nsec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==";
 
     #[tokio::test(flavor = "current_thread")]

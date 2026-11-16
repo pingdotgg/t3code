@@ -15,6 +15,7 @@ mod annotations;
 pub(crate) mod attachments;
 mod background;
 mod create_threads;
+mod html;
 mod manage;
 mod message;
 mod panels;
@@ -70,7 +71,8 @@ pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError 
 
 /// Every name in `tools.implemented` has an arm here; a test checks both ways.
 #[cfg(test)]
-pub(crate) const HANDLED: [&str; 48] = [
+pub(crate) const HANDLED: [&str; 49] = [
+    "html_render",
     "mcp_call",
     "mcp_connect",
     "create_threads",
@@ -143,6 +145,7 @@ pub(crate) async fn call(
         origin,
     };
     match name {
+        "html_render" => html::render(&cx, &args).await,
         "create_threads" => create_threads::create(&cx, &args).await,
         "t3_attachment_prepare_upload" => attachments::prepare(&cx, &args).await,
         "t3_attachment_discard" => attachments::discard(&cx, &args).await,

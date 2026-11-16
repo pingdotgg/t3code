@@ -85,7 +85,7 @@ hidden while linked environments are off; `watch_pull_request`/`unwatch_pull_req
 from delegated children. Preview, device and panel tools are listed to everyone and fail without
 the capability.
 
-**Served: 41 of 87.** Definitions come byte for byte from `apps/server`. Each served tool has
+**Served: 46 of 87.** Definitions come byte for byte from `apps/server`. Each served tool has
 a unit test and `parity.mjs` steps.
 
 Where they differ, because the engine does not do it yet:
@@ -203,7 +203,7 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `mcp_connect` | not served | actsAsCaller | desktop client: panels (the MCP panel) | |
 | `mcp_call` | not served | actsAsCaller | desktop client: panels (the MCP panel) | |
 | `html_preview` | not served | readsAsCaller | server: HTML renders (`HtmlRender`) | O |
-| `html_render` | not served | actsAsCaller | server: HTML renders (`HtmlRender`) | O |
+| `html_render` | served | actsAsCaller | `conn-files::html` publication | O |
 | `annotations_list` | served | readsAsCaller | | |
 | `annotations_claim` | served | actsAsCaller | | |
 | `annotations_complete` | served | actsAsCaller | | |
@@ -219,11 +219,11 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `t3_theme_set` | not served | writesEnvironment | server: themes | |
 | `t3_project_clone` | not served | writesEnvironment | server: project clone tracking (`ProjectCloneTracker`, source control repositories) | |
 
-The generated catalog serves 48 tools. `tools.implemented` is the source of the served set.
+The generated catalog serves 49 tools. `tools.implemented` is the source of the served set.
 
 
-**Named but not served (12):** `device_list`, `device_open`,
-`device_screenshot`, `fill_credential`, `html_preview`, `html_render`, `preview_open`, `preview_status` (and the
+**Named but not served (11):** `device_list`, `device_open`,
+`device_screenshot`, `fill_credential`, `html_preview`, `preview_open`, `preview_status` (and the
 other 11 through `preview_*`), `t3_environment_link`,
 `t3_environment_links`, `unwatch_pull_request`, `watch_pull_request`. Earlier batches took
 `send_to_user`, `t3_thread_organize`, `schedule_task`, `link_pull_request`,
@@ -339,6 +339,15 @@ subagent })` returns an `McpServerEntry { url, authorization, .. }` for one prov
 `crates/conn-server/examples/mcp_agent.rs` proves it: it serves one thread and writes that
 thread's `--mcp-config`, and `claude -p --model claude-haiku-5-5 --strict-mcp-config
 --mcp-config <file>` listed threads, launched one and waited for it.
+
+
+## HTML rendering
+
+`html_render` publishes a finished page to the calling thread. It is hidden from outside
+clients and checks that the caller still owns a live run. Plan mode may pass inline HTML;
+only full-access threads may pass a file path. The files service prepares the page and saves
+its attachment. The result is the normal client render reference and T3's success message.
+No preview capability is advertised. `html_preview` and the browser tools remain unserved.
 
 ## Secret requests and panels
 
