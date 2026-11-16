@@ -147,7 +147,7 @@ describe("isAutoSettlementCandidate", () => {
         NOW_MS,
       ),
     ).toBe(true);
-    // A pull request watch whose checks finished holds nothing, yet still keeps the thread.
+    // A legacy unawaited PR watch still protects the thread from auto-settlement.
     expect(
       ThreadSettlementService.isAutoSettlementCandidate(
         shell({

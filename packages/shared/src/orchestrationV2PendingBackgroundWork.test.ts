@@ -435,22 +435,24 @@ describe("derivePendingBackgroundWork kinds", () => {
       ]);
     });
 
-    it("stops a watch whose checks all finished from holding the thread, while still listing it", () => {
-      const tasks = derivePendingBackgroundWork({
+    it("keeps a watch holding after checks finish until the agent stops watching", () => {
+      const input = {
         latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
         providerThreads: [],
         turnItems: [],
         pullRequests: [{ ...link(1, {}), watch: { ...watch, passed: true, checksPending: false } }],
-      });
+      } as const;
+      const tasks = derivePendingBackgroundWork(input);
       expect(tasks).toEqual([
         {
           taskId: "pull-request-watch:github.com/acme/app#1",
           description: "Watching pull request #1",
           kind: "monitor",
+          awaited: true,
         },
       ]);
-      expect(backgroundWorkHoldsCompletion(tasks)).toBe(false);
-      // Unlike a monitor that wakes per line, it lets a comment wake's run complete too.
+      expect(backgroundWorkHoldsCompletion(tasks)).toBe(true);
+      // PR watches hold through awaited, not the progress-monitor wake rule.
       expect(
         monitorHoldsWakeCompletion({
           latestRunBackgroundWake: true,
@@ -464,36 +466,31 @@ describe("derivePendingBackgroundWork kinds", () => {
         }),
       ).toBe(true);
 
-      const running = derivePendingBackgroundWork({
-        latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
-        providerThreads: [],
-        turnItems: [],
-        pullRequests: [{ ...link(1, {}), watch: { ...watch, checksPending: true } }],
+      const unwatched = derivePendingBackgroundWork({
+        ...input,
+        pullRequests: [link(1, { watched: false })],
       });
-      expect(backgroundWorkHoldsCompletion(running)).toBe(true);
+      expect(unwatched).toEqual([]);
+      expect(backgroundWorkHoldsCompletion(unwatched)).toBe(false);
     });
 
-    it("keeps holding the thread after checks finish until a required review approves", () => {
-      const holds = (reviewDecision: "approved" | "changes-requested" | "review-required" | null) =>
-        backgroundWorkHoldsCompletion(
-          derivePendingBackgroundWork({
-            latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
-            providerThreads: [],
-            turnItems: [],
-            pullRequests: [
-              {
-                ...link(1, {}),
-                snapshot: { state: "open", reviewDecision },
-                watch: { ...watch, passed: true, checksPending: false },
-              },
-            ],
-          }),
-        );
-      expect(holds("review-required")).toBe(true);
-      expect(holds("changes-requested")).toBe(true);
-      expect(holds("approved")).toBe(false);
-      expect(holds(null)).toBe(false);
-    });
+    it.each(["approved", "changes-requested", "review-required", null, undefined] as const)(
+      "keeps watching with finished checks and review decision %s",
+      (reviewDecision) => {
+        const pullRequest = {
+          ...link(1, {}),
+          snapshot: { state: "open" as const, reviewDecision },
+          watch: { ...watch, passed: true, checksPending: false },
+        };
+        const tasks = derivePendingBackgroundWork({
+          latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+          providerThreads: [],
+          turnItems: [],
+          pullRequests: [pullRequest],
+        });
+        expect(backgroundWorkHoldsCompletion(tasks)).toBe(true);
+      },
+    );
 
     it("lists no watch while a run is active", () => {
       expect(

@@ -1,8 +1,10 @@
 # Wiki update log
 
-## 2026-11-16
+## 2026-11-17
 
-- **Compatibility**: Recorded the fork-only [pull request review hold](upstream-integration.md#pull-request-watches-hold-through-review). A watched pull request keeps its thread Waiting until a required review approves, not only until its checks finish.
+- **Compatibility**: Recorded [PR #83](https://github.com/NicholasZolton/t3code/pull/83)'s fork-only [active pull request watch hold](upstream-integration.md#active-pull-request-watches-keep-threads-waiting). Watching keeps a thread Waiting until the agent unwatches or the pull request merges or closes, including bot reviews without required-review rules.
+
+## 2026-11-16
 
 - **Integration**: [PR #81](https://github.com/NicholasZolton/t3code/pull/81) reached fork `main` at `eda7ca8f3f`. Refreshed [upstream integration](upstream-integration.md#completed-november-16-sync): all 967 incoming commits through `c8c51af4e3` are incorporated with ancestry preserved and zero main gap. Verification passes 17,582 tests after fixture repairs; all 19 remaining failures reproduce on pristine upstream or fork main. Upstream folder matching replaces the overlapping fork implementation, while shared Git/Jujutsu PR routing and OpenCode input-delivery safeguards remain. Native clients remain unverified; no live deployment occurred.
 

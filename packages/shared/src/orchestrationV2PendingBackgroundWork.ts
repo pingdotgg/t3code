@@ -115,7 +115,7 @@ export const isPullRequestWatchTask = (task: Pick<PendingBackgroundWorkTask, "ta
 
 /**
  * A monitor wakes the agent once per line, so a progress wake run's completion waits for the
- * monitor to end. A pull request watch wakes only on news and holds while its checks run.
+ * monitor to end. A pull request watch wakes only on news and holds until the watch ends.
  */
 export function monitorHoldsWakeCompletion(
   thread: Pick<OrchestrationV2ThreadShell, "latestRunBackgroundWake" | "pendingBackgroundTasks">,
@@ -134,10 +134,7 @@ type PendingBackgroundWorkPullRequest = Pick<
   ThreadPullRequestLink,
   "host" | "repository" | "number" | "url" | "source" | "watch"
 > & {
-  readonly snapshot: Pick<
-    NonNullable<ThreadPullRequestLink["snapshot"]>,
-    "state" | "reviewDecision"
-  > | null;
+  readonly snapshot: Pick<NonNullable<ThreadPullRequestLink["snapshot"]>, "state"> | null;
 };
 
 type PendingBackgroundWorkProviderThread = Pick<
@@ -329,20 +326,8 @@ function pullRequestWatchTasks(
             taskId: `${PULL_REQUEST_WATCH_TASK_ID}${link.host.toLowerCase()}/${link.repository.toLowerCase()}#${link.number}`,
             description: `Watching pull request #${link.number}`,
             kind: "monitor" as const,
-            ...(watchHoldsThread(link.watch, link.snapshot) ? { awaited: true as const } : {}),
+            awaited: true as const,
           },
         ],
-  );
-}
-
-// After checks finish, a required review still holds the thread until it approves.
-// A PR that needs no review then holds nothing, though the watch stays on.
-function watchHoldsThread(
-  watch: NonNullable<PendingBackgroundWorkPullRequest["watch"]>,
-  snapshot: PendingBackgroundWorkPullRequest["snapshot"],
-): boolean {
-  const reviewDecision = snapshot?.reviewDecision ?? null;
-  return (
-    watch.checksPending !== false || (reviewDecision !== null && reviewDecision !== "approved")
   );
 }

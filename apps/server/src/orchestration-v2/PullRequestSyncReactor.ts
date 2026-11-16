@@ -769,9 +769,7 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  // A push can start new checks, so the thread's watches forget whether checks were running and
-  // hold the thread until they read the pull request again. The run is still going, so the
-  // thread never shows as done in between.
+  // A push can register new checks; clearing the answer forces a fresh detail read.
   const reopenWatchedChecks = Effect.fn("PullRequestSyncReactor.reopenWatchedChecks")(
     function* (threadId: ThreadId, item: CommandExecution) {
       if (isOrchestrationV2WorkActive(item.status) || !isPushCommand(item.input)) return;
