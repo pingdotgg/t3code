@@ -27,6 +27,7 @@ import {
 import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -44,6 +45,7 @@ import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
+import * as HeldAssistantText from "./HeldAssistantText.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { PROVIDER_STOP_REASON_SIGNAL } from "@t3tools/provider-core/server/subagentProjection";
@@ -718,6 +720,7 @@ export const layer: Layer.Layer<
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
     const turnAnalytics = yield* ProviderUsageAnalytics.ProviderTurnAnalytics;
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+    const heldAssistantText = yield* HeldAssistantText.HeldAssistantText;
 
     const writeFinalRunEvents = Effect.fn("RunExecutionService.writeFinalRunEvents")(
       function* (input: {
@@ -1808,6 +1811,21 @@ export const layer: Layer.Layer<
           readonly type: "idle_flush";
           readonly at: number;
         }>(1);
+        // Publish requests ride the same stream so they stay ordered with ingestion; ones the
+        // stream never reaches are released when it closes.
+        const publishRequests = yield* Queue.unbounded<{
+          readonly type: "publish_held";
+          readonly done: Deferred.Deferred<void>;
+        }>();
+        const pendingPublishes = new Set<Deferred.Deferred<void>>();
+        const publishHeldText = Effect.suspend(() => {
+          if (idleFlushClosed || assistantStreaming.nextIdleFlushAt() === null) return Effect.void;
+          const done = Deferred.makeUnsafe<void>();
+          pendingPublishes.add(done);
+          return Queue.offer(publishRequests, { type: "publish_held", done }).pipe(
+            Effect.andThen(Deferred.await(done)),
+          );
+        });
         let idleFlushWake: { readonly at: number; readonly fiber: Fiber.Fiber<void> } | undefined;
         const scheduleIdleFlush = Effect.suspend(() => {
           const at = assistantStreaming.nextIdleFlushAt();
@@ -1833,10 +1851,18 @@ export const layer: Layer.Layer<
           idleFlushClosed = true;
           const wake = idleFlushWake;
           idleFlushWake = undefined;
-          return wake === undefined ? Effect.void : Fiber.interrupt(wake.fiber);
+          for (const done of pendingPublishes) Deferred.doneUnsafe(done, Exit.void);
+          pendingPublishes.clear();
+          return heldAssistantText
+            .unregister(input.run.threadId, publishHeldText)
+            .pipe(Effect.andThen(wake === undefined ? Effect.void : Fiber.interrupt(wake.fiber)));
         });
         // Per-tick ingestion avoids adding a span for every idle wake.
-        const flushIdleAssistantText = Effect.fnUntraced(function* (wokeAt: number) {
+        const flushIdleAssistantText = Effect.fnUntraced(function* (
+          wokeAt: number,
+          // A publish request takes every held snapshot, whether or not it is due.
+          publishAll: boolean,
+        ) {
           // A tick means its timer slept until `wokeAt`, but the wall clock can still read up
           // to a millisecond earlier; trusting it would keep the finished wake and never re-arm.
           const now = Math.max(DateTime.toEpochMillis(yield* DateTime.now), wokeAt);
@@ -1844,7 +1870,10 @@ export const layer: Layer.Layer<
           if (idleFlushWake !== undefined && idleFlushWake.at <= now) idleFlushWake = undefined;
           if (idleFlushClosed) return;
           const rootSettled = yield* Ref.get(rootRunFinalized);
-          for (const event of assistantStreaming.takeIdleFlushes(now)) {
+          for (const event of assistantStreaming.takeIdleFlushes(
+            now,
+            publishAll ? Number.POSITIVE_INFINITY : now,
+          )) {
             // Settling the root run closed its messages; only children may still stream.
             if (rootSettled && streamedThreadId(event) === input.run.threadId) continue;
             // The held text's child may have been handed to another run since it arrived.
@@ -1966,24 +1995,42 @@ export const layer: Layer.Layer<
           yield* trackChildLifecycle(event, deliveredEvent !== null);
           yield* scheduleIdleFlush;
         });
-        const providerEventFiber = yield* eventSink
-          .consumeProviderEvents(
-            eventSubscription.events.pipe(
-              Stream.merge(Stream.fromQueue(idleFlushTicks), { haltStrategy: "left" }),
-            ),
-            (event) =>
-              event.type === "idle_flush"
-                ? flushIdleAssistantText(event.at)
-                : Effect.gen(function* () {
-                    yield* ingestEvent(yield* routeEvent(event));
-                  }),
-            Effect.gen(function* () {
-              if (yield* agentTurnsSettled) yield* endPreviewActivity;
-              return yield* shouldStopProviderEventIngestion;
-            }),
-            Ref.get(rootTerminalSeen).pipe(Effect.map((seen) => !seen)),
-          )
+        const providerEventFiber = yield* heldAssistantText
+          .register(input.run.threadId, publishHeldText)
           .pipe(
+            Effect.andThen(
+              eventSink.consumeProviderEvents(
+                eventSubscription.events.pipe(
+                  Stream.merge(
+                    Stream.merge(
+                      Stream.fromQueue(idleFlushTicks),
+                      Stream.fromQueue(publishRequests),
+                    ),
+                    { haltStrategy: "left" },
+                  ),
+                ),
+                (event) =>
+                  event.type === "idle_flush"
+                    ? flushIdleAssistantText(event.at, false)
+                    : event.type === "publish_held"
+                      ? flushIdleAssistantText(Number.NEGATIVE_INFINITY, true).pipe(
+                          Effect.ensuring(
+                            Effect.sync(() => {
+                              pendingPublishes.delete(event.done);
+                              Deferred.doneUnsafe(event.done, Exit.void);
+                            }),
+                          ),
+                        )
+                      : Effect.gen(function* () {
+                          yield* ingestEvent(yield* routeEvent(event));
+                        }),
+                Effect.gen(function* () {
+                  if (yield* agentTurnsSettled) yield* endPreviewActivity;
+                  return yield* shouldStopProviderEventIngestion;
+                }),
+                Ref.get(rootTerminalSeen).pipe(Effect.map((seen) => !seen)),
+              ),
+            ),
             Effect.ensuring(closeIdleFlush),
             Effect.mapError((cause) => new RunExecutionIngestError({ runId: input.run.id, cause })),
             Effect.flatMap(() =>
