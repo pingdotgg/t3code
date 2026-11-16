@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs every check that needs no model, in order, and prints a summary.
-# Usage: tools/check.sh [--group build|1|2|3|4]
+# Usage: tools/check.sh [--group build|rust|1|2|3|4]
 # The Node tools read the contract, the web client and apps/server from the Conn monorepo this
 # folder sits in (two levels up); run `vp i` at the monorepo root first.
 # CHECK_SUMMARY=<file> also writes one line per check (`ok <name>`, `FAIL <name>`,
@@ -11,10 +11,10 @@ set -u
 group=all
 if [ "$#" -ne 0 ]; then
   if [ "$#" -ne 2 ] || [ "$1" != --group ]; then
-    echo "Usage: tools/check.sh [--group build|1|2|3|4]" >&2
+    echo "Usage: tools/check.sh [--group build|rust|1|2|3|4]" >&2
     exit 2
   fi
-  case "$2" in build|1|2|3|4) group="$2" ;; *) echo "Unknown check group: $2" >&2; exit 2 ;; esac
+  case "$2" in build|rust|1|2|3|4) group="$2" ;; *) echo "Unknown check group: $2" >&2; exit 2 ;; esac
 fi
 # The way out of the sealed cargo runner (tools/cargo-runner.mjs) is for hand runs only.
 if [ -n "${CONN_UNSEALED:-}" ]; then
@@ -34,7 +34,7 @@ if [ ! -d "$monorepo/node_modules" ]; then
   exit 1
 fi
 
-release="$repo/target/release"
+release="${CONN_CHECK_BINARIES:-$repo/target}/release"
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/conn-check.XXXXXX")"
 
 # The canary (tools/canary.mjs): every check runs with a decoy HOME, marker variables in the
@@ -112,8 +112,9 @@ run() {
 }
 
 client_check() {
-  cargo run --quiet --release -p conn-engine --features fake-provider --example export_turn \
-    -- "$scratch/export.json" &&
+  local binary
+  binary="$(node tools/check-binaries.mjs conn-engine export_turn)" &&
+    "$canary/runner" "$binary" "$scratch/export.json" &&
     node crates/conn-engine/tools/client-check.mjs "$scratch/export.json"
 }
 
@@ -131,34 +132,28 @@ toolchain_pin() {
   done
 }
 
-run build 30 "timeout wrapper" bash tools/check-timeout.test.sh
-run build 60 "toolchain pin" toolchain_pin
-run build 120 "cargo fmt --check" cargo fmt --check
-run build 600 "cargo clippy" cargo clippy --workspace --all-targets --all-features -- -D warnings
-run build 900 "cargo test" cargo test --workspace
-run build 1200 "release build" cargo build --release --workspace --bins --examples --features fake-provider
+run rust 30 "timeout wrapper" bash tools/check-timeout.test.sh
+run rust 60 "toolchain pin" toolchain_pin
+run rust 120 "cargo fmt --check" cargo fmt --check
+run rust 600 "cargo clippy" cargo clippy --workspace --all-targets --all-features -- -D warnings
+run rust 900 "cargo test" cargo test --workspace
+if [ "$group" = all ]; then
+  run rust 1200 "release build" cargo build --release --workspace --bins --examples --features fake-provider
+fi
 decode_check() {
   CARGO_TARGET_DIR="$repo/target" cargo test --manifest-path fixtures/decode-check/Cargo.toml
 }
-run build 300 "decode check" decode_check
-tool_prerequisites() {
-  local package
-  for package in conn-provider-codex conn-provider-claude conn-provider-acp conn-engine; do
-    cargo build -p "$package" --examples || return
-  done
-  cargo test -p conn-support --lib --no-run &&
-    cargo build --release -p conn-engine --features fake-provider --example export_turn
-}
+run rust 300 "decode check" decode_check
 if [ "$group" = build ]; then
-  run build 600 "tool prerequisites" tool_prerequisites
+  run build 1200 "comparison binaries" node tools/check-binaries.mjs --build "$repo/target/check-binaries"
 fi
 
 # Advisories, licences, bans and sources (deny.toml). Advisories need network access for the
 # RustSec database; DENY_OFFLINE=1 (`cargo deny --offline`) uses the cached copy.
-if [ "$group" != all ] && [ "$group" != build ]; then
+if [ "$group" != all ] && [ "$group" != rust ]; then
   :
 elif command -v cargo-deny >/dev/null 2>&1; then
-  run build 300 "cargo deny" cargo deny --locked ${DENY_OFFLINE:+--offline} check
+  run rust 300 "cargo deny" cargo deny --locked ${DENY_OFFLINE:+--offline} check
 else
   printf '\ncargo-deny is not installed: skipping `cargo deny check` (cargo install cargo-deny --locked).\n'
   skipped_tools+=("cargo deny")
@@ -244,7 +239,7 @@ run 4 120 "model-manifest-diff" \
   node crates/conn-server/tools/model-manifest-diff.mjs "$release/examples/model_manifest_cache"
 # Hand runs are sealed: plain `cargo test` with a decoy outer environment, the way out, and
 # the runner order (tools/sealed-run-check.mjs; needs no monorepo).
-run 3 180 "sealed-run" node tools/sealed-run-check.mjs
+run rust 180 "sealed-run" node tools/sealed-run-check.mjs
 # orbit-flow needs no monorepo.
 run 4 120 "orbit-flow (fake provider)" \
   node crates/conn-server/tools/orbit-flow.mjs "$release/examples/replay_server"

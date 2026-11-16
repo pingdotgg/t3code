@@ -29,8 +29,9 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import { exampleBinary } from "../../../../tools/check-binaries.mjs";
 import { monorepo, repoRoot } from "../../../../tools/monorepo.mjs";
-import { cargoBuildEnv, sealedNodeEnv } from "../../../../tools/sealed-env.mjs";
+import { sealedNodeEnv } from "../../../../tools/sealed-env.mjs";
 import { GUARD_IMPORT } from "../../../../tools/no-outside-fetch.mjs";
 
 const MONOREPO = monorepo();
@@ -304,18 +305,9 @@ NodeFS.writeFileSync(
   planFile,
   JSON.stringify({ cwdOut: rustCwdOut, scenarios: plan.map((p) => ({ name: p.name, instance: p.rustInstance })) }),
 );
-const build = NodeChildProcess.spawnSync("cargo", ["build", "--quiet", "-p", "conn-provider-codex", "--example", "codex_probe"], {
-  cwd: repoRoot,
-  stdio: ["ignore", "inherit", "inherit"],
-  env: cargoBuildEnv(),
-});
-if (build.status !== 0) {
-  console.error("probe-conformance: codex_probe did not build");
-  process.exit(1);
-}
-const targetDir = process.env.CARGO_TARGET_DIR ? NodePath.resolve(repoRoot, process.env.CARGO_TARGET_DIR) : NodePath.join(repoRoot, "target");
+const binary = exampleBinary("conn-provider-codex", "codex_probe");
 // The same server environment as T3's side.
-NodeChildProcess.spawnSync(NodePath.join(targetDir, "debug/examples/codex_probe"), [planFile, rustOut], {
+NodeChildProcess.spawnSync(binary, [planFile, rustOut], {
   cwd: repoRoot,
   env: base,
   stdio: ["ignore", "inherit", "inherit"],

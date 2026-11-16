@@ -26,8 +26,8 @@ cargo_home="$sealed_home/cargo-home"
 mkdir -p "$cargo_home"
 cargo_env=(HOME="$cargo_home" CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
   GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1)
-(cd "$root" && env "${cargo_env[@]}" cargo build -q -p conn-provider-claude --example t3_replay)
+binary="$(env "${cargo_env[@]}" CONN_CHECK_BINARIES="${CONN_CHECK_BINARIES:-}" node "$root/tools/check-binaries.mjs" conn-provider-claude t3_replay)"
 # Each scenario's runtime policy, from T3's own fixture table (runs from $out: the monorepo
 # gets no new file).
 (cd "$out" && sealed node "$here/policies.mjs" "$repo") > "$out/policies.json"
-sealed "$root/target/debug/examples/t3_replay" "$fixtures" "$here/fake-host.mjs" "$here/scenarios.json" "$out/policies.json" "$out" "$@"
+sealed "$binary" "$fixtures" "$here/fake-host.mjs" "$here/scenarios.json" "$out/policies.json" "$out" "$@"

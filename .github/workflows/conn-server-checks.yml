@@ -36,7 +36,7 @@ jobs:
   build:
     name: Conn Server prerequisites
     runs-on: ubuntu-24.04
-    timeout-minutes: 24
+    timeout-minutes: 18
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -45,9 +45,6 @@ jobs:
             /*
             !/.repos/
           sparse-checkout-cone-mode: false
-
-      - name: Keep source times stable for Cargo
-        run: git ls-files -z apps/conn-server | xargs -0 touch -d "$(git show -s --format=%cI HEAD)"
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
@@ -58,8 +55,8 @@ jobs:
           cache: false
           run-install: false
 
-      - name: Cache pnpm store
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Restore pnpm store
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.local/share/pnpm/store
           key: conn-server-pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -79,29 +76,34 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt, clippy
 
-      - name: Cache Cargo
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Restore Cargo
         id: cargo-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             apps/conn-server/target
-          key: conn-server-check-v2-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ github.sha }}
-          restore-keys: conn-server-check-v2-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
+          key: conn-server-build-v3-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('apps/conn-server/Cargo.lock') }}
+          restore-keys: conn-server-build-v3-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
 
-      - name: Install cargo-deny
-        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
-        with:
-          tool: cargo-deny@0.20.2
-
-      - name: Build and Rust checks
+      - name: Build comparison binaries
         working-directory: apps/conn-server
         run: tools/check.sh --group build
 
-      - name: Share Cargo prerequisites
-        if: steps.cargo-cache.outputs.cache-hit != 'true'
+      - name: Pack comparison binaries
+        run: tar -C apps/conn-server/target/check-binaries -czf /tmp/conn-check-binaries.tar.gz .
+
+      - name: Upload comparison binaries
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: conn-check-binaries
+          path: /tmp/conn-check-binaries.tar.gz
+          retention-days: 1
+
+      - name: Save Cargo on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -110,6 +112,93 @@ jobs:
             ~/.cargo/git/db
             apps/conn-server/target
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
+      - name: Save pnpm store on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/share/pnpm/store
+          key: conn-server-pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+  rust:
+    name: Conn Server Rust checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        env:
+          VP_DOWNLOAD_TIMEOUT: "120"
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
+
+      - name: Restore pnpm store
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/share/pnpm/store
+          key: conn-server-pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: conn-server-pnpm-${{ runner.os }}-
+
+      - name: Install Conn dependencies
+        run: vp i
+
+      # The Claude conformance checks and instances-flow run the real Agent SDK in the SDK host.
+      - name: Install the SDK host
+        working-directory: apps/conn-server/helpers/sdk-host
+        run: npm ci --no-audit --no-fund --ignore-scripts
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+
+      - name: Restore Cargo
+        id: cargo-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            apps/conn-server/target
+          key: conn-server-test-v1-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('apps/conn-server/Cargo.lock') }}
+          restore-keys: conn-server-test-v1-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-deny@0.20.2
+
+      - name: Rust checks
+        working-directory: apps/conn-server
+        run: tools/check.sh --group rust
+      - name: Save Cargo on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            apps/conn-server/target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
+      - name: Save pnpm store on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/share/pnpm/store
+          key: conn-server-pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
 
   compare:
     name: Conn Server comparisons (${{ matrix.group }})
@@ -129,9 +218,6 @@ jobs:
             !/.repos/
           sparse-checkout-cone-mode: false
 
-      - name: Keep source times stable for Cargo
-        run: git ls-files -z apps/conn-server | xargs -0 touch -d "$(git show -s --format=%cI HEAD)"
-
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         env:
@@ -141,8 +227,8 @@ jobs:
           cache: false
           run-install: false
 
-      - name: Cache pnpm store
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Restore pnpm store
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.local/share/pnpm/store
           key: conn-server-pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -162,30 +248,33 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt, clippy
 
-      - name: Restore Cargo prerequisites
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Download comparison binaries
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            apps/conn-server/target
-          key: conn-server-check-v2-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ github.sha }}
-          fail-on-cache-miss: true
+          name: conn-check-binaries
+          path: /tmp/conn-check-binaries
+
+      - name: Unpack comparison binaries
+        run: |
+          mkdir -p apps/conn-server/target/check-binaries
+          tar -C apps/conn-server/target/check-binaries -xzf /tmp/conn-check-binaries/conn-check-binaries.tar.gz
 
       - name: Compare
         working-directory: apps/conn-server
+        env:
+          CONN_CHECK_BINARIES: ${{ github.workspace }}/apps/conn-server/target/check-binaries
         run: tools/check.sh --group ${{ matrix.group }}
 
   checks:
     name: Conn Server checks
     if: always()
-    needs: [build, compare]
+    needs: [build, rust, compare]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - name: Require every group
         env:
           BUILD: ${{ needs.build.result }}
+          RUST: ${{ needs.rust.result }}
           COMPARE: ${{ needs.compare.result }}
-        run: test "$BUILD" = success && test "$COMPARE" = success
+        run: test "$BUILD" = success && test "$RUST" = success && test "$COMPARE" = success
