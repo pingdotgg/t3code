@@ -392,10 +392,14 @@ const make = Effect.gen(function* () {
     const modelPath = yield* store.installedPath(definition.file);
     if (!modelPath) return yield* failure("missing-model");
     // Held until the stream ends, after any cancelled synthesis has stopped.
-    yield* Effect.acquireRelease(Semaphore.take(permit, 1), () =>
-      Semaphore.release(permit, 1).pipe(
-        Effect.andThen(Effect.sync(() => Queue.offerUnsafe(idleDeadlines, undefined))),
-      ),
+    // Interruptible, so a request abandoned while waiting stops waiting.
+    yield* Effect.acquireRelease(
+      Semaphore.take(permit, 1),
+      () =>
+        Semaphore.release(permit, 1).pipe(
+          Effect.andThen(Effect.sync(() => Queue.offerUnsafe(idleDeadlines, undefined))),
+        ),
+      { interruptible: true },
     );
     if (!worker?.model.alive || worker.modelId !== definition.id) {
       yield* unloadWorker;
