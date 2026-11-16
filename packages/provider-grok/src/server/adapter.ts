@@ -408,7 +408,7 @@ export function makeGrokAcpAdapterFlavor(
           ...input,
           interruptPromptOnCancel: input.interruptPromptOnCancel ?? false,
           grokSettings: options.settings,
-          environment: options.environment,
+          environment: { ...options.environment, ...input.processEnvironment },
           runtimeMode: grokLaunchRuntimeMode(runtimePolicy),
         })),
     // Auto prompts represent classifier refusals and must reach the user.
