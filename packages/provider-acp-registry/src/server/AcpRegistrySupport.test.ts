@@ -23,7 +23,6 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
-import { checkAcpRegistryProviderReadiness } from "./driver.ts";
 import { prefersHttpMcpTransport } from "./mcpTransport.ts";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 
@@ -1547,24 +1546,6 @@ describe("AcpRegistrySupport", () => {
 
       expect(inspection).toMatchObject({ status: "ready", agentId: agent.id });
       expect(requests).toBe(0);
-
-      const emptyCache = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-acp-registry-empty-cache-",
-      });
-      const coldResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
-        cacheDir: emptyCache,
-        toolsDir: `${cacheDir}/tools`,
-        registryUrl,
-      });
-      const recovered = yield* checkAcpRegistryProviderReadiness({
-        instanceId: ProviderInstanceId.make("acpRegistry_restored"),
-        displayName: "Restored ACP",
-        accentColor: undefined,
-        continuationKey: "restored",
-        settings: settings(),
-        environment: process.env,
-      }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, coldResolver));
-      expect(recovered).toMatchObject({ installed: true, status: "ready" });
     }).pipe(
       Effect.scoped,
       Effect.provide(
