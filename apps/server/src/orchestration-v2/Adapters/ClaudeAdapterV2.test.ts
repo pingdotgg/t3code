@@ -9472,6 +9472,24 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   it.effect.each([
     { cooldown: " (reset after 1h2m3s)", seconds: 3723 },
     { cooldown: " (reset after 4m 6s) (last error: rate limited)", seconds: 246 },
+    {
+      cooldown:
+        " (last error: rate_limit_error: This request would exceed your account's rate limit. Please try again later.) (reset after 19h30m2s)",
+      seconds: 70202,
+    },
+    {
+      cooldown:
+        " (last error: All credentials for model upstream are cooling down (reset after 1h)) (reset after 1m)",
+      seconds: 60,
+    },
+    {
+      cooldown: " (last error: rate_limit_error (reset after 1h))",
+      seconds: 0,
+    },
+    {
+      cooldown: " (last error: upstream (last error: rate limited) (reset after 1h))",
+      seconds: 0,
+    },
     { cooldown: "", seconds: 0 },
   ])("keeps a gateway's reset on a direct 429 with cooldown '$cooldown'", (input) =>
     Effect.gen(function* () {
