@@ -73,6 +73,7 @@ const RawMergeRequestSchema = Schema.Struct({
   state: Schema.optional(Schema.NullOr(Schema.String)),
   draft: Schema.optional(Schema.Boolean),
   work_in_progress: Schema.optional(Schema.Boolean),
+  detailed_merge_status: Schema.optional(Schema.NullOr(Schema.String)),
   merge_status: Schema.optional(Schema.NullOr(Schema.String)),
   has_conflicts: Schema.optional(Schema.NullOr(Schema.Boolean)),
   created_at: Schema.String,
@@ -208,6 +209,7 @@ export interface GitLabMergeRequestListItem {
   readonly state: PullRequestState;
   readonly isDraft: boolean;
   readonly mergeability: PullRequestMergeability;
+  readonly rebaseRequired?: boolean | undefined;
   readonly additions: number;
   readonly deletions: number;
   readonly createdAt: string;
@@ -484,6 +486,7 @@ export function decodePipelineStageChecksJson(
 function toListItem(
   raw: Schema.Schema.Type<typeof RawMergeRequestSchema>,
 ): GitLabMergeRequestListItem {
+  const detailedMergeStatus = raw.detailed_merge_status?.trim().toLowerCase();
   return {
     number: raw.iid,
     title: raw.title,
@@ -494,6 +497,12 @@ function toListItem(
     state: toState(raw),
     isDraft: raw.draft ?? raw.work_in_progress ?? false,
     mergeability: toMergeability(raw),
+    rebaseRequired:
+      detailedMergeStatus === "need_rebase"
+        ? true
+        : detailedMergeStatus === "mergeable"
+          ? false
+          : undefined,
     additions: 0,
     deletions: 0,
     createdAt: raw.created_at,
@@ -2063,7 +2072,7 @@ export function decodeMergeRequestFileStatsJson(raw: string): Result.Result<
 export const MERGE_REQUEST_WATCH_FINGERPRINT_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!) {
   project(fullPath: $fullPath) {
     mergeRequest(iid: $iid) {
-      state mergeStatusEnum conflicts diffHeadSha
+      state mergeStatusEnum detailedMergeStatus conflicts diffHeadSha
       userPermissions { updateMergeRequest }
       headPipeline {
         id status
@@ -2097,6 +2106,7 @@ const decodeMergeRequestWatchFingerprint = decodeJsonResult(
             Schema.Struct({
               state: Schema.String,
               mergeStatusEnum: Schema.NullOr(Schema.String),
+              detailedMergeStatus: Schema.optional(Schema.NullOr(Schema.String)),
               conflicts: Schema.Boolean,
               diffHeadSha: Schema.NullOr(Schema.String),
               userPermissions: Schema.Struct({ updateMergeRequest: Schema.Boolean }),
@@ -2182,6 +2192,7 @@ export function decodeMergeRequestWatchFingerprintJson(
     status: [
       mr.state,
       mr.mergeStatusEnum ?? "",
+      mr.detailedMergeStatus ?? "",
       mr.conflicts,
       mr.diffHeadSha ?? "",
       pipeline?.id ?? "",

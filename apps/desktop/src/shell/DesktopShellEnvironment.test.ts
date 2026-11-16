@@ -711,9 +711,16 @@ describe("DesktopShellEnvironment", () => {
           Effect.gen(function* () {
             assert.isTrue(yield* service.awaitDiscovery);
             assert.equal(env.PATH, "/usr/bin");
+            // The Linux probe checks the D-Bus socket on the real filesystem, which the clock does not await.
+            const published = yield* service.updates.pipe(
+              Stream.filter((snapshot) => snapshot.environment.PATH === "/fish/bin:/usr/bin"),
+              Stream.runHead,
+              Effect.forkChild({ startImmediately: true }),
+            );
 
             fishReady = true;
             yield* TestClock.adjust("30 seconds");
+            assert.isTrue(Option.isSome(yield* Fiber.join(published)));
             assert.equal(env.PATH, "/fish/bin:/usr/bin");
             return true;
           }),

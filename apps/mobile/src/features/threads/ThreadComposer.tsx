@@ -173,6 +173,8 @@ function useCompactComposerEditor(text: ScaledTextRole, value: string) {
   const editorStyle = useAnimatedStyle(() => ({
     position: "absolute",
     overflow: "hidden",
+    // The compact slot is unknown until its first layout, so the editor would draw over the + button.
+    opacity: isExpanded || editorWidth.value > 0 ? 1 : 0,
     height,
     ...(isExpanded
       ? { left: 14, right: 14 }
@@ -591,6 +593,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     offersUsageLimits: usageLimitsOffered,
     onUsageLimits:
       usageLimitsOffered && draftAttachments.length === 0 ? openUsageLimits : undefined,
+    onOpenModelPicker: settingsSheetPresentation.open,
     modelOptions: mentionModelOptions,
     modelProviders: props.serverConfig?.providers,
     ...(props.onFreshSession === undefined ? {} : { onFreshSession: props.onFreshSession }),
