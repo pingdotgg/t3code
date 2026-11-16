@@ -108,10 +108,12 @@ export function updateAcpRegistryEnrichmentCache(input: {
     // was still in flight cannot overwrite that newer state when it lands.
     return { ...cache, generation: cache.generation + 1 };
   }
+  // Every cached model keeps its options, so replaying a configuration changes nothing.
   const provider = applyAcpRegistryLiveConfiguration(
     cache.entry.provider,
     configuration,
     customModels,
+    cache.entry.provider.models,
   );
   if (Equal.equals(provider, cache.entry.provider)) return cache;
   return {

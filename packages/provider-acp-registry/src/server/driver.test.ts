@@ -907,6 +907,37 @@ describe("acpRegistryEnrichmentCache", () => {
 
     expect(replayed).toBe(cache);
     expect(replayed.entry?.expiresAt).toBe(1_000);
+
+    // A session on another model with its own option is also applied once.
+    const moved = {
+      ...settledConfiguration,
+      currentModelId: "qmodel",
+      configOptions: [
+        {
+          id: "effort",
+          label: "Effort",
+          type: "select" as const,
+          options: [{ id: "high", label: "High" }],
+          currentValue: "high",
+        },
+      ],
+      modelOptionIds: ["effort"],
+    };
+    const applied = updateAcpRegistryEnrichmentCache({
+      cache,
+      configuration: moved,
+      customModels: [],
+      now: 2_000,
+    });
+    expect(applied.generation).toBe(2);
+    expect(
+      updateAcpRegistryEnrichmentCache({
+        cache: applied,
+        configuration: moved,
+        customModels: [],
+        now: 3_000,
+      }),
+    ).toBe(applied);
   });
 
   it("updates the cache and promotes the expiry when live configuration discovers a catalog", () => {
@@ -1319,18 +1350,24 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
         Option.some("model-e:effort,model-a:effort,model-b:effort,model-c:effort,model-d:effort"),
       );
 
+      // A probe result is dropped while the cached one still lacks the live configuration,
+      // so a session reports again before the next update.
+      expect(yield* publish("model-c")).toBe(
+        "model-e:,model-a:effort,model-b:effort,model-c:,model-d:",
+      );
+
       // An update moves the agent's default; model-a still keeps what the probe saw.
       yield* fileSystem.writeFileString(modelsPath, JSON.stringify(models));
       version = "1.1.0";
       const reprobed = yield* nextProbe;
       yield* instance.snapshot.refresh;
+      expect(yield* Fiber.join(reprobed)).toEqual(
+        Option.some("model-e:,model-a:effort,model-b:effort,model-c:,model-d:"),
+      );
 
       // The probe saw model-e without effort; models no session opened borrow the current one's.
-      expect(yield* Fiber.join(reprobed)).toEqual(
-        Option.some("model-e:,model-a:effort,model-b:effort,model-c:effort,model-d:effort"),
-      );
-      expect(yield* publish("model-c")).toBe(
-        "model-e:,model-a:effort,model-b:effort,model-c:,model-d:",
+      expect(yield* publish("model-b", "effort")).toBe(
+        "model-e:,model-a:effort,model-b:effort,model-c:,model-d:effort",
       );
       expect(yield* publish("model-e", "depth")).toBe(
         "model-e:depth,model-a:effort,model-b:effort,model-c:,model-d:depth",
