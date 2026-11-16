@@ -124,9 +124,11 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  // Like the server's live check, a value that is not a boolean turns telemetry off.
   telemetryEnabled: Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
+    Config.orElse(() => Config.succeed(false)),
   ),
   otlpExportIntervalMs: Config.Int("T3CODE_OTLP_EXPORT_INTERVAL_MS").pipe(
     Config.withDefault(10_000),

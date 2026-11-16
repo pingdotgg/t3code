@@ -509,6 +509,24 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     }),
   );
 
+  it.effect("reads a T3CODE_TELEMETRY_ENABLED that is not a boolean as off", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-config-telemetry-" });
+      const resolved = yield* resolveServerConfig(minimalDesktopFlags(baseDir), Option.none()).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({ env: { T3CODE_TELEMETRY_ENABLED: "maybe" } }),
+            ),
+            NetService.layer,
+          ),
+        ),
+      );
+      expect(resolved.telemetryEnabledByEnvironment).toBe(false);
+    }),
+  );
+
   it.effect("reports the desktop bootstrap as the source of endpoints it supplied", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
