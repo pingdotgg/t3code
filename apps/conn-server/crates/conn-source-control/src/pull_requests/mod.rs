@@ -13,6 +13,8 @@ use serde_json::{Value, json};
 
 mod activity;
 
+pub mod actions;
+
 mod detail;
 
 pub mod diff;
@@ -20,6 +22,8 @@ pub mod diff;
 pub mod listing;
 
 pub mod normalize;
+
+mod stack;
 
 #[cfg(test)]
 mod tests;
@@ -202,6 +206,15 @@ impl Client {
             ));
         }
         if !(200..300).contains(&response.status) {
+            if !path.ends_with("graphql") {
+                let messages = rest_error_messages(&raw);
+                if !messages.is_empty() {
+                    return Err(Error::Failed(format!(
+                        "GitHub returned an error: {}",
+                        messages.join("; ")
+                    )));
+                }
+            }
             return Err(Error::Failed(format!(
                 "GitHub returned HTTP {}.",
                 response.status
@@ -226,7 +239,7 @@ impl Client {
                 .request(
                     Method::Post,
                     path,
-                    Some(json!({"query":operation.document,"variables":variables})),
+                    Some(json!({"query":operation.document,"operationName":operation.name,"variables":variables})),
                     "application/vnd.github+json",
                     8 * 1024 * 1024,
                 )
@@ -275,13 +288,40 @@ impl Client {
 
                     continue;
                 }
-                if errors
+                let messages: Vec<_> = errors
                     .iter()
-                    .all(|e| normalize::text(e, "type") == "NOT_FOUND")
-                {
-                    return Err(Error::NotFound("GitHub could not find the requested resource, or the credential cannot see it.".into()));
+                    .filter_map(|e| {
+                        let message = e.get("message")?.as_str()?;
+                        let path = normalize::array(e.get("path"));
+                        if path.is_empty() {
+                            Some(message.to_owned())
+                        } else {
+                            Some(format!(
+                                "{message} (at {})",
+                                path.iter()
+                                    .map(|part| part
+                                        .as_str()
+                                        .map(str::to_owned)
+                                        .unwrap_or_else(|| part.to_string()))
+                                    .collect::<Vec<_>>()
+                                    .join(".")
+                            ))
+                        }
+                    })
+                    .collect();
+                if errors.iter().all(is_not_found_lookup) {
+                    let missing = "GitHub could not find the requested resource, or the credential cannot see it.";
+                    return Err(Error::NotFound(if messages.is_empty() {
+                        missing.into()
+                    } else {
+                        format!("{missing} GitHub said: {}", messages.join("; "))
+                    }));
                 }
-                return Err(Error::Failed("GitHub returned an error.".into()));
+                return Err(Error::Failed(if messages.is_empty() {
+                    format!("GitHub returned HTTP {}.", response.status)
+                } else {
+                    format!("GitHub returned an error: {}", messages.join("; "))
+                }));
             }
             return raw
                 .get("data")
@@ -504,4 +544,58 @@ fn pull_request<'a>(result: &'a Value, lookup: &Lookup) -> Result<&'a Value, Err
                 lookup.number, lookup.owner, lookup.name
             ))
         })
+}
+
+fn is_not_found_lookup(error: &Value) -> bool {
+    if normalize::text(error, "type") != "NOT_FOUND" {
+        return false;
+    }
+    let Some(path) = error.get("path") else {
+        return true;
+    };
+    let path = normalize::array(Some(path));
+    path.iter().skip(1).all(Value::is_number)
+        || (path.len() == 2
+            && path.first().and_then(Value::as_str) == Some("repository")
+            && matches!(
+                path.get(1).and_then(Value::as_str),
+                Some("pullRequest" | "issueOrPullRequest")
+            ))
+}
+
+fn rest_error_messages(raw: &Value) -> Vec<String> {
+    if !raw.is_object()
+        || raw.get("message").is_some_and(|v| !v.is_string())
+        || raw.get("errors").is_some_and(|v| !v.is_array())
+    {
+        return Vec::new();
+    }
+    let mut messages: Vec<_> = raw
+        .get("message")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .into_iter()
+        .collect();
+    for error in normalize::array(raw.get("errors")) {
+        if let Some(message) = error.as_str() {
+            messages.push(message.into());
+            continue;
+        }
+        if !error.is_object()
+            || ["message", "field", "code"]
+                .iter()
+                .any(|key| error.get(key).is_some_and(|v| !v.is_string()))
+        {
+            return Vec::new();
+        }
+        if let Some(message) = error.get("message").and_then(Value::as_str) {
+            messages.push(message.into());
+        } else if let (Some(field), Some(code)) = (
+            error.get("field").and_then(Value::as_str),
+            error.get("code").and_then(Value::as_str),
+        ) {
+            messages.push(format!("{field} {code}"));
+        }
+    }
+    messages
 }

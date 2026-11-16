@@ -13,7 +13,7 @@ use conn_engine::Engine;
 use conn_source_control::{
     cache::TtlCache,
     hosts::{DiscoveryContext, Endpoints, Environment},
-    pull_requests::{Client, Error, Lookup, listing},
+    pull_requests::{Client, Error, Lookup, actions, listing},
     registry,
     settings::Settings,
 };
@@ -31,6 +31,8 @@ use std::{
 };
 
 use tokio::sync::{OnceCell, mpsc, watch};
+
+mod guides;
 
 #[derive(Clone, Debug)]
 struct Project {
@@ -69,6 +71,16 @@ struct Panel {
     linked: watch::Sender<u64>,
     monitor: OnceCell<tokio::task::JoinHandle<()>>,
     reports: Mutex<VecDeque<(String, Value, tokio::time::Instant)>>,
+}
+
+struct MutationReads<'a> {
+    panel: &'a Panel,
+    reference: (String, String, Value),
+}
+impl Drop for MutationReads<'_> {
+    fn drop(&mut self) {
+        self.panel.invalidate_cached(Some(&self.reference), false);
+    }
 }
 impl Drop for Panel {
     fn drop(&mut self) {
@@ -274,6 +286,45 @@ impl Panel {
         id
     }
     async fn call(&self, method: &str, input: Value) -> Result<Value, Failure> {
+        if !actions::is_mutation(method) {
+            return self.call_inner(method, input).await;
+        }
+        let project = self.resolve(&input).await?;
+        let invalidation = MutationReads {
+            panel: self,
+            reference: (
+                project.host,
+                project.repository.to_lowercase(),
+                input.get("number").cloned().unwrap_or(Value::Null),
+            ),
+        };
+        self.invalidate_cached(Some(&invalidation.reference), false);
+        let result = self.call_inner(method, input).await;
+        drop(invalidation);
+        if result.is_ok() {
+            self.refreshes.send_modify(|v| *v = v.saturating_add(1));
+        }
+        result
+    }
+    async fn call_inner(&self, method: &str, input: Value) -> Result<Value, Failure> {
+        actions::validate(method, &input).map_err(|e| host_error(&e, method))?;
+        if method == "reviewGuide" {
+            let shell = self.engine.shell_snapshot().await.map_err(|_| {
+                operation_error(
+                    "reviewGuide",
+                    "Could not identify this pull request's host.",
+                )
+            })?;
+            if !array(shell.get("projects"))
+                .iter()
+                .any(|p| p.get("id") == input.get("projectId"))
+            {
+                return Err(operation_error(
+                    "reviewGuide",
+                    "Could not identify this pull request's host.",
+                ));
+            }
+        }
         match method {
             "invalidate" => {
                 let viewed = input.get("filesViewedOnly") == Some(&Value::Bool(true));
@@ -337,7 +388,13 @@ impl Panel {
                 .next()
                 .ok_or_else(unsupported)?
         } else {
-            self.resolve(&input).await?
+            self.resolve(&input).await.map_err(|error| {
+                if method == "reviewGuide" && text(&input, "host").is_empty() {
+                    operation_error("reviewGuide", "Could not identify this pull request's host.")
+                } else {
+                    error
+                }
+            })?
         };
 
         let client = self
@@ -392,6 +449,38 @@ impl Panel {
         )
         .map_err(|e| host_error(&e, method))?;
 
+        if method == "reviewGuide" {
+            let key = thread_key(&input, &project.host).ok_or_else(|| {
+                operation_error(
+                    "reviewGuide",
+                    "Could not identify this pull request's host.",
+                )
+            })?;
+            let guide = if let Some(environment) = &self.environment {
+                guides::load(
+                    environment.state_dir.join("statev2.sqlite"),
+                    key.host,
+                    key.repository,
+                    lookup.number,
+                )
+                .await?
+            } else {
+                Value::Null
+            };
+            let detail = client
+                .detail(&lookup)
+                .await
+                .map_err(|e| host_error(&e, "detail"))?;
+            return Ok(json!({"guide":guide,"run":null,"currentHeadSha":detail.get("headSha")}));
+        }
+        if actions::is_mutation(method)
+            || matches!(method, "reviewerCandidates" | "labelCandidates")
+        {
+            return client
+                .action(&lookup, method, &input)
+                .await
+                .map_err(|e| host_error(&e, method));
+        }
         if method == "setFilesViewed" {
             client
                 .set_files_viewed(&lookup, array(input.get("files")))
@@ -420,6 +509,7 @@ impl Panel {
             let observed=conn_support::time::now_ms();
 
             let value=match method {
+                "stack"=>client.stack(&lookup).await,
                 "summary"=>client.summary(&lookup).await,
                 "preview"=>client.preview(&lookup).await,
                 "detail"|"checks"=>client.detail(&lookup).await,
@@ -463,6 +553,9 @@ if let Ok(identity)=client.identity().await{value["viewer"]=identity.get("viewer
             None
         };
 
+        self.invalidate_cached(canonical.as_ref(), viewed);
+    }
+    fn invalidate_cached(&self, canonical: Option<&(String, String, Value)>, viewed: bool) {
         self.cache.invalidate_where(|key| {
             let Ok(key) = serde_json::from_str::<Value>(key) else {
                 return false;
@@ -471,7 +564,7 @@ if let Ok(identity)=client.identity().await{value["viewer"]=identity.get("viewer
             let method = key.get(1).and_then(Value::as_str).unwrap_or("");
 
             (!viewed || method == "filesViewed")
-                && canonical.as_ref().is_none_or(|(host, repo, number)| {
+                && canonical.is_none_or(|(host, repo, number)| {
                     key.get(3).and_then(Value::as_str) == Some(host)
                         && key.get(4).and_then(Value::as_str) == Some(repo)
                         && key.get(5) == Some(number)
@@ -952,7 +1045,7 @@ fn linked_view(thread: &Value) -> Option<Value> {
 }
 
 fn capabilities() -> Value {
-    json!({"diff":true,"comment":false,"actions":[],"mergeMethods":[],"search":true,"reactions":false,"mentions":true,"referenceSigils":["#"],"viewedFiles":"host","review":{"inlineComment":false,"rangeComment":false,"reply":false,"resolve":false,"verdicts":[]},"reviewers":{"request":false,"listCandidates":false},"checksAlwaysReport":true})
+    json!({"diff":true,"comment":true,"actions":[],"mergeMethods":[],"search":true,"reactions":true,"mentions":true,"referenceSigils":["#"],"viewedFiles":"host","review":{"inlineComment":true,"rangeComment":true,"reply":true,"resolve":true,"verdicts":["comment","approve","request-changes"]},"reviewers":{"request":true,"listCandidates":true,"searchCandidates":true},"edit":{"changeRequest":true,"comment":true,"maintainerEdits":true},"stacks":true,"labels":true,"checksAlwaysReport":true})
 }
 
 pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
@@ -1002,6 +1095,20 @@ fn register_panel(table: &mut MethodTable, panel: Arc<Panel>) {
         }};
     }
     unary!("pullRequests.list", list);
+
+    unary!("pullRequests.comment", comment);
+    unary!("pullRequests.replyToThread", reply_to_thread);
+    unary!("pullRequests.updateComment", update_comment);
+    unary!("pullRequests.setReaction", set_reaction);
+    unary!("pullRequests.setThreadResolution", set_thread_resolution);
+    unary!("pullRequests.submitReview", submit_review);
+    unary!("pullRequests.requestReviewers", request_reviewers);
+    unary!("pullRequests.reviewerCandidates", reviewer_candidates);
+    unary!("pullRequests.labelCandidates", label_candidates);
+    unary!("pullRequests.setLabels", set_labels);
+    unary!("pullRequests.update", update);
+    unary!("pullRequests.stack", stack);
+    unary!("pullRequests.reviewGuide", review_guide);
 
     unary!("pullRequests.listStats", list_stats);
 

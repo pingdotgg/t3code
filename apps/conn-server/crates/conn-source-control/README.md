@@ -18,7 +18,7 @@ monorepo.
 | GitHub's GraphQL operations | Generated from the monorepo; panel reads and viewed-file mutations send them. |
 | `git.*` (3) | Not served |
 | `pr` in VCS status | Not served (always `null`) |
-| `pullRequests.*` (35) | GitHub: the 20 panel read/refresh methods served; the 15 action/guide methods remain unregistered. [Port and proof](src/pull_requests/PORTING.md). |
+| `pullRequests.*` (35) | GitHub: 33 served, including comments, reviews, reactions, labels, reviewers, edits, stacks and stored review guides. `runAction` and `generateReviewGuide` remain unregistered. [Port and proof](src/pull_requests/PORTING.md). |
 | Engine commands for linked pull requests (7) | `thread.pull-request.link` and `unlink` as T3's decider (part 4); the other 5 refused |
 | `/mcp` pull request tools (9) | 5 served (part 4): `link_pull_request(s)`, `unlink_pull_request(s)`, `list_thread_pull_requests`; `watch`/`unwatch` and the 2 guide tools not served |
 

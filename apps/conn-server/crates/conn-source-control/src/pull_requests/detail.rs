@@ -376,7 +376,7 @@ impl Client {
         Ok(runs)
     }
 }
-fn can_write_permission(permission: Option<&Value>) -> bool {
+pub(super) fn can_write_permission(permission: Option<&Value>) -> bool {
     permission == Some(&Value::Null)
         || permission.and_then(Value::as_str).is_some_and(|p| {
             matches!(
