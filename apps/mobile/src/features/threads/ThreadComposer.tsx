@@ -301,6 +301,8 @@ const composerHeightTransition: LayoutAnimationFunction = (values) => {
 const COMPOSER_LAYOUT_TRANSITION = Platform.OS === "android" ? undefined : composerHeightTransition;
 // Share of the one-row composer the draft keeps; a long model name truncates first.
 const INLINE_EDITOR_MIN_WIDTH = "40%";
+// Keep a 44px input target after the floating editor's 4px inset on each side.
+const INLINE_EDITOR_COMPACT_MIN_WIDTH = 52;
 const INLINE_EDITOR_HEIGHT = 36;
 
 const COMPOSER_ATTACHMENT_ENTERING =
@@ -821,8 +823,17 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     </>
   ) : null;
 
+  const compactBeforeSend =
+    props.compactBeforeSend && !showResumeAction && queuedEdit === null
+      ? props.compactBeforeSend
+      : null;
+  const hasInlineAndroidCompactControl =
+    Platform.OS === "android" && compactBeforeSend !== null && !compactEditor.isExpanded;
   const modelControl = (
-    <View className="min-w-0 shrink">
+    <View
+      className="min-w-0 shrink"
+      style={hasInlineAndroidCompactControl ? { flexShrink: 0 } : undefined}
+    >
       <ComposerModelControl
         size={usesLargeControls ? "large" : "regular"}
         modelOption={currentModelOption}
@@ -837,10 +848,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     </View>
   );
 
-  const compactBeforeSend =
-    props.compactBeforeSend && !showResumeAction && queuedEdit === null
-      ? props.compactBeforeSend
-      : null;
   const compactTokens = compactBeforeSend ? formatTokens(compactBeforeSend.tokens) : null;
   const compactControl =
     compactBeforeSend && compactTokens !== null ? (
@@ -969,11 +976,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 style={[
                   {
                     minWidth:
-                      compactEditor.isExpanded ||
-                      stripAttachments.length > 0 ||
-                      (Platform.OS === "android" && compactBeforeSend !== null)
+                      compactEditor.isExpanded || stripAttachments.length > 0
                         ? 0
-                        : INLINE_EDITOR_MIN_WIDTH,
+                        : hasInlineAndroidCompactControl
+                          ? INLINE_EDITOR_COMPACT_MIN_WIDTH
+                          : INLINE_EDITOR_MIN_WIDTH,
                   },
                   compactEditor.containerStyle,
                   compactEditor.isExpanded ? { flex: 0, width: 0 } : undefined,
@@ -1145,7 +1152,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   compactEditor.isExpanded ? { flex: 1, justifyContent: "flex-end" } : undefined
                 }
               >
-                {compactControl}
+                {hasInlineAndroidCompactControl ? (
+                  <View className="min-w-0 shrink">{compactControl}</View>
+                ) : (
+                  compactControl
+                )}
                 {modelControl}
                 <ComposerDictationStartAction
                   size={usesLargeControls ? "large" : "regular"}
