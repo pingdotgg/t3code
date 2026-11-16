@@ -10321,6 +10321,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           uuid: "00000000-0000-4000-8000-000000000307",
         }),
       );
+      for (const [state, lifecycleUuid] of [
+        ["queued", "00000000-0000-4000-8000-000000000308"],
+        ["started", "00000000-0000-4000-8000-000000000309"],
+        ["completed", "00000000-0000-4000-8000-00000000030a"],
+      ] as const) {
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "command_lifecycle",
+            command_uuid: harness.promptUuid(0),
+            state,
+            uuid: lifecycleUuid,
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+      }
       yield* Queue.offer(
         harness.sdkMessages,
         claudeSdkFrame({
@@ -10329,12 +10345,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           content: notice,
           level: "warning",
           prevent_continuation: true,
+          prompt_submit_outcome: { kind: "blocked_by_hook", prompt_kept: false },
           session_id: WAKE_NATIVE_SESSION,
           uuid,
         }),
       );
-      yield* Queue.offer(
-        harness.sdkMessages,
+      yield* harness.offerAndWait(
         makeResultFrame({
           uuid: "00000000-0000-4000-8000-000000000306",
           result: notice,
@@ -10343,6 +10359,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
       );
       yield* Queue.take(harness.terminalReceipts);
+      // The idle drop settles on its own zero-turn result, which is not wake output.
+      assert.lengthOf(harness.continuationRequests, 0);
       const notices = harness.events.flatMap((event) =>
         event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
           ? [event.turnItem]

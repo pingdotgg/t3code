@@ -12000,8 +12000,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
           }
           // A prompt Claude takes into its own wake turn and a hook then drops never gets a
-          // result; settle it as an idle drop settles and leave the wake output to its run.
-          if (context.promptCompleted && isClaudePromptDroppedByHook(message)) {
+          // result; settle it and leave the wake output to its run. Idle drops settle on their
+          // zero-turn result.
+          if (
+            context.promptCompleted &&
+            context.heldRootFrames.length > 0 &&
+            isClaudePromptDroppedByHook(message)
+          ) {
             yield* handleRoutedSdkMessage(input);
             for (const frame of context.heldRootFrames.splice(0)) {
               yield* bufferWakeMessage({
