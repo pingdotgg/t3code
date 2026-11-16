@@ -352,6 +352,9 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
 const getProjection = (threadId: ThreadId) =>
   request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, { threadId });
 
+export const getThreadUsage = (threadId: ThreadId) =>
+  request(ORCHESTRATION_V2_WS_METHODS.getThreadUsage, { threadId });
+
 const persistAttachments = Effect.fn("EnvironmentCommands.persistAttachments")(function* (
   threadId: ThreadId,
   messageId: MessageId,

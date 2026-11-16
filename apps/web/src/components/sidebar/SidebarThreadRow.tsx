@@ -1,6 +1,13 @@
-import { useAtomMount } from "@effect/atom-react";
+import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import { asLaunchingThread } from "@t3tools/client-runtime/state/thread-inbox";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
+import { deriveThreadUsageRows } from "./threadUsage";
+import { getThreadUsage } from "@t3tools/client-runtime/operations";
+import {
+  createEnvironmentRpcQueryAtomFamily,
+  selectEnvironmentQueryData,
+} from "@t3tools/client-runtime/state/runtime";
+import { connectionAtomRuntime } from "~/connection/runtime";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { requestCustomSnooze } from "../CustomSnoozeDialog";
@@ -29,9 +36,11 @@ import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environ
 import { toServerClock } from "@t3tools/client-runtime/clock";
 import {
   AuthOrchestrationOperateScope,
+  ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId,
   type EnvironmentMachineKind,
   type ScopedThreadRef,
+  type ThreadId,
 } from "@t3tools/contracts";
 
 import type { TimestampFormat } from "@t3tools/contracts/settings";
@@ -233,6 +242,39 @@ function SidebarProviderStack(props: {
   );
 }
 
+// Mounted only inside the open hover card, so the usage is fetched on hover and not per row.
+const threadUsageQuery = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "environment-data:threads:usage",
+  tag: ORCHESTRATION_V2_WS_METHODS.getThreadUsage,
+  execute: (input) => getThreadUsage(input.threadId),
+  staleTimeMs: 15_000,
+  idleTtlMs: 60_000,
+});
+
+function ThreadUsageBlock({
+  environmentId,
+  threadId,
+}: {
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+}) {
+  const usage = selectEnvironmentQueryData(
+    useAtomValue(threadUsageQuery({ environmentId, input: { threadId } })),
+  );
+  const rows = deriveThreadUsageRows(usage);
+  if (rows.length === 0) return null;
+  return (
+    <div className="grid gap-1 border-t border-border/60 pt-2 pl-0.5">
+      {rows.map((row) => (
+        <div key={row.label} className="flex min-w-0 items-baseline justify-between gap-3">
+          <span>{row.label}</span>
+          <span className="tabular-nums text-foreground/75">{row.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function SidebarThreadTooltip({
   thread,
   project,
@@ -367,6 +409,7 @@ function SidebarThreadTooltip({
             </div>
           </div>
         ) : null}
+        <ThreadUsageBlock environmentId={thread.environmentId} threadId={thread.id} />
       </ThreadHoverCard>
     </ThreadHoverCardPopup>
   );
