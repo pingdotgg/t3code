@@ -72,18 +72,19 @@ export function applyThemeBackground(themeId: string | undefined): void {
   if (environmentId === null || themeId === undefined || key === null) return;
   const controller = new AbortController();
   loading = controller;
-  let retried = false;
+  const retryDelays = [1_000, 2_000, 4_000, 8_000];
+  let retries = 0;
   const failed = () => {
     if (controller.signal.aborted) return;
-    if (!retried) {
-      retried = true;
+    const delay = retryDelays[retries++];
+    if (delay !== undefined) {
       // Transient HTTP failures may never produce a browser online event.
-      const timer = setTimeout(load, 1_000);
+      const timer = setTimeout(load, delay);
       controller.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
       return;
     }
     loading = null;
-    // Lets the next repaint try again after the bounded retry is exhausted.
+    // Lets the next repaint try again after the bounded retries are exhausted.
     shownKey = null;
   };
   const load = () => {

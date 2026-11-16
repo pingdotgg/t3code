@@ -80,7 +80,7 @@ describe("theme backgrounds", () => {
     }
   });
 
-  it.each(["request failure", "HTTP 503", "online before rejection"])(
+  it.each(["request failure", "HTTP 503", "online before rejection", "longer outage"])(
     "retries a temporary %s without needing a later online event",
     async (failure) => {
       vi.useFakeTimers();
@@ -104,15 +104,34 @@ describe("theme backgrounds", () => {
         if (failure === "HTTP 503") return new Response(null, { status: 503 });
         throw new TypeError("Failed to fetch");
       });
+      if (failure === "longer outage") {
+        fetchBackground.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+        fetchBackground.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+        fetchBackground.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+      }
       vi.stubGlobal("fetch", fetchBackground);
       const stop = startThemeBackground();
       try {
         applyThemeBackground("nightfall");
         await vi.advanceTimersByTimeAsync(0);
         expect(properties.has("--theme-background-image")).toBe(false);
-        await vi.advanceTimersByTimeAsync(30_000);
+        if (failure === "longer outage") {
+          for (const [delay, attempts] of [
+            [1_000, 1],
+            [2_000, 2],
+            [4_000, 3],
+            [8_000, 4],
+          ] as const) {
+            await vi.advanceTimersByTimeAsync(delay - 1);
+            expect(fetchBackground).toHaveBeenCalledTimes(attempts);
+            expect(properties.has("--theme-background-image")).toBe(false);
+            await vi.advanceTimersByTimeAsync(1);
+          }
+        } else {
+          await vi.advanceTimersByTimeAsync(30_000);
+        }
         expect(properties.get("--theme-background-image") ?? "").toMatch(/^url\("blob:/);
-        expect(fetchBackground).toHaveBeenCalledTimes(2);
+        expect(fetchBackground).toHaveBeenCalledTimes(failure === "longer outage" ? 5 : 2);
       } finally {
         stop();
         applyThemeBackground(undefined);
@@ -147,7 +166,7 @@ describe("theme backgrounds", () => {
         if (reason === "theme change") applyThemeBackground(undefined);
         if (reason === "disposal") stop();
         await vi.advanceTimersByTimeAsync(30_000);
-        expect(fetchBackground).toHaveBeenCalledTimes(reason === "retry exhausted" ? 2 : 1);
+        expect(fetchBackground).toHaveBeenCalledTimes(reason === "retry exhausted" ? 5 : 1);
         expect(properties.has("--theme-background-image")).toBe(false);
       } finally {
         stop();
