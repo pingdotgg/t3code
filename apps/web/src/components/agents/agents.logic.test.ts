@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { McpGatewayProfile } from "@t3tools/contracts";
-import { agentAccentColor, agentColors, defaultAgentColor, soleOption } from "./agents.logic";
+import {
+  agentAccentColor,
+  agentColors,
+  buildAgentThreadMenuItems,
+  defaultAgentColor,
+  soleOption,
+} from "./agents.logic";
 
 const base: McpGatewayProfile = {
   profileId: "b",
@@ -34,5 +40,24 @@ describe("agent editor defaults", () => {
       agentColors[1],
     );
     expect(agentAccentColor(undefined, [base])).toBe("var(--muted-foreground)");
+  });
+});
+
+describe("buildAgentThreadMenuItems", () => {
+  it.each([false, true])("offers rename on cards and child rows (child: %s)", (isChildRow) => {
+    const items = buildAgentThreadMenuItems({
+      pinned: false,
+      settled: false,
+      isChildRow,
+      canMoveUp: true,
+      canMoveDown: true,
+      isRegeneratingTitle: true,
+      hasParent: isChildRow,
+      hasWorkspacePath: true,
+      hasBranch: false,
+    });
+    const rename = items.find((item) => item.id === "rename");
+    expect(rename?.disabled).toBeFalsy();
+    expect(items.some((item) => item.id === "move-up")).toBe(!isChildRow);
   });
 });

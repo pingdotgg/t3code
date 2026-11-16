@@ -4,7 +4,6 @@ import {
   type AtomCommandResult,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { ContextMenuItem } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
@@ -14,26 +13,16 @@ import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useUiStateStore } from "../../uiStateStore";
 import { useClientSettings } from "../../hooks/useSettings";
+import { requestThreadRename } from "../ThreadRenameDialog";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
-import { planAgentThreadMove, type AgentRunContextMenu } from "./agents.logic";
+import {
+  buildAgentThreadMenuItems,
+  planAgentThreadMove,
+  type AgentRunContextMenu,
+  type AgentThreadMenuId,
+} from "./agents.logic";
 import { useAgentThreadShells, useSetAgentRunParent } from "./useAgentRunParenting";
-
-type AgentThreadMenuId =
-  | "move-up"
-  | "move-down"
-  | "pin"
-  | "unpin"
-  | "settle"
-  | "unsettle"
-  | "regenerate-title"
-  | "mark-unread"
-  | "detach-parent"
-  | "copy-path"
-  | "copy-branch"
-  | "copy-thread-id"
-  | "archive"
-  | "delete";
 
 function failureToast(title: string, error: unknown) {
   toastManager.add(
@@ -116,60 +105,18 @@ export function useAgentThreadContextMenu(
       const plan = planAgentThreadMove(refresh(visible), refresh(threads), current, direction);
       return plan;
     };
-    const items: ContextMenuItem<AgentThreadMenuId>[] = [
-      pinned
-        ? { id: "unpin" as const, label: "Unpin chat", icon: "pin-off" }
-        : {
-            id: "pin" as const,
-            label: siblings ? "Pin to top of parent" : "Pin chat to top",
-            icon: "pin",
-          },
-      // Children sort by status (see arrangeAgentChildRuns), so only cards move by hand.
-      ...(!pinned && !settled && !siblings
-        ? [
-            {
-              id: "move-up" as const,
-              label: "Move up",
-              icon: "arrow-up",
-              disabled: !planMove("up"),
-            },
-            {
-              id: "move-down" as const,
-              label: "Move down",
-              icon: "arrow-down",
-              disabled: !planMove("down"),
-            },
-          ]
-        : []),
-      {
-        id: (settled ? "unsettle" : "settle") as "settle" | "unsettle",
-        label: settled ? "Un-settle chat" : "Settle chat",
-        icon: "circle-check",
-      },
-      {
-        id: "regenerate-title" as const,
-        label: current.titleRegeneration != null ? "Regenerating…" : "Regenerate title",
-        icon: "refresh-cw",
-        disabled: current.titleRegeneration != null,
-      },
-      { id: "mark-unread", label: "Mark unread", icon: "mail-open", separatorBefore: true },
+    const items = buildAgentThreadMenuItems({
+      pinned,
+      settled,
+      isChildRow: siblings !== undefined,
+      canMoveUp: !pinned && !settled && !siblings && Boolean(planMove("up")),
+      canMoveDown: !pinned && !settled && !siblings && Boolean(planMove("down")),
+      isRegeneratingTitle: current.titleRegeneration != null,
       // The board's view, which includes a pending move.
-      ...(thread.parentThreadId != null
-        ? [{ id: "detach-parent" as const, label: "Remove from parent", icon: "unlink" }]
-        : []),
-      {
-        id: "copy-path",
-        label: "Copy path",
-        icon: "folder",
-        disabled: workspacePath === null,
-      },
-      ...(current.branch
-        ? [{ id: "copy-branch" as const, label: "Copy branch", icon: "git-branch" }]
-        : []),
-      { id: "copy-thread-id", label: "Copy chat ID", icon: "hash" },
-      { id: "archive", label: "Archive chat", icon: "archive", separatorBefore: true },
-      { id: "delete", label: "Delete", destructive: true, icon: "trash" },
-    ];
+      hasParent: thread.parentThreadId != null,
+      hasWorkspacePath: workspacePath !== null,
+      hasBranch: Boolean(current.branch),
+    });
     let action: AgentThreadMenuId | null;
     try {
       action = await api.contextMenu.show(items, position);
@@ -218,6 +165,17 @@ export function useAgentThreadContextMenu(
       case "unsettle":
         await reportFailure("Failed to un-settle chat", () => unsettleThread(ref));
         return;
+      case "rename": {
+        const title = await requestThreadRename(current.title);
+        if (title === null) return;
+        await reportFailure("Failed to rename chat", () =>
+          updateThreadMetadata({
+            environmentId: ref.environmentId,
+            input: { threadId: ref.threadId, title },
+          }),
+        );
+        return;
+      }
       case "regenerate-title":
         await reportFailure("Failed to regenerate chat title", () =>
           updateThreadMetadata({
