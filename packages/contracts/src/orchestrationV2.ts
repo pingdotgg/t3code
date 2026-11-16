@@ -744,8 +744,6 @@ export const OrchestrationV2Run = Schema.Struct({
   manualContinuationOfRunId: Schema.optional(RunId),
   usageLimitContinuationOfRunId: Schema.optional(RunId),
   delegatedTaskId: Schema.optional(NodeId),
-  /** Awaited background work already pending when this follow-up was sent; an earlier run owns it. */
-  priorBackgroundTaskIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   workStartedAt: Schema.optional(Schema.DateTimeUtc),
   restartCancelledBackgroundWork: Schema.optional(
     Schema.Array(OrchestrationV2RestartCancelledBackgroundWork),
@@ -1060,6 +1058,8 @@ const PendingBackgroundTaskFields = {
   description: Schema.optional(TrimmedNonEmptyString),
   /** The subagent task that started this work and waits on it. */
   parentTaskId: Schema.optional(TrimmedNonEmptyString),
+  /** The run that started this work, stamped by the server when the work first appears. */
+  runId: Schema.optional(RunId),
   /** Native id of the turn item that started this work, when it is not `taskId`. */
   nativeItemId: Schema.optional(TrimmedNonEmptyString),
   /**
@@ -1378,6 +1378,8 @@ export const OrchestrationV2Notification = Schema.Struct({
   outcome: OrchestrationV2NotificationOutcome,
   summary: TrimmedNonEmptyString,
   detail: Schema.optional(Schema.String),
+  /** The pending background tasks whose end this wake reports, when the provider names them. */
+  backgroundTaskIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
 });
 export type OrchestrationV2Notification = typeof OrchestrationV2Notification.Type;
 

@@ -3523,28 +3523,31 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             .getThreadProjection(parentThreadId)
             .pipe(Effect.map((parent) => parent.subagents.find((task) => task.id === taskId)));
 
+        const roster = (name: string, work: ReadonlyArray<readonly [string, RunId]>) => ({
+          id: EventId.make(`event:followup-earlier-work-roster-${name}`),
+          type: "provider-thread.updated" as const,
+          threadId: child.childThreadId,
+          driver,
+          providerInstanceId: modelSelection.instanceId,
+          occurredAt: now,
+          payload: {
+            ...providerThread,
+            pendingBackgroundTasks: work.map(([taskId, runId]) => ({
+              taskId,
+              runId,
+              kind: "command" as const,
+              awaited: true as const,
+            })),
+          },
+        });
+
         // An earlier follow-up starts an awaited command, which keeps running throughout.
         const earlierRun = yield* sendFollowup("earlier", "Start the build and wait for it.");
         const earlierTaskId = earlierRun.delegatedTaskId!;
+        const earlierBuild = ["earlier-build", earlierRun.id] as const;
         yield* eventSink.write({
           commandId: reconcileCommandId("followup-earlier-work-awaited"),
-          events: [
-            {
-              id: EventId.make("event:followup-earlier-work-awaited"),
-              type: "provider-thread.updated",
-              threadId: child.childThreadId,
-              driver,
-              providerInstanceId: modelSelection.instanceId,
-              occurredAt: now,
-              payload: {
-                ...providerThread,
-                pendingBackgroundTasks: [
-                  { taskId: "earlier-build", kind: "command" as const, awaited: true as const },
-                ],
-              },
-            },
-            ...reply(earlierRun, "STARTED"),
-          ],
+          events: [roster("earlier", [earlierBuild]), ...reply(earlierRun, "STARTED")],
         });
         yield* orchestrator.recoverDelegatedTasks;
         assert.equal((yield* taskOf(earlierTaskId))?.status, "running");
@@ -3561,7 +3564,18 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         assert.equal(followup?.status, "completed");
         assert.equal(followup?.result, "ANSWER");
 
-        // The command's wake continues the earlier follow-up that still awaits it.
+        // A later follow-up starts its own awaited command, which outlasts the earlier one.
+        const laterRun = yield* sendFollowup("later", "Start the second build and wait for it.");
+        const laterTaskId = laterRun.delegatedTaskId!;
+        const laterBuild = ["later-build", laterRun.id] as const;
+        yield* eventSink.write({
+          commandId: reconcileCommandId("followup-earlier-work-later"),
+          events: [roster("later", [earlierBuild, laterBuild]), ...reply(laterRun, "STARTED-2")],
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        assert.equal((yield* taskOf(laterTaskId))?.status, "running");
+
+        // The earlier command's wake continues the follow-up that started it.
         const wakeMessageId = MessageId.make("message:followup-earlier-work-wake");
         yield* orchestrator.dispatch({
           type: "message.dispatch",
@@ -3575,6 +3589,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             source: { kind: "command" },
             outcome: "completed",
             summary: 'Command "build" finished',
+            backgroundTaskIds: ["earlier-build"],
           },
           attachments: [],
           dispatchMode: { type: "queue_after_active" },
@@ -3585,24 +3600,14 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         assert.equal(wakeRun.delegatedTaskId, earlierTaskId);
         yield* eventSink.write({
           commandId: reconcileCommandId("followup-earlier-work-settled"),
-          events: [
-            {
-              id: EventId.make("event:followup-earlier-work-settled"),
-              type: "provider-thread.updated",
-              threadId: child.childThreadId,
-              driver,
-              providerInstanceId: modelSelection.instanceId,
-              occurredAt: now,
-              payload: { ...providerThread, pendingBackgroundTasks: [] },
-            },
-            ...reply(wakeRun, "BUILD-DONE"),
-          ],
+          events: [roster("settled", [laterBuild]), ...reply(wakeRun, "BUILD-DONE")],
         });
         yield* orchestrator.recoverDelegatedTasks;
         const earlier = yield* taskOf(earlierTaskId);
         assert.equal(earlier?.status, "completed");
         assert.equal(earlier?.result, "BUILD-DONE");
         assert.equal((yield* taskOf(followupTaskId))?.result, "ANSWER");
+        assert.equal((yield* taskOf(laterTaskId))?.status, "running");
       }),
     );
 

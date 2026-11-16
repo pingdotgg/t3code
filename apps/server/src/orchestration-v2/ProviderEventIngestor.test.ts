@@ -597,6 +597,34 @@ layer("ProviderEventIngestorV2", (it) => {
         ["provider-thread.updated"],
       );
       assert.equal(latestThreadSequence, 2);
+
+      // Each background task keeps the run that started it when later rosters resend it.
+      const ingestRoster = (runId: RunId, taskIds: ReadonlyArray<string>) =>
+        ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+          runId,
+          event: {
+            type: "provider_thread.updated",
+            driver: CODEX_DRIVER,
+            providerThread: {
+              ...providerThread,
+              pendingBackgroundTasks: taskIds.map((taskId) => ({ taskId, kind: "command" })),
+            },
+          },
+        });
+      yield* ingestRoster(RunId.make("run:roster-first"), ["first-build"]);
+      yield* ingestRoster(RunId.make("run:roster-second"), ["first-build", "second-build"]);
+      const roster = (yield* projectionStore.getThreadProjection(threadEvent.threadId))
+        .providerThreads[0]?.pendingBackgroundTasks;
+      assert.deepEqual(
+        roster?.map((work) => [work.taskId, work.runId]),
+        [
+          ["first-build", "run:roster-first"],
+          ["second-build", "run:roster-second"],
+        ],
+      );
     }),
   );
 

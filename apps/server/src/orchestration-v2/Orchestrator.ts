@@ -9682,26 +9682,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (row) => row.id === message.runId,
       );
     if (run === undefined || run.delegatedTaskId !== undefined) return;
-    // A wake continues the latest open follow-up, as it continues the original task. A later
-    // follow-up may have settled while an earlier one still awaits the work that woke the child.
-    const followupIds =
+    // A wake continues the follow-up whose run started the work it reports, or else the latest
+    // follow-up, while it is open, as it continues the original task.
+    const woken =
       command.notification === undefined
-        ? []
-        : [
-            ...new Set(
-              (yield* projectionStore
-                .getThreadRecords(command.threadId, ["runs"])
-                .pipe(mapDispatchError(command))).runs
-                .filter((row) => row.id !== run.id && row.delegatedTaskId !== undefined)
-                .toSorted((a, b) => b.ordinal - a.ordinal)
-                .flatMap((row) => (row.delegatedTaskId === undefined ? [] : [row.delegatedTaskId])),
-            ),
-          ];
+        ? undefined
+        : yield* projectionStore
+            .getThreadRecords(command.threadId, ["runs", "providerThreads"])
+            .pipe(mapDispatchError(command));
+    const reportedWork = new Set(command.notification?.backgroundTaskIds);
+    const startedBy = new Set(
+      woken?.providerThreads.flatMap((thread) =>
+        (thread.pendingBackgroundTasks ?? []).flatMap((work) =>
+          reportedWork.has(work.taskId) && work.runId !== undefined ? [work.runId] : [],
+        ),
+      ),
+    );
+    const latestFollowupId = woken?.runs
+      .filter(
+        (row) =>
+          row.id !== run.id &&
+          row.delegatedTaskId !== undefined &&
+          (startedBy.size === 0 || startedBy.has(row.id)),
+      )
+      .toSorted((a, b) => b.ordinal - a.ordinal)[0]?.delegatedTaskId;
     const parent = yield* projectionStore
       .getThreadRecords(parentThreadId, ["runs", "subagents", "providerTurns", "attempts"], {
         subagentIds: [
           ...(child.forkedFrom?.type === "node" ? [child.forkedFrom.nodeId] : []),
-          ...followupIds,
+          ...(latestFollowupId === undefined ? [] : [latestFollowupId]),
         ],
       })
       .pipe(mapDispatchError(command));
@@ -9712,16 +9721,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         task.id === (child.forkedFrom?.type === "node" ? child.forkedFrom.nodeId : undefined),
     );
     if (original === undefined || original.result === null) return;
-    const openFollowup = followupIds
-      .map((id) => parent.subagents.find((task) => task.id === id))
-      .find(
-        (task) =>
-          task !== undefined &&
-          task.origin === "app_owned" &&
-          task.childThreadId === child.id &&
-          task.cancelledRunId === undefined &&
-          task.result === null,
-      );
+    const openFollowup = parent.subagents.find(
+      (task) =>
+        task.id === latestFollowupId &&
+        task.origin === "app_owned" &&
+        task.childThreadId === child.id &&
+        task.cancelledRunId === undefined &&
+        task.result === null,
+    );
     if (openFollowup !== undefined) {
       yield* emit(
         events,
@@ -9804,24 +9811,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       prompt: command.text,
       result: null,
     };
-    const priorBackgroundTaskIds = (yield* projectionStore
-      .getThreadRecords(child.id, ["providerThreads"])
-      .pipe(mapDispatchError(command))).providerThreads.flatMap((thread) =>
-      (thread.pendingBackgroundTasks ?? []).flatMap((work) =>
-        backgroundWorkHoldsCompletion([work]) ? [work.taskId] : [],
-      ),
-    );
     const emitEvent = emit(events, command);
     yield* emitEvent({
       type: "run.updated",
       threadId: child.id,
       runId: run.id,
       occurredAt: now,
-      payload: {
-        ...run,
-        delegatedTaskId: taskId,
-        ...(priorBackgroundTaskIds.length === 0 ? {} : { priorBackgroundTaskIds }),
-      },
+      payload: { ...run, delegatedTaskId: taskId },
     });
     yield* emitEvent({
       type: "node.updated",

@@ -4,6 +4,7 @@ import {
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
   type OrchestrationV2PlanArtifact,
+  type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
@@ -296,6 +297,45 @@ export const layer: Layer.Layer<
         );
       });
 
+    // Records the run that started each background task, so a delegated follow-up waits only on
+    // its own work. Adapters resend whole rosters, so a known task keeps the run it was given.
+    const withBackgroundWorkRuns = Effect.fn("ProviderEventIngestor.withBackgroundWorkRuns")(
+      function* (
+        input: ProviderEventIngestInput,
+        threadId: ThreadId,
+        providerThread: OrchestrationV2ProviderThread,
+      ) {
+        const roster = providerThread.pendingBackgroundTasks ?? [];
+        if (roster.every((work) => work.runId !== undefined)) return providerThread;
+        const records = yield* projections
+          .getThreadRecords(threadId, ["providerThreads", "runs"], {
+            runStatuses: ["preparing", "starting", "running", "waiting"],
+            includeLatestRun: true,
+          })
+          .pipe(Effect.orElseSucceed(() => undefined));
+        if (records === undefined) return providerThread;
+        const knownRuns = new Map(
+          records.providerThreads
+            .find((thread) => thread.id === providerThread.id)
+            ?.pendingBackgroundTasks?.flatMap((work) =>
+              work.runId === undefined ? [] : [[work.taskId, work.runId] as const],
+            ),
+        );
+        const startedBy =
+          (threadId === input.threadId ? input.runId : undefined) ??
+          records.runs
+            .filter((run) => run.startedAt !== null)
+            .toSorted((a, b) => b.ordinal - a.ordinal)[0]?.id;
+        return {
+          ...providerThread,
+          pendingBackgroundTasks: roster.map((work) => {
+            const runId = work.runId ?? knownRuns.get(work.taskId) ?? startedBy;
+            return runId === undefined ? work : { ...work, runId };
+          }),
+        };
+      },
+    );
+
     const dismissNativeUserInputs = Effect.fn("ProviderEventIngestor.dismissNativeUserInputs")(
       function* (
         input: ProviderEventIngestInput,
@@ -513,7 +553,7 @@ export const layer: Layer.Layer<
               const updated = yield* makeDomainEvent(input, {
                 type: "provider-thread.updated",
                 threadId,
-                payload: input.event.providerThread,
+                payload: yield* withBackgroundWorkRuns(input, threadId, input.event.providerThread),
               });
               return input.event.retainedNativeTurnIds === undefined
                 ? [updated]

@@ -228,8 +228,8 @@ export function delegatedTaskRuns(
 
 /**
  * A follow-up task's runs still owe a subagent they started its result, or the child still
- * awaits background work that was not already pending when the follow-up was sent, as the
- * original task waits on both.
+ * awaits background work those runs started, as the original task waits on both. Work with no
+ * recorded run predates attribution and holds every follow-up.
  */
 export function delegatedTaskAwaitsWork(
   runs: ReadonlyArray<OrchestrationV2Run>,
@@ -243,12 +243,13 @@ export function delegatedTaskAwaitsWork(
   },
 ): boolean {
   const runIds = new Set<string | null>(runs.map((run) => run.id));
-  const priorWork = new Set(runs.flatMap((run) => run.priorBackgroundTaskIds ?? []));
   return (
     child.subagents.some((task) => runIds.has(task.runId) && subagentHoldsCompletion(task)) ||
     child.providerThreads.some((thread) =>
       backgroundWorkHoldsCompletion(
-        (thread.pendingBackgroundTasks ?? []).filter((work) => !priorWork.has(work.taskId)),
+        (thread.pendingBackgroundTasks ?? []).filter(
+          (work) => work.runId === undefined || runIds.has(work.runId),
+        ),
       ),
     )
   );
