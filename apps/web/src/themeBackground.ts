@@ -72,20 +72,34 @@ export function applyThemeBackground(themeId: string | undefined): void {
   if (environmentId === null || themeId === undefined || key === null) return;
   const controller = new AbortController();
   loading = controller;
+  let retried = false;
   const failed = () => {
     if (controller.signal.aborted) return;
-    // Lets the next repaint try again.
-    shownKey = null;
-  };
-  loadBackground(environmentId, themeId, controller.signal).then((url) => {
-    if (controller.signal.aborted) {
-      if (url !== null) URL.revokeObjectURL(url);
+    if (!retried) {
+      retried = true;
+      // Transient HTTP failures may never produce a browser online event.
+      const timer = setTimeout(load, 1_000);
+      controller.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
       return;
     }
     loading = null;
-    if (url === null) failed();
-    else show(url);
-  }, failed);
+    // Lets the next repaint try again after the bounded retry is exhausted.
+    shownKey = null;
+  };
+  const load = () => {
+    loadBackground(environmentId, themeId, controller.signal).then((url) => {
+      if (controller.signal.aborted) {
+        if (url !== null) URL.revokeObjectURL(url);
+        return;
+      }
+      if (url === null) failed();
+      else {
+        loading = null;
+        show(url);
+      }
+    }, failed);
+  };
+  load();
 }
 
 /**
@@ -99,5 +113,9 @@ export function startThemeBackground(): () => void {
   return () => {
     unsubscribe();
     window.removeEventListener("online", reapply);
+    loading?.abort();
+    loading = null;
+    shownKey = null;
+    show(null);
   };
 }
