@@ -48,7 +48,7 @@ function setup(hinted: boolean) {
 describe("display-mode thread views", () => {
   it("opens only the shown view on a cold start of a thread last seen in a display mode", () => {
     const h = setup(true);
-    h.setConfig(configWith("messages-only"));
+    h.setConfig(configWith("chat-replies"));
     expect(h.opened).toEqual([true]);
     h.unmount();
   });
@@ -65,7 +65,6 @@ describe("display-mode thread views", () => {
     const h = setup(false);
     h.setConfig(configWith("chat-replies"));
     expect(h.keys.has(threadKey(ref))).toBe(true);
-    h.setConfig(configWith("messages-dashboard"));
     h.setConfig(configWith(null));
     expect(h.opened).toEqual([false, true, false]);
     expect(h.keys.size).toBe(0);

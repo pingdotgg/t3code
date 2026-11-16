@@ -2,7 +2,7 @@ import { DASHBOARD_SLOT_TITLES, DashboardSlotId, OrchestratorMcpFailure } from "
 import {
   DASHBOARD_GET_TOOL_NAME,
   DASHBOARD_SET_TOOL_NAME,
-  resolveDisplayMode,
+  threadDisplay,
 } from "@t3tools/shared/displayModes";
 import { TEXT_MATCH_MIN_RATIO } from "@t3tools/shared/textMatch";
 import * as DateTime from "effect/DateTime";
@@ -16,7 +16,7 @@ import * as ServerSettings from "../../serverSettings.ts";
 import { ThreadDashboard } from "./ThreadDashboard.ts";
 import { DASHBOARD_SLOT_LIMIT, visibleUnits } from "./visibleUnits.ts";
 
-const ONLY_IN_DASHBOARD_MODE = "Only in threads set to Messages + Dashboard; refused elsewhere.";
+const ONLY_WITH_DASHBOARD = "Only in threads whose Dashboard is on; refused elsewhere.";
 
 // Both texts travel in one tool input, which loses its text on the wire over 16 KiB of JSON.
 const SLOT_TEXT_MAX_BYTES = 6_000;
@@ -33,7 +33,7 @@ const slotText = (description: string) =>
   );
 
 const DashboardSetTool = Tool.make(DASHBOARD_SET_TOOL_NAME, {
-  description: `${ONLY_IN_DASHBOARD_MODE} Replace one whole slot of this thread's Dashboard, which the user sees beside the chat. Refused when old_text no longer matches the slot.`,
+  description: `${ONLY_WITH_DASHBOARD} Replace one whole slot of this thread's Dashboard, which the user sees beside the chat. Refused when old_text no longer matches the slot.`,
   parameters: Schema.Struct({
     slot: DashboardSlotId.annotate({
       description:
@@ -61,7 +61,7 @@ const DashboardSetTool = Tool.make(DASHBOARD_SET_TOOL_NAME, {
   .annotate(Tool.OpenWorld, false);
 
 const DashboardGetTool = Tool.make(DASHBOARD_GET_TOOL_NAME, {
-  description: `${ONLY_IN_DASHBOARD_MODE} Read this thread's Dashboard: each slot in page order with its text and when it was last written.`,
+  description: `${ONLY_WITH_DASHBOARD} Read this thread's Dashboard: each slot in page order with its text and when it was last written.`,
   success: Schema.Struct({
     slots: Schema.Array(
       Schema.Struct({
@@ -88,7 +88,7 @@ const DashboardGetTool = Tool.make(DASHBOARD_GET_TOOL_NAME, {
 
 export const DashboardToolkit = Toolkit.make(DashboardSetTool, DashboardGetTool);
 
-/** The caller's thread, refused unless its display mode has a Dashboard. */
+/** The caller's thread, refused unless its Dashboard is on. */
 const dashboardThread = Effect.gen(function* () {
   const scope = yield* McpInvocationContext.McpInvocationContext;
   const { thread } = yield* McpInvocationContext.requireThreadScope(scope, "The Dashboard");
@@ -98,10 +98,11 @@ const dashboardThread = Effect.gen(function* () {
         new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
     ),
   );
-  if (!resolveDisplayMode(settings.threadDisplayModes[thread.threadId]).dashboard) {
+  if (!threadDisplay(settings, thread.threadId).dashboard) {
     return yield* new OrchestratorMcpFailure({
       code: "capability_denied",
-      message: "This thread's display mode is not Messages + Dashboard, so it has no Dashboard.",
+      message:
+        "This thread's Dashboard is off. The user can turn it on with Enable Dashboard in the thread menu.",
     });
   }
   return thread.threadId;

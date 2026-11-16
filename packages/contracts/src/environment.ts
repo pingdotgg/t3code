@@ -134,6 +134,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   usagePriceOverrides: Schema.optionalKey(Schema.Boolean),
   usageModelAliases: Schema.optionalKey(Schema.Boolean),
   threadDisplayModes: Schema.optionalKey(Schema.Boolean),
+  /** Stores `threadDashboards`; older servers drop the key, so hide the switch where it is absent. */
+  threadDashboards: Schema.optionalKey(Schema.Boolean),
   /** Honors `shownOnly` on thread subscriptions and bounded snapshots. */
   threadShownHistory: Schema.optionalKey(Schema.Boolean),
   threadPinning: Schema.optionalKey(Schema.Boolean),

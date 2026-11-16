@@ -2,7 +2,7 @@ import type { ThreadTitleMessage } from "@t3tools/provider-core/server/threadTit
 
 import { SUMMARY_INSTRUCTIONS } from "../../../apps/server/src/fork/subThreads/summaryInstructions.ts";
 
-const source = "Chat + Replies display mode: the summary line under a first message";
+const source = "Chat mode: the summary line under a first message";
 
 /** Each case is one sub-thread; `previousTitle` is its last summary. */
 export const subThreadSummaryCases = [

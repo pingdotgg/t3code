@@ -1612,6 +1612,13 @@ export const ServerSettings = Schema.Struct({
   threadDisplayModes: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  /**
+   * The threads whose Dashboard is on, in any display mode. The app writes `true` or removes the
+   * entry; a `false` reads as off.
+   */
+  threadDashboards: Schema.Record(TrimmedNonEmptyString, Schema.Boolean).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   /** The display mode id that new threads started by hand in the web or desktop app open in. */
   newThreadDisplayMode: TrimmedNonEmptyString.pipe(
     Schema.withDecodingDefault(Effect.succeed("normal")),
@@ -2009,6 +2016,9 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   threadDisplayModes: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, Schema.NullOr(TrimmedNonEmptyString)),
+  ),
+  threadDashboards: Schema.optionalKey(
+    Schema.Record(TrimmedNonEmptyString, Schema.NullOr(Schema.Boolean)),
   ),
   newThreadDisplayMode: Schema.optionalKey(TrimmedNonEmptyString),
 });

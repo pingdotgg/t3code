@@ -52,9 +52,9 @@ const MAX_BYTES_TEXT = `Markdown, at most ${SEND_TO_USER_MAX_BYTES} bytes of UTF
 const messageText = (description: string) =>
   Schema.String.annotate({ description }).check(Schema.isMinLength(1));
 const MessageText = messageText(MAX_BYTES_TEXT);
-// Normal mode takes upstream's send_to_user limit; the other modes keep the fork's.
+// Normal mode takes upstream's send_to_user limit; Chat mode keeps the fork's.
 const SendText = messageText(
-  `In a thread set to Messages only, Messages + Dashboard or Chat + Replies: ${MAX_BYTES_TEXT} In any other thread (the full view, Normal): at most ${SEND_TO_USER_MAX_LENGTH} UTF-16 code units, where most characters count once and an emoji or a rare CJK character twice or more.`,
+  `In a thread set to Chat mode: ${MAX_BYTES_TEXT} In any other thread (the full view, Normal): at most ${SEND_TO_USER_MAX_LENGTH} UTF-16 code units, where most characters count once and an emoji or a rare CJK character twice or more.`,
 );
 
 const jsonEscapedBytes = (text: string) => Buffer.byteLength(JSON.stringify(text), "utf8") - 2;
@@ -96,7 +96,6 @@ const ACKED = {
   ok: true as const,
   message: "Shown to the user as an ack. Send your answer when it is ready.",
 };
-const LAST_MESSAGE = { what: "the user's last message", replace: REPLACE_SEND_TO_USER_TOOL_NAME };
 
 // An agent that fills every optional field sends null, an empty string or false for "none".
 const Pointer = (description: string) =>
@@ -111,11 +110,11 @@ const dependencies = [
 // The tools change only what the caller's thread shows, so read-only sandboxes and plan mode may use them.
 const SendToUserTool = Tool.make(SEND_TO_USER_TOOL_NAME, {
   description:
-    "Show the user a message in this thread. In a thread set to Messages only, this is the only output the user sees. In a thread set to Chat + Replies, also pass reply_to with user_message, or new_sub_thread. In the full view (Normal), use it for content the user must read in full before your turn ends, such as a draft or a code block, and don't repeat it in your reply.",
+    "Show the user a message in this thread. In a thread set to Chat mode, this is the only output the user sees; also pass reply_to with user_message, or new_sub_thread. In the full view (Normal), use it for content the user must read in full before your turn ends, such as a draft or a code block, and don't repeat it in your reply.",
   parameters: Schema.Struct({
     text: SendText,
     reply_to: Pointer(
-      "Chat + Replies only. The id of the user's message that this text answers, as the <t3-replies-mode> block before that message gave it. The answer shows where that message is: in the main list or in its sub-thread.",
+      "Chat mode only. The id of the user's message that this text answers, as the <t3-replies-mode> block before that message gave it. The answer shows where that message is: in the main list or in its sub-thread.",
     ),
     user_message: Schema.optional(
       Schema.NullOr(
@@ -128,14 +127,14 @@ const SendToUserTool = Tool.make(SEND_TO_USER_TOOL_NAME, {
       Schema.NullOr(
         Schema.Boolean.annotate({
           description:
-            "Chat + Replies only. True for a message that answers no message from the user. It shows in the main list, where the user can reply under it: one until the user writes there again.",
+            "Chat mode only. True for a message that answers no message from the user. It shows in the main list, where the user can reply under it: one until the user writes there again.",
         }),
       ),
     ),
     ack: Schema.optional(
       Schema.NullOr(
         Schema.Boolean.annotate({
-          description: `In a thread set to Messages only, Messages + Dashboard or Chat + Replies: true for a note of at most ${ACK_MAX_BYTES} bytes that you got the message and are on it, only when your answer will take a while. At most one, before the answer.`,
+          description: `In a thread set to Chat mode: true for a note of at most ${ACK_MAX_BYTES} bytes that you got the message and are on it, only when your answer will take a while. At most one, before the answer.`,
         }),
       ),
     ),
@@ -159,16 +158,16 @@ const SendToUserTool = Tool.make(SEND_TO_USER_TOOL_NAME, {
   .annotate(Tool.Meta, { "anthropic/alwaysLoad": true });
 
 const ReplaceSendToUserTool = Tool.make(REPLACE_SEND_TO_USER_TOOL_NAME, {
-  description: `In threads set to Messages only, Messages + Dashboard or Chat + Replies, you answer each message of the user once, after at most one ack. This replaces your latest message for it in place; an ack becomes the answer. Pass the user's last message and your current message as the recap shows them (their words only), each at least ${MIN_PERCENT}% alike, and the whole new text. In Chat + Replies, also pass reply_to or sub_thread.`,
+  description: `In a thread set to Chat mode, you answer each message of the user once, after at most one ack. This replaces your latest message for it in place; an ack becomes the answer. Pass reply_to or sub_thread, the user's message and your current message as the recap shows them (their words only), each at least ${MIN_PERCENT}% alike, and the whole new text.`,
   parameters: Schema.Struct({
     reply_to: Pointer(
-      "Chat + Replies only. The id of the user's message whose answer you replace, until the user writes after that answer or replies under it. user_message is then that message.",
+      "The id of the user's message whose answer you replace, until the user writes after that answer or replies under it. user_message is then that message.",
     ),
     sub_thread: Pointer(
-      "Chat + Replies only. The id of a message that you sent with new_sub_thread, as that send returned it, to replace that message until the user writes after it or replies under it. user_message is then an empty string.",
+      "The id of a message that you sent with new_sub_thread, as that send returned it, to replace that message until the user writes after it or replies under it. user_message is then an empty string.",
     ),
     user_message: MatchInput(
-      `The user's last message, at most ${MATCH_INPUT_TOLD_BYTES} bytes of UTF-8 after JSON escaping. An empty string if they have typed none.`,
+      `The user's message that reply_to names, or an empty string with sub_thread. At most ${MATCH_INPUT_TOLD_BYTES} bytes of UTF-8 after JSON escaping.`,
     ),
     old_text: MatchInput(
       `Your current message to the user, at most ${MATCH_INPUT_TOLD_BYTES} bytes of UTF-8 after JSON escaping.`,
@@ -209,55 +208,13 @@ function replyCallsAfter(
   items: ReadonlyArray<OrchestrationV2TurnItem>,
   at: number,
   named: boolean,
-  concerns: (item: OrchestrationV2TurnItem) => boolean = () => true,
+  concerns: (item: OrchestrationV2TurnItem) => boolean,
 ): ReadonlyArray<ReplyCall> {
   return items.slice(at + 1).flatMap((item) => {
     const call = concerns(item) ? replyCallOf(item, named) : null;
     return call === null ? [] : [call];
   });
 }
-
-/**
- * What the thread shows since the user's last typed message. `ownItem` is the native id of the
- * calling tool use when the provider names it; only then do sends still running count, and only
- * items stored before the call's own, so of two sends in one response the first is shown, and a
- * message typed after the call started does not change the answer.
- */
-function readTurn(shown: ReadonlyArray<OrchestrationV2TurnItem>, ownItem: string | undefined) {
-  const items = itemsBefore(shown, ownItem);
-  const cores = coresOf(items);
-  const typedAt = cores.findLastIndex((core) => core.from === "user");
-  return {
-    latest: cores.slice(-WRAPPED_CORE_COUNT),
-    typed: typedAt < 0 ? undefined : cores[typedAt],
-    current: cores.slice(typedAt + 1).findLast((core) => core.from === "agent"),
-    calls: replyCallsAfter(
-      items,
-      items.findLastIndex((item) => displayEventFromTurnItem(item)?.type === "user"),
-      ownItem !== undefined,
-    ),
-  };
-}
-
-type Turn = ReturnType<typeof readTurn>;
-
-const refusal = (
-  code: OrchestratorMcpFailure["code"],
-  reasons: ReadonlyArray<string>,
-  turn: Turn,
-) =>
-  new OrchestratorMcpFailure({
-    code,
-    message: [
-      `Refused: ${reasons.join(" ")}`,
-      ...(turn.latest.length === 0
-        ? []
-        : ["Latest messages between you and the user:", ...turn.latest.map(recapLine)]),
-      ...(turn.current === undefined
-        ? []
-        : ["Your current message, as old_text:", recapText(turn.current.text)]),
-    ].join("\n"),
-  });
 
 /** A text the agent copied from a recap line, compared without the line's marks. */
 const quoted = (text: string) =>
@@ -477,26 +434,15 @@ export const layerHandlers = McpToolAccess.toLayer(
       };
     });
 
-    // Claude Code names the tool use in the call's _meta, and a Claude item's native id is that id.
-    const readThreadTurn = Effect.fn("SendToUser.readThreadTurn")(function* (threadId: ThreadId) {
-      const client = yield* Effect.serviceOption(McpSchema.McpServerClient);
-      const named = Option.getOrUndefined(client)?.requestMetadata?.["claudecode/toolUseId"];
-      const toolUseId = typeof named === "string" ? named : undefined;
-      const items = yield* (yield* DisplayModeWrap)
-        .latestShownItems(threadId, toolUseId)
-        .pipe(Effect.mapError(orchestrationError));
-      return { ...readTurn(items, toolUseId), named: toolUseId !== undefined };
-    });
-
     // A call that does not name itself cannot tell a send still running from its own, so two such
     // sends in one response would both pass. The stage that an accepted call reached counts for a
     // few seconds instead, while the provider has not yet stored it, for that user message only.
     /** The ids given to first messages that may not be in the history yet, each with its hold's end. */
     const givenIds = new Map<string, number>();
     const holds = makeReplyHolds(UNNAMED_SEND_HOLD_MS);
-    const holdKey = (threadId: ThreadId, userMessage: string | undefined) =>
-      `${threadId}\n${userMessage ?? ""}`;
+    const holdKey = (threadId: ThreadId, place: string) => `${threadId}\n${place}`;
 
+    // Claude Code names the tool use in the call's _meta, and a Claude item's native id is that id.
     const readThreadCores = Effect.fn("SendToUser.readThreadCores")(function* (
       threadId: ThreadId,
       toMainListMessage: boolean,
@@ -542,7 +488,7 @@ export const layerHandlers = McpToolAccess.toLayer(
         return yield* placeRefusal(
           "invalid_request",
           [
-            "this thread is set to Chat + Replies. To answer a message from the user, pass reply_to with its id and user_message with its words. For a message that answers none, pass new_sub_thread true and no reply_to.",
+            "this thread is in Chat mode. To answer a message from the user, pass reply_to with its id and user_message with its words. For a message that answers none, pass new_sub_thread true and no reply_to.",
           ],
           cores,
           undefined,
@@ -677,7 +623,7 @@ export const layerHandlers = McpToolAccess.toLayer(
         return yield* placeRefusal(
           "invalid_request",
           [
-            "this thread is set to Chat + Replies. Pass reply_to to replace your answer to that message from the user, or sub_thread to replace a message that you sent with new_sub_thread, and not both.",
+            "this thread is in Chat mode. Pass reply_to to replace your answer to that message from the user, or sub_thread to replace a message that you sent with new_sub_thread, and not both.",
           ],
           cores,
           undefined,
@@ -809,7 +755,7 @@ export const layerHandlers = McpToolAccess.toLayer(
       [SEND_TO_USER_TOOL_NAME]: McpToolAccess.readsAsCaller((input) =>
         Effect.gen(function* () {
           const { threadId, mode } = yield* callerThread;
-          if (!mode.oneSendPerMessage) {
+          if (!mode.subThreads) {
             if (input.text.length > SEND_TO_USER_MAX_LENGTH)
               return yield* new OrchestratorMcpFailure({
                 code: "invalid_request",
@@ -817,101 +763,22 @@ export const layerHandlers = McpToolAccess.toLayer(
               });
             return { ...SHOWN_NORMAL, sentMessage: input.text };
           }
-          const ack = input.ack === true;
-          yield* checkMessageSize(input.text, ack);
-          if (mode.subThreads)
-            return yield* sendInSubThread(threadId, input).pipe(lockFor(threadId).withPermits(1));
-          return yield* Effect.gen(function* () {
-            const turn = yield* readThreadTurn(threadId);
-            if (ack && turn.typed === undefined) {
-              return yield* refusal(
-                "invalid_request",
-                [
-                  "an ack answers a message from the user, and they have typed none. Send without ack.",
-                ],
-                turn,
-              );
-            }
-            const now = yield* Clock.currentTimeMillis;
-            const key = holdKey(threadId, turn.typed?.id);
-            const verdict = judgeSend({
-              calls: turn.calls,
-              held: holds.held(key, turn.named, now),
-              kind: ack ? "ack" : "answer",
-              subject: LAST_MESSAGE,
-            });
-            if (!verdict.ok) return yield* refusal("invalid_request", [verdict.reason], turn);
-            holds.record(key, turn.named, ack ? "ack" : "answer", verdict.next, now);
-            return ack ? ACKED : SHOWN;
-          }).pipe(lockFor(threadId).withPermits(1));
+          yield* checkMessageSize(input.text, input.ack === true);
+          return yield* sendInSubThread(threadId, input).pipe(lockFor(threadId).withPermits(1));
         }),
       ),
       [REPLACE_SEND_TO_USER_TOOL_NAME]: McpToolAccess.readsAsCaller((input) =>
         Effect.gen(function* () {
-          const { user_message, old_text, new_text } = input;
-          yield* checkMessageSize(new_text);
+          yield* checkMessageSize(input.new_text);
           const { threadId, mode } = yield* callerThread;
-          if (mode.subThreads)
-            return yield* replaceInSubThread(threadId, input).pipe(
-              lockFor(threadId).withPermits(1),
-            );
-          return yield* Effect.gen(function* () {
-            const turn = yield* readThreadTurn(threadId);
-            if (
-              messagePointer(input.reply_to) !== undefined ||
-              messagePointer(input.sub_thread) !== undefined
-            ) {
-              return yield* refusal(
-                "capability_denied",
-                [
-                  "this thread is not set to Chat + Replies, so it has no sub-threads. Call replace_send_to_user without reply_to and sub_thread.",
-                ],
-                turn,
-              );
-            }
-            if (!mode.oneSendPerMessage) {
-              return yield* refusal(
-                "capability_denied",
-                [
-                  "replace_send_to_user works only in a thread whose display mode allows one answer from you per message of the user. This thread's mode does not. Use send_to_user.",
-                ],
-                turn,
-              );
-            }
-            const now = yield* Clock.currentTimeMillis;
-            const key = holdKey(threadId, turn.typed?.id);
-            const verdict = judgeReplace({
-              calls: turn.calls,
-              held: holds.held(key, turn.named, now),
-              subject: LAST_MESSAGE,
+          if (!mode.subThreads) {
+            return yield* new OrchestratorMcpFailure({
+              code: "capability_denied",
+              message:
+                "Refused: replace_send_to_user works only in a thread set to Chat mode. Use send_to_user.",
             });
-            if (!verdict.ok) return yield* refusal("invalid_request", [verdict.reason], turn);
-            if (turn.current === undefined) {
-              return yield* refusal(
-                "invalid_request",
-                [
-                  "you have sent no message since the user's last one, so there is nothing to replace. Use send_to_user.",
-                ],
-                turn,
-              );
-            }
-            const typed = turn.typed?.text ?? "";
-            const similarity = userSimilarity(user_message, typed);
-            const oldSimilarity = textSimilarity(quoted(old_text), recapText(turn.current.text));
-            const mismatches = [
-              ...(similarity >= TEXT_MATCH_MIN_RATIO
-                ? []
-                : [userMismatch(similarity, "the user's last message", typed)]),
-              ...(oldSimilarity >= TEXT_MATCH_MIN_RATIO
-                ? []
-                : [
-                    `old_text is ${percent(oldSimilarity)}% like your current message; needs ${MIN_PERCENT}%.`,
-                  ]),
-            ];
-            if (mismatches.length > 0) return yield* refusal("invalid_request", mismatches, turn);
-            holds.record(key, turn.named, "replace", verdict.next, now);
-            return SHOWN;
-          }).pipe(lockFor(threadId).withPermits(1));
+          }
+          return yield* replaceInSubThread(threadId, input).pipe(lockFor(threadId).withPermits(1));
         }),
       ),
     };

@@ -64,7 +64,7 @@ const cases: ReadonlyArray<Case> = [
   {
     name: "a Normal default removes a stale entry",
     defaultMode: "normal",
-    stored: "messages-only",
+    stored: "chat-replies",
     seen: undefined,
     entry: undefined,
   },

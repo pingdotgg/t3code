@@ -181,7 +181,7 @@ it.layer(layer)("t3_thread_user_view", (it) => {
   it.effect("reads the caller's own thread and pins the view to this environment", () =>
     Effect.gen(function* () {
       const text = textOf(yield* call({ main: 2 }));
-      assert.include(text, `<t3-user-view thread="${REPLIES}" mode="Chat + Replies"`);
+      assert.include(text, `<t3-user-view thread="${REPLIES}" mode="Chat mode"`);
       assert.include(text, "\n  Question 199\n");
       assert.include(
         text,

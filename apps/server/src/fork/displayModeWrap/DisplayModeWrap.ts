@@ -8,19 +8,18 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import {
-  type DisplayMode,
-  DISPLAY_MODES,
   displayEventFromTurnItem,
+  displayNote,
   isMainListOnItsOwn,
   isWebTypedMessage,
   type MessageOrigin,
-  NORMAL_DISPLAY_MODE,
-  resolveDisplayMode,
+  NORMAL_DISPLAY,
   foldCores,
   SUB_THREAD_WINDOW_CORES,
   subThreadCores,
   subThreadOfRecords,
-  WRAPPED_CORE_COUNT,
+  threadDisplay,
+  toldKey,
 } from "@t3tools/shared/displayModes";
 import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -91,15 +90,15 @@ export interface DisplayModeWrapShape {
   }) => Effect.Effect<WrappedUserText>;
   /**
    * The user messages and send calls that the screen shows, oldest first, in any state. Reads back
-   * past the user's last typed message and at least `cores` messages (default WRAPPED_CORE_COUNT),
-   * counted from the item with `ownNativeId` back when given. With `toMainListMessage`, also past
-   * the latest event that is in the main list on its own (`isMainListOnItsOwn`).
+   * past the user's last typed message and at least `cores` messages, counted from the item with
+   * `ownNativeId` back when given. With `toMainListMessage`, also past the latest event that is in
+   * the main list on its own (`isMainListOnItsOwn`).
    */
   readonly latestShownItems: (
     threadId: ThreadId,
-    ownNativeId?: string,
-    cores?: number,
-    toMainListMessage?: boolean,
+    ownNativeId: string | undefined,
+    cores: number,
+    toMainListMessage: boolean,
   ) => Effect.Effect<
     ReadonlyArray<OrchestrationV2TurnItem>,
     SqlError.SqlError | Schema.SchemaError | ProjectionStore.ProjectionStoreV2Error
@@ -156,22 +155,30 @@ export class DisplayModeWrap extends Context.Service<DisplayModeWrap, DisplayMod
 ) {}
 
 /**
- * Removes the stored mode of each deleted thread. A deleted thread keeps its projection row,
- * with `deleted_at` set.
+ * Removes the stored mode and Dashboard switch of each deleted thread. A deleted thread keeps its
+ * projection row, with `deleted_at` set.
  */
-export const pruneDeletedThreadModes = Effect.fn("DisplayModeWrap.pruneDeletedThreadModes")(
+export const pruneDeletedThreadDisplays = Effect.fn("DisplayModeWrap.pruneDeletedThreadDisplays")(
   function* () {
     const sql = yield* SqlClient.SqlClient;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
-    const threadIds = Object.keys((yield* serverSettings.getSettings).threadDisplayModes);
+    const settings = yield* serverSettings.getSettings;
+    const threadIds = [
+      ...new Set([
+        ...Object.keys(settings.threadDisplayModes),
+        ...Object.keys(settings.threadDashboards),
+      ]),
+    ];
     if (threadIds.length === 0) return;
     const deleted = yield* sql<{ readonly thread_id: string }>`
       SELECT thread_id FROM orchestration_v2_projection_threads
       WHERE thread_id IN ${sql.in(threadIds)} AND deleted_at IS NOT NULL
     `;
     if (deleted.length === 0) return;
+    const removed = Object.fromEntries(deleted.map((row) => [row.thread_id, null] as const));
     yield* serverSettings.updateSettings({
-      threadDisplayModes: Object.fromEntries(deleted.map((row) => [row.thread_id, null])),
+      threadDisplayModes: removed,
+      threadDashboards: removed,
     });
   },
 );
@@ -192,7 +199,7 @@ export const layer: Layer.Layer<
     yield* createToldTable;
 
     yield* serverSettings.ready.pipe(
-      Effect.andThen(pruneDeletedThreadModes()),
+      Effect.andThen(pruneDeletedThreadDisplays()),
       Effect.andThen(sql`DELETE FROM fork_display_mode_told WHERE thread_id IN (
         SELECT thread_id FROM orchestration_v2_projection_threads WHERE deleted_at IS NOT NULL
       )`),
@@ -207,9 +214,9 @@ export const layer: Layer.Layer<
     const shownItems = Effect.fn("DisplayModeWrap.shownItems")(function* (
       threadId: ThreadId,
       before: MessageId | null,
-      ownNativeId?: string,
-      coreCount: number = WRAPPED_CORE_COUNT,
-      toMainListMessage = false,
+      ownNativeId: string | undefined,
+      coreCount: number,
+      toMainListMessage: boolean,
     ) {
       const pageRows = Math.max(PAGE_ROWS, Math.min(coreCount, 64));
       let start = { ordinal: Number.MAX_SAFE_INTEGER, itemId: "" };
@@ -300,7 +307,7 @@ export const layer: Layer.Layer<
     });
 
     // The provider reads a slash command only at the start of the text.
-    // A `<t3-messages-mode>` block before the command would break the command.
+    // A `<t3-replies-mode>` block before the command would break the command.
     // The known commands are `/compact` and `/goal`, which T3 Code reads from the text without the
     // provider's list, and the ones that the composer offers for the thread's provider and folder.
     const isSlashCommand = Effect.fn("DisplayModeWrap.isSlashCommand")(function* (
@@ -329,9 +336,9 @@ export const layer: Layer.Layer<
       return commands.some((command) => command.name.toLowerCase() === name);
     });
 
-    const recordTold = (threadId: ThreadId, mode: DisplayMode) =>
+    const recordTold = (threadId: ThreadId, told: string) =>
       sql`INSERT INTO fork_display_mode_told (thread_id, mode_id)
-        VALUES (${threadId}, ${mode.toldId})
+        VALUES (${threadId}, ${told})
         ON CONFLICT (thread_id) DO UPDATE SET mode_id = excluded.mode_id`.pipe(
         Effect.asVoid,
         Effect.catchCause((cause) =>
@@ -339,8 +346,8 @@ export const layer: Layer.Layer<
         ),
       );
 
-    const setTold = (threadId: ThreadId, modeId: string) =>
-      sql`UPDATE fork_display_mode_told SET mode_id = ${modeId} WHERE thread_id = ${threadId}`;
+    const setTold = (threadId: ThreadId, told: string) =>
+      sql`UPDATE fork_display_mode_told SET mode_id = ${told} WHERE thread_id = ${threadId}`;
 
     const forgetNotes: DisplayModeWrapShape["forgetNotes"] = Effect.fn(
       "DisplayModeWrap.forgetNotes",
@@ -354,7 +361,7 @@ export const layer: Layer.Layer<
       threadId: ThreadId,
       context: NoteContext,
     ) {
-      if (context === "fresh") return yield* setTold(threadId, NORMAL_DISPLAY_MODE.toldId);
+      if (context === "fresh") return yield* setTold(threadId, toldKey(NORMAL_DISPLAY));
       if (context === "uncertain") return yield* setTold(threadId, UNKNOWN_TOLD);
       yield* sql`DELETE FROM fork_display_mode_told WHERE thread_id = ${threadId}`;
       yield* sql`INSERT INTO fork_display_mode_told (thread_id, mode_id)
@@ -429,33 +436,28 @@ export const layer: Layer.Layer<
           })
         )
           return unchanged;
-        const settings = yield* serverSettings.getSettings;
-        const mode = resolveDisplayMode(settings.threadDisplayModes[threadId]);
+        const display = threadDisplay(yield* serverSettings.getSettings, threadId);
+        const { mode } = display;
         const toldRows = yield* sql<{ readonly mode_id: string }>`
           SELECT mode_id FROM fork_display_mode_told WHERE thread_id = ${threadId}
         `;
-        const told = toldRows[0]?.mode_id ?? NORMAL_DISPLAY_MODE.toldId;
-        // After `unknown` or an older rules version, the agent may not know the mode that a switch
-        // notice would switch from, or its current rules.
-        const note =
-          told === mode.toldId
-            ? null
-            : DISPLAY_MODES.some((known) => known.toldId === told)
-              ? mode.notice
-              : mode.stateNotice;
+        const note = displayNote(toldRows[0]?.mode_id ?? toldKey(NORMAL_DISPLAY), display);
+        const recordNote = recordTold(threadId, toldKey(display));
         if (yield* isSlashCommand(threadId, message))
           return note === null
             ? unchanged
-            : { ...unchanged, commandNote: { text: note, delivered: recordTold(threadId, mode) } };
+            : { ...unchanged, commandNote: { text: note, delivered: recordNote } };
         const under = mode.subThreads ? subThreadOfRecords(message.context?.records) : undefined;
+        // Only a reply gets a recap, of its own sub-thread.
         const events =
-          mode.wrap === null || (mode.subThreads && under === undefined)
+          under === undefined
             ? []
             : (yield* shownItems(
                 threadId,
                 message.id,
                 undefined,
-                mode.subThreads ? SUB_THREAD_WINDOW_CORES : WRAPPED_CORE_COUNT,
+                SUB_THREAD_WINDOW_CORES,
+                false,
               )).flatMap((item) => {
                 const event = displayEventFromTurnItem(item);
                 return event === null ? [] : [event];
@@ -480,7 +482,7 @@ export const layer: Layer.Layer<
         }
         return note === null
           ? { text: wrapped, accepted: Effect.void }
-          : { text: `${note}\n${wrapped}`, accepted: recordTold(threadId, mode) };
+          : { text: `${note}\n${wrapped}`, accepted: recordNote };
       }).pipe(
         Effect.catch((error) =>
           Effect.logWarning("Display mode wrap skipped", {

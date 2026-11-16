@@ -23,7 +23,6 @@ import * as SubThreads from "../subThreads/SubThreads.ts";
 import * as SendToUser from "./SendToUser.ts";
 
 const repliesThread = ThreadId.make("sub-threads:chat-replies");
-const messagesThread = ThreadId.make("sub-threads:messages-only");
 
 const scopeFor = (threadId: ThreadId): McpInvocationContext.McpInvocationScope => ({
   environmentId: EnvironmentId.make("sub-threads-environment"),
@@ -127,7 +126,7 @@ const layer = McpHttpServer.toolkitRegistration(
   Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
   Layer.provide(
     ServerSettings.layerTest({
-      threadDisplayModes: { [repliesThread]: "chat-replies", [messagesThread]: "messages-only" },
+      threadDisplayModes: { [repliesThread]: "chat-replies" },
     }),
   ),
   Layer.provide(
@@ -197,7 +196,7 @@ it.effect("refuses a send that names neither a message to answer nor a new sub-t
       { text: "Lint passes too.", reply_to: shortId("q2"), new_sub_thread: true },
     ]) {
       expect(refusalLines(yield* call("send_to_user", args))).toEqual([
-        "Refused: this thread is set to Chat + Replies. To answer a message from the user, pass reply_to with its id and user_message with its words. For a message that answers none, pass new_sub_thread true and no reply_to.",
+        "Refused: this thread is in Chat mode. To answer a message from the user, pass reply_to with its id and user_message with its words. For a message that answers none, pass new_sub_thread true and no reply_to.",
         "Messages from the user with no answer yet, by id:",
         `"${shortId("why")}": Which build was deployed?`,
         `"${shortId("q2")}": And the lint job?`,
@@ -779,34 +778,7 @@ it.effect("refuses a replace that names both or neither", () =>
       yield* call("replace_send_to_user", { user_message: "", old_text: "a", new_text: "b" }),
     );
     expect(lines[0]).toBe(
-      "Refused: this thread is set to Chat + Replies. Pass reply_to to replace your answer to that message from the user, or sub_thread to replace a message that you sent with new_sub_thread, and not both.",
-    );
-  }).pipe(Effect.provide(layer)),
-);
-
-it.effect("keeps sub-thread pointers out of a thread with no sub-threads", () =>
-  Effect.gen(function* () {
-    setup([typed("u1", "Fix the build."), sent("s1", { text: "On it." })]);
-    const ignored = yield* call(
-      "send_to_user",
-      { text: "Done.", reply_to: shortId("u1"), user_message: "Fix the build." },
-      messagesThread,
-    );
-    expect(refusalLines(ignored)[0]).toContain("you already answered the user's last message");
-    const refused = refusalLines(
-      yield* call(
-        "replace_send_to_user",
-        {
-          reply_to: shortId("u1"),
-          user_message: "Fix the build.",
-          old_text: "On it.",
-          new_text: "Done.",
-        },
-        messagesThread,
-      ),
-    );
-    expect(refused[0]).toBe(
-      "Refused: this thread is not set to Chat + Replies, so it has no sub-threads. Call replace_send_to_user without reply_to and sub_thread.",
+      "Refused: this thread is in Chat mode. Pass reply_to to replace your answer to that message from the user, or sub_thread to replace a message that you sent with new_sub_thread, and not both.",
     );
   }).pipe(Effect.provide(layer)),
 );

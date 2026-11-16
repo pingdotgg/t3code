@@ -1,7 +1,11 @@
 import type { HookInput } from "@anthropic-ai/claude-agent-sdk";
 import { assert, it } from "@effect/vitest";
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import { MESSAGES_ONLY_DISPLAY_MODE, NORMAL_DISPLAY_MODE } from "@t3tools/shared/displayModes";
+import {
+  displayStateNote,
+  CHAT_REPLIES_DISPLAY_MODE,
+  NORMAL_DISPLAY_MODE,
+} from "@t3tools/shared/displayModes";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -12,14 +16,18 @@ import * as ServerSettings from "../../serverSettings.ts";
 import * as DisplayModeCompactionNote from "./DisplayModeCompactionNote.ts";
 
 const plainId = ThreadId.make("thread:compaction-note:plain");
-const messagesOnlyId = ThreadId.make("thread:compaction-note:messages-only");
+const chatId = ThreadId.make("thread:compaction-note:chat");
 const toldNormalId = ThreadId.make("thread:compaction-note:told-normal");
 const unknownToldId = ThreadId.make("thread:compaction-note:unknown-told");
+const dashboardId = ThreadId.make("thread:compaction-note:dashboard");
 
 const notes = DisplayModeCompactionNote.layer.pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provideMerge(
-    ServerSettings.layerTest({ threadDisplayModes: { [messagesOnlyId]: "messages-only" } }),
+    ServerSettings.layerTest({
+      threadDisplayModes: { [chatId]: "chat-replies" },
+      threadDashboards: { [dashboardId]: true },
+    }),
   ),
 );
 
@@ -31,36 +39,47 @@ const toldRows = Effect.gen(function* () {
 });
 
 it.layer(notes)("DisplayModeCompactionNote", (it) => {
-  it.effect("states the current mode once a thread has a told record or a non-Normal mode", () =>
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`INSERT INTO fork_display_mode_told (thread_id, mode_id)
+  it.effect(
+    "states the display once a thread has a told record, a non-Normal mode or a Dashboard",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO fork_display_mode_told (thread_id, mode_id)
         VALUES (${toldNormalId}, 'normal'), (${unknownToldId}, 'unknown')`;
-      const before = yield* toldRows;
-      const { noteAfterCompaction } = yield* DisplayModeCompactionNote.DisplayModeCompactionNote;
+        const { noteAfterCompaction } = yield* DisplayModeCompactionNote.DisplayModeCompactionNote;
 
-      assert.isUndefined(yield* noteAfterCompaction(plainId));
-      assert.equal(
-        yield* noteAfterCompaction(messagesOnlyId),
-        MESSAGES_ONLY_DISPLAY_MODE.stateNotice,
-      );
-      assert.equal(yield* noteAfterCompaction(toldNormalId), NORMAL_DISPLAY_MODE.stateNotice);
-      assert.equal(yield* noteAfterCompaction(unknownToldId), NORMAL_DISPLAY_MODE.stateNotice);
-      assert.deepEqual(yield* toldRows, before);
-    }),
+        assert.isUndefined(yield* noteAfterCompaction(plainId));
+        assert.equal(yield* noteAfterCompaction(chatId), CHAT_REPLIES_DISPLAY_MODE.stateNotice);
+        assert.equal(yield* noteAfterCompaction(toldNormalId), NORMAL_DISPLAY_MODE.stateNotice);
+        assert.equal(yield* noteAfterCompaction(unknownToldId), NORMAL_DISPLAY_MODE.stateNotice);
+        assert.equal(
+          yield* noteAfterCompaction(dashboardId),
+          displayStateNote({ mode: NORMAL_DISPLAY_MODE, dashboard: true }),
+        );
+        // The next typed message compares with these, so a later switch gets its note.
+        assert.deepEqual(
+          (yield* toldRows).map((row) => [row.thread_id, row.mode_id]),
+          [
+            [chatId, "chat-replies@3"],
+            [dashboardId, "normal+dashboard"],
+            [toldNormalId, "normal"],
+            [unknownToldId, "normal"],
+          ],
+        );
+      }),
   );
 
   it.effect("reads whether a thread is in Normal", () =>
     Effect.gen(function* () {
       const { isNormal } = yield* DisplayModeCompactionNote.DisplayModeCompactionNote;
       assert.isTrue(yield* isNormal(plainId));
-      assert.isFalse(yield* isNormal(messagesOnlyId));
+      assert.isFalse(yield* isNormal(chatId));
     }),
   );
 });
 
 it("states the mode instead of announcing a switch", () => {
-  for (const mode of [NORMAL_DISPLAY_MODE, MESSAGES_ONLY_DISPLAY_MODE]) {
+  for (const mode of [NORMAL_DISPLAY_MODE, CHAT_REPLIES_DISPLAY_MODE]) {
     assert.match(mode.stateNotice, /^<t3-display-mode>This thread is in .*<\/t3-display-mode>$/);
     assert.notInclude(mode.stateNotice, "switched");
   }
@@ -81,7 +100,7 @@ it("adds the compaction note hook to Claude beside the subagent hook", async () 
     hooks: DisplayModeCompactionNote.claudeDisplayModeHooks({
       notes: {
         noteAfterCompaction: (id) =>
-          Effect.succeed(id === threadId ? MESSAGES_ONLY_DISPLAY_MODE.stateNotice : undefined),
+          Effect.succeed(id === threadId ? CHAT_REPLIES_DISPLAY_MODE.stateNotice : undefined),
         isNormal: () => Effect.succeed(true),
       },
       threadId,
@@ -105,7 +124,7 @@ it("adds the compaction note hook to Claude beside the subagent hook", async () 
   assert.deepEqual(await callback(input, undefined, { signal }), {
     hookSpecificOutput: {
       hookEventName: "SessionStart",
-      additionalContext: MESSAGES_ONLY_DISPLAY_MODE.stateNotice,
+      additionalContext: CHAT_REPLIES_DISPLAY_MODE.stateNotice,
     },
   });
   assert.deepEqual(await callback({ ...input, agent_id: "subagent-1" }, undefined, { signal }), {});

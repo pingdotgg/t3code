@@ -14,7 +14,12 @@ import {
 } from "@t3tools/contracts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
-import { MESSAGES_ONLY_DISPLAY_MODE, NORMAL_DISPLAY_MODE } from "@t3tools/shared/displayModes";
+import {
+  CHAT_REPLIES_DISPLAY_MODE,
+  displayNote,
+  NORMAL_DISPLAY,
+  NORMAL_DISPLAY_MODE,
+} from "@t3tools/shared/displayModes";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -206,7 +211,7 @@ const makeAdapter = (input: {
   };
 };
 
-/** Runs `body` with a Messages only thread on Claude and Codex, and returns which attempts had the note. */
+/** Runs `body` with a Chat mode thread on Claude and Codex, and returns which attempts had the note. */
 const notesPerAttempt = (
   name: string,
   body: (input: {
@@ -254,7 +259,7 @@ const notesPerAttempt = (
       Layer.provideMerge(SqlitePersistence.layerMemory),
       Layer.provideMerge(
         ServerSettings.layerTest({
-          threadDisplayModes: { [threadId]: MESSAGES_ONLY_DISPLAY_MODE.id },
+          threadDisplayModes: { [threadId]: CHAT_REPLIES_DISPLAY_MODE.id },
         }),
       ),
       Layer.provide(layerNoProviders),
@@ -452,8 +457,8 @@ const notesPerAttempt = (
     );
     return (yield* Ref.get(attempts)).map(
       (text) =>
-        text.includes(MESSAGES_ONLY_DISPLAY_MODE.notice) ||
-        text.includes(MESSAGES_ONLY_DISPLAY_MODE.stateNotice),
+        text.includes(CHAT_REPLIES_DISPLAY_MODE.notice) ||
+        text.includes(CHAT_REPLIES_DISPLAY_MODE.stateNotice),
     );
   }).pipe(Effect.scoped);
 
@@ -530,7 +535,7 @@ describe("display mode note at turn start", () => {
         );
         assert.strictEqual(
           yield* Ref.get(inFork),
-          `${NORMAL_DISPLAY_MODE.stateNotice}\nRequest in the fork`,
+          `${displayNote("unknown", NORMAL_DISPLAY)}\nRequest in the fork`,
         );
       }),
   );
@@ -547,7 +552,10 @@ describe("display mode note at turn start", () => {
           yield* Ref.set(back, yield* lastAttempt);
         }),
       );
-      assert.strictEqual(yield* Ref.get(back), `${NORMAL_DISPLAY_MODE.stateNotice}\nRequest 3`);
+      assert.strictEqual(
+        yield* Ref.get(back),
+        `${displayNote("unknown", NORMAL_DISPLAY)}\nRequest 3`,
+      );
     }),
   );
 
@@ -560,7 +568,7 @@ describe("display mode note at turn start", () => {
             yield* send(1, CLAUDE_MODEL_SELECTION, "/goal ship it");
             assert.strictEqual(
               yield* lastAttempt,
-              `${MESSAGES_ONLY_DISPLAY_MODE.notice}|/goal ship it`,
+              `${CHAT_REPLIES_DISPLAY_MODE.notice}|/goal ship it`,
             );
             assert.isUndefined(yield* toldModeAfterStart);
             yield* send(2);
@@ -577,10 +585,10 @@ describe("display mode note at turn start", () => {
         ({ send, duringInjection, stopLatestRun, toldModeAfterStart }) =>
           Effect.gen(function* () {
             yield* send(1);
-            assert.strictEqual(yield* toldModeAfterStart, MESSAGES_ONLY_DISPLAY_MODE.id);
+            assert.strictEqual(yield* toldModeAfterStart, CHAT_REPLIES_DISPLAY_MODE.toldId);
             yield* Ref.set(duringInjection, stopLatestRun);
             yield* send(2, CODEX_MODEL_SELECTION);
-            assert.strictEqual(yield* toldModeAfterStart, NORMAL_DISPLAY_MODE.id);
+            assert.strictEqual(yield* toldModeAfterStart, NORMAL_DISPLAY_MODE.toldId);
           }),
       );
       assert.deepEqual(notes, [true]);

@@ -87,7 +87,7 @@ const repliesOnScreen = () =>
   selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, threadRef) === "replies";
 const shownSubThread = () => useSubThreadsStore.getState().shownByThreadKey[threadKey];
 
-describe("a Cite in the main list of a Chat + Replies thread", () => {
+describe("a Cite in the main list of a Chat mode thread", () => {
   it.each([
     { replies: undefined, opens: false },
     { replies: 0, opens: false },

@@ -23,7 +23,6 @@ import {
   CHAT_REPLIES_DISPLAY_MODE,
   type DisplayMode,
   displayEventFromTurnItem,
-  MESSAGES_ONLY_DISPLAY_MODE,
   SUB_THREAD_RECORD_KIND,
   shortId,
 } from "@t3tools/shared/displayModes";
@@ -176,7 +175,7 @@ const CITATION = serializeAssistantCitation({
 const [S1, S3, S5, S7] = ["563b25", "543b21", "5a3b2b", "583b28"] as const;
 
 /**
- * A Chat + Replies thread: two exchanges, a sub-thread of two replies under the second answer, the
+ * A Chat mode thread: two exchanges, a sub-thread of two replies under the second answer, the
  * second answered with an ack and then a rewrite, an attachment-only message, and a new message.
  */
 const conversation = (): ReadonlyArray<OrchestrationV2TurnItem> => [
@@ -268,7 +267,7 @@ function followEarlier(
   return pages;
 }
 
-const SUB_THREAD_VIEW = `<t3-user-view thread="thread:user-view" mode="Chat + Replies" sha256="SHA">
+const SUB_THREAD_VIEW = `<t3-user-view thread="thread:user-view" mode="Chat mode" sha256="SHA">
 The user's screen in this thread, word for word. Each message is a label line, then its lines indented two spaces. [user]: the user's messages. [guest Name]: a guest's messages. [agent]: the thread agent's send_to_user messages.
 
 Main list:
@@ -445,18 +444,6 @@ describe("userViewText", () => {
       `Sub-thread under [user ${q}, 2026-11-15T16:48:00.000Z]:\n\n[user ${r}, 2026-11-15T16:48:20.000Z]\n  In a microwave?\n\n[agent, answer to ${r}, 2026-11-15T16:48:30.000Z]\n  About 15 seconds.\n</t3-user-view>`,
     );
     expect(textOf(view(items, { subThread: r }))).toBe(thread);
-  });
-
-  it("lists every message in one list in Messages only, which has no sub-threads", () => {
-    const text = textOf(view(conversation(), {}, { mode: MESSAGES_ONLY_DISPLAY_MODE }));
-    expect(text).toContain('mode="Messages only"');
-    expect(text).toContain("\nMessages:\n");
-    expect(text).toContain("[user 5a3b2b, 2026-11-15T16:48:40.000Z]");
-    expect(text).not.toContain("replies]");
-    expect(view(conversation(), { subThread: S5 }, { mode: MESSAGES_ONLY_DISPLAY_MODE })).toEqual({
-      type: "refused",
-      reason: "this thread's display mode has no sub-threads",
-    });
   });
 
   it("names the messages before the main-list window in an Earlier line that skips none", () => {

@@ -10,7 +10,6 @@ import {
 } from "@t3tools/contracts";
 import {
   CHAT_REPLIES_DISPLAY_MODE,
-  MESSAGES_ONLY_DISPLAY_MODE,
   shortId,
   SUB_THREAD_RECORD_KIND,
 } from "@t3tools/shared/displayModes";
@@ -132,7 +131,7 @@ const editLint = rewrite("w2", 8, 9, { reply_to: shortId("q2"), new_text: "Lint 
 const readAt = (at: string | null) =>
   new Map([["q1", { firstId: "q1", readAt: at, summary: null }]]);
 
-describe("Chat + Replies rows", () => {
+describe("Chat mode rows", () => {
   it("draws the main list with each answer where its question is", () => {
     expect(ids(applyDisplayMode(CHAT_REPLIES_DISPLAY_MODE, entries))).toEqual(["q1", "news", "a1"]);
   });
@@ -174,17 +173,6 @@ describe("Chat + Replies rows", () => {
     ]);
     // A first message has no unread state: its edit is only marked.
     expect(timelineSubThreads(edited, null).get("news")?.agentReplyTimes).toEqual([]);
-  });
-
-  it("stays a flat list in Messages only", () => {
-    expect(ids(applyDisplayMode(MESSAGES_ONLY_DISPLAY_MODE, entries))).toEqual([
-      "q1",
-      "news",
-      "a1",
-      "why",
-      "q2",
-      "a2",
-    ]);
   });
 });
 

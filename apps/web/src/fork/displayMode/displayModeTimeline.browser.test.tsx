@@ -9,7 +9,7 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import { LegendListRef } from "@legendapp/list/react";
-import { MESSAGES_ONLY_DISPLAY_MODE, NORMAL_DISPLAY_MODE } from "@t3tools/shared/displayModes";
+import { CHAT_REPLIES_DISPLAY_MODE, NORMAL_DISPLAY_MODE } from "@t3tools/shared/displayModes";
 import * as DateTime from "effect/DateTime";
 import { createRef, type ComponentProps } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -150,10 +150,10 @@ async function renderTimeline(
   );
 }
 
-describe("Messages only timeline", () => {
+describe("display mode timeline", () => {
   it("shows the user's message and the sent message, drawn as a reply", async () => {
     await using screen = await renderTimeline([
-      ...applyDisplayMode(MESSAGES_ONLY_DISPLAY_MODE, entries),
+      ...applyDisplayMode(CHAT_REPLIES_DISPLAY_MODE, entries),
     ]);
     await expect
       .element(screen.getByText("Fixed: the token check now allows clock skew."))
@@ -207,7 +207,7 @@ describe("Messages only timeline", () => {
 
     it("draws neither in a mode that chooses its replies", async () => {
       await using screen = await renderTimeline(
-        [...applyDisplayMode(MESSAGES_ONLY_DISPLAY_MODE, asked)],
+        [...applyDisplayMode(CHAT_REPLIES_DISPLAY_MODE, asked)],
         true,
         working,
       );
@@ -249,25 +249,25 @@ describe("Messages only timeline", () => {
       send("two-last", 4, "It is shipped."),
     ]);
 
-    it("shows both in Messages only, with no fold", async () => {
+    it("shows both in Chat mode, with no fold", async () => {
       await using screen = await renderTimeline([
-        ...applyDisplayMode(MESSAGES_ONLY_DISPLAY_MODE, twoSends),
+        ...applyDisplayMode(CHAT_REPLIES_DISPLAY_MODE, twoSends),
       ]);
       await expect.element(screen.getByText("Tests pass, shipping now.")).toBeVisible();
       await expect.element(screen.getByText("It is shipped.")).toBeVisible();
       expect(screen.container.textContent ?? "").not.toContain("Worked");
     });
 
-    it("shows both in Messages only when zen hides tool calls", async () => {
+    it("shows both in Chat mode when zen hides tool calls", async () => {
       __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, toolCallVisibility: "zen" });
       try {
-        const messagesOnly = [...applyDisplayMode(MESSAGES_ONLY_DISPLAY_MODE, twoSends)];
+        const chat = [...applyDisplayMode(CHAT_REPLIES_DISPLAY_MODE, twoSends)];
         {
-          await using screen = await renderTimeline(messagesOnly);
+          await using screen = await renderTimeline(chat);
           await expect.element(screen.getByText("It is shipped.")).toBeVisible();
           expect(screen.container.textContent ?? "").not.toContain("Tests pass, shipping now.");
         }
-        await using screen = await renderTimeline(messagesOnly, true);
+        await using screen = await renderTimeline(chat, true);
         await expect.element(screen.getByText("Tests pass, shipping now.")).toBeVisible();
         await expect.element(screen.getByText("It is shipped.")).toBeVisible();
       } finally {
@@ -302,10 +302,10 @@ describe("Messages only timeline", () => {
       ),
     ]);
 
-    it("shows each Normal-mode send once in Normal, outside the fold, and as replies in Messages only", async () => {
+    it("shows each Normal-mode send once in Normal, outside the fold, and as replies in Chat mode", async () => {
       for (const [mode, repliesChosen] of [
         [NORMAL_DISPLAY_MODE, false],
-        [MESSAGES_ONLY_DISPLAY_MODE, true],
+        [CHAT_REPLIES_DISPLAY_MODE, true],
       ] as const) {
         await using screen = await renderTimeline(
           [...applyDisplayMode(mode, normalSends)],
@@ -357,7 +357,7 @@ describe("Messages only timeline", () => {
 
     it("redraws the send's row with the new text and time when the rewrite arrives", async () => {
       await using screen = await renderTimeline([
-        ...applyDisplayMode(MESSAGES_ONLY_DISPLAY_MODE, sent),
+        ...applyDisplayMode(CHAT_REPLIES_DISPLAY_MODE, sent),
       ]);
       const shownTime = (at: string) => formatDayAwareTimestamp(at, "locale");
       const rowOf = (text: string) =>
@@ -372,7 +372,7 @@ describe("Messages only timeline", () => {
       await screen.rerender(
         <MessagesTimeline
           {...props()}
-          timelineEntries={[...applyDisplayMode(MESSAGES_ONLY_DISPLAY_MODE, rewritten)]}
+          timelineEntries={[...applyDisplayMode(CHAT_REPLIES_DISPLAY_MODE, rewritten)]}
           repliesChosen={false}
         />,
       );
@@ -408,7 +408,7 @@ describe("Messages only timeline", () => {
     });
 
     it("draws no row for a replace call in any mode, running or done", () => {
-      for (const mode of [NORMAL_DISPLAY_MODE, MESSAGES_ONLY_DISPLAY_MODE])
+      for (const mode of [NORMAL_DISPLAY_MODE, CHAT_REPLIES_DISPLAY_MODE])
         for (const status of ["running", "completed"] as const) {
           const shown = applyDisplayMode(mode, [...sent, ...entriesOf([replace("call", status)])]);
           expect(shown.map((entry) => entry.id)).toEqual(["rewrite-ask", "rewrite-send"]);

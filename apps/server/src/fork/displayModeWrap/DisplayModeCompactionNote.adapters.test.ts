@@ -19,7 +19,7 @@ import {
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
-import { MESSAGES_ONLY_DISPLAY_MODE } from "@t3tools/shared/displayModes";
+import { CHAT_REPLIES_DISPLAY_MODE } from "@t3tools/shared/displayModes";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexReplay from "effect-codex-app-server/replay";
 import * as DateTime from "effect/DateTime";
@@ -103,7 +103,7 @@ const turnInput = (input: {
 };
 
 const settingsFor = (threadId: ThreadId) =>
-  ServerSettings.layerTest({ threadDisplayModes: { [threadId]: "messages-only" } });
+  ServerSettings.layerTest({ threadDisplayModes: { [threadId]: "chat-replies" } });
 
 /** The production layer that gives the adapters their services, so a test fails if it drops the note. */
 const infrastructureFor = (threadId: ThreadId, prefix: string) =>
@@ -215,7 +215,7 @@ it.effect("a Claude adapter built on the provider infrastructure adds the thread
       {
         hookSpecificOutput: {
           hookEventName: "SessionStart",
-          additionalContext: MESSAGES_ONLY_DISPLAY_MODE.stateNotice,
+          additionalContext: CHAT_REPLIES_DISPLAY_MODE.stateNotice,
         },
       },
     );
@@ -226,7 +226,7 @@ it.effect(
   "Claude gets upstream's send_to_user section from the hook in Normal, not in its system prompt",
   () => {
     const normalId = ThreadId.make("thread:send-section:normal");
-    const messagesOnlyId = ThreadId.make("thread:send-section:messages-only");
+    const chatId = ThreadId.make("thread:send-section:chat");
     const section = "### Text the user must read mid-turn";
     return Effect.gen(function* () {
       const sessions = yield* McpProviderSessions.McpProviderSessions;
@@ -264,8 +264,8 @@ it.effect(
           : undefined;
       });
       assert.include(yield* submitted(normalId), section);
-      assert.isUndefined(yield* submitted(messagesOnlyId));
-    }).pipe(Effect.scoped, Effect.provide(infrastructureFor(messagesOnlyId, "t3-send-section-")));
+      assert.isUndefined(yield* submitted(chatId));
+    }).pipe(Effect.scoped, Effect.provide(infrastructureFor(chatId, "t3-send-section-")));
   },
 );
 
@@ -404,7 +404,7 @@ const codexCompaction = (input: {
         {
           type: "message",
           role: "developer",
-          content: [{ type: "input_text", text: MESSAGES_ONLY_DISPLAY_MODE.stateNotice }],
+          content: [{ type: "input_text", text: CHAT_REPLIES_DISPLAY_MODE.stateNotice }],
         },
       ],
     },

@@ -375,7 +375,7 @@ import { ChatTerminalDrawers } from "./chat/ChatTerminalDrawers";
 import { ChatRightPanel } from "./chat/ChatRightPanel";
 import { useSplitRendered } from "../fork/rightPanelSplit/renderedSplit";
 import { unfocusedPaneSurface } from "../fork/rightPanelSplit/splitLayout.logic";
-import { useDashboardSurfaceAdder } from "../fork/dashboard/dashboardSurface";
+import { useModeSurfaceActions } from "../fork/dashboard/dashboardSurface";
 import { REPLY_BOX_QUEUE_EDIT_BLOCKED, subThreadDraftId } from "../fork/subThreads/subThreadReply";
 import { useSubThreadCite } from "../fork/subThreads/subThreadCite";
 import { SubThreadViewContext } from "../fork/subThreads/subThreadsState";
@@ -2816,7 +2816,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThread?.lineage.sideChat !== true &&
     !isSubagentThread &&
     serverConfig?.environment.capabilities.sideChats === true;
-  const addDashboardSurface = useDashboardSurfaceAdder(activeThreadRef);
+  const modeSurfaceActions = useModeSurfaceActions(activeThreadRef);
   const sideChat = useSideChat({
     threadRef: sideChatsOffered && isServerThread ? activeThreadRef : null,
     readSettings: () => ({
@@ -4038,7 +4038,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddDevice={addDeviceSurfaceStable}
           onAddSideChat={sideChatsOffered ? openSideChatStable : undefined}
-          onAddDashboard={addDashboardSurface}
+          modeSurfaceActions={modeSurfaceActions}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
           diffAvailable={isServerThread && isGitRepo}

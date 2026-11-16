@@ -93,7 +93,6 @@ function replyEntry(
 
 interface FoldedTimeline {
   readonly events: ReadonlyArray<DisplayEvent | null>;
-  readonly shown: ReadonlyArray<DisplayEvent>;
   readonly cores: ReadonlyArray<VisibleCore>;
   /** By core id, when the rewrite that last changed the core's text completed. Edited cores only. */
   readonly editedAt: ReadonlyMap<string, string>;
@@ -130,9 +129,8 @@ function foldTimeline(entries: ReadonlyArray<TimelineEntry>): FoldedTimeline {
   let folded = foldedTimelines.get(entries);
   if (folded === undefined) {
     const events = entries.map(displayEventFromEntry);
-    const shown = events.filter((event) => event !== null);
-    const cores = foldCores(shown);
-    folded = { events, shown, cores, editedAt: editTimes(entries, events, cores) };
+    const cores = foldCores(events.filter((event) => event !== null));
+    folded = { events, cores, editedAt: editTimes(entries, events, cores) };
     foldedTimelines.set(entries, folded);
   }
   return folded;
@@ -239,7 +237,7 @@ export function rowShownIn(
 /**
  * Returns the rows that a display mode draws, or `entries` itself when no row changes. A completed
  * send is a reply with its latest text, but in Normal a Normal-mode send keeps upstream's row. A
- * replace call has no row. A mode without `visibleCores` keeps all other rows. A mode with
+ * replace call has no row. A mode without sub-threads keeps all other rows. A mode with
  * sub-threads draws the first messages, or with `subThread`, that first message and its replies.
  */
 export function applyDisplayMode(
@@ -247,7 +245,7 @@ export function applyDisplayMode(
   entries: ReadonlyArray<TimelineEntry>,
   subThread: string | null = null,
 ): ReadonlyArray<TimelineEntry> {
-  const { events, shown, cores, editedAt } = foldTimeline(entries);
+  const { events, cores, editedAt } = foldTimeline(entries);
   const coreTexts = new Map(cores.map((core) => [core.id, core.text]));
   const shownIds = mode.subThreads
     ? new Set(
@@ -255,9 +253,7 @@ export function applyDisplayMode(
           .filter((core) => (subThread === null ? !core.reply : core.first === subThread))
           .map((core) => core.id),
       )
-    : mode.visibleCores === null
-      ? null
-      : new Set(mode.visibleCores(shown).map((core) => core.id));
+    : null;
   const rows = entries.flatMap((entry, index): TimelineEntry[] => {
     if (shownIds !== null && !shownIds.has(entry.id)) return [];
     const item = entry.kind === "work" ? entry.entry.structuredPayload : undefined;

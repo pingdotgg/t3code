@@ -20,11 +20,13 @@ import {
 import {
   CHAT_REPLIES_DISPLAY_MODE,
   type DisplayMode,
-  MESSAGES_ONLY_DISPLAY_MODE,
+  displayNote,
+  NORMAL_DISPLAY,
   NORMAL_DISPLAY_MODE,
   recapLine,
   shortId,
   SUB_THREAD_RECORD_KIND,
+  toldKey,
 } from "@t3tools/shared/displayModes";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -46,6 +48,8 @@ import { layerNoProviders } from "./DisplayModeWrap.testkit.ts";
 const sourceId = ThreadId.make("thread:display-wrap:source");
 const forkId = ThreadId.make("thread:display-wrap:fork");
 const deletedId = ThreadId.make("thread:display-wrap:deleted");
+const deletedDashboardId = ThreadId.make("thread:display-wrap:deleted-dashboard");
+const dashboardId = ThreadId.make("thread:display-wrap:dashboard");
 const rolledBackId = ThreadId.make("thread:display-wrap:rolled-back");
 const longId = ThreadId.make("thread:display-wrap:long");
 const busyId = ThreadId.make("thread:display-wrap:busy");
@@ -73,17 +77,18 @@ const forkMessageId = MessageId.make("message:display-wrap:fork");
 const store = ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 const settings = ServerSettings.layerTest({
   threadDisplayModes: {
-    [sourceId]: "messages-only",
-    [forkId]: "messages-only",
-    [deletedId]: "messages-only",
-    [rolledBackId]: "messages-only",
-    [longId]: "messages-only",
-    [busyId]: "messages-only",
-    [doneId]: "messages-only",
-    [newId]: "messages-only",
-    [rewrittenId]: "messages-only",
+    [sourceId]: "chat-replies",
+    [forkId]: "chat-replies",
+    [deletedId]: "chat-replies",
+    [rolledBackId]: "chat-replies",
+    [longId]: "chat-replies",
+    [busyId]: "chat-replies",
+    [doneId]: "chat-replies",
+    [newId]: "chat-replies",
+    [rewrittenId]: "chat-replies",
     [repliesId]: "chat-replies",
   },
+  threadDashboards: { [deletedDashboardId]: true, [dashboardId]: true },
 });
 const providers = Layer.mock(ProviderRegistry.ProviderRegistry)({
   getProviders: Effect.succeed([
@@ -305,20 +310,25 @@ const sessions = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
     } as never),
 });
 
-const recap = (lines: ReadonlyArray<string>, text: string) =>
+/** A message that the user typed in the main list of a Chat mode thread, as the agent gets it. */
+const inMainList = (id: string, text: string) =>
   [
-    "<t3-messages-mode>",
-    "This message is from the user. Before it, their screen showed:",
-    ...lines,
-    "</t3-messages-mode>",
+    "<t3-replies-mode>",
+    `Message "${shortId(id)}" from the user in the main list.`,
+    `To answer, call send_to_user with reply_to "${shortId(id)}" and the user's words below as user_message. Your answer shows in the main list.`,
+    "</t3-replies-mode>",
     text,
   ].join("\n");
 
-/** The first message that the user types after the thread switched to Messages only. */
-const told = (text: string) => `${MESSAGES_ONLY_DISPLAY_MODE.notice}\n${text}`;
+/** A message typed with the id `message:<its text>` in the main list of a Chat mode thread. */
+const typedInChat = (text: string) => inMainList(`message:${text}`, text);
 
-/** The first message that the user types after the agent may have lost its note. */
-const stated = (mode: DisplayMode, text: string) => `${mode.stateNotice}\n${text}`;
+/** The first message that the user types after the thread switched to Chat mode. */
+const told = (text: string) => `${CHAT_REPLIES_DISPLAY_MODE.notice}\n${text}`;
+
+/** The first message that the user types after the agent may have lost its note, with no Dashboard. */
+const stated = (mode: DisplayMode, text: string) =>
+  `${displayNote("unknown", { mode, dashboard: false })}\n${text}`;
 
 /** Returns the text that a provider gets for a message, and accepts the turn. */
 const deliver = Effect.fn("deliver")(function* (input: {
@@ -458,7 +468,7 @@ it.effect("wraps a steering message sent after the agent's hidden tool work", ()
     refuseSteer = false;
     yield* steer;
     yield* steer;
-    const block = recap(["[user] Fix the build.", "[you] On it."], "Use the smaller fix.");
+    const block = inMainList(steerId, "Use the smaller fix.");
     assert.deepEqual(steered, [told(block), told(block), block]);
   }).pipe(
     Effect.provide(
@@ -493,7 +503,7 @@ it.effect("leaves the note owed after a slash command sent as a steer", () =>
       message: { id: steerId, createdBy: "user", creationSource: "web", text: "/review" },
       text: "/review",
     });
-    assert.strictEqual(next.commandNote?.text, MESSAGES_ONLY_DISPLAY_MODE.notice);
+    assert.strictEqual(next.commandNote?.text, CHAT_REPLIES_DISPLAY_MODE.notice);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -523,24 +533,15 @@ it.effect("counts the history a fork inherits from its source", () =>
       }),
     ];
     yield* Effect.forEach(forkEvents, (event) => projections.apply(event), { discard: true });
-    const text = yield* deliver({
-      threadId: forkId,
-      id: forkMessageId,
-      text: "Try another way.",
-    });
-    assert.strictEqual(
-      text,
-      told(recap(["[user] Fix the build.", "[you] On it."], "Try another way.")),
-    );
     const wrap = yield* DisplayModeWrap.DisplayModeWrap;
     assert.deepEqual(
-      (yield* wrap.latestShownItems(forkId)).map((item) => item.ordinal),
+      (yield* wrap.latestShownItems(forkId, undefined, 3, false)).map((item) => item.ordinal),
       [100, 101, 1_000_100],
     );
   }).pipe(Effect.provide(Layer.merge(store, wrapper))),
 );
 
-it.effect("recaps a send with its latest rewrite, and does not count rewrites as messages", () =>
+it.effect("does not count rewrites as messages when it reads back", () =>
   Effect.gen(function* () {
     const now = yield* DateTime.now;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -568,15 +569,12 @@ it.effect("recaps a send with its latest rewrite, and does not count rewrites as
       message(15, "Any news?"),
     ];
     yield* Effect.forEach(events, (event) => projections.apply(event), { discard: true });
-    const text = yield* deliver({
-      threadId: rewrittenId,
-      id: MessageId.make("message:display-wrap:rewritten:15"),
-      text: "Any news?",
-    });
-    assert.strictEqual(
-      text,
-      told(recap(["[you] Hello.", "[user] Fix the build.", "[you] On it, take 10."], "Any news?")),
+    const wrap = yield* DisplayModeWrap.DisplayModeWrap;
+    const ordinals = (yield* wrap.latestShownItems(rewrittenId, undefined, 3, false)).map(
+      (item) => item.ordinal,
     );
+    // Three messages back: "Any news?", "On it." and "Fix the build.", with the rewrites between.
+    assert.deepEqual(ordinals, [3, 4, ...rewrites.map((_, index) => 5 + index), 15]);
   }).pipe(Effect.provide(Layer.merge(store, wrapper))),
 );
 
@@ -610,7 +608,9 @@ it.effect("reads the latest shown items back past the user's last typed message"
       }),
     ];
     yield* Effect.forEach(events, (event) => projections.apply(event), { discard: true });
-    const ordinals = (yield* wrap.latestShownItems(latestId)).map((item) => item.ordinal);
+    const ordinals = (yield* wrap.latestShownItems(latestId, undefined, 3, false)).map(
+      (item) => item.ordinal,
+    );
     // Back to the typed message at 2, which with the sends after it makes 3 messages.
     assert.deepEqual(ordinals, [2, 3, 4, 5, 7, 8]);
   }).pipe(Effect.provide(Layer.merge(store, wrapper))),
@@ -651,7 +651,7 @@ it.effect("counts back from the caller's own item when it names one", () =>
       itemUpdated(now, ownCallId, runId, 5, { type: "send_to_user", text: "Tests pass." }),
     ];
     yield* Effect.forEach(events, (event) => projections.apply(event), { discard: true });
-    const ordinals = (yield* wrap.latestShownItems(ownCallId, "toolu_own")).map(
+    const ordinals = (yield* wrap.latestShownItems(ownCallId, "toolu_own", 3, false)).map(
       (item) => item.ordinal,
     );
     // The typed message before the call's own item is read, though two came after it.
@@ -688,13 +688,13 @@ it.effect("reads back to the latest message of the main list when asked, past ma
     ];
     yield* Effect.forEach(events, (event) => projections.apply(event), { discard: true });
     const first = (items: ReadonlyArray<OrchestrationV2TurnItem>) => items[0]?.ordinal;
-    assert.strictEqual(first(yield* wrap.latestShownItems(mainFirstId, undefined, 120)), 8);
+    assert.strictEqual(first(yield* wrap.latestShownItems(mainFirstId, undefined, 120, false)), 8);
     // The agent's news at 2 is the main list's latest message; the user's first message is not needed.
     assert.strictEqual(first(yield* wrap.latestShownItems(mainFirstId, undefined, 120, true)), 2);
   }).pipe(Effect.provide(Layer.merge(store, wrapper))),
 );
 
-it.effect("looks back past many of the user's messages to find the agent's earlier work", () =>
+it.effect("reads back no further than it needs past many runs of the user's messages", () =>
   Effect.gen(function* () {
     const now = yield* DateTime.now;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -712,7 +712,6 @@ it.effect("looks back past many of the user's messages to find the agent's earli
         }),
       ];
     }).flat();
-    const lastMessageId = MessageId.make("message:display-wrap:long:12");
     const events: ReadonlyArray<OrchestrationV2DomainEvent> = [
       threadCreated(now, longId, null),
       runCreated(now, longId, firstRunId, "completed"),
@@ -726,11 +725,11 @@ it.effect("looks back past many of the user's messages to find the agent's earli
       ...turns,
     ];
     yield* Effect.forEach(events, (event) => projections.apply(event), { discard: true });
-    const text = yield* deliver({ threadId: longId, id: lastMessageId, text: "Any news?" });
-    assert.strictEqual(
-      text,
-      told(recap(["[user] Note 9", "[user] Note 10", "[user] Note 11"], "Any news?")),
+    const wrap = yield* DisplayModeWrap.DisplayModeWrap;
+    const ordinals = (yield* wrap.latestShownItems(longId, undefined, 3, false)).map(
+      (item) => item.ordinal,
     );
+    assert.deepEqual(ordinals, [100, 110, 120]);
   }).pipe(Effect.provide(Layer.merge(store, wrapper))),
 );
 
@@ -757,8 +756,6 @@ it.effect("reads past thousands of tool calls for the decision and the listed me
           Array.from({ length: commandCount }, (_, index) =>
             itemUpdated(now, threadId, run, from + index, { type: "command_execution" }),
           ),
-        wrapAt: (ordinal: number, text: string) =>
-          deliver({ threadId, id: messageId(ordinal), text }),
       };
     };
     const busy = thread(busyId);
@@ -778,14 +775,13 @@ it.effect("reads past thousands of tool calls for the decision and the listed me
       done.message(commandCount + 3, "Thanks"),
     ];
     yield* Effect.forEach(events, (event) => projections.apply(event), { discard: true });
-    assert.strictEqual(
-      yield* busy.wrapAt(commandCount + 5, "Any news?"),
-      told(recap(["[you] On it.", "[user] Keep going.", "[you] Halfway there."], "Any news?")),
-    );
-    assert.strictEqual(
-      yield* done.wrapAt(commandCount + 3, "Thanks"),
-      told(recap(["[user] Fix the build.", "[you] All done."], "Thanks")),
-    );
+    const wrap = yield* DisplayModeWrap.DisplayModeWrap;
+    const ordinals = (threadId: ThreadId) =>
+      wrap
+        .latestShownItems(threadId, undefined, 3, false)
+        .pipe(Effect.map((items) => items.map((item) => item.ordinal)));
+    assert.deepEqual(yield* ordinals(busyId), [3, 4, commandCount + 5]);
+    assert.deepEqual(yield* ordinals(doneId), [1, commandCount + 2, commandCount + 3]);
   }).pipe(Effect.provide(Layer.merge(store, wrapper))),
 );
 
@@ -832,8 +828,11 @@ it.effect("leaves out the messages of a rolled-back run and a cancelled queued t
       }),
     ];
     yield* Effect.forEach(events, (event) => projections.apply(event), { discard: true });
-    const text = yield* deliver({ threadId: rolledBackId, id: nextMessageId, text: "Any news?" });
-    assert.strictEqual(text, told(recap(["[user] Fix the build.", "[you] On it."], "Any news?")));
+    const wrap = yield* DisplayModeWrap.DisplayModeWrap;
+    const ordinals = (yield* wrap.latestShownItems(rolledBackId, undefined, 3, false)).map(
+      (item) => item.ordinal,
+    );
+    assert.deepEqual(ordinals, [1, 2, 7]);
   }).pipe(Effect.provide(Layer.merge(store, wrapper))),
 );
 
@@ -860,7 +859,7 @@ it.effect(
       assert.strictEqual(yield* sendAt(104, "/REVIEW"), "/REVIEW");
       assert.strictEqual(
         yield* sendAt(105, "/tmp is full"),
-        told(recap(["[you] On it.", "[user] /compact", "[user] /REVIEW"], "/tmp is full")),
+        told(inMainList("message:display-wrap:105", "/tmp is full")),
       );
     }).pipe(Effect.provide(Layer.merge(store, wrapper))),
 );
@@ -889,7 +888,7 @@ it.effect(
       assert.strictEqual(yield* sendAt(105, "/goal ship it"), "/goal ship it");
       assert.strictEqual(
         yield* sendAt(106, "Any news?"),
-        told(recap(["[user] /compact", "[user]  /COMPACT ", "[user] /goal ship it"], "Any news?")),
+        told(inMainList("message:display-wrap:106", "Any news?")),
       );
     }).pipe(Effect.provide(Layer.merge(store, wrapperWithoutCommands))),
 );
@@ -915,11 +914,11 @@ it.effect("gives an owed note to a slash command as its context, told once deliv
     const review = yield* command("/review");
     assert.deepEqual(
       [review.text, review.commandNote?.text],
-      ["/review", MESSAGES_ONLY_DISPLAY_MODE.notice],
+      ["/review", CHAT_REPLIES_DISPLAY_MODE.notice],
     );
     yield* review.accepted;
     const again = yield* command("/review");
-    assert.strictEqual(again.commandNote?.text, MESSAGES_ONLY_DISPLAY_MODE.notice);
+    assert.strictEqual(again.commandNote?.text, CHAT_REPLIES_DISPLAY_MODE.notice);
     yield* again.commandNote?.delivered ?? Effect.void;
     assert.isUndefined((yield* command("/review")).commandNote);
   }).pipe(Effect.provide(Layer.merge(store, wrapper))),
@@ -957,39 +956,9 @@ it.effect(
           },
           text,
         });
-        assert.isTrue(wrapped.text.startsWith(MESSAGES_ONLY_DISPLAY_MODE.notice));
+        assert.isTrue(wrapped.text.startsWith(CHAT_REPLIES_DISPLAY_MODE.notice));
       }
     }).pipe(Effect.provide(Layer.merge(store, wrapperWithoutCommands))),
-);
-
-it.effect("leaves a queued message that has not started out of the block", () =>
-  Effect.gen(function* () {
-    const now = yield* DateTime.now;
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    yield* seedSource(now);
-    const id = MessageId.make("message:display-wrap:after-queued");
-    yield* projections.apply(
-      itemUpdated(now, sourceId, runId, 103, {
-        type: "user_message",
-        messageId: MessageId.make("message:display-wrap:queued"),
-        text: "Then ship it.",
-        inputIntent: "queued_turn",
-        status: "pending",
-      }),
-    );
-    yield* projections.apply(
-      itemUpdated(now, sourceId, runId, 104, {
-        type: "user_message",
-        messageId: id,
-        text: "Any news?",
-        inputIntent: "steer",
-      }),
-    );
-    assert.strictEqual(
-      yield* deliver({ threadId: sourceId, id, text: "Any news?" }),
-      told(recap(["[user] Fix the build.", "[you] On it."], "Any news?")),
-    );
-  }).pipe(Effect.provide(Layer.merge(store, wrapper))),
 );
 
 it.effect("tells the agent about the mode on the first typed message after each switch", () =>
@@ -1003,24 +972,39 @@ it.effect("tells the agent about the mode on the first typed message after each 
     const switchTo = (mode: string | null) =>
       serverSettings.updateSettings({ threadDisplayModes: { [switchId]: mode } });
 
-    assert.strictEqual(yield* send(newId, "First"), told("First"));
-    assert.strictEqual(yield* send(newId, "Second"), "Second");
+    assert.strictEqual(yield* send(newId, "First"), told(typedInChat("First")));
+    assert.strictEqual(yield* send(newId, "Second"), typedInChat("Second"));
 
     assert.strictEqual(yield* send(switchId, "Hello"), "Hello");
-    yield* switchTo("messages-only");
+    yield* switchTo("chat-replies");
     assert.strictEqual(
       yield* send(switchId, "Continue where you left off.", "server"),
       "Continue where you left off.",
     );
     assert.strictEqual(yield* send(switchId, "From the phone", "mobile"), "From the phone");
-    assert.strictEqual(yield* send(switchId, "Status?"), told("Status?"));
-    assert.strictEqual(yield* send(switchId, "Thanks"), "Thanks");
+    assert.strictEqual(yield* send(switchId, "Status?"), told(typedInChat("Status?")));
+    assert.strictEqual(yield* send(switchId, "Thanks"), typedInChat("Thanks"));
     yield* switchTo(null);
     assert.strictEqual(
       yield* send(switchId, "Show me everything"),
       `${NORMAL_DISPLAY_MODE.notice}\nShow me everything`,
     );
     assert.strictEqual(yield* send(switchId, "Next"), "Next");
+
+    const dashboardOn = { mode: NORMAL_DISPLAY_MODE, dashboard: true };
+    const dashboard = (on: true | null) =>
+      serverSettings.updateSettings({ threadDashboards: { [switchId]: on } });
+    yield* dashboard(true);
+    assert.strictEqual(
+      yield* send(switchId, "Show the Dashboard"),
+      `${displayNote(toldKey(NORMAL_DISPLAY), dashboardOn)}\nShow the Dashboard`,
+    );
+    assert.strictEqual(yield* send(switchId, "Anything new?"), "Anything new?");
+    yield* dashboard(null);
+    assert.strictEqual(
+      yield* send(switchId, "Hide it"),
+      `${displayNote(toldKey(dashboardOn), NORMAL_DISPLAY)}\nHide it`,
+    );
   }).pipe(Effect.provide(Layer.mergeAll(store, settings, wrapper))),
 );
 
@@ -1041,10 +1025,7 @@ it.effect("adds nothing to a message typed in the mobile app", () =>
     const typed = (creationSource: "web" | "mobile") =>
       deliver({ threadId: sourceId, id, text: "Status?", creationSource });
     assert.strictEqual(yield* typed("mobile"), "Status?");
-    assert.strictEqual(
-      yield* typed("web"),
-      told(recap(["[user] Fix the build.", "[you] On it."], "Status?")),
-    );
+    assert.strictEqual(yield* typed("web"), told(inMainList(id, "Status?")));
   }).pipe(Effect.provide(Layer.merge(store, wrapper))),
 );
 
@@ -1061,11 +1042,12 @@ it.effect("sends the note again until the provider accepts the turn", () =>
       },
       text: "First",
     };
-    assert.strictEqual((yield* wrap.wrapUserText(input)).text, told("First"));
+    const typed = inMainList(input.message.id, "First");
+    assert.strictEqual((yield* wrap.wrapUserText(input)).text, told(typed));
     const retried = yield* wrap.wrapUserText(input);
-    assert.strictEqual(retried.text, told("First"));
+    assert.strictEqual(retried.text, told(typed));
     yield* retried.accepted;
-    assert.strictEqual((yield* wrap.wrapUserText(input)).text, "First");
+    assert.strictEqual((yield* wrap.wrapUserText(input)).text, typed);
   }).pipe(Effect.provide(Layer.mergeAll(store, settings, wrapper))),
 );
 
@@ -1080,16 +1062,19 @@ it.effect("tells a new provider context again, whichever message starts it", () 
         ...(options.server ? { creationSource: "server" as const } : {}),
         ...(options.fresh ? { context: "fresh" as const } : {}),
       });
-    yield* serverSettings.updateSettings({ threadDisplayModes: { [switchId]: "messages-only" } });
-    assert.strictEqual(yield* send("First"), told("First"));
-    assert.strictEqual(yield* send("Second"), "Second");
-    assert.strictEqual(yield* send("After a handoff", { fresh: true }), told("After a handoff"));
-    assert.strictEqual(yield* send("Next"), "Next");
+    yield* serverSettings.updateSettings({ threadDisplayModes: { [switchId]: "chat-replies" } });
+    assert.strictEqual(yield* send("First"), told(typedInChat("First")));
+    assert.strictEqual(yield* send("Second"), typedInChat("Second"));
+    assert.strictEqual(
+      yield* send("After a handoff", { fresh: true }),
+      told(typedInChat("After a handoff")),
+    );
+    assert.strictEqual(yield* send("Next"), typedInChat("Next"));
     assert.strictEqual(
       yield* send("Continue where you left off.", { server: true, fresh: true }),
       "Continue where you left off.",
     );
-    assert.strictEqual(yield* send("Status?"), told("Status?"));
+    assert.strictEqual(yield* send("Status?"), told(typedInChat("Status?")));
     // A new agent starts in the full view, so a Normal thread has nothing to tell it.
     yield* serverSettings.updateSettings({ threadDisplayModes: { [switchId]: null } });
     assert.strictEqual(yield* send("In Normal", { fresh: true }), "In Normal");
@@ -1109,12 +1094,12 @@ it.effect("tells the agent its mode again after a rollback, if it was told one",
 
     yield* wrap.forgetNotes(threadId);
     assert.strictEqual(yield* send("Never told"), "Never told");
-    yield* switchTo("messages-only");
-    assert.strictEqual(yield* send("Switched"), told("Switched"));
+    yield* switchTo("chat-replies");
+    assert.strictEqual(yield* send("Switched"), told(typedInChat("Switched")));
     yield* wrap.forgetNotes(threadId);
     assert.strictEqual(
       yield* send("Rolled back"),
-      stated(MESSAGES_ONLY_DISPLAY_MODE, "Rolled back"),
+      stated(CHAT_REPLIES_DISPLAY_MODE, typedInChat("Rolled back")),
     );
     yield* switchTo(null);
     assert.strictEqual(yield* send("Back to Normal"), normalNote("Back to Normal"));
@@ -1147,9 +1132,9 @@ it.effect("tells a copied conversation its mode only when the source got a note"
       "Copy of an untold thread",
     );
     yield* serverSettings.updateSettings({
-      threadDisplayModes: { [sourceThreadId]: "messages-only" },
+      threadDisplayModes: { [sourceThreadId]: "chat-replies" },
     });
-    assert.strictEqual(yield* send(sourceThreadId, "Source"), told("Source"));
+    assert.strictEqual(yield* send(sourceThreadId, "Source"), told(typedInChat("Source")));
     assert.strictEqual(
       yield* send(secondCopy, "Copy of a told thread", sourceThreadId),
       stated(NORMAL_DISPLAY_MODE, "Copy of a told thread"),
@@ -1171,8 +1156,8 @@ it.effect("tells the agent its mode again when history joins its conversation", 
       });
 
     assert.strictEqual(yield* send("Never told", "uncertain"), "Never told");
-    yield* serverSettings.updateSettings({ threadDisplayModes: { [threadId]: "messages-only" } });
-    assert.strictEqual(yield* send("Switched"), told("Switched"));
+    yield* serverSettings.updateSettings({ threadDisplayModes: { [threadId]: "chat-replies" } });
+    assert.strictEqual(yield* send("Switched"), told(typedInChat("Switched")));
     yield* serverSettings.updateSettings({ threadDisplayModes: { [threadId]: null } });
     // The handoff's turn is the first one in Normal, so the agent can still hold only the older note.
     assert.strictEqual(
@@ -1183,7 +1168,7 @@ it.effect("tells the agent its mode again when history joins its conversation", 
   }).pipe(Effect.provide(Layer.mergeAll(store, settings, wrapper))),
 );
 
-it.effect("recaps a reply's own sub-thread in Chat + Replies, and reports the change", () => {
+it.effect("recaps a reply's own sub-thread in Chat mode, and reports the change", () => {
   const changes: Array<{ readonly firstId: string; readonly lines: ReadonlyArray<string> }> = [];
   const subThreads = Layer.mock(SubThreads.SubThreads)({
     changed: ({ firstId, thread }) =>
@@ -1240,28 +1225,20 @@ it.effect("recaps a reply's own sub-thread in Chat + Replies, and reports the ch
     assert.deepStrictEqual(changes, [
       { firstId: answerId, lines: ["[you] Yes, all checks pass.", "[user] And the lint job?"] },
     ]);
-    const inMainList = (name: string, text: string) =>
-      block(
-        [
-          `Message "${shortId(id(name))}" from the user in the main list.`,
-          answerWith(name, "in the main list"),
-        ],
-        text,
-      );
     assert.strictEqual(
       yield* deliver({ threadId: repliesId, id: id("other"), text: "Unrelated question." }),
-      inMainList("other", "Unrelated question."),
+      inMainList(id("other"), "Unrelated question."),
     );
     assert.strictEqual(changes.length, 1);
     // A thread told the rules before they changed gets them again, once.
-    yield* sql`UPDATE fork_display_mode_told SET mode_id = 'chat-replies' WHERE thread_id = ${repliesId}`;
+    yield* sql`UPDATE fork_display_mode_told SET mode_id = 'chat-replies@2' WHERE thread_id = ${repliesId}`;
     assert.strictEqual(
       yield* deliver({ threadId: repliesId, id: id("later"), text: "Ship it." }),
-      `${CHAT_REPLIES_DISPLAY_MODE.stateNotice}\n${inMainList("later", "Ship it.")}`,
+      stated(CHAT_REPLIES_DISPLAY_MODE, inMainList(id("later"), "Ship it.")),
     );
     assert.strictEqual(
       yield* deliver({ threadId: repliesId, id: id("next"), text: "Thanks." }),
-      inMainList("next", "Thanks."),
+      inMainList(id("next"), "Thanks."),
     );
   }).pipe(Effect.provide(Layer.merge(store, wrapper.pipe(Layer.provide(subThreads)))));
 });
@@ -1329,7 +1306,7 @@ it.effect("finds in a thread only the text that its display mode shows", () =>
     const draftId = "message:display-wrap:find:draft";
     assert.deepEqual(yield* matches(), [asked, draftId]);
     assert.deepEqual(yield* matches(NORMAL_DISPLAY_MODE.id), [asked, draftId, sentId]);
-    assert.deepEqual(yield* matches(MESSAGES_ONLY_DISPLAY_MODE.id), [asked, sentId]);
+    assert.deepEqual(yield* matches(CHAT_REPLIES_DISPLAY_MODE.id), [asked, sentId]);
   }).pipe(
     Effect.provide(
       Layer.merge(ProjectionStore.layer, ProjectStore.layer).pipe(
@@ -1396,7 +1373,7 @@ it.effect("finds a rewritten send by its new text, with the rewrite many rows la
       return result.navigation?.map((entry) => entry.entryId) ?? [];
     });
     const sentId = `item:${sourceId}:2`;
-    for (const mode of [NORMAL_DISPLAY_MODE.id, MESSAGES_ONLY_DISPLAY_MODE.id]) {
+    for (const mode of [NORMAL_DISPLAY_MODE.id, CHAT_REPLIES_DISPLAY_MODE.id]) {
       assert.deepEqual(yield* matches("pin", mode), [sentId]);
       assert.deepEqual(yield* matches("haystack", mode), []);
     }
@@ -1409,26 +1386,31 @@ it.effect("finds a rewritten send by its new text, with the rewrite many rows la
   ),
 );
 
-it.effect("drops the mode of a deleted thread and keeps the others", () =>
+it.effect("drops the mode and the Dashboard of a deleted thread and keeps the others", () =>
   Effect.gen(function* () {
     const now = yield* DateTime.now;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const sql = yield* SqlClient.SqlClient;
     yield* projections.apply(threadCreated(now, sourceId, null));
     yield* projections.apply(threadCreated(now, deletedId, null));
+    yield* projections.apply(threadCreated(now, deletedDashboardId, null));
     yield* sql`UPDATE orchestration_v2_projection_threads
-      SET deleted_at = ${DateTime.formatIso(now)} WHERE thread_id = ${deletedId}`;
-    yield* DisplayModeWrap.pruneDeletedThreadModes();
+      SET deleted_at = ${DateTime.formatIso(now)}
+      WHERE thread_id IN (${deletedId}, ${deletedDashboardId})`;
+    yield* DisplayModeWrap.pruneDeletedThreadDisplays();
     const serverSettings = yield* ServerSettings.ServerSettingsService;
-    assert.deepEqual((yield* serverSettings.getSettings).threadDisplayModes, {
-      [sourceId]: "messages-only",
-      [forkId]: "messages-only",
-      [rolledBackId]: "messages-only",
-      [longId]: "messages-only",
-      [busyId]: "messages-only",
-      [doneId]: "messages-only",
-      [newId]: "messages-only",
-      [rewrittenId]: "messages-only",
+    const pruned = yield* serverSettings.getSettings;
+    // The thread with only a Dashboard entry proves the prune reads both records.
+    assert.deepEqual(pruned.threadDashboards, { [dashboardId]: true });
+    assert.deepEqual(pruned.threadDisplayModes, {
+      [sourceId]: "chat-replies",
+      [forkId]: "chat-replies",
+      [rolledBackId]: "chat-replies",
+      [longId]: "chat-replies",
+      [busyId]: "chat-replies",
+      [doneId]: "chat-replies",
+      [newId]: "chat-replies",
+      [rewrittenId]: "chat-replies",
       [repliesId]: "chat-replies",
     });
   }).pipe(Effect.provide(Layer.merge(store, settings))),

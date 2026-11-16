@@ -14,7 +14,7 @@ import { selectionOf } from "./userViewText.ts";
 
 const UserViewTool = Tool.make(THREAD_USER_VIEW_TOOL_NAME, {
   description:
-    "Read a thread word for word as the user's screen shows it in Messages only, Messages + Dashboard or Chat + Replies: the latest main-list messages, or with subThread, a sub-thread and the main-list messages before it. Omit threadId for your own thread. To hand this text to another agent unchanged, give it the result's Pinned line (and any Earlier line), not a copy.",
+    "Read a thread word for word as the user's screen shows it in Chat mode: the latest main-list messages, or with subThread, a sub-thread and the main-list messages before it. Omit threadId for your own thread. To hand this text to another agent unchanged, give it the result's Pinned line (and any Earlier line), not a copy.",
   parameters: ThreadUserViewInput,
   success: ThreadUserViewResult,
   failure: OrchestratorMcpFailure,

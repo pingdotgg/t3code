@@ -12,8 +12,9 @@ import * as ServerSettings from "../../serverSettings.ts";
 import * as DashboardTools from "./DashboardTools.ts";
 import * as ThreadDashboard from "./ThreadDashboard.ts";
 
+/** A Normal thread with its Dashboard on, and a Chat thread with it off: the switch decides, not the mode. */
 const dashboardThread = ThreadId.make("thread:dashboard-tools");
-const messagesOnlyThread = ThreadId.make("thread:dashboard-tools:messages-only");
+const dashboardOffThread = ThreadId.make("thread:dashboard-tools:chat-off");
 
 const scopeFor = (threadId: ThreadId): McpInvocationContext.McpInvocationScope => ({
   environmentId: EnvironmentId.make("dashboard-tools-environment"),
@@ -48,10 +49,8 @@ const layer = McpHttpServer.toolkitRegistration(
   Layer.provide(ThreadDashboard.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
   Layer.provide(
     ServerSettings.layerTest({
-      threadDisplayModes: {
-        [dashboardThread]: "messages-dashboard",
-        [messagesOnlyThread]: "messages-only",
-      },
+      threadDisplayModes: { [dashboardOffThread]: "chat-replies" },
+      threadDashboards: { [dashboardThread]: true },
     }),
   ),
 );
@@ -174,15 +173,15 @@ it.effect("refuses an old_text that no longer matches and shows the current text
 );
 
 it.effect.each(["dashboard_set", "dashboard_get"] as const)(
-  "refuses %s in a thread whose mode has no Dashboard",
+  "refuses %s in a thread whose Dashboard is off",
   (name) =>
     Effect.gen(function* () {
       const args =
         name === "dashboard_set" ? { slot: "working", old_text: "", new_text: "Hi" } : {};
-      const result = yield* call(name, args, messagesOnlyThread);
+      const result = yield* call(name, args, dashboardOffThread);
       expect(result.isError).toBe(true);
       expect(errorText(result)).toContain(
-        "This thread's display mode is not Messages + Dashboard, so it has no Dashboard.",
+        "This thread's Dashboard is off. The user can turn it on with Enable Dashboard in the thread menu.",
       );
     }).pipe(Effect.provide(layer)),
 );

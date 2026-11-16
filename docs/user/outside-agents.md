@@ -154,8 +154,7 @@ default model and permission mode, and runs in the project folder unless you
 pass `--worktree <base-branch>`. `send` never interrupts: a busy thread gets
 the message as its next turn. Pass `-` as the message to read it from stdin.
 
-`user-view` prints a Messages only, Messages + Dashboard or Chat + Replies
-thread word for word as your screen shows it: the latest main-list messages, or
+`user-view` prints a Chat mode thread word for word as your screen shows it: the latest main-list messages, or
 with `--sub-thread`, a sub-thread and the three main-list messages before it.
 
 `--wait` prints the agent's reply. It exits 1 when the run fails or stops, and

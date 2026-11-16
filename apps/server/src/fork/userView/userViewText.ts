@@ -202,7 +202,7 @@ export function userViewText(input: {
 }): UserViewResult {
   const { tail, selection } = input;
   const { mode, cores, complete } = tail;
-  const list = mode.subThreads ? cores.filter((core) => !core.reply) : cores;
+  const list = cores.filter((core) => !core.reply);
 
   /** Full ids win over short ids; a short id of two messages is refused. Null names none. */
   const lookup = (id: string): VisibleCore | NotShown | null => {
@@ -238,7 +238,6 @@ export function userViewText(input: {
     if (start <= 0 && !complete) return { type: "more" };
     stretch = list.slice(Math.max(0, start), end + 1);
   } else {
-    if (!mode.subThreads) return refused("this thread's display mode has no sub-threads");
     const named = lookup(selection.subThread) ?? notLoaded(selection.subThread);
     if (!isCore(named)) return named;
     const found = rootOf(cores, named, selection.subThread, complete);
@@ -262,7 +261,7 @@ export function userViewText(input: {
   }
 
   const replyCounts = new Map<string, number>();
-  if (selection.view === "main" && mode.subThreads)
+  if (selection.view === "main")
     for (const core of cores)
       if (core.reply && core.first !== null)
         replyCounts.set(core.first, (replyCounts.get(core.first) ?? 0) + 1);
@@ -313,8 +312,7 @@ export function userViewText(input: {
     };
     const mainBlocks = shown.filter((block) => !block.inSubThread);
     const subBlocks = shown.filter((block) => block.inSubThread);
-    if (mainBlocks.length > 0)
-      section(mode.subThreads ? "Main list:" : "Messages:", mainBlocks.map(blockText));
+    if (mainBlocks.length > 0) section("Main list:", mainBlocks.map(blockText));
     if (
       root !== undefined &&
       (subBlocks.length > 0 || (!hasReplies && shown.some((block) => block.core === root)))

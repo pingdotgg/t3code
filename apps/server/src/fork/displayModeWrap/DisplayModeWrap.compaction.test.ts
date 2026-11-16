@@ -18,7 +18,7 @@ import {
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import { MESSAGES_ONLY_DISPLAY_MODE } from "@t3tools/shared/displayModes";
+import { CHAT_REPLIES_DISPLAY_MODE, displayNote } from "@t3tools/shared/displayModes";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -47,7 +47,7 @@ const wrapper = DisplayModeWrap.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       database,
-      ServerSettings.layerTest({ threadDisplayModes: { [threadId]: "messages-only" } }),
+      ServerSettings.layerTest({ threadDisplayModes: { [threadId]: "chat-replies" } }),
       layerNoProviders,
     ),
   ),
@@ -207,8 +207,11 @@ const runCompleted = (driver: string) =>
     threadDisposition: "reusable",
   });
 
+/** The note for an agent that may have lost its notes in this thread, which has no Dashboard. */
+const stateNote = displayNote("unknown", { mode: CHAT_REPLIES_DISPLAY_MODE, dashboard: false });
+
 let sent = 0;
-/** The note that the next typed message carries, which then counts as told. */
+/** The note before the Chat mode block of the next typed message, which then counts as told. */
 const nextNote = Effect.gen(function* () {
   const wrap = yield* DisplayModeWrap.DisplayModeWrap;
   sent += 1;
@@ -224,17 +227,18 @@ const nextNote = Effect.gen(function* () {
     text,
   });
   yield* wrapped.accepted;
-  return wrapped.text === text ? null : wrapped.text.slice(0, -text.length - 1);
+  const block = wrapped.text.indexOf("<t3-replies-mode>");
+  return block === 0 ? null : wrapped.text.slice(0, block - 1);
 });
 
 it.effect("tells the agent its mode again after the first completion of a compaction item", () =>
   Effect.gen(function* () {
     yield* seedRun("Work on it.");
-    assert.strictEqual(yield* nextNote, MESSAGES_ONLY_DISPLAY_MODE.notice);
+    assert.strictEqual(yield* nextNote, CHAT_REPLIES_DISPLAY_MODE.notice);
     yield* compaction("opencode", "running");
     assert.isNull(yield* nextNote);
     yield* compaction("opencode", "completed");
-    assert.strictEqual(yield* nextNote, MESSAGES_ONLY_DISPLAY_MODE.stateNotice);
+    assert.strictEqual(yield* nextNote, stateNote);
     yield* compaction("opencode", "completed");
     assert.isNull(yield* nextNote);
   }).pipe(Effect.provide(layer)),
@@ -243,7 +247,7 @@ it.effect("tells the agent its mode again after the first completion of a compac
 it.effect("leaves the notes of Claude and Codex, which send the note after a compaction", () =>
   Effect.gen(function* () {
     yield* seedRun("/compact");
-    assert.strictEqual(yield* nextNote, MESSAGES_ONLY_DISPLAY_MODE.notice);
+    assert.strictEqual(yield* nextNote, CHAT_REPLIES_DISPLAY_MODE.notice);
     for (const driver of ["claudeAgent", "codex"]) {
       yield* compaction(driver, "completed");
       yield* runCompleted(driver);
@@ -255,16 +259,16 @@ it.effect("leaves the notes of Claude and Codex, which send the note after a com
 it.effect("tells the agent its mode again after a /compact run that reports no compaction", () =>
   Effect.gen(function* () {
     yield* seedRun("/compact");
-    assert.strictEqual(yield* nextNote, MESSAGES_ONLY_DISPLAY_MODE.notice);
+    assert.strictEqual(yield* nextNote, CHAT_REPLIES_DISPLAY_MODE.notice);
     yield* runCompleted("cursor");
-    assert.strictEqual(yield* nextNote, MESSAGES_ONLY_DISPLAY_MODE.stateNotice);
+    assert.strictEqual(yield* nextNote, stateNote);
   }).pipe(Effect.provide(layer)),
 );
 
 it.effect("keeps the notes when a run with another prompt ends", () =>
   Effect.gen(function* () {
     yield* seedRun("Work on it.");
-    assert.strictEqual(yield* nextNote, MESSAGES_ONLY_DISPLAY_MODE.notice);
+    assert.strictEqual(yield* nextNote, CHAT_REPLIES_DISPLAY_MODE.notice);
     yield* runCompleted("cursor");
     assert.isNull(yield* nextNote);
   }).pipe(Effect.provide(layer)),

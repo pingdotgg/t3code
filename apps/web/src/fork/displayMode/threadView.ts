@@ -80,7 +80,7 @@ export function createThreadViews(
       if (config === null) return hints.has(key);
       const shown =
         config.environment.capabilities.threadShownHistory === true &&
-        resolveDisplayMode(config.settings.threadDisplayModes[threadId]).visibleCores !== null;
+        resolveDisplayMode(config.settings.threadDisplayModes[threadId]).subThreads;
       hints.set(key, shown);
       return shown;
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`web-thread-shown-view:${key}`));

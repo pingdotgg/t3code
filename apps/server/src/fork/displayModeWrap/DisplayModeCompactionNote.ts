@@ -1,7 +1,14 @@
 import type { HookCallbackMatcher, HookEvent } from "@anthropic-ai/claude-agent-sdk";
 import type { MessageId, ThreadId } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import { NORMAL_DISPLAY_MODE, resolveDisplayMode } from "@t3tools/shared/displayModes";
+import {
+  displayStateNote,
+  NORMAL_DISPLAY,
+  NORMAL_DISPLAY_MODE,
+  resolveDisplayMode,
+  threadDisplay,
+  toldKey,
+} from "@t3tools/shared/displayModes";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -12,9 +19,10 @@ import * as ServerSettings from "../../serverSettings.ts";
 
 export interface DisplayModeCompactionNoteShape {
   /**
-   * The note that tells a thread's agent its display mode after a compaction of its conversation, or
-   * `undefined` for a thread that never had a note and is Normal. It only reads, and it logs a failure
-   * and returns `undefined`.
+   * The note that tells a thread's agent its display mode and Dashboard after a compaction of its
+   * conversation, or `undefined` for a thread that never had a note and is Normal with no Dashboard.
+   * Its callers deliver the note it returns, so it records the display as told. It logs a failure and
+   * returns `undefined`.
    */
   readonly noteAfterCompaction: (threadId: ThreadId) => Effect.Effect<string | undefined>;
   /** Whether the thread is in Normal, or `undefined` when the read fails, which it logs. */
@@ -32,9 +40,9 @@ export const providedCompactionNote = Effect.serviceOption(DisplayModeCompaction
 );
 
 /**
- * The mode that the thread's current agent was last told, by its `toldId`, or `unknown`. A thread
- * with no row never had a note sent, so no conversation of it holds one. Told nothing counts as
- * told Normal.
+ * What the thread's current agent was last told, as `toldKey` (the mode and the Dashboard switch),
+ * or `unknown`. A thread with no row never had a note sent, so no conversation of it holds one. Told
+ * nothing counts as told Normal with no Dashboard.
  */
 export const createToldTable = Effect.flatMap(
   SqlClient.SqlClient,
@@ -59,10 +67,13 @@ export const layer: Layer.Layer<
       "DisplayModeCompactionNote.noteAfterCompaction",
     )(function* (threadId) {
       return yield* Effect.gen(function* () {
-        const settings = yield* serverSettings.getSettings;
-        const mode = resolveDisplayMode(settings.threadDisplayModes[threadId]);
+        const display = threadDisplay(yield* serverSettings.getSettings, threadId);
         const told = yield* sql`SELECT 1 FROM fork_display_mode_told WHERE thread_id = ${threadId}`;
-        return told.length === 0 && mode === NORMAL_DISPLAY_MODE ? undefined : mode.stateNotice;
+        if (told.length === 0 && toldKey(display) === toldKey(NORMAL_DISPLAY)) return undefined;
+        yield* sql`INSERT INTO fork_display_mode_told (thread_id, mode_id)
+          VALUES (${threadId}, ${toldKey(display)})
+          ON CONFLICT (thread_id) DO UPDATE SET mode_id = excluded.mode_id`;
+        return displayStateNote(display);
       }).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("Display mode note after compaction skipped", { threadId, cause }).pipe(

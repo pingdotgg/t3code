@@ -257,6 +257,7 @@ export const make = Effect.gen(function* () {
       usagePriceOverrides: true,
       usageModelAliases: true,
       threadDisplayModes: true,
+      threadDashboards: true,
       threadShownHistory: true,
       threadPinning: true,
       threadPinReorder: true,

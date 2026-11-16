@@ -15,15 +15,17 @@ import { applyServerSettingsPatch } from "../../serverSettings.ts";
 import {
   CHAT_REPLIES_DISPLAY_MODE,
   type DisplayEvent,
+  type DisplayMode,
   displayEventFromTurnItem,
   displayModeShowsText,
+  displayNote,
+  displayStateNote,
   foldCores,
   foldSentTexts,
   isReplaceSendCall,
   freshFirstPointer,
   isWebTypedMessage,
-  MESSAGES_DASHBOARD_DISPLAY_MODE,
-  MESSAGES_ONLY_DISPLAY_MODE,
+  NORMAL_DISPLAY,
   NORMAL_DISPLAY_MODE,
   recapText,
   resolveDisplayMode,
@@ -31,6 +33,9 @@ import {
   shortId,
   SUB_THREAD_RECORD_KIND,
   subThreadCores,
+  threadDisplay,
+  toldKey,
+  withoutRemovedDisplayModes,
 } from "./displayModes.ts";
 
 const decodeServerSettings = Schema.decodeSync(ServerSettings);
@@ -39,18 +44,6 @@ const user = (text: string): DisplayEvent => ({ type: "user", id: `user:${text}`
 const sent = (text: string): DisplayEvent => ({ type: "sent", id: `sent:${text}`, text });
 const rewrite = (text: string): DisplayEvent => ({ type: "rewrite", id: `rewrite:${text}`, text });
 const other: DisplayEvent = { type: "other" };
-
-const wrap = (events: ReadonlyArray<DisplayEvent>, text: string) =>
-  MESSAGES_ONLY_DISPLAY_MODE.wrap!(events, text, { id: "typed" });
-
-const wrapped = (lines: ReadonlyArray<string>, text: string) =>
-  [
-    "<t3-messages-mode>",
-    "This message is from the user. Before it, their screen showed:",
-    ...lines,
-    "</t3-messages-mode>",
-    text,
-  ].join("\n");
 
 const item = (fields: Record<string, unknown>) =>
   ({
@@ -310,11 +303,9 @@ describe("displayEventFromTurnItem", () => {
   });
 });
 
-describe("visibleCores", () => {
+describe("foldCores", () => {
   it("keeps the user's messages and sent messages in order", () => {
-    expect(
-      MESSAGES_ONLY_DISPLAY_MODE.visibleCores!([user("A"), other, sent("B"), other, user("C")]),
-    ).toMatchObject([
+    expect(foldCores([user("A"), other, sent("B"), other, user("C")])).toMatchObject([
       { id: "user:A", from: "user", text: "A" },
       { id: "sent:B", from: "agent", text: "B" },
       { id: "user:C", from: "user", text: "C" },
@@ -323,15 +314,7 @@ describe("visibleCores", () => {
 
   it("shows a rewrite as the new text of the latest send before it, even across user messages", () => {
     expect(
-      MESSAGES_ONLY_DISPLAY_MODE.visibleCores!([
-        sent("A"),
-        user("B"),
-        sent("C"),
-        other,
-        user("D"),
-        rewrite("C2"),
-        rewrite("C3"),
-      ]),
+      foldCores([sent("A"), user("B"), sent("C"), other, user("D"), rewrite("C2"), rewrite("C3")]),
     ).toMatchObject([
       { id: "sent:A", from: "agent", text: "A" },
       { id: "user:B", from: "user", text: "B" },
@@ -355,142 +338,9 @@ describe("visibleCores", () => {
   });
 
   it("shows nothing for a rewrite with no send before it", () => {
-    expect(MESSAGES_ONLY_DISPLAY_MODE.visibleCores!([rewrite("X"), user("A")])).toMatchObject([
+    expect(foldCores([rewrite("X"), user("A")])).toMatchObject([
       { id: "user:A", from: "user", text: "A" },
     ]);
-  });
-
-  it("is null for Normal, which shows everything", () => {
-    expect(NORMAL_DISPLAY_MODE.visibleCores).toBeNull();
-    expect(NORMAL_DISPLAY_MODE.wrap).toBeNull();
-  });
-});
-
-describe("Messages only wrap", () => {
-  it("recaps the screen before a direct reply too", () => {
-    expect(wrap([user("A"), other, sent("B")], "C")).toBe(wrapped(["[user] A", "[you] B"], "C"));
-    expect(wrap([user("A"), other, sent("B"), user("C")], "D")).toBe(
-      wrapped(["[user] A", "[you] B", "[user] C"], "D"),
-    );
-  });
-
-  it("sends the text unchanged when the screen showed nothing before it", () => {
-    expect(wrap([], "First")).toBe("First");
-    expect(wrap([other, other], "First")).toBe("First");
-  });
-
-  const fromItem = (fields: Record<string, unknown>) => displayEventFromTurnItem(item(fields))!;
-
-  it.each([
-    ["a tool call", [fromItem({ type: "command_execution", input: "ls" })]],
-    ["the agent's plain text", [fromItem({ type: "assistant_message", text: "Done" })]],
-    ["reasoning", [fromItem({ type: "reasoning", text: "thinking" })]],
-    [
-      "a scheduled prompt and the agent's text in a later turn",
-      [
-        fromItem({
-          type: "user_message",
-          messageId: "s",
-          createdBy: "user",
-          scheduledTaskId: "task-1",
-          text: "Daily check",
-        }),
-        fromItem({ type: "assistant_message", text: "Checked" }),
-      ],
-    ],
-    [
-      "a bot message",
-      [fromItem({ type: "user_message", messageId: "b", createdBy: "agent", text: "From bot" })],
-    ],
-    [
-      "an automatic retry after a usage limit",
-      [
-        fromItem({
-          type: "user_message",
-          messageId: "r",
-          createdBy: "user",
-          creationSource: "server",
-          text: "Continue where you left off.",
-        }),
-      ],
-    ],
-  ])("wraps after %s", (_name, after) => {
-    expect(wrap([user("A"), sent("B"), ...after], "C")).toBe(wrapped(["[user] A", "[you] B"], "C"));
-  });
-
-  it("wraps when the agent wrote text between the user's messages", () => {
-    const reply = fromItem({ type: "assistant_message", text: "Noted" });
-    expect(wrap([user("A"), sent("B"), user("C"), reply, user("D")], "E")).toBe(
-      wrapped(["[you] B", "[user] C", "[user] D"], "E"),
-    );
-  });
-
-  it("wraps the first message when the agent has only written text", () => {
-    expect(wrap([user("A"), other], "B")).toBe(wrapped(["[user] A"], "B"));
-  });
-
-  it("lists at most 3 earlier cores in real order, two user messages in a row both counted", () => {
-    expect(wrap([sent("S0"), user("A"), sent("B"), user("C"), user("D"), other], "E")).toBe(
-      wrapped(["[you] B", "[user] C", "[user] D"], "E"),
-    );
-  });
-
-  it("cuts each core at 2000 UTF-8 bytes on a character boundary", () => {
-    const ascii = "a".repeat(2001);
-    const chinese = "汉".repeat(700);
-    const emoji = `${"a".repeat(1998)}🙂`;
-    expect(wrap([user(ascii), user(chinese), user(emoji), other], "E")).toBe(
-      wrapped(
-        [
-          `[user] ${"a".repeat(2000)}…[truncated]`,
-          `[user] ${"汉".repeat(666)}…[truncated]`,
-          `[user] ${"a".repeat(1998)}…[truncated]`,
-        ],
-        "E",
-      ),
-    );
-    expect(wrap([user("a".repeat(2000)), other], "E")).toBe(
-      wrapped([`[user] ${"a".repeat(2000)}`], "E"),
-    );
-  });
-
-  it("recaps a rewritten send with its new text, and a rewrite adds no line", () => {
-    expect(wrap([user("A"), sent("B"), user("C"), rewrite("B2")], "D")).toBe(
-      wrapped(["[user] A", "[you] B2", "[user] C"], "D"),
-    );
-  });
-
-  it("shows a quote as its quoted text and comment", () => {
-    const quote = serializeAssistantCitation({
-      version: 1,
-      environmentId: EnvironmentId.make("env"),
-      threadId: ThreadId.make("thread"),
-      messageId: MessageId.make("message"),
-      text: "the token check",
-      start: 0,
-      end: 15,
-      prefix: "",
-      suffix: "",
-      comment: "Why here?",
-    });
-    expect(wrap([user(`Look at ${quote} again`)], "E")).toBe(
-      wrapped(["[user] Look at the token check\nComment: Why here? again"], "E"),
-    );
-  });
-
-  it("wraps the same way in Messages + Dashboard", () => {
-    const events = [user("A"), sent("B"), other];
-    expect(MESSAGES_DASHBOARD_DISPLAY_MODE.wrap!(events, "C", { id: "typed" })).toBe(
-      wrapped(["[user] A", "[you] B"], "C"),
-    );
-    expect(MESSAGES_DASHBOARD_DISPLAY_MODE.wrap!([], "C", { id: "typed" })).toBe("C");
-  });
-
-  it("uses a tag that user-view's <x-mode> pattern strips", () => {
-    const text = wrap([user("A"), other], "C");
-    // user-view is an outside tool that shows a transcript as the user saw it.
-    // It removes the blocks that match this pattern, and then it trims the whitespace around them.
-    expect(text.replace(/<([a-z][a-z0-9_-]*-mode)>[\s\S]*?<\/\1>/g, "").trim()).toBe("C");
   });
 });
 
@@ -700,6 +550,21 @@ describe("recapText", () => {
   it("cuts a message at 2000 UTF-8 bytes after quotes become their text", () => {
     expect(recapText("a".repeat(2000))).toBe("a".repeat(2000));
     expect(recapText("汉".repeat(700))).toBe(`${"汉".repeat(666)}…[truncated]`);
+    const quote = serializeAssistantCitation({
+      version: 1,
+      environmentId: EnvironmentId.make("env"),
+      threadId: ThreadId.make("thread"),
+      messageId: MessageId.make("message"),
+      text: "the token check",
+      start: 0,
+      end: 15,
+      prefix: "",
+      suffix: "",
+      comment: "Why here?",
+    });
+    expect(recapText(`Look at ${quote} again`)).toBe(
+      "Look at the token check\nComment: Why here? again",
+    );
   });
 });
 
@@ -707,41 +572,132 @@ describe("resolveDisplayMode", () => {
   it("falls back to Normal for a missing or unknown id", () => {
     expect(resolveDisplayMode(undefined)).toBe(NORMAL_DISPLAY_MODE);
     expect(resolveDisplayMode("retired-experiment")).toBe(NORMAL_DISPLAY_MODE);
-    expect(resolveDisplayMode("messages-only")).toBe(MESSAGES_ONLY_DISPLAY_MODE);
-    expect(resolveDisplayMode("messages-dashboard")).toBe(MESSAGES_DASHBOARD_DISPLAY_MODE);
     expect(resolveDisplayMode("chat-replies")).toBe(CHAT_REPLIES_DISPLAY_MODE);
   });
+});
 
-  it("gives only Messages + Dashboard a Dashboard", () => {
-    expect(
-      ["normal", "messages-only", "messages-dashboard", "chat-replies"].map(
-        (id) => resolveDisplayMode(id).dashboard,
-      ),
-    ).toEqual([false, false, true, false]);
+/** The display of a thread whose settings hold `mode` and the Dashboard switch `dashboard`. */
+const displayOf = (mode: DisplayMode, dashboard: boolean) =>
+  threadDisplay({ threadDisplayModes: { t: mode.id }, threadDashboards: { t: dashboard } }, "t");
+
+describe("threadDisplay", () => {
+  const settings = {
+    threadDisplayModes: { normalOn: "normal", chatOff: "chat-replies", retired: "retired-mode" },
+    threadDashboards: { normalOn: true, chatOff: false, missing: false },
+  };
+
+  it.each([
+    ["normalOn", NORMAL_DISPLAY_MODE, true],
+    ["chatOff", CHAT_REPLIES_DISPLAY_MODE, false],
+    ["retired", NORMAL_DISPLAY_MODE, false],
+    ["missing", NORMAL_DISPLAY_MODE, false],
+  ])("reads the mode and the Dashboard of thread %s", (threadId, mode, dashboard) => {
+    expect(threadDisplay(settings, threadId)).toEqual({ mode, dashboard });
+  });
+
+  it("gives the same object for the same display, and Normal without settings", () => {
+    expect(threadDisplay(settings, "normalOn")).toBe(displayOf(NORMAL_DISPLAY_MODE, true));
+    expect(threadDisplay(settings, "missing")).toBe(NORMAL_DISPLAY);
+    expect(threadDisplay(null, "normalOn")).toBe(NORMAL_DISPLAY);
   });
 });
 
-describe("oneSendPerMessage", () => {
-  it("limits the agent to one send per typed message only where the user sees only messages", () => {
-    expect(
-      ["normal", "messages-only", "messages-dashboard", "chat-replies"].map(
-        (id) => resolveDisplayMode(id).oneSendPerMessage,
-      ),
-    ).toEqual([false, true, true, true]);
+describe("displayNote", () => {
+  const RULES =
+    "They see this thread's Dashboard beside the chat, six slots in this order: decide (needs their decision), waiting, working, autoreview, humanreview, merged. Read it with dashboard_get. To change a slot, call dashboard_set with the slot's current text as old_text and the whole new text as new_text.";
+  const ON = `<t3-display-mode>The user turned on this thread's Dashboard. ${RULES}</t3-display-mode>`;
+  const OFF =
+    "<t3-display-mode>The user turned off this thread's Dashboard. They no longer see it, and dashboard_get and dashboard_set are refused.</t3-display-mode>";
+  const ON_STATE = `<t3-display-mode>This thread's Dashboard is on. ${RULES}</t3-display-mode>`;
+  const OFF_STATE =
+    "<t3-display-mode>This thread's Dashboard is off. The user does not see it, and dashboard_get and dashboard_set are refused.</t3-display-mode>";
+  const NORMAL = NORMAL_DISPLAY_MODE;
+  const CHAT = CHAT_REPLIES_DISPLAY_MODE;
+
+  it.each<readonly [string, string, boolean, ReadonlyArray<string> | null]>([
+    ["chat-replies@3+dashboard", "chat-replies", true, null],
+    ["normal", "chat-replies", false, [CHAT.notice]],
+    ["normal", "normal", true, [ON]],
+    ["chat-replies@3+dashboard", "chat-replies", false, [OFF]],
+    ["normal", "chat-replies", true, [CHAT.notice, ON]],
+    ["chat-replies@3", "normal", true, [NORMAL.notice, ON]],
+    ["unknown", "chat-replies", true, [CHAT.stateNotice, ON_STATE]],
+    ["messages-dashboard", "chat-replies", true, [CHAT.stateNotice, ON_STATE]],
+    ["messages-dashboard", "chat-replies", false, [CHAT.stateNotice, OFF_STATE]],
+    ["chat-replies@2", "chat-replies", false, [CHAT.stateNotice, OFF_STATE]],
+  ])("brings an agent told %s up to %s with the Dashboard on: %s", (told, modeId, on, notes) => {
+    expect(displayNote(told, displayOf(resolveDisplayMode(modeId), on))).toBe(
+      notes?.join("\n") ?? null,
+    );
+  });
+
+  it("states the Dashboard after a compaction only when it is on", () => {
+    expect(displayStateNote(displayOf(CHAT, true))).toBe(`${CHAT.stateNotice}\n${ON_STATE}`);
+    expect(displayStateNote(displayOf(CHAT, false))).toBe(CHAT.stateNotice);
+  });
+
+  it("records what the agent was told in one key per display", () => {
+    expect([NORMAL_DISPLAY, displayOf(CHAT, true)].map(toldKey)).toEqual([
+      "normal",
+      "chat-replies@3+dashboard",
+    ]);
   });
 });
 
-describe("threadDisplayModes setting", () => {
+describe("withoutRemovedDisplayModes", () => {
+  const settings = (
+    threadDisplayModes: Record<string, string>,
+    threadDashboards: Record<string, boolean> = {},
+    newThreadDisplayMode = "normal",
+  ) => ({ threadDisplayModes, threadDashboards, newThreadDisplayMode });
+
+  it.each([
+    [
+      "Messages + Dashboard and Messages only threads to Chat, with a Dashboard where it was on",
+      settings({ a: "messages-dashboard", b: "messages-only", c: "normal" }, { c: true }),
+      settings({ a: "chat-replies", b: "chat-replies", c: "normal" }, { a: true, c: true }),
+    ],
+    [
+      "an older client's Messages only on a thread with the Dashboard on to Chat with it off",
+      settings({ a: "messages-only" }, { a: true, b: true }),
+      settings({ a: "chat-replies" }, { b: true }),
+    ],
+    [
+      "a removed new-thread mode to Chat",
+      settings({}, {}, "messages-dashboard"),
+      settings({}, {}, "chat-replies"),
+    ],
+  ])("moves %s", (_name, before, after) => {
+    expect(withoutRemovedDisplayModes(before)).toEqual(after);
+  });
+
+  it("returns settings without a removed id unchanged, so a second run changes nothing", () => {
+    const current = settings({ a: "chat-replies" }, { a: true }, "chat-replies");
+    expect(withoutRemovedDisplayModes(current)).toBe(current);
+    const once = withoutRemovedDisplayModes(settings({ a: "messages-dashboard" }));
+    expect(withoutRemovedDisplayModes(once)).toBe(once);
+  });
+});
+
+describe("threadDisplayModes and threadDashboards settings", () => {
   it("sets and clears one thread without touching the others", () => {
     const set = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-      threadDisplayModes: { "thread-a": "messages-only", "thread-b": "messages-only" },
+      threadDisplayModes: { "thread-a": "chat-replies", "thread-b": "chat-replies" },
+      threadDashboards: { "thread-a": true, "thread-b": true },
     });
-    const cleared = applyServerSettingsPatch(set, { threadDisplayModes: { "thread-a": null } });
-    expect(cleared.threadDisplayModes).toEqual({ "thread-b": "messages-only" });
+    const cleared = applyServerSettingsPatch(set, {
+      threadDisplayModes: { "thread-a": null },
+      threadDashboards: { "thread-a": null },
+    });
+    expect([cleared.threadDisplayModes, cleared.threadDashboards]).toEqual([
+      { "thread-b": "chat-replies" },
+      { "thread-b": true },
+    ]);
   });
 
-  it("decodes settings written before the setting existed", () => {
-    expect(decodeServerSettings({}).threadDisplayModes).toEqual({});
+  it("decodes settings written before the settings existed", () => {
+    const decoded = decodeServerSettings({});
+    expect([decoded.threadDisplayModes, decoded.threadDashboards]).toEqual([{}, {}]);
   });
 });
 
@@ -786,15 +742,11 @@ describe("displayModeShowsText", () => {
     ["normal", send("failed"), false],
     ["normal", send("running"), false],
     ["normal", tool, false],
-    ["messages-only", typed, true],
-    ["messages-only", assistant, false],
-    ["messages-only", send("completed"), true],
-    ["messages-only", send("failed"), false],
-    ["messages-only", tool, false],
-    ["messages-dashboard", typed, true],
-    ["messages-dashboard", assistant, false],
-    ["messages-dashboard", send("completed"), true],
-    ["messages-dashboard", tool, false],
+    ["chat-replies", typed, true],
+    ["chat-replies", assistant, false],
+    ["chat-replies", send("completed"), true],
+    ["chat-replies", send("failed"), false],
+    ["chat-replies", tool, false],
   ])("for mode %s and item %#", (modeId, turnItem, shown) => {
     expect(displayModeShowsText(modeId, turnItem)).toBe(shown);
   });
@@ -901,7 +853,7 @@ describe("isReplaceSendCall", () => {
   });
 
   it("is never drawn as text", () => {
-    for (const modeId of ["normal", "messages-only", "messages-dashboard"])
+    for (const modeId of ["normal", "chat-replies"])
       expect(displayModeShowsText(modeId, replace("r", "x"))).toBe(false);
   });
 

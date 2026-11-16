@@ -3,6 +3,7 @@ import {
   type OrchestrationV2Actor,
   type OrchestrationV2CreationSource,
   type OrchestrationV2TurnItem,
+  type ServerSettings,
 } from "@t3tools/contracts";
 
 import { assistantCitationsToPlainText } from "../../assistantCitations.ts";
@@ -148,28 +149,20 @@ export interface DisplayMode {
   readonly notice: string;
   /** States the mode to an agent whose conversation was just compacted, which may have dropped `notice`. */
   readonly stateNotice: string;
-  /** Null keeps the whole timeline. */
-  readonly visibleCores: ((events: ReadonlyArray<DisplayEvent>) => VisibleCore[]) | null;
   /**
    * Returns the text that the agent gets for the user's `message` after `events`. Null sends it
-   * unchanged. `events` may leave out events, as long as it keeps their order, the latest
-   * WRAPPED_CORE_COUNT `user` and `sent` events, and every `rewrite` after the first of those.
-   * A mode with sub-threads counts those in the message's sub-thread, and needs its first message.
+   * unchanged. `events` may leave out events, as long as it keeps their order, the first message of
+   * the message's sub-thread, the latest WRAPPED_CORE_COUNT `user` and `sent` events in that
+   * sub-thread, and every `rewrite` after the first of those.
    */
   readonly wrap:
     | ((events: ReadonlyArray<DisplayEvent>, text: string, message: WrappedMessage) => string)
     | null;
-  /** Whether the thread has a Dashboard that the user sees and the agent writes. */
-  readonly dashboard: boolean;
-  /**
-   * Whether the agent may send one answer after each message that the user types, after at most
-   * one ack. To say more, it rewrites its latest message with `replace_send_to_user`.
-   */
-  readonly oneSendPerMessage: boolean;
   /**
    * Whether the user can reply under one of the agent's main-list messages, in its sub-thread. The
-   * main list shows the cores that are not replies. The agent answers a user message by its short
-   * id, and the answer shows where that message is.
+   * main list shows the cores that are not replies. The agent answers each message that the user
+   * types once, by its short id, after at most one ack, and the answer shows where that message is.
+   * To say more, it rewrites that answer with `replace_send_to_user`.
    */
   readonly subThreads: boolean;
 }
@@ -336,59 +329,12 @@ export const recapLine = (core: VisibleCore): string =>
 export const NORMAL_DISPLAY_MODE: DisplayMode = {
   id: "normal",
   toldId: "normal",
-  label: "Normal",
+  label: "Normal mode",
   notice:
     "<t3-display-mode>The user switched this thread back to the full view. They see your replies and tool calls again; reply as usual, not only through send_to_user.</t3-display-mode>",
   stateNotice:
     "<t3-display-mode>This thread is in the full view. The user sees your replies and tool calls; reply as usual, not only through send_to_user.</t3-display-mode>",
-  visibleCores: null,
   wrap: null,
-  dashboard: false,
-  oneSendPerMessage: false,
-  subThreads: false,
-};
-
-function messagesOnlyWrap(events: ReadonlyArray<DisplayEvent>, text: string): string {
-  // Every message recaps the latest shown messages, so the agent always knows what the user saw,
-  // whatever else entered its transcript. A message with nothing shown before it has no recap.
-  const shown = foldCores(events).slice(-WRAPPED_CORE_COUNT);
-  if (shown.length === 0) return text;
-  return [
-    "<t3-messages-mode>",
-    "This message is from the user. Before it, their screen showed:",
-    ...shown.map(recapLine),
-    "</t3-messages-mode>",
-    text,
-  ].join("\n");
-}
-
-export const MESSAGES_ONLY_DISPLAY_MODE: DisplayMode = {
-  id: "messages-only",
-  toldId: "messages-only",
-  label: "Messages only",
-  notice:
-    "<t3-display-mode>The user switched this thread to Messages only. From now on they see only their own messages and your send_to_user messages; reply with send_to_user.</t3-display-mode>",
-  stateNotice:
-    "<t3-display-mode>This thread is in Messages only. The user sees only their own messages and your send_to_user messages; reply with send_to_user.</t3-display-mode>",
-  visibleCores: foldCores,
-  wrap: messagesOnlyWrap,
-  dashboard: false,
-  oneSendPerMessage: true,
-  subThreads: false,
-};
-
-export const MESSAGES_DASHBOARD_DISPLAY_MODE: DisplayMode = {
-  id: "messages-dashboard",
-  toldId: "messages-dashboard",
-  label: "Messages + Dashboard",
-  notice:
-    "<t3-display-mode>The user switched this thread to Messages + Dashboard. They see only their own messages and your send_to_user messages; reply with send_to_user. They also see this thread's Dashboard, six slots in this order: decide (needs their decision), waiting, working, autoreview, humanreview, merged. Read it with dashboard_get. To change a slot, call dashboard_set with the slot's current text as old_text and the whole new text as new_text.</t3-display-mode>",
-  stateNotice:
-    "<t3-display-mode>This thread is in Messages + Dashboard. The user sees only their own messages and your send_to_user messages; reply with send_to_user. They also see this thread's Dashboard, six slots in this order: decide (needs their decision), waiting, working, autoreview, humanreview, merged. Read it with dashboard_get. To change a slot, call dashboard_set with the slot's current text as old_text and the whole new text as new_text.</t3-display-mode>",
-  visibleCores: foldCores,
-  wrap: messagesOnlyWrap,
-  dashboard: true,
-  oneSendPerMessage: true,
   subThreads: false,
 };
 
@@ -421,27 +367,133 @@ const CHAT_REPLIES_RULES =
 
 export const CHAT_REPLIES_DISPLAY_MODE: DisplayMode = {
   id: "chat-replies",
-  toldId: "chat-replies@2",
-  label: "Chat + Replies",
-  notice: `<t3-display-mode>The user switched this thread to Chat + Replies. ${CHAT_REPLIES_RULES}</t3-display-mode>`,
-  stateNotice: `<t3-display-mode>This thread is in Chat + Replies. ${CHAT_REPLIES_RULES}</t3-display-mode>`,
-  visibleCores: foldCores,
+  toldId: "chat-replies@3",
+  label: "Chat mode",
+  notice: `<t3-display-mode>The user switched this thread to Chat mode. ${CHAT_REPLIES_RULES}</t3-display-mode>`,
+  stateNotice: `<t3-display-mode>This thread is in Chat mode. ${CHAT_REPLIES_RULES}</t3-display-mode>`,
   wrap: chatRepliesWrap,
-  dashboard: false,
-  oneSendPerMessage: true,
   subThreads: true,
 };
 
 export const DISPLAY_MODES: ReadonlyArray<DisplayMode> = [
   NORMAL_DISPLAY_MODE,
-  MESSAGES_ONLY_DISPLAY_MODE,
-  MESSAGES_DASHBOARD_DISPLAY_MODE,
   CHAT_REPLIES_DISPLAY_MODE,
 ];
 
 /** An unknown or removed mode id shows the thread as Normal. */
 export function resolveDisplayMode(id: string | undefined): DisplayMode {
   return DISPLAY_MODES.find((mode) => mode.id === id) ?? NORMAL_DISPLAY_MODE;
+}
+
+/** What a thread's screen shows. The Dashboard is on or off in any mode. */
+export interface ThreadDisplay {
+  readonly mode: DisplayMode;
+  readonly dashboard: boolean;
+}
+
+export const NORMAL_DISPLAY: ThreadDisplay = { mode: NORMAL_DISPLAY_MODE, dashboard: false };
+
+/** What the server records once the agent knows `display`: the mode's `toldId`, then `+dashboard` when on. */
+export function toldKey(display: ThreadDisplay): string {
+  return display.dashboard ? `${display.mode.toldId}+dashboard` : display.mode.toldId;
+}
+
+/** Every display by its told key, so equal displays are one object and keep React identities stable. */
+const DISPLAYS: ReadonlyMap<string, ThreadDisplay> = new Map(
+  DISPLAY_MODES.flatMap((mode) =>
+    [false, true].map((dashboard) => {
+      const display =
+        mode === NORMAL_DISPLAY_MODE && !dashboard ? NORMAL_DISPLAY : { mode, dashboard };
+      return [toldKey(display), display] as const;
+    }),
+  ),
+);
+
+/** No settings, an unknown mode id, and a Dashboard entry other than `true` read as Normal and off. */
+export function threadDisplay(
+  settings: Pick<ServerSettings, "threadDisplayModes" | "threadDashboards"> | null | undefined,
+  threadId: string,
+): ThreadDisplay {
+  const mode = resolveDisplayMode(settings?.threadDisplayModes[threadId]);
+  const dashboard = settings?.threadDashboards[threadId] === true;
+  return DISPLAYS.get(toldKey({ mode, dashboard })) ?? NORMAL_DISPLAY;
+}
+
+const DASHBOARD_RULES =
+  "They see this thread's Dashboard beside the chat, six slots in this order: decide (needs their decision), waiting, working, autoreview, humanreview, merged. Read it with dashboard_get. To change a slot, call dashboard_set with the slot's current text as old_text and the whole new text as new_text.";
+const DASHBOARD_ON_NOTICE = `<t3-display-mode>The user turned on this thread's Dashboard. ${DASHBOARD_RULES}</t3-display-mode>`;
+const DASHBOARD_OFF_NOTICE =
+  "<t3-display-mode>The user turned off this thread's Dashboard. They no longer see it, and dashboard_get and dashboard_set are refused.</t3-display-mode>";
+const DASHBOARD_ON_STATE_NOTICE = `<t3-display-mode>This thread's Dashboard is on. ${DASHBOARD_RULES}</t3-display-mode>`;
+const DASHBOARD_OFF_STATE_NOTICE =
+  "<t3-display-mode>This thread's Dashboard is off. The user does not see it, and dashboard_get and dashboard_set are refused.</t3-display-mode>";
+
+/** All of `display`, for an agent that may have lost its notes. An off Dashboard adds nothing. */
+export function displayStateNote(display: ThreadDisplay): string {
+  return display.dashboard
+    ? `${display.mode.stateNotice}\n${DASHBOARD_ON_STATE_NOTICE}`
+    : display.mode.stateNotice;
+}
+
+/**
+ * The note that brings an agent told `told` up to `display`, or null when it knows it. It compares
+ * what the agent knows with now, so a change undone before the next message needs no note. A told
+ * value that names no display, such as `unknown` or an older rules version, gets the whole state.
+ */
+export function displayNote(told: string, display: ThreadDisplay): string | null {
+  if (told === toldKey(display)) return null;
+  const known = DISPLAYS.get(told);
+  if (known === undefined)
+    return display.dashboard
+      ? displayStateNote(display)
+      : `${display.mode.stateNotice}\n${DASHBOARD_OFF_STATE_NOTICE}`;
+  return [
+    ...(known.mode === display.mode ? [] : [display.mode.notice]),
+    ...(known.dashboard === display.dashboard
+      ? []
+      : [display.dashboard ? DASHBOARD_ON_NOTICE : DASHBOARD_OFF_NOTICE]),
+  ].join("\n");
+}
+
+/** Each removed mode id, with the mode that replaces it and whether its Dashboard stays on. */
+const REMOVED_DISPLAY_MODES: ReadonlyMap<
+  string,
+  { readonly id: string; readonly dashboard: boolean }
+> = new Map([
+  ["messages-only", { id: CHAT_REPLIES_DISPLAY_MODE.id, dashboard: false }],
+  ["messages-dashboard", { id: CHAT_REPLIES_DISPLAY_MODE.id, dashboard: true }],
+]);
+
+/**
+ * `settings` with each removed mode id replaced, or `settings` itself when it holds none. The
+ * server runs it on each read and write of its settings, so other readers know only current ids.
+ */
+export function withoutRemovedDisplayModes<
+  S extends Pick<
+    ServerSettings,
+    "threadDisplayModes" | "threadDashboards" | "newThreadDisplayMode"
+  >,
+>(settings: S): S {
+  const removed = Object.entries(settings.threadDisplayModes).flatMap(([threadId, id]) => {
+    const replacement = REMOVED_DISPLAY_MODES.get(id);
+    return replacement === undefined ? [] : [[threadId, replacement] as const];
+  });
+  const newThreadMode = REMOVED_DISPLAY_MODES.get(settings.newThreadDisplayMode);
+  if (removed.length === 0 && newThreadMode === undefined) return settings;
+  const threadDisplayModes = { ...settings.threadDisplayModes };
+  const threadDashboards = { ...settings.threadDashboards };
+  for (const [threadId, replacement] of removed) {
+    threadDisplayModes[threadId] = replacement.id;
+    // Only an older client writes a removed id now, and its Messages only means no Dashboard.
+    if (replacement.dashboard) threadDashboards[threadId] = true;
+    else delete threadDashboards[threadId];
+  }
+  return {
+    ...settings,
+    threadDisplayModes,
+    threadDashboards,
+    newThreadDisplayMode: newThreadMode?.id ?? settings.newThreadDisplayMode,
+  };
 }
 
 const USER_TYPED_SOURCES: ReadonlySet<OrchestrationV2CreationSource> = new Set(["web", "mobile"]);
@@ -656,6 +708,7 @@ export function isReplaceSendCall(item: OrchestrationV2TurnItem): boolean {
 export function displayModeShowsText(modeId: string, item: OrchestrationV2TurnItem): boolean {
   const event = displayEventFromTurnItem(item);
   if (item.type === "dynamic_tool" && event?.type !== "sent") return false;
-  const { visibleCores } = resolveDisplayMode(modeId);
-  return visibleCores === null || (event !== null && visibleCores([event]).length > 0);
+  return (
+    !resolveDisplayMode(modeId).subThreads || (event !== null && foldCores([event]).length > 0)
+  );
 }

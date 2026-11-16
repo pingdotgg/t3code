@@ -408,6 +408,7 @@ export function applyServerSettingsPatch(
     usagePriceOverrides: usagePriceOverridesPatch,
     usageModelAliases: usageModelAliasesPatch,
     threadDisplayModes: threadDisplayModesPatch,
+    threadDashboards: threadDashboardsPatch,
     // Entry replacement: deepMerge would keep keys the client meant to clear.
     projectSettingsOverrides: projectSettingsOverridesPatch,
     projectAgentBrowserAccessOverrides: _legacyBrowserAccess,
@@ -650,6 +651,9 @@ export function applyServerSettingsPatch(
             threadDisplayModesPatch,
           ),
         }
+      : {}),
+    ...(threadDashboardsPatch !== undefined
+      ? { threadDashboards: mergeSettingsEntries(current.threadDashboards, threadDashboardsPatch) }
       : {}),
     ...(patch.sourceControlWriterModelSelection !== undefined
       ? { sourceControlWriterModelSelection: patch.sourceControlWriterModelSelection }

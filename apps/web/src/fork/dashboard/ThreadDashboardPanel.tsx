@@ -21,6 +21,7 @@ import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { chatMarkdownClipboardPayload } from "../../markdown-clipboard";
+import { useThreadDisplay } from "../displayMode/useThreadDisplayMode";
 import {
   type CiteAssistantText,
   dashboardCitationSourceProps,
@@ -242,8 +243,15 @@ export function ThreadDashboardPanel(props: {
   readonly onCite: CiteAssistantText;
 }) {
   const { environmentId, threadId } = props.threadRef;
-  const query = useEnvironmentQuery(threadDashboard({ environmentId, input: { threadId } }));
+  const on = useThreadDisplay(props.threadRef).dashboard;
+  const query = useEnvironmentQuery(
+    on ? threadDashboard({ environmentId, input: { threadId } }) : null,
+  );
   const markSeen = useAtomCommand(markThreadDashboardSlotSeen, { reportFailure: false });
+  // Another device may turn the Dashboard off while this tab is open.
+  if (!on) {
+    return <p className="p-3 text-muted-foreground text-xs">This thread's Dashboard is off.</p>;
+  }
   if (query.data === null) {
     return query.error === null ? null : (
       <p className="p-3 text-muted-foreground text-sm">{query.error}</p>

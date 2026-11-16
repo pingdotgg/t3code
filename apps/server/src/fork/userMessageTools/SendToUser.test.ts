@@ -9,11 +9,11 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
+import { shortId } from "@t3tools/shared/displayModes";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as TestClock from "effect/testing/TestClock";
 import * as Context from "effect/Context";
 import { McpSchema, McpServer, Tool } from "effect/ai";
 
@@ -25,8 +25,7 @@ import { DisplayModeWrap } from "../displayModeWrap/DisplayModeWrap.ts";
 import * as SendToUser from "./SendToUser.ts";
 
 const normalThread = ThreadId.make("send-to-user-thread");
-const messagesThread = ThreadId.make("send-to-user-thread:messages-only");
-const dashboardThread = ThreadId.make("send-to-user-thread:messages-dashboard");
+const chatThread = ThreadId.make("send-to-user-thread:chat");
 
 const scopeFor = (threadId: ThreadId): McpInvocationContext.McpInvocationScope => ({
   environmentId: EnvironmentId.make("send-to-user-environment"),
@@ -60,7 +59,7 @@ const time = DateTime.makeUnsafe("2026-11-07T00:00:00.000Z");
 let ordinal = 0;
 const base = (id: string, status: OrchestrationV2TurnItem["status"] = "completed") => ({
   id: TurnItemId.make(id),
-  threadId: messagesThread,
+  threadId: chatThread,
   runId: null,
   nodeId: null,
   providerThreadId: null,
@@ -89,21 +88,25 @@ const typed = (id: string, text: string, creationSource: "web" | "server" = "web
     createdBy: "user",
     creationSource,
   }) satisfies OrchestrationV2TurnItem;
-const sent = (id: string, text: string, status: OrchestrationV2TurnItem["status"] = "completed") =>
+/** The agent's answer to the user message `to`. */
+const answer = (
+  id: string,
+  text: string,
+  to: string,
+  status: OrchestrationV2TurnItem["status"] = "completed",
+) =>
   ({
     ...base(id, status),
     type: "dynamic_tool",
     toolName: "mcp__t3-code__send_to_user",
-    input: { text },
+    input: { text, reply_to: shortId(to), user_message: "" },
   }) satisfies OrchestrationV2TurnItem;
-const acked = (id: string, text: string, status: OrchestrationV2TurnItem["status"] = "completed") =>
-  ({ ...sent(id, text, status), input: { text, ack: true } }) satisfies OrchestrationV2TurnItem;
-const rewritten = (id: string, text: string) =>
+const rewritten = (id: string, text: string, to: string) =>
   ({
     ...base(id),
     type: "dynamic_tool",
     toolName: "mcp__t3-code__replace_send_to_user",
-    input: { user_message: "", old_text: "", new_text: text },
+    input: { reply_to: shortId(to), user_message: "", old_text: "", new_text: text },
   }) satisfies OrchestrationV2TurnItem;
 
 /** The shown history that each thread's reader returns, oldest first. */
@@ -116,10 +119,7 @@ const layer = McpHttpServer.toolkitRegistration(
   Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
   Layer.provide(
     ServerSettings.layerTest({
-      threadDisplayModes: {
-        [messagesThread]: "messages-only",
-        [dashboardThread]: "messages-dashboard",
-      },
+      threadDisplayModes: { [chatThread]: "chat-replies" },
     }),
   ),
   Layer.provide(
@@ -139,7 +139,7 @@ const call = (
     Effect.flatMap((server) => server.callTool({ name, arguments: args })),
     Effect.provideService(
       McpInvocationContext.McpInvocationContext,
-      scopeFor(options.threadId ?? messagesThread),
+      scopeFor(options.threadId ?? chatThread),
     ),
     Effect.provideService(McpSchema.McpServerClient, clientWith(options.toolUseId)),
   );
@@ -168,20 +168,9 @@ const shownInNormal = (text: string) => ({
   message: "Shown to the user. Don't repeat it.",
   sentMessage: text,
 });
-const ACKED = {
-  ok: true,
-  message: "Shown to the user as an ack. Send your answer when it is ready.",
-};
-const SECOND_ANSWER =
-  "Refused: you already answered the user's last message. To change your answer, call replace_send_to_user.";
-const SECOND_ACK =
-  "Refused: you already sent an ack for the user's last message. Send your answer without ack, or make the ack your answer with replace_send_to_user.";
-const LATE_ACK =
-  "Refused: you already answered the user's last message, and an ack goes only before the answer. To change your answer, call replace_send_to_user.";
-const DELIVERING =
-  "Refused: your message for the user's last message is still being delivered. Call replace_send_to_user again.";
-/** The first line of a refusal: its reason. */
-const reasonOf = (result: McpSchema.CallToolResult) => refusalText(result).split("\n")[0];
+/** Answers the user message u1, "Fix the build.", in Chat mode. */
+const answerU1 = (text: string, more: Record<string, unknown> = {}) =>
+  call("send_to_user", { text, reply_to: shortId("u1"), user_message: "Fix the build.", ...more });
 
 it.effect("shows the message to the user without needing any capability", () =>
   Effect.gen(function* () {
@@ -220,8 +209,13 @@ describe("the 1000-byte limit", () => {
   ) =>
     call(
       "replace_send_to_user",
-      { user_message: "Fix the build.", old_text: options.old_text ?? "On it.", new_text },
-      { threadId: options.threadId ?? messagesThread },
+      {
+        reply_to: shortId("u1"),
+        user_message: "Fix the build.",
+        old_text: options.old_text ?? "On it.",
+        new_text,
+      },
+      { threadId: options.threadId ?? chatThread },
     );
   /** The parts of a result the agent reads. */
   const seen = (result: McpSchema.CallToolResult) => ({
@@ -237,14 +231,14 @@ describe("the 1000-byte limit", () => {
 
   it.effect("refuses an oversize send with only the sentence", () =>
     Effect.gen(function* () {
-      history = [typed("u1", "Fix the build."), sent("s1", "On it."), typed("u2", "Any news?")];
-      expect(seen(yield* call("send_to_user", { text: oversize }))).toEqual(REFUSED);
+      history = [typed("u1", "Fix the build.")];
+      expect(seen(yield* answerU1(oversize))).toEqual(REFUSED);
     }).pipe(Effect.provide(layer)),
   );
 
   it.effect("refuses an oversize new_text with only the sentence", () =>
     Effect.gen(function* () {
-      history = [typed("u1", "Fix the build."), sent("s1", "On it.")];
+      history = [typed("u1", "Fix the build."), answer("s1", "On it.", "u1")];
       expect(seen(yield* replaceWith(oversize))).toEqual(REFUSED);
     }).pipe(Effect.provide(layer)),
   );
@@ -260,9 +254,9 @@ describe("the 1000-byte limit", () => {
   ])("shows 1000 bytes of %s and refuses one byte more", ([_name, atLimit]) =>
     Effect.gen(function* () {
       history = [typed("u1", "Fix the build.")];
-      expect((yield* call("send_to_user", { text: atLimit })).structuredContent).toEqual(SHOWN);
-      expect(refusalText(yield* call("send_to_user", { text: `${atLimit}a` }))).toBe(ONE_POINT);
-      history = [typed("u1", "Fix the build."), sent("s1", "On it.")];
+      expect((yield* answerU1(atLimit)).isError).not.toBe(true);
+      expect(refusalText(yield* answerU1(`${atLimit}a`))).toBe(ONE_POINT);
+      history = [typed("u1", "Fix the build."), answer("s1", "On it.", "u1")];
       expect((yield* replaceWith(atLimit)).structuredContent).toEqual(SHOWN);
       expect(refusalText(yield* replaceWith(`${atLimit}a`))).toBe(ONE_POINT);
     }).pipe(Effect.provide(layer)),
@@ -270,30 +264,18 @@ describe("the 1000-byte limit", () => {
 
   it.effect("shows an ack of 200 bytes and refuses one byte more, outside Normal", () =>
     Effect.gen(function* () {
-      const ack = (text: string, threadId: ThreadId) =>
-        call("send_to_user", { text, ack: true }, { threadId });
-      for (const threadId of [messagesThread, dashboardThread]) {
-        history = [typed("u1", "Fix the build.")];
-        expect(refusalText(yield* ack("a".repeat(201), threadId))).toBe(
-          "an ack is at most 200 bytes. Say only that you got the message and are on it.",
-        );
-        expect((yield* ack("a".repeat(200), threadId)).isError).not.toBe(true);
-      }
-      const answer = yield* call("send_to_user", { text: "a".repeat(1_000) });
-      expect(answer.structuredContent).toEqual(SHOWN);
-      const normal = yield* ack("a".repeat(201), normalThread);
-      expect(normal.structuredContent).toEqual(shownInNormal("a".repeat(201)));
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("refuses an oversize send in Messages only and Messages + Dashboard", () =>
-    Effect.gen(function* () {
       history = [typed("u1", "Fix the build.")];
-      for (const threadId of [messagesThread, dashboardThread]) {
-        expect(seen(yield* call("send_to_user", { text: oversize }, { threadId }))).toEqual(
-          REFUSED,
-        );
-      }
+      expect(refusalText(yield* answerU1("a".repeat(201), { ack: true }))).toBe(
+        "an ack is at most 200 bytes. Say only that you got the message and are on it.",
+      );
+      expect((yield* answerU1("a".repeat(200), { ack: true })).isError).not.toBe(true);
+      expect((yield* answerU1("a".repeat(1_000))).isError).not.toBe(true);
+      const normal = yield* call(
+        "send_to_user",
+        { text: "a".repeat(201), ack: true },
+        { threadId: normalThread },
+      );
+      expect(normal.structuredContent).toEqual(shownInNormal("a".repeat(201)));
     }).pipe(Effect.provide(layer)),
   );
 
@@ -313,7 +295,7 @@ describe("the 1000-byte limit", () => {
 
   it.effect("refuses an oversize new_text before the replace's other refusals", () =>
     Effect.gen(function* () {
-      history = [typed("u1", "Fix the build."), sent("s1", "On it.")];
+      history = [typed("u1", "Fix the build."), answer("s1", "On it.", "u1")];
       const normal = yield* replaceWith(oversize, { threadId: normalThread });
       expect(refusalText(normal)).toBe(ONE_POINT);
       const unlike = yield* replaceWith(oversize, { old_text: "Something else entirely." });
@@ -321,30 +303,33 @@ describe("the 1000-byte limit", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("does not hold the one send for a refused unnamed send", () =>
+  it.effect("does not hold the answer for a refused unnamed send", () =>
     Effect.gen(function* () {
       history = [typed("u1", "Fix the build.")];
-      expect((yield* call("send_to_user", { text: oversize })).isError).toBe(true);
-      expect((yield* call("send_to_user", { text: "Done." })).structuredContent).toEqual(SHOWN);
+      expect((yield* answerU1(oversize)).isError).toBe(true);
+      expect((yield* answerU1("Done.")).isError).not.toBe(true);
     }).pipe(Effect.provide(layer)),
   );
 
   it.effect.each<readonly [string, OrchestrationV2TurnItem]>([
-    ["failed", sent("refused", oversize, "failed")],
+    ["failed", answer("refused", oversize, "u1", "failed")],
     [
       "completed with an error result",
       {
-        ...sent("refused", oversize),
+        ...answer("refused", oversize, "u1"),
         output: { content: [{ type: "text", text: ONE_POINT }], isError: true },
       },
     ],
   ])("does not count a refused send stored as %s", ([_name, refused]) =>
     Effect.gen(function* () {
       history = [typed("u1", "Fix the build."), refused];
-      const named = yield* call("send_to_user", { text: "Done." }, { toolUseId: "toolu_own" });
-      expect(named.structuredContent).toEqual(SHOWN);
-      const unnamed = yield* call("send_to_user", { text: "Done." });
-      expect(unnamed.structuredContent).toEqual(SHOWN);
+      const named = yield* call(
+        "send_to_user",
+        { text: "Done.", reply_to: shortId("u1"), user_message: "Fix the build." },
+        { toolUseId: "toolu_own" },
+      );
+      expect(named.isError).not.toBe(true);
+      expect((yield* answerU1("Done.")).isError).not.toBe(true);
     }).pipe(Effect.provide(layer)),
   );
 
@@ -375,184 +360,33 @@ describe("the 1000-byte limit", () => {
   );
 });
 
-describe("one send per typed message", () => {
-  it.effect("shows the first send after the user's message, as sends before it do not count", () =>
-    Effect.gen(function* () {
-      history = [typed("u1", "Fix the build."), sent("s1", "On it."), typed("u2", "Any news?")];
-      const result = yield* call("send_to_user", { text: "Done." });
-      expect(result.structuredContent).toEqual(SHOWN);
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("refuses a second send with the latest messages and the current one", () =>
-    Effect.gen(function* () {
-      history = [
-        typed("u1", "Fix the build."),
-        sent("s1", "On it."),
-        typed("u2", "Any news?"),
-        typed("r", "Continue where you left off.", "server"),
-        sent("s2", "Still working."),
-        rewritten("w2", "Still working, halfway."),
-      ];
-      const error = refusalText(yield* call("send_to_user", { text: "Done." }));
-      expect(error).toBe(
-        [
-          SECOND_ANSWER,
-          "Latest messages between you and the user:",
-          "[you] On it.",
-          "[user] Any news?",
-          "[you] Still working, halfway.",
-          "Your current message, as old_text:",
-          "Still working, halfway.",
-        ].join("\n"),
-      );
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("counts a send made in Normal as an answer, though it passed ack", () =>
-    Effect.gen(function* () {
-      const inNormal = {
-        ...acked("n1", "On it."),
-        output: shownInNormal("On it."),
-      } satisfies OrchestrationV2TurnItem;
-      history = [typed("u1", "Fix the build."), inNormal];
-      expect(reasonOf(yield* call("send_to_user", { text: "Done." }))).toBe(SECOND_ANSWER);
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("takes one ack before the answer, and no send after the answer", () =>
-    Effect.gen(function* () {
-      const named = (text: string, ack = false) =>
-        call("send_to_user", { text, ack }, { toolUseId: "toolu_own" });
-      history = [typed("u1", "Fix the build.")];
-      expect((yield* named("On it.", true)).structuredContent).toEqual(ACKED);
-      history = [typed("u1", "Fix the build."), acked("a1", "On it.")];
-      expect(reasonOf(yield* named("Still on it.", true))).toBe(SECOND_ACK);
-      expect((yield* named("Done.")).structuredContent).toEqual(SHOWN);
-      for (const answered of [sent("s1", "Done."), rewritten("w1", "Done.")]) {
-        history = [typed("u1", "Fix the build."), acked("a1", "On it."), answered];
-        expect(reasonOf(yield* named("Also: types pass."))).toBe(SECOND_ANSWER);
-        expect(reasonOf(yield* named("On it.", true))).toBe(LATE_ACK);
-      }
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("limits Messages + Dashboard too, and not Normal", () =>
-    Effect.gen(function* () {
-      history = [typed("u1", "Fix the build."), sent("s1", "On it.")];
-      const dashboard = yield* call(
-        "send_to_user",
-        { text: "Done." },
-        { threadId: dashboardThread },
-      );
-      expect(dashboard.isError).toBe(true);
-      const normal = yield* call("send_to_user", { text: "Done." }, { threadId: normalThread });
-      expect(normal.structuredContent).toEqual(shownInNormal("Done."));
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("counts another send still running when the call names its own tool use", () =>
-    Effect.gen(function* () {
-      history = [typed("u1", "Fix the build."), sent("other", "On it.", "running")];
-      const refused = yield* call("send_to_user", { text: "Done." }, { toolUseId: "toolu_own" });
-      expect(refused.isError).toBe(true);
-      history = [typed("u1", "Fix the build."), sent("own", "Done.", "running")];
-      const own = yield* call("send_to_user", { text: "Done." }, { toolUseId: "toolu_own" });
-      expect(own.structuredContent).toEqual(SHOWN);
-      history = [typed("u1", "Fix the build."), sent("other", "On it.", "failed")];
-      const failed = yield* call("send_to_user", { text: "Done." }, { toolUseId: "toolu_own" });
-      expect(failed.structuredContent).toEqual(SHOWN);
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("of two sends in one response, shows the first and refuses the second", () =>
-    Effect.gen(function* () {
-      history = [
-        typed("u1", "Fix the build."),
-        sent("first", "On it.", "running"),
-        sent("second", "Done.", "running"),
-      ];
-      const first = yield* call("send_to_user", { text: "On it." }, { toolUseId: "toolu_first" });
-      expect(first.structuredContent).toEqual(SHOWN);
-      const second = yield* call("send_to_user", { text: "Done." }, { toolUseId: "toolu_second" });
-      expect(second.isError).toBe(true);
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("ignores a message the user typed after the call started", () =>
-    Effect.gen(function* () {
-      history = [
-        typed("u1", "Fix the build."),
-        sent("own", "Done.", "running"),
-        typed("u2", "Also run the tests."),
-        sent("later", "Tests pass.", "completed"),
-      ];
-      const result = yield* call("send_to_user", { text: "Done." }, { toolUseId: "toolu_own" });
-      expect(result.structuredContent).toEqual(SHOWN);
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect(
-    "of two unnamed sends before either is stored, refuses the second for a few seconds",
-    () =>
-      Effect.gen(function* () {
-        history = [typed("u1", "Fix the build.")];
-        const first = yield* call("send_to_user", { text: "On it." });
-        expect(first.structuredContent).toEqual(SHOWN);
-        const second = yield* call("send_to_user", { text: "Done." });
-        expect(second.isError).toBe(true);
-        yield* TestClock.adjust("11 seconds");
-        const later = yield* call("send_to_user", { text: "Done." });
-        expect(later.structuredContent).toEqual(SHOWN);
-        history = [typed("u1", "Fix the build."), sent("s1", "Done."), typed("u2", "Thanks.")];
-        const afterTyping = yield* call("send_to_user", { text: "You're welcome." });
-        expect(afterTyping.structuredContent).toEqual(SHOWN);
-        history = [typed("u3", "Ship it.")];
-        const ack = yield* call("send_to_user", { text: "On it.", ack: true });
-        expect(ack.structuredContent).toEqual(ACKED);
-        expect(reasonOf(yield* call("send_to_user", { text: "On it.", ack: true }))).toBe(
-          SECOND_ACK,
-        );
-        const answer = yield* call("send_to_user", { text: "Shipped." });
-        expect(answer.structuredContent).toEqual(SHOWN);
-        expect(reasonOf(yield* call("send_to_user", { text: "Tagged too." }))).toBe(SECOND_ANSWER);
-      }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("counts only completed sends when the call does not name its tool use", () =>
-    Effect.gen(function* () {
-      history = [typed("u1", "Fix the build."), sent("other", "On it.", "running")];
-      const result = yield* call("send_to_user", { text: "Done." });
-      expect(result.structuredContent).toEqual(SHOWN);
-    }).pipe(Effect.provide(layer)),
-  );
-});
-
 describe("replace_send_to_user", () => {
-  const replace = (user_message: string, old_text: string, threadId = messagesThread) =>
+  const replace = (user_message: string, old_text: string, threadId = chatThread) =>
     call(
       "replace_send_to_user",
-      { user_message, old_text, new_text: "Done, and pushed." },
-      {
-        threadId,
-      },
+      { reply_to: shortId("u1"), user_message, old_text, new_text: "Done, and pushed." },
+      { threadId },
     );
 
-  it.effect("accepts the user's message and the current message as the recap shows them", () =>
+  it.effect("accepts the user's message and the current answer as the recap shows them", () =>
     Effect.gen(function* () {
       const long = "汉".repeat(700);
-      history = [typed("u1", long), sent("s1", "On it.")];
+      history = [typed("u1", long), answer("s1", "On it.", "u1")];
       const result = yield* replace(`[user] ${"汉".repeat(666)}…[truncated]`, "[you] On it.");
       expect(result.structuredContent).toEqual(SHOWN);
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("compares old_text with the send's text after its earlier rewrites", () =>
+  it.effect("compares old_text with the answer's text after its earlier rewrites", () =>
     Effect.gen(function* () {
       history = [
         typed("u1", "Fix the build."),
-        sent("s1", "The build passed on prototype/host. I will deploy after Chief says yes."),
-        rewritten("w1", "Deployed. Next I clean up the old branches."),
+        answer(
+          "s1",
+          "The build passed on prototype/host. I will deploy after Chief says yes.",
+          "u1",
+        ),
+        rewritten("w1", "Deployed. Next I clean up the old branches.", "u1"),
       ];
       const stale = refusalText(
         yield* replace(
@@ -560,7 +394,7 @@ describe("replace_send_to_user", () => {
           "The build passed on prototype/host. I will deploy after Chief says yes.",
         ),
       );
-      expect(stale).toMatch(/^Refused: old_text is \d+% like your current message; needs 70%\./);
+      expect(stale).toMatch(/^Refused: old_text is \d+% like your answer to it; needs 70%\./);
       const current = yield* replace("Fix the build.", "Deployed; next I clean up old branches.");
       expect(current.structuredContent).toEqual(SHOWN);
     }).pipe(Effect.provide(layer)),
@@ -579,42 +413,10 @@ describe("replace_send_to_user", () => {
         prefix: "",
         suffix: "",
       });
-      history = [typed("u1", `Why ${quote}?`), sent("s1", "On it.")];
+      history = [typed("u1", `Why ${quote}?`), answer("s1", "On it.", "u1")];
       const result = yield* replace("Why [assistant-quote-1]?", "On it.");
       expect(result.structuredContent).toEqual(SHOWN);
     }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("refuses a user_message unlike the user's last message, floored to whole percent", () =>
-    Effect.gen(function* () {
-      history = [typed("u1", "Fix the build."), sent("s1", "On it.")];
-      // The longest common subsequence is "i the l.", 8 characters, against 14 + 17: 51.6%.
-      const error = refusalText(yield* replace("Ship the release.", "On it."));
-      expect(error.split("\n")[0]).toBe(
-        "Refused: user_message is 51% like the user's last message; needs 70%.",
-      );
-      expect(error).toContain("[user] Fix the build.\n[you] On it.");
-      expect(error.endsWith("Your current message, as old_text:\nOn it.")).toBe(true);
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect(
-    "expects an empty user_message, and refuses an ack, when the user has typed nothing",
-    () =>
-      Effect.gen(function* () {
-        history = [typed("r", "Continue where you left off.", "server")];
-        expect(reasonOf(yield* call("send_to_user", { text: "On it.", ack: true }))).toBe(
-          "Refused: an ack answers a message from the user, and they have typed none. Send without ack.",
-        );
-        expect((yield* call("send_to_user", { text: "On it." })).structuredContent).toEqual(SHOWN);
-        history = [typed("r", "Continue where you left off.", "server"), sent("s1", "On it.")];
-        const error = refusalText(yield* replace("Continue where you left off.", "On it."));
-        expect(error.split("\n")[0]).toBe(
-          "Refused: user_message is 0% like the user's last message; expected an empty string.",
-        );
-        const result = yield* replace("", "On it.");
-        expect(result.structuredContent).toEqual(SHOWN);
-      }).pipe(Effect.provide(layer)),
   );
 
   it.effect(
@@ -622,7 +424,7 @@ describe("replace_send_to_user", () => {
     () =>
       Effect.gen(function* () {
         const long = "Fix the build and tell me what broke. ".repeat(65);
-        history = [typed("u1", long), sent("s1", "On it.")];
+        history = [typed("u1", long), answer("s1", "On it.", "u1")];
         const result = yield* replace(long, "On it.");
         expect(result.structuredContent).toEqual(SHOWN);
       }).pipe(Effect.provide(layer)),
@@ -632,7 +434,7 @@ describe("replace_send_to_user", () => {
     Effect.gen(function* () {
       const typedText = "\\".repeat(1_250);
       const sentText = "a".repeat(2_500);
-      history = [typed("u1", typedText), sent("s1", sentText)];
+      history = [typed("u1", typedText), answer("s1", sentText, "u1")];
       const within = yield* replace(typedText, sentText);
       expect(within.structuredContent).toEqual(SHOWN);
       const user = yield* replace(`${typedText}\\`, sentText).pipe(Effect.flip);
@@ -644,75 +446,12 @@ describe("replace_send_to_user", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("refuses a replace while the answer after an ack is still being delivered", () =>
+  it.effect("refuses in Normal", () =>
     Effect.gen(function* () {
-      const replaceAck = (toolUseId?: string) =>
-        call(
-          "replace_send_to_user",
-          { user_message: "Fix the build.", old_text: "On it.", new_text: "Done." },
-          toolUseId === undefined ? {} : { toolUseId },
-        );
-      history = [
-        typed("u1", "Fix the build."),
-        acked("a1", "On it."),
-        sent("s1", "Fixed.", "running"),
-      ];
-      expect(reasonOf(yield* replaceAck("toolu_own"))).toBe(DELIVERING);
-      history = [typed("u1", "Fix the build."), acked("a1", "On it.")];
-      expect((yield* call("send_to_user", { text: "Fixed." })).structuredContent).toEqual(SHOWN);
-      expect(reasonOf(yield* replaceAck())).toBe(DELIVERING);
-      history = [typed("u1", "Fix the build."), acked("a1", "On it."), sent("s1", "Fixed.")];
-      const stored = yield* call("replace_send_to_user", {
-        user_message: "Fix the build.",
-        old_text: "Fixed.",
-        new_text: "Fixed and pushed.",
-      });
-      expect(stored.structuredContent).toEqual(SHOWN);
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("makes an ack the answer, and then holds against another answer", () =>
-    Effect.gen(function* () {
-      history = [typed("u1", "Fix the build."), acked("a1", "On it.")];
-      const replaced = yield* replace("Fix the build.", "On it.");
-      expect(replaced.structuredContent).toEqual(SHOWN);
-      expect(reasonOf(yield* call("send_to_user", { text: "Done." }))).toBe(SECOND_ANSWER);
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("holds a named replace of an ack against another answer until it is stored", () =>
-    Effect.gen(function* () {
-      history = [typed("u1", "Fix the build."), acked("a1", "On it.")];
-      const namedReplace = yield* call(
-        "replace_send_to_user",
-        { user_message: "Fix the build.", old_text: "On it.", new_text: "Done." },
-        { toolUseId: "toolu_replace" },
+      history = [typed("u1", "Fix the build."), answer("s1", "On it.", "u1")];
+      expect(refusalText(yield* replace("Fix the build.", "On it.", normalThread))).toBe(
+        "Refused: replace_send_to_user works only in a thread set to Chat mode. Use send_to_user.",
       );
-      expect(namedReplace.structuredContent).toEqual(SHOWN);
-      const namedSend = yield* call("send_to_user", { text: "Done." }, { toolUseId: "toolu_send" });
-      expect(reasonOf(namedSend)).toBe(SECOND_ANSWER);
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("refuses when there is no send since the user's last message", () =>
-    Effect.gen(function* () {
-      history = [sent("s1", "On it."), typed("u1", "Fix the build.")];
-      const error = refusalText(yield* replace("Fix the build.", "On it."));
-      expect(error.split("\n")[0]).toBe(
-        "Refused: you have sent no message since the user's last one, so there is nothing to replace. Use send_to_user.",
-      );
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("refuses outside Messages only and Messages + Dashboard", () =>
-    Effect.gen(function* () {
-      history = [typed("u1", "Fix the build."), sent("s1", "On it.")];
-      const error = refusalText(yield* replace("Fix the build.", "On it.", normalThread));
-      expect(error.split("\n")[0]).toBe(
-        "Refused: replace_send_to_user works only in a thread whose display mode allows one answer from you per message of the user. This thread's mode does not. Use send_to_user.",
-      );
-      const dashboard = yield* replace("Fix the build.", "On it.", dashboardThread);
-      expect(dashboard.structuredContent).toEqual(SHOWN);
     }).pipe(Effect.provide(layer)),
   );
 });

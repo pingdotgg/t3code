@@ -24,7 +24,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
-import { dashboardSurfaceActions, ModeSurfaceIcon } from "~/fork/dashboard/dashboardSurface";
+import { type ModeSurfaceAction, ModeSurfaceIcon } from "~/fork/dashboard/dashboardSurface";
 import type { SplitMenuAction } from "~/fork/rightPanelSplit/splitLayout.logic";
 import {
   SplitPaneFrame,
@@ -148,8 +148,8 @@ export interface RightPanelTabsProps {
   onAddDevice: () => void;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
-  /** Absent unless the thread's display mode has a Dashboard. */
-  onAddDashboard?: (() => void) | undefined;
+  /** Items that open the tabs of the thread's display mode and Dashboard switch, such as Replies. */
+  modeSurfaceActions?: ReadonlyArray<ModeSurfaceAction> | undefined;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -331,7 +331,7 @@ function RightPanelEmptyState(props: {
   onAddDevice: () => void;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
-  onAddDashboard?: (() => void) | undefined;
+  modeSurfaceActions?: ReadonlyArray<ModeSurfaceAction> | undefined;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -415,7 +415,7 @@ function RightPanelEmptyState(props: {
           },
         ]
       : []),
-    ...dashboardSurfaceActions(props.onAddDashboard),
+    ...(props.modeSurfaceActions ?? []),
   ] as const;
 
   type SurfaceAction = (typeof actions)[number];
@@ -1200,7 +1200,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           },
         ]
       : []),
-    ...dashboardSurfaceActions(props.onAddDashboard),
+    ...(props.modeSurfaceActions ?? []),
   ] as const;
 
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -1593,7 +1593,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}
             onAddSideChat={props.onAddSideChat}
-            onAddDashboard={props.onAddDashboard}
+            modeSurfaceActions={props.modeSurfaceActions}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}

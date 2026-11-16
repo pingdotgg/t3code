@@ -52,7 +52,7 @@ export function userViewCommand(cli: {
     ),
   }).pipe(
     Command.withDescription(
-      "Print part of a thread word for word as the user's screen shows it in Messages only, Messages + Dashboard or Chat + Replies.",
+      "Print part of a thread word for word as the user's screen shows it in Chat mode.",
     ),
     Command.withHandler((flags) =>
       Effect.gen(function* () {

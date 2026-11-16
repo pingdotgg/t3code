@@ -4,12 +4,15 @@ import {
   type ContextMenuItem,
   type ScopedThreadRef,
   type ServerSettings,
+  type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import {
   DISPLAY_MODES,
   type DisplayMode,
+  NORMAL_DISPLAY,
   NORMAL_DISPLAY_MODE,
-  resolveDisplayMode,
+  type ThreadDisplay,
+  threadDisplay,
 } from "@t3tools/shared/displayModes";
 import {
   isAtomCommandInterrupted,
@@ -28,21 +31,37 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { SubThreadViewContext } from "../subThreads/subThreadsState";
 import { applyDisplayMode } from "./displayModeTimeline";
 
-export type DisplayModeMenuId = "display-mode" | `display-mode:${string}`;
+/** A Dashboard item's id names the state that a click sets, so a stale menu sets what it showed. */
+export type DisplayModeMenuId =
+  | "display-mode"
+  | `display-mode:${string}`
+  | "dashboard:on"
+  | "dashboard:off";
 
 const noSettingsAtom = Atom.make<ServerSettings | null>(null);
 
-/** Returns the thread's mode. A draft thread is Normal. */
-export function useThreadDisplayMode(threadRef: ScopedThreadRef | null): DisplayMode {
+/** Returns the thread's mode and Dashboard switch. A draft thread is Normal with no Dashboard. */
+export function useThreadDisplay(threadRef: ScopedThreadRef | null): ThreadDisplay {
   const settings = useAtomValue(
     threadRef === null
       ? noSettingsAtom
       : serverEnvironment.settingsValueAtom(threadRef.environmentId),
   );
-  return threadRef === null
-    ? NORMAL_DISPLAY_MODE
-    : resolveDisplayMode(settings?.threadDisplayModes[threadRef.threadId]);
+  return threadRef === null ? NORMAL_DISPLAY : threadDisplay(settings, threadRef.threadId);
 }
+
+/** Returns the thread's mode. A draft thread is Normal. */
+export const useThreadDisplayMode = (threadRef: ScopedThreadRef | null): DisplayMode =>
+  useThreadDisplay(threadRef).mode;
+
+const MODE_SURFACE_KINDS = ["replies", "dashboard"] as const;
+export type ModeSurfaceKind = (typeof MODE_SURFACE_KINDS)[number];
+
+/** The right-panel tabs that `display` has, in menu order. */
+export const modeSurfaces = (display: ThreadDisplay): ReadonlyArray<ModeSurfaceKind> => [
+  ...(display.mode.subThreads ? (["replies"] as const) : []),
+  ...(display.dashboard ? (["dashboard"] as const) : []),
+];
 
 /**
  * Returns the rows that the thread's mode draws from `entries`. `repliesChosen` is true when the
@@ -66,78 +85,132 @@ export function useDisplayModeTimeline(
   const subThread = use(SubThreadViewContext);
   return {
     entries: applyDisplayMode(mode, entries, mode.subThreads ? subThread : null),
-    repliesChosen: mode.visibleCores !== null,
+    repliesChosen: mode.subThreads,
     rememberKey:
       subThread === null && activeThreadKey !== null ? `${activeThreadKey}\u0000${mode.id}` : null,
   };
 }
 
-/** Returns the Display mode submenu. Returns nothing when the server cannot store a mode. */
+/** The thread's mode and Dashboard switch, read outside React. */
+export const readThreadDisplay = (threadRef: ScopedThreadRef) =>
+  threadDisplay(
+    appAtomRegistry.get(serverEnvironment.settingsValueAtom(threadRef.environmentId)),
+    threadRef.threadId,
+  );
+
+/**
+ * Returns the Display mode submenu and the Enable Dashboard switch beside it, each only when the
+ * server can store it.
+ */
 export function displayModeMenuItems(
   threadRef: ScopedThreadRef,
 ): ReadonlyArray<ContextMenuItem<DisplayModeMenuId>> {
-  const environment = appAtomRegistry
+  const capabilities = appAtomRegistry
     .get(environmentServerConfigsAtom)
-    .get(threadRef.environmentId)?.environment;
-  if (environment?.capabilities.threadDisplayModes !== true) return [];
-  const current = resolveDisplayMode(
-    appAtomRegistry.get(serverEnvironment.settingsValueAtom(threadRef.environmentId))
-      ?.threadDisplayModes[threadRef.threadId],
-  );
+    .get(threadRef.environmentId)?.environment.capabilities;
+  return displayMenuItems({
+    modes: capabilities?.threadDisplayModes === true,
+    dashboard: capabilities?.threadDashboards === true,
+    current: readThreadDisplay(threadRef),
+    disabled: !readEnvironmentScope(threadRef.environmentId, AuthSettingsWriteScope),
+  });
+}
+
+/** The items `displayModeMenuItems` returns, for a server that can store `modes` and `dashboard`. */
+export function displayMenuItems(input: {
+  readonly modes: boolean;
+  readonly dashboard: boolean;
+  readonly current: ThreadDisplay;
+  readonly disabled: boolean;
+}): ReadonlyArray<ContextMenuItem<DisplayModeMenuId>> {
+  const { current, disabled } = input;
   return [
-    {
-      id: "display-mode",
-      label: "Display mode",
-      icon: "message-square",
-      disabled: !readEnvironmentScope(threadRef.environmentId, AuthSettingsWriteScope),
-      children: DISPLAY_MODES.map((mode) => ({
-        id: `display-mode:${mode.id}` as const,
-        label: mode.label,
-        checked: mode.id === current.id,
-      })),
-    },
+    ...(input.modes
+      ? [
+          {
+            id: "display-mode" as const,
+            label: "Display mode",
+            icon: "message-square",
+            disabled,
+            children: DISPLAY_MODES.map((mode) => ({
+              id: `display-mode:${mode.id}` as const,
+              label: mode.label,
+              checked: mode === current.mode,
+            })),
+          },
+        ]
+      : []),
+    ...(input.dashboard
+      ? [
+          {
+            id: current.dashboard ? ("dashboard:off" as const) : ("dashboard:on" as const),
+            label: "Enable Dashboard",
+            checked: current.dashboard,
+            disabled,
+          },
+        ]
+      : []),
   ];
 }
 
-/** Returns the settings patch that moves a thread to the mode that a `display-mode:<id>` item names. */
-export function displayModePatch(threadRef: ScopedThreadRef, action: string) {
+type DisplayModeAction = Exclude<DisplayModeMenuId, "display-mode">;
+
+const isDisplayModeAction = (action: string): action is DisplayModeAction =>
+  action.startsWith("display-mode:") || action === "dashboard:on" || action === "dashboard:off";
+
+/**
+ * Returns the settings patch for a menu item, which writes only that item's key, or null when the
+ * thread's stored mode id is already the one the item sets.
+ */
+export function displayModePatch(
+  threadRef: ScopedThreadRef,
+  action: DisplayModeAction,
+  storedModeId: string | undefined,
+): ServerSettingsPatch | null {
+  const { threadId } = threadRef;
+  if (action === "dashboard:on" || action === "dashboard:off")
+    return { threadDashboards: { [threadId]: action === "dashboard:on" ? true : null } };
   const modeId = action.slice("display-mode:".length);
-  return {
-    threadDisplayModes: {
-      [threadRef.threadId]: modeId === NORMAL_DISPLAY_MODE.id ? null : modeId,
-    },
-  };
+  // An older server can store a removed mode, which shows as Normal; choosing Normal clears it.
+  if (modeId === (storedModeId ?? NORMAL_DISPLAY_MODE.id)) return null;
+  return { threadDisplayModes: { [threadId]: modeId === NORMAL_DISPLAY_MODE.id ? null : modeId } };
 }
 
-/** Closes the thread's Dashboard and Replies tabs when the mode `modeId` names does not have them. */
-export function closeDashboardOutsideMode(threadRef: ScopedThreadRef, modeId: string): void {
-  const mode = resolveDisplayMode(modeId);
+/** Closes the thread's Replies and Dashboard tabs that `display` does not have. */
+export function closeModeSurfacesOutside(threadRef: ScopedThreadRef, display: ThreadDisplay): void {
+  const kept = modeSurfaces(display);
   const store = useRightPanelStore.getState();
   const panel = selectThreadRightPanelState(store.byThreadKey, threadRef);
-  for (const [kind, kept] of [
-    ["dashboard", mode.dashboard],
-    ["replies", mode.subThreads],
-  ] as const) {
-    if (!kept && panel.surfaces.some((surface) => surface.kind === kind)) {
+  for (const kind of MODE_SURFACE_KINDS) {
+    if (!kept.includes(kind) && panel.surfaces.some((surface) => surface.kind === kind)) {
       store.closeSurface(threadRef, kind);
     }
   }
 }
 
 /**
- * Returns a menu handler. For a `display-mode:<id>` item, the handler saves that mode and resolves to
- * true, even when the save fails. For any other item, it resolves to false.
+ * Returns a menu handler. For a Display mode or Dashboard item, the handler saves what the item sets
+ * and resolves to true, even when the save fails. For any other item, it resolves to false.
  */
 export function useDisplayModeMenuAction() {
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   return async (threadRef: ScopedThreadRef, action: string): Promise<boolean> => {
-    if (!action.startsWith("display-mode:")) return false;
+    if (!isDisplayModeAction(action)) return false;
+    const settings = appAtomRegistry.get(
+      serverEnvironment.settingsValueAtom(threadRef.environmentId),
+    );
+    const patch = displayModePatch(
+      threadRef,
+      action,
+      settings?.threadDisplayModes[threadRef.threadId],
+    );
+    if (patch === null) return true;
     const result = await updateSettings({
       environmentId: threadRef.environmentId,
-      input: { patch: displayModePatch(threadRef, action) },
+      input: { patch },
     });
     if (result._tag === "Success") {
-      closeDashboardOutsideMode(threadRef, action.slice("display-mode:".length));
+      closeModeSurfacesOutside(threadRef, threadDisplay(result.value, threadRef.threadId));
     }
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);

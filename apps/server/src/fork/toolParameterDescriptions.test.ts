@@ -24,7 +24,7 @@ describe("fork tool parameter descriptions", () => {
 
   it("replace_send_to_user describes user_message, old_text and new_text", () => {
     const tool = SendToUserToolkit.tools.replace_send_to_user;
-    expect(parameterDescription(tool, "user_message")).toMatch(/last message/);
+    expect(parameterDescription(tool, "user_message")).toMatch(/message that reply_to names/);
     expect(parameterDescription(tool, "old_text")).toMatch(/current message/);
     expect(parameterDescription(tool, "new_text")).toMatch(/bytes/);
   });

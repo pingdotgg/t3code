@@ -64,7 +64,7 @@ export const layer = Layer.effect(
       const mode = resolveDisplayMode(
         (yield* serverSettings.getSettings).threadDisplayModes[threadId],
       );
-      if (mode.visibleCores === null)
+      if (!mode.subThreads)
         return yield* new UserViewRefused({
           reason:
             "this thread is in Normal, so the user sees the whole timeline; read it with t3_thread_read",

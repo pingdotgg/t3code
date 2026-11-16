@@ -42,9 +42,7 @@ export function SubThreadsPanel(props: {
   const show = (first: string | null) => useSubThreadsStore.getState().show(threadKey, first);
   // Another device may switch the mode while this tab is open; no reply box works then.
   if (!hasSubThreads) {
-    return (
-      <p className="p-3 text-muted-foreground text-xs">This thread is not set to Chat + Replies.</p>
-    );
+    return <p className="p-3 text-muted-foreground text-xs">This thread is not in Chat mode.</p>;
   }
   // A rewind can remove the first message of the sub-thread on screen; the list takes its place.
   const shown = chosen !== null && summaries.has(chosen) ? chosen : null;
