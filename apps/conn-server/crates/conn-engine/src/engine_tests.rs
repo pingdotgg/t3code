@@ -4117,3 +4117,74 @@ async fn work_queued_behind_an_abandoned_start_runs_after_it() {
     let next_start = calls.iter().position(|c| c == "start run:t1:3");
     assert!(abandoned.is_some() && abandoned < next_start, "{calls:?}");
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn secret_cards_keep_their_position_and_final_status_and_cancel_on_restart() {
+    let db = TempDb::new("secret-cards");
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "secret-thread")).await;
+        let mut changes = engine
+            .subscribe_thread(from_json(json!({"threadId":"t1"})).unwrap())
+            .await
+            .unwrap();
+        next(&mut changes).await;
+        dispatch(&engine, message("t1", "secret-run", "hang")).await;
+        until_provider_turn(&mut changes).await;
+        let p = projection(&engine, "t1").await;
+        let run = &p["runs"][0];
+        let command = json!({"commandId":"secret-pending","threadId":"t1","runId":run["id"],"nodeId":run["rootNodeId"],"turnItemId":"secret-card","label":"API key","reason":"Test","secretStatus":"pending"});
+        let mut wrong = command.clone();
+        wrong["nodeId"] = json!("wrong");
+        assert!(engine.record_secret_request(wrong).await.is_err());
+        engine.record_secret_request(command.clone()).await.unwrap();
+        let p = projection(&engine, "t1").await;
+        let initial = p["turnItems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["id"] == "secret-card")
+            .unwrap();
+        let mut declined = command.clone();
+        declined["commandId"] = json!("secret-declined");
+        declined["secretStatus"] = json!("declined");
+        engine.record_secret_request(declined).await.unwrap();
+        let mut again = command.clone();
+        again["commandId"] = json!("secret-again");
+        engine.record_secret_request(again).await.unwrap();
+        let p = projection(&engine, "t1").await;
+        let cards: Vec<_> = p["turnItems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| i["id"] == "secret-card")
+            .collect();
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0]["secretStatus"], "declined");
+        assert_eq!(cards[0]["ordinal"], initial["ordinal"]);
+        assert_eq!(cards[0]["startedAt"], initial["startedAt"]);
+        let mut waiting = command;
+        waiting["commandId"] = json!("secret-waiting");
+        waiting["turnItemId"] = json!("restart-card");
+        engine.record_secret_request(waiting).await.unwrap();
+        engine.begin_shutdown();
+        engine.shutdown().await;
+    }
+    let (engine, _) = open(&db);
+    let p = projection(&engine, "t1").await;
+    assert_eq!(
+        p["runs"].as_array().unwrap().len(),
+        1,
+        "a run waiting on a card is never auto-resumed"
+    );
+    assert_eq!(
+        p["turnItems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["id"] == "restart-card")
+            .unwrap()["secretStatus"],
+        "cancelled"
+    );
+    engine.shutdown().await;
+}

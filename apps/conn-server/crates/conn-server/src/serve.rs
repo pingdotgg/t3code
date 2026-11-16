@@ -222,6 +222,12 @@ pub async fn serve_with_instances(
         .await;
     let _ = host.scheduled_tasks.set(scheduled_tasks.clone());
     let mut deps = Deps {
+        panels: Some(conn_features::panels::PanelBroker::default()),
+        secrets: Some(conn_features::secrets::SecretRequests::new(
+            &state_dir,
+            engine.clone(),
+            Arc::new(conn_features::clock::SystemClock),
+        )),
         engine: Some(engine.clone()),
         scheduled_tasks: Some(scheduled_tasks),
         annotations: Some(conn_features::annotations::Annotations::new(

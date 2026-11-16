@@ -7,3 +7,5 @@ annotations_claim
 annotations_complete
 annotations_release
 t3_background_wait
+request_secret
+panel_open

@@ -417,7 +417,7 @@ pub(super) fn prepare_save(
         .into());
     }
     if signature.as_ref().is_some_and(|s| s.secret_ref.is_some()) {
-        // `request_secret` is not served here, so no ref can name a stored secret.
+        // This service is not wired to the secret request store yet.
         return Err(TaskError::new(
             "This server cannot read a secretRef. Send the signing secret itself.",
             Some(task_id),

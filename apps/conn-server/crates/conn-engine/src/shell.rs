@@ -9,6 +9,14 @@ use serde_json::{Value, json};
 
 use crate::store::{StoreResult, Tx};
 
+const PENDING_SECRET_SQL: &str = "SELECT i.body FROM entities i INDEXED BY entities_waiting_secrets
+    JOIN entities r ON r.thread_id = i.thread_id AND r.kind = 'runs' AND r.id = json_extract(i.body, '$.runId')
+    WHERE i.thread_id = ?1 AND i.kind = 'turnItems'
+      AND json_extract(i.body, '$.type') = 'secret_request'
+      AND json_extract(i.body, '$.status') = 'waiting'
+      AND json_extract(r.body, '$.status') IN ('preparing','starting','running','waiting')
+    ORDER BY json_extract(i.body, '$.updatedAt') DESC, i.id DESC LIMIT 1";
+
 pub(crate) const LIVE_RUN_STATUSES: [&str; 5] =
     ["preparing", "queued", "starting", "running", "waiting"];
 /// `isActiveRun`: the run that owns the provider. A queued run waits behind it.
@@ -170,6 +178,25 @@ pub(crate) fn thread_shell(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Value> {
          AND json_extract(body, '$.status') = 'pending' ORDER BY seq DESC LIMIT 1",
         params![thread_id],
     )?;
+    let secret = one(tx, PENDING_SECRET_SQL, params![thread_id])?;
+    let mut pending_summary = pending.as_ref().map_or(Value::Null, |request| {
+        json!({
+            "id":request.get("id"), "kind":request.get("kind"), "createdAt":request.get("createdAt")
+        })
+    });
+    if let Some(secret) = secret.filter(|s| s.get("nodeId").is_some_and(Value::is_string)) {
+        let created = secret
+            .get("startedAt")
+            .filter(|v| !v.is_null())
+            .or_else(|| secret.get("updatedAt"));
+        let replaces = pending.as_ref().is_none_or(|p| {
+            p.get("kind").and_then(Value::as_str) == Some("user_input")
+                && created.and_then(Value::as_str) >= p.get("createdAt").and_then(Value::as_str)
+        });
+        if replaces {
+            pending_summary = json!({"id":secret.get("id"),"kind":"user_input","createdAt":created,"blocking":true,"userOnly":true});
+        }
+    }
     let latest_user = one(
         tx,
         "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'messages'
@@ -254,11 +281,7 @@ pub(crate) fn thread_shell(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Value> {
         "lastErrorClass": failure_field("class"),
         "lastErrorCode": failure_field("code"),
         "usageLimitResetAt": null,
-        "pendingRuntimeRequest": pending.map_or(Value::Null, |request| json!({
-            "id": request["id"],
-            "kind": request["kind"],
-            "createdAt": request["createdAt"],
-        })),
+        "pendingRuntimeRequest": pending_summary,
         "pendingGuestMessageCount": 0,
         "latestVisibleMessage": null,
         "latestUserMessageAt": latest_user.as_ref().map_or(Value::Null, |m| m["updatedAt"].clone()),
@@ -292,4 +315,33 @@ pub(crate) fn thread_shell(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Value> {
         "limitRecovery": field("limitRecovery"),
         "deletedAt": field("deletedAt"),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn pending_secrets_use_a_sparse_index_and_look_up_their_own_run() {
+        let path = std::env::temp_dir().join(format!(
+            "conn-secret-index-{}.sqlite",
+            conn_support::uuid_v4()
+        ));
+        let store = crate::store::Store::open(&path).unwrap();
+        let plan = store.query_plan(super::PENDING_SECRET_SQL, rusqlite::params!["t"]);
+        assert!(
+            plan.iter()
+                .any(|step| step.contains("USING INDEX entities_waiting_secrets")),
+            "{plan:?}"
+        );
+        assert!(
+            plan.iter()
+                .any(|step| step.contains("r USING PRIMARY KEY") && step.contains("id=?")),
+            "{plan:?}"
+        );
+        assert!(
+            !plan.iter().any(|step| step.contains("TEMP B-TREE")),
+            "{plan:?}"
+        );
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
 }

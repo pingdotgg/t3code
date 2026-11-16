@@ -43,6 +43,10 @@ CREATE TABLE IF NOT EXISTS entities (
   body      TEXT NOT NULL,
   PRIMARY KEY (thread_id, kind, id)
 ) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS entities_waiting_secrets
+ON entities(thread_id, json_extract(body, '$.updatedAt') DESC, id DESC)
+WHERE kind = 'turnItems' AND json_extract(body, '$.type') = 'secret_request'
+  AND json_extract(body, '$.status') = 'waiting';
 CREATE TABLE IF NOT EXISTS projects (
   id             TEXT PRIMARY KEY,
   workspace_root TEXT NOT NULL UNIQUE,
