@@ -43,6 +43,7 @@ import { historyCost } from "@t3tools/provider-core/server/handoffBudget";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -1022,32 +1023,40 @@ it.effect("summarizes the next stretch when the model cites none of the chunk", 
   }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
 });
 
-it.effect("retries every pass and skips nothing while every summary times out", () => {
-  let down = true;
-  const model = scripted((input) =>
-    down
-      ? Effect.fail(
-          new TextGenerationError({
-            operation: "generateConversationSummary",
-            detail: "OpenCode did not finish generating in time.",
+it.effect.each([0, 1])(
+  "skips nothing while every summary after the first %i of a pass times out",
+  (healthy) => {
+    let down = true;
+    let callsThisPass = 0;
+    const model = scripted((input) =>
+      down && callsThisPass++ >= healthy
+        ? Effect.fail(
+            new TextGenerationError({
+              operation: "generateConversationSummary",
+              detail: "OpenCode did not finish generating in time.",
+            }),
+          )
+        : Effect.succeed({
+            statements: [{ text: "Recovered.", citations: [input.messages[0]!.ref] }],
           }),
-        )
-      : Effect.succeed({
-          statements: [{ text: "Recovered.", citations: [input.messages[0]!.ref] }],
-        }),
-  );
-  return Effect.gen(function* () {
-    yield* seedThread(5 * 24 + 6);
-    for (let pass = 0; pass < 4; pass++)
-      assert.instanceOf(yield* summarize.pipe(Effect.flip), ConversationSummaryPassError);
-    assert.deepEqual((yield* list).summaries, []);
+    );
+    return Effect.gen(function* () {
+      yield* seedThread(5 * 24 + 6);
+      for (let pass = 0; pass < 4; pass++) {
+        callsThisPass = 0;
+        const exit = yield* Effect.exit(summarize);
+        if (healthy === 0) assert.isTrue(Exit.isFailure(exit));
+        assert.notInclude((yield* list).lastPass?.reason ?? "", "Skipped");
+      }
+      if (healthy === 0) assert.deepEqual((yield* list).summaries, []);
 
-    down = false;
-    for (let pass = 0; pass < 3; pass++) yield* summarize;
-    assert.equal((yield* list).lastPass?.waitingMessages, 0);
-    assert.notInclude((yield* list).lastPass?.reason ?? "", "Skipped");
-  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
-});
+      down = false;
+      for (let pass = 0; pass < 3; pass++) yield* summarize;
+      assert.equal((yield* list).lastPass?.waitingMessages, 0);
+      assert.notInclude((yield* list).lastPass?.reason ?? "", "Skipped");
+    }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+  },
+);
 
 it.effect("turning summaries back on during a pass still retries skipped stretches", () => {
   let gate: { entered: Deferred.Deferred<void>; release: Deferred.Deferred<void> } | undefined;
