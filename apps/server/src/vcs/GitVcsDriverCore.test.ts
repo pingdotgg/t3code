@@ -512,7 +512,7 @@ const markIndexWrittenByGitForWindows = (indexPath: string) =>
   });
 
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-  "does not re-read files on a WSL drive mount whose index Git for Windows wrote",
+  "refreshes an index Git for Windows wrote on a WSL drive mount once, still reporting a same-size edit",
   () =>
     Effect.gen(function* () {
       const driver = yield* GitVcsDriver.GitVcsDriver;
@@ -528,53 +528,30 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       yield* writeTextFile(cwd, ".gitattributes", "asset.bin filter=probe\n");
       yield* writeTextFile(cwd, ".gitignore", ".filter-runs\n");
       yield* writeTextFile(cwd, "asset.bin", "original\n");
+      yield* writeTextFile(cwd, "notes.txt", "original\n");
       const assetPath = path.join(cwd, "asset.bin");
+      const notesPath = path.join(cwd, "notes.txt");
       // An mtime older than the index keeps Git's racy-entry check from reading the file anyway.
       NodeFS.utimesSync(assetPath, 1, 1);
+      NodeFS.utimesSync(notesPath, 1, 1);
       yield* git(cwd, ["add", "."]);
       yield* git(cwd, ["commit", "-m", "filtered asset"]);
       replaceKeepingStat(assetPath, "original\n");
+      replaceKeepingStat(notesPath, "modified\n");
       yield* markIndexWrittenByGitForWindows(path.join(cwd, ".git", "index"));
-      const runsPath = path.join(cwd, ".filter-runs");
-      yield* fs.remove(runsPath, { force: true });
 
       const alias = path.join(yield* makeTmpDir(), "alias");
       NodeFS.symlinkSync(cwd, alias);
+      const changedFiles = Effect.map(
+        driver.statusDetailsLocal(alias, { includeBranchChanges: true }),
+        (status) => status.workingTree.files.map((file) => file.path),
+      );
 
-      const status = yield* driver.statusDetailsLocal(alias, { includeBranchChanges: true });
-
-      assert.isFalse(status.hasWorkingTreeChanges);
+      assert.deepStrictEqual(yield* changedFiles, ["notes.txt"]);
+      const runsPath = path.join(cwd, ".filter-runs");
+      yield* fs.remove(runsPath, { force: true });
+      assert.deepStrictEqual(yield* changedFiles, ["notes.txt"]);
       assert.isFalse(yield* fs.exists(runsPath));
-    }).pipe(Effect.provide(layerMountInfoTest(wslMountInfo(wslDriveDir)))),
-);
-
-it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-  "reports a same-size replacement that kept its mtime on a WSL drive mount whose index Linux Git wrote",
-  () =>
-    Effect.gen(function* () {
-      const driver = yield* GitVcsDriver.GitVcsDriver;
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      yield* fs.makeDirectory(wslDriveDir, { recursive: true });
-      yield* Effect.addFinalizer(() =>
-        fs.remove(wslDriveDir, { recursive: true }).pipe(Effect.ignore),
-      );
-      const cwd = yield* fs.makeTempDirectoryScoped({ directory: wslDriveDir });
-      yield* initRepoWithCommit(cwd);
-      yield* writeTextFile(cwd, "asset.txt", "original\n");
-      const assetPath = path.join(cwd, "asset.txt");
-      NodeFS.utimesSync(assetPath, 1, 1);
-      yield* git(cwd, ["add", "."]);
-      yield* git(cwd, ["commit", "-m", "asset"]);
-      replaceKeepingStat(assetPath, "modified\n");
-
-      const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
-
-      assert.isTrue(status.hasWorkingTreeChanges);
-      assert.deepStrictEqual(
-        status.workingTree.files.map((file) => file.path),
-        ["asset.txt"],
-      );
     }).pipe(Effect.provide(layerMountInfoTest(wslMountInfo(wslDriveDir)))),
 );
 

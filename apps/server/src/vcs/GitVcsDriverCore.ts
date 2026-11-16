@@ -1026,8 +1026,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const serviceScope = yield* Effect.scope;
   const automaticFetchInterval = yield* VcsAutomaticFetchInterval;
   // Git for Windows records no device or inode in the index, so WSL Git on a drive mount finds every
-  // entry changed and, as polls never save the refresh, re-reads every file. Only then is the stat
-  // check relaxed: it hides same-size edits that keep their mtime. Guards always keep the full check.
+  // entry changed and, as polls never save the refresh, re-reads every file on each poll. Refreshing
+  // once records Linux stat data, keeping Git's full check (and its change detection) fast.
   const driveMountInfo =
     hostPlatform === "linux"
       ? yield* fileSystem
@@ -1052,13 +1052,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.orElseSucceed(() => false),
     );
   // Untraced: it runs on every status poll, and off Linux it does no work.
-  const readPollStatConfig = Effect.fnUntraced(function* (cwd: string) {
-    if (driveMountInfo === "") return [];
+  const refreshIndexWrittenByGitForWindows = Effect.fnUntraced(function* (cwd: string) {
+    if (driveMountInfo === "") return;
     // A symlinked alias must classify by the mount the checkout really lives on.
     const physicalCwd = yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd));
-    if (windowsMountFor(driveMountInfo, physicalCwd) === undefined) return [];
+    if (windowsMountFor(driveMountInfo, physicalCwd) === undefined) return;
     const indexPath = yield* executeGit(
-      "GitVcsDriver.pollStatConfig.indexPath",
+      "GitVcsDriver.refreshForeignIndex.indexPath",
       cwd,
       ["rev-parse", "--git-path", "index"],
       { allowNonZeroExit: true },
@@ -1068,9 +1068,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ),
       Effect.orElseSucceed(() => null),
     );
-    return indexPath !== null && (yield* indexWrittenByGitForWindows(indexPath))
-      ? ["-c", "core.checkStat=minimal"]
-      : [];
+    if (indexPath === null || !(yield* indexWrittenByGitForWindows(indexPath))) return;
+    // Entries whose content changed stay stale, so status still reports them.
+    yield* executeGit(
+      "GitVcsDriver.refreshForeignIndex",
+      cwd,
+      ["update-index", "-q", "--refresh"],
+      { allowNonZeroExit: true },
+    ).pipe(Effect.ignore);
   });
   type StatusFetchState = {
     phase: "queued" | "running" | "claimed";
@@ -2401,9 +2406,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         Effect.orElseSucceed(() => null),
       ),
     );
-    const pollStatConfig = yield* readPollStatConfig(cwd);
+    yield* refreshIndexWrittenByGitForWindows(cwd);
     const statusArgs = [
-      ...pollStatConfig,
       "status",
       "--porcelain=2",
       "--branch",
@@ -2470,7 +2474,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       executeGitWithStableDiagnostics(
         "GitVcsDriver.statusDetails.numstat",
         cwd,
-        [...pollStatConfig, "diff-index", "-M", "--numstat", "-z", ref, "--"],
+        ["diff-index", "-M", "--numstat", "-z", ref, "--"],
         { allowNonZeroExit: true, maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
       );
     // diff-index does not read status output, so both spawn together; a non-repository discards it.
@@ -3991,13 +3995,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
     untrackedTotalsFailures.delete(cwd);
-    const pollStatConfig = yield* readPollStatConfig(cwd);
+    yield* refreshIndexWrittenByGitForWindows(cwd);
     const readNumstat = (ref: string) =>
       executeGit(
         "GitVcsDriver.readBranchChangeTotals",
         cwd,
         // Plumbing: porcelain diff refreshes and rewrites the real index, taking index.lock.
-        [...pollStatConfig, "diff-index", "-M", "--numstat", "-z", ref, "--"],
+        ["diff-index", "-M", "--numstat", "-z", ref, "--"],
         {
           allowNonZeroExit: true,
           maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES,
