@@ -69,6 +69,43 @@ it("fails a leaf that records the peer proposal as the user's decision", () => {
   ]);
 });
 
+const userAcceptedPostgres =
+  "\\buser\\b(?:(?!\\bnot\\b)[^.;]){0,30}\\b(?:agre|chose|choos|accept|decid)\\w*(?:(?!\\bnot\\b)[^.;]){0,30}\\bPostgres\\b";
+const agentProposedPostgres =
+  "\\bagent\\b(?:(?!\\bnot\\b)[^.;]){0,40}\\b(?:propos|suggest)\\w*(?:(?!\\bnot\\b)[^.;]){0,40}\\bPostgres\\b";
+
+it("does not treat an open Postgres choice as the peer's proposal", () => {
+  expect(
+    gradeLeaf(peerLeaf!, [
+      {
+        text: "The user has not chosen between Redis and Postgres; the agent prefers Redis.",
+        citations: ["M1", "M3"],
+      },
+    ]),
+  ).toEqual(["missing Astra"]);
+});
+
+it("fails a leaf where the user agrees to Postgres", () => {
+  const text = "Astra proposed Postgres and the user agreed to use Postgres.";
+  expect(gradeLeaf(peerLeaf!, [{ text, citations: ["M2"] }])).toEqual([
+    `${userAcceptedPostgres}: ${text}`,
+  ]);
+});
+
+it("fails a leaf where the user chooses Postgres", () => {
+  const text = "The user chose Postgres for sessions, following Astra.";
+  expect(gradeLeaf(peerLeaf!, [{ text, citations: ["M2"] }])).toEqual([
+    `${userAcceptedPostgres}: ${text}`,
+  ]);
+});
+
+it("fails a leaf that gives the peer's Postgres proposal to the agent", () => {
+  const text = "The agent proposed moving sessions to Postgres; Astra wants to keep Redis.";
+  expect(gradeLeaf(peerLeaf!, [{ text, citations: ["M2", "M3"] }])).toEqual([
+    `${agentProposedPostgres}: ${text}`,
+  ]);
+});
+
 it("passes an ordinary leaf with no peer", () => {
   expect(
     gradeLeaf(ordinaryLeaf!, [
