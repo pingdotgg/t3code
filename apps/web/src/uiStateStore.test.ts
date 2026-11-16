@@ -294,7 +294,7 @@ describe("uiStateStore persistence", () => {
       threadLastVisitedAtById: { "environment:thread-2": "2026-02-25T12:35:00.000Z" },
     });
     localStorageStub.setItem(PERSISTED_STATE_KEY, otherWindow);
-    adoptUiStateFromOtherWindow(otherWindow);
+    adoptUiStateFromOtherWindow();
 
     expect(useUiStateStore.getState().projectExpandedById.mine).toBe(false);
     vi.advanceTimersByTime(500);
@@ -308,13 +308,28 @@ describe("uiStateStore persistence", () => {
     );
   });
 
+  it("keeps its own saved change when another window's earlier write arrives late", () => {
+    vi.useFakeTimers();
+    localStorageStub.setItem(
+      PERSISTED_STATE_KEY,
+      JSON.stringify({ ...makeUiState(), projectOrder: ["physical-d"] }),
+    );
+    useUiStateStore.getState().setProjectExpanded("saved-before-event", false);
+    vi.advanceTimersByTime(500);
+
+    adoptUiStateFromOtherWindow();
+
+    expect(useUiStateStore.getState().projectExpandedById["saved-before-event"]).toBe(false);
+    expect(useUiStateStore.getState().projectOrder).toEqual(["physical-d"]);
+  });
+
   it("schedules no write when it adopts another window's write", () => {
     vi.useFakeTimers();
     const otherWindow = JSON.stringify({ ...makeUiState(), projectOrder: ["physical-c"] });
     localStorageStub.setItem(PERSISTED_STATE_KEY, otherWindow);
     const setItem = vi.spyOn(localStorageStub, "setItem");
 
-    adoptUiStateFromOtherWindow(otherWindow);
+    adoptUiStateFromOtherWindow();
     vi.advanceTimersByTime(500);
 
     expect(useUiStateStore.getState().projectOrder).toEqual(["physical-c"]);

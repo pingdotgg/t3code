@@ -492,9 +492,12 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
 
 let applyingExternal = false;
 
-/** Takes another window's write, keeping this window's unwritten changes on top. */
-export function adoptUiStateFromOtherWindow(raw: string): void {
-  const incoming = readStoredUiState(raw);
+/**
+ * Takes the latest stored state, keeping this window's unwritten changes on top. It reads storage
+ * rather than the event's value, since a queued event can predate this window's own later write.
+ */
+export function adoptUiStateFromOtherWindow(): void {
+  const incoming = readStoredUiState(window.localStorage.getItem(PERSISTED_STATE_KEY));
   if (!incoming) return;
   const current = pickUiState(useUiStateStore.getState());
   const next = mergeUiStates(incoming, current, persistedBaseline);
@@ -523,8 +526,6 @@ if (typeof window !== "undefined" && typeof window.addEventListener === "functio
     debouncedPersistState.flush();
   });
   window.addEventListener("storage", (event) => {
-    if (event.key === PERSISTED_STATE_KEY && event.newValue !== null) {
-      adoptUiStateFromOtherWindow(event.newValue);
-    }
+    if (event.key === PERSISTED_STATE_KEY) adoptUiStateFromOtherWindow();
   });
 }

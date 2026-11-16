@@ -747,6 +747,13 @@ describe("resolveIndexLandingProject", () => {
         scopeReady: true,
       }),
     ).toBe("B");
+    expect(
+      landing({
+        scopeKeys: ["logical-b"],
+        scopedProjectKeys: new Set([`${localEnvironmentId}:${projectB.id}`]),
+        scopeReady: false,
+      }),
+    ).toBe("B");
   });
 
   it("waits for a scope to resolve, then falls back to every project", () => {
