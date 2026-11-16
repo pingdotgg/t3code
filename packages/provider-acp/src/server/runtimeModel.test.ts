@@ -1410,6 +1410,38 @@ describe("extractMcpToolCallIdentity", () => {
     }
   });
 
+  it("identifies a t3_call as the T3 tool it runs", () => {
+    const identityFor = (rawInput: Record<string, unknown>) =>
+      extractMcpToolCallIdentity(
+        toolCallFromUpdate({
+          sessionUpdate: "tool_call",
+          toolCallId: "gateway-1",
+          kind: "other",
+          title: "t3-code-t3_call",
+          status: "pending",
+          rawInput,
+        }),
+      );
+    const wrapped = { server: "t3-code", tool: "t3_theme_set", input: { themeId: "dusk" } };
+
+    expect(identityFor({ tool: "t3_theme_set", arguments: { themeId: "dusk" } })).toEqual(wrapped);
+    // codex-acp nests the call's own arguments under `arguments`.
+    expect(
+      identityFor({
+        server: "t3-code",
+        tool: "t3_call",
+        arguments: { tool: "t3_theme_set", arguments: { themeId: "dusk" } },
+      }),
+    ).toEqual(wrapped);
+    expect(identityFor({ tool: "t3_theme_read" })).toEqual({
+      server: "t3-code",
+      tool: "t3_theme_read",
+      input: {},
+    });
+    // Arguments not streamed yet: the call keeps its own name.
+    expect(identityFor({})).toEqual({ server: "t3-code", tool: "t3_call" });
+  });
+
   it("recovers T3 identity from Hermes editor-renamed MCP tool titles", () => {
     const identityFor = (title: string) =>
       extractMcpToolCallIdentity(

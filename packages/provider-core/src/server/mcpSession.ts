@@ -3,7 +3,7 @@ import type * as Effect from "effect/Effect";
 
 /**
  * Sent by MCP clients that cannot defer tools themselves. The T3 MCP server then
- * lists only a core set plus `tool_search`, which lists the rest on demand.
+ * lists only a core set plus `t3_help` and `t3_call`, which reach the rest.
  */
 export const MCP_TOOL_EXPOSURE_HEADER = "t3-tool-exposure";
 
