@@ -42,7 +42,6 @@ import { Button } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { ThemeImportDialog } from "./ThemeImportDialog";
-import { searchableSetting } from "./settingsSearch";
 import { useThemeEditorStore } from "./themeEditorStore";
 import {
   STANDARD_THEME_CARDS,
@@ -883,13 +882,11 @@ export function ThemeLibrary({
   return (
     <div className="space-y-3">
       <h3 className="flex min-h-7 items-center px-3 text-base font-semibold text-foreground sm:px-4">
-        {searchableSetting("color-scheme").title}
+        {t("search.color-scheme")}
       </h3>
       {renderModeTiles()}
       <div className="flex min-h-8 flex-wrap items-center justify-between gap-3 px-3 pt-5 sm:px-4">
-        <h3 className="text-base font-semibold text-foreground">
-          {searchableSetting("theme").title}
-        </h3>
+        <h3 className="text-base font-semibold text-foreground">{t("search.theme")}</h3>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button
             size="xs"

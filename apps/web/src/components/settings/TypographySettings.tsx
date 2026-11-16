@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   DEFAULT_UNIFIED_SETTINGS,
   MAX_CODE_FONT_SIZE,
@@ -66,12 +67,14 @@ function useFontDefaultFamilies() {
 }
 
 function InterfaceFontRow({ preview }: { preview?: ReactNode }) {
+  const { t } = useTranslation("settings");
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const defaults = useFontDefaultFamilies();
   return (
     <FontFamilySettingsRow
-      {...searchableSetting("interface-font")}
+      id={searchableSetting("interface-font").id}
+      title={t("search.interface-font")}
       description="Everything outside code blocks and the terminal."
       defaultFamily={defaults.sans}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilySans}
@@ -97,12 +100,14 @@ function InterfaceFontRow({ preview }: { preview?: ReactNode }) {
 }
 
 function PromptFontRow() {
+  const { t } = useTranslation("settings");
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const defaults = useFontDefaultFamilies();
   return (
     <FontFamilySettingsRow
-      {...searchableSetting("prompt-font")}
+      id={searchableSetting("prompt-font").id}
+      title={t("search.prompt-font")}
       description="Only the box you write prompts in. Mono works well here."
       defaultFamily={defaults.interfaceFamily}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer}
@@ -136,13 +141,14 @@ function CodeFontRow({
   description?: string;
   preview?: ReactNode;
 }) {
+  const { t } = useTranslation("settings");
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const defaults = useFontDefaultFamilies();
   return (
     <FontFamilySettingsRow
-      {...searchableSetting("code-font")}
-      {...(title !== undefined ? { title } : {})}
+      id={searchableSetting("code-font").id}
+      {...(title !== undefined ? { title } : { title: t("search.code-font") })}
       description={description}
       defaultFamily={defaults.code}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyCode}
@@ -169,12 +175,14 @@ function CodeFontRow({
 }
 
 function TerminalFontRow() {
+  const { t } = useTranslation("settings");
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const defaults = useFontDefaultFamilies();
   return (
     <FontFamilySettingsRow
-      {...searchableSetting("terminal-font")}
+      id={searchableSetting("terminal-font").id}
+      title={t("search.terminal-font")}
       description="Terminal output, independent from code blocks and diffs."
       defaultFamily={defaults.code}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal}

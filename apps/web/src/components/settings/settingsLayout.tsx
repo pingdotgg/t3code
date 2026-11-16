@@ -172,9 +172,8 @@ export function useSettingsSearchTarget<T extends HTMLElement>(id: string | unde
 export function SettingsSearchTarget({
   children,
   // `searchableSetting` names the target for search; as an HTML title it shows a native tooltip.
-  title: _searchTitle,
   ...targetProps
-}: ComponentPropsWithoutRef<"div">) {
+}: Omit<ComponentPropsWithoutRef<"div">, "title">) {
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(targetProps.id);
   return (
     <div {...targetProps} ref={targetRef} tabIndex={targetProps.id ? -1 : targetProps.tabIndex}>
@@ -217,8 +216,8 @@ export function SettingsSection({
   children,
   className,
   ...sectionProps
-}: ComponentPropsWithoutRef<"section"> & {
-  title: string;
+}: Omit<ComponentPropsWithoutRef<"section">, "title"> & {
+  title: ReactNode;
   hideTitle?: boolean;
   icon?: ReactNode;
   titleAction?: ReactNode;
