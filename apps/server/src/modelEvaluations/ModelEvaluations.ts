@@ -51,11 +51,16 @@ const encodeIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(MessageId
 const decodeSelection = Schema.decodeUnknownEffect(Schema.fromJsonString(ModelSelection));
 const isModelEvaluationError = Schema.is(ModelEvaluationError);
 
+// fastMode, serviceTier, contextWindow, and ultracode change latency, billing, or capacity, not output quality.
+const QUALITY_OPTION_IDS = new Set(["effort", "reasoningEffort", "reasoning_effort"]);
+
 function selectionKey(selection: ModelSelection) {
   return JSON.stringify({
     instanceId: selection.instanceId,
     model: selection.model,
-    options: (selection.options ?? []).toSorted((a, b) => a.id.localeCompare(b.id)),
+    options: (selection.options ?? [])
+      .filter((option) => QUALITY_OPTION_IDS.has(option.id))
+      .toSorted((left, right) => left.id.localeCompare(right.id)),
   });
 }
 
