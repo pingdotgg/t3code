@@ -49,13 +49,18 @@ export function usePasteToFocusComposer(
         event.stopPropagation();
         return;
       }
-      const text = pasteTextToFocusComposer(event);
       const clipboardData = event.clipboardData;
-      if (text === null || clipboardData === null) return;
+      if (clipboardData === null) return;
+      const hasContext = (readPastedComposerContext(clipboardData)?.records.length ?? 0) > 0;
+      // A copied chip carries its image as a file; the text import restores the chip instead.
+      const text =
+        hasContext && shouldRedirectInputToComposer(event)
+          ? clipboardData.getData("text/plain") || null
+          : pasteTextToFocusComposer(event);
+      if (text === null) return;
       pasteAsTextShortcutUntilRef.current = 0;
       if (
-        ((readPastedComposerContext(clipboardData)?.records.length ?? 0) === 0 &&
-          composerRef.current?.pasteTextAtEnd(text, { bypassAutoAttachment })) ||
+        (!hasContext && composerRef.current?.pasteTextAtEnd(text, { bypassAutoAttachment })) ||
         composerRef.current?.insertTextAtEnd(text, { clipboardData })
       ) {
         event.preventDefault();

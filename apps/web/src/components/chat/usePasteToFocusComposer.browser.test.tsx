@@ -1,5 +1,10 @@
 import { createMemoryHistory } from "@tanstack/react-router";
-import { WS_METHODS } from "@t3tools/contracts";
+import { ComposerContextId, WS_METHODS, type ComposerContextRecord } from "@t3tools/contracts";
+import {
+  COMPOSER_CONTEXT_CLIPBOARD_MIME,
+  encodeComposerContextFragment,
+} from "@t3tools/shared/composerContextClipboard";
+import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -112,4 +117,50 @@ it("text and screenshots pasted outside the composer send with an Enter right af
       expect.objectContaining({ name: "second.png" }),
     ],
   });
+});
+
+it("a copied image chip pasted outside the composer lands in it as a chip", async () => {
+  const thread = threadWithHistory("paste-to-focus-chip", 1);
+  using _environment = installFakeEnvironment([thread], { acceptCommands: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
+  const record = {
+    version: 1,
+    kind: "image",
+    contextId: ComposerContextId.make("image_snapshot"),
+    label: "shot.png",
+    attachmentId: "snapshot",
+    name: "shot.png",
+    mimeType: "image/png",
+    sizeBytes: PNG.length,
+  } satisfies ComposerContextRecord;
+
+  (document.activeElement as HTMLElement | null)?.blur();
+  pasteOnPage((data) => {
+    data.items.add(new File([PNG], "shot.png", { type: "image/png" }));
+    data.setData("text/plain", formatComposerContextReference(record));
+    data.setData(
+      COMPOSER_CONTEXT_CLIPBOARD_MIME,
+      encodeComposerContextFragment({
+        version: 1,
+        source: { environmentId: ENVIRONMENT_ID },
+        records: [record],
+      })!,
+    );
+  });
+
+  await vi.waitFor(() =>
+    expect(page.getByTestId("composer-editor").element().textContent).toContain("shot.png"),
+  );
 });
