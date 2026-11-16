@@ -27,9 +27,11 @@ describe("buildThreadTitlePrompt", () => {
         instructions: "Prefix every title with the team name.",
       });
       expect(prompt).toContain('Never include the project name ("Hyperdrive")');
-      expect(prompt).toMatch(
-        /word and character limits, follow these instead:\nPrefix every title/,
-      );
+      expect(prompt).not.toContain("fewer than 40 characters");
+      expect(prompt).toContain("Title instructions from the user:\nPrefix every title");
     }
+    expect(buildThreadTitlePrompt({ message: "Fix login", instructions: " " }).prompt).toContain(
+      "3-8 words, fewer than 40 characters.",
+    );
   });
 });
