@@ -9,9 +9,13 @@ import {
 } from "../../lib/videoPreviewSource";
 
 export const ThreadMediaVisibleContext = createContext(false);
+/** Asks the feed to keep this row out of list recycling while its media holds playback state. */
+export const ThreadMediaRetainContext = createContext<(retained: boolean) => void>(() => {});
 
 export function ThreadMarkdownVideo(props: {
   readonly source: MediaVideoPreviewSource;
+  /** Keeps the player and its poster across source changes that show the same video. */
+  readonly thumbnailKey?: string;
   readonly thumbnailVisible?: boolean;
   readonly onPlaybackStart?: () => void;
   readonly borderRadius?: number;
@@ -19,7 +23,7 @@ export function ThreadMarkdownVideo(props: {
   const { source } = props;
   const feedVisible = useContext(ThreadMediaVisibleContext);
   const visible = props.thumbnailVisible ?? feedVisible;
-  const thumbnailKey = mediaVideoThumbnailKey(source);
+  const thumbnailKey = props.thumbnailKey ?? mediaVideoThumbnailKey(source);
   const asset = useAssetUrlState(
     "environmentId" in source ? source.environmentId : null,
     "resource" in source ? source.resource : null,
