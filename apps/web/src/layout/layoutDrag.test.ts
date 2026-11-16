@@ -308,4 +308,91 @@ describe("layout drops of a thread's surfaces", () => {
     }
     opened();
   });
+
+  function resolvingFileDrop(path: string) {
+    let settle!: (surface: LayoutDragSurface) => void;
+    const resolved = new Promise<LayoutDragSurface>((resolve) => {
+      settle = resolve;
+    });
+    const source: LayoutDragSource = {
+      kind: "surface",
+      threadRef: surfaceThreadRef,
+      surface: fileSurface("cloud/http.ts", 3, 0),
+      resolve: () => resolved,
+    };
+    return { source, settle: () => settle(fileSurface(path, 3, 0)), resolved };
+  }
+
+  it("lands a resolving drop in the workspace focused at the drop after focus moves", async () => {
+    using _fixture = setupSurfaceDrop();
+    const column = (id: string, tabs: LayoutTab[]): LayoutColumn => ({
+      id,
+      width: 1,
+      panes: [{ id: `${id}-pane`, tabs, activeTabId: tabs[0]!.id, size: 1 }],
+    });
+    const workspace = (id: string, columns: LayoutColumn[]) => ({
+      id,
+      name: null,
+      focusedPaneId: columns[0]!.panes[0]!.id,
+      cameraWidth: null,
+      columns,
+    });
+    const fileTab = createLayoutTab({
+      kind: "surface",
+      threadRef: surfaceThreadRef,
+      surfaceId: "file:packages/app/cloud/http.ts",
+    });
+    useLayoutStore.setState({
+      layout: {
+        focusedWorkspaceId: "dropped",
+        workspaces: [
+          workspace("dropped", [
+            column("chat", [
+              createLayoutTab({ kind: "chat", target: { kind: "server", threadRef } }),
+            ]),
+          ]),
+          workspace("other", [
+            column("file", [fileTab]),
+            column("other-chat", [
+              createLayoutTab({
+                kind: "chat",
+                target: { kind: "server", threadRef: surfaceThreadRef },
+              }),
+            ]),
+          ]),
+        ],
+      },
+    });
+    useRightPanelStore.getState().openFile(surfaceThreadRef, "packages/app/cloud/http.ts", 1);
+    const drop = resolvingFileDrop("packages/app/cloud/http.ts");
+
+    expect(commitLayoutDrop(drop.source, { kind: "extend", edge: "right" })).toBe(true);
+    useLayoutStore.setState({
+      layout: { ...useLayoutStore.getState().layout, focusedWorkspaceId: "other" },
+    });
+    drop.settle();
+    await drop.resolved;
+
+    const moved = findLayoutTab(useLayoutStore.getState().layout, (tab) => tab.id === fileTab.id)!;
+    expect(moved.workspace.id).toBe("dropped");
+    expect(moved.workspace.columns.at(-1)!.panes[0]!.tabs.map((tab) => tab.id)).toEqual([
+      fileTab.id,
+    ]);
+  });
+
+  it("drops nothing when the pane a resolving drop targets closes before it resolves", async () => {
+    using fixture = setupSurfaceDrop();
+    const drop = resolvingFileDrop("packages/app/cloud/http.ts");
+
+    expect(
+      commitLayoutDrop(drop.source, { kind: "side", paneId: fixture.chatPaneId, side: "right" }),
+    ).toBe(true);
+    const closed = createLayoutState();
+    useLayoutStore.setState({ layout: closed });
+    drop.settle();
+    await drop.resolved;
+
+    expect(useLayoutStore.getState().layout).toBe(closed);
+    expect(panel().surfaces).toEqual([]);
+  });
 });

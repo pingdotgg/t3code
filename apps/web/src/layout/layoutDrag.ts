@@ -20,7 +20,6 @@ import {
   layoutTabContentKey,
   THREAD_TERMINAL_SURFACE_ID,
   selectFocusedChatTab,
-  selectFocusedWorkspace,
   type LayoutDirection,
   type LayoutLauncherContent,
   type LayoutState,
@@ -204,6 +203,7 @@ function layoutDropDestination(
   target: LayoutDropTarget,
   workspaceId = layout.focusedWorkspaceId,
 ): LayoutTabDestination | null {
+  if (target.kind !== "extend" && !findLayoutPane(layout, target.paneId)) return null;
   if (target.kind === "side") {
     return { kind: "split", paneId: target.paneId, side: target.side, exact: true };
   }
@@ -213,7 +213,8 @@ function layoutDropDestination(
       paneId: target.paneId,
       ...(target.index === undefined ? {} : { index: target.index }),
     };
-  const workspace = selectFocusedWorkspace({ ...layout, focusedWorkspaceId: workspaceId });
+  const workspace = layout.workspaces.find((candidate) => candidate.id === workspaceId);
+  if (!workspace) return null;
   if (target.edge === "left") return { kind: "column", workspaceId: workspace.id, index: 0 };
   if (target.edge === "right") {
     return { kind: "column", workspaceId: workspace.id, index: workspace.columns.length };
@@ -235,8 +236,9 @@ export function isLayoutDropUseful(
   layout: LayoutState,
   source: LayoutDragSource,
   target: LayoutDropTarget,
+  workspaceId = layout.focusedWorkspaceId,
 ): boolean {
-  if (layoutDropDestination(layout, target) === null) return false;
+  if (layoutDropDestination(layout, target, workspaceId) === null) return false;
   if (source.kind === "thread") return true;
   const location = layoutDragSourceTab(layout, source);
   if (!location) return source.kind !== "tab";
@@ -255,8 +257,8 @@ export function isLayoutDropUseful(
     );
     return tabCount > 1;
   }
-  const workspace = selectFocusedWorkspace(layout);
-  if (location.workspace.id !== workspace.id) return true;
+  const workspace = layout.workspaces.find((candidate) => candidate.id === workspaceId);
+  if (!workspace || location.workspace.id !== workspace.id) return true;
   const paneCount = workspace.columns.reduce((sum, column) => sum + column.panes.length, 0);
   if (!alone || paneCount > 1) {
     const columns = workspace.columns;
@@ -420,10 +422,14 @@ export function dropLayoutDrag(): boolean {
   return commitLayoutDropWithMotion(current.source, current.target);
 }
 
-function commitLayoutDropWithMotion(source: LayoutDragSource, target: LayoutDropTarget): boolean {
+function commitLayoutDropWithMotion(
+  source: LayoutDragSource,
+  target: LayoutDropTarget,
+  workspaceId?: string,
+): boolean {
   const before = useLayoutStore.getState().layout;
   notePaneDrop(true);
-  const committed = commitLayoutDrop(source, target);
+  const committed = commitLayoutDrop(source, target, workspaceId);
   if (!committed || useLayoutStore.getState().layout === before) notePaneDrop(false);
   return committed;
 }
@@ -436,14 +442,18 @@ export function cancelLayoutDrag(): void {
  * Apply a drop: move the tab, or place the dragged content. A surface tab
  * without its panel store entry closes on load, so a new one opens there.
  */
-export function commitLayoutDrop(source: LayoutDragSource, target: LayoutDropTarget): boolean {
+export function commitLayoutDrop(
+  source: LayoutDragSource,
+  target: LayoutDropTarget,
+  workspaceId = useLayoutStore.getState().layout.focusedWorkspaceId,
+): boolean {
   const store = useLayoutStore.getState();
-  const destination = layoutDropDestination(store.layout, target);
-  if (!destination || !isLayoutDropUseful(store.layout, source, target)) return false;
+  const destination = layoutDropDestination(store.layout, target, workspaceId);
+  if (!destination || !isLayoutDropUseful(store.layout, source, target, workspaceId)) return false;
   if (source.kind === "surface" && source.resolve) {
     const { resolve, ...resolving } = source;
     void resolve().then((surface) => {
-      if (surface) commitLayoutDropWithMotion({ ...resolving, surface }, target);
+      if (surface) commitLayoutDropWithMotion({ ...resolving, surface }, target, workspaceId);
     });
     return true;
   }
@@ -468,9 +478,7 @@ export function commitLayoutDrop(source: LayoutDragSource, target: LayoutDropTar
     openLayoutDragSurface(source.threadRef, source.surface);
     const layout = useLayoutStore.getState().layout;
     const placed = existing || reopensOthers ? layoutDragSourceTab(layout, source) : null;
-    const landing = placed
-      ? layoutDropDestination(layout, target, store.layout.focusedWorkspaceId)
-      : null;
+    const landing = placed ? layoutDropDestination(layout, target, workspaceId) : null;
     if (placed && landing) useLayoutStore.getState().moveTab(placed.tab.id, landing);
   } else {
     store.placeContent(layoutDragContent(source), destination);
