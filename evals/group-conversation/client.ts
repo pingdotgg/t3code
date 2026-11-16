@@ -209,7 +209,6 @@ export function makeClient(options: { readonly proxy: boolean; readonly effort: 
             HttpClientRequest.setHeaders(headers),
             HttpClientRequest.bodyJson(request),
             Effect.flatMap(client.execute),
-            Effect.timeout("120 seconds"),
           );
           // Rate limits and server errors are transport, not model behaviour, so they get retries.
           if ((response.status === 429 || response.status >= 500) && attempt < MAX_ATTEMPTS) {
@@ -227,7 +226,7 @@ export function makeClient(options: { readonly proxy: boolean; readonly effort: 
             );
           return yield* response.text;
         }
-      }).pipe(Effect.provide(FetchHttpClient.layer)),
+      }).pipe(Effect.timeout("120 seconds"), Effect.provide(FetchHttpClient.layer)),
     );
     const raw: unknown = proxy
       ? body
