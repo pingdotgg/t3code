@@ -5,6 +5,7 @@ import {
   TextGenerationError,
   type AcpRegistryOperationError,
   type AcpRegistryProbeModel,
+  type CustomModelSetting,
   type ServerProvider,
   type ServerProviderModel,
   type ServerProviderUsageLimits,
@@ -104,7 +105,7 @@ export function isAcpRegistryCacheValid(
 export function updateAcpRegistryEnrichmentCache(input: {
   readonly cache: AcpRegistryEnrichmentCache;
   readonly configuration: AcpRegistryLiveConfiguration;
-  readonly customModels: ReadonlyArray<string>;
+  readonly customModels: ReadonlyArray<CustomModelSetting>;
   readonly now: number;
 }): AcpRegistryEnrichmentCache {
   const { cache, configuration, customModels, now } = input;
@@ -164,7 +165,7 @@ function modelsFromDiscovery(
         "models" | "currentModelId" | "configOptions" | "modelOptionIds"
       >
     | undefined,
-  customModels: ReadonlyArray<string>,
+  customModels: ReadonlyArray<CustomModelSetting>,
   previousModels: ReadonlyArray<ServerProviderModel> = [],
 ): ReadonlyArray<ServerProviderModel> {
   const discovered = discovery?.models ?? [];
@@ -356,7 +357,7 @@ export function applyAcpRegistryAvailableCommands(
 export function applyAcpRegistryLiveConfiguration(
   provider: ServerProvider,
   configuration: AcpRegistryLiveConfiguration,
-  customModels: ReadonlyArray<string>,
+  customModels: ReadonlyArray<CustomModelSetting>,
   previousModels: ReadonlyArray<ServerProviderModel> = provider.models,
 ): ServerProvider {
   const { message: _staleProbeMessage, ...snapshot } = provider;
@@ -917,14 +918,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           );
     // A local executable's version comes only from probing it, so readiness checks reuse the last report.
     const reportedLocalVersion = yield* Ref.make<string | null>(null);
-    const withReportedLocalVersion = (provider: ServerProvider) =>
-      Ref.get(reportedLocalVersion).pipe(
-        Effect.map((version) =>
-          provider.installed && provider.version === null && version !== null
-            ? { ...provider, version }
-            : provider,
-        ),
-      );
     const checkProvider = Effect.gen(function* () {
       const cached = glmUsageCache === null ? { limits: undefined } : yield* glmUsageCache.get;
       return yield* checkAcpRegistryProvider({
@@ -932,15 +925,18 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         ...(cached.limits === undefined ? {} : { usageLimits: cached.limits }),
       }).pipe(
         Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
-        Effect.flatMap(withReportedLocalVersion),
+        Effect.flatMap((provider) =>
+          Ref.get(reportedLocalVersion).pipe(
+            Effect.map((version) =>
+              provider.installed && provider.version === null && version !== null
+                ? { ...provider, version }
+                : provider,
+            ),
+          ),
+        ),
         Effect.flatMap(withLiveRuntimeState),
       );
     });
-    const initialProvider = checkAcpRegistryProviderReadiness(readinessInput).pipe(
-      Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
-      Effect.flatMap(withReportedLocalVersion),
-      Effect.flatMap(withLiveRuntimeState),
-    );
     const enrichProvider = checkAcpRegistryProviderStatus(
       {
         ...readinessInput,
@@ -1014,7 +1010,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       getSettings: snapshotSettings.getSettings,
       streamSettings: snapshotSettings.streamSettings,
       haveSettingsChanged: haveProviderSnapshotSettingsChanged,
-      initialSnapshot: () => initialProvider,
+      // Inspection may fetch the registry when its disk cache is missing; creation must not wait on that.
+      initialSnapshot: () => buildInitialAcpRegistrySnapshot(readinessInput),
       checkProvider,
       ...(glmUsageCache === null
         ? {}

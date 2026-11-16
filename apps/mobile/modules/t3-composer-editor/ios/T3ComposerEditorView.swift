@@ -250,8 +250,9 @@ private final class ComposerTextView: UITextView {
         return
       }
     }
+    // pasteboard.string is only the first item; super.paste inserts every text item.
     if !bypassTextPasteInterception,
-       let text = pasteboard.string, shouldInterceptTextPaste(text) {
+       let text = pasteboard.strings?.joined(), shouldInterceptTextPaste(text) {
       onPasteText?(text, selectedRange)
       return
     }
