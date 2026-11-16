@@ -1333,7 +1333,9 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
                 onToggleViewedFile={(event) => {
                   const file = data.files.find((file) => file.id === event.nativeEvent.fileId);
                   if (!file || (!commit && !viewed.canToggle)) return;
-                  setFoldChoices((current) => withFileDiffFold(current, file.id, undefined));
+                  setFoldChoices((current) =>
+                    withFileDiffFold(current, file.id, !viewedIdSet.has(file.id)),
+                  );
                   if (commit)
                     setCommitViewedPaths((current) => {
                       const next = new Set(current);

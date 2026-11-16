@@ -1004,11 +1004,7 @@ function PullRequestCodeTab({
       setViewed(file.path, viewed, commit === null ? file.fileDiff.newObjectId : undefined);
     }
     setFoldChoices((current) =>
-      range.reduce(
-        (next, file) =>
-          withFileDiffFold(next, file.fileKey, effectiveFoldOverride === null ? undefined : viewed),
-        current,
-      ),
+      range.reduce((next, file) => withFileDiffFold(next, file.fileKey, viewed), current),
     );
   };
   const fileViewedToggle = {
