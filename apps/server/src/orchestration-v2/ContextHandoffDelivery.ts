@@ -53,16 +53,45 @@ function handoffReceiptLine(input: {
 }
 
 const STUBBED_ITEMS = 5;
+const NOT_SHOWN_LINES = 3;
+
+const summaryCount = (count: number, adjective: string) =>
+  `${count} ${adjective} ${count === 1 ? "summary holds" : "summaries hold"} omitted items`;
+const listCall = (offer: HandoffSummary) =>
+  `t3_conversation_summary_list({projectId:"${offer.projectId}",threadId:"${offer.threadId}"})`;
 
 /**
- * Where to read omitted items held by a summary that did not fit. A delivered summary needs no
- * line: its header already names its expand call. Agents are not told their project id.
+ * Where to read omitted items held by summaries that did not fit, nearest the present first. A
+ * delivered summary needs no line: its header already names its expand call. Agents are not told
+ * their project id. Lines give way from the far end; when none fits, one line names the list call.
  */
+function notShownBlock(input: {
+  readonly offers: ReadonlyArray<HandoffSummary>;
+  readonly omitted: ReadonlySet<string>;
+  readonly messages: ReadonlyArray<OrchestrationV2HistoricalMessage>;
+  readonly fits: (block: string) => boolean;
+}): string {
+  const lines = notShownLines(input);
+  if (lines.length === 0) return "";
+  for (let shown = Math.min(lines.length, NOT_SHOWN_LINES); shown > 0; shown--) {
+    const rest = lines.slice(shown);
+    const block = [
+      ...lines.slice(0, shown).map(({ line }) => line),
+      ...(rest.length === 0
+        ? []
+        : [`${summaryCount(rest.length, "more")}; list them with ${listCall(rest[0]!.offer)}.`]),
+    ].join("\n");
+    if (input.fits(block)) return block;
+  }
+  const fallback = `Not shown here: ${summaryCount(lines.length, "conversation")}; list them with ${listCall(lines[0]!.offer)}.`;
+  return input.fits(fallback) ? fallback : "";
+}
+
 function notShownLines(input: {
   readonly offers: ReadonlyArray<HandoffSummary>;
   readonly omitted: ReadonlySet<string>;
   readonly messages: ReadonlyArray<OrchestrationV2HistoricalMessage>;
-}): ReadonlyArray<string> {
+}): ReadonlyArray<{ readonly offer: HandoffSummary; readonly line: string }> {
   const byId = new Map(input.messages.map((message) => [message.itemId, message]));
   return input.offers.flatMap((offer) => {
     const covered = offer.coveredItemIds.filter((id) => input.omitted.has(id));
@@ -77,7 +106,10 @@ function notShownLines(input: {
     const more = covered.length - stubs.length;
     const ids = offer.summaryIds ?? [offer.id];
     return [
-      `Not shown here: ${[...stubs, ...(more > 0 ? [`${more} ${stubs.length > 0 ? "more " : ""}omitted item${more === 1 ? "" : "s"}`] : [])].join(", ")}. ${ids.join(", ")} ${ids.length === 1 ? "holds" : "hold"} the original text; read it with t3_conversation_summary_expand({projectId:"${offer.projectId}",threadId:"${offer.threadId}",summaryId:"${ids[0]}"})${ids.length === 1 ? "" : " and the other ids"}.`,
+      {
+        offer,
+        line: `Not shown here: ${[...stubs, ...(more > 0 ? [`${more} ${stubs.length > 0 ? "more " : ""}omitted item${more === 1 ? "" : "s"}`] : [])].join(", ")}. ${ids.join(", ")} ${ids.length === 1 ? "holds" : "hold"} the original text; read it with t3_conversation_summary_expand({projectId:"${offer.projectId}",threadId:"${offer.threadId}",summaryId:"${ids[0]}"})${ids.length === 1 ? "" : " and the other ids"}.`,
+      },
     ];
   });
 }
@@ -208,7 +240,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     });
     const summarized = new Set<TurnItemId>();
     const chosen: Array<HandoffSummary> = [];
-    let offers: ReadonlyArray<HandoffSummary> = [];
+    let offered: ReadonlyArray<HandoffSummary> = [];
     const priorOmitted = new Set<string>(
       pending.flatMap((handoff) => handoff.history?.omittedItemIds ?? []),
     );
@@ -230,7 +262,8 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       );
       // Most covered items per byte first, so coarse summaries of old history come before the
       // finer ones next to the tail. Ties keep the offered order, nearest the present first.
-      offers = (yield* input.summaries(eligible)).toSorted(
+      offered = yield* input.summaries(eligible);
+      const offers = offered.toSorted(
         (a, b) =>
           b.coveredItemIds.length / Buffer.byteLength(b.text) -
           a.coveredItemIds.length / Buffer.byteLength(a.text),
@@ -307,7 +340,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
           .map((message) => message.itemId),
       ]);
     const omittedHaveSummaries = (ids: ReadonlySet<string>) =>
-      offers.some((offer) => offer.coveredItemIds.some((id) => ids.has(id)));
+      offered.some((offer) => offer.coveredItemIds.some((id) => ids.has(id)));
     const receiptFor = (handoff: OrchestrationV2ContextHandoff) =>
       withHandoffReceipt(
         handoff.summaryText,
@@ -316,16 +349,13 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
           omittedHaveSummaries: omittedHaveSummaries(stillOmitted(handoff)),
         }),
       );
-    const notShown = notShownLines({
-      offers: offers.filter((offer) => !chosen.includes(offer)),
+    const notShown = notShownBlock({
+      offers: offered.filter((offer) => !chosen.includes(offer)),
       omitted: new Set(pending.flatMap((handoff) => [...stillOmitted(handoff)])),
       messages,
-    }).join("\n");
-    const context =
-      notShown !== "" &&
-      historyCost(selected.messages, `${selected.context}\n${notShown}`) <= budget
-        ? `${selected.context}\n${notShown}`
-        : selected.context;
+      fits: (block) => historyCost(selected.messages, `${selected.context}\n${block}`) <= budget,
+    });
+    const context = notShown === "" ? selected.context : `${selected.context}\n${notShown}`;
     const estimatedTokens = historyCost(selected.messages, context);
     if (estimatedTokens > budget) {
       if (input.deferInline) return empty;
