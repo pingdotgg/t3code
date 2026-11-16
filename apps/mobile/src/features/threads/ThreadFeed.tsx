@@ -3463,8 +3463,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const settling = props.feed.length > 0 && loadedListKey !== feedThreadKey;
   const handleMetricsChange = () => {
     const state = listRef.current?.getState();
-    // Before the first positioning the list sits at offset 0, which is not the end it opens at.
-    if (state) onIsAtEndChange?.(settling || state.isAtEnd);
+    // Offset 0 before the first positioning, and the gaps while rows measure in, are not the
+    // user leaving the end; only a scroll away stops end following.
+    if (state) onIsAtEndChange?.(settling || state.isAtEnd || state.isFollowingEnd);
   };
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     reportHeaderMaterialVisibility(
@@ -3479,6 +3480,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     handleMetricsChange();
     const stops = [
       state.listen("isAtEnd", handleMetricsChange),
+      state.listen("isFollowingEnd", handleMetricsChange),
       state.listen("totalSize", handleMetricsChange),
       state.listen("footerSize", handleMetricsChange),
       state.listen("headerSize", handleMetricsChange),
