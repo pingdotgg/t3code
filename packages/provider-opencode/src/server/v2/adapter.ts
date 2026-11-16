@@ -3170,17 +3170,21 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     ) {
       const pendingWake = (yield* mcpSessions.read(turn.input.threadId))?.hasPendingWake;
       if (pendingWake === undefined || !(yield* pendingWake)) return;
+      // OpenCode's goal check can pause for no progress before this read resolves; the wake still
+      // owns that goal, so a paused goal is adopted for resume without another pause.
       const pausing = yield* lock.withPermit(
         Effect.sync(() => {
+          const status = state.providerThread.goal?.status;
           if (
-            state.active !== turn ||
+            (state.active !== undefined && state.active !== turn) ||
+            turn.interrupted ||
             state.goalPausedForWake ||
-            state.providerThread.goal?.status !== "active"
+            (status !== "active" && status !== "paused")
           ) {
             return false;
           }
           state.goalPausedForWake = true;
-          return true;
+          return status === "active";
         }),
       );
       if (!pausing) return;
@@ -3191,7 +3195,18 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           Effect.catch((cause) =>
             Effect.logWarning("Could not pause an OpenCode goal awaiting a T3 wake.", {
               cause,
-            }).pipe(Effect.andThen(Effect.sync(() => (state.goalPausedForWake = false)))),
+            }).pipe(
+              Effect.andThen(
+                lock.withPermit(
+                  Effect.sync(() => {
+                    // A failure because OpenCode paused it first still leaves the wake to resume it.
+                    if (state.providerThread.goal?.status === "active") {
+                      state.goalPausedForWake = false;
+                    }
+                  }),
+                ),
+              ),
+            ),
           ),
         );
     });
@@ -5086,6 +5101,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             return;
           }
           turn.interrupted = true;
+          state.goalPausedForWake = false;
           const reply = yield* client.session
             .interrupt({ sessionID: Session.ID.make(sessionId) })
             .pipe(
