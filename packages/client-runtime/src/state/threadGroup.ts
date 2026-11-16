@@ -63,8 +63,6 @@ export function groupParticipants(group: GroupLike): ReadonlyArray<ThreadGroupPa
   return listedParticipants(group, true);
 }
 
-const sameHandle = (left: string, right: string) => left.toLowerCase() === right.toLowerCase();
-
 // Clients trim before sending, so an address may end the prompt. The lookbehind keeps `me@astra`
 // an email address, and `@astra.ts` stays a file mention because only trailing punctuation goes.
 const ADDRESS_TOKEN = /(?<=^|[\s(])@(\S+)/g;
@@ -86,29 +84,20 @@ export function groupMentionOccurrences(
 ): ReadonlyArray<GroupMentionOccurrence> {
   if (group == null) return [];
   const members = listedParticipants(group, options?.seatedOnly === true);
-  const byHandle = new Map<string, ThreadGroupParticipant>();
-  for (const member of members) {
-    const key = member.handle.toLowerCase();
-    if (!byHandle.has(key)) byHandle.set(key, member);
-  }
-  const primary = members.find((member) => member.isPrimary);
+  // A handle invited again names its newest seat, which comes last.
+  const byHandle = new Map(members.map((member) => [member.handle.toLowerCase(), member]));
+  const [primary] = members;
+  if (primary !== undefined) byHandle.set("primary", primary);
   const occurrences: GroupMentionOccurrence[] = [];
   for (const match of text.matchAll(ADDRESS_TOKEN)) {
-    const token = match[1];
-    const index = match.index;
-    if (token === undefined || index === undefined) continue;
-    const handle = token.replace(TRAILING_PUNCTUATION, "");
-    if (handle.length === 0) continue;
-    const participant = sameHandle(handle, "primary")
-      ? primary
-      : byHandle.get(handle.toLowerCase());
+    const handle = (match[1] ?? "").replace(TRAILING_PUNCTUATION, "");
+    const participant = byHandle.get(handle.toLowerCase());
     if (participant === undefined) continue;
-    const start = index;
-    const end = start + 1 + handle.length;
+    const end = match.index + 1 + handle.length;
     occurrences.push({
-      start,
+      start: match.index,
       end,
-      source: text.slice(start, end),
+      source: text.slice(match.index, end),
       label: participant.label,
       isPrimary: participant.isPrimary,
       member: participant.member,
