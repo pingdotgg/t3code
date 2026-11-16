@@ -253,6 +253,7 @@ it.each([
   { flow: "Git URL", value: "https://github.com/pingdotgg/t3code.git", submit: "Continue (Enter)" },
   { flow: "New project", value: "demo-tab-order", submit: /^Create \(/ },
 ])("moves focus from the $flow input to its enabled submit button on Tab", async (step) => {
+  setup();
   await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
   await act(() => openCommandPalette({ open: "add-project" }));
   await page.getByText(step.flow, { exact: true }).click();
