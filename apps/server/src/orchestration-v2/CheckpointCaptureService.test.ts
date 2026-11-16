@@ -916,6 +916,23 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
       assert.equal(projected.rootNode?.status, "cancelled");
       assert.deepEqual([...projected.preservedCheckpointOrdinals].toSorted(), [0, 1]);
 
+      // A failed capture still carries the run's revert target; the next baseline must not replace it.
+      yield* projectionStore.apply({
+        id: EventId.make("event:checkpoint-capture-cancelled:captured-error"),
+        type: "checkpoint.captured",
+        threadId: cancelledThreadId,
+        runId: cancelledRunId,
+        nodeId: cancelledRootNodeId,
+        providerInstanceId,
+        occurredAt: cancelledAt,
+        payload: { ...captured, status: "error" },
+      });
+      const afterFailedCapture = yield* projectionStore.getCheckpointCaptureContext(
+        cancelledThreadId,
+        { runId: cancelledRunId, scopeId: cancelledScopeId },
+      );
+      assert.deepEqual([...afterFailedCapture.preservedCheckpointOrdinals].toSorted(), [0, 1]);
+
       // A rewind leaves the run's checkpoint stale; the next capture must rebaseline it.
       yield* projectionStore.apply({
         id: EventId.make("event:checkpoint-capture-cancelled:captured-stale"),
