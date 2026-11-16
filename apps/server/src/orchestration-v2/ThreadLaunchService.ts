@@ -41,6 +41,7 @@ import {
   isTemporaryWorktreeBranch,
 } from "@t3tools/shared/git";
 
+import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import { parseGitCloneProgressLine } from "../project/gitCloneProgress.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -163,6 +164,7 @@ export class ThreadLaunchBaseRefError extends Schema.TaggedError<ThreadLaunchBas
     projectTitle: Schema.String,
     workspaceRoot: Schema.String,
     baseRef: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -216,6 +218,8 @@ export class ThreadLaunchService extends Context.Service<
       void,
       ThreadLaunchBaseRefError | ThreadLaunchBranchConflictError | ThreadLaunchNotRepositoryError
     >;
+    /** True only when the project's folder is known not to be a Git repository. */
+    readonly isNonGitProject: (projectId: ProjectId) => Effect.Effect<boolean>;
     readonly retryPreparation: (
       input: ThreadLaunchPreparationInput,
     ) => Effect.Effect<
@@ -244,6 +248,7 @@ const make = Effect.gen(function* () {
   const cloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
   const terminals = yield* TerminalManager.TerminalManager;
   const git = yield* GitWorkflow.GitWorkflowService;
+  const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -428,6 +433,69 @@ const make = Effect.gen(function* () {
       });
   });
 
+  const isNonGitProject: ThreadLaunchService["Service"]["isNonGitProject"] = Effect.fn(
+    "ThreadLaunchService.isNonGitProject",
+  )(function* (projectId) {
+    const project = yield* projects
+      .getById(projectId)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    if (Option.isNone(project)) return false;
+    // Unlike `git.repositoryRoot`, this fails on a repository Git cannot read, which is not "no repository".
+    return yield* checkpointStore.isGitRepository(project.value.workspaceRoot).pipe(
+      Effect.map((isRepository) => !isRepository),
+      Effect.orElseSucceed(() => false),
+    );
+  });
+
+  /**
+   * A recorded worktree strategy can outlive the ref it names: tasks saved before
+   * the base followed the repo's default branch kept `"main"`, and a base branch
+   * can be deleted after it was recorded. Re-base on the remote's default branch,
+   * then on the checked-out commit, instead of failing every launch.
+   */
+  const worktreeFallbackBase = Effect.fn("ThreadLaunchService.worktreeFallbackBase")(function* (
+    cwd: string,
+    remoteName: string | null,
+  ) {
+    if (remoteName !== null) {
+      const defaultBranch = yield* git.resolveDefaultBranchName(cwd, remoteName);
+      if (defaultBranch !== null) {
+        // Fetch freshens the default branch the way the recorded base would have been.
+        const remoteBase = yield* git
+          .fetchWorktreeBaseCommit({
+            cwd,
+            refName: defaultBranch,
+            remote: { remoteName, branchName: defaultBranch },
+          })
+          .pipe(
+            Effect.map((base) => ({ fetchFailed: false as const, base })),
+            Effect.orElseSucceed(() => ({ fetchFailed: true as const, base: null })),
+          );
+        if (remoteBase.base !== null) {
+          return {
+            startRef: remoteBase.base.commitSha,
+            baseRefName: `refs/remotes/${remoteBase.base.remoteRefName}`,
+          };
+        }
+        // A completed fetch that found no branch means the branch is gone and its
+        // tracking ref is stale; only a failed fetch can fall back to it.
+        if (remoteBase.fetchFailed) {
+          const trackingRef = `refs/remotes/${remoteName}/${defaultBranch}`;
+          if (yield* git.hasCommit({ cwd, refName: trackingRef })) {
+            return { startRef: trackingRef, baseRefName: trackingRef };
+          }
+        }
+      }
+    }
+    const currentBranch = yield* git.currentBranch(cwd);
+    if (currentBranch !== null) {
+      return { startRef: currentBranch, baseRefName: currentBranch };
+    }
+    return (yield* git.hasCommit({ cwd, refName: "HEAD" }))
+      ? { startRef: "HEAD", baseRefName: "HEAD" }
+      : null;
+  });
+
   const prepareInBackground = Effect.fn("ThreadLaunchService.prepareInBackground")(function* (
     input: PreparationInput,
     threadId: ThreadId,
@@ -546,8 +614,9 @@ const make = Effect.gen(function* () {
             })
             .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
         }
-        let startRef = input.workspaceStrategy.baseRef;
-        let baseRefName = input.workspaceStrategy.baseRef;
+        const requestedBaseRef = input.workspaceStrategy.baseRef;
+        let startRef = requestedBaseRef;
+        let baseRefName = requestedBaseRef;
         const remote =
           input.workspaceStrategy.startFromOrigin === true
             ? yield* git
@@ -559,6 +628,7 @@ const make = Effect.gen(function* () {
             : null;
         const shouldFetch = remote !== null;
         yield* setupTracker.stageStatus(threadId, "fetch", shouldFetch ? "running" : "skipped");
+        let fetchedBase = false;
         if (remote !== null) {
           const remoteBase = yield* git
             .fetchWorktreeBaseCommit({
@@ -570,9 +640,40 @@ const make = Effect.gen(function* () {
           if (remoteBase !== null) {
             startRef = remoteBase.commitSha;
             baseRefName = `refs/remotes/${remoteBase.remoteRefName}`;
+            fetchedBase = true;
           }
         }
         if (shouldFetch) yield* setupTracker.stageStatus(threadId, "fetch", "done");
+        // `:/text` bases are commit searches, not refs; `hasCommit` treats the appended
+        // `^{commit}` as part of the pattern (same guard as checkWorktreeBase).
+        const recordedBaseResolves =
+          fetchedBase ||
+          startRef.startsWith(":") ||
+          (yield* git
+            .hasCommit({
+              cwd: project.workspaceRoot,
+              // `git worktree add` reads `-` as the previous checkout.
+              refName: startRef === "-" ? "@{-1}" : startRef,
+            })
+            .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId))));
+        if (!recordedBaseResolves) {
+          const remoteName =
+            remote?.remoteName ??
+            (yield* git
+              .resolvePrimaryRemoteName(project.workspaceRoot)
+              .pipe(Effect.orElseSucceed(() => null)));
+          const fallback = yield* worktreeFallbackBase(project.workspaceRoot, remoteName).pipe(
+            Effect.orElseSucceed(() => null),
+          );
+          if (fallback !== null) {
+            startRef = fallback.startRef;
+            baseRefName = fallback.baseRefName;
+            yield* setupTracker.update(threadId, (snapshot) => ({
+              ...snapshot,
+              baseRef: fallback.baseRefName,
+            }));
+          }
+        }
         if (branch !== null && (generatedTemporaryBranch || isTemporaryWorktreeBranch(branch))) {
           const parts = branch.split("/");
           for (let depth = 1; depth < parts.length; depth++) {
@@ -650,7 +751,22 @@ const make = Effect.gen(function* () {
               },
             },
           )
-          .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+          .pipe(
+            Effect.catchIf(
+              (error) => error.reason === "ref_not_found",
+              (cause) =>
+                Effect.fail(
+                  new ThreadLaunchBaseRefError({
+                    projectId: project.id,
+                    projectTitle: project.title,
+                    workspaceRoot: project.workspaceRoot,
+                    baseRef: requestedBaseRef,
+                    cause,
+                  }),
+                ),
+            ),
+            Effect.mapError(mapError(input, "provision-worktree", threadId)),
+          );
         worktreePath = worktree.worktree.path;
         branch = worktree.worktree.refName;
         createdWorktreePath = worktreePath;
@@ -1269,16 +1385,21 @@ const make = Effect.gen(function* () {
               return yield* releasePreparation(input.commandId);
             }
             const boundWorktreePath = current?.thread.worktreePath ?? null;
+            // A retry prepares the worktree the accepted launch asked for, not the
+            // retry's own strategy, whose defaults may resolve differently.
+            const accepted = current?.runs.find((run) => run.id === runId)?.workspacePreparation;
             const preparationStrategy: ThreadLaunchWorkspaceStrategy =
-              Option.isSome(launchReceipt) &&
-              workspaceStrategy.type === "root" &&
-              boundWorktreePath !== null
-                ? {
-                    type: "existing_worktree",
-                    worktreePath: boundWorktreePath,
-                    branch: workspaceStrategy.branch,
-                  }
-                : workspaceStrategy;
+              Option.isSome(launchReceipt) && accepted?.type === "worktree"
+                ? accepted
+                : Option.isSome(launchReceipt) &&
+                    workspaceStrategy.type === "root" &&
+                    boundWorktreePath !== null
+                  ? {
+                      type: "existing_worktree",
+                      worktreePath: boundWorktreePath,
+                      branch: workspaceStrategy.branch,
+                    }
+                  : workspaceStrategy;
             yield* schedulePreparation(
               { ...input, workspaceStrategy: preparationStrategy },
               threadId,
@@ -1382,7 +1503,13 @@ const make = Effect.gen(function* () {
     );
   });
 
-  return ThreadLaunchService.of({ launch, checkWorktreeBase, retryPreparation, prepareRun });
+  return ThreadLaunchService.of({
+    launch,
+    checkWorktreeBase,
+    isNonGitProject,
+    retryPreparation,
+    prepareRun,
+  });
 });
 
 export const layer = Layer.effect(ThreadLaunchService, make);
