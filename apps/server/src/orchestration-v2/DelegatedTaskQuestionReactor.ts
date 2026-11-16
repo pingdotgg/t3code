@@ -14,6 +14,7 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import { reportLabel } from "@t3tools/provider-core/server/notification";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -227,14 +228,51 @@ const make = Effect.gen(function* () {
       ),
   );
 
-  const start: DelegatedTaskQuestionReactor["Service"]["start"] = () =>
-    forkParked(
-      Stream.runForEach(engine.streamDomainEvents, handle).pipe(
+  // Every wake and cancel goes to the parent, so keying by it keeps a question's wake ahead of
+  // its task's cancel while a busy parent's lock delays only that parent's reactions.
+  const parentOf = (event: OrchestrationV2DomainEvent) => {
+    switch (event.type) {
+      case "run.updated":
+        return Effect.succeed(event.threadId);
+      case "subagent.updated":
+        return Effect.succeed(event.payload.threadId);
+      case "runtime-request.updated":
+        return event.payload.kind === "user_input"
+          ? projections
+              .getThread(event.threadId)
+              .pipe(Effect.map((child) => child.lineage.parentThreadId))
+          : Effect.succeed(null);
+      default:
+        return Effect.succeed(null);
+    }
+  };
+
+  const start: DelegatedTaskQuestionReactor["Service"]["start"] = Effect.fn(
+    "DelegatedTaskQuestionReactor.start",
+  )(function* () {
+    const parentReactions = yield* KeyedLock.makeRunner<ThreadId>();
+    yield* forkParked(
+      Stream.runForEach(engine.streamDomainEvents, (event) =>
+        parentOf(event).pipe(
+          Effect.flatMap((parentThreadId) =>
+            parentThreadId === null
+              ? Effect.void
+              : parentReactions.run(parentThreadId, handle(event)),
+          ),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("finding the parent of a delegated task question failed", {
+              threadId: event.threadId,
+              cause,
+            }),
+          ),
+        ),
+      ).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("delegated task question event stream failed", { cause }),
         ),
       ),
     );
+  });
 
   return { start, handle } satisfies DelegatedTaskQuestionReactor["Service"];
 });
