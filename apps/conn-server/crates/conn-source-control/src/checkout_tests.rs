@@ -217,17 +217,15 @@ async fn worktrees_reuse_refresh_and_preserve_edits_local_commits_and_rewritten_
     );
     let fetches = root.join("fetches");
     let upload = root.join("upload-pack");
-    std::fs::write(
+    conn_support::test_util::executable(
         &upload,
-        format!(
+        &format!(
             "#!/bin/sh\nprintf 'fetch\\n' >> '{}'\nexec '{}/git-upload-pack' \"$@\"\n",
             fetches.display(),
             git(&root, &["--exec-path"])
         ),
     )
     .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&upload, std::fs::Permissions::from_mode(0o755)).unwrap();
     git(
         &work,
         &[
