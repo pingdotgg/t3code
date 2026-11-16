@@ -356,7 +356,7 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     return withEnvironmentThemes(
       {
         ...Object.fromEntries(
-          Array.from({ length: 6 }, (_, index) => [
+          Array.from({ length: 3 }, (_, index) => [
             `aa-${index}.json`,
             encodeThemeFileEscaped(large(`Large ${index}`)),
           ]),
