@@ -1,6 +1,7 @@
 // Files live in apps/web/public/app-icons, which the web build ships and the desktop app reads.
 export const APP_ICONS = [
   { id: "black", label: "Black" },
+  { id: "orbital-sunrise", label: "Orbital Sunrise" },
   { id: "sunrise", label: "Sunrise" },
   { id: "blueprint", label: "Blueprint" },
   { id: "classic-blueprint", label: "Classic Blueprint" },
