@@ -1703,13 +1703,12 @@ async fn search_puts_titles_first_and_keeps_slots_for_messages() {
 /// Tools that a text we send to an agent names and that this server does not serve. An agent
 /// told to call one finds no such tool. Serve one, and this test makes you strike it here.
 /// `preview_*` in the orchestration text also names all 13 preview tools.
-const NAMED_NOT_SERVED: [&str; 12] = [
+const NAMED_NOT_SERVED: [&str; 11] = [
     "device_list",
     "device_open",
     "device_screenshot",
     "fill_credential",
     "html_preview",
-    "html_render",
     "preview_open",
     "preview_status",
     "t3_environment_link",
@@ -1780,7 +1779,6 @@ async fn fixture_with_tasks(name: &str) -> Fixture {
     let config = &base.service.config;
     let service = McpService::new(McpConfig {
         refresh_provider: None,
-        files: None,
         worktrees: None,
         panels: Some(conn_features::panels::PanelBroker::default()),
         secrets: config.secrets.clone(),
@@ -1793,6 +1791,7 @@ async fn fixture_with_tasks(name: &str) -> Fixture {
         providers: config.providers.clone(),
         hosted_app_url: config.hosted_app_url.clone(),
         scheduled_tasks: Some(tasks),
+        files: config.files.clone(),
         annotations: Some(conn_features::annotations::Annotations::new(
             &base.dir,
             Arc::new(conn_features::clock::SystemClock),
@@ -2730,6 +2729,81 @@ async fn saved_secret_refs_sign_webhooks_with_project_scope_one_use_and_safe_rep
             .contains("test-sign-key")
     );
     f.service.config.engine.shutdown().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn html_render_publishes_for_live_callers_and_guards_file_access() {
+    let f = fixture("html-render");
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    not_offered(
+        &mut swamp,
+        "html_render",
+        json!({"html": "<p>Hi</p>", "title": "Hi", "height": 100}),
+    )
+    .await;
+    let live = launch_as_swamp(&mut swamp, "HTML", "hang", "approval-required", "plan").await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &live)).await;
+    let args = json!({"html": "<p>Hi</p>", "title": "  Hi  ", "height": 9000});
+    let rendered = agent.ok("html_render", args.clone()).await;
+    assert_eq!(rendered["htmlRender"]["title"], "Hi");
+    assert_eq!(rendered["htmlRender"]["height"], 2000);
+    let id = rendered["htmlRender"]["attachmentId"].as_str().unwrap();
+    let file = f
+        .service
+        .config
+        .files
+        .as_ref()
+        .unwrap()
+        .attachments
+        .resolve(id)
+        .unwrap();
+    assert!(
+        std::fs::read_to_string(file.path)
+            .unwrap()
+            .contains("<p>Hi</p>")
+    );
+    let next = agent.ok("html_render", args).await;
+    assert_ne!(next["htmlRender"]["attachmentId"], id);
+    let path = f.dir.join("page.html");
+    std::fs::write(&path, "<html>on disk</html>").unwrap();
+    let path_args = json!({"path": path, "title": "File", "height": 400});
+    let (code, message) = agent.failure("html_render", path_args.clone()).await;
+    assert_eq!(code, "capability_denied");
+    assert_eq!(
+        message,
+        "Pass html instead of path: only full-access threads may pass a path."
+    );
+    for invalid in [
+        json!({"title": "a", "height": 100}),
+        json!({"html":"<p>a</p>", "path": path, "title":"a", "height":100}),
+        json!({"html":"<style>p{height:100vh}</style>", "title":"a", "height":100}),
+    ] {
+        let (code, _) = agent.failure("html_render", invalid).await;
+        assert_eq!(code, "invalid_request");
+    }
+    let (code, _) = rpc_error(
+        &mut agent,
+        "html_render",
+        json!({"html":"", "title":"a", "height":100}),
+    )
+    .await;
+    assert_eq!(code, -32602);
+    let full = launch_as_swamp(&mut swamp, "File HTML", "hang", "full-access", "default").await;
+    let mut full_agent = Client::open(&f.service, agent_of(&f, &full)).await;
+    let reference = full_agent.ok("html_render", path_args).await;
+    assert_eq!(reference["htmlRender"]["title"], "File");
+    dispatch(
+        &f,
+        json!({"type":"thread.archive", "commandId":"archive-html", "threadId":live}),
+    )
+    .await;
+    let (code, _) = agent
+        .failure(
+            "html_render",
+            json!({"html":"<p>late</p>", "title":"late", "height":80}),
+        )
+        .await;
+    assert_eq!(code, "parent_not_active");
 }
 
 #[tokio::test(flavor = "current_thread")]

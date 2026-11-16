@@ -192,10 +192,12 @@ dependencies = [
  "grep-searcher",
  "ignore",
  "nucleo-matcher",
+ "regex-automata",
  "regex-syntax",
  "serde",
  "serde_json",
  "sha2",
+ "thiserror",
  "tokio",
 ]
 

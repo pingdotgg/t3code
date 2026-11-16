@@ -21,6 +21,10 @@ use serde_json::Value;
 mod catalog;
 mod credentials;
 mod input;
+mod http_limits {
+    include!("http-limits.rs");
+}
+pub use http_limits::MAX_MCP_BODY_BYTES;
 mod links;
 mod sessions;
 mod time;

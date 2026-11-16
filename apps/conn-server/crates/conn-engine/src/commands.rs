@@ -62,6 +62,10 @@ pub(crate) enum Effect {
         thread_id: String,
         selection: Value,
     },
+    CleanupHtmlAttachments {
+        thread_id: String,
+        ids: Vec<(String, String)>,
+    },
     /// Tells the host a thread was archived, deleted or settled (its terminals close).
     ThreadClosed {
         thread_id: String,
@@ -90,6 +94,7 @@ impl Effect {
             | Self::CloseSession { thread_id }
             | Self::DetachWorkspace { thread_id }
             | Self::ApplyModelSelection { thread_id, .. }
+            | Self::CleanupHtmlAttachments { thread_id, .. }
             | Self::ThreadClosed { thread_id, .. } => Some(thread_id),
             Self::GenerateTitle { .. } | Self::AbandonStart { .. } => None,
         }
@@ -1626,6 +1631,10 @@ fn thread_delete(tx: &mut Tx<'_>, command: Value) -> Outcome {
     patch_thread(tx, &c.thread_id, "thread.deleted", true, |t, now| {
         t["deletedAt"] = json!(now);
     })?;
+    effects.push(Effect::CleanupHtmlAttachments {
+        thread_id: c.thread_id.clone(),
+        ids: crate::html_cleanup::plan(tx, &c.thread_id)?,
+    });
     effects.push(Effect::ThreadClosed {
         thread_id: c.thread_id,
         reason: crate::ThreadClose::Deleted,
@@ -2494,4 +2503,42 @@ fn thread_title_regeneration_complete(tx: &mut Tx<'_>, command: Value) -> Outcom
         t["updatedAt"] = json!(now);
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod html_deletion_tests {
+    use super::*;
+    use crate::store::Store;
+
+    #[test]
+    fn deleting_a_thread_plans_html_cleanup_after_commit() {
+        let dir =
+            std::env::temp_dir().join(format!("conn-html-cleanup-{}", conn_support::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut store = Store::open(&dir.join("engine.sqlite")).unwrap();
+        let mut tx = store.tx().unwrap();
+        tx.append(Draft::new("owner", "thread.created", json!({"id":"owner", "projectId":"p", "createdAt":"2026-01-01T00:00:00.000Z", "updatedAt":"2026-01-01T00:00:00.000Z"}))).unwrap();
+        tx.append(Draft::new("owner", "turn-item.updated", json!({"id":"html", "type":"dynamic_tool", "toolName":"html_render", "output":{"htmlRender":{"attachmentId":"owner-00000000-0000-4000-8000-000000000001-html", "title":"Page", "height":100}}}))).unwrap();
+        let effects = thread_delete(&mut tx, json!({"threadId":"owner"}))
+            .ok()
+            .unwrap();
+        let ids: Vec<_> = effects
+            .into_iter()
+            .filter_map(|effect| match effect {
+                Effect::CleanupHtmlAttachments { ids, .. } => Some(ids),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(
+            ids,
+            [(
+                "owner".into(),
+                "owner-00000000-0000-4000-8000-000000000001-html".into()
+            )]
+        );
+        drop(tx);
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }
