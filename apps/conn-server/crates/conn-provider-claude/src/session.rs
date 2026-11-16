@@ -1643,6 +1643,7 @@ impl Session for ClaudeSession {
                 .call("mcpServerStatus", json!([]), CONTROL_TIMEOUT)
                 .await?;
             let mut found = None;
+            let mut matched = false;
             for status in statuses.as_array().into_iter().flatten() {
                 if status.get("status").and_then(Value::as_str) != Some("connected") {
                     continue;
@@ -1662,9 +1663,10 @@ impl Session for ClaudeSession {
                     if mcp_apps::claude_name(server, tool_name) != name {
                         continue;
                     }
-                    if found.is_some() {
+                    if matched {
                         return Ok(None);
                     }
+                    matched = true;
                     require_unambiguous_server(&statuses, server)?;
                     let Some(uri) =
                         mcp_apps::resource_uri(tool.get("_meta").unwrap_or(&Value::Null))

@@ -527,7 +527,7 @@ async fn mcp_apps_use_the_live_query_and_honor_permission_rules() {
             .contains("deny rule")
     );
     std::fs::write(log.with_extension("log.rules"), "[]").unwrap();
-    std::fs::write(log.with_extension("log.servers"),json!([{"name":"weather","status":"connected","tools":[{"name":"show.weather"},{"name":"show_weather"}]}]).to_string()).unwrap();
+    std::fs::write(log.with_extension("log.servers"),json!([{"name":"weather","status":"connected","tools":[{"name":"show.weather"},{"name":"show_weather","_meta":{"ui":{"resourceUri":"ui://weather"}}}]}]).to_string()).unwrap();
     assert!(
         session
             .mcp_app_request(request(Operation::CallTool {
@@ -538,6 +538,13 @@ async fn mcp_apps_use_the_live_query_and_honor_permission_rules() {
             .unwrap_err()
             .to_string()
             .contains("same Claude tool name")
+    );
+    assert!(
+        session
+            .mcp_app_source(json!({"toolName":"mcp__weather__show_weather"}))
+            .await
+            .unwrap()
+            .is_none()
     );
     std::fs::write(
         log.with_extension("log.servers"),
