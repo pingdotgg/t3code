@@ -609,7 +609,7 @@ const make = Effect.gen(function* () {
           reason = null;
         }
       }
-      yield* settings.withSettingsSnapshot((current) =>
+      const retry = yield* settings.withSettingsSnapshot((current) =>
         sql.withTransaction(
           Effect.gen(function* () {
             if (
@@ -618,9 +618,9 @@ const make = Effect.gen(function* () {
                 current.modelEvaluationModelSelection ?? current.textGenerationModelSelection,
               ) !== selectionKey(evaluatorSelection)
             )
-              return;
+              return false;
             const latestGeneration = yield* reset(projectId);
-            if (latestGeneration.generation !== generation.generation) return;
+            if (latestGeneration.generation !== generation.generation) return false;
             const latest = yield* loadSource(threadId, runId);
             if (
               latest === null ||
@@ -628,13 +628,24 @@ const make = Effect.gen(function* () {
               latest.run.status !== records.run.status ||
               selectionKey(latest.run.modelSelection) !== selectionKey(records.run.modelSelection)
             )
-              return;
+              return false;
             const latestEvidence = build(latest);
             if (
               encodePacket(latestEvidence?.packet ?? null) !==
               encodePacket(evidence?.packet ?? null)
-            )
-              return;
+            ) {
+              const revision = yield* sequence(threadId);
+              const effects = modelEvaluationEffects({
+                settings: current,
+                threadId,
+                runId,
+                runOutcome,
+                subagentRevision: revision,
+              });
+              if (effects.length === 0) return false;
+              yield* outbox.enqueue(effects);
+              return true;
+            }
             yield* requireProject(projectId);
             const record: ModelEvaluationRecord = {
               projectId,
@@ -662,9 +673,11 @@ const make = Effect.gen(function* () {
             source_message_ids = excluded.source_message_ids,
             payload_json = excluded.payload_json
           WHERE ${replacing ? sql`1 = 1` : sql`0 = 1`}`;
+            return false;
           }),
         ),
       );
+      if (retry) yield* outbox.notifyAvailable(1);
     },
     (effect, { runId }) =>
       effect.pipe(

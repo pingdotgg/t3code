@@ -1146,7 +1146,7 @@ it.effect("scores a turn whose child settles before the evaluation is stored", (
       const sql = yield* SqlClient.SqlClient;
       const fiber = yield* Effect.forkChild(service.evaluateRun(input));
       yield* Deferred.await(reached);
-      yield* recordChild("racing-child", "completed", "racing-child-token", 2);
+      yield* recordChild("racing-child", "completed", "settled-result-token", 2);
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(fiber);
       const ids = yield* sql<{ effect_id: string }>`
@@ -1157,7 +1157,7 @@ it.effect("scores a turn whose child settles before the evaluation is stored", (
       assert.equal(calls.length, 0);
       assert.equal(ids.length, 1);
       yield* service.evaluateRun(input);
-      assert.equal(packetsWith(calls, "racing-child-token").length, 1);
+      assert.equal(packetsWith(calls, "settled-result-token").length, 1);
       assert.equal((yield* service.list(scope)).guidance[0]?.sampleCount, 1);
     }).pipe(
       Effect.provide(
