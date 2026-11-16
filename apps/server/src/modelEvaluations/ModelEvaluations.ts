@@ -334,6 +334,14 @@ const make = Effect.gen(function* () {
       WHERE evaluation.project_id = ${projectId} AND thread.project_id = ${projectId}
         AND thread.deleted_at IS NULL AND thread.archived_at IS NULL AND run.status <> 'rolled_back'
         AND evaluation.evaluated_at >= ${after}
+        AND (
+          json_extract(evaluation.payload_json, '$.status') NOT IN ('scored', 'insufficient_evidence')
+          OR NOT EXISTS (
+            SELECT 1 FROM orchestration_v2_projection_messages AS request
+            WHERE request.message_id = json_extract(run.payload_json, '$.userMessageId')
+              AND json_extract(request.payload_json, '$.notification') IS NOT NULL
+          )
+        )
         AND NOT EXISTS (
           SELECT 1 FROM orchestration_events AS source
           WHERE source.application_event_version = 2 AND source.aggregate_kind = 'thread'
