@@ -12,6 +12,7 @@ import {
   findLayoutTabByContent,
   selectFocusedChatTab,
   selectFocusedTab,
+  type LayoutLauncherContent,
   type LayoutOpenPlacement,
   type LayoutTabContent,
 } from "./layoutModel";
@@ -87,8 +88,18 @@ export function closeLayoutProject(
  * it. Its surfaces open for the thread focus was on.
  */
 export function openLayoutNewTab(placement: LayoutOpenPlacement = "active-pane"): void {
-  const store = useLayoutStore.getState();
-  const from = selectFocusedChatTab(store.layout)?.tab.content;
+  useLayoutStore.getState().openTab(createLayoutNewTabContent(), {
+    placement,
+    position: getLayoutBehavior().newTabPosition,
+  });
+}
+
+/** The launcher a new tab opened from `tabId`, or from the focused tab, shows. */
+export function createLayoutNewTabContent(tabId: string | null = null): LayoutLauncherContent {
+  const layout = useLayoutStore.getState().layout;
+  const from = (
+    tabId === null ? selectFocusedChatTab(layout) : findLayoutTab(layout, (tab) => tab.id === tabId)
+  )?.tab.content;
   // A surface's launcher offers that surface's thread, as its "+" did.
   const context: ThreadRouteTarget | null =
     from?.kind === "chat"
@@ -98,10 +109,7 @@ export function openLayoutNewTab(placement: LayoutOpenPlacement = "active-pane")
         : from?.kind === "surface"
           ? { kind: "server", threadRef: from.threadRef }
           : null;
-  store.openTab(createLayoutLauncherContent(context), {
-    placement,
-    position: getLayoutBehavior().newTabPosition,
-  });
+  return createLayoutLauncherContent(context);
 }
 
 /**

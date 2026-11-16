@@ -287,6 +287,9 @@ const PULL_REQUESTS_PAGE_TAB: LayoutTab = {
 
 function DraggedContentLabel({ source }: { source: LayoutDragContentSource }) {
   if (source.kind === "pull-requests") return <LayoutTabGhostLabel tab={PULL_REQUESTS_PAGE_TAB} />;
+  if (source.kind === "new-tab") {
+    return <LayoutTabGhostLabel tab={{ id: source.content.id, content: source.content }} />;
+  }
   return (
     <GhostLabel
       icon={<ThreadSurfaceTabIcon threadRef={source.threadRef} surface={source.surface} />}
@@ -324,6 +327,7 @@ export function LayoutDropZones() {
     const found = findLayoutPane(layout, state.target.paneId);
     if (!found || !isBlankLayoutWorkspace(found.workspace)) return false;
     const { source } = state;
+    if (source.kind === "new-tab") return false;
     return (
       source.kind !== "tab" ||
       findLayoutTab(layout, (tab) => tab.id === source.tabId)?.tab.content.kind !== "launcher"

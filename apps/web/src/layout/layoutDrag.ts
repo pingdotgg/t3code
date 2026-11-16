@@ -21,6 +21,7 @@ import {
   selectFocusedChatTab,
   selectFocusedWorkspace,
   type LayoutDirection,
+  type LayoutLauncherContent,
   type LayoutState,
   type LayoutTabContent,
   type LayoutTabDestination,
@@ -45,12 +46,10 @@ export type LayoutDragSource =
   | { kind: "tab"; tabId: string }
   | { kind: "thread"; threadRef: ScopedThreadRef }
   | { kind: "pull-requests" }
-  | { kind: "surface"; threadRef: ScopedThreadRef; surface: LayoutDragSurface };
+  | { kind: "surface"; threadRef: ScopedThreadRef; surface: LayoutDragSurface }
+  | { kind: "new-tab"; content: LayoutLauncherContent };
 
-export type LayoutDragContentSource = Extract<
-  LayoutDragSource,
-  { kind: "pull-requests" | "surface" }
->;
+export type LayoutDragContentSource = Exclude<LayoutDragSource, { kind: "tab" | "thread" }>;
 
 export type LayoutDropTarget =
   | { kind: "side"; paneId: string; side: LayoutDirection }
@@ -284,6 +283,7 @@ function layoutDragContent(source: Exclude<LayoutDragSource, { kind: "tab" }>): 
     return { kind: "chat", target: { kind: "server", threadRef: source.threadRef } };
   }
   if (source.kind === "pull-requests") return { kind: "pull-requests" };
+  if (source.kind === "new-tab") return source.content;
   return { kind: "surface", threadRef: source.threadRef, surfaceId: source.surface.id };
 }
 
@@ -418,6 +418,13 @@ export function commitLayoutDrop(source: LayoutDragSource, target: LayoutDropTar
   if (!destination || !isLayoutDropUseful(store.layout, source, target)) return false;
   if (source.kind === "tab") {
     store.moveTab(source.tabId, destination);
+  } else if (
+    source.kind === "new-tab" &&
+    destination.kind === "column" &&
+    target.kind === "extend" &&
+    target.edge === "bottom"
+  ) {
+    store.focusWorkspace(destination.workspaceId);
   } else if (source.kind === "surface" && !layoutDragSourceTab(store.layout, source)) {
     const panels = useRightPanelStore.getState();
     const panel = selectThreadRightPanelState(panels.byThreadKey, source.threadRef);
@@ -511,7 +518,7 @@ export function beginLayoutContentDrag(
 
 function beginLayoutDrag(
   event: ReactPointerEvent,
-  source: Extract<LayoutDragSource, { kind: "tab" | "pull-requests" | "surface" }>,
+  source: Exclude<LayoutDragSource, { kind: "thread" }>,
   threadRef: ScopedThreadRef | null,
 ): void {
   if (event.button !== 0 || event.pointerType === "touch") return;
