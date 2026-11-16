@@ -25,7 +25,11 @@ test(
 
     await finishImageCompression(browser);
     await app.screenshot("after-compression");
-    // Sent with the image: neither the prompt nor the image is left behind in the composer.
+    const conversation = screen.getByRole("region", "Conversation");
+    await expect(
+      conversation.getByText("What is in this screenshot?", { exact: false }),
+    ).toBeVisible();
+    await expect(conversation.getByRole("button", "Preview screenshot.png")).toBeVisible();
     await expect(composer).not.toContainText("What is in this screenshot?");
     await expect(composer).not.toContainText("screenshot.png");
   },
