@@ -107,7 +107,10 @@ function ColumnScreen(props: {
   readonly selectedThreadKey?: string | null;
   readonly selectedPullRequestKey?: string | null;
   readonly onDismiss: (routeKey: string, native: boolean) => void;
-  readonly onAppearance: (type: "willAppear" | "didAppear" | "willDisappear", key: string) => void;
+  readonly onAppearance: (
+    type: "willAppear" | "didAppear" | "willDisappear" | "didDisappear",
+    key: string,
+  ) => void;
   readonly onCompose?: () => void;
   readonly navigation: ViewProps["navigation"];
   readonly footer?: ReactNode;
@@ -152,9 +155,10 @@ function ColumnScreen(props: {
         props.onAppearance("willDisappear", key);
         props.navigation.emit({ type: "transitionStart", target: key, data: { closing: true } });
       }}
-      onDidDisappear={() =>
-        props.navigation.emit({ type: "transitionEnd", target: key, data: { closing: true } })
-      }
+      onDidDisappear={() => {
+        props.onAppearance("didDisappear", key);
+        props.navigation.emit({ type: "transitionEnd", target: key, data: { closing: true } });
+      }}
     >
       <PaneContext value={sidebar ? "sidebar" : "content"}>
         <NavigationContext value={descriptor.navigation}>
@@ -167,6 +171,7 @@ function ColumnScreen(props: {
             />
             <ColumnContent
               primary={sidebar}
+              column={props.primary ? "primary" : undefined}
               insetHorizontally={
                 (options as AppNativeStackNavigationOptions).nativeContentInsetHorizontally
               }
@@ -307,7 +312,7 @@ function WorkspaceColumns(
     }
   };
   const followCollapsedSplit = (
-    type: "willAppear" | "didAppear" | "willDisappear",
+    type: "willAppear" | "didAppear" | "willDisappear" | "didDisappear",
     key: string,
   ) => {
     if (!collapsed.current || layout.usesSplitView) return;
@@ -331,6 +336,7 @@ function WorkspaceColumns(
 
   const primary = props.descriptors[props.primary.key];
   if (!primary) return null;
+  const primaryColumnWidth = (layout.listPaneWidth ?? 320) + (layout.listPaneGap ?? 0) / 2;
   return (
     <Split.Host
       ref={hostRef}
@@ -388,8 +394,8 @@ function WorkspaceColumns(
       onInspectorHide={hideInspector}
       columnMetrics={{
         minimumPrimaryColumnWidth: 280,
-        maximumPrimaryColumnWidth: Math.max(380, layout.listPaneWidth ?? 0),
-        preferredPrimaryColumnWidthOrFraction: layout.listPaneWidth ?? 320,
+        maximumPrimaryColumnWidth: Math.max(380, primaryColumnWidth),
+        preferredPrimaryColumnWidthOrFraction: primaryColumnWidth,
         minimumSecondaryColumnWidth: NATIVE_INSPECTOR_MIN_MAIN_WIDTH,
         // UIKit can retain its automatic width despite a new preference; constrain both edges.
         minimumInspectorColumnWidth: inspectorWidth,
@@ -429,7 +435,7 @@ function WorkspaceColumns(
             <PaneContext value="content">
               <EmptyDetailHeader onCompose={detailCompose} />
             </PaneContext>
-            <ColumnContent>
+            <ColumnContent column="empty-detail">
               <WorkspaceEmptyDetail
                 tab={settingsOpen ? "settings" : selectedTab}
                 onStartNewTask={
@@ -532,35 +538,38 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
     render: () => (
       <WorkspaceNativeTabs
         tabsInSidebarColumn={props.nativeColumns && !workspacePage && deviceType === "pad"}
+        detailOpen={projection.detail.length > 0}
         hidden={
-          !workspacePage &&
           projection.detail.length > 0 &&
           !primaryVisible &&
           !layout.usesSplitView &&
           (metrics?.verticalBarEdge ?? "none") === "none"
         }
       >
-        {props.nativeColumns && !workspacePage ? (
-          <WorkspaceColumns
-            {...props}
-            descriptors={descriptors}
-            primary={primaryRoute}
-            detail={projection.detail}
-          />
-        ) : (
-          <V5CardStackView
-            {...props}
-            onRootVisibilityChange={setPrimaryVisible}
-            onNativePopChange={setNativelyPoppingWorkspaceRoute}
-            descriptors={descriptors}
-            state={{
-              ...props.state,
-              routes: [primaryRoute, ...projection.detail],
-              index: projection.detail.length,
-              preloadedRoutes: [],
-            }}
-          />
-        )}
+        {(slotWorkspace) =>
+          props.nativeColumns &&
+          workspaceUsesColumns(slotWorkspace.state.selectedTab, slotWorkspace.settingsOpen) ? (
+            <WorkspaceColumns
+              {...props}
+              descriptors={descriptors}
+              primary={primaryRoute}
+              detail={projection.detail}
+            />
+          ) : (
+            <V5CardStackView
+              {...props}
+              onRootVisibilityChange={setPrimaryVisible}
+              onNativePopChange={setNativelyPoppingWorkspaceRoute}
+              descriptors={descriptors}
+              state={{
+                ...props.state,
+                routes: [primaryRoute, ...projection.detail],
+                index: projection.detail.length,
+                preloadedRoutes: [],
+              }}
+            />
+          )
+        }
       </WorkspaceNativeTabs>
     ),
   };
