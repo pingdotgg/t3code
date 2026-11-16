@@ -20,6 +20,7 @@
 // Differences listed in KNOWN (with the reason) are reported but do not fail the check. Any
 // other difference exits 1. Rerun on every Codex CLI change and every pinned-commit change.
 
+import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -945,7 +946,8 @@ const processes = (log) => {
   const out = [];
   for (const entry of log) {
     if (entry.kind === "start") out.push({ start: entry, frames: [], childReads: [], extra: [], missing: [], end: [] });
-    const current = out.at(-1);
+    // An old stub can still log its shutdown after the resumed process starts.
+    const current = out.find((p) => p.start.pid === entry.pid);
     if (current === undefined) continue;
     if (entry.kind === "in") current.frames.push(entry.frame ?? { invalid: entry.line });
     // A subagent's model read (the stub logs it as \`child-metadata\` right after its \`in\`):
@@ -968,6 +970,14 @@ const processes = (log) => {
   }
   return out;
 };
+
+NodeAssert.deepEqual(processes([
+  { kind: "start", pid: 1 },
+  { kind: "alive", pid: 1, afterMs: 208 },
+  { kind: "start", pid: 2 },
+  { kind: "alive", pid: 1, afterMs: 1904 },
+  { kind: "alive", pid: 2, afterMs: 1903 },
+]).map((p) => p.end.at(-1).afterMs), [1904, 1903]);
 
 /**
  * T3's \`mergePathEntries\`: the login shell's entries first, then the server's own, each once.

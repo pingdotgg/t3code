@@ -417,18 +417,16 @@ mod tests {
     /// and leaves the server's own environment untouched. No real profile is read.
     #[test]
     fn a_login_shell_reaches_children_and_not_the_server() {
-        use std::os::unix::fs::PermissionsExt;
         let before = std::env::var_os("PATH");
         let fake_shell_path = "/conn-login-env-test/bin";
         let dir = std::env::temp_dir().join(format!("conn-login-env-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("dir");
         let shell = dir.join("fake-login-shell");
-        std::fs::write(
+        crate::test_util::executable(
             &shell,
-            format!("#!/bin/sh\nPATH={fake_shell_path}:/usr/bin:/bin\nexport PATH\nexec /bin/sh -c \"$2\"\n"),
+            &format!("#!/bin/sh\nPATH={fake_shell_path}:/usr/bin:/bin\nexport PATH\nexec /bin/sh -c \"$2\"\n"),
         )
         .expect("script");
-        std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).expect("chmod");
         let output = read_login_shell(&shell.to_string_lossy(), TIMEOUT, &[]);
         let _ = std::fs::remove_dir_all(&dir);
         let output = output.expect("the shell answers");

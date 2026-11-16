@@ -1,29 +1,21 @@
 name: Conn Server checks
 
-# apps/conn-server/tools/check.sh: every Conn Server check that needs no model, against the
-# contract, the web client and apps/server of this same tree. Generated files that drift from
-# the tree fail here. Runs on changes to the Conn Server or to the contract.
-#
-# The nightly upstream sync runs this job on its sync/* branch and waits for it before it merges
-# (FORK.md, "Upstream scope" and "Conn Server"). A push also runs it when apps/server or a
-# package changes, since the checks compare against them.
+# Every model-free Conn Server check against this tree's server, web client and packages.
+# Pull requests and main/sync pushes use the same inputs; generated drift fails the job.
 
 on:
   pull_request:
-    paths:
-      - apps/conn-server/**
-      - packages/contracts/**
-      - .github/workflows/conn-server-checks.yml
-  push:
-    branches:
-      - main
-      - "sync/**"
-    paths:
+    paths: &paths
       - apps/conn-server/**
       - apps/server/**
       - apps/web/**
       - packages/**
       - .github/workflows/conn-server-checks.yml
+  push:
+    branches:
+      - main
+      - "sync/**"
+    paths: *paths
   workflow_dispatch:
 
 permissions:
