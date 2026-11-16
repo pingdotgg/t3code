@@ -1,5 +1,6 @@
 import {
   type EnvironmentId,
+  isRuntimeModeAbove,
   type OrchestrationV2LinkOrigin,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
@@ -29,6 +30,8 @@ import {
   assertLiveCaller,
   assertTargetWithinLimits,
   type Caller,
+  type CallerLimits,
+  limitsForTarget,
   loadCaller,
   readCaller,
   unavailable,
@@ -197,25 +200,41 @@ export const writesWithCapability = <P, A, E, R>(handle: (params: P) => Effect.E
 export const writesThreads = <P, A, E, R>(
   threads: (params: P) => ReadonlyArray<ThreadId | undefined>,
   handle: (params: P) => Effect.Effect<A, E, R>,
+  /** `copiesModes`: the call copies a target's modes into a new thread, so own subagents get no exception. */
+  options?: { readonly copiesModes?: true },
 ) =>
   declare(
     (params: P) =>
       Effect.gen(function* () {
         const caller = yield* writingCaller;
+        // The orchestrator rechecks one limit for the whole call: the narrowest any target allowed.
+        let dispatchLimits: CallerLimits | undefined;
         for (const threadId of threads(params)) {
           if (threadId === undefined || threadId === caller.scope.thread?.threadId) continue;
           const target = yield* caller.threads
             .getThreadShell(threadId)
             .pipe(Effect.mapError(unavailable));
           if (target !== null && target.deletedAt === null) {
-            yield* assertTargetWithinLimits(caller.limits, target);
+            const limits =
+              options?.copiesModes === true
+                ? caller.limits
+                : limitsForTarget(caller.caller?.id, caller.limits, target);
+            yield* assertTargetWithinLimits(limits, target);
             yield* assertSameLink(caller, target);
+            if (
+              dispatchLimits === undefined ||
+              isRuntimeModeAbove(dispatchLimits.runtimeMode, limits.runtimeMode)
+            )
+              dispatchLimits = limits;
           }
         }
         // Modes can rise after this check; the orchestrator rechecks under lock and records refusal before handlers wrap errors.
         const refused = yield* Ref.make<DispatchModeRefusal | undefined>(undefined);
         return yield* handle(params).pipe(
-          Effect.provideService(DispatchModeLimit, { ...caller.limits, refused }),
+          Effect.provideService(DispatchModeLimit, {
+            ...(dispatchLimits ?? caller.limits),
+            refused,
+          }),
           Effect.catch((error) =>
             Effect.flatMap(Ref.get(refused), (refusal) =>
               Effect.fail<E | OrchestratorMcpFailure>(

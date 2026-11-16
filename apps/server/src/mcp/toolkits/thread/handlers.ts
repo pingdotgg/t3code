@@ -194,6 +194,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
             .pipe(Effect.mapError(dispatchFailure));
           return { sequence: result.sequence, targetThreadId };
         }),
+      { copiesModes: true },
     ),
   ),
   t3_thread_configure: McpToolAccess.either(

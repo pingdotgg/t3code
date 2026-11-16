@@ -1,6 +1,7 @@
 import type { ProjectionRecordField } from "../orchestration-v2/ProjectionStore.ts";
 import {
   CommandId,
+  isRuntimeModeAbove,
   OrchestratorMcpFailure,
   type ProjectId,
   type ProviderInstanceId,
@@ -111,6 +112,22 @@ export const loadCaller = Effect.fn("mcp.loadCaller")(function* () {
     limits: { runtimeMode: caller.runtimeMode, interactionMode: caller.interactionMode },
   } satisfies Caller;
 });
+
+/**
+ * A parent reaches its own subagent at the runtime mode the child already has,
+ * so it can move it to another account or resume it without widening it.
+ */
+export const limitsForTarget = (
+  callerThreadId: ThreadId | undefined,
+  limits: CallerLimits,
+  target: Pick<OrchestrationV2ThreadShell, "runtimeMode" | "lineage">,
+): CallerLimits =>
+  callerThreadId !== undefined &&
+  target.lineage.parentThreadId === callerThreadId &&
+  target.lineage.relationshipToParent === "subagent" &&
+  isRuntimeModeAbove(target.runtimeMode, limits.runtimeMode)
+    ? { ...limits, runtimeMode: target.runtimeMode }
+    : limits;
 
 export const assertTargetWithinLimits = (
   limits: CallerLimits,

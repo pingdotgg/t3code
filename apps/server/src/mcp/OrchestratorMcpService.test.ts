@@ -3813,6 +3813,56 @@ describe("OrchestratorMcpService thread lookup", () => {
     }),
   );
 
+  it.effect("lets an Auto parent message its own Full-access subagent, not another thread", () =>
+    Effect.gen(function* () {
+      const parent = liveThreadShell(ThreadId.make("thread:auto-parent"), { runtimeMode: "auto" });
+      const child = {
+        ...liveThreadShell(ThreadId.make("thread:full-access-child")),
+        lineage: {
+          rootThreadId: parent.id,
+          parentThreadId: parent.id,
+          relationshipToParent: "subagent" as const,
+        },
+      };
+      const other = liveThreadShell(ThreadId.make("thread:full-access-other"));
+      const scope: McpInvocationScope = {
+        ...client,
+        requestNamespace: `provider:${parent.id}`,
+        thread: {
+          threadId: parent.id,
+          providerSessionId: `provider:${parent.id}`,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
+      };
+      const sent = yield* Ref.make(0);
+      yield* Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* mcp.sendToThread(scope, { threadId: child.id, message: "Resume your work." });
+        const refused = yield* mcp
+          .sendToThread(scope, { threadId: other.id, message: "hello" })
+          .pipe(Effect.flip);
+        assert.equal(refused.code, "runtime_mode_escalation_denied");
+      }).pipe(
+        Effect.provide(
+          service([parent, child, other], sent, {
+            getThreadRecords: () => Effect.succeed(idleThreadProjection(parent)),
+            getProjectThreadRecords: (input) =>
+              Effect.succeed(idleThreadProjection(input.threadId === child.id ? child : other)),
+            sendToThread: () =>
+              Ref.update(sent, (count) => count + 1).pipe(
+                Effect.as({
+                  run: { id: RunId.make("run:resumed"), status: "running" },
+                  delivery: "started",
+                } as never),
+              ),
+          }),
+        ),
+      );
+      assert.equal(yield* Ref.get(sent), 1);
+    }),
+  );
+
   it.effect("records the linked environment's thread that sent a message", () =>
     Effect.gen(function* () {
       const target = liveThreadShell(ThreadId.make("thread:target"));

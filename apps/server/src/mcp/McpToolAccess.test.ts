@@ -135,6 +135,10 @@ const ProbeToolkit = Toolkit.make(
     ...probe,
     parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
   }),
+  Tool.make("writes_threads_copying_modes", {
+    ...probe,
+    parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
+  }),
   Tool.make("starts_threads", {
     ...probe,
     parameters: Schema.Struct({
@@ -154,6 +158,11 @@ const probeHandlers: McpToolAccess.Handlers<typeof ProbeToolkit.tools> = {
   writes_threads: McpToolAccess.writesThreads(
     (input) => [input.threadId],
     () => ran,
+  ),
+  writes_threads_copying_modes: McpToolAccess.writesThreads(
+    (input) => [input.threadId],
+    () => ran,
+    { copiesModes: true },
   ),
   starts_threads: McpToolAccess.startsThreads(
     (input) => input,
@@ -198,6 +207,7 @@ export const refusedAtCompileTime = () => {
       writes: unchecked,
       writes_with_capability: unchecked,
       writes_threads: unchecked,
+      writes_threads_copying_modes: unchecked,
       starts_threads: unchecked,
       writes_environment: unchecked,
     }),
@@ -316,6 +326,13 @@ it.effect.each([
   ["writes_threads", supervised, { threadId: "thread:missing" }, "ran"],
   // A parent moves or resumes its own subagent at the child's existing mode.
   ["writes_threads", autoParent, { threadId: fullAccessChildThreadId }, "ran"],
+  // Copying the child's modes into a new thread would widen the parent.
+  [
+    "writes_threads_copying_modes",
+    autoParent,
+    { threadId: fullAccessChildThreadId },
+    "runtime_mode_escalation_denied",
+  ],
 
   ["starts_threads", supervised, {}, "approval-required/default"],
   ["starts_threads", supervised, { runtimeMode: "full-access" }, "runtime_mode_escalation_denied"],
