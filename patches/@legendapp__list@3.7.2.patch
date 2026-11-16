@@ -1,8 +1,107 @@
+diff --git a/keyboard.js b/keyboard.js
+index 2c92fc689789d5813ea98b92bc6d479d6970fc7d..896b3a76885c7e5dc85bcac41aec50915671d8cb 100644
+--- a/keyboard.js
++++ b/keyboard.js
+@@ -139,6 +139,8 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
+   const combinedRef = useCombinedRef(forwardedRef, refLegendList);
+   const staticContentInsetRef = React.useRef(rest.contentInset);
+   staticContentInsetRef.current = rest.contentInset;
++  const hasAnchoredEndSpaceRef = React.useRef(false);
++  hasAnchoredEndSpaceRef.current = !!anchoredEndSpace;
+   const blankSpace = reactNativeReanimated.useSharedValue(0);
+   const scrollRef = reactNativeReanimated.useAnimatedRef();
+   const combinedScrollRef = useCombinedRef(scrollRef, refScrollView);
+@@ -217,7 +219,7 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
+   );
+   const onContentInsetChange = React.useCallback(
+     (insets) => {
+-      var _a2, _b2, _c, _d, _e, _f, _g, _h, _i;
++      var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+       const staticInset = staticContentInsetRef.current;
+       if (reactNative$1.Platform.OS !== "ios" && staticInset) {
+         insets = {
+@@ -227,6 +229,12 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
+           top: Math.max(0, ((_g = insets.top) != null ? _g : 0) - ((_h = staticInset.top) != null ? _h : 0))
+         };
+       }
++      if (hasAnchoredEndSpaceRef.current && !isHorizontal) {
++        // T3 patch: the native inset includes the anchored blank, which the list adds from its own
++        // size. The native report lags that size, so a shrinking blank left the end target stale.
++        const padding = Math.max(0, keyboard.value.height - (keyboardOffset != null ? keyboardOffset : 0) * keyboard.value.progress) + Math.max(0, (_j = contentInsetEndAdjustment == null ? void 0 : contentInsetEndAdjustment.value) != null ? _j : 0);
++        insets = { ...insets, bottom: Math.min((_k = insets.bottom) != null ? _k : 0, staticBottomInset + padding) };
++      }
+       reportedInsets.current = insets;
+       const list = refLegendList.current;
+       if ((endScrollFreeze == null ? void 0 : endScrollFreeze.value) === "animated") {
+@@ -237,7 +245,7 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
+         list == null ? void 0 : list.reportContentInset(insets);
+       }
+     },
+-    [endScrollFreeze, getEndInset, keyboard, keyboardTarget]
++    [contentInsetEndAdjustment, endScrollFreeze, getEndInset, isHorizontal, keyboard, keyboardOffset, keyboardTarget, staticBottomInset]
+   );
+   const reportClosingInset = React.useCallback((bottom) => {
+     var _a2;
+diff --git a/keyboard.mjs b/keyboard.mjs
+index 78942837d2405f2f3a037e7d89e708378c2cb54e..3b2c438b6fbd1a4289f3e281dfa22501db7151d6 100644
+--- a/keyboard.mjs
++++ b/keyboard.mjs
+@@ -118,6 +118,8 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
+   const combinedRef = useCombinedRef(forwardedRef, refLegendList);
+   const staticContentInsetRef = useRef(rest.contentInset);
+   staticContentInsetRef.current = rest.contentInset;
++  const hasAnchoredEndSpaceRef = useRef(false);
++  hasAnchoredEndSpaceRef.current = !!anchoredEndSpace;
+   const blankSpace = useSharedValue(0);
+   const scrollRef = useAnimatedRef();
+   const combinedScrollRef = useCombinedRef(scrollRef, refScrollView);
+@@ -196,7 +198,7 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
+   );
+   const onContentInsetChange = useCallback(
+     (insets) => {
+-      var _a2, _b2, _c, _d, _e, _f, _g, _h, _i;
++      var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+       const staticInset = staticContentInsetRef.current;
+       if (Platform.OS !== "ios" && staticInset) {
+         insets = {
+@@ -206,6 +208,12 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
+           top: Math.max(0, ((_g = insets.top) != null ? _g : 0) - ((_h = staticInset.top) != null ? _h : 0))
+         };
+       }
++      if (hasAnchoredEndSpaceRef.current && !isHorizontal) {
++        // T3 patch: the native inset includes the anchored blank, which the list adds from its own
++        // size. The native report lags that size, so a shrinking blank left the end target stale.
++        const padding = Math.max(0, keyboard.value.height - (keyboardOffset != null ? keyboardOffset : 0) * keyboard.value.progress) + Math.max(0, (_j = contentInsetEndAdjustment == null ? void 0 : contentInsetEndAdjustment.value) != null ? _j : 0);
++        insets = { ...insets, bottom: Math.min((_k = insets.bottom) != null ? _k : 0, staticBottomInset + padding) };
++      }
+       reportedInsets.current = insets;
+       const list = refLegendList.current;
+       if ((endScrollFreeze == null ? void 0 : endScrollFreeze.value) === "animated") {
+@@ -216,7 +224,7 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
+         list == null ? void 0 : list.reportContentInset(insets);
+       }
+     },
+-    [endScrollFreeze, getEndInset, keyboard, keyboardTarget]
++    [contentInsetEndAdjustment, endScrollFreeze, getEndInset, isHorizontal, keyboard, keyboardOffset, keyboardTarget, staticBottomInset]
+   );
+   const reportClosingInset = useCallback((bottom) => {
+     var _a2;
 diff --git a/react-native.js b/react-native.js
-index 4af685dfb961eb0c8a4bf1ae9132c9304cf4fa4d..a50466b8fc8509db2d097b85a09d2109a20530cb 100644
+index 4af685dfb961eb0c8a4bf1ae9132c9304cf4fa4d..697d6cb31c2a2f1dfd916c0759e2057ee44d04b8 100644
 --- a/react-native.js
 +++ b/react-native.js
-@@ -1795,7 +1795,35 @@ function resolvePendingNativeMVCPAdjust(ctx, newScroll) {
+@@ -1102,7 +1102,9 @@ function requestAdjust(ctx, positionDiff, source) {
+           "ignoreScrollFromMVCP"
+         );
+       }
+-    } else {
++    } else if (!state.initialScroll) {
++      // T3 patch: an initial scroll resolves its target from measured sizes. A native adjust
++      // queued for it before the list is ready lands a second time as the list appears.
+       state.adjustingFromInitialMount = (state.adjustingFromInitialMount || 0) + 1;
+       requestAnimationFrame(doit);
+     }
+@@ -1795,7 +1797,48 @@ function resolvePendingNativeMVCPAdjust(ctx, newScroll) {
    }
    return false;
  }
@@ -13,6 +112,15 @@ index 4af685dfb961eb0c8a4bf1ae9132c9304cf4fa4d..a50466b8fc8509db2d097b85a09d2109
 +  const state = ctx.state;
 +  return !dataChanged && !!state.props.maintainScrollAtEnd && !!state.didFinishInitialScroll && !state.endFollowInterrupted && !state.visibleContentAnchor && state.scrollingTo === void 0 && !state.isDragging && state.userScrollContentSize === void 0 && !!peek$(ctx, "isFollowingEnd");
 +}
++// T3 patch: while the anchored end space is the largest end inset, it takes up size changes below
++// its anchor and the end does not move. Its size is refreshed first, so the end math that
++// follows also sees it.
++function anchoredEndSpaceAbsorbsResize(ctx) {
++  if (!ctx.state.props.anchoredEndSpace) return false;
++  maybeUpdateAnchoredEndSpace(ctx);
++  const blank = peek$(ctx, "anchoredEndSpaceSize") || 0;
++  return blank > 0 && getContentInsetEnd(ctx) <= blank;
++}
  function prepareMVCP(ctx, dataChanged, adjustmentSource) {
 +  const restore = prepareDefaultMVCP(ctx, dataChanged, adjustmentSource);
 +  if (!shouldHoldEndOnSizeChange(ctx, dataChanged)) {
@@ -20,6 +128,10 @@ index 4af685dfb961eb0c8a4bf1ae9132c9304cf4fa4d..a50466b8fc8509db2d097b85a09d2109
 +  }
 +  return () => {
 +    if (!shouldHoldEndOnSizeChange(ctx, dataChanged)) {
++      restore == null ? void 0 : restore();
++      return;
++    }
++    if (anchoredEndSpaceAbsorbsResize(ctx)) {
 +      restore == null ? void 0 : restore();
 +      return;
 +    }
@@ -38,7 +150,20 @@ index 4af685dfb961eb0c8a4bf1ae9132c9304cf4fa4d..a50466b8fc8509db2d097b85a09d2109
    var _a3, _b, _c;
    const state = ctx.state;
    const { idsInView, positions, props } = state;
-@@ -5422,6 +5450,11 @@ function updateItemSizesBatch(ctx, measurements) {
+@@ -1940,8 +1983,11 @@ function prepareMVCP(ctx, dataChanged, adjustmentSource) {
+         const targetIndex = scrollingTo.index;
+         const newSize = getItemSize(ctx, getId(state, targetIndex), targetIndex, state.props.data[targetIndex]);
+         const prevSize = scrollingTo.itemSize;
++        const absorbed = prevSize !== void 0 && newSize !== prevSize && !!scrollingTo.isScrollToEnd && anchoredEndSpaceAbsorbsResize(ctx);
+         if (prevSize !== void 0 && newSize !== prevSize) {
+-          if (scrollingTo.viewPositionFallback) {
++          if (absorbed) {
++            // T3 patch: the anchored end space keeps the end where it is.
++          } else if (scrollingTo.viewPositionFallback) {
+             const viewport = state.scrollLength - getContentInsetTop(ctx) - getContentInsetEnd(ctx);
+             const previousSpace = viewport - Math.max(0, prevSize - ctx.scrollAxisGap);
+             const nextSpace = viewport - Math.max(0, newSize - ctx.scrollAxisGap);
+@@ -5422,6 +5468,11 @@ function updateItemSizesBatch(ctx, measurements) {
    const result = {};
    const previousTotalSize = state.totalSize;
    for (const measurement of measurements) {
@@ -51,10 +176,21 @@ index 4af685dfb961eb0c8a4bf1ae9132c9304cf4fa4d..a50466b8fc8509db2d097b85a09d2109
      if (ownsMeasuredItem) {
        const index = state.indexByKey.get(measurement.itemKey);
 diff --git a/react-native.mjs b/react-native.mjs
-index 9ebfddc183a9b202d35c990a387c9b628feeb185..489050190144997ac72de8f4f7c6219479216dba 100644
+index 9ebfddc183a9b202d35c990a387c9b628feeb185..47725a0ff7555482692d336afa0700ccb5cb0a44 100644
 --- a/react-native.mjs
 +++ b/react-native.mjs
-@@ -1774,7 +1774,35 @@ function resolvePendingNativeMVCPAdjust(ctx, newScroll) {
+@@ -1081,7 +1081,9 @@ function requestAdjust(ctx, positionDiff, source) {
+           "ignoreScrollFromMVCP"
+         );
+       }
+-    } else {
++    } else if (!state.initialScroll) {
++      // T3 patch: an initial scroll resolves its target from measured sizes. A native adjust
++      // queued for it before the list is ready lands a second time as the list appears.
+       state.adjustingFromInitialMount = (state.adjustingFromInitialMount || 0) + 1;
+       requestAnimationFrame(doit);
+     }
+@@ -1774,7 +1776,48 @@ function resolvePendingNativeMVCPAdjust(ctx, newScroll) {
    }
    return false;
  }
@@ -65,6 +201,15 @@ index 9ebfddc183a9b202d35c990a387c9b628feeb185..489050190144997ac72de8f4f7c62194
 +  const state = ctx.state;
 +  return !dataChanged && !!state.props.maintainScrollAtEnd && !!state.didFinishInitialScroll && !state.endFollowInterrupted && !state.visibleContentAnchor && state.scrollingTo === void 0 && !state.isDragging && state.userScrollContentSize === void 0 && !!peek$(ctx, "isFollowingEnd");
 +}
++// T3 patch: while the anchored end space is the largest end inset, it takes up size changes below
++// its anchor and the end does not move. Its size is refreshed first, so the end math that
++// follows also sees it.
++function anchoredEndSpaceAbsorbsResize(ctx) {
++  if (!ctx.state.props.anchoredEndSpace) return false;
++  maybeUpdateAnchoredEndSpace(ctx);
++  const blank = peek$(ctx, "anchoredEndSpaceSize") || 0;
++  return blank > 0 && getContentInsetEnd(ctx) <= blank;
++}
  function prepareMVCP(ctx, dataChanged, adjustmentSource) {
 +  const restore = prepareDefaultMVCP(ctx, dataChanged, adjustmentSource);
 +  if (!shouldHoldEndOnSizeChange(ctx, dataChanged)) {
@@ -72,6 +217,10 @@ index 9ebfddc183a9b202d35c990a387c9b628feeb185..489050190144997ac72de8f4f7c62194
 +  }
 +  return () => {
 +    if (!shouldHoldEndOnSizeChange(ctx, dataChanged)) {
++      restore == null ? void 0 : restore();
++      return;
++    }
++    if (anchoredEndSpaceAbsorbsResize(ctx)) {
 +      restore == null ? void 0 : restore();
 +      return;
 +    }
@@ -90,7 +239,20 @@ index 9ebfddc183a9b202d35c990a387c9b628feeb185..489050190144997ac72de8f4f7c62194
    var _a3, _b, _c;
    const state = ctx.state;
    const { idsInView, positions, props } = state;
-@@ -5401,6 +5429,11 @@ function updateItemSizesBatch(ctx, measurements) {
+@@ -1919,8 +1962,11 @@ function prepareMVCP(ctx, dataChanged, adjustmentSource) {
+         const targetIndex = scrollingTo.index;
+         const newSize = getItemSize(ctx, getId(state, targetIndex), targetIndex, state.props.data[targetIndex]);
+         const prevSize = scrollingTo.itemSize;
++        const absorbed = prevSize !== void 0 && newSize !== prevSize && !!scrollingTo.isScrollToEnd && anchoredEndSpaceAbsorbsResize(ctx);
+         if (prevSize !== void 0 && newSize !== prevSize) {
+-          if (scrollingTo.viewPositionFallback) {
++          if (absorbed) {
++            // T3 patch: the anchored end space keeps the end where it is.
++          } else if (scrollingTo.viewPositionFallback) {
+             const viewport = state.scrollLength - getContentInsetTop(ctx) - getContentInsetEnd(ctx);
+             const previousSpace = viewport - Math.max(0, prevSize - ctx.scrollAxisGap);
+             const nextSpace = viewport - Math.max(0, newSize - ctx.scrollAxisGap);
+@@ -5401,6 +5447,11 @@ function updateItemSizesBatch(ctx, measurements) {
    const result = {};
    const previousTotalSize = state.totalSize;
    for (const measurement of measurements) {
