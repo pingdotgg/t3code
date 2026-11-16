@@ -14,9 +14,10 @@ const CELL_END = Symbol("cell-end");
 type TextPart = string | typeof CELL_START | typeof CELL_END | { fallback: string };
 
 const TRUNCATED = "\n\n[Extracted text truncated at document extraction limits.]";
-// Parts the document never displays: tracked deletions and moves, field codes, phonetic guides,
-// paragraph properties such as tab-stop definitions.
+// Parts the document never displays: the XHTML head, tracked deletions and moves, field codes,
+// phonetic guides, paragraph properties such as tab-stop definitions.
 const HIDDEN = new Set([
+  "head",
   "script",
   "style",
   "binary-data",
@@ -41,7 +42,38 @@ interface XmlNode {
   hasTextChoice?: boolean;
 }
 
+// ODF 1.3 Part 3 §6.1.2: paragraph character data turns TAB, CR and LF into spaces, collapses
+// space runs and trims the ends; only <text:s>, <text:tab> and <text:line-break> keep literal ones.
+function collapseOdfWhitespace(paragraph: XmlNode) {
+  let afterSpace = true;
+  let tail: { node: XmlNode; index: number; value: string } | undefined;
+  const visit = (node: XmlNode) => {
+    for (const [index, child] of node.children.entries()) {
+      if (typeof child !== "string") {
+        if (HIDDEN.has(child.name)) continue;
+        if (child.spaceCount === undefined && !["tab", "line-break", "p", "h"].includes(child.name))
+          visit(child);
+        else {
+          afterSpace = false;
+          tail = undefined;
+        }
+        continue;
+      }
+      let value = child.replaceAll(/[ \t\r\n]+/g, " ");
+      if (afterSpace && value.startsWith(" ")) value = value.slice(1);
+      if (value) {
+        afterSpace = value.endsWith(" ");
+        tail = { node, index, value };
+      }
+      node.children[index] = value;
+    }
+  };
+  visit(paragraph);
+  if (tail && afterSpace) tail.node.children[tail.index] = tail.value.slice(0, -1);
+}
+
 function xml(source: string, extension: string): XmlNode {
+  const odf = [".odt", ".ods", ".odp"].includes(extension);
   const root: XmlNode = { name: "root", attrs: {}, children: [] };
   const stack = [root];
   let nodes = 0;
@@ -59,14 +91,14 @@ function xml(source: string, extension: string): XmlNode {
       ),
       children: [],
     };
-    if ([".odt", ".ods", ".odp"].includes(extension) && node.name === "s")
-      node.spaceCount = repeatCount(node.attrs.c);
+    if (odf && node.name === "s") node.spaceCount = repeatCount(node.attrs.c);
     stack.at(-1)!.children.push(node);
     stack.push(node);
   });
   parser.on("closetag", () => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
+    if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
     if (extension === ".docx" && node.name === "del") {
       parent.children.pop();
       return;

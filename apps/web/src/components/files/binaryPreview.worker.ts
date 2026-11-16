@@ -14,7 +14,8 @@ import {
 
 let database: Database | null = null;
 let tables: string[] = [];
-let files = new Map<string, Uint8Array<ArrayBuffer>>();
+// Entries over the preview limit keep only their size, so their payload is never copied.
+let files = new Map<string, Uint8Array<ArrayBuffer> | number>();
 const reply = (result: BinaryWorkerResult) => self.postMessage(result, { transfer: [] });
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 
@@ -137,14 +138,14 @@ function tarEntries(bytes: Uint8Array<ArrayBuffer>) {
       const linked = type === "1" ? files.get(linkpath) : undefined;
       entries.push({
         path,
-        size: linked?.length ?? size,
+        size: typeof linked === "number" ? linked : (linked?.length ?? size),
         directory: type === "5",
         modified: Number.isNaN(date.getTime()) ? null : date.toISOString(),
       });
       if (type === "5") {
         files.delete(path);
         files.delete(path.replace(/\/+$/, ""));
-      } else files.set(path, linked ?? content.slice());
+      } else files.set(path, linked ?? (size > ARCHIVE_ENTRY_MAX_BYTES ? size : content.slice()));
     } else {
       files.delete(path);
     }
@@ -157,8 +158,8 @@ function tarEntries(bytes: Uint8Array<ArrayBuffer>) {
 async function handle(input: BinaryWorkerRequest) {
   if (input.type === "entry") {
     const bytes = files.get(input.path);
-    if (!bytes) throw new Error("This archive entry is unavailable.");
-    if (bytes.length > ARCHIVE_ENTRY_MAX_BYTES)
+    if (bytes === undefined) throw new Error("This archive entry is unavailable.");
+    if (typeof bytes === "number" || bytes.length > ARCHIVE_ENTRY_MAX_BYTES)
       throw new Error("Entry previews are limited to 10 MB.");
     reply({ type: "entry", path: input.path, bytes });
     return;
