@@ -1264,8 +1264,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       </span>
     ) : null;
   const diff = latestRunDiff(thread);
-  // Only the trailing icons would remain, so the row moves them to the title line instead.
+  // Card rows move the trailing icons to the title line when only they would remain.
   const metaLineEmpty =
+    variant !== "folder-multiline" &&
     !checkoutThread.branch &&
     !showsScratchMachine &&
     prBadge === null &&
@@ -1383,7 +1384,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               )}
               {draftIndicator}
               {title}
-              {multiline ? titleLineIcons : null}
               {pinIndicator}
               {multiline ? null : terminalStatusIcon}
               {multiline ? null : issueBadge}
