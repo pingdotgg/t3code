@@ -137,13 +137,11 @@ export const codexRoutesSpendNativeQuota = (
   if (!account.requiresOpenaiAuth || account.account?.type === "apiKey") return false;
   if (routesToNativeOpenai(config)) return true;
   const baseUrl = codexRouteBaseUrl(config);
-  return (
-    account.account?.type === "chatgpt" &&
-    typeof baseUrl === "string" &&
-    baseUrl === subscriptionQuotaBaseUrl &&
-    URL.canParse(baseUrl) &&
-    /^https?:$/.test(new URL(baseUrl).protocol)
-  );
+  if (account.account?.type !== "chatgpt" || !baseUrl || baseUrl !== subscriptionQuotaBaseUrl) {
+    return false;
+  }
+  const url = URL.parse(baseUrl);
+  return url !== null && /^https?:$/.test(url.protocol);
 };
 
 const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
@@ -760,6 +758,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       ).pipe(
         Effect.catch(() => Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined))),
         Effect.flatMap((config) => {
+          // Only a confirmed native or declared pass-through route may probe the login's quota.
           const nativeUsage =
             !input.skipNativeUsage &&
             config !== undefined &&
