@@ -75,7 +75,7 @@ export function BrowserImportWizard({
   const [target, setTarget] = useState<WizardTargetSelection>(() =>
     initialTargetSelection(canCreateProfile, targetProfiles),
   );
-  const [targetError, setTargetError] = useState<string>();
+  const [targetError, setTargetError] = useState<"profileUnavailable">();
   const newProfileId = useRef(`profile-${randomUUID()}`);
   // Guard synchronously so a second click's refusal cannot leave the importing step during the first write.
   const importInFlight = useRef(false);
@@ -84,7 +84,7 @@ export function BrowserImportWizard({
     if (importInFlight.current) return;
     const chosen = resolveWizardTarget(target, newProfileId.current, targetProfiles);
     if (chosen === undefined) {
-      setTargetError("That profile is no longer available. Choose where to import these cookies.");
+      setTargetError("profileUnavailable");
       setStep({ step: "configure" });
       return;
     }
@@ -209,10 +209,16 @@ function QuitStep({
   );
 }
 
-function cookieCountLabel(count: number | undefined): string | undefined {
+function cookieCountLabel(
+  count: number | undefined,
+  m: ReturnType<typeof useMessages>,
+): string | undefined {
   if (count === undefined) return undefined;
-  if (count === 0) return "no cookies";
-  return `${count.toLocaleString()} ${count === 1 ? "cookie" : "cookies"}`;
+  if (count === 0) return m(msg("No cookies"));
+  const amount = count.toLocaleString();
+  return count === 1
+    ? m(msg("{count} cookie"), { count: amount })
+    : m(msg("{count} cookies"), { count: amount });
 }
 
 function cookieResultCount(count: number): string {
@@ -227,7 +233,7 @@ type ConfigureStepProps = {
   readonly sourceProfileDirectory: string;
   readonly onSourceProfileChange: (directory: string) => void;
   readonly target: WizardTargetSelection;
-  readonly targetError: string | undefined;
+  readonly targetError: "profileUnavailable" | undefined;
   readonly onTargetChange: (target: WizardTargetSelection) => void;
   readonly onCancel: () => void;
   readonly onImport: () => void;
@@ -338,32 +344,33 @@ function ConfigureStep({
     !targetProfiles.some((profile) => profile.id === target.profileId);
   const targetUncreatable = target.kind === "new" && !canCreateProfile;
   const targetFeedback =
-    targetError ??
-    (targetMissing
-      ? "That profile is no longer available. Choose where to import these cookies."
+    targetError === "profileUnavailable" || targetMissing
+      ? msg("That profile is no longer available. Choose where to import these cookies.")
       : targetUncreatable
-        ? "You've reached the profile limit. Choose an existing profile to import into."
-        : undefined);
+        ? msg("You've reached the profile limit. Choose an existing profile to import into.")
+        : undefined;
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Import from {source.name}</DialogTitle>
+        <DialogTitle>{m(msg("Import from {sourceName}"), { sourceName: source.name })}</DialogTitle>
         <DialogDescription>
-          Choose which cookies to import for {destinationEnvironmentName}.
+          {m(msg("Choose which cookies to import for {environmentName}."), {
+            environmentName: destinationEnvironmentName,
+          })}
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
           <section className="flex-1 space-y-2">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              From
+              {m(msg("From"))}
             </p>
             {source.profiles.map((profile) => (
               <SelectableTile
                 key={profile.directory}
                 selected={sourceProfileDirectory === profile.directory}
                 title={profile.name}
-                subtitle={cookieCountLabel(profile.cookieCount)}
+                subtitle={cookieCountLabel(profile.cookieCount, m)}
                 onSelect={() => onSourceProfileChange(profile.directory)}
               />
             ))}
@@ -374,7 +381,7 @@ function ConfigureStep({
           </div>
           <section className="flex-1 space-y-2">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Into
+              {m(msg("Into"))}
             </p>
             {canCreateProfile ? (
               <SelectableTile
@@ -397,19 +404,19 @@ function ConfigureStep({
         </div>
         {targetFeedback ? (
           <p role="alert" className="mt-3 text-sm text-destructive">
-            {targetFeedback}
+            {m(targetFeedback)}
           </p>
         ) : null}
       </DialogPanel>
       <DialogFooter>
         <Button variant="outline" onClick={onCancel}>
-          Cancel
+          {m(msg("Cancel"))}
         </Button>
         <Button
           disabled={sourceProfileDirectory === "" || targetMissing || targetUncreatable}
           onClick={onImport}
         >
-          Import
+          {m(msg("Import"))}
         </Button>
       </DialogFooter>
     </>
