@@ -47,6 +47,11 @@ again. The pass rolls up a run of four current roots when that run ends before t
 gap, and makes a new leaf only after those runs. A gap keeps the roots on its far side out of
 that run, so the neighbours of a replaced leaf never roll up without the replacement. Rolling
 them up early would summarize more than the broken path, which could then not be rebuilt alone.
+A stretch is skipped after two passes in which its own summary came back empty or unreadable while
+another summary succeeded; a pass where every summary fails blames the model, not the stretch, and
+skips nothing. A skipped stretch gets no leaf, so it is not a gap: roll-ups proceed past it. Its
+items stay uncovered, and delivery replays them verbatim. Skips are keyed by the summary model,
+so choosing another model tries the stretch again.
 A roll-up offer carries no delivered-knowledge evidence, unlike a leaf offer: the evidence of a few
 hundred items would never fit beside it. Roll-ups are capped by rendered bytes, as delivery
 measures them, so several fit beside the verbatim tail of a 16 KB handoff.
