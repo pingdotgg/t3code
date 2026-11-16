@@ -359,6 +359,21 @@ it.each([
   expect(stops).toEqual([]);
 });
 
+it("leaves Escape to an open native popover, which closes on it", async () => {
+  const stops: string[] = [];
+  await using _screen = await render(<StoppableChat stops={stops} />, options);
+  const popover = document.createElement("div");
+  popover.popover = "auto";
+  document.body.append(popover);
+  using _popover = { [Symbol.dispose]: () => popover.remove() };
+  popover.showPopover();
+
+  await userEvent.keyboard("{Escape}");
+
+  expect(stops).toEqual([]);
+  await expect.element(popover).not.toBeVisible();
+});
+
 it("closes thread find before Escape can stop the turn", async () => {
   const stops: string[] = [];
   const closedFinds: string[] = [];

@@ -133,7 +133,9 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       context.terminalFocus ||
       context.previewFocus ||
       context.modelPickerOpen ||
-      (context.editableFocus && !context.composerFocus)
+      (context.editableFocus && !context.composerFocus) ||
+      // A native popover, such as a full screen MCP app, closes on this Escape unless it is prevented.
+      document.querySelector(":popover-open") !== null
     )
       return;
     const command = resolveChatShortcutCommand(event, input.keybindings, input.scriptKeybindings, {
