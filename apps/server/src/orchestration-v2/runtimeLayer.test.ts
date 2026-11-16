@@ -5332,6 +5332,124 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   );
 
   it.effect(
+    "without a host feed, reads a pull request with running checks once its fingerprint moves",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make("runtime-pull-request-watch-probe");
+        const projectId = ProjectId.make("pr-watch-probe-project");
+        yield* seedProject({
+          projectId,
+          title: "Watch probe",
+          workspaceRoot: "/workspace/watch-probe",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("pr-watch-probe-create"),
+          threadId,
+          projectId,
+          title: "Watch probe",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        const key = { host: "github.com", repository: "pingdotgg/t3code", number: 16 };
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make("pr-watch-probe-start"),
+          threadId,
+          ...key,
+          watching: true,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/16", source: "agent" },
+        });
+
+        let checks: PullRequestDetail["checks"] = [
+          { name: "lint", status: "pending", description: null, url: null, required: true },
+        ];
+        let status = "pending";
+        const followed = yield* Deferred.make<void>();
+        const detailReads = yield* Queue.unbounded<void>();
+        const host = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(PullRequestService.PullRequestService)({
+            // Watches other cases left on share this mock, so only this project's reads count.
+            detail: (input) =>
+              (input.projectId === projectId
+                ? Queue.offer(detailReads, undefined)
+                : Effect.void
+              ).pipe(
+                Effect.as({
+                  ...watchedPullRequestDetail({
+                    projectId,
+                    number: 16,
+                    at: "2026-10-02T12:00:00.000Z",
+                  }),
+                  headSha: "bbbbbbbbbb",
+                  checks,
+                }),
+              ),
+            activity: () =>
+              Effect.succeed({
+                comments: [],
+                commentCount: 0,
+                commentsTruncated: false,
+                reviewThreads: [],
+                commits: [],
+              }),
+            watchFingerprint: () => Effect.sync(() => ({ status, remarks: "" })),
+            invalidate: () => Effect.void,
+            // The host offers no event feed, as without the GitHub app sign-in.
+            changes: () => Stream.fromEffectDrain(Deferred.succeed(followed, undefined)),
+          }),
+        );
+        const wakes = Effect.map(
+          orchestrator.getThreadRecords(threadId, ["messages"]),
+          ({ messages }) =>
+            messages.filter(
+              (message) => message.notification !== undefined && message.notification !== null,
+            ),
+        );
+        const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* reactor.start();
+        yield* Deferred.await(followed);
+        yield* Queue.take(detailReads);
+
+        // An unchanged fingerprint costs no detail read.
+        yield* TestClock.adjust("20 seconds");
+        assert.isTrue(Option.isNone(yield* Queue.poll(detailReads)));
+
+        checks = [
+          { name: "lint", status: "failure", description: null, url: null, required: true },
+        ];
+        status = "failure";
+        // Well inside the 2-minute sweep.
+        yield* TestClock.adjust("20 seconds");
+        yield* Queue.take(detailReads);
+        yield* reactor.sweep;
+        yield* worker.drain();
+        const woken = yield* wakes;
+        assert.lengthOf(woken, 1);
+        assert.include(woken[0]!.notification?.summary ?? "", "failed");
+
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make("pr-watch-probe-end"),
+          threadId,
+          ...key,
+          watching: false,
+        });
+      }),
+  );
+
+  it.effect(
     "reads a watched pull request when the host reports a change, and wakes once per change",
     () =>
       Effect.gen(function* () {

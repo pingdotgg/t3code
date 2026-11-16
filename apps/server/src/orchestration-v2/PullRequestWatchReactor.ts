@@ -46,6 +46,8 @@ import {
 
 /** Checks take minutes; faster sweeps waste the account's shared host quota. */
 const SWEEP_MINUTES = 2;
+/** Without a host event feed, in-flight PRs poll their batched fingerprint and read only on change. */
+const PROBE_SECONDS = 20;
 const READ_FAILURE_LIMIT = 8;
 /** Group reads in flight at once, inside the host's own request limit. */
 const GROUP_READS = 4;
@@ -863,12 +865,42 @@ export const make = Effect.gen(function* () {
         );
       }
     });
+    const probe = Effect.gen(function* () {
+      const due = currentGroups.filter(
+        (group) =>
+          lastReads.get(group.key)?.inFlight === true &&
+          !FiberMap.hasUnsafe(feeds, pullRequestOf(group)),
+      );
+      const moved = new Set<string>();
+      yield* Effect.forEach(
+        due,
+        (group) =>
+          fingerprintOf(group).pipe(
+            Effect.map((fingerprint) => {
+              const last = lastReads.get(group.key);
+              if (
+                fingerprint !== null &&
+                fingerprint !== "paused" &&
+                last !== undefined &&
+                (last.status !== fingerprint.status || last.remarks !== fingerprint.remarks)
+              ) {
+                moved.add(pullRequestOf(group));
+              }
+            }),
+          ),
+        { concurrency: "unbounded", discard: true },
+      );
+      yield* Effect.forEach(moved, readOnChange, { discard: true });
+    });
     yield* forkParked(
       sweep.pipe(
         Effect.andThen(follow),
         Effect.repeat(Schedule.spaced(`${SWEEP_MINUTES} minutes`)),
         Effect.asVoid,
       ),
+    );
+    yield* forkParked(
+      Effect.sleep(`${PROBE_SECONDS} seconds`).pipe(Effect.andThen(probe), Effect.forever),
     );
   });
 
