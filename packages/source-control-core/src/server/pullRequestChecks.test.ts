@@ -241,7 +241,6 @@ describe("check log excerpts", () => {
       ],
       text: " ❯ runAssertion src/example.test.ts:10:5",
       lines: 7,
-      truncated: true,
     },
     {
       chunks: [
@@ -253,7 +252,19 @@ describe("check log excerpts", () => {
       ],
       text: "##[error]TypeError: boom\n    at Object.<anonymous> (/home/runner/work/app/src/build.js:2:2)",
       lines: 3,
-      truncated: true,
+    },
+    {
+      chunks: [
+        [
+          "##[start-action display=Install dependencies;id=install]",
+          "##[end-action id=install;outcome=success;conclusion=success;duration_ms=900]",
+          "##[start-action display=Build;id=build]",
+          "##[error]The action has timed out.",
+          "##[end-action id=build;outcome=failure;conclusion=failure;duration_ms=1250]",
+        ].join("\n"),
+      ],
+      text: "##[error]The action has timed out.\n##[end-action id=build;outcome=failure;conclusion=failure;duration_ms=1250]",
+      lines: 5,
     },
   ])(
     "strips formatting and counts lines across chunks %#",
@@ -299,7 +310,8 @@ describe("check log excerpts", () => {
 
     expect(result.text).toBe(expected.join("\n"));
     expect(result.totalLines).toBe(expected.length + noise.length * 3);
-    expect(result.truncated).toBe(true);
+    // Every real line is present, so dropped noise alone does not mark the excerpt truncated.
+    expect(result.truncated).toBe(false);
   });
 
   it("keeps error context, its Run header and the tail within both budgets", () => {

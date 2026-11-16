@@ -739,6 +739,12 @@ describe("GitHub check failures", () => {
             annotation_level: "failure",
             message: "Process completed with exit code 137.",
           },
+          {
+            path: ".github/workflows/ci.yml",
+            start_line: 0,
+            annotation_level: "failure",
+            message: "Process completed with exit code 1.",
+          },
           { path: "a.ts", start_line: 4, annotation_level: "failure", message: "bad code" },
           { path: "budget.json", start_line: 0, annotation_level: "failure", message: "grew" },
         ]);
