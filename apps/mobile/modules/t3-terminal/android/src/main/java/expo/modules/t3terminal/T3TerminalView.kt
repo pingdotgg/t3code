@@ -308,6 +308,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
           true
         }
         event.isCtrlPressed && keyCode in KeyEvent.KEYCODE_A..KeyEvent.KEYCODE_Z -> {
+          resetInput()
           onInput(
             mapOf("data" to (keyCode - KeyEvent.KEYCODE_A + 1).toChar().toString()),
           )
