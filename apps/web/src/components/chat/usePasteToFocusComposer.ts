@@ -1,5 +1,6 @@
 import { pasteTextToFocusComposer, shouldRedirectInputToComposer } from "./composerFocusRedirect";
 import { readPastedComposerContext } from "../composerInlineTokenPaste";
+import { splitTransferredFiles } from "./workspaceFileDrop";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { useEffect, useRef } from "react";
 import { isMacPlatform } from "../../lib/utils";
@@ -32,10 +33,25 @@ export function usePasteToFocusComposer(
       if (isCommandPaletteOpen() || isInSideChatPane(event.target)) return;
       if (getTerminalFocusOwner() !== null) return;
       if (composerRef.current?.isModelPickerOpen()) return;
+      const bypassAutoAttachment = Date.now() <= pasteAsTextShortcutUntilRef.current;
+      // Images and files pasted outside the composer would be dropped; `types` reads no data.
+      if (
+        event.clipboardData?.types.includes("Files") === true &&
+        shouldRedirectInputToComposer(event) &&
+        composerRef.current?.pasteAttachmentsAtEnd(
+          event.clipboardData,
+          splitTransferredFiles(event.clipboardData),
+          { bypassAutoAttachment },
+        )
+      ) {
+        pasteAsTextShortcutUntilRef.current = 0;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       const text = pasteTextToFocusComposer(event);
       const clipboardData = event.clipboardData;
       if (text === null || clipboardData === null) return;
-      const bypassAutoAttachment = Date.now() <= pasteAsTextShortcutUntilRef.current;
       pasteAsTextShortcutUntilRef.current = 0;
       if (
         ((readPastedComposerContext(clipboardData)?.records.length ?? 0) === 0 &&

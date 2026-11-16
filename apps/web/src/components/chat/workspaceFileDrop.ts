@@ -30,12 +30,14 @@ function movedWithinDropTarget(event: WorkspaceFileDragEvent): boolean {
   return event.relatedTarget !== null && event.currentTarget.contains(event.relatedTarget as Node);
 }
 
+export interface TransferredFiles {
+  readonly files: File[];
+  readonly folders: File[];
+}
+
 export function splitTransferredFiles(
   dataTransfer: Pick<WorkspaceFileDragEvent["dataTransfer"], "files" | "items">,
-): {
-  files: File[];
-  folders: File[];
-} {
+): TransferredFiles {
   if (dataTransfer.items === undefined)
     return { files: Array.from(dataTransfer.files), folders: [] };
 

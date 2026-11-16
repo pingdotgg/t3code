@@ -19,17 +19,11 @@ import {
   useQuestionAttachmentPreparation,
 } from "../../questionAttachments";
 import type {
-  KeybindingCommand,
-  AssistantCitation,
-  ResponseContextRecord,
   ChatAttachment as ContractChatAttachment,
   ChatFileAttachment,
   EnvironmentId,
   ModelSelection,
   ProjectId,
-  PreviewAnnotationPayload,
-  ThreadContextRecord,
-  EnvironmentContextRecord,
   ResolvedKeybindingsConfig,
   RuntimeMode,
   RuntimeRequestId,
@@ -55,7 +49,7 @@ import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { type FolderDropTarget, folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
-import { splitTransferredFiles } from "./workspaceFileDrop";
+import { splitTransferredFiles, type TransferredFiles } from "./workspaceFileDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
@@ -267,7 +261,6 @@ import { useSoftwareKeyboardOpen } from "../../hooks/useSoftwareKeyboardOpen";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { usePanelAnimationSettings } from "../../panelAnimations";
 import { readEnvironmentScope, readPreparedConnection } from "../../state/session";
-import type { ReviewCommentContext } from "../../reviewCommentContext";
 import { useComposerRestingTransition } from "./useComposerRestingTransition";
 import { ComposerCommandMenuLayer } from "./ComposerCommandMenuLayer";
 import { useRestingComposerControlsLayout } from "./useRestingComposerControlsLayout";
@@ -286,68 +279,13 @@ import { composerCommandKeyHandler } from "./composerCommandKey";
 import { usePromptSuggestion } from "./usePromptSuggestion";
 import { useFreshSessionArmed } from "./freshSessionArms";
 
+export type { ChatComposerHandle } from "./chatComposerHandle";
+import type { ChatComposerHandle } from "./chatComposerHandle";
+
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
   const armed = Date.now() <= deadline.current;
   deadline.current = 0;
   return armed;
-}
-
-export interface ChatComposerHandle {
-  focusAtEnd: () => void;
-  focusAt: (cursor: number) => void;
-  addDroppedFiles: (files: File[]) => void;
-  addDroppedFolders: (folders: File[]) => void;
-  hasPendingAttachments: () => boolean;
-  insertTextAtEnd: (
-    text: string,
-    options?: { ensureLeadingBoundary?: boolean; clipboardData?: DataTransfer },
-  ) => boolean;
-  pasteTextAtEnd: (text: string, options?: { bypassAutoAttachment?: boolean }) => boolean;
-  citeAssistantText: (
-    citation: AssistantCitation,
-    sourceAnchor: AssistantCitationSourceAnchor,
-  ) => boolean;
-  replyToResponse: (response: ResponseContextRecord) => boolean;
-  openModelPicker: () => void;
-  stepReasoningEffort: (direction: 1 | -1) => void;
-  toggleModelPicker: () => void;
-  openControl: (command: KeybindingCommand) => void;
-  isModelPickerOpen: () => boolean;
-  isCaretAtStart: () => boolean;
-  compactContext: () => void;
-  readSnapshot: () => {
-    value: string;
-    cursor: number;
-    expandedCursor: number;
-    contextIds: string[];
-  };
-  resetCursorState: (options?: {
-    cursor?: number;
-    prompt?: string;
-    detectTrigger?: boolean;
-  }) => void;
-  addTerminalContext: (selection: TerminalContextSelection) => void;
-  getSendContext: () => {
-    answeringPendingUserInput: boolean;
-    prompt: string;
-    images: ComposerImageAttachment[];
-    files: ComposerFileAttachment[];
-    terminalContexts: TerminalContextDraft[];
-    previewAnnotations: PreviewAnnotationPayload[];
-    reviewComments: ReviewCommentContext[];
-    threadContexts: ThreadContextRecord[];
-    environmentContexts: EnvironmentContextRecord[];
-    selectedPromptEffort: string | null;
-    selectedModelSelection: ModelSelection;
-    multipleModelSelections: ReadonlyArray<ModelSelection> | null;
-    providerAvailable: boolean;
-    selectedProvider: ProviderDriverKind;
-    selectedModel: string;
-    selectedProviderModels: ReadonlyArray<ServerProvider["models"][number]>;
-    shownPendingApprovalIds: ReadonlyArray<RuntimeRequestId>;
-  };
-  validateProviderInput: (providerInput: string) => boolean;
-  setMultipleModelSelections: (selections: ReadonlyArray<ModelSelection>) => void;
 }
 
 export interface ChatComposerProps {
@@ -2756,24 +2694,42 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const addComposerFoldersStable = useStableCallback(addComposerFolders);
 
-  const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
-    const { files, folders } = splitTransferredFiles(event.clipboardData);
-    const plainText = event.clipboardData.getData("text/plain");
-    const bypassAutoAttachment = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
+  // Takes the files already read: a dictation tool may replace the clipboard after the first read.
+  const pasteComposerAttachments = (
+    clipboardData: DataTransfer,
+    { files, folders }: TransferredFiles,
+    bypassAutoAttachment: boolean,
+  ): boolean => {
     if (
-      folders.length > 0 ||
-      (activeThreadId &&
+      folders.length === 0 &&
+      !(
+        activeThreadId &&
         files.length > 0 &&
-        shouldHandleComposerAttachmentPaste({ files, plainText }))
+        shouldHandleComposerAttachmentPaste({
+          files,
+          plainText: clipboardData.getData("text/plain"),
+        })
+      )
     ) {
+      return false;
+    }
+    if (folders.length > 0) addComposerFoldersStable(folders);
+    if (files.length > 0) {
+      void addComposerAttachments(files, { skipImageInlineChip: bypassAutoAttachment });
+    }
+    return true;
+  };
+  const pasteComposerAttachmentsStable = useStableCallback(pasteComposerAttachments);
+
+  const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
+    const bypassAutoAttachment = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
+    const transferred = splitTransferredFiles(event.clipboardData);
+    if (pasteComposerAttachments(event.clipboardData, transferred, bypassAutoAttachment)) {
       event.preventDefault();
       event.stopPropagation();
-      if (folders.length > 0) addComposerFoldersStable(folders);
-      if (files.length > 0) {
-        void addComposerAttachments(files, { skipImageInlineChip: bypassAutoAttachment });
-      }
       return;
     }
+    const plainText = event.clipboardData.getData("text/plain");
 
     if ((readPastedComposerContext(event.clipboardData)?.records.length ?? 0) > 0) return;
     if (!foldPastedText(plainText, bypassAutoAttachment)) {
@@ -3052,6 +3008,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         focusComposer();
         return true;
       },
+      pasteAttachmentsAtEnd: (clipboardData, transferred, options) => {
+        const shortcutArmed = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
+        const bypassAutoAttachment = options?.bypassAutoAttachment === true || shortcutArmed;
+        if (!pasteComposerAttachmentsStable(clipboardData, transferred, bypassAutoAttachment))
+          return false;
+        // Enter right after the paste must reach the composer, not the page.
+        focusComposer();
+        return true;
+      },
       citeAssistantText: (citation, sourceAnchor) =>
         insertComposerTextStable(
           formatAssistantCitationForComposer(citation, citation.comment),
@@ -3257,6 +3222,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setComposerDraftReplyTo,
       insertComposerTextStable,
       insertComposerTextAtEndStable,
+      pasteComposerAttachmentsStable,
       promptRef,
       composerImagesRef,
       composerFilesRef,
