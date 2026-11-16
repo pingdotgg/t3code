@@ -78,6 +78,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
               onUseArtifactTemplate={ctx.onUseArtifactTemplate}
               onRunShellCommand={ctx.onRunShellCommand}
               onImageExpand={ctx.onImageExpand}
+              sourceControlMedia
             />
           </AssistantCitationSource>
         </div>
@@ -137,6 +138,7 @@ export function SentMessageTimelineRow({
           onUseArtifactTemplate={ctx.onUseArtifactTemplate}
           onRunShellCommand={ctx.onRunShellCommand}
           onImageExpand={ctx.onImageExpand}
+          sourceControlMedia
         />
       </AssistantCitationSource>
     </div>

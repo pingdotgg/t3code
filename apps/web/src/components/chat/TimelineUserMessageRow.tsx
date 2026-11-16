@@ -1232,6 +1232,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       extraRemarkPlugins={USER_MESSAGE_REMARK_PLUGINS}
       renderContextReference={props.renderContextReference}
       headingLevelOffset={MESSAGE_HEADING_LEVEL}
+      sourceControlMedia
     />
   );
 });
