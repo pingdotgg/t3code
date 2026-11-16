@@ -78,7 +78,7 @@ export function ThreadGroupBar({ thread }: { readonly thread: EnvironmentThreadS
                       <Pressable
                         accessibilityRole="button"
                         accessibilityLabel={`${seat.label}, group member actions`}
-                        className="rounded-full bg-subtle px-3 py-2"
+                        className="rounded-full border border-border bg-subtle px-3 py-2"
                       >
                         <Text className="text-xs text-foreground">{seat.label}</Text>
                       </Pressable>
