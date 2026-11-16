@@ -76,7 +76,7 @@ for (const [key,reason] of [["missing","cli-missing"],["unauthenticated","cli-un
   if (!match) throw new Error("T3 credential requirement changed shape: "+key);
   add("unavailable",reason,{_tag:"PullRequestUnavailableError",reason,provider:"github",requirement:JSON.parse('"'+match[1]+'"')});
 }
-const out = JSON.stringify(cases, null, 2) + "\n";
+const out = "[\n" + cases.map((c) => JSON.stringify(c)).join(",\n") + "\n]\n";
 if (process.argv.includes("--check")) {
   if (fs.readFileSync(path,"utf8") !== out) throw new Error("PR characterizations changed; run gen-pr-cases.mjs and port the difference");
   console.log(`PR characterizations: ${cases.length} T3 cases current`);

@@ -2,44 +2,32 @@ use super::{
     Client, Error, Lookup,
     normalize::{array, text},
 };
-
 use crate::http::Method;
-
-use serde_json::{Value, json};
-
 pub(super) use conn_support::ids::encode_component as encode;
-
+use serde_json::{Value, json};
 fn is_sha(s: &str) -> bool {
     (7..=64).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 pub(super) fn contains_file(files: &[Value], old: &str, new: &str) -> bool {
     files.iter().any(|f| {
         let path = text(f, "filename");
-
         let previous = text(f, "previous_filename");
-
         let old_path = if previous.is_empty() { path } else { previous };
-
         old_path == old && path == new
     })
 }
 impl Client {
     pub async fn diff_file_contents(&self, lookup: &Lookup, input: &Value) -> Result<Value, Error> {
         let commit = input.get("commit").and_then(Value::as_str);
-
         if commit.is_some_and(|c| !is_sha(c)) {
             return Err(Error::Failed(
                 "The named commit was not a commit sha.".into(),
             ));
         }
         let old = text(input, "oldPath");
-
         let new = text(input, "newPath");
-
         let kind = text(input, "changeType");
-
         let mut found = false;
-
         for page in 1..=100 {
             let endpoint = commit.map_or_else(
                 || format!("{}/files?per_page=100&page={page}", lookup.path()),
@@ -50,18 +38,14 @@ impl Client {
                     )
                 },
             );
-
             let result = self.rest(&endpoint).await?;
-
             let files = if commit.is_some() {
                 array(result.get("files"))
             } else {
                 result.as_array().map_or(&[] as &[Value], Vec::as_slice)
             };
-
             if contains_file(files, old, new) {
                 found = true;
-
                 break;
             }
             if files.len() < 100 {
@@ -77,9 +61,7 @@ impl Client {
             || lookup.path(),
             |c| format!("repos/{}/{}/commits/{c}", lookup.owner, lookup.name),
         );
-
         let refs = self.rest(&endpoint).await?;
-
         let base = if commit.is_some() {
             array(refs.get("parents"))
                 .first()
@@ -90,7 +72,6 @@ impl Client {
                 .and_then(Value::as_str)
                 .unwrap_or("")
         };
-
         let head = if commit.is_some() {
             text(&refs, "sha")
         } else {
@@ -98,7 +79,6 @@ impl Client {
                 .and_then(Value::as_str)
                 .unwrap_or("")
         };
-
         if !is_sha(head)
             || (!(commit.is_some() && kind == "new" && base.is_empty()) && !is_sha(base))
         {
@@ -113,7 +93,6 @@ impl Client {
             )));
         }
         let mut old_ref = base.to_owned();
-
         if commit.is_none()
             && kind != "new"
             && let Ok(compare) = self
@@ -134,18 +113,15 @@ impl Client {
         } else {
             self.file(lookup, &old_ref, old).await?
         };
-
         let new_contents = if kind == "deleted" {
             String::new()
         } else {
             self.file(lookup, head, new).await?
         };
-
         Ok(json!({"oldContents":old_contents,"newContents":new_contents}))
     }
     async fn file(&self, lookup: &Lookup, revision: &str, path: &str) -> Result<String, Error> {
         let encoded = path.split('/').map(encode).collect::<Vec<_>>().join("/");
-
         let response = self
             .request(
                 Method::Get,
@@ -160,7 +136,6 @@ impl Client {
                 1024 * 1024,
             )
             .await?;
-
         if response.truncated {
             return Err(Error::Failed(format!(
                 "The diff file '{path}' exceeds the 1 MB expansion limit."
@@ -168,7 +143,6 @@ impl Client {
         }
         let contents = String::from_utf8(response.body)
             .map_err(|_| Error::Failed(format!("The diff file '{path}' is binary.")))?;
-
         if contents.contains('\0') {
             return Err(Error::Failed(format!("The diff file '{path}' is binary.")));
         }
@@ -178,39 +152,29 @@ impl Client {
 
 pub fn files_patch(files: &[Value]) -> Value {
     let mut patch = String::new();
-
     let mut omitted = Vec::new();
-
     for file in files {
         let Some(filename) = file.get("filename").and_then(Value::as_str) else {
             continue;
         };
-
         let status = text(file, "status").trim().to_lowercase();
-
         let hunks = text(file, "patch");
-
         let added = file.get("additions").and_then(Value::as_i64).unwrap_or(0);
-
         let deleted = file.get("deletions").and_then(Value::as_i64).unwrap_or(0);
-
         if hunks.is_empty() && added + deleted > 0 {
             omitted.push(json!({"path":filename,"additions":added,"deletions":deleted}));
         }
         let previous = text(file, "previous_filename");
-
         let old = if status == "renamed" && !previous.is_empty() {
             previous
         } else {
             filename
         };
-
         patch.push_str(&format!(
             "diff --git {} {}\n",
             quote_path(&format!("a/{old}")),
             quote_path(&format!("b/{filename}"))
         ));
-
         match status.as_str() {
             "added" => patch.push_str("new file mode 100644\n"),
             "removed" => patch.push_str("deleted file mode 100644\n"),
@@ -239,17 +203,14 @@ pub fn files_patch(files: &[Value]) -> Value {
                 quote_path(&format!("b/{filename}"))
             }
         ));
-
         if !hunks.is_empty() {
             patch.push_str(hunks);
-
             if !hunks.ends_with('\n') {
                 patch.push('\n');
             }
         }
     }
     let mut result = json!({"patch":patch,"truncated":!omitted.is_empty(),"nextCursor":null});
-
     if !omitted.is_empty() {
         result["omittedFileStats"] = json!(omitted);
     }
@@ -257,9 +218,7 @@ pub fn files_patch(files: &[Value]) -> Value {
 }
 fn quote_path(path: &str) -> String {
     let mut body = String::new();
-
     let mut quoted = false;
-
     for ch in path.chars() {
         let escape = match ch {
             '"' => Some("\\\""),
@@ -273,16 +232,12 @@ fn quote_path(path: &str) -> String {
             '\r' => Some("\\r"),
             _ => None,
         };
-
         if let Some(escape) = escape {
             body.push_str(escape);
-
             quoted = true;
         } else if ch < ' ' || ch == '\u{7f}' {
             use std::fmt::Write;
-
             let _ = write!(body, "\\{:03o}", ch as u32);
-
             quoted = true;
         } else {
             body.push(ch);
@@ -298,14 +253,12 @@ impl Client {
             ));
         }
         let commit = input.get("commit").and_then(Value::as_str);
-
         if commit.is_some_and(|c| !is_sha(c)) {
             return Err(Error::Failed(
                 "The named commit was not a commit sha.".into(),
             ));
         }
         let cursor = input.get("cursor").and_then(Value::as_str);
-
         let page = if let Some(cursor) = cursor {
             if cursor.is_empty()
                 || cursor.len() > 7
@@ -322,7 +275,6 @@ impl Client {
         } else {
             1
         };
-
         if commit.is_none() && cursor.is_none() {
             match self
                 .request(
@@ -340,7 +292,7 @@ impl Client {
                     );
                 }
                 Err(error @ (Error::Unauthenticated | Error::Missing)) => return Err(error),
-                Err(error) if error == Error::Failed("GitHub API rate limit exceeded.".into()) => {
+                Err(error) if matches!(error, Error::RateLimited) => {
                     return Err(error);
                 }
                 _ => {}
@@ -355,17 +307,13 @@ impl Client {
                 )
             },
         );
-
         let raw = self.rest(&endpoint).await?;
-
         let files = if commit.is_some() {
             array(raw.get("files"))
         } else {
             raw.as_array().map_or(&[] as &[Value], Vec::as_slice)
         };
-
         let mut result = files_patch(files);
-
         if files.len() >= 100 {
             result["nextCursor"] = json!((page + 1).to_string());
         }

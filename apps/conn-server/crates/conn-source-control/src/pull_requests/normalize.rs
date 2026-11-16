@@ -1,13 +1,12 @@
 //! Contract shapes of GitHub's generated reads; no transport or retained state.
 use serde_json::{Value, json};
-
-pub(super) fn array(value: Option<&Value>) -> &[Value] {
+pub fn array(value: Option<&Value>) -> &[Value] {
     value.and_then(Value::as_array).map_or(&[], Vec::as_slice)
 }
 pub(super) fn nodes(value: &Value) -> &[Value] {
     array(value.get("nodes"))
 }
-pub(super) fn text<'a>(value: &'a Value, key: &str) -> &'a str {
+pub fn text<'a>(value: &'a Value, key: &str) -> &'a str {
     value.get(key).and_then(Value::as_str).unwrap_or("")
 }
 pub(super) fn trimmed(value: Option<&Value>) -> Value {
@@ -38,17 +37,13 @@ pub fn actor(raw: Option<&Value>, host: &str) -> Value {
     let Some(raw) = raw else {
         return Value::Null;
     };
-
     let login = trimmed(raw.get("login"));
-
     if login.is_null() {
         return Value::Null;
     }
     let mut actor = json!({"login":login,"name":trimmed(raw.get("name")),"avatarUrl":trimmed(raw.get("avatarUrl"))});
-
     if actor.get("avatarUrl").is_none_or(Value::is_null) {
         let name = login.as_str().unwrap_or("");
-
         if (1..=39).contains(&name.len())
             && name
                 .as_bytes()
@@ -81,12 +76,10 @@ fn review_decision(raw: &Value) -> Value {
         "REVIEW_REQUIRED" => Some("review-required"),
         _ => None,
     };
-
     if matches!(base, Some("approved" | "changes-requested")) {
         return json!(base);
     }
     let reviews = nodes(raw.get("latestReviews").unwrap_or(&Value::Null));
-
     if reviews.iter().any(|r| {
         r.get("isMinimized") != Some(&Value::Bool(true)) && text(r, "state") == "CHANGES_REQUESTED"
     }) {
@@ -106,16 +99,13 @@ pub(super) fn labels(raw: &Value) -> Vec<Value> {
 }
 pub(super) fn stack(raw: &Value) -> Option<Value> {
     let s = raw.get("stack").filter(|v| !v.is_null())?;
-
     let entry = raw.get("stackEntry").filter(|v| !v.is_null())?;
-
     Some(
         json!({"number":s.get("number"),"size":s.get("size"),"base":s.get("baseRefName"),"position":entry.get("position")}),
     )
 }
 pub fn summary(raw: &Value, host: &str) -> Value {
     let mut value = json!({"number":raw.get("number"),"title":raw.get("title"),"url":raw.get("url"),"headBranch":raw.get("headRefName"),"baseBranch":raw.get("baseRefName"),"state":state(raw),"isDraft":raw.get("isDraft"),"closedAt":trimmed(raw.get("closedAt")),"mergedAt":trimmed(raw.get("mergedAt")),"updatedAt":raw.get("updatedAt"),"author":actor(raw.get("author"),host),"additions":raw.get("additions"),"deletions":raw.get("deletions"),"changedFiles":raw.get("changedFiles"),"reviewDecision":review_decision(raw),"checksState":rollup(&nodes(raw.get("commits").unwrap_or(&Value::Null)).iter().filter_map(|n| n.pointer("/commit/statusCheckRollup/state")).map(|s|check_status(&json!({"state":s}))).collect::<Vec<_>>()),"mergeability":mergeability(raw)});
-
     if raw.get("stack").is_some() {
         value["stack"] = stack(raw).unwrap_or(Value::Null);
     }
@@ -123,7 +113,6 @@ pub fn summary(raw: &Value, host: &str) -> Value {
 }
 fn check_status(raw: &Value) -> &'static str {
     let status = text(raw, "status").trim().to_uppercase();
-
     if !status.is_empty() && status != "COMPLETED" {
         return "pending";
     }
@@ -165,20 +154,16 @@ pub(super) fn rollup(statuses: &[&str]) -> Value {
 }
 pub fn checks(raw: &[Value]) -> Vec<Value> {
     let mut kept: Vec<(String, String, Value)> = Vec::new();
-
     for check in raw {
         let name = trimmed(check.get("name"));
-
         let name = if name.is_null() {
             trimmed(check.get("context"))
         } else {
             name
         };
-
         let Some(name) = name.as_str() else {
             continue;
         };
-
         let workflow = check
             .get("workflowName")
             .and_then(Value::as_str)
@@ -188,11 +173,8 @@ pub fn checks(raw: &[Value]) -> Vec<Value> {
                     .and_then(Value::as_str)
             })
             .unwrap_or("");
-
         let key = format!("{workflow}\0{name}");
-
         let status = check_status(check);
-
         let real_at = |key| {
             check
                 .get(key)
@@ -200,7 +182,6 @@ pub fn checks(raw: &[Value]) -> Vec<Value> {
                 .map(str::trim)
                 .filter(|s| !s.is_empty() && *s != "0001-01-01T00:00:00Z")
         };
-
         let at = if status == "pending" {
             "9999-12-31T23:59:59Z"
         } else {
@@ -208,16 +189,13 @@ pub fn checks(raw: &[Value]) -> Vec<Value> {
                 .or_else(|| real_at("startedAt"))
                 .unwrap_or("")
         };
-
         let mut value = json!({"name":name,"status":status,"description":trimmed(check.get("description")),"url":if trimmed(check.get("detailsUrl")).is_null(){trimmed(check.get("targetUrl"))}else{trimmed(check.get("detailsUrl"))}});
-
         if let Some(required) = check.get("isRequired").filter(|v| v.is_boolean()) {
             value["required"] = required.clone();
         }
         if let Some(entry) = kept.iter_mut().find(|(k, _, _)| k == &key) {
             if at_least_as_new(at, &entry.1) {
                 entry.1 = at.into();
-
                 entry.2 = value;
             }
         } else {
@@ -228,23 +206,18 @@ pub fn checks(raw: &[Value]) -> Vec<Value> {
         .iter()
         .map(|(_, _, c)| text(c, "name").into())
         .collect();
-
     let mut result: Vec<Value> = kept
         .into_iter()
         .map(|(key, _, mut check)| {
             let name = text(&check, "name");
-
             let workflow = key.split('\0').next().unwrap_or("");
-
             if !workflow.is_empty() && names.iter().filter(|n| n.as_str() == name).count() > 1 {
                 check["name"] = json!(format!("{workflow} / {name}"));
             }
             check
         })
         .collect();
-
     result.sort_by_key(|c| !matches!(text(c, "status"), "failure" | "cancelled"));
-
     result
 }
 
@@ -255,7 +228,6 @@ fn at_least_as_new(candidate: &str, kept: &str) -> bool {
     ) else {
         return candidate >= kept;
     };
-
     if candidate_at != kept_at {
         return candidate_at > kept_at;
     }
@@ -269,17 +241,11 @@ fn at_least_as_new(candidate: &str, kept: &str) -> bool {
             })
             .unwrap_or_default()
     };
-
     let mut left = fraction(candidate);
-
     let mut right = fraction(kept);
-
     let length = left.len().max(right.len());
-
     left.extend(std::iter::repeat_n('0', length - left.len()));
-
     right.extend(std::iter::repeat_n('0', length - right.len()));
-
     left >= right
 }
 
@@ -288,17 +254,14 @@ pub fn breakdown(stats: &Value) -> Value {
         return Value::Null;
     }
     let mut result = json!({"code":{"additions":0,"deletions":0},"tests":{"additions":0,"deletions":0},"mocks":{"additions":0,"deletions":0},"generated":{"additions":0,"deletions":0},"docs":{"additions":0,"deletions":0}});
-
     for file in array(stats.get("files")) {
         let kind = classify(text(file, "path"));
-
         for field in ["additions", "deletions"] {
             let count = result
                 .get(kind)
                 .and_then(|v| v.get(field))
                 .and_then(Value::as_u64)
                 .unwrap_or(0);
-
             if let Some(bucket) = result.get_mut(kind) {
                 bucket[field] = json!(
                     count.saturating_add(file.get(field).and_then(Value::as_u64).unwrap_or(0))
@@ -310,19 +273,14 @@ pub fn breakdown(stats: &Value) -> Value {
 }
 fn classify(path: &str) -> &'static str {
     let path = path.replace('\\', "/");
-
     let mut parts: Vec<&str> = path.split('/').collect();
-
     let name = parts.pop().unwrap_or("");
-
     let lower = name.to_lowercase();
-
     let dir = |names: &[&str]| {
         parts
             .iter()
             .any(|p| names.contains(&p.to_lowercase().as_str()))
     };
-
     let locks = [
         "bun.lock",
         "bun.lockb",
@@ -345,7 +303,6 @@ fn classify(path: &str) -> &'static str {
         "uv.lock",
         "yarn.lock",
     ];
-
     if locks.contains(&lower.as_str())
         || name.contains(".generated.")
         || name.contains(".gen.")
@@ -368,7 +325,6 @@ fn classify(path: &str) -> &'static str {
         return "generated";
     }
     let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
-
     if name.ends_with(".snap")
         || [
             "mock", "mocks", "fixture", "fixtures", "stub", "stubs", "fake", "fakes",
@@ -398,13 +354,11 @@ fn classify(path: &str) -> &'static str {
         return "mocks";
     }
     let test_stem = stem.to_lowercase();
-
     let class = [
         "java", "kt", "kts", "scala", "groovy", "cs", "php", "swift", "m",
     ]
     .contains(&name.rsplit('.').next().unwrap_or(""))
         && ["Test", "Tests", "Spec"].iter().any(|s| stem.ends_with(s));
-
     if [
         ".test", ".spec", ".e2e", ".eval", ".stories", "_test", "_spec",
     ]

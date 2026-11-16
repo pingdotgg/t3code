@@ -409,18 +409,41 @@ pub struct RestRequest<'a> {
     pub body: Option<serde_json::Value>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct RestOptions<'a> {
+    pub accept: &'a str,
+    pub limit: usize,
+    pub timeout: std::time::Duration,
+}
+impl Default for RestOptions<'_> {
+    fn default() -> Self {
+        Self {
+            accept: "application/vnd.github+json",
+            limit: http::DEFAULT_MAX_RESPONSE_BYTES,
+            timeout: http::DEFAULT_TIMEOUT,
+        }
+    }
+}
+
 pub async fn rest(
     request: RestRequest<'_>,
     token: Secret,
     root_override: Option<&str>,
+    options: RestOptions<'_>,
 ) -> Result<HttpResponse, ApiError> {
     let root = root_override.map_or_else(|| rest_root(request.host), str::to_owned);
-    let url = format!("{root}/{}", request.path.trim_start_matches('/'));
-    let mut http_request = HttpRequest::new(request.method, url)
-        .header("accept", "application/vnd.github+json")
+    let url = url::Url::parse(&format!("{root}/"))
+        .and_then(|root| root.join(request.path.trim_start_matches('/')))
+        .map_err(|_| ApiError::Request {
+            host: request.host.into(),
+        })?;
+    let mut http_request = HttpRequest::new(request.method, url.to_string())
+        .header("accept", options.accept)
         .header("x-github-api-version", API_VERSION)
         .header("user-agent", USER_AGENT)
         .secret_header("authorization", "Bearer ", token);
+    http_request.max_response_bytes = options.limit;
+    http_request.timeout = options.timeout;
     if let Some(body) = &request.body {
         http_request = http_request
             .header("content-type", "application/json")
@@ -648,6 +671,7 @@ pub async fn starred(ctx: DiscoveryContext<'_>, host: &str, repository: &str, st
         },
         token,
         root,
+        RestOptions::default(),
     )
     .await
     .is_ok_and(|response| response.status == 204)
@@ -709,6 +733,7 @@ pub async fn discover(ctx: DiscoveryContext<'_>) -> SourceControlProviderDiscove
         },
         token,
         ctx.endpoints.github_rest.as_deref(),
+        RestOptions::default(),
     )
     .await;
     #[derive(Deserialize)]

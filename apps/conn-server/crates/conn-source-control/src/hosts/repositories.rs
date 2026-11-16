@@ -284,6 +284,7 @@ async fn github_rest(
         },
         token,
         root,
+        github::RestOptions::default(),
     )
     .await
     .map_err(|e| HostFailure::new(e.message()))
