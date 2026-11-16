@@ -1,4 +1,4 @@
-//! A host CLI call outside discovery (`glab api`, `az repos`, `origin auth token`, ...), as
+//! A host CLI call outside discovery (`gh auth token`), as
 //! `VcsProcess.run` runs it for a driver: the server's environment plus
 //! `safe.bareRepository=explicit`, 30 s and 1,000,000 bytes by default.
 

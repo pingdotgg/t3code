@@ -1,16 +1,13 @@
 //! `thread.pull-request.link` and `thread.pull-request.unlink`, as T3's decider writes them
 //! (`Orchestrator.ts`, the `thread.pull-request.link | unlink | -link.sync` case). Keys are
 //! the registry's (`normalizeThreadPullRequestKey`, `legacyThreadPullRequestKey`): host and
-//! repository lower case and canonical, a Forgejo link's port from its URL, a GitCafe URL in
-//! GitCafe's own spelling. Unlinking a stack member leaves a `stack-dismissed` tombstone, and
+//! repository lower case and canonical. URLs keep the caller's spelling.
+//! Unlinking a stack member leaves a `stack-dismissed` tombstone, and
 //! linking it again by hand lifts it.
 
-use conn_source_control::registry::{
-    canonicalize_gitcafe_pull_request_url,
-    thread_keys::{
-        KeySource, ThreadPullRequestKey, legacy_thread_pull_request_key,
-        normalize_thread_pull_request_key,
-    },
+use conn_source_control::registry::thread_keys::{
+    KeySource, ThreadPullRequestKey, legacy_thread_pull_request_key,
+    normalize_thread_pull_request_key,
 };
 use serde_json::{Value, json};
 
@@ -131,7 +128,7 @@ fn link(
     if existing_link.is_some() && !undismisses {
         return None;
     }
-    let url = canonicalize_gitcafe_pull_request_url(text(command, "url"));
+    let url = text(command, "url");
     let mut link = match existing_link {
         Some(existing) => existing.clone(),
         None => {
@@ -169,10 +166,7 @@ fn link(
         {
             let mut entry = key_json(&branch_key);
             if let Some(map) = entry.as_object_mut() {
-                map.insert(
-                    "url".into(),
-                    json!(canonicalize_gitcafe_pull_request_url(text(branch, "url"))),
-                );
+                map.insert("url".into(), json!(text(branch, "url")));
                 map.insert("source".into(), json!("manual"));
                 map.insert("linkedAt".into(), json!(now));
                 map.insert("snapshot".into(), Value::Null);
@@ -236,7 +230,7 @@ mod tests {
     }
 
     #[test]
-    fn links_are_keyed_canonically_and_gitcafe_urls_rewritten() {
+    fn links_are_keyed_canonically_and_urls_preserved() {
         let thread = json!({"pullRequests": []});
         let command = link_command(
             "Git.Cafe",
@@ -250,8 +244,8 @@ mod tests {
         assert_eq!(link["host"], "git.cafe", "lower case");
         assert_eq!(link["repository"], "o/r", "lower case");
         assert_eq!(
-            link["url"], "https://git.cafe/o/r/pulls/4",
-            "GitCafe's spelling"
+            link["url"], "https://git.cafe/O/R/pull/4?x",
+            "unknown host URL is preserved"
         );
         assert_eq!(updated["updatedAt"], NOW, "updated");
         assert_eq!(
@@ -262,7 +256,7 @@ mod tests {
     }
 
     #[test]
-    fn a_forgejo_link_takes_its_port_from_the_url() {
+    fn an_unknown_link_keeps_the_explicit_host() {
         let command = link_command(
             "forge.example",
             "a/b",
@@ -272,8 +266,8 @@ mod tests {
         );
         let updated = decide(&json!({}), &command, NOW).expect("linked");
         assert_eq!(
-            updated["pullRequests"][0]["host"], "forge.example:3000",
-            "authority"
+            updated["pullRequests"][0]["host"], "forge.example",
+            "unknown host"
         );
     }
 

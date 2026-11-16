@@ -364,6 +364,7 @@ pub(super) fn restore_echoed_references(
 /// secret shows `••••••`, a sensitive variable shows `""` with `valueRedacted`, and a
 /// reference shows the marker.
 pub(super) fn redact(settings: &mut Map<String, Value>) {
+    super::retain_supported_hosts(settings);
     map_secrets(settings, &mut |secret| {
         if secret.sensitive {
             Mapped {

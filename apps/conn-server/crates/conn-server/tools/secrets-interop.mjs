@@ -77,7 +77,6 @@ function secretSettings(tag) {
     },
     sourceControlHosts: {
       github: { tokens: { "github.com": `ghp-${tag}` } },
-      bitbucket: { accessToken: `bb-${tag}` },
     },
     cloudSpeechCredentials: { openai: `voice-${tag}` },
     usageLimitSources: {
@@ -120,7 +119,6 @@ function expectedSecrets(tag) {
     textGenerators: { tg: { apiKey: `tg-${tag}` } },
     sourceControlHosts: {
       github: { tokens: { "github.com": `ghp-${tag}` } },
-      bitbucket: { accessToken: `bb-${tag}` },
     },
     cloudSpeechCredentials: { openai: `voice-${tag}` },
     usageLimitSources: { u: { managementKey: `mk-${tag}` } },
@@ -130,7 +128,7 @@ function expectedSecrets(tag) {
 }
 
 const secretValues = (tag) =>
-  [`pw-${tag}`, `env-${tag}`, `tg-${tag}`, `ghp-${tag}`, `bb-${tag}`, `voice-${tag}`, `mk-${tag}`, `eas-${tag}`, `sim-${tag}`];
+  [`pw-${tag}`, `env-${tag}`, `tg-${tag}`, `ghp-${tag}`, `voice-${tag}`, `mk-${tag}`, `eas-${tag}`, `sim-${tag}`];
 
 /** A T3 home: the state folder is `<base>/userdata`, as `deriveServerPaths` makes it. */
 function newHome() {

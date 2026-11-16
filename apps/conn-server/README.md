@@ -90,7 +90,7 @@ CI path filters and sync triggers are listed in [`docs/upkeep.md`](docs/upkeep.m
 | Client reducers     | `cargo run -p conn-engine --features fake-provider --example export_turn -- x.json`, then `crates/conn-engine/tools/client-check.mjs x.json` | Shell and thread streams rebuild the right state in the client's reducers                            |
 | Replay              | `node crates/conn-server/tools/replay.mjs target/release/examples/replay_server`                                                | Every call in the `remote` and `turn` recordings gets a decodable answer or the not-supported defect |
 | Text generation     | `node crates/conn-server/tools/textgen-diff.mjs target/release/examples/text_generation` | Text generator requests and answers, title prompts, contexts and titles equal T3's own code, on a loopback stub |
-| Registry            | `node crates/conn-source-control/tools/registry-diff.mjs target/release/examples/registry_cases` | The host definition registry answers as T3's own on every literal of T3's definition tests and a fixed grid (24,085 cases) |
+| Registry            | `node crates/conn-source-control/tools/registry-diff.mjs target/release/examples/registry_cases` | GitHub and unknown-host fallback match T3's core registry with its GitHub definition, on every GitHub test literal and a fixed grid (8,901 cases) |
 | MCP parity          | `node crates/conn-mcp/tools/parity.mjs target/release/examples/replay_server`                                                   | `/mcp` answers as the T3 server's does, on the same calls                                            |
 | Orbit idle check    | `node crates/conn-server/tools/idle-diff.mjs target/release/conn-server` | `/api/orchestration/shell` as Orbit's idle sleep and thread index read it equals the T3 server's in 14 states (no thread to a restart mid-turn) and 5 refusals; Codex on the conformance stub; differences listed in its `KNOWN` must stay exactly those |
 | Codex instructions  | `node crates/conn-provider-codex/tools/gen-instructions.mjs --check`                                                             | T3's Codex `additionalContext` text is current, byte for byte                                         |
@@ -120,8 +120,7 @@ and rustup keep their real folders (`CARGO_HOME`, `RUSTUP_HOME`), and cargo runs
 global git configuration. Reads are seen by access time (a self-test fails the check on a
 `noatime` file system), opens of a mode-000 file only when the error names the decoy path, and
 a stat or a file that lived less than half a second without printing a marker not at all. Marker
-executables named after the provider and host CLIs (`claude`, `codex`, `grok`, `gh`, `glab`,
-`fj`, `tea`, `az`, `cafe`) go first on `PATH` and fail the canary when run; a Node hook
+executables named after the provider and host CLIs (`claude`, `codex`, `grok`, `gh`, `glab`, `fj`, `tea`, `az`, `cafe`) go first on `PATH` and fail the canary when run; a Node hook
 (`NODE_OPTIONS=--import`) and `CONN_NETWORK_LOG` in our server refuse and record any
 connection outside loopback. `mark` names the check behind each record.
 
@@ -177,7 +176,7 @@ Release, which Orbit downloads.
 | `conn-vcs`              | Git status, refs, review diffs, worktrees and their setup             |
 | `conn-files`            | Project files, search, asset URLs, attachments                        |
 | `conn-terminal`         | Shells on PTYs: sessions, scrollback, viewers (`terminal.*`)          |
-| `conn-source-control`   | Source control hosts (GitHub, GitLab, ...): discovery, sign-in, stars, repositories, the host definition registry, provider detection, GitHub's GraphQL operations; later pull requests |
+| `conn-source-control`   | GitHub source control: discovery, sign-in, stars, repositories, the host definition registry, provider detection, GitHub's GraphQL operations; later pull requests |
 | `conn-server`           | Binary: HTTP, `/ws` session, pairing, method table, handlers          |
 | `conn-support`          | Helpers several crates share: time, hex, base64, SHA-256 and HMAC, atomic writes, v4 ids, the T3 secret store, URL text |
 | `conn-features`         | Scheduled tasks (webhook tasks too) and the Conn-only areas beside the engine; see its README |
@@ -455,7 +454,7 @@ lists what it serves.
 | Agents          | `conn-provider-claude`, `conn-provider-codex`, `conn-provider-acp` (Grok); `/mcp` (`conn-mcp`, 20 tools) |
 | Workspace       | `conn-vcs` (status, refs, review, worktrees), `conn-files` (files, search, assets, uploads)     |
 | Terminals       | `conn-terminal`                                                                                 |
-| Source control  | `conn-source-control`: discovery of 7 hosts, all 9 `sourceControl.*` (repositories on all 7 hosts)  |
+| Source control  | `conn-source-control`: GitHub discovery, all 9 `sourceControl.*` (GitHub repositories)  |
 | Text generators | `src/text_generation/`: `server.listTextGeneratorModels` and thread titles through the user's own model API (`docs/server-area.md`, "Text generators") |
 
 The server joins them in `src/host.rs`: each provider session gets a `/mcp` credential, messages
