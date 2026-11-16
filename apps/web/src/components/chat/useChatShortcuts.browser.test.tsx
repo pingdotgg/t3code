@@ -144,7 +144,9 @@ function UnavailableTerminalCommand({
 }) {
   useChatShortcuts({
     enabled: true,
-    keybindings: compileResolvedKeybindingsConfig([{ key: "cmd+[", command }]),
+    keybindings: compileResolvedKeybindingsConfig([
+      { key: command === "terminal.previous" ? "cmd+shift+tab" : "cmd+tab", command },
+    ]),
     scriptKeybindings: [],
     getShortcutContext: () => ({ ...shortcutContext, terminalFocus: owner !== null }),
     threadFindActive: false,
@@ -178,15 +180,16 @@ it.each([
   const received: string[] = [];
   input.addEventListener("keydown", (event) => received.push(event.key));
   const event = new KeyboardEvent("keydown", {
-    key: "[",
-    code: "BracketLeft",
+    key: "Tab",
+    code: "Tab",
+    shiftKey: command === "terminal.previous",
     metaKey: true,
     bubbles: true,
     cancelable: true,
   });
   input.dispatchEvent(event);
   expect(event.defaultPrevented).toBe(prevented);
-  expect(received).toEqual(prevented ? [] : ["["]);
+  expect(received).toEqual(prevented ? [] : ["Tab"]);
 });
 
 const ctrlShift = (key: string, command: KeybindingCommand) => ({

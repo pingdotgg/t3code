@@ -644,7 +644,7 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
-  it("uses bracket shortcuts for history outside terminals and cycling inside them", () => {
+  it("uses terminal cycling shortcuts without changing bracket history shortcuts", () => {
     const back = event({ key: "[", code: "BracketLeft", metaKey: true });
     const forward = event({ key: "]", code: "BracketRight", ctrlKey: true });
     assert.strictEqual(
@@ -663,12 +663,33 @@ describe("resolveShortcutCommand", () => {
       ] as const) {
         assert.strictEqual(
           resolveShortcutCommand(
-            event({ key, metaKey: mac, ctrlKey: !mac, altKey: !mac }),
+            event({
+              key: mac ? "Tab" : key,
+              code: mac ? "Tab" : key === "[" ? "BracketLeft" : "BracketRight",
+              metaKey: mac,
+              ctrlKey: !mac,
+              altKey: !mac,
+              shiftKey: mac && command === "terminal.previous",
+            }),
             DEFAULT_RESOLVED_KEYBINDINGS,
             { platform, context: { terminalFocus: true } },
           ),
           command,
         );
+      }
+      if (mac) {
+        for (const key of ["[", "]"]) {
+          const command = resolveShortcutCommand(
+            event({ key, metaKey: true }),
+            DEFAULT_RESOLVED_KEYBINDINGS,
+            {
+              platform,
+              context: { terminalFocus: true },
+            },
+          );
+          assert.notStrictEqual(command, "terminal.previous");
+          assert.notStrictEqual(command, "terminal.next");
+        }
       }
       assert.isNull(
         resolveShortcutCommand(event({ key: "[", ctrlKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
