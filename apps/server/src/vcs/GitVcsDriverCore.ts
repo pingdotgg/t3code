@@ -82,7 +82,7 @@ const backgroundGitProcesses = Semaphore.makeUnsafe(2);
 // The fetch before `git worktree add` downloads everything the remote gained since
 // the last fetch; on busy repositories that alone outlasts the 30s default.
 const FETCH_REMOTE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
-const WORKTREE_INDEX_REFRESH_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
+const INDEX_REFRESH_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 const WORKTREE_REMOVE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const REF_SNAPSHOT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
@@ -1074,7 +1074,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       "GitVcsDriver.refreshForeignIndex",
       cwd,
       ["update-index", "-q", "--refresh"],
-      { allowNonZeroExit: true },
+      // Git saves nothing until the whole check finishes, so a kill would repeat it every poll.
+      { allowNonZeroExit: true, timeoutMs: INDEX_REFRESH_TIMEOUT_MS },
     ).pipe(Effect.ignore);
   });
   type StatusFetchState = {
@@ -5097,7 +5098,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       "GitVcsDriver.createWorktree.refreshIndex",
       worktreePath,
       ["update-index", "-q", "--refresh", "--force-write-index"],
-      { timeoutMs: WORKTREE_INDEX_REFRESH_TIMEOUT_MS },
+      { timeoutMs: INDEX_REFRESH_TIMEOUT_MS },
     );
     const checkoutSecond = yield* indexSecond;
     yield* refresh;
