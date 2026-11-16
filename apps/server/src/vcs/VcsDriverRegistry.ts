@@ -148,10 +148,14 @@ export const make = Effect.gen(function* () {
   };
 
   // False when any .git entry exists (Git may read it once repaired) or the check fails.
+  // Git discovers from the physical directory, so walk up from the real path, not the symlink.
   const readNoGitEntry = (cwd: string) =>
-    Effect.forEach(foldersToRoot(cwd), (folder) =>
-      fileSystem.exists(path.join(folder, ".git")),
-    ).pipe(
+    fileSystem.realPath(cwd).pipe(
+      Effect.flatMap((realCwd) =>
+        Effect.forEach(foldersToRoot(realCwd), (folder) =>
+          fileSystem.exists(path.join(folder, ".git")),
+        ),
+      ),
       Effect.map((entries) => !entries.some(Boolean)),
       Effect.orElseSucceed(() => false),
     );
