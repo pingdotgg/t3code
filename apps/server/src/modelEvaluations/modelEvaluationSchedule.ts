@@ -12,12 +12,17 @@ export function modelEvaluationEffects(input: {
   readonly threadId: ThreadId;
   readonly runId: RunId;
   readonly runOutcome: ModelEvaluationRunOutcome;
+  readonly subagentRevision?: number;
 }): ReadonlyArray<PendingOrchestrationEffectV2> {
   if (!input.settings.enableModelEvaluations) return [];
+  const id =
+    input.subagentRevision === undefined
+      ? `effect:model-evaluation.generate:${input.runId}`
+      : `effect:model-evaluation.generate:${input.runId}:subagents:${input.subagentRevision}`;
   return [
     {
-      id: `effect:model-evaluation.generate:${input.runId}`,
-      commandId: CommandId.make(`command:effect:model-evaluation.generate:${input.runId}`),
+      id,
+      commandId: CommandId.make(`command:${id}`),
       threadId: input.threadId,
       request: {
         type: "model-evaluation.generate",

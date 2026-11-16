@@ -3,7 +3,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EventId,
   MessageId,
+  NodeId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ServerProvider,
   RunId,
@@ -53,12 +55,13 @@ const makeLayer = (
   generate: Generate,
   enabled = true,
   published: ReadonlyArray<ServerProvider> = [],
+  readProviders: Effect.Effect<ReadonlyArray<ServerProvider>> = Effect.succeed(published),
 ) =>
   ModelEvaluations.layer.pipe(
     Layer.provide(Layer.mock(TextGeneration.TextGeneration)({ generateModelEvaluation: generate })),
     Layer.provide(
       Layer.mock(ProviderRegistry.ProviderRegistry)({
-        getProviders: Effect.succeed(published),
+        getProviders: readProviders,
       }),
     ),
     Layer.provideMerge(
@@ -112,6 +115,7 @@ const seed = Effect.fn("test.seedEvaluationRun")(function* (
     readonly subagent?: boolean;
     readonly existingThread?: OrchestrationV2AppThread;
     readonly requestedAt?: DateTime.Utc;
+    readonly notification?: OrchestrationV2ConversationMessage["notification"];
   } = {},
 ) {
   const project = options.project ?? projectId;
@@ -217,6 +221,9 @@ const seed = Effect.fn("test.seedEvaluationRun")(function* (
           : "I am DeepSeek on OpenCode. Added the named export; existing callers remain compatible.",
       streaming: false,
       attachments: [],
+      ...(role === "user" && options.notification !== undefined
+        ? { notification: options.notification }
+        : {}),
       createdAt:
         role === "user"
           ? (options.requestedAt ?? at)
@@ -345,63 +352,94 @@ it.effect(
   },
 );
 
-it.effect.each(["provider-error", "unsupported-citation", "abstention", "missing-reply"] as const)(
-  "keeps %s separate from a low task score",
-  (kind) =>
-    Effect.gen(function* () {
-      yield* seed({ missingReply: kind === "missing-reply" });
-      const service = yield* ModelEvaluations.ModelEvaluations;
-      yield* service.evaluateRun(input);
-      const report = yield* service.list(scope);
-      const record = report.records[0]!;
-      assert.equal(
-        record.status,
-        kind === "missing-reply"
-          ? "skipped"
-          : kind === "abstention"
-            ? "insufficient_evidence"
-            : "failed",
-      );
-      assert.equal(
-        report.guidance.reduce((sum, group) => sum + group.sampleCount, 0),
-        0,
-      );
-      if (kind !== "abstention") assert.isNull(record.verdict);
-    }).pipe(
-      Effect.provide(
-        makeLayer((request) => {
-          if (kind === "provider-error")
-            return Effect.fail(
-              new TextGenerationError({
-                operation: "generateModelEvaluation",
-                detail: "Do not persist this provider payload.",
-              }),
-            );
-          const output = verdict(request.packet);
-          if (kind === "unsupported-citation")
-            return Effect.succeed({
-              ...output,
-              rationale: { text: "Unfounded claim", citations: ["E999"] },
-            });
-          if (kind === "abstention")
-            return Effect.succeed({
-              ...output,
-              outcome: "insufficient_evidence",
-              confidence: "low",
-              scores: {
-                taskCompletion: null,
-                correctness: null,
-                instructionFollowing: null,
-                verification: null,
-              },
-              strengths: [],
-              weaknesses: [],
-              promptAdvice: [],
-            });
-          return Effect.succeed(output);
-        }),
-      ),
+it.effect.each([
+  "provider-error",
+  "provider-stderr",
+  "provider-unavailable",
+  "unsupported-citation",
+  "abstention",
+  "missing-reply",
+] as const)("keeps %s separate from a low task score", (kind) =>
+  Effect.gen(function* () {
+    yield* seed({ missingReply: kind === "missing-reply" });
+    const service = yield* ModelEvaluations.ModelEvaluations;
+    yield* service.evaluateRun(input);
+    const report = yield* service.list(scope);
+    const record = report.records[0]!;
+    assert.equal(
+      record.status,
+      kind === "missing-reply"
+        ? "skipped"
+        : kind === "abstention"
+          ? "insufficient_evidence"
+          : "failed",
+    );
+    assert.equal(
+      report.guidance.reduce((sum, group) => sum + group.sampleCount, 0),
+      0,
+    );
+    if (kind !== "abstention") assert.isNull(record.verdict);
+    if (
+      kind === "provider-error" ||
+      kind === "provider-stderr" ||
+      kind === "provider-unavailable"
+    ) {
+      assert.include(record.reason ?? "", "TextGenerationError");
+      assert.notInclude(record.reason ?? "", "Codex CLI request timed out");
+      assert.notInclude(record.reason ?? "", "Claude CLI command failed");
+      assert.notInclude(record.reason ?? "", "TAIL_SECRET");
+      assert.notInclude(record.reason ?? "", "sk-live-SECRET");
+      assert.notInclude(record.reason ?? "", "FULL_MODEL_RESPONSE");
+      assert.notInclude(record.reason ?? "", "x".repeat(200));
+    }
+    if (kind === "provider-error") assert.match(record.reason ?? "", /timed out/);
+    if (kind === "provider-stderr") assert.match(record.reason ?? "", /provider command failed/);
+    if (kind === "provider-unavailable") assert.match(record.reason ?? "", /provider unavailable/);
+  }).pipe(
+    Effect.provide(
+      makeLayer((request) => {
+        if (
+          kind === "provider-error" ||
+          kind === "provider-stderr" ||
+          kind === "provider-unavailable"
+        )
+          return Effect.fail(
+            new TextGenerationError({
+              operation: "generateModelEvaluation",
+              detail:
+                kind === "provider-stderr"
+                  ? "Claude CLI command failed: Error: leaked sk-live-SECRET from provider stderr"
+                  : kind === "provider-unavailable"
+                    ? "The selected evaluator is unavailable. Choose an enabled, installed, authenticated provider that supports blind evaluation."
+                    : `Codex CLI request timed out.${"x".repeat(500)}TAIL_SECRET`,
+              cause: "FULL_MODEL_RESPONSE",
+            }),
+          );
+        const output = verdict(request.packet);
+        if (kind === "unsupported-citation")
+          return Effect.succeed({
+            ...output,
+            rationale: { text: "Unfounded claim", citations: ["E999"] },
+          });
+        if (kind === "abstention")
+          return Effect.succeed({
+            ...output,
+            outcome: "insufficient_evidence",
+            confidence: "low",
+            scores: {
+              taskCompletion: null,
+              correctness: null,
+              instructionFollowing: null,
+              verification: null,
+            },
+            strengths: [],
+            weaknesses: [],
+            promptAdvice: [],
+          });
+        return Effect.succeed(output);
+      }),
     ),
+  ),
 );
 
 it.effect.each(["clear", "disable", "edit", "move"] as const)(
@@ -442,6 +480,11 @@ it.effect.each(["clear", "disable", "edit", "move"] as const)(
         assert.deepEqual((yield* service.list(scope)).records, []);
         assert.deepEqual(
           yield* (yield* SqlClient.SqlClient)`SELECT run_id FROM model_evaluations`,
+          [],
+        );
+        assert.deepEqual(
+          yield* (yield* SqlClient.SqlClient)`SELECT effect_id FROM orchestration_v2_effect_outbox
+            WHERE effect_id LIKE ${`effect:model-evaluation.generate:${runId}:subagents:%`}`,
           [],
         );
         if (action === "clear") {
@@ -520,15 +563,38 @@ it.effect(
 );
 
 it.effect(
-  "keeps model options and judges separate, counts observed scores, and expires old guidance",
+  "pools latency and capacity options, and keeps behavior, effort, judges, scope, and observed scores separate",
   () =>
     Effect.gen(function* () {
       const service = yield* ModelEvaluations.ModelEvaluations;
       const settings = yield* ServerSettings.ServerSettingsService;
-      for (let index = 0; index < 8; index++) {
+      const cases: ReadonlyArray<{
+        readonly options: NonNullable<ModelSelection["options"]>;
+        readonly subagent?: boolean;
+        readonly switchJudge?: boolean;
+      }> = [
+        { options: [] },
+        { options: [{ id: "fastMode", value: true }] },
+        { options: [{ id: "fastMode", value: false }] },
+        { options: [{ id: "serviceTier", value: "priority" }] },
+        { options: [{ id: "contextWindow", value: "1m" }] },
+        { options: [{ id: "ultracode", value: true }] },
+        { options: [{ id: "effort", value: "high" }] },
+        { options: [{ id: "effort", value: "low" }] },
+        { options: [{ id: "reasoningEffort", value: "high" }] },
+        { options: [{ id: "reasoning_effort", value: "medium" }] },
+        { options: [{ id: "thinking", value: true }] },
+        { options: [{ id: "thinking", value: false }] },
+        { options: [{ id: "thinking_level", value: "high" }] },
+        { options: [{ id: "agent", value: "plan" }] },
+        { options: [{ id: "mode", value: "architect" }] },
+        { options: [], switchJudge: true },
+        { options: [], subagent: true },
+      ];
+      for (const [index, entry] of cases.entries()) {
         const id = RunId.make(`group-run-${index}`);
         const thread = ThreadId.make(`group-thread-${index}`);
-        if (index === 6)
+        if (entry.switchJudge)
           yield* settings.updateSettings({
             modelEvaluationModelSelection: {
               instanceId: ProviderInstanceId.make("codex"),
@@ -538,25 +604,36 @@ it.effect(
         yield* seed({
           thread,
           run: id,
-          subagent: index === 7,
-          model: {
-            ...modelSelection,
-            options: index === 5 ? [{ id: "effort", value: "high" }] : [],
-          },
+          ...(entry.subagent ? { subagent: true } : {}),
+          model: { ...modelSelection, options: entry.options },
         });
         yield* service.evaluateRun({ threadId: thread, runId: id, runOutcome: "completed" });
       }
       const report = yield* service.list(scope);
-      assert.equal(report.guidance.length, 4);
-      const learned = report.guidance.find((group) => group.sampleCount === 5)!;
+      const groupsWith = (id: string) =>
+        report.guidance.filter((group) =>
+          (group.modelSelection.options ?? []).some((option) => option.id === id),
+        );
+      assert.equal(report.guidance.length, 12);
+      const learned = report.guidance.find((group) => group.sampleCount === 6)!;
+      assert.deepEqual(learned.modelSelection, modelSelection);
       assert.equal(learned.confidence, "observed");
       assert.equal(learned.meanScores.taskCompletion, 3);
-      assert.equal(learned.scoreCounts.taskCompletion, 5);
+      assert.equal(learned.scoreCounts.taskCompletion, 6);
       assert.equal(learned.scoreCounts.verification, 0);
       assert.equal(learned.strengths.length, 1);
+      assert.equal(learned.scope, "turn");
+      assert.equal(groupsWith("effort").length, 2);
+      assert.equal(groupsWith("reasoningEffort").length, 1);
+      assert.equal(groupsWith("reasoning_effort").length, 1);
+      assert.equal(groupsWith("thinking").length, 2);
+      assert.equal(groupsWith("thinking_level").length, 1);
+      assert.equal(groupsWith("agent").length, 1);
+      assert.equal(groupsWith("mode").length, 1);
+      assert.equal(report.guidance.filter((group) => group.scope === "subagent").length, 1);
       yield* settings.updateSettings({ enableModelEvaluations: false });
       assert.deepEqual(yield* service.guidance(scope), []);
-      assert.equal((yield* service.list(scope)).records.length, 8);
+      assert.equal((yield* service.list(scope)).records.length, cases.length);
       yield* TestClock.adjust("91 days");
       assert.deepEqual((yield* service.list(scope)).guidance, []);
     }).pipe(Effect.provide(makeLayer((request) => Effect.succeed(verdict(request.packet))))),
@@ -805,4 +882,381 @@ it.effect(
       ),
     );
   },
+);
+
+it.effect("ranks scored guidance ahead of newer single samples and drops unscored groups", () => {
+  let calls = 0;
+  return Effect.gen(function* () {
+    const service = yield* ModelEvaluations.ModelEvaluations;
+    const rich = { instanceId, model: "rich-model" };
+    for (let index = 0; index < 5; index++) {
+      const thread = ThreadId.make(`rich-thread-${index}`);
+      const id = RunId.make(`rich-run-${index}`);
+      yield* seed({ thread, run: id, model: rich });
+      yield* service.evaluateRun({ threadId: thread, runId: id, runOutcome: "completed" });
+      yield* TestClock.adjust("1 second");
+    }
+    for (let index = 0; index < 20; index++) {
+      const thread = ThreadId.make(`thin-thread-${index}`);
+      const id = RunId.make(`thin-run-${index}`);
+      yield* seed({
+        thread,
+        run: id,
+        model: { instanceId, model: `thin-model-${index}` },
+      });
+      yield* service.evaluateRun({ threadId: thread, runId: id, runOutcome: "completed" });
+      yield* TestClock.adjust("1 second");
+    }
+    const emptyRun = RunId.make("empty-run");
+    yield* seed({
+      thread: ThreadId.make("empty-thread"),
+      run: emptyRun,
+      model: { instanceId, model: "empty-model" },
+    });
+    yield* service.evaluateRun({
+      threadId: ThreadId.make("empty-thread"),
+      runId: emptyRun,
+      runOutcome: "completed",
+    });
+    const report = yield* service.list(scope);
+    assert.equal(
+      report.records.find((record) => record.runId === emptyRun)?.status,
+      "insufficient_evidence",
+    );
+    assert.equal(report.guidance[0]?.modelSelection.model, "rich-model");
+    assert.equal(report.guidance[0]?.sampleCount, 5);
+    assert.equal(report.guidance[1]?.modelSelection.model, "thin-model-19");
+    assert.equal(report.guidance.length, 20);
+    assert.isFalse(report.guidance.some((group) => group.sampleCount === 0));
+    assert.isFalse(report.guidance.some((group) => group.modelSelection.model === "empty-model"));
+    assert.isFalse(report.guidance.some((group) => group.modelSelection.model === "thin-model-0"));
+  }).pipe(
+    Effect.provide(
+      makeLayer((request) => {
+        calls += 1;
+        if (calls < 26) return Effect.succeed(verdict(request.packet));
+        const output = verdict(request.packet);
+        return Effect.succeed({
+          ...output,
+          outcome: "insufficient_evidence",
+          confidence: "low",
+          scores: {
+            taskCompletion: null,
+            correctness: null,
+            instructionFollowing: null,
+            verification: null,
+          },
+          strengths: [],
+          weaknesses: [],
+          promptAdvice: [],
+        });
+      }),
+    ),
+  );
+});
+
+it.effect("leaves an already scored automated wake out of guidance", () =>
+  Effect.gen(function* () {
+    yield* seed();
+    const service = yield* ModelEvaluations.ModelEvaluations;
+    yield* service.evaluateRun(input);
+    assert.equal((yield* service.list(scope)).guidance[0]?.sampleCount, 1);
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      UPDATE orchestration_v2_projection_messages
+      SET payload_json = json_set(
+        payload_json,
+        '$.notification',
+        json('{"source":{"kind":"command"},"outcome":"completed","summary":"Background work finished"}')
+      )
+      WHERE message_id = ${`${runId}:user`}
+    `;
+    const report = yield* service.list(scope);
+    assert.deepEqual(report.guidance, []);
+    assert.deepEqual(report.records, []);
+  }).pipe(Effect.provide(makeLayer((request) => Effect.succeed(verdict(request.packet))))),
+);
+
+it.effect.each(["command", "monitor", "group", "delegated_task"] as const)(
+  "records a %s wake as skipped and does not judge it",
+  (kind) => {
+    const calls: string[] = [];
+    return Effect.gen(function* () {
+      yield* seed({
+        notification: {
+          source:
+            kind === "delegated_task" ? { kind, taskIds: [NodeId.make("wake-task")] } : { kind },
+          outcome: "completed",
+          summary: "Background work finished",
+        },
+      });
+      const service = yield* ModelEvaluations.ModelEvaluations;
+      yield* service.evaluateRun(input);
+      assert.deepEqual(calls, []);
+      const record = (yield* service.list(scope)).records[0]!;
+      assert.equal(record.status, "skipped");
+      assert.match(record.reason ?? "", /automated wake/);
+      assert.deepEqual((yield* service.list(scope)).guidance, []);
+    }).pipe(
+      Effect.provide(
+        makeLayer((request) => {
+          calls.push("judge");
+          return Effect.succeed(verdict(request.packet));
+        }),
+      ),
+    );
+  },
+);
+
+const childDriver = ProviderDriverKind.make("claude");
+
+function delegatedChild(
+  id: string,
+  status: OrchestrationV2TurnItem["status"],
+  result: string | null,
+  ordinal: number,
+): Extract<OrchestrationV2TurnItem, { readonly type: "subagent" }> {
+  return {
+    id: TurnItemId.make(id),
+    threadId,
+    runId,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal,
+    status,
+    title: "Delegated child",
+    startedAt: at,
+    completedAt: status === "pending" || status === "running" || status === "waiting" ? null : at,
+    updatedAt: at,
+    type: "subagent",
+    subagentId: NodeId.make(id),
+    origin: "app_owned",
+    driver: childDriver,
+    providerInstanceId: instanceId,
+    childThreadId: null,
+    prompt: "Check the export.",
+    result,
+  };
+}
+
+const recordChild = (
+  id: string,
+  status: OrchestrationV2TurnItem["status"],
+  result: string | null,
+  ordinal: number,
+) =>
+  persist({
+    id: EventId.make(`child:${id}:${status}:${ordinal}`),
+    type: "turn-item.updated",
+    threadId,
+    runId,
+    occurredAt: at,
+    payload: delegatedChild(id, status, result, ordinal),
+  });
+
+const packetsWith = (calls: ReadonlyArray<Parameters<Generate>[0]>, token: string) =>
+  calls.filter((call) => JSON.stringify(call.packet).includes(token));
+
+it.effect("scores a delegated child once that child settles", () => {
+  const calls: Array<Parameters<Generate>[0]> = [];
+  return Effect.gen(function* () {
+    yield* seed();
+    yield* recordChild("running-child", "running", null, 2);
+    const service = yield* ModelEvaluations.ModelEvaluations;
+    yield* service.evaluateRun(input);
+    assert.equal(packetsWith(calls, "child-result-token").length, 0);
+    yield* recordChild("running-child", "completed", "child-result-token", 2);
+    assert.deepEqual((yield* service.list(scope)).records, []);
+    yield* service.evaluateRun(input);
+    assert.equal(packetsWith(calls, "child-result-token").length, 1);
+    const report = yield* service.list(scope);
+    assert.equal(report.records.length, 1);
+    assert.equal(report.records[0]?.status, "scored");
+    assert.equal(report.guidance[0]?.sampleCount, 1);
+    yield* service.evaluateRun(input);
+    assert.equal(packetsWith(calls, "child-result-token").length, 1);
+  }).pipe(
+    Effect.provide(
+      makeLayer((request) => {
+        calls.push(request);
+        return Effect.succeed(verdict(request.packet));
+      }),
+    ),
+  );
+});
+
+it.effect("waits to rescore until every delegated child has settled", () => {
+  const calls: Array<Parameters<Generate>[0]> = [];
+  return Effect.gen(function* () {
+    yield* seed();
+    yield* recordChild("child-a", "running", null, 2);
+    yield* recordChild("child-b", "running", null, 3);
+    const service = yield* ModelEvaluations.ModelEvaluations;
+    yield* service.evaluateRun(input);
+    yield* recordChild("child-a", "completed", "alpha-result", 2);
+    yield* service.evaluateRun(input);
+    assert.equal(packetsWith(calls, "alpha-result").length, 0);
+    assert.deepEqual((yield* service.list(scope)).records, []);
+    yield* recordChild("child-b", "completed", "beta-result", 3);
+    yield* service.evaluateRun(input);
+    assert.equal(packetsWith(calls, "alpha-result").length, 1);
+    assert.equal(packetsWith(calls, "beta-result").length, 1);
+    assert.equal((yield* service.list(scope)).guidance[0]?.sampleCount, 1);
+  }).pipe(
+    Effect.provide(
+      makeLayer((request) => {
+        calls.push(request);
+        return Effect.succeed(verdict(request.packet));
+      }),
+    ),
+  );
+});
+
+it.effect("does not rescore a settled child when the exchange itself changed", () => {
+  const calls: Array<Parameters<Generate>[0]> = [];
+  return Effect.gen(function* () {
+    const seeded = yield* seed();
+    yield* recordChild("edited-child", "running", null, 2);
+    const service = yield* ModelEvaluations.ModelEvaluations;
+    yield* service.evaluateRun(input);
+    yield* recordChild("edited-child", "completed", "child-edit-token", 2);
+    yield* persist({
+      id: EventId.make("edited-final-answer"),
+      type: "message.updated",
+      threadId,
+      runId,
+      occurredAt: at,
+      payload: { ...seeded.messages[1]!, text: "The export was removed after review." },
+    });
+    yield* service.evaluateRun(input);
+    assert.equal(packetsWith(calls, "child-edit-token").length, 0);
+    assert.deepEqual((yield* service.list(scope)).records, []);
+  }).pipe(
+    Effect.provide(
+      makeLayer((request) => {
+        calls.push(request);
+        return Effect.succeed(verdict(request.packet));
+      }),
+    ),
+  );
+});
+
+it.effect("scores a turn whose delegated child already ended cancelled", () => {
+  const calls: Array<Parameters<Generate>[0]> = [];
+  return Effect.gen(function* () {
+    yield* seed();
+    yield* recordChild("cancelled-child", "cancelled", null, 2);
+    const service = yield* ModelEvaluations.ModelEvaluations;
+    yield* service.evaluateRun(input);
+    assert.equal(calls.length, 1);
+    assert.equal((yield* service.list(scope)).guidance[0]?.sampleCount, 1);
+  }).pipe(
+    Effect.provide(
+      makeLayer((request) => {
+        calls.push(request);
+        return Effect.succeed(verdict(request.packet));
+      }),
+    ),
+  );
+});
+
+it.effect("enqueues one refresh after every delegated child settles", () =>
+  Effect.gen(function* () {
+    yield* seed();
+    yield* recordChild("queued-a", "running", null, 2);
+    yield* recordChild("queued-b", "running", null, 3);
+    const service = yield* ModelEvaluations.ModelEvaluations;
+    const sql = yield* SqlClient.SqlClient;
+    const refreshIds = () =>
+      sql<{ effect_id: string }>`
+        SELECT effect_id FROM orchestration_v2_effect_outbox
+        WHERE effect_id LIKE ${`effect:model-evaluation.generate:${runId}:subagents:%`}
+        ORDER BY effect_id
+      `;
+    yield* service.evaluateRun(input);
+    yield* recordChild("queued-a", "completed", "queued-a-token", 2);
+    yield* service.enqueueSettledSubagentRefreshes({ runId });
+    assert.deepEqual(yield* refreshIds(), []);
+    yield* recordChild("queued-b", "completed", "queued-b-token", 3);
+    yield* service.enqueueSettledSubagentRefreshes();
+    yield* service.enqueueSettledSubagentRefreshes({ runId });
+    const ids = yield* refreshIds();
+    assert.equal(ids.length, 1);
+    assert.match(ids[0]!.effect_id, /:subagents:\d+$/);
+  }).pipe(Effect.provide(makeLayer((request) => Effect.succeed(verdict(request.packet))))),
+);
+
+it.effect.each(["completed", "cancelled", "idle"] as const)(
+  "scores a turn whose child ends %s before the evaluation is stored",
+  (settledStatus) =>
+    Effect.gen(function* () {
+      const reached = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const calls: Array<Parameters<Generate>[0]> = [];
+      const readProviders = Effect.gen(function* () {
+        yield* Deferred.succeed(reached, undefined);
+        yield* Deferred.await(release);
+        return [];
+      });
+      return yield* Effect.gen(function* () {
+        yield* seed();
+        yield* recordChild("racing-child", "running", null, 2);
+        const service = yield* ModelEvaluations.ModelEvaluations;
+        const sql = yield* SqlClient.SqlClient;
+        const fiber = yield* Effect.forkChild(service.evaluateRun(input));
+        yield* Deferred.await(reached);
+        yield* recordChild(
+          "racing-child",
+          settledStatus,
+          settledStatus === "completed" ? "settled-result-token" : null,
+          2,
+        );
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(fiber);
+        const ids = yield* sql<{ effect_id: string }>`
+        SELECT effect_id FROM orchestration_v2_effect_outbox
+        WHERE effect_id LIKE ${`effect:model-evaluation.generate:${runId}:subagents:%`}
+        ORDER BY effect_id
+      `;
+        assert.equal(calls.length, 0);
+        assert.equal(ids.length, 1);
+        yield* service.evaluateRun(input);
+        assert.equal(calls.length, 1);
+        if (settledStatus === "completed")
+          assert.equal(packetsWith(calls, "settled-result-token").length, 1);
+        assert.equal((yield* service.list(scope)).guidance[0]?.sampleCount, 1);
+      }).pipe(
+        Effect.provide(
+          makeLayer(
+            (request) => {
+              calls.push(request);
+              return Effect.succeed(verdict(request.packet));
+            },
+            true,
+            [],
+            readProviders,
+          ),
+        ),
+      );
+    }),
+);
+
+it.effect("checks every revised source message through the message-revision index", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const plan = yield* sql<{ detail: string }>`EXPLAIN QUERY PLAN
+      SELECT evaluation.run_id FROM model_evaluations AS evaluation
+      WHERE ${ModelEvaluations.sourceMessageRevised(sql)}`;
+    assert.isTrue(
+      plan.some((row) =>
+        row.detail.includes(
+          "model_evaluation_message_revision (stream_id=? AND <expr>=? AND sequence>?)",
+        ),
+      ),
+      JSON.stringify(plan),
+    );
+  }).pipe(Effect.provide(makeLayer((request) => Effect.succeed(verdict(request.packet))))),
 );
