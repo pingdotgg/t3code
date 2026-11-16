@@ -6427,7 +6427,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               message: `Claude sent nothing for ${PROVIDER_RETRY_BUDGET_MS / 60_000} minutes. The API or a gateway in front of it is not responding.`,
               retryable: false,
             }),
-            isUnanswered,
+            // Once the stop is sent, a frame clearing the silence must not skip forced settlement.
+            Effect.map(Ref.get(activeTurn), (active) => active === context),
           );
         });
 
@@ -10604,7 +10605,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 Effect.delay(PROVIDER_RETRY_BUDGET_MS),
                 Effect.forkIn(sessionScope),
               );
-            } else {
+            } else if (
+              // Background tasks from earlier turns keep streaming while the root request hangs.
+              Reflect.get(message, "parent_tool_use_id") == null &&
+              !(message.type === "system" && message.subtype.startsWith("task_"))
+            ) {
               context.unansweredRequestSince = undefined;
             }
           }
