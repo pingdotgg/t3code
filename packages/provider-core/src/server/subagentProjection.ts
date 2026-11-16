@@ -22,6 +22,7 @@ import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2Pe
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import { derive } from "./IdAllocator.ts";
 import { isOrchestrationV2WorkActive, latestProviderTurnForAttempt } from "@t3tools/contracts";
 
 function trimmed(value: string | null | undefined): string | undefined {
@@ -61,8 +62,10 @@ export function makeSubagentChildThread(input: {
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
 }): OrchestrationV2AppThread {
+  // The remote parent delegated the parent thread, not its subagents.
+  const { delegatedFrom: _delegatedFrom, ...inherited } = input.parentThread;
   return {
-    ...input.parentThread,
+    ...inherited,
     createdBy: input.createdBy,
     creationSource: input.creationSource,
     id: input.childThreadId,
@@ -187,6 +190,19 @@ export function withExecutedModelNote(
     : `Requested model ${requestedModel}; the provider reported running ${executedModel}.\n\n${result}`;
 }
 
+/** Run signal of the notice that carries a provider's stop reason on a completed run. */
+export const PROVIDER_STOP_REASON_SIGNAL = "provider-stop-reason";
+
+function withStopNotice(
+  projection: Pick<OrchestrationV2ThreadProjection, "turnItems">,
+  run: OrchestrationV2Run,
+  text: string,
+): string {
+  const id = derive.runSignalTurnItem({ runId: run.id, signal: PROVIDER_STOP_REASON_SIGNAL });
+  const notice = projection.turnItems.find((item) => item.id === id);
+  return notice?.type === "system_notice" ? `${text}\n\n${notice.message}` : text;
+}
+
 export function subagentResultForRun(
   projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems" | "providerTurns">,
   run: OrchestrationV2Run,
@@ -240,7 +256,7 @@ export function subagentResultForRun(
     message?.text ??
     turnItem?.text ??
     (run.status === "completed"
-      ? "Child task completed without an assistant result."
+      ? withStopNotice(projection, run, "Child task completed without an assistant result.")
       : `Child task ended with status ${run.status}.`);
   const executedModel = latestProviderTurnForAttempt(
     projection.providerTurns,
@@ -254,6 +270,19 @@ export function subagentResultForRun(
     messageId: failure === undefined ? (message?.id ?? turnItem?.messageId ?? null) : null,
     turnItemId: failure?.id ?? turnItem?.id ?? null,
   };
+}
+
+export function subagentHoldsCompletion(
+  task: Pick<OrchestrationV2ThreadProjection["subagents"][number], "status" | "completionDelivery">,
+): boolean {
+  return (
+    isOrchestrationV2WorkActive(task.status) ||
+    // Publishing a child's result precedes scheduling its parent's wake.
+    // The parent still owes that follow-up even between those transactions.
+    (task.status !== "idle" &&
+      (task.completionDelivery?.state === "pending" ||
+        task.completionDelivery?.state === "claimed"))
+  );
 }
 
 export function delegatedTaskProgress(projection: {
@@ -282,15 +311,7 @@ export function delegatedTaskProgress(projection: {
     (run) => !terminal(run.status) && !(run.status === "queued" && run.queueHeld === true),
   );
   const children =
-    projection.subagents.some(
-      (task) =>
-        isOrchestrationV2WorkActive(task.status) ||
-        // Publishing a child's result precedes scheduling its parent's wake.
-        // The parent still owes that follow-up even between those transactions.
-        (task.status !== "idle" &&
-          (task.completionDelivery?.state === "pending" ||
-            task.completionDelivery?.state === "claimed")),
-    ) ||
+    projection.subagents.some(subagentHoldsCompletion) ||
     projection.providerThreads.some((thread) =>
       backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []),
     );
