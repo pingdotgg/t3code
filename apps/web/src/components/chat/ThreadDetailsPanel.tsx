@@ -191,7 +191,12 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 />
               ) : null}
 
-              {density === "full" && visible.testRun ? <ThreadDetailsTestRun /> : null}
+              {density === "full" && !props.draftId && visible.testRun ? (
+                <ThreadDetailsTestRun
+                  environmentId={props.environmentId}
+                  threadId={props.threadId}
+                />
+              ) : null}
 
               {show.environment || show.openIn || show.scripts ? (
                 <ThreadDetailsSection

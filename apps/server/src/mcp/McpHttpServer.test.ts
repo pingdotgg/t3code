@@ -64,6 +64,9 @@ import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import { ThreadToolkit } from "./toolkits/thread/tools.ts";
+import * as QaRecorder from "../qa/QaRecorder.ts";
+import * as QaRuns from "../qa/QaRuns.ts";
+import { QaToolkit } from "./toolkits/qa/tools.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -96,6 +99,12 @@ const client = McpSchema.McpServerClient.of({
 const layerTest = McpHttpServer.layerPreviewToolkit.pipe(
   Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
   Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      Layer.mock(QaRuns.QaRuns)({}),
+      Layer.mock(QaRecorder.QaRecorder)({ browserOpened: () => Effect.void }),
+    ),
+  ),
   Layer.provideMerge(PreviewAutomationBroker.layer),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-http-server-test-" })),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
@@ -615,7 +624,7 @@ it.effect("refuses preview tools to a client outside a thread before they run", 
 it.effect("advertises the compact input schema for every registered tool", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
-    const tools: Record<string, Tool.Any> = PreviewToolkit.tools;
+    const tools: Record<string, Tool.Any> = { ...PreviewToolkit.tools, ...QaToolkit.tools };
 
     expect(server.tools.length).toBe(Object.keys(tools).length);
     for (const { tool } of server.tools) {

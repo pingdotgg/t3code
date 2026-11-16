@@ -1,17 +1,11 @@
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 import {
-  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PREVIEW_RECORDING_STOP_TIMEOUT_MS,
-  PreviewAutomationRecordingTransferError,
-  PreviewAutomationRecordingDesktopUpdateRequiredError,
-  PreviewAutomationRecordingArtifact,
   PreviewAutomationActInputs,
   OrchestratorMcpFailure,
   type ToolActivityIcon,
-  type ThreadId,
   type PreviewAutomationOperation,
   type PreviewAutomationOpenInput,
   type PreviewAutomationRecordingStatus,
@@ -23,17 +17,11 @@ import {
   type PreviewTabId,
 } from "@t3tools/contracts";
 
-import {
-  parseAttachmentUuid,
-  parseAttachmentFileExtension,
-  PENDING_ATTACHMENT_THREAD_SEGMENT,
-  toSafeThreadAttachmentSegment,
-} from "../../../attachmentStore.ts";
-import { resolveAttachmentRelativePath } from "../../../attachmentPaths.ts";
-import * as ServerConfig from "../../../config.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import * as QaRecorder from "../../../qa/QaRecorder.ts";
+import { claimPreviewRecording } from "./recordingClaim.ts";
 import { PreviewSnapshotToolkit, PreviewStandardToolkit, PreviewToolkit } from "./tools.ts";
 
 /** Whether a preview the agent
@@ -117,78 +105,6 @@ const decodeActInput = Record.map(PreviewAutomationActInputs, (schema) =>
   Schema.decodeUnknownEffect(schema),
 );
 
-const UploadedRecordingArtifact = Schema.Struct({
-  ...PreviewAutomationRecordingArtifact.fields,
-  uploadedAttachmentId: Schema.optional(Schema.String),
-});
-const decodeUploadedRecordingArtifact = Schema.decodeUnknownEffect(UploadedRecordingArtifact);
-
-export const claimPreviewRecording = Effect.fn("PreviewToolkit.claimRecording")(function* (
-  threadId: ThreadId,
-  response: unknown,
-) {
-  const artifact = yield* decodeUploadedRecordingArtifact(response).pipe(
-    Effect.mapError(
-      (cause) =>
-        new PreviewAutomationRecordingTransferError({
-          threadId,
-          cause,
-        }),
-    ),
-  );
-  if (!artifact.uploadedAttachmentId) {
-    return yield* new PreviewAutomationRecordingDesktopUpdateRequiredError({ threadId });
-  }
-  const config = yield* ServerConfig.ServerConfig;
-  const uuid = parseAttachmentUuid(artifact.uploadedAttachmentId);
-  const extension = parseAttachmentFileExtension(artifact.uploadedAttachmentId);
-  const threadSegment = toSafeThreadAttachmentSegment(threadId);
-  const pendingId = `${PENDING_ATTACHMENT_THREAD_SEGMENT}-${uuid}-${extension}`;
-  if (!uuid || !extension || !threadSegment || artifact.uploadedAttachmentId !== pendingId) {
-    return yield* new PreviewAutomationRecordingTransferError({
-      threadId,
-    });
-  }
-  const finalId = `${threadSegment}-${uuid}-${extension}`;
-  const currentPath = resolveAttachmentRelativePath({
-    attachmentsDir: config.attachmentsDir,
-    relativePath: `${pendingId}.${extension}`,
-  });
-  const finalPath = resolveAttachmentRelativePath({
-    attachmentsDir: config.attachmentsDir,
-    relativePath: `${finalId}.${extension}`,
-  });
-  if (!currentPath || !finalPath) {
-    return yield* new PreviewAutomationRecordingTransferError({ threadId });
-  }
-  const fileSystem = yield* FileSystem.FileSystem;
-  const validateFile = (filePath: string) =>
-    fileSystem.stat(filePath).pipe(
-      Effect.filterOrFail(
-        (stat) =>
-          stat.type === "File" &&
-          Number(stat.size) === artifact.sizeBytes &&
-          artifact.sizeBytes > 0 &&
-          artifact.sizeBytes <= PROVIDER_SEND_TURN_MAX_FILE_BYTES,
-        () => new PreviewAutomationRecordingTransferError({ threadId }),
-      ),
-    );
-  yield* Effect.gen(function* () {
-    yield* validateFile(currentPath);
-    yield* fileSystem.rename(currentPath, finalPath);
-  }).pipe(
-    Effect.catchIf(
-      (cause) =>
-        cause._tag !== "PreviewAutomationRecordingTransferError" &&
-        cause.reason._tag === "NotFound",
-      () => validateFile(finalPath),
-    ),
-    Effect.mapError((cause) => new PreviewAutomationRecordingTransferError({ threadId, cause })),
-  );
-  const { uploadedAttachmentId: _uploadedAttachmentId, ...recording } = artifact;
-  return { ...recording, id: finalId, path: finalPath };
-});
-
 const handlers = {
   preview_dialog: McpToolAccess.actsAsCaller((input) =>
     invokeTargeted<PreviewAutomationStatus>("dialog", input),
@@ -205,11 +121,16 @@ const handlers = {
           target === undefined && url !== undefined ? { ...input, url } : input,
         ),
       );
-      if (target === undefined || opened.tabId === null) return opened;
-      return yield* invokeTargeted<PreviewAutomationStatus>("navigate", {
-        target,
-        tabId: opened.tabId,
-      });
+      const result =
+        target === undefined || opened.tabId === null
+          ? opened
+          : yield* invokeTargeted<PreviewAutomationStatus>("navigate", {
+              target,
+              tabId: opened.tabId,
+            });
+      const scope = yield* McpInvocationContext.requireThreadMcpCapability("preview");
+      yield* (yield* QaRecorder.QaRecorder).browserOpened(scope, result);
+      return result;
     }),
   ),
   preview_navigate: McpToolAccess.actsAsCaller((input) =>
