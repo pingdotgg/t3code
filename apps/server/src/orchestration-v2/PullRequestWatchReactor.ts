@@ -841,12 +841,17 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("PullRequestWatchReactor.readOnChange"),
     );
 
-  /** Targeted reads for the watches whose last read saw checks or mergeability still pending. */
+  /** Targeted reads for the watches whose last read saw checks or mergeability still pending. One
+   * pass per pull request covers every project watching it. */
   const probePending = Effect.suspend(() =>
     Effect.forEach(
-      currentGroups
-        .filter((group) => lastReads.get(group.key)?.inFlight === true)
-        .map(pullRequestOf),
+      [
+        ...new Set(
+          currentGroups
+            .filter((group) => lastReads.get(group.key)?.inFlight === true)
+            .map(pullRequestOf),
+        ),
+      ],
       readOnChange,
       { concurrency: "unbounded", discard: true },
     ),
@@ -887,8 +892,7 @@ export const make = Effect.gen(function* () {
     // would wait the whole sweep for its checks; the probes catch the conclusion sooner.
     yield* forkParked(
       Effect.sleep(PENDING_PROBE_MS).pipe(
-        Effect.andThen(probePending),
-        Effect.repeat(Schedule.spaced(PENDING_PROBE_MS)),
+        Effect.andThen(probePending.pipe(Effect.repeat(Schedule.spaced(PENDING_PROBE_MS)))),
         Effect.asVoid,
       ),
     );

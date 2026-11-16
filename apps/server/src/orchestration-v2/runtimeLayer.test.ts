@@ -5824,8 +5824,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         NodeServices.layer,
         NodeCrypto.layer,
         Layer.mock(PullRequestService.PullRequestService)({
-          detail: () =>
-            Queue.offer(detailReads, undefined).pipe(
+          detail: (input) =>
+            // Watches left by earlier cases in this layer are swept too.
+            (input.projectId === projectId
+              ? Queue.offer(detailReads, undefined)
+              : Effect.void
+            ).pipe(
               Effect.as({
                 ...watchedPullRequestDetail({
                   projectId,
@@ -5864,6 +5868,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* worker.drain();
       assert.lengthOf(yield* wakes, 0);
 
+      // The probes keep coming every 30 seconds while the checks stay pending.
+      yield* TestClock.adjust("30 seconds");
+      yield* Queue.take(detailReads);
+      yield* TestClock.adjust("30 seconds");
+      yield* Queue.take(detailReads);
+      assert.lengthOf(yield* wakes, 0);
+
       status = "passed";
       checks = [{ name: "lint", status: "success", description: null, url: null, required: true }];
       // The probe must hear the concluded checks long before the 2-minute sweep could.
@@ -5886,6 +5897,131 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ...key,
         watching: false,
       });
+      yield* worker.drain();
+    }),
+  );
+
+  it.effect("probes a pull request watched from two projects once", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const projects = [
+        {
+          threadId: ThreadId.make("runtime-pull-request-watch-probe-dedupe-a"),
+          projectId: ProjectId.make("pr-watch-probe-dedupe-project-a"),
+        },
+        {
+          threadId: ThreadId.make("runtime-pull-request-watch-probe-dedupe-b"),
+          projectId: ProjectId.make("pr-watch-probe-dedupe-project-b"),
+        },
+      ];
+      for (const [index, { projectId, threadId }] of projects.entries()) {
+        yield* seedProject({
+          projectId,
+          title: `Watch probe ${index}`,
+          workspaceRoot: `/workspace/watch-probe-${index}`,
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`pr-watch-probe-dedupe-create-${index}`),
+          threadId,
+          projectId,
+          title: `Watch probe ${index}`,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-probe-dedupe-start-${index}`),
+          threadId,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 14,
+          watching: true,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/14", source: "agent" },
+        });
+      }
+
+      const checks = [
+        { name: "lint", status: "pending", description: null, url: null, required: true },
+      ] as const;
+      const detailReads = yield* Queue.unbounded<void>();
+      const fingerprintReads = yield* Queue.unbounded<void>();
+      let fingerprints = 0;
+      const mine = (projectId: ProjectId) =>
+        projects.some((project) => project.projectId === projectId);
+      const host = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(PullRequestService.PullRequestService)({
+          detail: (input) =>
+            // Watches left by earlier cases in this layer are swept too.
+            (mine(input.projectId) ? Queue.offer(detailReads, undefined) : Effect.void).pipe(
+              Effect.as({
+                ...watchedPullRequestDetail({
+                  projectId: input.projectId,
+                  number: 14,
+                  at: "2026-10-02T12:00:00.000Z",
+                }),
+                headSha: "6074dd48ff",
+                checks,
+              }),
+            ),
+          activity: () =>
+            Effect.succeed({
+              comments: [],
+              commentCount: 0,
+              commentsTruncated: false,
+              reviewThreads: [],
+              commits: [],
+            }),
+          watchFingerprint: (input) =>
+            Effect.sync(() => ({ status: "pending", remarks: "none" })).pipe(
+              Effect.tap(() =>
+                mine(input.projectId)
+                  ? Effect.sync(() => void fingerprints++).pipe(
+                      Effect.andThen(Queue.offer(fingerprintReads, undefined)),
+                    )
+                  : Effect.void,
+              ),
+            ),
+          invalidate: () => Effect.void,
+          changes: () => Stream.empty,
+        }),
+      );
+      const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      yield* reactor.start();
+      // The first sweep reads both project groups.
+      yield* Queue.take(detailReads);
+      yield* Queue.take(detailReads);
+      yield* worker.drain();
+      // One probe pass fingerprints each group once; a repeat pass per tick would double it.
+      yield* TestClock.adjust("30 seconds");
+      yield* Queue.take(fingerprintReads);
+      yield* Queue.take(fingerprintReads);
+      yield* TestClock.adjust("30 seconds");
+      yield* Queue.take(fingerprintReads);
+      yield* Queue.take(fingerprintReads);
+      assert.equal(fingerprints, 6);
+
+      for (const [index, { threadId }] of projects.entries()) {
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-probe-dedupe-end-${index}`),
+          threadId,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 14,
+          watching: false,
+        });
+      }
       yield* worker.drain();
     }),
   );
