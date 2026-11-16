@@ -5,7 +5,7 @@ interface WorkspaceFileDragEvent {
     readonly items?: Iterable<{
       readonly kind: string;
       getAsFile(): File | null;
-      webkitGetAsEntry(): { readonly isDirectory: boolean } | null;
+      webkitGetAsEntry(): FileSystemEntry | null;
     }>;
     dropEffect: string;
   };
@@ -19,7 +19,7 @@ interface WorkspaceFileDragEvent {
 interface WorkspaceFileDropHost {
   setDragActive(active: boolean): void;
   addFiles(files: File[]): void;
-  addFolders(folders: File[]): void;
+  addFolders(folders: File[], folderEntries: FileSystemDirectoryEntry[]): void;
 }
 
 function isFileDrag(event: WorkspaceFileDragEvent): boolean {
@@ -35,23 +35,28 @@ export function splitTransferredFiles(
 ): {
   files: File[];
   folders: File[];
+  folderEntries: FileSystemDirectoryEntry[];
 } {
   if (dataTransfer.items === undefined)
-    return { files: Array.from(dataTransfer.files), folders: [] };
+    return { files: Array.from(dataTransfer.files), folders: [], folderEntries: [] };
 
   const files: File[] = [];
   const folders: File[] = [];
+  // Entries go stale once the event handler returns, so capture them here, before any await.
+  const folderEntries: FileSystemDirectoryEntry[] = [];
   for (const item of dataTransfer.items) {
     if (item.kind !== "file") continue;
     const file = item.getAsFile();
     if (file === null) continue;
-    if (item.webkitGetAsEntry()?.isDirectory === true) {
+    const entry = item.webkitGetAsEntry();
+    if (entry?.isDirectory === true) {
       folders.push(file);
+      folderEntries.push(entry as FileSystemDirectoryEntry);
     } else {
       files.push(file);
     }
   }
-  return { files, folders };
+  return { files, folders, folderEntries };
 }
 
 export function makeWorkspaceFileDropHandlers(host: WorkspaceFileDropHost) {
@@ -78,9 +83,9 @@ export function makeWorkspaceFileDropHandlers(host: WorkspaceFileDropHost) {
       if (!isFileDrag(event)) return;
       event.preventDefault();
       host.setDragActive(false);
-      const { files, folders } = splitTransferredFiles(event.dataTransfer);
+      const { files, folders, folderEntries } = splitTransferredFiles(event.dataTransfer);
       if (files.length > 0) host.addFiles(files);
-      if (folders.length > 0) host.addFolders(folders);
+      if (folders.length > 0) host.addFolders(folders, folderEntries);
     },
   };
 }
