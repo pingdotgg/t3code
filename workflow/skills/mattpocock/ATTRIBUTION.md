@@ -57,6 +57,8 @@ and `writing-for-agents`.
   question card and notifies the user instead of leaving the question in plain text. `grilling`
   asks each round that way and keeps upstream's text format as the fallback; `to-tickets`,
   `wayfinder`, and `improve-codebase-architecture` ask their approval and pick questions the same way.
+- `wayfinder` ends a finished map by filing implementation tickets with `to-tickets` and handing them
+  to `maestro`, so charting runs straight into dispatch. One added step under "Work through the map".
 
 ## Upstream sync
 
