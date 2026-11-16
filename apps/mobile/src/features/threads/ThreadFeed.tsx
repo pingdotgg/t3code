@@ -325,7 +325,7 @@ const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   includeOrderedLists: Platform.OS === "android",
 } as const;
 
-const TURN_FOLD_HEIGHT = 32;
+const TURN_FOLD_HEIGHT = 42;
 const FEED_PADDING_TOP = 12;
 const VIEWED_IMAGE_GAP = 8;
 const USER_BUBBLE_HORIZONTAL_PADDING = 3.5 * 3.5;
@@ -1709,7 +1709,7 @@ function RunFoldWorking(props: {
   const seconds = Math.floor((nowMs - Date.parse(props.startedAt)) / 1_000);
   return (
     <View
-      className="min-w-0 flex-1 flex-row items-center"
+      className="min-h-11 min-w-0 flex-1 flex-row items-center"
       style={{ minHeight: Math.max(TURN_FOLD_HEIGHT - 3.5, props.rowSizing.estimatedRowHeight) }}
     >
       <Text
@@ -1772,9 +1772,8 @@ function RunFoldButton({
         accessibilityRole="button"
         accessibilityState={{ expanded: entry.expanded, busy: loading }}
         onPress={toggle}
-        // The row is as tall as a work row; the slop keeps a full-size tap target.
-        hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
-        className="min-w-0 flex-1 flex-row items-center gap-2"
+        hitSlop={4}
+        className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2"
         style={{ minHeight: Math.max(TURN_FOLD_HEIGHT - 3.5, rowSizing.estimatedRowHeight) }}
       >
         <Text
@@ -1886,7 +1885,7 @@ function renderFeedEntry(
     return (
       <View className="mb-1 flex-row items-center border-b border-border-subtle px-2">
         <View
-          className="min-w-0 flex-1 flex-row items-center"
+          className="min-h-11 min-w-0 flex-1 flex-row items-center"
           style={{
             minHeight: Math.max(TURN_FOLD_HEIGHT - 3.5, props.workRowSizing.estimatedRowHeight),
           }}
