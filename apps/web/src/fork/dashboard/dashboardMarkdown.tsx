@@ -23,6 +23,12 @@ import {
   rewriteMarkdownFileUriHref,
 } from "../../markdown-links";
 import { remarkEndLinksAtCjkPunctuation } from "../cjkLinkEnd";
+import {
+  hostFileAnchorHref,
+  hostFileLinkHref,
+  hostFileLinkLabel,
+  useHostFileOrigins,
+} from "../hostFileLinks";
 
 interface LinkScope {
   readonly threadRef: ScopedThreadRef;
@@ -36,9 +42,10 @@ interface SlotCopy {
   readonly text: string;
   /** Every file path in the slot's current and read text, so both copies label chips alike. */
   readonly filePaths: readonly string[];
+  readonly hostFileOrigins: readonly string[];
 }
 
-const SlotCopyContext = createContext<SlotCopy>({ text: "", filePaths: [] });
+const SlotCopyContext = createContext<SlotCopy>({ text: "", filePaths: [], hostFileOrigins: [] });
 
 function remarkUnwrapSoleParagraph() {
   return (tree: Root) => {
@@ -85,11 +92,16 @@ function normalizeHref(href: string): string {
   return rewriteMarkdownFileUriHref(destination) ?? destination;
 }
 
-function slotFilePaths(texts: readonly string[], cwd: string | undefined): string[] {
+function slotFilePaths(
+  texts: readonly string[],
+  cwd: string | undefined,
+  hostFileOrigins: readonly string[],
+): string[] {
   const paths = new Set<string>();
   for (const text of texts) {
     for (const href of extractMarkdownLinkHrefs(text)) {
-      const path = resolveMarkdownFileLinkMeta(normalizeHref(href), cwd)?.filePath;
+      const linkPath = hostFileLinkHref(normalizeHref(href), hostFileOrigins);
+      const path = resolveMarkdownFileLinkMeta(linkPath, cwd)?.filePath;
       if (path) paths.add(path);
     }
     for (const span of extractInlineCodeSpans(text)) {
@@ -106,10 +118,11 @@ const renderMarkdown = createMarkdownRenderer({
   components: {
     a: function DashboardLink({ node, children, ...props }) {
       const scope = use(DashboardLinkScope);
-      const { text } = use(SlotCopyContext);
+      const { text, hostFileOrigins } = use(SlotCopyContext);
       const href = props.href ? normalizeHref(props.href) : "";
+      const linkPath = hostFileAnchorHref(href, node, hostFileOrigins);
       const fileLinkMeta =
-        scope !== null && href !== "" ? resolveMarkdownFileLinkMeta(href, scope.cwd) : null;
+        scope !== null && href !== "" ? resolveMarkdownFileLinkMeta(linkPath, scope.cwd) : null;
       if (scope === null || fileLinkMeta === null) {
         return (
           <a {...props} target="_blank" rel="noreferrer">
@@ -126,7 +139,7 @@ const renderMarkdown = createMarkdownRenderer({
           ? source
           : `[${(label || fileLinkMeta.basename).replace(/[\\[\]]/g, "\\$&")}](${href})`;
       const chip = <ChatFileChip markdown={`[](<${linkDestination(href)}>)`} scope={scope} />;
-      return isMarkdownFileLinkLabel(label, href) ? (
+      return isMarkdownFileLinkLabel(hostFileLinkLabel(label, hostFileOrigins), linkPath) ? (
         <span data-markdown-copy={copyMarkdown}>{chip}</span>
       ) : (
         <span data-markdown-copy={copyMarkdown}>
@@ -157,9 +170,14 @@ const renderMarkdown = createMarkdownRenderer({
  */
 export function DashboardMarkdown(props: { readonly text: string; readonly pairedText?: string }) {
   const scope = use(DashboardLinkScope);
-  const filePaths = slotFilePaths([props.text, props.pairedText ?? ""], scope?.cwd);
+  const hostFileOrigins = useHostFileOrigins(scope?.threadRef.environmentId ?? null);
+  const filePaths = slotFilePaths(
+    [props.text, props.pairedText ?? ""],
+    scope?.cwd,
+    hostFileOrigins,
+  );
   return (
-    <SlotCopyContext value={{ text: props.text, filePaths }}>
+    <SlotCopyContext value={{ text: props.text, filePaths, hostFileOrigins }}>
       {renderMarkdown(props.text, true)}
     </SlotCopyContext>
   );

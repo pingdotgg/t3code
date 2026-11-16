@@ -142,6 +142,12 @@ import { useRenderedAppearance } from "../hooks/useTheme";
 import { useClientSettings } from "../hooks/useSettings";
 import { chatMarkdownClipboardPayload } from "../markdown-clipboard";
 import {
+  hostFileAnchorHref,
+  hostFileLinkHref,
+  hostFileLinkLabel,
+  useHostFileOrigins,
+} from "../fork/hostFileLinks";
+import {
   isLocalEditorFileHref,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
@@ -476,10 +482,11 @@ function fileLinkSourcesKey(
   cwd: string | undefined,
   imageBaseDir: string | undefined,
   peerPaths: readonly string[] = [],
+  hostFileOrigins: readonly string[] = [],
 ): string {
   const hrefs = extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(text))
     .filter((href) => !parseComposerContextHref(href))
-    .map(normalizeMarkdownLinkHrefKey)
+    .map((href) => hostFileLinkHref(normalizeMarkdownLinkHrefKey(href), hostFileOrigins))
     .filter((href) => resolveMarkdownFileLinkMeta(href, cwd, imageBaseDir ?? cwd));
   const spans = extractInlineCodeSpans(text).filter((span) =>
     resolveInlineCodeFileLinkMeta(span, cwd, imageBaseDir ?? cwd),
@@ -710,7 +717,9 @@ function useChatMarkdownState({
   // Keyed by the file links found, not the text, so streamed text that adds none keeps the
   // renderer context, and every block reading it, unchanged.
   // A template literal marks the key as a string, so the compiler memoizes the maps on its value.
-  const fileLinksKey = `${fileLinkSourcesKey(text, cwd, imageBaseDir, fileLinkPeerPaths)}`;
+  // A file chip opens in a thread, so only a thread's links to its environment's files become chips.
+  const hostFileOrigins = useHostFileOrigins(threadRef?.environmentId ?? null);
+  const fileLinksKey = `${fileLinkSourcesKey(text, cwd, imageBaseDir, fileLinkPeerPaths, hostFileOrigins)}`;
   const { markdownFileLinkMetaByHref, inlineCodeFileLinkMetaByText, fileLinkParentSuffixByPath } =
     resolveFileLinkSources(fileLinksKey, cwd, imageBaseDir);
   const resolveThreadPullRequest = (
@@ -884,6 +893,7 @@ function useChatMarkdownState({
     fileLinkMeta: MarkdownFileLinkMeta,
     copyMarkdown: string,
     mediaSource?: string,
+    linkHref?: string,
   ) => {
     const resolveHostPath = () =>
       resolveMarkdownFileHostPath({
@@ -910,7 +920,7 @@ function useChatMarkdownState({
     return (
       <MarkdownFileLink
         environmentId={environmentId}
-        href={fileLinkMeta.targetPath}
+        href={linkHref ?? fileLinkMeta.targetPath}
         targetPath={fileLinkMeta.targetPath}
         iconPath={
           isAppBundle && cwd
@@ -987,6 +997,7 @@ function useChatMarkdownState({
     sourceControlMediaRepository,
     renderContextReference,
     headingLevelOffset,
+    hostFileOrigins,
     imageBaseDir,
     workspaceMutationId,
     inlineCodeFileLinkMetaByText,
@@ -1164,6 +1175,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       canOperatePreview,
       cwd,
       environmentId,
+      hostFileOrigins,
       imageBaseDir,
       markdownFileLinkMetaByHref,
       threadRef,
@@ -1209,7 +1221,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
         <span>{label}</span>
       );
     }
-    const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
+    const authoredHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
+    const normalizedHref = hostFileAnchorHref(authoredHref, node, hostFileOrigins);
     const fileLinkMeta = normalizedHref
       ? (markdownFileLinkMetaByHref.get(normalizedHref) ??
         resolveMarkdownFileLinkMeta(normalizedHref, cwd, imageBaseDir ?? cwd))
@@ -1439,9 +1452,14 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const copyMarkdown =
       source.startsWith("[") && source.includes("](")
         ? source
-        : `[${(label || fileLinkMeta.basename).replace(/[\\[\]]/g, "\\$&")}](${normalizedHref})`;
-    const chip = fileLinkChip(fileLinkMeta, copyMarkdown, normalizedHref);
-    return isMarkdownFileLinkLabel(label, normalizedHref) ? (
+        : `[${(label || fileLinkMeta.basename).replace(/[\\[\]]/g, "\\$&")}](${authoredHref})`;
+    const chip = fileLinkChip(
+      fileLinkMeta,
+      copyMarkdown,
+      normalizedHref,
+      authoredHref === normalizedHref ? undefined : authoredHref,
+    );
+    return isMarkdownFileLinkLabel(hostFileLinkLabel(label, hostFileOrigins), normalizedHref) ? (
       chip
     ) : (
       <span data-markdown-copy={copyMarkdown}>

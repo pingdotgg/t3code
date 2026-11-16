@@ -41,7 +41,7 @@ const ANY_FILE_EXTENSION_PATTERN = /\.[^./\\]+$/;
 const VERSION_SUFFIX_PATTERN = /\d\.\d[^.]*$/;
 const NUMERIC_DOTTED_PATTERN = /^\d+(?:\.\d+)+$/;
 
-const POSIX_FILE_ROOT_PREFIXES = [
+export const POSIX_FILE_ROOT_PREFIXES = [
   "/Users/",
   "/home/",
   "/tmp/",

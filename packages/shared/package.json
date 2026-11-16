@@ -443,6 +443,10 @@
       "types": "./src/fork/textMatch.ts",
       "import": "./src/fork/textMatch.ts"
     },
+    "./hostFileLinks": {
+      "types": "./src/fork/hostFileLinks.ts",
+      "import": "./src/fork/hostFileLinks.ts"
+    },
     "./t3McpToolPresentation": {
       "types": "./src/t3McpToolPresentation.ts",
       "import": "./src/t3McpToolPresentation.ts"

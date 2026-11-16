@@ -8,6 +8,11 @@ import {
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { memo, useState, type MouseEvent as ReactMouseEvent } from "react";
 
+import {
+  hostFileLinkMenuItems,
+  leavesFileChipClickToBrowser,
+  runHostFileLinkMenuItem,
+} from "../../fork/hostFileLinks";
 import { readLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
 import { shouldOpenMarkdownFileLinkInEditor } from "../../markdown-links";
@@ -259,9 +264,11 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
             : []),
           ...(onReveal && revealLabel ? ([{ id: "reveal", label: revealLabel }] as const) : []),
           ...copyItems.map(({ id, label }) => ({ id, label })),
+          ...hostFileLinkMenuItems(href),
         ] as const,
         position,
       );
+      if (runHostFileLinkMenuItem(clicked, href)) return;
 
       if (clicked === "preview-media") {
         onOpenMedia?.();
@@ -338,6 +345,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
               className={MARKDOWN_FILE_LINK_CLASS_NAME}
               data-markdown-copy={copyMarkdown}
               onClick={(event) => {
+                if (leavesFileChipClickToBrowser(href, event)) return;
                 event.preventDefault();
                 event.stopPropagation();
                 if (onOpen && shouldOpenMarkdownFileLinkInEditor(event)) {
