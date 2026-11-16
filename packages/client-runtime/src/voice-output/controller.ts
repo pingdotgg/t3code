@@ -8,7 +8,13 @@ type Snapshot = {
 };
 
 export type SpeechAudioPlayer = {
-  readonly play: (audio: Uint8Array, signal: AbortSignal, onPlaying: () => void) => Promise<void>;
+  readonly play: (
+    audio: Uint8Array,
+    signal: AbortSignal,
+    onPlaying: () => void,
+    rate: number,
+  ) => Promise<void>;
+  readonly setPlaybackRate: (rate: number) => void;
   readonly pause: () => void;
   readonly resume: () => Promise<void>;
 };
@@ -17,6 +23,7 @@ export class VoiceOutputController {
   private snapshot: Snapshot = { owner: null, phase: "idle", error: null };
   private readonly listeners = new Set<() => void>();
   private request: AbortController | null = null;
+  private playbackRate = 1;
 
   private readonly player: SpeechAudioPlayer;
 
@@ -35,6 +42,13 @@ export class VoiceOutputController {
   private publish(snapshot: Snapshot) {
     this.snapshot = snapshot;
     for (const listener of this.listeners) listener();
+  }
+
+  setPlaybackRate(rate: number) {
+    if (!Number.isFinite(rate) || rate < 0.5 || rate > 2)
+      throw new RangeError("Playback speed must be between 0.5× and 2×.");
+    this.player.setPlaybackRate(rate);
+    this.playbackRate = rate;
   }
 
   readonly stop = () => {
@@ -60,9 +74,14 @@ export class VoiceOutputController {
         this.publish({ owner, phase: "loading", error: null });
         const audio = await synthesize(text, request.signal);
         request.signal.throwIfAborted();
-        await this.player.play(audio, request.signal, () => {
-          if (this.request === request) this.publish({ owner, phase: "playing", error: null });
-        });
+        await this.player.play(
+          audio,
+          request.signal,
+          () => {
+            if (this.request === request) this.publish({ owner, phase: "playing", error: null });
+          },
+          this.playbackRate,
+        );
       }
       if (this.request === request) this.stop();
     } catch (error) {

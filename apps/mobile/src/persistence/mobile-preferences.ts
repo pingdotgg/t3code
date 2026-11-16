@@ -8,6 +8,7 @@ import * as Semaphore from "effect/Semaphore";
 import {
   EnvironmentId,
   SpeechOutputDestination,
+  SpeechPlaybackRate,
   PullRequestInvolvement,
   PullRequestListFilters,
   PullRequestListState,
@@ -86,6 +87,7 @@ const PullRequestActivityVisibility = Schema.Struct({
 });
 export type PullRequestActivityVisibility = typeof PullRequestActivityVisibility.Type;
 
+const isSpeechPlaybackRate = Schema.is(SpeechPlaybackRate);
 const isSpeechOutputDestination = Schema.is(SpeechOutputDestination);
 const isThreadListFilters = Schema.is(ThreadListFilters);
 const isPullRequestActivityVisibility = Schema.is(PullRequestActivityVisibility);
@@ -98,6 +100,7 @@ const ThreadProject = Schema.Struct({
 const isThreadProject = Schema.is(ThreadProject);
 
 export interface Preferences {
+  readonly speechPlaybackRate?: SpeechPlaybackRate;
   readonly speechOutputDestination?: SpeechOutputDestination | null;
   readonly navigationTabOrder?: readonly string[];
   readonly hiddenNavigationTabs?: readonly string[];
@@ -190,6 +193,7 @@ const isPullRequestMergeMethod = Schema.is(PullRequestMergeMethod);
 
 function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
+    speechPlaybackRate?: SpeechPlaybackRate;
     speechOutputDestination?: SpeechOutputDestination | null;
     navigationTabOrder?: readonly string[];
     hiddenNavigationTabs?: readonly string[];
@@ -230,6 +234,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     pullRequestListFilters?: PullRequestListPreferences;
     workspaceSelections?: WorkspaceSelections;
   } = {};
+
+  if (isSpeechPlaybackRate(parsed.speechPlaybackRate))
+    preferences.speechPlaybackRate = parsed.speechPlaybackRate;
 
   if (
     parsed.speechOutputDestination === null ||

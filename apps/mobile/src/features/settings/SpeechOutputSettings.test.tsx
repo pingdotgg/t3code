@@ -23,6 +23,9 @@ vi.mock("../../state/preferences", () => ({
   mobilePreferencesAtom: {},
   updateMobilePreferencesAtom: {},
 }));
+vi.mock("../voice-output/SpeechPlaybackSpeed", () => ({ SpeechPlaybackSpeed: () => null }));
+vi.mock("../../components/ui/AppText", () => ({ AppTextInput: () => null }));
+vi.mock("../../components/ui/SecretTextInput", () => ({ SecretTextInput: () => null }));
 vi.mock("../voice-output/voiceOutput", () => ({ voiceOutput: { stop: () => {} } }));
 vi.mock("../voice-output/useSpeechVoiceCatalog", () => ({
   useSpeechVoiceCatalog: () => ({
@@ -33,6 +36,7 @@ vi.mock("../voice-output/useSpeechVoiceCatalog", () => ({
   }),
 }));
 vi.mock("react-native", () => ({
+  View: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
   ScrollView: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
 }));
 vi.mock("../../components/ui/ListChoiceRow", () => ({
@@ -110,6 +114,12 @@ it("defaults off and changes the playback destination on this device without cha
     click("OpenAI");
     expect(mocks.preferences.speechOutputDestination).toEqual({ environmentId, engine: "openai" });
     click("Read aloud with: OpenAI via Server");
+    click("ElevenLabs");
+    expect(mocks.preferences.speechOutputDestination).toEqual({
+      environmentId,
+      engine: "elevenlabs",
+    });
+    click("Read aloud with: ElevenLabs via Server");
     click("Off");
     expect(mocks.preferences.speechOutputDestination).toBeNull();
     expect(mocks.update).not.toHaveBeenCalled();

@@ -7,11 +7,13 @@ let audio: HTMLAudioElement | null = null;
 let recording = false;
 
 const player: SpeechAudioPlayer = {
-  play(bytes, signal, onPlaying) {
+  play(bytes, signal, onPlaying, rate) {
     return new Promise<void>((resolve, reject) => {
       const url = URL.createObjectURL(new Blob([Uint8Array.from(bytes)], { type: "audio/wav" }));
       const element = new Audio(url);
       audio = element;
+      element.preservesPitch = true;
+      element.playbackRate = rate;
       let finished = false;
       const finish = (error?: unknown) => {
         if (finished) return;
@@ -39,6 +41,9 @@ const player: SpeechAudioPlayer = {
         if (!signal.aborted) onPlaying();
       }, finish);
     });
+  },
+  setPlaybackRate: (rate) => {
+    if (audio) audio.playbackRate = rate;
   },
   pause: () => audio?.pause(),
   resume: () => audio?.play() ?? Promise.resolve(),

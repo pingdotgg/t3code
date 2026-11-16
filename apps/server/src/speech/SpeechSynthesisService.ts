@@ -20,8 +20,9 @@ import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+import { Headers, FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
+import { pcm16Wave } from "./synthesisAudio.ts";
 import * as PiperRuntime from "./PiperRuntime.ts";
 import { SPEECH_VOICES } from "./voices.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -283,7 +284,10 @@ const make = Effect.gen(function* () {
           .readFile(output)
           .pipe(Effect.mapError(SpeechSynthesisOperationError.fromCause));
       } else {
-        const source = snapshot.cloudSpeechCredentials.openai;
+        const elevenLabs = input.engine === "elevenlabs";
+        const source = elevenLabs
+          ? config.elevenLabsApiKey
+          : snapshot.cloudSpeechCredentials.openai;
         if (!source) return yield* new SpeechSynthesisError({ reason: "not-configured" });
         if (isSecretReference(source)) yield* resolver.invalidate([source]);
         const key = yield* requireSettingsSecret(resolver, source).pipe(
@@ -292,11 +296,24 @@ const make = Effect.gen(function* () {
         const current = yield* settings.getSettings.pipe(
           Effect.mapError(SpeechSynthesisOperationError.fromCause),
         );
-        if (!sameCredential(current.cloudSpeechCredentials.openai, source))
+        if (
+          !sameCredential(
+            elevenLabs
+              ? current.speechOutput.elevenLabsApiKey
+              : current.cloudSpeechCredentials.openai,
+            source,
+          )
+        )
           return yield* new SpeechSynthesisError({ reason: "configuration-changed" });
-        const response = yield* http
-          .execute(
-            HttpClientRequest.post("https://api.openai.com/v1/audio/speech").pipe(
+        const request = elevenLabs
+          ? HttpClientRequest.post(
+              `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(config.elevenLabsVoiceId)}?output_format=pcm_24000`,
+            ).pipe(
+              HttpClientRequest.setHeader("xi-api-key", key),
+              HttpClientRequest.setHeader("content-type", "application/json"),
+              HttpClientRequest.bodyJsonUnsafe({ text, model_id: "eleven_multilingual_v2" }),
+            )
+          : HttpClientRequest.post("https://api.openai.com/v1/audio/speech").pipe(
               HttpClientRequest.bearerToken(Redacted.make(key)),
               HttpClientRequest.setHeader("content-type", "application/json"),
               HttpClientRequest.bodyJsonUnsafe({
@@ -305,21 +322,35 @@ const make = Effect.gen(function* () {
                 voice: config.voice,
                 response_format: "wav",
               }),
-            ),
-          )
-          .pipe(
-            Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
-            Effect.provideService(HttpClient.TracerPropagationEnabled, false),
-            Effect.mapError(SpeechSynthesisOperationError.fromCause),
-          );
+            );
+        const response = yield* http.execute(request).pipe(
+          Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
+          Effect.provideService(HttpClient.TracerPropagationEnabled, false),
+          Effect.updateService(Headers.CurrentRedactedNames, (names) => [...names, "xi-api-key"]),
+          Effect.mapError(() => new SpeechSynthesisError({ reason: "unavailable" })),
+        );
+        if (response.status === 401 || response.status === 403)
+          return yield* new SpeechSynthesisError({ reason: "rejected-key" });
+        if (response.status === 429)
+          return yield* new SpeechSynthesisError({ reason: "rate-limit" });
         if (response.status !== 200)
           return yield* new SpeechSynthesisError({ reason: "unavailable" });
         audio = new Uint8Array(
           yield* response.arrayBuffer.pipe(
             Effect.provideService(HttpIncomingMessage.MaxBodySize, ByteSize.bytes(MAX_AUDIO_BYTES)),
-            Effect.mapError(SpeechSynthesisOperationError.fromCause),
+            Effect.mapError(() => new SpeechSynthesisError({ reason: "unavailable" })),
           ),
         );
+        if (elevenLabs) {
+          if (
+            audio.length === 0 ||
+            audio.length % 2 !== 0 ||
+            audio.length > MAX_AUDIO_BYTES - 44 ||
+            /json|^text\//i.test(response.headers["content-type"] ?? "")
+          )
+            return yield* new SpeechSynthesisError({ reason: "invalid-audio" });
+          audio = pcm16Wave(audio, 24000);
+        }
       }
       if (
         audio.length < 44 ||

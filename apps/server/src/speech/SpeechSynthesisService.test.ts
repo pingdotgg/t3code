@@ -139,39 +139,92 @@ it.effect("returns local WAV and removes temporary output after success or inter
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect("uses only the explicitly selected external engine and returns bounded WAV", () =>
-  Effect.gen(function* () {
-    const upstream = vi.fn<typeof fetch>(async () => new Response(wave()));
-    const run = vi.fn(() => Effect.succeed(success));
-    const service = Context.get(
-      yield* Layer.build(
-        SpeechSynthesisService.layer.pipe(
-          Layer.provide(
-            ServerSettings.layerTest({
-              cloudSpeechCredentials: { openai: "fixture" },
-            }),
+it.effect.each(["openai", "elevenlabs"] as const)(
+  "uses only the selected %s engine and returns bounded WAV",
+  (engine) =>
+    Effect.gen(function* () {
+      const pcm = new Uint8Array([0, 0, 1, 0]);
+      const upstream = vi.fn<typeof fetch>(
+        async () =>
+          new Response(engine === "elevenlabs" ? pcm : wave(), {
+            headers: { "content-type": "audio/wav" },
+          }),
+      );
+      const run = vi.fn(() => Effect.succeed(success));
+      const service = Context.get(
+        yield* Layer.build(
+          SpeechSynthesisService.layer.pipe(
+            Layer.provide(
+              ServerSettings.layerTest({
+                cloudSpeechCredentials: { openai: "openai-fixture" },
+                speechOutput: {
+                  ...DEFAULT_SPEECH_OUTPUT_SETTINGS,
+                  elevenLabsApiKey: "eleven-fixture",
+                },
+              }),
+            ),
+            Layer.provide(Layer.succeed(ProcessRunner.ProcessRunner, { run })),
+            Layer.provide(dependencies),
           ),
-          Layer.provide(Layer.succeed(ProcessRunner.ProcessRunner, { run })),
-          Layer.provide(dependencies),
         ),
-      ),
-      SpeechSynthesisService.SpeechSynthesisService,
-    );
-    const synthesize = service
-      .synthesize({ text: "Olá", engine: "openai" })
-      .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
-    expect(yield* synthesize).toEqual(wave());
-    expect(run).not.toHaveBeenCalled();
-    const [url, init] = upstream.mock.calls[0]!;
-    expect(String(url)).toBe("https://api.openai.com/v1/audio/speech");
-    expect(init?.redirect).toBe("error");
-    expect(new Headers(init?.headers).get("authorization")).toBe("Bearer fixture");
-    expect(JSON.parse(String(init?.body))).toMatchObject({ input: "Olá", response_format: "wav" });
-    upstream.mockResolvedValueOnce(new Response("private upstream details", { status: 500 }));
-    expect(yield* Effect.flip(synthesize)).toMatchObject({ reason: "unavailable" });
-    upstream.mockResolvedValueOnce(new Response("invalid audio"));
-    expect(yield* Effect.flip(synthesize)).toMatchObject({ reason: "invalid-audio" });
-  }).pipe(Effect.scoped),
+        SpeechSynthesisService.SpeechSynthesisService,
+      );
+      const synthesize = service
+        .synthesize({ text: "Olá", engine })
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
+      const audio = yield* synthesize;
+      if (engine === "elevenlabs") {
+        expect(audio.subarray(44)).toEqual(pcm);
+        const header = new DataView(audio.buffer, audio.byteOffset, 44);
+        expect(new TextDecoder().decode(audio.subarray(0, 4))).toBe("RIFF");
+        expect(new TextDecoder().decode(audio.subarray(8, 16))).toBe("WAVEfmt ");
+        expect(header.getUint32(4, true)).toBe(audio.length - 8);
+        expect(header.getUint16(20, true)).toBe(1);
+        expect(header.getUint16(22, true)).toBe(1);
+        expect(header.getUint32(24, true)).toBe(24000);
+        expect(header.getUint32(28, true)).toBe(48000);
+        expect(header.getUint16(32, true)).toBe(2);
+        expect(header.getUint16(34, true)).toBe(16);
+        expect(header.getUint32(40, true)).toBe(pcm.length);
+      } else expect(audio).toEqual(wave());
+      expect(run).not.toHaveBeenCalled();
+      const [url, init] = upstream.mock.calls[0]!;
+      expect(String(url)).toBe(
+        engine === "elevenlabs"
+          ? `https://api.elevenlabs.io/v1/text-to-speech/${DEFAULT_SPEECH_OUTPUT_SETTINGS.elevenLabsVoiceId}?output_format=pcm_24000`
+          : "https://api.openai.com/v1/audio/speech",
+      );
+      expect(init?.redirect).toBe("error");
+      const headers = new Headers(init?.headers);
+      expect(headers.get("traceparent")).toBeNull();
+      expect(headers.get(engine === "elevenlabs" ? "authorization" : "xi-api-key")).toBeNull();
+      expect(headers.get(engine === "elevenlabs" ? "xi-api-key" : "authorization")).toBe(
+        engine === "elevenlabs" ? "eleven-fixture" : "Bearer openai-fixture",
+      );
+      expect(JSON.parse(String(init?.body))).toEqual(
+        engine === "elevenlabs"
+          ? { text: "Olá", model_id: "eleven_multilingual_v2" }
+          : { model: "gpt-4o-mini-tts", input: "Olá", voice: "coral", response_format: "wav" },
+      );
+      for (const [status, reason] of [
+        [500, "unavailable"],
+        [401, "rejected-key"],
+        [429, "rate-limit"],
+      ] as const) {
+        upstream.mockResolvedValueOnce(new Response("private upstream details", { status }));
+        expect(yield* Effect.flip(synthesize)).toMatchObject({ reason });
+      }
+      upstream.mockResolvedValueOnce(new Response("invalid audio"));
+      expect(yield* Effect.flip(synthesize)).toMatchObject({ reason: "invalid-audio" });
+      if (engine === "elevenlabs") {
+        upstream.mockResolvedValueOnce(
+          new Response("{}", { headers: { "content-type": "application/json" } }),
+        );
+        expect(yield* Effect.flip(synthesize)).toMatchObject({ reason: "invalid-audio" });
+        upstream.mockResolvedValueOnce(new Response(new Uint8Array()));
+        expect(yield* Effect.flip(synthesize)).toMatchObject({ reason: "invalid-audio" });
+      }
+    }).pipe(Effect.scoped),
 );
 
 it.effect(

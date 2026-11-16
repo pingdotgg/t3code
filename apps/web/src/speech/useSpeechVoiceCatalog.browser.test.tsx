@@ -138,4 +138,7 @@ it("starts off, checks the selected environment, and offers managed Piper instal
   await screen.getByRole("combobox", { name: "Read aloud with" }).click();
   await page.getByRole("option", { name: "Off", exact: true }).click();
   expect(getClientSettings().speechOutputDestination).toBeNull();
+  await screen.getByRole("combobox", { name: "Playback speed" }).click();
+  await page.getByRole("option", { name: "1.5×", exact: true }).click();
+  expect(getClientSettings().speechPlaybackRate).toBe(1.5);
 });

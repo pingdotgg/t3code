@@ -2,13 +2,18 @@ import { EnvironmentId, DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import type { SpeechAudioPlayer } from "@t3tools/client-runtime/voice-output";
 import * as Option from "effect/Option";
 import { expect, it, vi } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
 import { render } from "../../test/render";
 import { useEnvironmentScope } from "../state/session";
 import { ResponseSpeechButton } from "./ResponseSpeechButton";
 import { voiceOutput } from "./voiceOutput";
 
 vi.mock("./useSpeechOutputDestination", () => ({
-  useSpeechOutputDestination: () => ({ destination: null }),
+  useSpeechOutputDestination: () => ({
+    destination: null,
+    playbackRate: 1,
+    setPlaybackRate: (rate: number) => voiceOutput.setPlaybackRate(rate),
+  }),
 }));
 vi.mock("../state/session", () => ({
   usePreparedConnection: () => Option.none(),
@@ -30,6 +35,7 @@ vi.mock("./voiceOutput", async () => {
         signal.addEventListener("abort", () => resolve(), { once: true }),
       );
     },
+    setPlaybackRate: () => {},
     pause: () => {},
     resume: async () => {},
   };
@@ -47,6 +53,9 @@ it("keeps pause, resume, and stop available without connection or synthesis perm
       // Playback ownership and connection availability do not depend on routing.
       { router: false },
     );
+    await screen.getByRole("combobox", { name: "Playback speed" }).click();
+    await page.getByRole("option", { name: "1.5×", exact: true }).click();
+    expect(voiceOutput.getSnapshot().phase).toBe("playing");
     await screen.getByRole("button", { name: "Pause response audio" }).click();
     await expect
       .element(screen.getByRole("button", { name: "Resume response audio" }))

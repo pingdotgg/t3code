@@ -14,7 +14,7 @@ import { uuidv4 } from "../../lib/uuid";
 
 let current: ReturnType<typeof createAudioPlaybackSession> | null = null;
 const player: SpeechAudioPlayer = {
-  async play(bytes, signal, onPlaying) {
+  async play(bytes, signal, onPlaying, rate) {
     const file = new File(Paths.cache, `t3-speech-${uuidv4()}.wav`);
     try {
       signal.throwIfAborted();
@@ -23,6 +23,9 @@ const player: SpeechAudioPlayer = {
       file.write(bytes);
       await new Promise<void>((resolve, reject) => {
         const audio = createAudioPlayer(file.uri, { updateInterval: 500 });
+        audio.shouldCorrectPitch = true;
+        audio.setPlaybackRate(rate, "high");
+        currentAudioRate = (rate) => audio.setPlaybackRate(rate, "high");
         let finished = false;
         const playback = createAudioPlaybackSession(audio, false, (requested) => {
           if (!requested && !finished) finish(new Error("Response playback was interrupted."));
@@ -47,6 +50,7 @@ const player: SpeechAudioPlayer = {
           if (current === playback) {
             current = null;
             currentAudioPause = null;
+            currentAudioRate = null;
           }
           if (error) reject(error);
           else resolve();
@@ -66,6 +70,7 @@ const player: SpeechAudioPlayer = {
       if (file.exists) file.delete();
     }
   },
+  setPlaybackRate: (rate) => currentAudioRate?.(rate),
   pause: () => {
     // A user pause retains ownership, so the recorder can still interrupt this playback.
     currentAudioPause?.();
@@ -74,6 +79,7 @@ const player: SpeechAudioPlayer = {
     await current?.play();
   },
 };
+let currentAudioRate: ((rate: number) => void) | null = null;
 let currentAudioPause: (() => void) | null = null;
 
 export const voiceOutput = new VoiceOutputController(player);

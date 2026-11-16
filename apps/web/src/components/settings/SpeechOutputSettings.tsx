@@ -1,13 +1,20 @@
 import {
   AuthSettingsWriteScope,
+  CloudSpeechApiKey,
   SpeechOutputSettings as SpeechOutputSchema,
 } from "@t3tools/contracts";
+import { useState } from "react";
+import * as Schema from "effect/Schema";
 import { CloudIcon, MonitorIcon, VolumeXIcon } from "lucide-react";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { useSpeechOutputDestination } from "../../speech/useSpeechOutputDestination";
 import { useSpeechVoiceCatalog } from "../../speech/useSpeechVoiceCatalog";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { SecretInput } from "./SecretInput";
+import { DraftInput } from "../ui/draft-input";
 import { Button } from "../ui/button";
 import {
   Select,
@@ -19,7 +26,11 @@ import {
   SelectGroupLabel,
 } from "../ui/select";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { SpeechPlaybackSpeed } from "../../speech/SpeechPlaybackSpeed";
 import { LocalSpeechVoices } from "./LocalSpeechVoices";
+
+const isApiKey = Schema.is(CloudSpeechApiKey);
+const isVoiceId = Schema.is(Schema.toType(SpeechOutputSchema.fields.elevenLabsVoiceId));
 
 export function SpeechOutputSettings() {
   const { environments } = useEnvironments();
@@ -49,12 +60,17 @@ export function SpeechOutputSettings() {
                 const picked = available.find(
                   (environment) =>
                     value === `piper:${environment.environmentId}` ||
-                    value === `openai:${environment.environmentId}`,
+                    value === `openai:${environment.environmentId}` ||
+                    value === `elevenlabs:${environment.environmentId}`,
                 );
                 if (picked)
                   choose({
                     environmentId: picked.environmentId,
-                    engine: value?.startsWith("openai:") ? "openai" : "piper",
+                    engine: value?.startsWith("elevenlabs:")
+                      ? "elevenlabs"
+                      : value?.startsWith("openai:")
+                        ? "openai"
+                        : "piper",
                   });
               }}
             >
@@ -73,7 +89,7 @@ export function SpeechOutputSettings() {
                     <span className="truncate">
                       {" "}
                       {destination
-                        ? `${destination.engine === "openai" ? "OpenAI via " : ""}${chosen?.label ?? "Chosen environment (unavailable)"}`
+                        ? `${destination.engine === "elevenlabs" ? "ElevenLabs via " : destination.engine === "openai" ? "OpenAI via " : ""}${chosen?.label ?? "Chosen environment (unavailable)"}`
                         : "Off"}
                     </span>
                   </span>
@@ -109,6 +125,12 @@ export function SpeechOutputSettings() {
                         OpenAI
                       </span>
                     </SelectItem>
+                    <SelectItem value={`elevenlabs:${environment.environmentId}`}>
+                      <span className="flex items-center gap-2">
+                        <CloudIcon aria-hidden className="size-4" />
+                        ElevenLabs
+                      </span>
+                    </SelectItem>
                   </SelectGroup>
                 ))}
                 {destination &&
@@ -122,9 +144,17 @@ export function SpeechOutputSettings() {
           </div>
         }
       />
+      <SettingsRow
+        title="Playback speed"
+        description="Adjust listening speed on this device without generating new audio."
+        devicePreference
+        control={<SpeechPlaybackSpeed />}
+      />
       {destination && chosen ? (
         destination.engine === "piper" ? (
           <LocalPlaybackSettings key={chosen.environmentId} environment={chosen} />
+        ) : destination.engine === "elevenlabs" ? (
+          <ElevenLabsPlaybackSettings key={chosen.environmentId} environment={chosen} />
         ) : (
           <OpenAiPlaybackSettings key={chosen.environmentId} environment={chosen} />
         )
@@ -224,5 +254,91 @@ function OpenAiPlaybackSettings({ environment }: { environment: EnvironmentPrese
         </Select>
       }
     />
+  );
+}
+
+function ElevenLabsPlaybackSettings({ environment }: { environment: EnvironmentPresentation }) {
+  const config = useEnvironmentSettings(
+    environment.environmentId,
+    (settings) => settings.speechOutput,
+  );
+  const canManage = useEnvironmentScope(environment.environmentId, AuthSettingsWriteScope);
+  const update = useAtomCommand(serverEnvironment.updateSettings);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const key = draft.trim();
+  const saveKey = async (key: string) => {
+    setSaving(true);
+    const result = await update({
+      environmentId: environment.environmentId,
+      input: { patch: { speechOutput: { elevenLabsApiKey: key } } },
+    });
+    setSaving(false);
+    if (result._tag === "Success") setDraft("");
+  };
+  return (
+    <>
+      <SettingsRow
+        title="ElevenLabs API key"
+        description={`Stored on ${environment.label}. Sends response text to ElevenLabs. API charges apply.`}
+        control={
+          <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:max-w-96">
+            <div className="min-w-0 flex-1">
+              <SecretInput
+                aria-label="ElevenLabs API key"
+                size="sm"
+                configured={Boolean(config.elevenLabsApiKey)}
+                value={draft}
+                disabled={!canManage || saving}
+                maxLength={4096}
+                onChange={(event) => setDraft(event.target.value)}
+              />
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!canManage || saving || !isApiKey(key)}
+              onClick={() => void saveKey(key)}
+            >
+              Save
+            </Button>
+            {config.elevenLabsApiKey ? (
+              <Button
+                size="sm"
+                variant="ghost-destructive"
+                disabled={!canManage || saving}
+                onClick={() => void saveKey("")}
+              >
+                Remove key
+              </Button>
+            ) : null}
+          </div>
+        }
+      />
+      <SettingsRow
+        title="ElevenLabs voice ID"
+        description="Copy a voice ID from your ElevenLabs voice library. George is selected by default."
+        control={
+          <div className="w-full @min-[32rem]/settings-row:max-w-72">
+            <DraftInput
+              aria-label="ElevenLabs voice ID"
+              size="sm"
+              value={config.elevenLabsVoiceId}
+              disabled={!canManage}
+              maxLength={128}
+              spellCheck={false}
+              onCommit={(value) => {
+                const elevenLabsVoiceId = value.trim();
+                if (isVoiceId(elevenLabsVoiceId))
+                  void update({
+                    environmentId: environment.environmentId,
+                    input: { patch: { speechOutput: { elevenLabsVoiceId } } },
+                  });
+              }}
+            />
+          </div>
+        }
+      />
+    </>
   );
 }

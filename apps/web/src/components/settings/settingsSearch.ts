@@ -552,7 +552,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Response playback",
     to: "/settings/voice",
     searchTerms: [
-      "tts text to speech read aloud speaker listen piper local output OpenAI voice model destination environment off download install",
+      "tts text to speech read aloud speaker listen speed playback rate ElevenLabs piper local output OpenAI voice model destination environment off download install",
     ],
   },
   {

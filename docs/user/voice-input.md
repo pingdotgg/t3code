@@ -166,7 +166,7 @@ are omitted; link labels and inline code are read.
 
 Configure **Settings → Voice → Response playback → Read aloud with**. Playback
 starts **Off** on each device. Choose an environment for local playback, or
-**OpenAI** under **Cloud via** an environment. The destination can differ from
+**OpenAI** or **ElevenLabs** under **Cloud via** an environment. The destination can differ from
 the environment that owns the thread.
 
 When you choose an environment, T3 Code checks its platform. Choose **Download
@@ -187,8 +187,18 @@ When connected remotely, synthesis runs on that environment and audio plays on
 the device where you selected the response. The mobile app does not need a Piper
 installation of its own.
 
+Adjust **Playback speed** from 0.5× to 2× in Voice settings or beside the active
+response audio. Speed changes apply immediately without generating audio again
+and are saved on this device.
+
 To use a service instead, explicitly select **OpenAI** under **Cloud via** the
 environment whose API key you want to use, then choose a voice. It
 uses the OpenAI API key saved under Cloud providers in Voice settings, sends the
 response text to OpenAI, and incurs API charges. A local synthesis failure never
 switches to OpenAI automatically.
+
+For **ElevenLabs**, choose it under **Cloud via** the environment that should send
+the text. Save an ElevenLabs API key and enter a voice ID from your voice library
+in Response playback settings. George is the default voice; synthesis uses
+Multilingual v2. The key stays on the chosen environment. Response text is sent
+to ElevenLabs and API charges apply. Playback never switches services automatically.

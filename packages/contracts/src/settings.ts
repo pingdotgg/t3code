@@ -64,6 +64,7 @@ import {
   SpeechPostProcessingPromptSettings,
   SpeechOutputSettings,
   SpeechOutputDestination,
+  SpeechPlaybackRate,
   DEFAULT_SPEECH_OUTPUT_SETTINGS,
 } from "./speech.ts";
 
@@ -406,6 +407,7 @@ export const VoiceTranscriptionDestination = Schema.Union([
 export type VoiceTranscriptionDestination = typeof VoiceTranscriptionDestination.Type;
 
 export const ClientSettingsSchema = Schema.Struct({
+  speechPlaybackRate: SpeechPlaybackRate.pipe(Schema.withDecodingDefault(Effect.succeed(1))),
   speechOutputDestination: Schema.NullOr(SpeechOutputDestination).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1865,6 +1867,10 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   speechOutput: Schema.optionalKey(
     Schema.Struct({
+      elevenLabsApiKey: Schema.optionalKey(SettingsSecretValue),
+      elevenLabsVoiceId: Schema.optionalKey(
+        Schema.toType(SpeechOutputSettings.fields.elevenLabsVoiceId),
+      ),
       piperVoiceId: Schema.optionalKey(Schema.toType(SpeechOutputSettings.fields.piperVoiceId)),
       voice: Schema.optionalKey(SpeechOutputSettings.fields.voice),
     }),
@@ -2114,6 +2120,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  speechPlaybackRate: Schema.optionalKey(SpeechPlaybackRate),
   speechOutputDestination: Schema.optionalKey(Schema.NullOr(SpeechOutputDestination)),
   voiceMicrophone: Schema.optionalKey(Schema.String),
   voiceMicrophones: Schema.optionalKey(Schema.Array(VoiceMicrophoneEntry)),

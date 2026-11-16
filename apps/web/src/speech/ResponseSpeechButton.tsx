@@ -1,3 +1,4 @@
+import { SpeechPlaybackSpeed } from "./SpeechPlaybackSpeed";
 import { useSpeechOutputDestination } from "./useSpeechOutputDestination";
 import { synthesizeEnvironmentSpeech } from "@t3tools/client-runtime/voice-input";
 import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/contracts";
@@ -14,7 +15,9 @@ import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { isVoiceRecordingActive, voiceOutput } from "./voiceOutput";
 
 export function ResponseSpeechScope({ owner, children }: { owner: string; children: ReactNode }) {
-  const { destination } = useSpeechOutputDestination();
+  const { destination, playbackRate } = useSpeechOutputDestination();
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- synchronizes the external player with the saved speed, including changes from other tabs
+  useEffect(() => voiceOutput.setPlaybackRate(playbackRate), [playbackRate]);
   const destinationKey = destination ? `${destination.environmentId}:${destination.engine}` : "off";
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- stops the external player when this thread closes or its playback destination changes
   useEffect(() => {
@@ -60,9 +63,11 @@ export function ResponseSpeechButton(props: {
         ? "Pause response audio"
         : phase === "paused"
           ? "Resume response audio"
-          : destination?.engine === "openai"
-            ? "Read aloud using OpenAI"
-            : "Read aloud locally";
+          : destination?.engine === "elevenlabs"
+            ? "Read aloud using ElevenLabs"
+            : destination?.engine === "openai"
+              ? "Read aloud using OpenAI"
+              : "Read aloud locally";
   const Icon =
     phase === "loading"
       ? SquareIcon
@@ -116,6 +121,11 @@ export function ResponseSpeechButton(props: {
         </TooltipTrigger>
         <TooltipPopup side="top">{label}</TooltipPopup>
       </Tooltip>
+      {active ? (
+        <div className="w-16">
+          <SpeechPlaybackSpeed compact />
+        </div>
+      ) : null}
       {phase === "playing" || phase === "paused" ? (
         <Button
           type="button"

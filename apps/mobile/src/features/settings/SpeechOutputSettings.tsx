@@ -1,9 +1,13 @@
 import { useState } from "react";
-import { ScrollView } from "react-native";
+import { ScrollView, View } from "react-native";
 import {
   AuthSettingsWriteScope,
+  CloudSpeechApiKey,
   SpeechOutputSettings as SpeechOutputSchema,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import { AppTextInput } from "../../components/ui/AppText";
+import { SecretTextInput } from "../../components/ui/SecretTextInput";
 import { ListActionRow } from "../../components/ui/ListActionRow";
 import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
 import { ListSection } from "../../components/ui/ListSection";
@@ -15,7 +19,11 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useSpeechOutputDestination } from "../voice-output/useSpeechOutputDestination";
 import { useSpeechVoiceCatalog } from "../voice-output/useSpeechVoiceCatalog";
 import { SettingsSection } from "./components/SettingsSection";
+import { SpeechPlaybackSpeed } from "../voice-output/SpeechPlaybackSpeed";
 import { LocalSpeechVoices } from "./LocalSpeechVoices";
+
+const isApiKey = Schema.is(CloudSpeechApiKey);
+const isVoiceId = Schema.is(Schema.toType(SpeechOutputSchema.fields.elevenLabsVoiceId));
 
 export function SpeechOutputSettings({
   environments,
@@ -40,11 +48,12 @@ export function SpeechOutputSettings({
           label="Read aloud with"
           detail={
             destination
-              ? `${destination.engine === "openai" ? "OpenAI via " : ""}${chosen?.label ?? "Unavailable environment"}`
+              ? `${destination.engine === "elevenlabs" ? "ElevenLabs via " : destination.engine === "openai" ? "OpenAI via " : ""}${chosen?.label ?? "Unavailable environment"}`
               : "Off"
           }
           onPress={() => setChoosing(true)}
         />
+        <SpeechPlaybackSpeed />
       </SettingsSection>
       {choosing ? (
         <Sheet title="Read aloud with" onClose={() => setChoosing(false)}>
@@ -93,6 +102,19 @@ export function SpeechOutputSettings({
                     setChoosing(false);
                   }}
                 />
+                <ListChoiceRow
+                  label="ElevenLabs"
+                  description="Sends response text to ElevenLabs. API charges apply."
+                  separated
+                  selected={
+                    destination?.engine === "elevenlabs" &&
+                    destination.environmentId === environment.environmentId
+                  }
+                  onPress={() => {
+                    choose({ environmentId: environment.environmentId, engine: "elevenlabs" });
+                    setChoosing(false);
+                  }}
+                />
               </ListSection>
             ))}
           </ScrollView>
@@ -101,6 +123,8 @@ export function SpeechOutputSettings({
       {chosen && destination ? (
         destination.engine === "piper" ? (
           <LocalPlaybackSettings key={chosen.environmentId} environment={chosen} />
+        ) : destination.engine === "elevenlabs" ? (
+          <ElevenLabsPlaybackSettings key={chosen.environmentId} environment={chosen} />
         ) : (
           <OpenAiPlaybackSettings key={chosen.environmentId} environment={chosen} />
         )
@@ -203,6 +227,87 @@ function OpenAiPlaybackSettings({ environment }: { environment: EnvironmentPrese
           </ScrollView>
         </Sheet>
       ) : null}
+    </>
+  );
+}
+
+function ElevenLabsPlaybackSettings({ environment }: { environment: EnvironmentPresentation }) {
+  const config = environment.serverConfig?.settings.speechOutput;
+  const canManage = useEnvironmentScope(environment.environmentId, AuthSettingsWriteScope);
+  const update = useAtomCommand(serverEnvironment.updateSettings);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const saveKey = async (key: string) => {
+    setSaving(true);
+    const result = await update({
+      environmentId: environment.environmentId,
+      input: { patch: { speechOutput: { elevenLabsApiKey: key } } },
+    });
+    setSaving(false);
+    if (result._tag === "Success") setDraft("");
+  };
+  if (!config) return null;
+  return (
+    <>
+      <SettingsSection
+        title="ElevenLabs API key"
+        footer={`Stored on ${environment.label}. Sends response text to ElevenLabs. API charges apply.`}
+      >
+        <View className="p-3">
+          <SecretTextInput
+            accessibilityLabel="ElevenLabs API key"
+            placeholder={
+              config.elevenLabsApiKey
+                ? "Stored secret, enter a new value to replace"
+                : "Enter API key"
+            }
+            value={draft}
+            onChangeText={setDraft}
+            editable={canManage && !saving}
+            onSubmitEditing={(value) => {
+              const key = value.trim();
+              if (isApiKey(key) && canManage && !saving) void saveKey(key);
+            }}
+          />
+        </View>
+        <ListActionRow
+          label="Save key"
+          disabled={!canManage || saving || !isApiKey(draft.trim())}
+          onPress={() => void saveKey(draft.trim())}
+        />
+        {config.elevenLabsApiKey ? (
+          <ListActionRow
+            label="Remove key"
+            tone="danger"
+            disabled={!canManage || saving}
+            onPress={() => void saveKey("")}
+          />
+        ) : null}
+      </SettingsSection>
+      <SettingsSection
+        title="ElevenLabs voice ID"
+        footer="Copy a voice ID from your ElevenLabs voice library. George is selected by default."
+      >
+        <View className="p-3">
+          <AppTextInput
+            accessibilityLabel="ElevenLabs voice ID"
+            key={config.elevenLabsVoiceId}
+            defaultValue={config.elevenLabsVoiceId}
+            editable={canManage}
+            maxLength={128}
+            autoCorrect={false}
+            autoCapitalize="none"
+            onEndEditing={(event) => {
+              const elevenLabsVoiceId = event.nativeEvent.text.trim();
+              if (isVoiceId(elevenLabsVoiceId))
+                void update({
+                  environmentId: environment.environmentId,
+                  input: { patch: { speechOutput: { elevenLabsVoiceId } } },
+                });
+            }}
+          />
+        </View>
+      </SettingsSection>
     </>
   );
 }

@@ -28,6 +28,7 @@ it("discards late synthesis after switching messages and aborts active playback"
         signal.addEventListener("abort", () => resolve(), { once: true }),
       );
     }),
+    setPlaybackRate: vi.fn(),
     pause: vi.fn(),
     resume: vi.fn(async () => {}),
   };
@@ -54,7 +55,12 @@ it("ends the queue on a synthesis failure without playing stale segments", async
   const synthesize = vi.fn(async () => {
     throw new Error("Local engine unavailable");
   });
-  const controller = new VoiceOutputController({ play, pause() {}, async resume() {} });
+  const controller = new VoiceOutputController({
+    play,
+    setPlaybackRate() {},
+    pause() {},
+    async resume() {},
+  });
   await controller.start("a", "First\n\nSecond", synthesize);
   expect(synthesize).toHaveBeenCalledOnce();
   expect(play).not.toHaveBeenCalled();
@@ -62,4 +68,27 @@ it("ends the queue on a synthesis failure without playing stale segments", async
     phase: "error",
     error: "Local engine unavailable",
   });
+});
+
+it("updates active audio and retains speed across queued chunks and messages", async () => {
+  const rates: number[] = [];
+  const player: SpeechAudioPlayer = {
+    play: async (_audio, _signal, onPlaying, rate) => {
+      rates.push(rate);
+      onPlaying();
+      if (rates.length === 1) controller.setPlaybackRate(1.5);
+    },
+    setPlaybackRate: vi.fn(),
+    pause() {},
+    async resume() {},
+  };
+  const controller = new VoiceOutputController(player);
+  controller.setPlaybackRate(1.25);
+  await controller.start("a", "First\n\nSecond", async () => new Uint8Array([1]));
+  expect(player.setPlaybackRate).toHaveBeenLastCalledWith(1.5);
+  expect(rates).toEqual([1.25, 1.5]);
+  for (const rate of [NaN, Infinity, 0, 3])
+    expect(() => controller.setPlaybackRate(rate)).toThrow(RangeError);
+  await controller.start("b", "Third", async () => new Uint8Array([1]));
+  expect(rates).toEqual([1.25, 1.5, 1.5]);
 });

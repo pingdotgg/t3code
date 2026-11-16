@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
+import { SettingsSecretValue } from "./settingsSecretValue.ts";
 import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const CloudSpeechApiKey = TrimmedNonEmptyString.check(
@@ -356,7 +357,15 @@ export const SpeechStreamEvent = Schema.Union([
 ]);
 export type SpeechStreamEvent = typeof SpeechStreamEvent.Type;
 
+export const SpeechPlaybackRate = Schema.Literals([0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]);
+export type SpeechPlaybackRate = typeof SpeechPlaybackRate.Type;
+
 export const SpeechOutputSettings = Schema.Struct({
+  elevenLabsApiKey: SettingsSecretValue.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  elevenLabsVoiceId: Schema.String.check(
+    Schema.isMaxLength(128),
+    Schema.isPattern(/^[a-zA-Z0-9_-]+$/),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed("JBFqnCBsd6RMkjVDRZzb"))),
   piperVoiceId: Schema.String.check(Schema.isMaxLength(128)).pipe(
     Schema.withDecodingDefault(Effect.succeed("")),
   ),
@@ -364,13 +373,15 @@ export const SpeechOutputSettings = Schema.Struct({
 });
 export type SpeechOutputSettings = typeof SpeechOutputSettings.Type;
 export const DEFAULT_SPEECH_OUTPUT_SETTINGS: SpeechOutputSettings = {
+  elevenLabsApiKey: "",
+  elevenLabsVoiceId: "JBFqnCBsd6RMkjVDRZzb",
   piperVoiceId: "",
   voice: "coral",
 };
 
 export const SpeechSynthesisRequest = Schema.Struct({
   text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2000)),
-  engine: Schema.Literals(["piper", "openai"]),
+  engine: Schema.Literals(["piper", "openai", "elevenlabs"]),
 });
 export type SpeechSynthesisRequest = typeof SpeechSynthesisRequest.Type;
 
@@ -396,6 +407,8 @@ export class SpeechSynthesisError extends Schema.TaggedError<SpeechSynthesisErro
       "invalid-text",
       "unavailable",
       "invalid-audio",
+      "rejected-key",
+      "rate-limit",
       "voice-not-found",
       "voice-not-installed",
       "busy",
@@ -404,6 +417,10 @@ export class SpeechSynthesisError extends Schema.TaggedError<SpeechSynthesisErro
 ) {
   override get message(): string {
     switch (this.reason) {
+      case "rejected-key":
+        return "The speech provider rejected this API key. Check its permissions and billing.";
+      case "rate-limit":
+        return "The speech provider reached a usage limit. Check your quota or try again later.";
       case "not-configured":
         return "Configure response playback in Settings → Voice on this environment first.";
       case "configuration-changed":

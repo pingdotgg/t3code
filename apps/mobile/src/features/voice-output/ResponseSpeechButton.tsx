@@ -3,18 +3,21 @@ import { useFocusEffect } from "@react-navigation/native";
 import { synthesizeEnvironmentSpeech } from "@t3tools/client-runtime/voice-input";
 import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { Pressable, View, type ColorValue } from "react-native";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import * as Dialog from "../../components/ui/Dialog";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { runSpeech } from "../voice-input/voiceDestination";
+import { SpeechPlaybackSpeed } from "./SpeechPlaybackSpeed";
 import { useSpeechOutputDestination } from "./useSpeechOutputDestination";
 import { voiceOutput } from "./voiceOutput";
 
 export function useResponseSpeechScope(owner: string) {
-  const { destination } = useSpeechOutputDestination();
+  const { destination, playbackRate } = useSpeechOutputDestination();
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- synchronizes the native player with the saved playback speed
+  useEffect(() => voiceOutput.setPlaybackRate(playbackRate), [playbackRate]);
   const destinationKey = destination ? `${destination.environmentId}:${destination.engine}` : "off";
   const active = useSyncExternalStore(voiceOutput.subscribe, () => {
     const snapshot = voiceOutput.getSnapshot();
@@ -71,9 +74,11 @@ export function ResponseSpeechButton(props: {
         ? "Pause response audio"
         : phase === "paused"
           ? "Resume response audio"
-          : destination?.engine === "openai"
-            ? "Read aloud using OpenAI"
-            : "Read aloud locally";
+          : destination?.engine === "elevenlabs"
+            ? "Read aloud using ElevenLabs"
+            : destination?.engine === "openai"
+              ? "Read aloud using OpenAI"
+              : "Read aloud locally";
   const click = async () => {
     if (phase === "loading") {
       voiceOutput.stop();
@@ -122,6 +127,7 @@ export function ResponseSpeechButton(props: {
           tintColor={props.tintColor}
         />
       </Pressable>
+      {active ? <SpeechPlaybackSpeed compact /> : null}
       {phase === "playing" || phase === "paused" ? (
         <Pressable
           accessibilityRole="button"
