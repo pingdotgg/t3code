@@ -94,7 +94,7 @@ describe("environment themes", () => {
     expect(getThemeDefinition("nightfall")?.label).toBe("Nightfall 2");
   });
 
-  it("lets a published theme win an id collision with a saved one", () => {
+  it("lets a theme the user saved win an id collision", () => {
     const store = new Map<string, string>();
     vi.stubGlobal("window", {
       addEventListener: vi.fn(),
@@ -106,26 +106,19 @@ describe("environment themes", () => {
       },
     });
     invalidateCustomThemes();
-    const css = ".chat-header { height: 3rem; }";
-    const [published] = publishedThemeDefinitions([NIGHTFALL_THEME]);
-    if (!published) throw new Error("expected the published theme");
-    const saved = { ...published, label: "My Nightfall" };
     try {
       appAtomRegistry.set(publishedThemes.atom, [NIGHTFALL_THEME]);
-      expect(() => installCustomTheme(saved)).toThrow("already installed");
+      expect(getThemeDefinition("nightfall")?.label).toBe("Nightfall");
+      const environment = getThemeDefinition("nightfall");
+      if (!environment) throw new Error("expected the published theme");
+      installCustomTheme({ ...environment, label: "My Nightfall" });
 
-      // The environment can publish an id after this client saved a theme under it.
-      appAtomRegistry.set(publishedThemes.atom, []);
-      installCustomTheme(saved);
-      appAtomRegistry.set(publishedThemes.atom, [{ ...NIGHTFALL_THEME, css }]);
-      expect(getThemeDefinition("nightfall")).toMatchObject({ label: "Nightfall", css });
-
-      appAtomRegistry.set(publishedThemes.atom, []);
       expect(getThemeDefinition("nightfall")?.label).toBe("My Nightfall");
     } finally {
       vi.unstubAllGlobals();
       invalidateCustomThemes();
     }
+    expect(getThemeDefinition("nightfall")?.label).toBe("Nightfall");
   });
 
   it("keeps the last published palette while the server has not answered", () => {

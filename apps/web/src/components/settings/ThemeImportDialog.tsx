@@ -7,7 +7,6 @@ import { cn } from "../../lib/utils";
 import {
   getCustomThemes,
   installCustomTheme,
-  isPublishedThemeId,
   parseThemeFile,
   removeCustomTheme,
   THEME_FILE_VERSION,
@@ -41,9 +40,7 @@ function describeOversizedThemeFile(bytes: number): string | null {
 }
 
 function isThemeIdTaken(themeId: string): boolean {
-  return (
-    isPublishedThemeId(themeId) || getCustomThemes().some((existing) => existing.id === themeId)
-  );
+  return getCustomThemes().some((existing) => existing.id === themeId);
 }
 
 function escapeJsonHtml(value: string): string {
@@ -483,11 +480,9 @@ function ThemeImportBody({
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                {conflicts.some((theme) => isPublishedThemeId(theme.id)) ? null : (
-                  <Button size="sm" onClick={() => resolveConflicts("update")}>
-                    Update existing
-                  </Button>
-                )}
+                <Button size="sm" onClick={() => resolveConflicts("update")}>
+                  Update existing
+                </Button>
                 <Button size="sm" variant="outline" onClick={() => resolveConflicts("copy")}>
                   Keep both
                 </Button>
