@@ -13,6 +13,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   retainedTerminalHistory,
+  terminalSequenceEnd,
+  terminalSequenceStateAfter,
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -59,10 +61,16 @@ vi.mock("effect/SynchronizedRef", async (importOriginal) => {
 
 // The server omits DOM types, which include TypeScript's WebAssembly declarations.
 
+const POWERSHELL_ARGS = [
+  "-NoLogo",
+  "-NoExit",
+  "-Command",
+  "[Console]::OutputEncoding = $OutputEncoding = [System.Text.UTF8Encoding]::new()",
+];
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 class FakePtyProcess implements PtyAdapter.PtyProcess {
-  readonly writes: string[] = [];
+  readonly writes: Array<string | Buffer> = [];
   readonly resizeCalls: Array<{ cols: number; rows: number }> = [];
   readonly killSignals: Array<string | undefined> = [];
   readonly pid: number;
@@ -78,7 +86,7 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
     this.pid = pid;
   }
 
-  write(data: string): void {
+  write(data: string | Buffer): void {
     if (this.writeFailure !== undefined) {
       throw this.writeFailure;
     }
@@ -240,6 +248,7 @@ interface CreateManagerOptions {
     ReadonlyArray<{ readonly pid: number; readonly ppid: number; readonly name: string }>,
     never
   >;
+  foregroundProcessGroup?: (terminalPid: number) => Effect.Effect<number | null>;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
   registerTerminalProcesses?: Parameters<
@@ -291,6 +300,8 @@ const createManager = (
           ? { subprocessInspector: options.subprocessInspector }
           : {}),
         ...(options.processTable !== undefined ? { processTable: options.processTable } : {}),
+        // Fixture pids are not real processes; default to a shell idle at its prompt.
+        foregroundProcessGroup: options.foregroundProcessGroup ?? ((pid) => Effect.succeed(pid)),
         ...(options.subprocessPollIntervalMs !== undefined
           ? { subprocessPollIntervalMs: options.subprocessPollIntervalMs }
           : {}),
@@ -337,7 +348,6 @@ function retainedHistory(text: string, maxLines: number, maxBytes = Infinity): s
   if (terminated) lines.pop();
   const retained = lines.slice(Math.max(0, lines.length - maxLines)).join("\n");
   const capped = terminated ? `${retained}\n` : retained;
-  if (Buffer.byteLength(capped) <= maxBytes) return capped;
   const points = Array.from(capped);
   let start = points.length;
   let bytes = 0;
@@ -347,7 +357,11 @@ function retainedHistory(text: string, maxLines: number, maxBytes = Infinity): s
     bytes += next;
     start -= 1;
   }
-  return points.slice(start).join("");
+  const kept = points.slice(start).join("");
+  if (maxLines <= 0 || maxBytes <= 0) return kept;
+  // A cut inside a control sequence drops the rest of that sequence too.
+  const state = terminalSequenceStateAfter(0, text, 0, text.length - kept.length);
+  return kept.slice(terminalSequenceEnd(state, kept));
 }
 
 it("preserves line and byte limits across arbitrary chunks, Unicode, ANSI sequences, and clear", () => {
@@ -365,6 +379,10 @@ it("preserves line and byte limits across arbitrary chunks, Unicode, ANSI sequen
     "\u001b[31m",
     "\u001b[0m",
     "\u001b]8;;url\u0007",
+    "\u001b]0;",
+    "\u001bP",
+    "\u0007",
+    "\u001b\\",
     "\ud83d",
     "\ude80",
   ];
@@ -375,7 +393,8 @@ it("preserves line and byte limits across arbitrary chunks, Unicode, ANSI sequen
 
   for (const maxBytes of [0, 3, 8, 64, Infinity]) {
     for (const maxLines of [0, 1, 3, 5, 5_000]) {
-      let expected = retainedHistory("before\ninitial\n", maxLines, maxBytes);
+      let full = "before\ninitial\n";
+      let expected = retainedHistory(full, maxLines, maxBytes);
       const history = new TerminalManager.BoundedTerminalHistory(
         maxLines,
         "before\ninitial\n",
@@ -386,15 +405,30 @@ it("preserves line and byte limits across arbitrary chunks, Unicode, ANSI sequen
       for (let step = 0; step < 300; step += 1) {
         if (step % 73 === 0) {
           history.clear();
-          expected = "";
-          expect(history.value()).toBe(expected);
+          full = "";
+          expect(history.value()).toBe("");
         }
         const chunk = nextFragment() + nextFragment();
         history.append(chunk);
-        expected = retainedHistory(expected + chunk, maxLines, maxBytes);
+        full += chunk;
+        expected = retainedHistory(full, maxLines, maxBytes);
         expect(history.value()).toBe(expected);
       }
     }
+  }
+});
+
+it("does not retain the tail of a control sequence whose introducer was trimmed", () => {
+  for (const [text, maxBytes, retained] of [
+    ["prefix\u001b[31mOK", 6, "OK"],
+    ["prefix\u001b]0;HIDDEN\u0007OK", 10, "OK"],
+    ["prefix\u001b]0;🙂HIDDEN\u0007OK", 9, "OK"],
+    // libghostty leaves every string but OSC at the emoji's second byte, so HELLO was visible.
+    ["prefix\u001bP🙂HELLO\u001b\\OK", 9, "HELLO\u001b\\OK"],
+  ] as const) {
+    expect(new TerminalManager.BoundedTerminalHistory(5_000, text, maxBytes).value()).toBe(
+      retained,
+    );
   }
 });
 
@@ -713,6 +747,39 @@ it.layer(
     }),
   );
 
+  // Every attached renderer answers the same query; a second DECRQM answer breaks Vim's input.
+  it.effect("lets one attached viewer answer terminal queries on a shared PTY", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const attach = (terminalId: string, viewerId: string) =>
+        manager.attachStream(openInput({ terminalId }), () => Effect.void, undefined, viewerId);
+      const stopFirst = yield* attach(DEFAULT_TERMINAL_ID, "first");
+      const stopSecond = yield* attach(DEFAULT_TERMINAL_ID, "second");
+      const stopOther = yield* attach("other", "second");
+      yield* Effect.addFinalizer(() => Effect.sync(() => (stopSecond(), stopOther())));
+      const [shared, other] = ptyAdapter.processes;
+      const modeReply = "\x1b[?12;2$y";
+      const write = (terminalId: string, viewerId: string, data: string, reply?: boolean) =>
+        manager.write(
+          { threadId: "thread-1", terminalId, data, ...(reply ? { reply } : {}) },
+          viewerId,
+        );
+
+      yield* write(DEFAULT_TERMINAL_ID, "first", modeReply, true);
+      yield* write(DEFAULT_TERMINAL_ID, "second", modeReply, true);
+      yield* write(DEFAULT_TERMINAL_ID, "second", "iHELLO");
+      yield* write("other", "second", modeReply, true);
+      expect(shared!.writes).toEqual([modeReply, "iHELLO"]);
+      expect(other!.writes).toEqual([modeReply]);
+
+      stopFirst();
+      yield* write(DEFAULT_TERMINAL_ID, "first", modeReply, true);
+      yield* write(DEFAULT_TERMINAL_ID, "second", modeReply, true);
+      yield* write(DEFAULT_TERMINAL_ID, "first", modeReply, true);
+      expect(shared!.writes).toEqual([modeReply, "iHELLO", modeReply]);
+    }),
+  );
+
   it.effect("resumed attaches after close never respawn until the terminal is reopened", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
@@ -863,9 +930,15 @@ it.layer(
 
       yield* manager.write({ threadId: "thread-1", terminalId: "default", data: "pwd\n" });
       yield* manager.write({ threadId: "thread-1", terminalId: "term-2", data: "ls\n" });
+      yield* manager.write({
+        threadId: "thread-1",
+        terminalId: "term-2",
+        data: "\x1b[M \x80(",
+        binary: true,
+      });
 
       expect(first.writes).toEqual(["pwd\n"]);
-      expect(second.writes).toEqual(["ls\n"]);
+      expect(second.writes).toEqual(["ls\n", Buffer.from([0x1b, 0x5b, 0x4d, 0x20, 0x80, 0x28])]);
       expect(ptyAdapter.spawnInputs).toHaveLength(2);
     }),
   );
@@ -915,6 +988,51 @@ it.layer(
           false,
           true,
         ]);
+      }),
+  );
+
+  it.effect("keeps a terminal whose shell was replaced by exec open on settlement", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => "/bin/bash",
+        processTable: Effect.succeed([{ pid: 9000, ppid: 1, name: "node" }]),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      yield* manager.open(openInput());
+
+      yield* manager.closeOnSettle({ threadId: "thread-1" });
+
+      expect(ptyAdapter.processes[0]?.killed).toBe(false);
+    }),
+  );
+
+  it.effect.each([
+    { label: "idle prompt", platform: "linux", foregroundProcessGroup: 9000, killed: true },
+    { label: "foreground job", platform: "linux", foregroundProcessGroup: 100, killed: false },
+    {
+      label: "unknown foreground group",
+      platform: "linux",
+      foregroundProcessGroup: null,
+      killed: false,
+    },
+    { label: "idle prompt", platform: "darwin", foregroundProcessGroup: 9000, killed: true },
+    { label: "foreground job", platform: "darwin", foregroundProcessGroup: 100, killed: false },
+  ] as const)(
+    "settles a shell with a childless shell-named child by its foreground group: $label ($platform)",
+    ({ platform, foregroundProcessGroup, killed }) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          shellResolver: () => "/bin/bash",
+          processTable: Effect.succeed([
+            { pid: 9000, ppid: 1, name: "bash" },
+            { pid: 100, ppid: 9000, name: "bash" },
+          ]),
+          foregroundProcessGroup: () => Effect.succeed(foregroundProcessGroup),
+        }).pipe(Effect.provide(layerWithHostPlatform(platform)));
+        yield* manager.open(openInput());
+
+        yield* manager.closeOnSettle({ threadId: "thread-1" });
+
+        expect(ptyAdapter.processes[0]?.killed).toBe(killed);
       }),
   );
 
@@ -1172,6 +1290,55 @@ it.layer(
     }),
   );
 
+  it.effect("clears a terminal that keeps printing while its history is saved", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      let printWhileSaving = Effect.void;
+      const printing = FileSystem.FileSystem.of({
+        ...fs,
+        writeFileString: (filePath, data, options) =>
+          printWhileSaving.pipe(Effect.andThen(fs.writeFileString(filePath, data, options))),
+      });
+      const { manager, ptyAdapter, getEvents } = yield* createManager().pipe(
+        Effect.provideService(FileSystem.FileSystem, printing),
+      );
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      // Each save sees fresh output, so the history worker never goes idle.
+      printWhileSaving = Effect.gen(function* () {
+        const printed = yield* Deferred.make<void>();
+        const unsubscribe = yield* manager.subscribe((event) =>
+          event.type === "output" ? Deferred.succeed(printed, undefined) : Effect.void,
+        );
+        process.emitData("tick\n");
+        yield* Deferred.await(printed);
+        unsubscribe();
+      });
+
+      yield* manager.clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+
+      expect((yield* getEvents).map((event) => event.type)).toContain("cleared");
+    }),
+  );
+
+  it.effect("restores a log tail that starts inside a control sequence without its remainder", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      for (const [persisted, restored] of [
+        ["\u001b]0;x\u0007ABCD", "ABCD"],
+        ["名\u001b]0;名\u0007ABCD", "ABCD"],
+        ["\u001b]0;x\u0007\u001b[31mABCD", "ABCD"],
+      ] as const) {
+        const { manager, logsDir } = yield* createManager(5, { historyByteLimit: 8 });
+        const path = yield* historyLogPath(logsDir);
+        yield* fs.makeDirectory(logsDir, { recursive: true });
+        yield* fs.writeFileString(path, persisted);
+        expect((yield* manager.open(openInput())).history).toBe(restored);
+        expect(yield* fs.readFileString(path)).toBe(restored);
+      }
+    }),
+  );
+
   it.effect("persists small terminal updates without rewriting the retained history", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1399,9 +1566,11 @@ it.layer(
 
       process.emitData("prompt ");
       process.emitData("\u001b[?2026$p\u001b[?2026;2$y\u001b[>q\u001b[?u\u001b[?31u");
-      process.emitData("\u001b[=c\u001b[=0c");
+      process.emitData("\u001b[=c\u001b[=0c\u001bZ");
       process.emitData("\u001bP$q m\u001b\\\u001bP1$r0m\u001b\\");
       process.emitData("\u001bP+q544e\u001b\\\u001bP1+r544e=1b\u001b\\");
+      // BEL is DCS payload, not a terminator: only ST ends the string.
+      process.emitData("\u001bP$qm\u0007hidden\u001b\\\u001bP+q544e\u0007hidden\u001b\\");
       process.emitData('\u001b[!p\u001b["p\u001b[4 q\u001b[u');
       process.emitData("\u001b]0;x\u001b\u001b[?2026$p");
       process.emitData("done\n");
@@ -1414,6 +1583,50 @@ it.layer(
           'prompt \u001b[!p\u001b["p\u001b[4 q\u001b[u\u001b]0;x\u001bdone\n',
         ),
       ).toBe(true);
+    }),
+  );
+
+  // Ghostty executes 0x00-0x0F inside a CSI and ignores DEL and 0x10-0x1F; none change the query.
+  it.effect.each([
+    { name: "NUL in DA", data: "A\u001b[0\u0000cB", history: "AB" },
+    { name: "DEL in DA", data: "A\u001b[0\u007fcB", history: "AB" },
+    { name: "NUL in DECRQM", data: "A\u001b[?2026\u0000$pB", history: "AB" },
+    { name: "CR in DSR", data: "AB\u001b[5\rnC", history: "AB\rC" },
+    { name: "DLE in DSR", data: "AB\u001b[5\u0010nC", history: "ABC" },
+    // Ghostty reads non-ASCII there as UTF-8 bytes: it drops é and runs 0x80-0x9F as C1 controls.
+    { name: "é in DA", data: "A\u001b[0écB", history: "AB" },
+    { name: "DECID byte in a CSI", data: "A\u001b[嚠B", history: "A\ufffdB" },
+    {
+      name: "C1 DCS then C1 CSI in DSR",
+      data: "A\u001b[\u0090\u009b6nB",
+      history: "A\u001bP\u009cB",
+    },
+    { name: "ESC in DSR", data: "A\u001b[5\u001b[6nB", history: "AB" },
+  ])(
+    "strips a query with an embedded control but keeps what the terminal ran ($name)",
+    ({ data, history }) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager();
+        yield* manager.open(openInput());
+        ptyAdapter.processes[0]!.emitData(data);
+        yield* manager.close({ threadId: "thread-1" });
+
+        const reopened = yield* manager.open(openInput());
+        const restored = reopened.history.replaceAll("\u0000", "");
+        expect(restored.split("\u001b[?1049h")[0]).toBe(history);
+      }),
+  );
+
+  // Ghostty aborts a CSI at a non-ASCII code point and prints it and what follows.
+  it.effect("keeps a CSI interrupted by non-ASCII text in history", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      ptyAdapter.processes[0]!.emitData("A\u001b[界nB");
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      expect(reopened.history.split("\u001b[?1049h")[0]).toBe("A\u001b[界nB");
     }),
   );
 
@@ -1465,6 +1678,21 @@ it.layer(
 
       const reopened = yield* manager.open(openInput());
       assert.equal(reopened.history, "before after after after after\n");
+    }),
+  );
+
+  it.effect("keeps a decoded U+009C inside a stripped OSC query out of history", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      // libghostty receives UTF-8 (c2 9c), which is OSC payload; only ESC \ ends this string.
+      process.emitData("A\u001b]11;?\u009cHIDDEN\u001b\\B\n");
+      // A DCS string does end at U+009C there, so the text after it stays visible.
+      process.emitData("C\u001bP$qm\u009cSHOWN\u001b\\D\n");
+      yield* manager.close({ threadId: "thread-1" });
+
+      expect((yield* manager.open(openInput())).history).toMatch(/^AB\nCSHOWN\u001b\\D\n/);
     }),
   );
 
@@ -1570,6 +1798,28 @@ it.layer(
       yield* manager.close({ threadId, deleteHistory: true });
       expect(yield* fs.readDirectory(logsDir)).toEqual([]);
     }),
+  );
+
+  // Case-insensitive filesystems resolve "Terminal_YQ.log" to thread "a"'s "terminal_YQ.log",
+  // so the mixed-case file stands in for that alias on case-sensitive hosts.
+  it.effect.each(["terminal_", "Terminal_"])(
+    "never resolves a %s legacy history name to another thread's history file",
+    (prefix) =>
+      Effect.gen(function* () {
+        const { manager, logsDir } = yield* createManager();
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const threadId = `${prefix}${Base64Url.encode("a")}`;
+        const otherThreadPath = path.join(logsDir, `${threadId}.log`);
+        yield* fs.makeDirectory(logsDir, { recursive: true });
+        yield* fs.writeFileString(otherThreadPath, "thread a\n");
+
+        expect((yield* manager.open(openInput({ threadId }))).history).toBe("");
+        yield* manager.close({ threadId, terminalId: DEFAULT_TERMINAL_ID, deleteHistory: true });
+        yield* manager.close({ threadId, deleteHistory: true });
+
+        expect(yield* fs.readFileString(otherThreadPath)).toBe("thread a\n");
+      }),
   );
 
   it.effect("keeps reading and deleting history at an encoded path that already fit", () =>
@@ -1783,6 +2033,41 @@ it.layer(
     }),
   );
 
+  it.effect("keeps a startup failure in the snapshot every later attachment receives", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      ptyAdapter.spawnFailures.push(new Error("forkpty(3) failed."));
+      const startupFailure = {
+        type: "snapshot",
+        snapshot: {
+          status: "error",
+          error: expect.stringContaining("Failed to spawn PTY process"),
+        },
+      };
+      const record = (events: TerminalAttachStreamEvent[]) => (event: TerminalAttachStreamEvent) =>
+        Effect.sync(() => events.push(event));
+
+      const creating: TerminalAttachStreamEvent[] = [];
+      (yield* manager.attachStream(openInput(), record(creating)))();
+      const resumed: TerminalAttachStreamEvent[] = [];
+      (yield* manager.attachStream({ ...openInput(), resume: true }, record(resumed)))();
+      const observed: TerminalAttachStreamEvent[] = [];
+      (yield* manager.observeStream(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        record(observed),
+      ))();
+      expect([creating, resumed, observed]).toMatchObject([
+        [startupFailure],
+        [startupFailure],
+        [startupFailure],
+      ]);
+
+      const restarted = yield* manager.open(openInput());
+      expect(restarted.status).toBe("running");
+      expect(restarted).not.toHaveProperty("error");
+    }),
+  );
+
   it.effect("retries with fallback shells when preferred shell spawn fails", () =>
     Effect.gen(function* () {
       const platform = yield* HostProcess.Platform;
@@ -1816,6 +2101,59 @@ it.layer(
             .slice(1)
             .some((input) => input.shell !== "/definitely/missing-shell"),
         ).toBe(true);
+      }
+    }),
+  );
+
+  it.effect("starts an existing $SHELL whose path contains spaces before a dash", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-shell-path-" });
+      const bin = join(root, "Jane -Doe Smith", ".local", "bin");
+      yield* fs.makeDirectory(bin, { recursive: true });
+      yield* fs.writeFileString(join(bin, "fish"), "");
+      // Temp dirs are not POSIX-absolute on Windows, so stat maps a fixed POSIX prefix onto them.
+      const fixtureFs = FileSystem.FileSystem.of({
+        ...fs,
+        stat: (filePath) =>
+          fs.stat(
+            filePath.startsWith("/shell-fixture/")
+              ? join(root, filePath.slice("/shell-fixture/".length))
+              : filePath,
+          ),
+      });
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { SHELL: "/shell-fixture/Jane -Doe Smith/.local/bin/fish -l" },
+      }).pipe(
+        Effect.provide(layerWithHostPlatform("darwin")),
+        Effect.provideService(FileSystem.FileSystem, fixtureFs),
+      );
+
+      yield* manager.open(openInput());
+
+      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual([
+        "/shell-fixture/Jane -Doe Smith/.local/bin/fish",
+      ]);
+    }),
+  );
+
+  it.effect("keeps missing or quoted $SHELL paths that contain spaces", () =>
+    Effect.gen(function* () {
+      for (const [shell, expected] of [
+        ["/Users/Jane Doe/.local/bin/fish", "/Users/Jane Doe/.local/bin/fish"],
+        ['"/opt/my -shell/fish" -l', "/opt/my -shell/fish"],
+      ]) {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          env: { SHELL: shell },
+        }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
+
+        yield* manager.open(openInput());
+
+        expect(
+          ptyAdapter.spawnInputs.map((input) => input.shell),
+          shell,
+        ).toEqual([expected]);
       }
     }),
   );
@@ -1963,8 +2301,8 @@ it.layer(
         "pwsh.exe",
         "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
       ]);
-      expect(ptyAdapter.spawnInputs[1]?.args).toEqual(["-NoLogo"]);
-      expect(ptyAdapter.spawnInputs[2]?.args).toEqual(["-NoLogo"]);
+      expect(ptyAdapter.spawnInputs[1]?.args).toEqual(POWERSHELL_ARGS);
+      expect(ptyAdapter.spawnInputs[2]?.args).toEqual(POWERSHELL_ARGS);
     }),
   );
 
@@ -2338,6 +2676,30 @@ it.layer(
     }),
   );
 
+  it.effect("force-kills a closed terminal that ignores SIGTERM when the manager shuts down", () =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make();
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        processKillGraceMs: 1_000,
+      }).pipe(Effect.provideService(Scope.Scope, scope));
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      const sigterm = yield* Deferred.make<void>();
+      process.onKill = (signal) => {
+        if (signal === "SIGTERM") Deferred.doneUnsafe(sigterm, Effect.void);
+      };
+      yield* manager.close({ threadId: "thread-1" });
+      yield* Deferred.await(sigterm);
+
+      const shutdown = yield* Scope.close(scope, Exit.void).pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(shutdown);
+
+      expect(process.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+      expect(process.exitListenerCount).toBe(0);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("attaches to a running provider terminal without resolving the provider again", () =>
     Effect.gen(function* () {
       const providerInstanceId = ProviderInstanceId.make("codex_work");
@@ -2377,7 +2739,7 @@ it.layer(
         ["win32", "C:\\Program Files\\Git\\bin\\bash.exe", undefined],
         ["darwin", "/bin/zsh", ["-o", "nopromptsp"]],
         ["linux", "/bin/zsh", ["-o", "nopromptsp"]],
-        ["win32", "pwsh.exe", ["-NoLogo"]],
+        ["win32", "pwsh.exe", POWERSHELL_ARGS],
       ] as const) {
         const { manager, ptyAdapter } = yield* createManager(5, {
           shellResolver: () => shell,
@@ -2442,7 +2804,7 @@ it.layer(
         { type: "snapshot", snapshot: { status: "running", pid: ptyAdapter.processes[0]?.pid } },
       ]);
       expect(ptyAdapter.processes).toHaveLength(1);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("resyncs bounded history and follows close/reopen across a stalled stream", () =>
@@ -2516,7 +2878,7 @@ it.layer(
       ptyAdapter.processes.at(-1)!.emitData("new session only\n");
       expect(yield* pull).toMatchObject([{ type: "output", data: "new session only\n" }]);
       expect(ptyAdapter.spawnInputs).toHaveLength(4);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each([
@@ -2563,7 +2925,7 @@ it.layer(
 
       yield* Deferred.await(restored);
       expect(process.resizeCalls.at(-1)).toEqual({ cols: 130, rows: 15 });
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("sends bounded attach streams only the history the client retains", () =>
@@ -2614,7 +2976,7 @@ it.layer(
       expect(yield* full).toEqual(yield* bounded);
       yield* manager.attachStream({ ...openInput(), restartIfNotRunning: true }, () => Effect.void);
       yield* expectRetained();
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("does not replay in-flight output already included in an observer snapshot", () =>
@@ -2651,7 +3013,7 @@ it.layer(
       expect(observed.filter((event) => event.type === "output")).toMatchObject([
         { data: "after\n" },
       ]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("observes terminal history and live output without changing the process", () =>

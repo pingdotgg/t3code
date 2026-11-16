@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import { ServerProviderModel, type ServerProviderSkill } from "@t3tools/contracts";
 import { MuseSettings } from "../settings.ts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -10,7 +11,11 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import { createMuseSdkHost, makeMuseEnvironment } from "./sdk.ts";
 import { discoverMuseSkills } from "./skills.ts";
 import { parseMuseVersion } from "./maintenance.ts";
-import { discoverMuseModels, museModelCapabilities } from "./modelCatalog.ts";
+import {
+  discoverMuseModels,
+  museModelCapabilities,
+  resolveMuseStartupTimeoutMs,
+} from "./modelCatalog.ts";
 import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
@@ -89,7 +94,12 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
         ...(cwd ? { cwd } : {}),
       }),
     );
-  }).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
+  }).pipe(
+    Effect.timeoutOption(
+      resolveProviderProbeTimeoutMs("muse", DEFAULT_TIMEOUT_MS, museEnvironment),
+    ),
+    Effect.result,
+  );
 
   if (Result.isFailure(versionResult)) {
     const missing = isCommandMissingCause(versionResult.failure);
@@ -134,7 +144,8 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
 
   const catalog = yield* discoverMuseModels(settings, museEnvironment, cwd, createHost).pipe(
     Effect.scoped,
-    Effect.timeoutOption(12_000),
+    // Startup shares the override, so the catalog keeps its 4 seconds on top of it.
+    Effect.timeoutOption(resolveMuseStartupTimeoutMs(museEnvironment) + 4_000),
     Effect.result,
   );
   if (Result.isFailure(catalog) || Option.isNone(catalog.success)) {
