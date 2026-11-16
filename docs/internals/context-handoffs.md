@@ -45,8 +45,8 @@ only while every range beneath it is; a stale leaf therefore withholds its ances
 pass deletes a dead roll-up (unless a handoff references it) so its current children become roots
 again. The pass rolls up a run of four current roots when that run ends before the first uncovered
 gap, and makes a new leaf only after those runs. A gap keeps the roots on its far side out of
-that run, so the neighbours of a replaced leaf are not rolled up without the replacement.
-Doing so would summarize more than the broken path, and that path could not be rebuilt on its own.
+that run, so the neighbours of a replaced leaf never roll up without the replacement. Rolling
+them up early would summarize more than the broken path, which could then not be rebuilt alone.
 A roll-up offer carries no delivered-knowledge evidence, unlike a leaf offer: the evidence of a few
 hundred items would never fit beside it. Roll-ups are capped by rendered bytes, as delivery
 measures them, so several fit beside the verbatim tail of a 16 KB handoff.
