@@ -3830,6 +3830,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getWorktreeThreadIds: "orchestration.getWorktreeThreadIds",
   getOlderSettledThreads: "orchestration.getOlderSettledThreads",
   getThreadProjection: "orchestration.getThreadProjection",
+  getThreadUsage: "orchestration.getThreadUsage",
   getWorkflowScript: "orchestration.getWorkflowScript",
   getNativeChildWork: "orchestration.getNativeChildWork",
   stopWorkflow: "orchestration.stopWorkflow",
@@ -3929,6 +3930,25 @@ export const OrchestrationV2GetThreadProjectionInput = Schema.Struct({
 });
 export type OrchestrationV2GetThreadProjectionInput =
   typeof OrchestrationV2GetThreadProjectionInput.Type;
+
+export const OrchestrationV2GetThreadUsageInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationV2GetThreadUsageInput = typeof OrchestrationV2GetThreadUsageInput.Type;
+
+/** The inputs `deriveLatestContextWindowSnapshot` reads, without the thread's turns or items. */
+export const OrchestrationV2ThreadUsage = Schema.Struct({
+  threadId: ThreadId,
+  providerThread: Schema.NullOr(
+    Schema.Struct({
+      id: ProviderThreadId,
+      contextUsage: Schema.NullOr(ThreadTokenUsageSnapshot),
+      updatedAt: Schema.DateTimeUtc,
+    }),
+  ),
+  latestTurnTokenUsage: Schema.NullOr(OrchestrationV2ProviderTurnTokenUsage),
+});
+export type OrchestrationV2ThreadUsage = typeof OrchestrationV2ThreadUsage.Type;
 
 export const OrchestrationV2SubscribeShellInput = Schema.Struct({
   afterSequence: Schema.optionalKey(NonNegativeInt),
@@ -4526,6 +4546,10 @@ export const OrchestrationV2RpcSchemas = {
   getThreadProjection: {
     input: OrchestrationV2GetThreadProjectionInput,
     output: OrchestrationV2ThreadProjection,
+  },
+  getThreadUsage: {
+    input: OrchestrationV2GetThreadUsageInput,
+    output: OrchestrationV2ThreadUsage,
   },
   stopWorkflow: {
     input: OrchestrationV2StopWorkflowInput,

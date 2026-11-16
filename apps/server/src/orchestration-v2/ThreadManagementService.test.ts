@@ -1077,3 +1077,63 @@ it.effect(
       }).pipe(Effect.provide(layerTest));
     }),
 );
+
+it.effect.each([
+  { name: "returns the active provider thread's latest context and turn usage", usage: true },
+  { name: "returns null usage for a thread without any", usage: false },
+])("getThreadUsage $name", ({ usage }) =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:thread-management:usage");
+    const activeId = ProviderThreadId.make("provider-thread:thread-management:usage:active");
+    const retiredId = ProviderThreadId.make("provider-thread:thread-management:usage:retired");
+    const updatedAt = DateTime.makeUnsafe("2026-01-01T00:00:00Z");
+    const contextUsage = { usedTokens: 40_000, maxTokens: 200_000, cost: 0.42 };
+    const providerThreads = [
+      { id: retiredId, contextUsage: { usedTokens: 1 }, updatedAt },
+      { id: activeId, contextUsage: usage ? contextUsage : null, updatedAt },
+    ];
+    const turnUsage = (usedTokens: number, at: string) => ({ usedTokens, updatedAt: at });
+    const providerTurns = usage
+      ? [
+          { providerThreadId: activeId, tokenUsage: turnUsage(30_000, "2026-01-01T00:00:00Z") },
+          { providerThreadId: activeId, tokenUsage: turnUsage(40_000, "2026-01-01T00:01:00Z") },
+          { providerThreadId: retiredId, tokenUsage: turnUsage(9, "2026-01-01T00:02:00Z") },
+        ]
+      : [{ providerThreadId: activeId, tokenUsage: undefined }];
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadRecords: (_threadId, _fields, filter) =>
+            Effect.succeed({
+              thread: { id: threadId, activeProviderThreadId: activeId },
+              providerThreads: providerThreads.filter(
+                (thread) => filter?.providerThreadIds?.includes(thread.id) ?? true,
+              ),
+              providerTurns: providerTurns
+                .filter(
+                  (turn) =>
+                    turn.tokenUsage !== undefined &&
+                    (filter?.providerTurnThreadIds?.includes(turn.providerThreadId) ?? true),
+                )
+                .toSorted((a, b) => b.tokenUsage!.updatedAt.localeCompare(a.tokenUsage!.updatedAt))
+                .slice(0, filter?.latestProviderTurnUsageOnly ? 1 : undefined),
+            } as unknown as OrchestrationV2ThreadProjection),
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(layerTest),
+    );
+
+    const result = yield* service.getThreadUsage(threadId);
+
+    expect(result).toStrictEqual({
+      threadId,
+      providerThread: { id: activeId, contextUsage: usage ? contextUsage : null, updatedAt },
+      latestTurnTokenUsage: usage ? turnUsage(40_000, "2026-01-01T00:01:00Z") : null,
+    });
+  }),
+);

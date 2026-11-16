@@ -1908,6 +1908,12 @@ const WsOrchestrationV2GetThreadProjectionRpc = Rpc.make(
   },
 );
 
+const WsOrchestrationV2GetThreadUsageRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.getThreadUsage, {
+  payload: OrchestrationV2RpcSchemas.getThreadUsage.input,
+  success: OrchestrationV2RpcSchemas.getThreadUsage.output,
+  error: Schema.Union([OrchestrationV2GetThreadProjectionError, EnvironmentAuthorizationError]),
+});
+
 const WsOrchestrationV2StopWorkflowRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.stopWorkflow, {
   payload: OrchestrationV2RpcSchemas.stopWorkflow.input,
   success: OrchestrationV2RpcSchemas.stopWorkflow.output,
@@ -2327,6 +2333,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetWorktreeThreadIdsRpc,
   WsOrchestrationV2GetOlderSettledThreadsRpc,
   WsOrchestrationV2GetThreadProjectionRpc,
+  WsOrchestrationV2GetThreadUsageRpc,
   WsOrchestrationV2LaunchThreadRpc,
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
