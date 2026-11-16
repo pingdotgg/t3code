@@ -741,6 +741,7 @@ effectIt.effect.each([
     const nameLookups: number[] = [];
     const commands: string[] = [];
     const layer = Layer.effect(PortScanner.PortDiscovery, PortScanner.make).pipe(
+      Layer.provide(layerForeground),
       Layer.provide(
         Layer.mergeAll(
           layerNoProc,
