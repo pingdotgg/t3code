@@ -5,9 +5,15 @@ import {
   selectableProviderOptionChoices,
 } from "@t3tools/client-runtime/model-traits";
 import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
-import type { EffortDisplay } from "@t3tools/contracts/settings";
+import type { EffortDisplay, IdleCompactionMode } from "@t3tools/contracts/settings";
 import { getProviderOptionCurrentLabel } from "@t3tools/shared/model";
-import { CheckIcon, ChevronRightIcon, ChevronUpIcon, WorkflowIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronRightIcon,
+  ChevronUpIcon,
+  TimerResetIcon,
+  WorkflowIcon,
+} from "lucide-react";
 import { type KeyboardEvent, type ReactNode, use, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
@@ -614,6 +620,43 @@ function UltracodeControl(props: { traits: TraitsSelectionInput }) {
   );
 }
 
+/**
+ * Idle compaction is a per-thread choice: a thread you will come back to can compact while its
+ * prompt cache is still warm, which spends tokens while you are away.
+ */
+function IdleCompactionControl(props: {
+  mode: IdleCompactionMode;
+  onChange: (enabled: boolean) => void;
+}) {
+  const on = props.mode === "beforeCacheExpires";
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-pressed={on}
+            data-checked={on || undefined}
+            aria-label={`Compact this thread before its prompt cache expires: ${on ? "on" : "off"}`}
+            className="flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2 text-muted-foreground text-xs outline-none hover:bg-foreground/[0.09] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset data-checked:bg-foreground/[0.09] data-checked:text-foreground"
+            onClick={() => props.onChange(!on)}
+          />
+        }
+      >
+        <TimerResetIcon aria-hidden="true" className="size-3.5" />
+        Compact while away
+      </TooltipTrigger>
+      <TooltipPopup side="top" align="end">
+        <div className="max-w-56">
+          {on
+            ? "Compacts this thread shortly before its prompt cache expires, while the history is still cached."
+            : "This thread compacts when you return instead of while you are away."}
+        </div>
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
 /** Permissions change rarely, so the footer names the mode and nests the choice in a menu. */
 function PermissionsMenu(props: {
   runtimeMode: RuntimeMode;
@@ -637,7 +680,7 @@ function PermissionsMenu(props: {
             type="button"
             data-composer-permissions-trigger
             aria-label={`Permissions: ${current.label}`}
-            className="ms-auto flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2 text-muted-foreground text-xs outline-none hover:bg-foreground/[0.09] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset data-popup-open:bg-foreground/[0.09] data-popup-open:text-foreground"
+            className="flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2 text-muted-foreground text-xs outline-none hover:bg-foreground/[0.09] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset data-popup-open:bg-foreground/[0.09] data-popup-open:text-foreground"
           />
         }
       >
@@ -662,16 +705,27 @@ export function ComposerPickerFooter(props: {
   runtimeMode: RuntimeMode;
   runtimeModeOptions: ReadonlyArray<RuntimeModeOption>;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
+  /** The thread's effective idle compaction mode, or null when it has no such choice. */
+  idleCompaction: IdleCompactionMode | null;
+  onIdleCompactionChange: (enabled: boolean) => void;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2 border-t border-border/70 bg-muted/40 px-3 py-2">
       {props.traits ? <SpeedControl traits={props.traits} /> : null}
       {props.traits ? <UltracodeControl traits={props.traits} /> : null}
-      <PermissionsMenu
-        runtimeMode={props.runtimeMode}
-        options={props.runtimeModeOptions}
-        onChange={props.onRuntimeModeChange}
-      />
+      <div className="ms-auto flex items-center gap-1">
+        {props.idleCompaction !== null ? (
+          <IdleCompactionControl
+            mode={props.idleCompaction}
+            onChange={props.onIdleCompactionChange}
+          />
+        ) : null}
+        <PermissionsMenu
+          runtimeMode={props.runtimeMode}
+          options={props.runtimeModeOptions}
+          onChange={props.onRuntimeModeChange}
+        />
+      </div>
     </div>
   );
 }

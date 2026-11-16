@@ -2,6 +2,7 @@ import type { OrchestrationV2HistoricalMessage } from "@t3tools/contracts";
 import {
   ChatAttachment,
   CheckpointId,
+  IdleCompactionMode,
   MessageId,
   ModelSelection,
   NodeId,
@@ -526,6 +527,8 @@ export interface ProviderAdapterV2OpenSessionInput {
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   /** Labs flag, read live: emit `prompt_suggestion.updated` after completed turns, where the provider can. */
   readonly promptSuggestions?: Effect.Effect<boolean>;
+  /** Read live when the provider asks; absent leaves the adapter on its instance's mode. */
+  readonly idleCompaction?: Effect.Effect<IdleCompactionMode>;
   readonly resumeFromSession?: OrchestrationV2ProviderSession;
   readonly initialNativeThreadId?: string;
   readonly initialProviderItemIdentityVersion?: 2;

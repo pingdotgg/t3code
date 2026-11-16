@@ -21,6 +21,7 @@ import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as IdleCompactionService from "./IdleCompactionService.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -205,8 +206,13 @@ describe("IdleCompactionService", () => {
     { mode: "beforeCacheExpires", driver: "codex", instance: "custom-codex", reads: 0 },
     { mode: "beforeCacheExpires", driver: "claudeAgent", instance: "custom-claude", reads: 1 },
     { mode: "beforeCacheExpires", unconfigured: true, reads: 1 },
+    { mode: "beforeCacheExpires", threadIdle: "off", reads: 0 },
+    { mode: "beforeCacheExpires", threadIdle: "onReturn", reads: 0 },
+    { mode: "off", threadIdle: "beforeCacheExpires", reads: 1 },
+    { mode: "beforeCacheExpires", override: "off", threadIdle: "beforeCacheExpires", reads: 1 },
+    { mode: "onReturn", threadIdle: "beforeCacheExpires", locked: true, reads: 0 },
   ] as const)(
-    "loads history only for eligible idle compaction: $mode/$override/$enabled/$projectDisabled/$instance/$unconfigured",
+    "loads history only for eligible idle compaction: $mode/$override/$threadIdle/$locked/$enabled/$projectDisabled/$instance/$unconfigured",
     (scenario) => {
       const test = {
         override: "default",
@@ -227,6 +233,7 @@ describe("IdleCompactionService", () => {
             ...base.thread,
             providerInstanceId: selectedInstance,
             modelSelection: { ...base.thread.modelSelection, instanceId: selectedInstance },
+            ...("threadIdle" in test ? { idleCompaction: test.threadIdle } : {}),
           },
           runs: base.runs.map((run) => ({
             ...run,
@@ -288,6 +295,15 @@ describe("IdleCompactionService", () => {
                 return data;
               }),
           }),
+          ManagedPolicy.layerTest(
+            "locked" in test && test.locked
+              ? {
+                  schemaVersion: 1,
+                  organization: "Example Corp",
+                  settings: { idleCompaction: { value: "onReturn", locked: true } },
+                }
+              : undefined,
+          ),
           Layer.mock(ServerSettings.ServerSettingsService)({
             getSettings: Effect.succeed({
               ...DEFAULT_SERVER_SETTINGS,
@@ -397,6 +413,7 @@ describe("IdleCompactionService", () => {
               ),
             }),
         }),
+        ManagedPolicy.layerTest(),
         Layer.mock(ServerSettings.ServerSettingsService)({
           getSettings: Effect.succeed({
             ...DEFAULT_SERVER_SETTINGS,

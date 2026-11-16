@@ -3704,6 +3704,23 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         interactionMode: "plan",
       });
       yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("runtime-layer-lifecycle-idle-compaction"),
+        threadId,
+        idleCompaction: "beforeCacheExpires",
+      });
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.idleCompaction,
+        "beforeCacheExpires",
+      );
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("runtime-layer-lifecycle-idle-compaction-inherit"),
+        threadId,
+        idleCompaction: null,
+      });
+      assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.idleCompaction);
+      yield* orchestrator.dispatch({
         type: "thread.model-selection.set",
         commandId: CommandId.make("runtime-layer-lifecycle-model"),
         threadId,

@@ -20,6 +20,7 @@ import {
   resolveIdleCompaction,
   resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
+  resolveThreadIdleCompaction,
   ServerSettings,
   ServerSettingsPatch,
   withIdleCompaction,
@@ -280,6 +281,45 @@ describe("resolveIdleCompaction", () => {
     );
     expect(resolveIdleCompaction(settings, ProviderInstanceId.make("claude_personal"))).toBe("off");
     expect(resolveIdleCompaction(settings, ProviderInstanceId.make("claudeAgent"))).toBe("off");
+  });
+
+  it("lets a thread outrank its instance and the global default", () => {
+    const settings = decodeServerSettings({
+      idleCompaction: "onReturn",
+      providerInstances: {
+        claude_work: { driver: "claudeAgent", config: { idleCompaction: "off" } },
+      },
+    });
+    const workThread = { providerInstanceId: ProviderInstanceId.make("claude_work") };
+    expect(resolveThreadIdleCompaction(settings, workThread, false)).toBe("off");
+    expect(
+      resolveThreadIdleCompaction(
+        settings,
+        { ...workThread, idleCompaction: "beforeCacheExpires" },
+        false,
+      ),
+    ).toBe("beforeCacheExpires");
+    expect(
+      resolveThreadIdleCompaction(
+        settings,
+        {
+          providerInstanceId: ProviderInstanceId.make("claude_personal"),
+          idleCompaction: "off",
+        },
+        false,
+      ),
+    ).toBe("off");
+    // A managed policy lock outranks the thread's own choice.
+    expect(
+      resolveThreadIdleCompaction(settings, { ...workThread, idleCompaction: "onReturn" }, true),
+    ).toBe("off");
+    expect(
+      resolveThreadIdleCompaction(
+        settings,
+        { providerInstanceId: ProviderInstanceId.make("claude_personal") },
+        false,
+      ),
+    ).toBe("onReturn");
   });
 
   it("reads the mode from the legacy switch, in either form servers saved it", () => {

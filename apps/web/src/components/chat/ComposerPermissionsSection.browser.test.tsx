@@ -112,6 +112,8 @@ function PickerWithPermissions() {
             runtimeMode={mode}
             runtimeModeOptions={options}
             onRuntimeModeChange={setMode}
+            idleCompaction={null}
+            onIdleCompactionChange={() => {}}
           />
         </PopoverPopup>
       </Popover>

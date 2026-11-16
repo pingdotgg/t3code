@@ -22,6 +22,7 @@ const claude = ProviderInstanceId.make("claudeAgent");
 const claudeWork = ProviderInstanceId.make("claude_work");
 const claudeOtherHome = ProviderInstanceId.make("claude_other_home");
 const codex = ProviderInstanceId.make("codex");
+const opencode = ProviderInstanceId.make("opencode");
 const lastTurnAt = "2026-10-30T14:23:02.000Z";
 const returnedAt = "2026-10-30T23:03:21.000Z";
 
@@ -43,6 +44,8 @@ function sendInput(
     readonly promptOutsideWindow?: boolean;
     readonly text?: string;
     readonly threadIdle?: boolean;
+    readonly threadIdleCompaction?: "beforeCacheExpires" | "onReturn" | "off";
+    readonly idleCompactionLocked?: boolean;
   } = {},
 ) {
   const source = overrides.source ?? claude;
@@ -55,6 +58,7 @@ function sendInput(
     { instanceId: claudeWork, driver: "claudeAgent", groupKey: "claude:~/.claude" },
     { instanceId: claudeOtherHome, driver: "claudeAgent", groupKey: "claude:~/.claude-other" },
     { instanceId: codex, driver: "codex", groupKey: "codex:~/.codex" },
+    { instanceId: opencode, driver: "opencode", groupKey: "opencode:~/.config/opencode" },
   ].map(({ instanceId, driver, groupKey }) => ({
     instanceId,
     driver: ProviderDriverKind.make(driver),
@@ -166,6 +170,9 @@ function sendInput(
     });
   }
   const selected = overrides.selected ?? claude;
+  if (overrides.threadIdleCompaction !== undefined) {
+    Object.assign(projection.thread, { idleCompaction: overrides.threadIdleCompaction });
+  }
   return {
     projection,
     visibleTurnItems: visibleTurnItems as never,
@@ -177,6 +184,7 @@ function sendInput(
     settings: { ...DEFAULT_SERVER_SETTINGS, ...overrides.settings },
     text: overrides.text ?? "back again",
     threadIdle: overrides.threadIdle ?? true,
+    idleCompactionLocked: overrides.idleCompactionLocked ?? false,
     now: overrides.now ?? returnedAt,
   };
 }
@@ -204,6 +212,24 @@ describe("compactBeforeSendTokens", () => {
     { name: "under 200K", usedTokens: 150_000, expected: false },
     { name: "with idle compaction off", settings: { idleCompaction: "off" }, expected: false },
     {
+      name: "with the thread itself set to never",
+      threadIdleCompaction: "off",
+      expected: false,
+    },
+    {
+      name: "with the thread set to compact while away",
+      settings: { idleCompaction: "off" },
+      threadIdleCompaction: "beforeCacheExpires",
+      expected: true,
+    },
+    {
+      name: "with a locked policy outranking the thread",
+      settings: { idleCompaction: "off" },
+      threadIdleCompaction: "beforeCacheExpires",
+      idleCompactionLocked: true,
+      expected: false,
+    },
+    {
       name: "with the Claude instance overriding idle compaction to off",
       settings: {
         idleCompaction: "onReturn",
@@ -216,7 +242,12 @@ describe("compactBeforeSendTokens", () => {
       },
       expected: false,
     },
-    { name: "on a Codex thread", source: codex, selected: codex, expected: false },
+    {
+      name: "on a Codex thread, which compacts natively",
+      source: codex,
+      selected: codex,
+      expected: true,
+    },
     {
       name: "after switching a stale Codex thread to Claude",
       source: codex,
@@ -239,6 +270,19 @@ describe("compactBeforeSendTokens", () => {
       expected: false,
     },
     { name: "an unstarted fork resuming its source instance", unstartedFork: true, expected: true },
+    {
+      name: "a stale OpenCode thread over 200K",
+      source: opencode,
+      selected: opencode,
+      expected: true,
+    },
+    {
+      name: "an OpenCode thread without /compact",
+      source: opencode,
+      selected: opencode,
+      slashCommands: [],
+      expected: false,
+    },
     {
       name: "an unstarted fork selecting another Claude home",
       unstartedFork: true,
