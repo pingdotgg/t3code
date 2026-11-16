@@ -1,78 +1,103 @@
 ---
 name: captain-event-loop
-description: "Captain's event loop for named children on Ada builds since nightly 20261016: arm one listener per running child, sweep every child on every wake, take the next step from the pipeline, and never end a turn with a child unwatched. Read at the start of every Captain turn that launches, messages or checks a child."
+description: "Captain's event loop for named children: arm one v2 listener per child (it follows background continuations and reports a question or approval within about a minute), sweep every child on every wake, answer approvals, take the next pipeline step, and never end a turn with a child unwatched. Read at the start of every Captain turn that launches, messages or checks a child, and after a PR merges for worktree and cache cleanup."
 ---
 
 # Captain event loop
 
 ## Why this exists
 
-Since Ada nightly 20261016.322001 (runtime commit `7089486ba`, "stop automatic child-to-parent messages"), a named child never wakes its parent. That covers `t3_thread_launch`, `create_threads` and `delegate_task` with a `profileId`, and it includes run ends, `stopped`, `interrupted`, task DONE/INPUT updates and check-backs. The only events that start an idle Captain turn are:
+Since Ada nightly 20261016, a named child never wakes its parent on run end, idle or stop. These events do start an idle Captain turn:
 
 1. a message from the user;
-2. a **profile-less `delegate_task` helper reaching any terminal state** (completed, failed, or interrupted). These arrive as one batched message, "Delegated tasks … reached terminal states", and are queued if Captain is mid-turn;
-3. `watch_pull_request` events.
+2. a **profile-less `delegate_task` helper reaching any terminal state** (one batched "Delegated tasks … reached terminal states" message);
+3. `watch_pull_request` events;
+4. "Child thread … has a question": an interactive question in a child.
 
-So every running child needs its own listener: a profile-less helper that blocks on that child with `t3_thread_wait` and finishes when the child's run ends. Its completion is the wake. This is not polling: there is one blocking call per child run, no timer and no message between chats.
+These do **not** wake Captain:
+
+- **A command approval in a child.** This happens even under `full-access`: Claude Code's own "Dangerous rm … command substitution" check still prompts. `t3_pending_request list` returns `{}` for it, and `t3_thread_wait` with `returnOnQuestion` does not return. Only `t3_get_pending_questions` (`data.status: "waiting-approval"`), `t3_thread_read` (`pendingRequestCount`, an `approval_request` item with status `waiting`) and `t3_get_agents_view executionState=waiting-approval` show it.
+- **A child continuing by itself.** A child that ends its turn with a background command registered through `t3_background_wait` is resumed by Ada in a **new run** when the command finishes. A listener tied to the old runId returns "completed" too early, so the child looks stopped while it is still working.
+
+So every running child needs the v2 listener below. It follows new runs and checks for approvals once a minute.
 
 ## Launching and messaging children
 
-- Start named children with `t3_thread_launch` (or `create_threads`). Each gets an automatic task, so it shows in the one-call sweep. For Cleaner, launch one new child per review round with `t3_thread_launch`. Avoid `delegate_task` with a `profileId`: it creates no task, so it is invisible to the sweep and its completion is silently disposed.
-- Send follow-ups with `t3_thread_send`, not `t3_send_message`, because `t3_thread_send` returns the new `runId`.
-- Every brief ends with: _"When you finish, or whenever you need a decision, end your turn with a short summary. Put any question on the last line as `BLOCKED: <question> (default: <what you would pick>)`. Do not use interactive question tools, and do not message Captain."_ `t3_thread_wait` does not return while a child sits in `waiting_input`; only a finished turn ends the wait. A child that ignores this rule and asks a question while nothing else is running will not wake Captain. The question is caught at the next wake's sweep, which may be the user's next message.
+- Start named children with `t3_thread_launch` (or `create_threads`) so they get a task and show in the sweep. Avoid `delegate_task` with a `profileId`.
+- Send follow-ups with `t3_thread_send`.
+- Every brief ends with: _"End each turn with a short summary. Put any question on the last line as `BLOCKED: <question> (default: <your pick>)`. Do not use interactive question tools and do not message Captain. For a long wait (CI, a remote build, a helper), start it in the background, register it with `t3_background_wait`, and keep working or end your turn: Ada resumes you when it finishes. Do not write a final summary until that work is done. Never pass `rm` a `$(...)` target: use a literal path or a quoted variable (`d=$(mktemp -d); rm -rf "$d"`)."_
+- Do not tell a child to "block in the foreground". Foreground `sleep` is blocked by the Claude Code harness, so the child cannot comply and ends its turn anyway.
 
 ### Children on another machine
 
-`t3_thread_wait`, `t3_thread_send`, `t3_thread_read` and the `t3_task_read` sweep only see threads on this machine. They return `thread_not_found` for a child launched with `t3_create_and_start_thread` on another environment (Ada gap, see bug report). For such a child:
+`t3_thread_wait`, `t3_thread_send`, `t3_thread_read` and the `t3_task_read` sweep take `environmentId`. If a call returns `thread_not_found`, fall back to `t3_get_thread` / `t3_get_messages` / `t3_send_message` with `environmentId`. Record each remote child's `environmentId` in PIPELINE.md and pass it to the listener (add `environmentId` to every tool call in the template).
 
-- Record its `environmentId` in PIPELINE.md.
-- Message it with `t3_send_message` + `environmentId`.
-- Read it with `t3_get_messages` / `t3_get_thread` + `environmentId`.
-- Arm the listener as a profile-less helper that calls `t3_get_thread` with `environmentId` every 60 s for at most 60 min. It replies when the latest run is no longer running or the last message has a `BLOCKED:` line.
+## Arm: one v2 listener per child
 
-When the deliverable is a file or artifact on this machine, a background waiter on that file may be used instead. In each sweep, also check every remote child listed in PIPELINE.md this way. This is the one allowed exception to "never poll"; remove it once Ada supports cross-machine waits.
-
-## Arm: one listener per running child run
-
-Arm a listener immediately after any action that starts or resumes a child run: launch, `t3_thread_send`, answering a question, or resume/retry. Never leave two listeners on one child.
+Arm one immediately after a launch, a `t3_thread_send`, answering a question, approving an action, or a resume. Never leave two listeners on one child.
 
 ```
 delegate_task {
   title: "listen <child short name>",
   mode: "async",
   target: { providerInstanceId: "claudeAgent", model: "claude-haiku-5-5", options: [{ id: "effort", value: "low" }] },
-  clientRequestId: "listen:<childThreadId>:<runId>",
-  task: "You are an event listener. Call the t3-code tool t3_thread_wait with threadId \"<childThreadId>\", runId \"<runId>\" and timeoutMs 3600000 (a number, never the string Infinity). If it returns timedOut true, or fails with a connection error such as ECONNRESET, call it again with the same arguments, at most 8 calls in total. Call no other tool: never SendMessage, never message anyone, never read or write files. When a call returns timedOut false, or after the 8th call, or on any other error, reply with one line: threadId, run status, timedOut, or the exact error text."
+  clientRequestId: "listen:<childThreadId>:<n>",
+  task: "You are an event listener for Ada thread \"<childThreadId>\". Use only the t3-code tools named here (load them with ToolSearch first). Never message anyone, never read or write files.
+
+Repeat this loop, at most 240 rounds:
+A. Call t3_thread_wait with threadId (above), timeoutMs 60000, returnOnQuestion true, untilDelegatedWorkSettled true. Pass no runId.
+B. If the result has hasPendingQuestion true: reply `INPUT <pendingRequestId>` and stop.
+C. If timedOut is true: call t3_get_pending_questions with the threadId. If data.status is \"waiting-approval\" or \"waiting-input\": reply `<data.status in capitals>` and stop. Otherwise go to A.
+D. If timedOut is false: call t3_thread_read with threadId, view \"messages\", limit 1, maxCharsPerItem 300, runLimit 1. If thread.activeRunId is present, the child started another run (a background task or helper woke it): go to A. Otherwise reply `ENDED <thread.status>: <the last assistant message text>` and stop.
+On a tool error, retry that call once; on a second error reply `ERROR <exact text>`. After round 240 reply `REARM still running`."
 }
 ```
 
-Record the listener's `taskId` against the child in the pipeline table. A listener can still end without the run ending (a repeated connection error, or the 8-hour cap), so a wake means "look", not "the child stopped". The sweep decides. Listeners always run on Claude Haiku 5.5; there is no fallback model. If Haiku is unavailable, tell the user. Ada caps one MCP tool call at 65 minutes, so the listener re-waits hourly itself. Captain is not woken unless a wait errors or the 8-hour cap is reached.
+Listeners always run on Claude Haiku 5.5; there is no fallback model. If Haiku is unavailable, tell the user. The listener stays quiet through a child's turn end while background work is pending, and returns `WAITING-APPROVAL` within about a minute of an approval prompt. Record the listener's `taskId` against the child in the pipeline table. A wake means "look", not "the child stopped". The sweep decides.
 
 ## Wake: sweep everything, then act
 
-Treat every turn as a wake, whether it is the user's message or a "Delegated tasks … reached terminal states" message. Then:
+1. **Sweep once:** `t3_task_read` with no `threadId`, then `task_status` for each listener named in the wake. If the user mentions input requests, or a listener reports `ERROR`, also run `t3_get_agents_view` with `executionState: "waiting-approval"`, then with `"waiting-input"`.
+2. **Handle every changed child:**
+   - **`WAITING-APPROVAL`:** read the child's last activity (`t3_thread_read` view `activity`, the last ~6 items) to see the `approval_request` and the command it guards. Derive `approvalRequestId` from the item's `itemId`: strip the `turn-item:runtime-request:` prefix and URL-decode the rest **once**. Approve with `t3_respond_to_approval` (`decision: "accept"`, a fresh `idempotencyKey`, and `confirmDestructive: true` when the API asks for it) if the command is routine work inside the child's worktree or temp dirs. Decline it, and tell the child why with `t3_thread_send`, if it touches anything outside that scope or anything on the "ask the user" list. Re-arm the listener.
+   - **`INPUT` / `WAITING-INPUT`:** `t3_pending_request` `read`, then `respond` using the defaults rule. Escalate to the user only for "ask the user" items. Re-arm.
+   - **`ENDED`:** if the last line holds a deliverable, verify it and start the next pipeline step. If it is `BLOCKED:`, decide it and reply with `t3_thread_send`. If it is a "waiting on X" line with no summary, check `t3_thread_read` for `activeRunId` before sending anything: a resumed run means the child is fine, so just re-arm. Re-arm after any send.
+   - **interrupted / failed / stopped:** resume once with `t3_thread_send` ("continue from where you stopped; re-check uncommitted work first"), re-arm, and report to the user if it stops again.
+   - **running with no live listener:** arm one. **`REARM`:** arm a fresh one.
+3. **End-of-turn invariant:** every running child has exactly one live listener, every idle child has its next step started or is waiting on the user for a listed decision, and nothing is waiting on Captain. Never sleep, poll, schedule checks or send "status?" messages yourself.
 
-1. **Sweep once:** call `t3_task_read` with no `threadId`. It returns every launched child with `status`, `workerRun` (`running`/`idle`/`waiting_input`/…) and `continuationLive`. Prefer the task sweep over listing unrelated threads. Then call `task_status` for each listener or `delegate_task` named in the wake message. Reading the result acknowledges that wake.
-2. **Compare with the pipeline table** and handle every child whose state changed, not only the one named in the wake:
-   - **idle / completed:** read the child's last 3–5 messages (`t3_get_messages`). If they hold a deliverable, verify it, record it and start the pipeline's next step (next instruction with `t3_thread_send`, the next child, a Cleaner round, or a merge), then re-arm. If the last line is `BLOCKED:`, decide it (see Defaults), reply with `t3_thread_send`, then re-arm.
-   - **waiting_input / waiting_approval:** call `t3_get_pending_questions`, then answer with `t3_answer_question` using the default rule. Re-arm only if the child's run ended. Escalate to the user only for decisions on the "ask the user" list.
-   - **interrupted / failed / stopped:** read the last messages. Resume once with `t3_thread_send` ("continue from where you stopped; re-check uncommitted work first"), then re-arm. If it stops again with no progress, report it to the user with the evidence.
-   - **running with no live listener** (after a reboot, a listener error, or the 8-hour cap): arm one.
-   - **running with a live listener:** leave it alone.
-3. **End-of-turn invariant** (check before replying): every running child has exactly one live listener; every idle child has its next step started, is waiting on the user for a listed decision, or is done and settled; nothing is waiting on Captain. Only then end the turn. Never sleep, poll, schedule a check or send a "status?" message.
+## Time-limited human steps (sign-in links, 2FA, codes)
+
+A link that expires in minutes must reach the user in one hop, while they are likely to be there.
+
+- Before launching work that needs a cloud or SSO session, check that session yourself (for AWS, `aws sts get-caller-identity`). If it is missing or near expiry, do the sign-in with the user **first**, then launch the child.
+- When a child reports a sign-in link or code, relay it in your very next message, together with what to paste back, and send `PushNotification` (one line, under 200 characters) so the user sees it away from the screen. If a link has expired, regenerate it yourself before asking the user again.
 
 ## Pipeline table
 
-Keep the job's table in `.t3/captain/<job>/PIPELINE.md` so it survives context compaction and reboots: child id | role | current step | done means | next step | listener taskId | last state seen. Each wake maps a changed row to "read the last 3–5 messages, then the next step". When an instruction from the user changes the plan, update the table first.
+Keep the job's table in `.t3/captain/<job>/PIPELINE.md`: child id | role | step | done means | next step | listener taskId | last state seen. Update it before acting on an instruction from the user that changes the plan.
 
 ## Defaults instead of blocking on the user
 
-Captain leads. Decide reversible and routine choices yourself: order, naming, which safe migration pattern, splitting PRs, starting a Cleaner round the user already authorised, re-running checks, resuming a stopped child, and merging each PR bottom-up once its review fixes are in, CI is green and the staging deploy is checked. State the choice under "Defaults taken" in the next update to the user. Ask the user, and keep the rest of the pipeline moving meanwhile, only for: production deploys or releases, architecture exceptions (per the repo's CLAUDE.md), product decisions the user has not made, destructive data operations, spending or purchases, and anything outward-facing that the user has not already approved.
+Decide reversible and routine choices yourself (order, naming, splitting PRs, re-running checks, resuming, approving routine in-scope commands, merging each PR once it meets the repository's PR rules), and list them under "Defaults taken". Ask the user only about production deploys or releases, architecture exceptions, product decisions they have not made, destructive data operations, spending, and outward-facing actions they have not approved.
+
+## After a PR merges: reclaim task disk space
+
+Cleanup of merged task worktrees and their regenerable build caches is routine. Treat it as the last pipeline step before declaring the task done; do not wait for disk pressure or another request. Include this requirement in implementation briefs. Preserve explicit handoff holds and stacked work that still depends on the checkout.
+
+1. Verify the PR is actually merged and the checkout's current HEAD landed: ancestry, patch equivalence, or the merged PR's exact head. A merged branch name alone is insufficient after extra commits or squash merges. Check tracked changes, untracked files and ignored state before removal.
+2. Confirm the checkout and any nested worktrees are idle: no active child/helper/background job, provider, terminal, build, database or dependent task uses them. Stop only task-owned disposable services through project teardown commands when their data is known to be regenerable. Do not infer that databases, ignored files, secrets, local notes or audit evidence are disposable. Preserve unique state outside the checkout or defer cleanup.
+3. For Ada-managed worktrees, use `t3_reclaim_worktree` dry-run then reclaim. Resolve eligibility refusals through supported lifecycle operations; never bypass a refusal with shell deletion. For unmanaged checkouts use `git worktree remove` without force after the same checks. Never remove primary checkouts, unmerged commits, dirty state or another task's live workspace. Branch deletion is separate and is not implied.
+4. Removing the checkout also removes its disposable local build outputs and dependency caches. Remove a task-specific cache outside it only when its exact path and ownership are known, nothing still references it, and every file is regenerable. Do not glob-delete temporary directories.
+5. Preserve shared caches across worktrees. Do not run `go clean -cache`, delete `GOCACHE`/`GOMODCACHE`, or symlink branch outputs together after each merge. If the machine already runs a shared-cache trim job, check that it is healthy and follow its configured policy for shared-cache pressure; do not create a duplicate job or copy its paths and thresholds to another host without inspection.
+6. Verify the checkout is absent and Git worktree metadata is consistent. Record removed paths, preserved state, reclaimed space when measured, and skipped reasons in PIPELINE.md. For active/stacked/held checkouts, record the owning task and exact release condition, and perform cleanup when its existing completion event arrives. Do not claim cleanup is complete while eligible work remains; report explicit holds separately.
+
+Use the existing child/listener lifecycle for delegated cleanup. A prompt rule is not a filesystem hook: this runs when Captain handles merge/completion events, while any installed cache-trim job maintains shared caches between turns.
 
 ## Reboots and Ada updates
 
-A reboot kills every child and listener run. Per the runtime source (restart recovery finalizes interrupted helper subagents and resumes their completion delivery), each killed listener should then deliver a terminal wake, and the sweep shows the children as `interrupted`, so resume them. This is not yet observed live. If no wake arrives, the user's next message is the wake: always sweep first. After any Ada update, recheck the wake semantics in the `delegate_task` and `t3_task_assign` tool descriptions before trusting this skill.
+A reboot kills children and listeners. Sweep on the first wake, resume interrupted children and re-arm. After any Ada update, recheck: whether `returnOnQuestion` now covers approvals, whether `t3_pending_request list` lists approvals, and what `untilDelegatedWorkSettled` waits for. If any has changed, simplify the listener.
 
 ## Cost
 
-A listener costs one small helper turn per child run, plus one more helper step for each hour the child runs past 60 minutes. Token usage varies with context size and provider caching. Do not arm listeners for idle or settled children. Settle finished children promptly.
+One Haiku helper per child, making about 2 small tool calls a minute while the child runs (wait + pending check). That is an estimated 0.1–0.3 USD per child-hour of cache reads, against Opus wakes that are never needed for a quiet child. Do not arm listeners for idle or settled children, and settle finished children promptly.
