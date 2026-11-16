@@ -17,7 +17,6 @@ import {
   modelEvaluationAwaitsSubagents,
   validateModelEvaluationVerdict,
 } from "@t3tools/provider-core/server/modelEvaluation";
-import { REASONING_EFFORT_OPTION_IDS } from "@t3tools/shared/model";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -54,8 +53,13 @@ const encodeIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(MessageId
 const decodeSelection = Schema.decodeUnknownEffect(Schema.fromJsonString(ModelSelection));
 const isModelEvaluationError = Schema.is(ModelEvaluationError);
 
-// fastMode, serviceTier, contextWindow, and ultracode change latency, billing, or capacity, not output quality.
-const QUALITY_OPTION_IDS = new Set<string>(REASONING_EFFORT_OPTION_IDS);
+// These change latency, billing, or capacity, not output quality.
+const QUALITY_NEUTRAL_OPTION_IDS = new Set([
+  "fastMode",
+  "serviceTier",
+  "contextWindow",
+  "ultracode",
+]);
 
 function evaluatorFailureCause(detail: string): string {
   const text = detail.toLowerCase();
@@ -68,7 +72,12 @@ function evaluatorFailureCause(detail: string): string {
   )
     return "invalid output";
   if (text.includes("tool activity") || text.includes("tool work")) return "tool activity";
-  if (text.includes("not available") || text.includes("enoent")) return "provider unavailable";
+  if (
+    /unavailable|not available|not installed|no provider instance|does not support|enoent/.test(
+      text,
+    )
+  )
+    return "provider unavailable";
   return "provider request failed";
 }
 
@@ -76,7 +85,7 @@ function evaluatorFailureReason(error: { readonly _tag: string; readonly detail:
   return `The evaluator could not complete this evaluation (${error._tag}: ${evaluatorFailureCause(error.detail)}). No model score was recorded.`;
 }
 
-function refreshRunOutcome(status: string): ModelEvaluationRunOutcome | undefined {
+function settledRunOutcome(status: string): ModelEvaluationRunOutcome | undefined {
   switch (status) {
     case "completed":
     case "failed":
@@ -88,15 +97,26 @@ function refreshRunOutcome(status: string): ModelEvaluationRunOutcome | undefine
   }
 }
 
-function selectionKey(selection: ModelSelection) {
-  return JSON.stringify({
-    instanceId: selection.instanceId,
-    model: selection.model,
-    options: (selection.options ?? [])
-      .filter((option) => QUALITY_OPTION_IDS.has(option.id))
-      .toSorted((left, right) => left.id.localeCompare(right.id)),
-  });
+function qualitySelection(selection: ModelSelection): ModelSelection {
+  const options = (selection.options ?? [])
+    .filter((option) => !QUALITY_NEUTRAL_OPTION_IDS.has(option.id))
+    .toSorted((left, right) => left.id.localeCompare(right.id));
+  const base = { instanceId: selection.instanceId, model: selection.model };
+  return options.length === 0 ? base : { ...base, options };
 }
+
+function selectionKey(selection: ModelSelection) {
+  return JSON.stringify(qualitySelection(selection));
+}
+
+export const sourceMessageRevised = (sql: SqlClient.SqlClient) => sql`EXISTS (
+  SELECT 1 FROM json_each(evaluation.source_message_ids) AS message
+  CROSS JOIN orchestration_events AS source INDEXED BY model_evaluation_message_revision
+    ON json_extract(source.payload_json, '$.id') = +message.value
+  WHERE source.application_event_version = 2 AND source.aggregate_kind = 'thread'
+    AND source.stream_id = evaluation.thread_id AND source.event_type = 'message.updated'
+    AND source.sequence > evaluation.source_sequence
+)`;
 
 function summarize(
   records: ReadonlyArray<ModelEvaluationRecord>,
@@ -160,8 +180,8 @@ function summarize(
           : "provisional";
       return {
         scope: first.scope,
-        modelSelection: first.modelSelection,
-        evaluatorSelection: first.evaluatorSelection,
+        modelSelection: qualitySelection(first.modelSelection),
+        evaluatorSelection: qualitySelection(first.evaluatorSelection),
         rubricVersion: first.rubricVersion,
         taskCategory: first.verdict!.taskCategory,
         sampleCount: scored.length,
@@ -362,14 +382,7 @@ const make = Effect.gen(function* () {
             AND json_extract(source.payload_json, '$.runId') = +evaluation.run_id
             AND (source.event_type = 'message.updated' OR json_extract(source.payload_json, '$.type') IN ('user_message', 'assistant_message', 'command_execution', 'file_change', 'dynamic_tool', 'subagent'))
         )
-        AND NOT EXISTS (
-          SELECT 1 FROM json_each(evaluation.source_message_ids) AS message
-          JOIN orchestration_events AS source
-            ON json_extract(source.payload_json, '$.id') = message.value
-          WHERE source.application_event_version = 2 AND source.aggregate_kind = 'thread'
-            AND source.stream_id = evaluation.thread_id AND source.event_type = 'message.updated'
-            AND source.sequence > evaluation.source_sequence
-        )
+        AND NOT ${sourceMessageRevised(sql)}
         AND NOT EXISTS (
           SELECT 1 FROM json_each(evaluation.source_message_ids) AS reference
           LEFT JOIN orchestration_v2_projection_messages AS message ON message.message_id = reference.value
@@ -428,14 +441,7 @@ const make = Effect.gen(function* () {
                   )
                 )
             )
-            AND NOT EXISTS (
-              SELECT 1 FROM json_each(evaluation.source_message_ids) AS message
-              CROSS JOIN orchestration_events AS source INDEXED BY model_evaluation_message_revision
-                ON json_extract(source.payload_json, '$.id') = +message.value
-              WHERE source.application_event_version = 2 AND source.aggregate_kind = 'thread'
-                AND source.stream_id = evaluation.thread_id AND source.event_type = 'message.updated'
-                AND source.sequence > evaluation.source_sequence
-            )
+            AND NOT ${sourceMessageRevised(sql)}
             AND NOT EXISTS (
               SELECT 1 FROM json_each(evaluation.source_message_ids) AS reference
               LEFT JOIN orchestration_v2_projection_messages AS message ON message.message_id = reference.value
@@ -529,16 +535,9 @@ const make = Effect.gen(function* () {
       const records = source.records;
       if (records === null) return;
       const projectId = records.thread.projectId;
-      const runOutcome =
-        records.run.status === "completed" ||
-        records.run.status === "failed" ||
-        records.run.status === "interrupted" ||
-        records.run.status === "cancelled"
-          ? records.run.status
-          : requestedOutcome;
-      const settled = ["completed", "failed", "interrupted", "cancelled"].includes(
-        records.run.status,
-      );
+      const settledOutcome = settledRunOutcome(records.run.status);
+      const runOutcome = settledOutcome ?? requestedOutcome;
+      const settled = settledOutcome !== undefined;
       yield* requireProject(projectId);
       const previous = yield* sql`SELECT run_id FROM model_evaluations WHERE run_id = ${runId}`;
       const awaitsSubagents = modelEvaluationAwaitsSubagents(records.turnItems, runId);
@@ -654,7 +653,8 @@ const make = Effect.gen(function* () {
             const latestEvidence = build(latest);
             if (
               encodePacket(latestEvidence?.packet ?? null) !==
-              encodePacket(evidence?.packet ?? null)
+                encodePacket(evidence?.packet ?? null) ||
+              modelEvaluationAwaitsSubagents(latest.turnItems, runId) !== awaitsSubagents
             ) {
               const revision = yield* sequence(threadId);
               const effects = modelEvaluationEffects({
@@ -715,7 +715,7 @@ const make = Effect.gen(function* () {
         const candidates = yield* settledSubagentRevisions(input?.runId);
         const effects = yield* Effect.forEach(candidates, (candidate) =>
           Effect.gen(function* () {
-            const runOutcome = refreshRunOutcome(candidate.run_status);
+            const runOutcome = settledRunOutcome(candidate.run_status);
             if (runOutcome === undefined || candidate.subagent_revision === null) return [];
             const runId = RunId.make(candidate.run_id);
             const loaded = yield* projections
