@@ -1414,10 +1414,6 @@ const program = Effect.gen(function* () {
         }
       }
 
-      if (failPrompt || promptCount === failPromptOrdinal) {
-        return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
-      }
-
       if (emitTrackedToolCallKindThenHang !== undefined) {
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
@@ -1430,7 +1426,12 @@ const program = Effect.gen(function* () {
             rawInput: { command: "git status" },
           },
         });
-        return yield* Effect.never;
+        // With T3_ACP_FAIL_PROMPT the prompt fails below instead of hanging.
+        if (!failPrompt) return yield* Effect.never;
+      }
+
+      if (failPrompt || promptCount === failPromptOrdinal) {
+        return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
       }
 
       if (hangPromptForever || (emitEmptySuccessfulBashThenHang && promptCount === 2)) {
