@@ -315,7 +315,17 @@ export const make = Effect.gen(function* () {
           operation: "realpath-workspace-root",
           cause,
         }),
-    });
+    }).pipe(
+      // Storage cleanup removes idle worktrees but keeps their path, so nothing below them exists.
+      Effect.catchIf(
+        (error) =>
+          input.allowMissing === true && (error.cause as NodeJS.ErrnoException).code === "ENOENT",
+        () => Effect.succeed(null),
+      ),
+    );
+    if (realWorkspaceRoot === null) {
+      return { relativePath: target.relativePath, realTargetPath: null };
+    }
     const resolved = yield* Effect.tryPromise({
       try: async () => {
         let candidate = target.absolutePath;

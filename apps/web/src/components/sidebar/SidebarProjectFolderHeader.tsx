@@ -1,9 +1,11 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { ContextMenuSource } from "@t3tools/contracts";
 import { ChevronDownIcon, SquarePenIcon } from "lucide-react";
 import { memo } from "react";
 
 import { cn } from "~/lib/utils";
+import { contextMenuSourceOf } from "../../contextMenuSource";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useUiStateStore } from "../../uiStateStore";
 import { resolveSidebarFolderDot, resolveThreadLastVisitedAt } from "../Sidebar.logic";
@@ -41,7 +43,11 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   hiddenThreads: readonly EnvironmentThreadShell[];
   onToggle: (group: SidebarProjectSnapshot) => void;
   onNewThread: (group: SidebarProjectSnapshot) => void;
-  onContextMenu: (group: SidebarProjectSnapshot, position: { x: number; y: number }) => void;
+  onContextMenu: (
+    group: SidebarProjectSnapshot,
+    position: { x: number; y: number },
+    source: ContextMenuSource,
+  ) => void;
 }) {
   const { group, collapsed, hiddenThreads } = props;
   const rowId = sidebarFolderRowId(group.projectKey);
@@ -71,7 +77,11 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
         onClick={() => props.onToggle(group)}
         onContextMenu={(event) => {
           event.preventDefault();
-          props.onContextMenu(group, { x: event.clientX, y: event.clientY });
+          props.onContextMenu(
+            group,
+            { x: event.clientX, y: event.clientY },
+            contextMenuSourceOf(event),
+          );
         }}
         className="flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-(--sidebar-row-content-inset) text-left outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >

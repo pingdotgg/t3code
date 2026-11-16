@@ -8,6 +8,7 @@ import {
 } from "./chatAttachment.ts";
 import { ProjectFaviconPath } from "./project.ts";
 import { ToolActivityNativeAppReference } from "./providerRuntime.ts";
+import { EnvironmentThemeId } from "./server.ts";
 
 const ASSET_PATH_MAX_LENGTH = 1024;
 
@@ -66,6 +67,9 @@ export const AssetResource = Schema.Union([
   // to a request that carries a credential, which the client has none of, so the server fetches
   // them with the credential the host's driver holds for the repository at `cwd`. `repository`
   // names the change request's repository, which can differ from the checkout at `cwd`.
+  Schema.TaggedStruct("environment-theme-background", {
+    themeId: EnvironmentThemeId,
+  }),
   Schema.TaggedStruct(SOURCE_CONTROL_MEDIA_ASSET, {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),

@@ -438,7 +438,7 @@ describe("pull request list answers across a reload", () => {
       { environmentId: remote, input },
     ]);
     expect(restored?.entries.map((row) => [row.environmentId, row.updatedAt])).toEqual([
-      [remote, "2026-07-03T00:00:00Z"],
+      [local, "2026-07-01T00:00:00Z"],
     ]);
   });
 

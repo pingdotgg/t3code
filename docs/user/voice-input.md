@@ -73,7 +73,10 @@ language; speed is the time to transcribe 30 seconds on a reference GPU. Choose
 **Auto**, a recording that fails on the GPU is retried once on that same
 environment's CPU; a GPU you picked yourself reports the error instead. Nothing
 is ever retried on another environment. Models marked **Live preview** show
-text while you speak. Other models can process long recordings in chunks at pauses
+text while you speak. On web and desktop, turn off **Advanced → Streaming transcription**
+to transcribe with the same model after stopping instead. This may help when live
+transcription falls behind. The preference is saved on this device and only applies
+to models that support native streaming. Other models can process long recordings in chunks at pauses
 while you record; models with built-in long-form support transcribe when you stop.
 
 ## Dictate

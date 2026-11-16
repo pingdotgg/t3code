@@ -52,6 +52,7 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useDelayedStatus } from "../../lib/useDelayedStatus";
+import { connectionRetryLabel } from "./floating-working-status";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useThreadShell } from "../../state/entities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
@@ -135,6 +136,8 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
   const first = Array.isArray(value) ? value[0] : value;
   return first === undefined || first.trim().length === 0 ? null : first;
 }
+
+const RECONNECT_ERROR_DELAY_MS = 5_000;
 
 // The inspector pane's bar belongs to ThreadInspectorHeader; the fallback must not draw its own.
 const InspectorHeaderShownContext = createContext(false);
@@ -961,18 +964,33 @@ function ThreadRouteContent(
           detailDeleted: selectedThreadDetailState.status === "deleted",
           connectionState: routeConnectionState,
         });
-  // Shown in the header subtitle so the composer's status slot doesn't jump while history syncs.
-  const threadSyncLabel = useDelayedStatus(
-    selectedThread === null ? "" : scopedThreadKey(selectedThread.environmentId, selectedThread.id),
-    // A thread this client is creating has nothing older to sync.
+  const connectionRetrying =
+    routeConnectionState === "connecting" || routeConnectionState === "reconnecting";
+  // Connection failures survive retries and app suspension.
+  const retryConnectionError = useDelayedStatus(
+    `${environmentId}:${connectionRetrying && routeConnectionError !== null}`,
+    connectionRetrying ? routeConnectionError : null,
+    RECONNECT_ERROR_DELAY_MS,
+  );
+  const connectionStatusLabel = connectionRetryLabel({
+    connectionError: retryConnectionError,
+    connectionState: routeConnectionState,
+    connectionAwaitingApproval: routeEnvironmentRuntime?.connectionAwaitingApproval === true,
+  });
+  // A thread this client is creating has nothing older to sync.
+  const threadSyncLabel =
     creationState === null
       ? threadSyncStatusLabel(selectedThreadDetailState.status, contentPresentation.kind)
-      : null,
+      : null;
+  // Transient states go in the header subtitle so the composer's status slot doesn't jump.
+  const threadStatusLabel = useDelayedStatus(
+    selectedThread === null ? "" : scopedThreadKey(selectedThread.environmentId, selectedThread.id),
+    connectionStatusLabel !== null ? connectionStatusLabel : threadSyncLabel,
   );
   const inspectorHeader = props.inspectorPresentation ? (
     <ThreadInspectorHeader
       title={selectedThread?.title ?? "Thread"}
-      subtitle={threadSyncLabel ?? undefined}
+      subtitle={threadStatusLabel ?? undefined}
       {...props.inspectorPresentation}
     />
   ) : null;
@@ -1000,7 +1018,7 @@ function ThreadRouteContent(
             props.inspectorPresentation ? null : (
               <ThreadHeader
                 title={selectedThread.title}
-                subtitle={threadSyncLabel ?? headerSubtitle}
+                subtitle={threadStatusLabel ?? headerSubtitle}
                 gitControls={threadGitControlProps}
                 hasThreadCwd={selectedThreadCwd !== null}
                 inspectorMode={inspectorMode}
@@ -1065,7 +1083,6 @@ function ThreadRouteContent(
           activePendingUserInputAnswers={requests.activePendingUserInputAnswers}
           respondingUserInputId={requests.respondingUserInputId}
           connectionStateLabel={routeConnectionState}
-          connectionAwaitingApproval={routeEnvironmentRuntime?.connectionAwaitingApproval === true}
           historyControls={historyControls}
           activeThreadBusy={composer.activeThreadBusy}
           canStopThread={awaitingBootstrapTurn || composer.interruptibleRunId !== null}

@@ -2083,7 +2083,7 @@ it("renders automatic compaction as one live divider that finishes with its reas
   await expect
     .element(
       screen.getByRole("separator", {
-        name: "Context automatically compacted before cache expiry 899K → 19K tokens",
+        name: "Auto-compacted before cache expiry 899K → 19K tokens",
       }),
     )
     .toBeVisible();

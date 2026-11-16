@@ -41,9 +41,11 @@ const ThemeReadTool = Tool.make("t3_theme_read", {
         id: EnvironmentThemeId,
         name: Schema.String,
         hasCss: Schema.Boolean,
+        hasBackground: Schema.Boolean,
       }),
     ),
     theme: Schema.optionalKey(EnvironmentThemeFile),
+    themesDir: Schema.String,
     guide: Schema.String,
   }),
 })

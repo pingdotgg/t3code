@@ -3655,6 +3655,10 @@ describe("OrchestratorMcpService provider resolution", () => {
       saved: Ref.Ref<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>,
       task: ScheduledTask = existing,
       inputs?: Ref.Ref<ReadonlyArray<ScheduledTaskUpsertInput>>,
+      defaults: {
+        readonly project: ScheduledTask["modelSelection"] | null;
+        readonly environment?: ScheduledTask["modelSelection"];
+      } = { project: existing.modelSelection },
     ) =>
       OrchestratorMcpService.layer.pipe(
         Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -3666,7 +3670,11 @@ describe("OrchestratorMcpService provider resolution", () => {
             Layer.mock(ThreadManagementService.ThreadManagementService)({
               getThreadShell: () => Effect.succeed(null),
             }),
-            ServerSettings.layerTest(),
+            ServerSettings.layerTest(
+              defaults.environment === undefined
+                ? {}
+                : { defaultModelSelection: defaults.environment },
+            ),
             Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
             Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
               list: () => Effect.succeed([]),
@@ -3676,7 +3684,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 Effect.succeedSome({
                   id: projectId,
                   workspaceRoot,
-                  defaultModelSelection: existing.modelSelection,
+                  defaultModelSelection: defaults.project,
                 } as never),
             }),
             Layer.mock(SecretRequests.SecretRequests)({}),
@@ -3714,6 +3722,32 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.deepEqual(yield* Ref.get(saved), [
           { type: "worktree", baseRef: "origin/master", startFromOrigin: true },
         ]);
+      }),
+    );
+
+    it.effect("uses the environment's default model when the project inherits it", () =>
+      Effect.gen(function* () {
+        const environmentDefault = {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-opus-5-5",
+        };
+        const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(
+            service(
+              masterRepository,
+              yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
+              existing,
+              inputs,
+              { project: null, environment: environmentDefault },
+            ),
+          ),
+        );
+        yield* mcp.scheduleTask(client, { projectId, prompt: "Check the build", schedule });
+        assert.deepEqual(
+          (yield* Ref.get(inputs)).map((input) => input.modelSelection),
+          [environmentDefault],
+        );
       }),
     );
 
