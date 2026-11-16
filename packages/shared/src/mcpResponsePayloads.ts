@@ -1,6 +1,4 @@
 // @effect-diagnostics globalJsonInEffect:off
-import * as Arr from "effect/Array";
-import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
@@ -24,34 +22,6 @@ function takeSseData(buffered: string): readonly [rest: string, data: ReadonlyAr
   return [buffered, events];
 }
 
-// Reads a body until it ends; on interruption it unlocks and cancels the body, so a stalled read ends.
-const bodyChunks = <E>(
-  body: ReadableStream<Uint8Array>,
-  onError: (cause: unknown) => E,
-): Stream.Stream<Uint8Array, E> =>
-  Stream.unwrap(
-    Effect.acquireRelease(
-      Effect.sync(() => body.getReader()),
-      (reader) =>
-        Effect.promise(() => {
-          reader.releaseLock();
-          return body.cancel().catch(() => undefined);
-        }),
-    ).pipe(
-      Effect.map((reader) =>
-        Stream.fromPull(
-          Effect.succeed(
-            Effect.tryPromise({ try: () => reader.read(), catch: onError }).pipe(
-              Effect.flatMap(({ done, value }) =>
-                done ? Cause.done() : Effect.succeed(Arr.of(value)),
-              ),
-            ),
-          ),
-        ),
-      ),
-    ),
-  );
-
 export const discardResponseBody = (response: Response): Effect.Effect<void> =>
   Effect.promise(() => response.body?.cancel().catch(() => undefined) ?? Promise.resolve());
 
@@ -66,7 +36,7 @@ export function responsePayloads<E>(
   if (mediaType.toLowerCase() === "text/event-stream") {
     const body = response.body;
     if (body === null) return Stream.empty;
-    return bodyChunks(body, onError).pipe(
+    return Stream.fromReadableStream({ evaluate: () => body, onError }).pipe(
       Stream.decodeText,
       Stream.mapAccum(
         () => "",
