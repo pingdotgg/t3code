@@ -1,11 +1,6 @@
 import { EnvironmentId, type ServerConfig } from "@t3tools/contracts";
-import type * as Effect from "effect/Effect";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
-import {
-  createAttachmentUploadRegistry,
-  type AttachmentUploadError,
-  type AttachmentUploadStatus,
-} from "@t3tools/client-runtime/state/attachment-uploads";
+import type { AttachmentUploadStatus } from "@t3tools/client-runtime/state/attachment-uploads";
 
 import { parseLegacyNewTaskDraftKey } from "../state/new-task-draft-key";
 import type { DraftComposerAttachment } from "./composerImages";
@@ -106,39 +101,4 @@ export function composerAttachmentsStillUploading(input: {
     const state = input.states[composerAttachmentUploadKey(input.environmentId, attachment.id)];
     return state?.status !== "ready" && state?.status !== "failed";
   });
-}
-
-/**
- * The composer's uploads, on the shared registry: keyed by environment and attachment, three at
- * a time per environment.
- */
-export function createComposerAttachmentUploadQueue(options: {
-  /** Uploads one attachment; interrupting it must abort the transfer and wait for it to settle. */
-  readonly upload: (
-    request: ComposerAttachmentUploadRequest,
-    reportProgress: (progress: number) => void,
-  ) => Effect.Effect<string, AttachmentUploadError>;
-  /** Saves a finished upload's id; the upload is ready once this succeeds. */
-  readonly onUploaded?: (
-    request: ComposerAttachmentUploadRequest,
-    uploadedId: string,
-  ) => Effect.Effect<void, AttachmentUploadError>;
-  readonly onChange: (states: Readonly<Record<string, ComposerAttachmentUploadState>>) => void;
-}) {
-  const registry = createAttachmentUploadRegistry<ComposerAttachmentUploadRequest>({
-    key: (request) => composerAttachmentUploadKey(request.environmentId, request.attachment.id),
-    environmentId: (request) => request.environmentId,
-    concurrencyPerEnvironment: 3,
-    upload: options.upload,
-    ...(options.onUploaded ? { onUploaded: options.onUploaded } : {}),
-    onChange: options.onChange,
-  });
-  return {
-    sync: registry.sync,
-    upload: registry.upload,
-    retry: (environmentId: EnvironmentId, attachmentId: string) =>
-      registry.retry(composerAttachmentUploadKey(environmentId, attachmentId)),
-    settled: registry.settled,
-    dispose: registry.dispose,
-  };
 }

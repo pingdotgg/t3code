@@ -2,7 +2,10 @@ import { useAtomValue } from "@effect/atom-react";
 import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { attachmentUploadError } from "@t3tools/client-runtime/state/attachment-uploads";
+import {
+  attachmentUploadError,
+  createAttachmentUploadRegistry,
+} from "@t3tools/client-runtime/state/attachment-uploads";
 import { Atom } from "effect/reactivity";
 
 import { uploadComposerAttachment } from "../lib/attachmentUpload";
@@ -15,7 +18,6 @@ import {
   composerAttachmentUploadKey,
   composerDraftEnvironmentId,
   canUploadComposerAttachment,
-  createComposerAttachmentUploadQueue,
   type ComposerAttachmentUploadState,
 } from "../lib/composerAttachmentUploadQueue";
 import { appAtomRegistry } from "./atom-registry";
@@ -52,7 +54,7 @@ export const composerAttachmentUploadsAtom = Atom.make<
 const uploadStateAtom = Atom.family((key: string) =>
   Atom.map(composerAttachmentUploadsAtom, (states) => states[key]),
 );
-let uploadQueue: ReturnType<typeof createComposerAttachmentUploadQueue> | null = null;
+let uploadQueue: ReturnType<typeof createComposerUploadRegistry> | null = null;
 
 export function useComposerAttachmentUploadState(
   environmentId: EnvironmentId | undefined,
@@ -65,7 +67,7 @@ export function useComposerAttachmentUploadState(
 
 export function retryComposerAttachmentUpload(environmentId: EnvironmentId, attachmentId: string) {
   if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
-  uploadQueue?.retry(environmentId, attachmentId);
+  uploadQueue?.retry(composerAttachmentUploadKey(environmentId, attachmentId));
 }
 
 type ComposerAttachmentUploadRequest = {
@@ -238,8 +240,11 @@ const recordComposerAttachmentUpload = Effect.fn("ComposerAttachments.recordUplo
   );
 });
 
-function composerAttachmentUploads() {
-  uploadQueue ??= createComposerAttachmentUploadQueue({
+const createComposerUploadRegistry = () =>
+  createAttachmentUploadRegistry<ComposerAttachmentUploadRequest>({
+    key: (request) => composerAttachmentUploadKey(request.environmentId, request.attachment.id),
+    environmentId: (request) => request.environmentId,
+    concurrencyPerEnvironment: 3,
     onChange: (states) => appAtomRegistry.set(composerAttachmentUploadsAtom, states),
     // The file stays on disk while its upload reads it, even if its draft lets go meanwhile.
     upload: ({ environmentId, attachment }, reportProgress) =>
@@ -254,6 +259,9 @@ function composerAttachmentUploads() {
       ),
     onUploaded: recordComposerAttachmentUpload,
   });
+
+function composerAttachmentUploads() {
+  uploadQueue ??= createComposerUploadRegistry();
   return uploadQueue;
 }
 
