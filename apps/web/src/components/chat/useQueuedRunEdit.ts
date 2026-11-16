@@ -3,7 +3,9 @@ import {
   makeQueuedRunEditStore,
   makeQueuedRunsAtom,
 } from "@t3tools/client-runtime/queued-run-edit";
+import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
+import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type ChatAttachment,
@@ -38,6 +40,7 @@ import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   awaitAttachmentUploads,
   getUploadedAttachments,
+  refreshExpiredAttachmentUploads,
   releaseDraftAttachments,
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
@@ -48,6 +51,7 @@ import {
 } from "../../lib/composerContextReferences";
 import { readFileAsDataUrl } from "../../lib/imageCompression";
 import type { TerminalContextDraft } from "../../lib/terminalContext";
+import type { ComposerSubmissionIntent } from "../../composer-logic";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../../state/server";
@@ -60,6 +64,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import type { ChatComposerHandle } from "./ChatComposer";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
+import { composerDraftContentChanged } from "./composerSend.logic";
 import {
   discardQueuedEditDraft,
   prepareQueuedEditAttachments,
@@ -105,6 +110,7 @@ async function submitQueuedRunEdit(input: {
   readonly editing: EditingQueuedRun;
   readonly content: QueuedRunEditContent;
   readonly editQueuedRun: ReturnType<typeof useEditQueuedRunCommand>;
+  readonly draftChanged: () => boolean;
 }): Promise<string | null> {
   const { environmentId, draftTarget, editing, content } = input;
   const editText = content.prompt.trim();
@@ -124,6 +130,7 @@ async function submitQueuedRunEdit(input: {
     validateFiles();
     for (const file of files) startAttachmentUpload({ environmentId, image: file, draftTarget });
     await awaitAttachmentUploads(files.map((file) => file.id));
+    await refreshExpiredAttachmentUploads({ environmentId, images: files, draftTarget });
     validateFiles();
     const uploaded = getUploadedAttachments({ environmentId, images: files });
     if (uploaded === null) throw new Error("Retry or remove failed uploads before saving.");
@@ -137,6 +144,8 @@ async function submitQueuedRunEdit(input: {
       readImage: readFileAsDataUrl,
       uploadFiles,
     });
+    if (input.draftChanged())
+      return "Draft changed while preparing this message. Review it and save again.";
     // The edit draft owns thread and machine mentions, so a chip removed while editing is dropped.
     const keptRecords = (editing.context?.records ?? []).filter(
       (record) =>
@@ -211,6 +220,7 @@ export function useQueuedRunEdit(input: {
     composerRef,
   } = input;
   const editQueuedRunCommand = useEditQueuedRunCommand();
+  const promoteQueuedRun = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const editKey = scopedThreadKey(routeThreadRef);
   const storedEdit = useAtomValue(queuedRunEdits.atom)[editKey] ?? null;
   const editing = activeThreadId === null ? null : storedEdit;
@@ -337,9 +347,39 @@ export function useQueuedRunEdit(input: {
     }));
   });
 
+  // The same move as the queued row's "Send now" while a turn runs.
+  const steerSavedRun = async (edited: EditingQueuedRun) => {
+    const projection = appAtomRegistry.get(
+      environmentThreadDetails.quietThreadAtom({ environmentId, threadId: edited.threadId }),
+    )?.projection;
+    if (!projection) return;
+    const workflow = deriveThreadQueueWorkflowState(projection);
+    const queued = workflow.queuedRuns.find(({ run }) => run.id === edited.runId);
+    if (
+      queued === undefined ||
+      workflow.activeRun === null ||
+      !workflow.canPromoteToSteer ||
+      (queued.run.freshContext === true && !workflow.promoteSkipsCompaction)
+    ) {
+      return;
+    }
+    await promoteQueuedRun({
+      environmentId,
+      input: {
+        threadId: edited.threadId,
+        queuedRunId: edited.runId,
+        targetRunId: workflow.activeRun.id,
+      },
+    });
+  };
+
   const saveEdit = async (
     content: QueuedRunEditContent,
     setThreadError: (threadId: ThreadId, error: string | null) => void,
+    submission?: {
+      readonly dispatchMode: ComposerDispatchMode;
+      readonly submissionIntent: ComposerSubmissionIntent;
+    },
   ) => {
     if (editing === null || isSaving) return;
     const newAttachments = [...content.images, ...content.files];
@@ -363,15 +403,29 @@ export function useQueuedRunEdit(input: {
     // The save's result decides the edit's fate, even if the run starts meanwhile.
     const finishSave = queuedRunEdits.startSave(editKey);
     if (finishSave === null) return;
+    const draftBeforeSave = useComposerDraftStore.getState().getComposerDraft(draftTarget);
+    const draftChanged = () =>
+      appAtomRegistry.get(queuedRunEdits.atom)[editKey] !== editing ||
+      composerDraftContentChanged(
+        draftBeforeSave,
+        useComposerDraftStore.getState().getComposerDraft(draftTarget),
+      );
     const error = await submitQueuedRunEdit({
       environmentId,
       draftTarget,
       editing,
       content,
       editQueuedRun: editQueuedRunCommand,
+      draftChanged,
     });
-    setThreadError(editing.threadId, error);
-    const current = finishSave(error === null);
+    const changedAfterSave = error === null && draftChanged();
+    setThreadError(
+      editing.threadId,
+      changedAfterSave
+        ? "The earlier edit was saved. Review your newer changes and save again."
+        : error,
+    );
+    const current = finishSave(error === null && !changedAfterSave);
     if (!current) {
       // A failed save can recover into the thread draft; a newer edit can also retain resources.
       const drafts = Object.values(useComposerDraftStore.getState().draftsByThreadKey);
@@ -394,11 +448,17 @@ export function useQueuedRunEdit(input: {
       return;
     }
     if (error !== null) return;
+    if (changedAfterSave) return;
     releaseDraftAttachments(newAttachments);
     promptRef.current = "";
     clearEditDraft(editing.runId);
     composerRef.current?.resetCursorState();
     focusComposerSoon();
+    // A plain submit means "Update queued message"; only the opposite-action shortcut or
+    // modifier-click asks to steer, as it does for a new follow-up.
+    if (submission?.submissionIntent === "alternate" && submission.dispatchMode === "steer") {
+      await steerSavedRun(editing);
+    }
   };
 
   return {

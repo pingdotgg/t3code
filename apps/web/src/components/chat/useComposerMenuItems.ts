@@ -124,14 +124,16 @@ export function useComposerMenuItems({
     pullRequestTextQuery === debouncedPullRequestTextQuery ? pullRequestTextQuery : null;
   const isPathTrigger = composerTriggerKind === "path";
   const environmentThreadShells = useVisibleThreadShells(isPathTrigger);
-  // Mounts older settled threads matching the mention, which shells may leave out.
-  useThreadSearch(isPathTrigger ? [environmentId] : [], pathTriggerQuery, { titlesOnly: true });
+  // Mounts older settled threads matching the mention, here and on linked machines, which shells
+  // may leave out.
+  const threadSearchEnvironmentIds = isPathTrigger
+    ? [environmentId, ...linkedEnvironments.keys()]
+    : [];
+  useThreadSearch(threadSearchEnvironmentIds, pathTriggerQuery, { titlesOnly: true });
   const threadQuery = composerThreadQuery(pathTriggerQuery);
-  useThreadSearch(
-    isPathTrigger && threadQuery !== pathTriggerQuery ? [environmentId] : [],
-    threadQuery,
-    { titlesOnly: true },
-  );
+  useThreadSearch(threadQuery !== pathTriggerQuery ? threadSearchEnvironmentIds : [], threadQuery, {
+    titlesOnly: true,
+  });
   // The user's machines feed `@` machine matches; the catalog summary is cheap and stable.
   const environmentIdentities = useEnvironmentIdentities();
   const environmentMachines = useEnvironmentMachines();
