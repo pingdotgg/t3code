@@ -3,8 +3,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
 
@@ -74,6 +76,10 @@ export function startSecondServer(devUrl: string) {
       Effect.provide([NodeServices.layer, NetService.layer]),
     ),
   );
-  server.addObserver(() => pairing.reject(new Error("The second server stopped.")));
+  server.addObserver((exit) =>
+    pairing.reject(
+      Exit.isFailure(exit) ? Cause.squash(exit.cause) : new Error("The second server stopped."),
+    ),
+  );
   return { ready: pairing.promise, stop: () => Effect.runPromise(Fiber.interrupt(server)) };
 }

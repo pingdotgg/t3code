@@ -45,6 +45,7 @@ it("rejects readiness when the second server exits before printing a token", asy
     "process.exit(1);\n",
   );
   const server = startSecondServer("http://127.0.0.1:5733");
+  const failure = server.ready.catch((error: unknown) => error);
   let readiness = "pending";
   const settled = server.ready.then(
     () => {
@@ -61,6 +62,9 @@ it("rejects readiness when the second server exits before printing a token", asy
     expect(readiness, "expect startup failure to reject readiness after the server exits").toBe(
       "failed",
     );
+    expect(await failure).toMatchObject({
+      message: "The second server exited with code 1 at startup.",
+    });
   } finally {
     vi.useRealTimers();
     await server.stop();
