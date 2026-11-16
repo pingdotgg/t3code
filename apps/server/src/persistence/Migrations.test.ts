@@ -1364,3 +1364,22 @@ it.effect("registers every migration file", () =>
     );
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.effect.each(["RepairSubagentGroups", "ProjectKnowledgeFtsVocab"])(
+  "installs recall indexes after either migration 113 preview (%s)",
+  (name) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 112 });
+      if (name === "ProjectKnowledgeFtsVocab")
+        yield* sql`CREATE VIRTUAL TABLE project_knowledge_fts_vocab USING fts5vocab(project_knowledge_fts, 'row')`;
+      yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (113, ${name})`;
+      yield* runMigrations();
+      assert.deepEqual(
+        yield* sql`SELECT token FROM project_knowledge_tokenizer WHERE input = 'πύλη 캐시 ガバナンス'`,
+        [{ token: "πύλη" }, { token: "캐시" }, { token: "ガバナンス" }],
+      );
+      assert.deepEqual(yield* sql`SELECT term FROM project_knowledge_fts_instances LIMIT 1`, []);
+      assert.deepEqual(yield* runMigrations(), []);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+);

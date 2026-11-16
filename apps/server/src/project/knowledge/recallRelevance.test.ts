@@ -1,3 +1,4 @@
+import * as NodeSqlite from "node:sqlite";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -212,3 +213,37 @@ it.effect("splits terms the way the FTS vocabulary does", () =>
     assert.deepEqual([...recallTokens(`${content} Café Menu`)].sort(), [...indexed].sort());
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
+
+it("uses unicode61 tokens across scripts and identifier punctuation", () => {
+  const db = new NodeSqlite.DatabaseSync(":memory:");
+  try {
+    db.exec(
+      "CREATE VIRTUAL TABLE sample USING fts5(content); CREATE VIRTUAL TABLE vocab USING fts5vocab(sample, 'row')",
+    );
+    const samples = [
+      "café naïve résumé Ærøskøbing straße İstanbul Cấu hình kết nối cơ sở dữ liệu",
+      "πύλη πληρωμών απορρίπτει συναλλαγές Σ σ ς Ελληνικά",
+      "Привет мир тестирование",
+      "캐시 키에는 테넌트 한국어텍스트",
+      "ガバナンス ばなな キャッシュキー",
+      "数据库连接池配置 東京タワー",
+      "การย้ายฐานข้อมูล ภายใน ธุรกรรม",
+      "हिन्दी भाषा परीक्षण",
+      "ﬁlesystem ＦＵＬＬＷＩＤＴＨ ①②③ x²y³ ㎒",
+      "emoji🚀rocket deploy✅done",
+      "snake_case-name dotted.name path/to/file.ts CamelCase HTTPServer2",
+      "a\u0301 e\u0302\u0301 क\u093f क\u094dष",
+    ];
+    for (const text of samples) {
+      db.exec("DELETE FROM sample");
+      db.prepare("INSERT INTO sample(content) VALUES (?)").run(text);
+      const indexed = db
+        .prepare("SELECT term FROM vocab ORDER BY term")
+        .all()
+        .map((row) => row.term);
+      assert.deepEqual([...recallTokens(text)].sort(), indexed, text);
+    }
+  } finally {
+    db.close();
+  }
+});
