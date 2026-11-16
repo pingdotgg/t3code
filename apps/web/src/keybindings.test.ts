@@ -22,6 +22,7 @@ import {
   shouldShowThreadJumpHintsForModifiers,
   shortcutLabelForCommand,
   terminalNavigationShortcutData,
+  withoutExploroHiddenCommands,
   type ShortcutEventLike,
 } from "./keybindings";
 
@@ -426,6 +427,19 @@ describe("model picker navigation helpers", () => {
 });
 
 describe("chat/editor shortcuts", () => {
+  it("drops chords for Exploro's hidden developer features", () => {
+    const bindings = withoutExploroHiddenCommands(
+      mergeWithDefaultKeybindings(
+        compile([{ shortcut: modShortcut("r", { shiftKey: true }), command: "script.test.run" }]),
+      ),
+    );
+    const commands = new Set(bindings.map((rule) => rule.command));
+    for (const hidden of ["editor.openFavorite", "composer.branch", "script.test.run"]) {
+      assert.isFalse(commands.has(hidden as KeybindingCommand), hidden);
+    }
+    assert.isTrue(commands.has("threadPanel.toggle"));
+  });
+
   it("toggles the thread panel by default without taking terminal keystrokes", () => {
     for (const platform of ["MacIntel", "Win32", "Linux"]) {
       const input = event({

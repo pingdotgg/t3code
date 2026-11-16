@@ -1,8 +1,10 @@
 import type { ClientSettings } from "@t3tools/contracts";
 
 // Ids are stored in client settings, so never rename one.
-export const THREAD_DETAILS_ITEMS = [
-  { id: "environment", label: "Environment and worktree", defaultVisible: true },
+const ALL_THREAD_DETAILS_ITEMS = [
+  { id: "target", label: "Target", defaultVisible: true },
+  { id: "testRun", label: "Test run", defaultVisible: true },
+  { id: "environment", label: "Environment", defaultVisible: true },
   { id: "openIn", label: "Open in editor", defaultVisible: true },
   { id: "scripts", label: "Project scripts", defaultVisible: true },
   { id: "branch", label: "Branch and pull request", defaultVisible: true },
@@ -16,10 +18,24 @@ export const THREAD_DETAILS_ITEMS = [
   { id: "context", label: "Context window", defaultVisible: false },
 ] as const;
 
-export type ThreadDetailsItemId = (typeof THREAD_DETAILS_ITEMS)[number]["id"];
+export type ThreadDetailsItemId = (typeof ALL_THREAD_DETAILS_ITEMS)[number]["id"];
+
+// Exploro is a QA tool. The developer sections stay in the code, so T3 merges stay easy, but never show.
+const EXPLORO_HIDDEN_ITEMS: ReadonlySet<ThreadDetailsItemId> = new Set([
+  "openIn",
+  "scripts",
+  "branch",
+  "gitActions",
+  "changes",
+  "servers",
+]);
+
+export const THREAD_DETAILS_ITEMS = ALL_THREAD_DETAILS_ITEMS.filter(
+  (item) => !EXPLORO_HIDDEN_ITEMS.has(item.id),
+);
 export type ThreadDetailsVisibility = Readonly<Record<ThreadDetailsItemId, boolean>>;
 
-type ThreadDetailsItem = (typeof THREAD_DETAILS_ITEMS)[number];
+type ThreadDetailsItem = (typeof ALL_THREAD_DETAILS_ITEMS)[number];
 type ThreadDetailsItemSettings = Pick<
   ClientSettings,
   "threadDetailsItems" | "threadDetailsUsageEnabled"
@@ -36,9 +52,10 @@ export function resolveThreadDetailsVisibility(
   settings: ThreadDetailsItemSettings,
 ): ThreadDetailsVisibility {
   return Object.fromEntries(
-    THREAD_DETAILS_ITEMS.map((item) => [
+    ALL_THREAD_DETAILS_ITEMS.map((item) => [
       item.id,
-      settings.threadDetailsItems[item.id] ?? defaultVisible(item, settings),
+      !EXPLORO_HIDDEN_ITEMS.has(item.id) &&
+        (settings.threadDetailsItems[item.id] ?? defaultVisible(item, settings)),
     ]),
   ) as Record<ThreadDetailsItemId, boolean>;
 }

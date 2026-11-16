@@ -202,7 +202,7 @@ import { ComposerContextPermissions } from "./ComposerContextPermissions";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { isEditableFocused } from "../lib/editableFocus";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
-import { shortcutLabelForCommand } from "../keybindings";
+import { shortcutLabelForCommand, withoutExploroHiddenCommands } from "../keybindings";
 import { cn } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { toastManager } from "./ui/toast";
@@ -1680,9 +1680,10 @@ export default function ChatView(props: ChatViewProps) {
   });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const backgroundThread = use(BackgroundThreadContext);
-  const scriptKeybindings =
+  const scriptKeybindings = withoutExploroHiddenCommands(
     useAtomValue(serverEnvironment.configValueAtom(environmentId))?.keybindings ??
-    DEFAULT_RESOLVED_KEYBINDINGS;
+      DEFAULT_RESOLVED_KEYBINDINGS,
+  );
   const openInEnvironmentId = activeThread?.environmentId ?? environmentId;
   const availableEditors =
     useAtomValue(serverEnvironment.configValueAtom(openInEnvironmentId))?.availableEditors ?? [];
@@ -3798,7 +3799,8 @@ export default function ChatView(props: ChatViewProps) {
                                   projectId={activeThread.projectId}
                                   worktreePath={activeThread.worktreePath}
                                   isServerThread={isServerThread}
-                                  showGitControls={isGitRepo}
+                                  // Exploro is a QA tool and shows no branch controls.
+                                  showGitControls={false}
                                   {...(routeKind === "draft" && draftId ? { draftId } : {})}
                                   onEnvModeChange={onEnvModeChangeStable}
                                   startFromOrigin={startFromOrigin}
