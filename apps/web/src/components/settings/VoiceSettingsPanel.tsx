@@ -740,11 +740,36 @@ function AdvancedSpeechSettings({
   catalog: VoiceModels;
 }) {
   const m = useMessages();
+  const settings = useClientSettings();
   const { run, controlsDisabled, status } = catalog;
   if (!status?.supported) return null;
   const supported = status;
   return (
-    <AdvancedSettings targetIds={[searchableSetting("speech-hardware").id]}>
+    <AdvancedSettings
+      targetIds={[
+        searchableSetting("speech-streaming").id,
+        searchableSetting("speech-hardware").id,
+      ]}
+    >
+      <SettingsRow
+        {...searchableSetting("speech-streaming")}
+        title={msg("Streaming transcription")}
+        description={
+          supported.supportsStreaming
+            ? msg(
+                "Transcribe while recording. Turn off to transcribe after stopping, which may help when live transcription falls behind.",
+              )
+            : msg("This model doesn’t support native streaming.")
+        }
+        control={
+          <Switch
+            aria-label={m(msg("Streaming transcription"))}
+            disabled={!supported.supportsStreaming}
+            checked={settings.speechStreaming}
+            onCheckedChange={(checked) => void updateClientSettings({ speechStreaming: checked })}
+          />
+        }
+      />
       <SettingsRow
         {...searchableSetting("speech-hardware")}
         title={msg("Hardware")}
@@ -1289,6 +1314,7 @@ export function VoiceSettingsPanel() {
           model || destination.cloudProvider ? undefined : "voice-transcription-destination",
         "speech-models": prepared ? undefined : "voice-transcription-destination",
         "speech-hardware": prepared && model ? undefined : "voice-transcription-destination",
+        "speech-streaming": prepared && model ? undefined : "voice-transcription-destination",
         "transcription-test": !prepared
           ? "voice-transcription-destination"
           : !model || model.state === "missing-model"
