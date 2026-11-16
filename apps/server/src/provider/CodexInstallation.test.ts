@@ -417,7 +417,8 @@ it.effect("updates an older supported managed installation to the pinned release
     expect((yield* terminalState(restarted.installation)).phase).toBe("succeeded");
     expect((yield* restarted.installation.resolve()).version).toBe("0.156.1");
     expect(restarted.downloads()).toBe(1);
-    yield* Fiber.await(session);
+    // Either runtime may serve it: the older one still resolves while the update downloads.
+    expect((yield* Fiber.join(session)).source).toBe("managed");
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
