@@ -24,6 +24,7 @@ import { forkParked } from "../../serverActivation.ts";
 
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
+import { readPeerSpeakers } from "../../orchestration-v2/readPeerSpeakers.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as TextGeneration from "../../textGeneration/TextGeneration.ts";
 import {
@@ -195,6 +196,20 @@ const make = Effect.gen(function* () {
         (left, right) => finalized.indexOf(left) - finalized.indexOf(right),
       );
       // Citations are message ids and digests from this canonical read; the model only names refs.
+      const speakersByMessage = new Map<
+        (typeof transcript)[number]["id"],
+        { readonly label: string; readonly model: string }
+      >();
+      const assistantIds = new Map<ThreadId, Array<(typeof transcript)[number]["id"]>>();
+      for (const message of transcript) {
+        if (message.role !== "assistant") continue;
+        const ids = assistantIds.get(message.threadId) ?? [];
+        ids.push(message.id);
+        assistantIds.set(message.threadId, ids);
+      }
+      for (const [id, messageIds] of assistantIds)
+        for (const [messageId, speaker] of yield* readPeerSpeakers(sql, id, messageIds))
+          speakersByMessage.set(messageId, speaker);
       const refs = new Map<string, KnowledgeMessageRef>();
       const userRefs = new Set<string>();
       const messages: Array<
@@ -219,14 +234,20 @@ const make = Effect.gen(function* () {
           messageId: message.id,
           digest: yield* digest(message.text),
         });
-        messages.push({
+        const speaker =
+          message.role === "assistant" ? speakersByMessage.get(message.id) : undefined;
+        const shared = {
           ref,
-          role: message.role as "user" | "assistant",
           threadId: message.threadId,
           runId: message.runId!,
           runOutcome: batch.find((entry) => entry.runId === message.runId)!.runOutcome,
           text: message.text.slice(0, textLimits.get(message.id)),
-        });
+        };
+        messages.push(
+          speaker === undefined
+            ? { ...shared, role: message.role as "user" | "assistant" }
+            : { ...shared, role: "peer" as const, speaker },
+        );
       }
       const project = yield* projects.get(projectId);
       const cwd = Option.isSome(project) ? project.value.workspaceRoot : undefined;

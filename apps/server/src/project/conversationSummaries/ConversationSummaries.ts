@@ -19,7 +19,6 @@ import {
   type KnowledgeSourceUnavailableReason,
   type MessageId,
   type OrchestrationV2ConversationMessage,
-  type OrchestrationV2HistoricalMessage,
   type OrchestrationV2RunStatus,
   type OrchestrationV2UserMessageInputIntent,
   type ProjectId,
@@ -32,10 +31,6 @@ import {
   summaryToolText,
   summaryToolTypes,
 } from "@t3tools/provider-core/server/conversationEvidence";
-import {
-  historicalMessage,
-  renderHistoricalMessage,
-} from "@t3tools/provider-core/server/handoffBudget";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
 import * as Context from "effect/Context";
@@ -50,6 +45,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
+import { readPeerSpeakers } from "../../orchestration-v2/readPeerSpeakers.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as TextGeneration from "../../textGeneration/TextGeneration.ts";
 import * as ProjectKnowledge from "../knowledge/ProjectKnowledge.ts";
@@ -334,6 +330,11 @@ const make = Effect.gen(function* () {
         source.kind === "message",
     );
     const messageResults = yield* knowledge.readSources({ ...input, sources: messages });
+    const speakers = yield* readPeerSpeakers(
+      sql,
+      input.threadId,
+      messages.map((source) => source.messageId),
+    );
     const invisible =
       messages.length === 0
         ? new Set<MessageId>()
@@ -342,14 +343,16 @@ const make = Effect.gen(function* () {
             messages.map((source) => source.messageId),
           );
     const current = new Map<string, ConversationSummarySourceResult>();
-    messages.forEach((source, index) =>
+    messages.forEach((source, index) => {
+      const result = invisible.has(source.messageId)
+        ? { state: "unavailable" as const, reason: "missing" as const }
+        : messageResults[index]!;
+      const speaker = result.state === "available" ? speakers.get(source.messageId) : undefined;
       current.set(
         conversationSummarySourceIdentity(source),
-        invisible.has(source.messageId)
-          ? { state: "unavailable", reason: "missing" }
-          : messageResults[index]!,
-      ),
-    );
+        speaker === undefined || result.state !== "available" ? result : { ...result, speaker },
+      );
+    });
     const tools = unique.filter(
       (source): source is Extract<ConversationSummaryRangeRef, { kind: "turn_item" }> =>
         source.kind === "turn_item",
@@ -821,7 +824,7 @@ const make = Effect.gen(function* () {
       const records = yield* projections
         .getThreadRecords(threadId, ["messages", "turnItems"], {
           messageRoles: ["user", "assistant"],
-          turnItemTypes: [...summaryToolTypes, "assistant_message"],
+          turnItemTypes: summaryToolTypes,
           turnItemStatuses: finalizedToolStatuses,
         })
         .pipe(Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }));
@@ -927,13 +930,9 @@ const make = Effect.gen(function* () {
           createdAt: message.createdAt,
         });
       }
-      const peerReplies = new Map<MessageId, OrchestrationV2HistoricalMessage>();
+      const speakers = yield* readPeerSpeakers(sql, threadId);
       for (const item of records.turnItems) {
         if (item.runId !== null && excluded.has(item.runId)) continue;
-        if (item.type === "assistant_message" && item.speaker !== undefined) {
-          const historical = historicalMessage(item);
-          if (historical !== null) peerReplies.set(item.messageId, historical);
-        }
         const text = summaryToolText(item);
         if (text === null) continue;
         all.push({
@@ -996,11 +995,18 @@ const make = Effect.gen(function* () {
         );
 
       const publish = Effect.fnUntraced(function* (input: {
-        readonly messages: ReadonlyArray<{
-          readonly role: "user" | "assistant" | "tool" | "summary";
-          readonly text: string;
-          readonly range?: ConversationSummaryRangeRef["range"];
-        }>;
+        readonly messages: ReadonlyArray<
+          {
+            readonly text: string;
+            readonly range?: ConversationSummaryRangeRef["range"];
+          } & (
+            | { readonly role: "user" | "assistant" | "tool" | "summary" }
+            | {
+                readonly role: "peer";
+                readonly speaker: { readonly label: string; readonly model: string };
+              }
+          )
+        >;
         readonly sources: ReadonlyArray<ConversationSummarySourceRef>;
         readonly ranges: ReadonlyArray<ConversationSummaryRangeRef>;
         readonly position: string;
@@ -1013,6 +1019,7 @@ const make = Effect.gen(function* () {
             ref,
             role: message.role,
             text: message.text,
+            ...(message.role === "peer" ? { speaker: message.speaker } : {}),
             ...(message.range === undefined ? {} : { range: message.range }),
           };
         });
@@ -1091,16 +1098,12 @@ const make = Effect.gen(function* () {
       const summarizeLeaf = (chunk: ReadonlyArray<SummarySource>) =>
         publish({
           messages: chunk.map((source) => {
-            const peer =
-              source.ref.kind === "message" ? peerReplies.get(source.ref.messageId) : undefined;
-            return {
-              role: peer?.role ?? source.role,
-              text:
-                peer === undefined
-                  ? source.text
-                  : renderHistoricalMessage({ ...peer, text: source.text }),
-              ...(source.ref.range === undefined ? {} : { range: source.ref.range }),
-            };
+            const speaker =
+              source.ref.kind === "message" ? speakers.get(source.ref.messageId) : undefined;
+            const range = source.ref.range === undefined ? {} : { range: source.ref.range };
+            return speaker === undefined
+              ? { role: source.role, text: source.text, ...range }
+              : { role: "peer" as const, speaker, text: source.text, ...range };
           }),
           sources: chunk.map((source) => source.ref),
           ranges: chunk.map((source) => source.ref),

@@ -535,6 +535,7 @@ export function buildKnowledgeCandidatesPrompt(input: KnowledgeCandidatesPromptI
     "Rules:",
     "- kind is one of decision, constraint, convention",
     "- only extract decisions the user made or accepted, constraints the project must respect, or conventions the code follows",
+    "- a peer is another model in the conversation, so attribute its words to it by name, never to the user or the agent",
     "- do not summarize the work, restate the task, or record transient status, plans, or guesses",
     "- content is one or two plain sentences that stand alone without this conversation",
     "- entities lists up to 5 short names of files, modules, tools, or concepts the knowledge is about",
@@ -549,10 +550,17 @@ export function buildKnowledgeCandidatesPrompt(input: KnowledgeCandidatesPromptI
         ]),
     "",
     "Messages:",
-    ...input.messages.map(
-      (message) =>
-        `[${message.ref}] ${message.role}${message.runId === undefined ? "" : ` (${threads.get(message.threadId ?? "") ?? "T?"}/${runs.get(message.runId)}, ${message.runOutcome ?? input.runOutcome})`}:\n${message.text}\n`,
-    ),
+    ...input.messages.map((message) => {
+      const role =
+        message.role === "peer"
+          ? `peer ${message.speaker.label} (${message.speaker.model})`
+          : message.role;
+      const run =
+        message.runId === undefined
+          ? ""
+          : ` (${threads.get(message.threadId ?? "") ?? "T?"}/${runs.get(message.runId)}, ${message.runOutcome ?? input.runOutcome})`;
+      return `[${message.ref}] ${role}${run}:\n${message.text}\n`;
+    }),
   ].join("\n");
   const outputSchema = Schema.Struct({
     candidates: Schema.Array(
@@ -591,6 +599,7 @@ export function buildConversationSummaryPrompt(input: ConversationSummaryPromptI
     "- each text is one or two plain sentences, at most 600 characters",
     "- keep what the user asked for, decisions made, constraints, what was done and verified, and what was left open",
     "- say who said what; do not present an agent's claim or plan as a verified outcome",
+    "- a peer is another model in the conversation, so attribute its words to it by name, never to the user or the agent",
     "- citations lists the refs (like M1) of the sources that support the statement; never invent a ref",
     "- sources may be exact ranges of long messages or tool evidence; do not infer omitted ranges",
     "- preserve observed command results, failures and checks, distinguishing tool evidence from an agent claiming success",
@@ -603,10 +612,17 @@ export function buildConversationSummaryPrompt(input: ConversationSummaryPromptI
       : []),
     "",
     "Sources:",
-    ...input.messages.map(
-      (message) =>
-        `[${message.ref}] ${message.role}${message.range === undefined ? "" : ` (UTF-16 range ${message.range.start}–${message.range.end} of ${message.range.total})`}:\n${message.text}\n`,
-    ),
+    ...input.messages.map((message) => {
+      const role =
+        message.role === "peer"
+          ? `peer ${message.speaker.label} (${message.speaker.model})`
+          : message.role;
+      const range =
+        message.range === undefined
+          ? ""
+          : ` (UTF-16 range ${message.range.start}–${message.range.end} of ${message.range.total})`;
+      return `[${message.ref}] ${role}${range}:\n${message.text}\n`;
+    }),
   ].join("\n");
   const outputSchema = Schema.Struct({
     statements: Schema.Array(

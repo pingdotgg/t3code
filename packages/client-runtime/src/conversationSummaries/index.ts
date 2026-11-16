@@ -59,7 +59,9 @@ export function conversationSummarySourceLabel(
     case "user":
       return "User";
     case "assistant":
-      return "Assistant";
+      return result.speaker === undefined
+        ? "Assistant"
+        : `${result.speaker.label} (${result.speaker.model})`;
     case "tool":
       return "Tool";
     case "summary":

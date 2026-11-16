@@ -9,8 +9,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as CodexTextGeneration from "../../apps/server/src/textGeneration/CodexTextGeneration.ts";
 import * as ServerConfig from "../../apps/server/src/config.ts";
-import { condensedCases } from "./cases.ts";
-import { gradeCondensed } from "./grade.ts";
+import { condensedCases, leafCases } from "./cases.ts";
+import { gradeCondensed, gradeLeaf } from "./grade.ts";
 
 const { values } = NodeUtil.parseArgs({
   options: {
@@ -25,12 +25,14 @@ if (!values.model || !values.out) throw new Error("Use --model <model> --out <di
 const model = values.model;
 const outputDirectory = values.out;
 const samples = Number(values.samples);
-const selected = condensedCases.filter(
-  (fixture) => values.case === undefined || values.case.split(",").includes(fixture.id),
-);
-if (selected.length === 0)
+const selectedIds = values.case?.split(",");
+const selected = <T extends { readonly id: string }>(fixtures: ReadonlyArray<T>) =>
+  fixtures.filter((fixture) => selectedIds === undefined || selectedIds.includes(fixture.id));
+const selectedCondensed = selected(condensedCases);
+const selectedLeaf = selected(leafCases);
+if (selectedCondensed.length + selectedLeaf.length === 0)
   throw new Error(
-    `Unknown --case ${values.case}. Available cases: ${condensedCases.map((fixture) => fixture.id).join(", ")}`,
+    `Unknown --case ${values.case}. Available cases: ${[...condensedCases, ...leafCases].map((fixture) => fixture.id).join(", ")}`,
   );
 const Results = Schema.Array(
   Schema.Struct({
@@ -57,25 +59,41 @@ await Effect.runPromise(
     const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-summary-eval-" });
     const generation = yield* CodexTextGeneration.makeCodexTextGeneration(decodeSettings({}));
     const results: Array<(typeof Results.Type)[number]> = [];
-    for (const fixture of selected) {
+    const record = (
+      id: string,
+      sample: number,
+      statements: (typeof Results.Type)[number]["statements"],
+      failures: ReadonlyArray<string>,
+    ) => {
+      results.push({ id, sample, statements, failures, passed: failures.length === 0 });
+    };
+    for (const fixture of selectedCondensed) {
       for (let sample = 0; sample < samples; sample++) {
         const { statements } = yield* generation.generateConversationSummary({
           cwd,
           modelSelection: { instanceId: ProviderInstanceId.make("codex"), model },
           messages: fixture.summaries.map((text, index) => ({
             ref: `M${index + 1}`,
-            role: "summary",
+            role: "summary" as const,
             text,
           })),
         });
-        const failures = gradeCondensed(fixture, statements);
-        results.push({
-          id: fixture.id,
-          sample,
-          statements,
-          failures,
-          passed: failures.length === 0,
+        record(fixture.id, sample, statements, gradeCondensed(fixture, statements));
+      }
+    }
+    for (const fixture of selectedLeaf) {
+      for (let sample = 0; sample < samples; sample++) {
+        const { statements } = yield* generation.generateConversationSummary({
+          cwd,
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model },
+          messages: fixture.messages.map((message, index) => {
+            const ref = `M${index + 1}`;
+            return message.role === "peer"
+              ? { ref, role: "peer" as const, speaker: message.speaker, text: message.text }
+              : { ref, role: message.role, text: message.text };
+          }),
         });
+        record(fixture.id, sample, statements, gradeLeaf(fixture, statements));
       }
     }
     yield* fs.makeDirectory(outputDirectory, { recursive: true });
@@ -85,7 +103,7 @@ await Effect.runPromise(
     );
     if (baseline !== undefined)
       yield* fs.writeFileString(path.join(outputDirectory, "baseline.json"), baseline);
-    for (const fixture of selected) {
+    for (const fixture of [...selectedCondensed, ...selectedLeaf]) {
       const rows = results.filter((row) => row.id === fixture.id);
       const passed = rows.filter((row) => row.passed).length;
       // A case fails when half or more of its samples fail.
