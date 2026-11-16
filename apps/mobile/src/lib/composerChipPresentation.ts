@@ -40,6 +40,7 @@ const CONTEXT_CHIP_PRESENTATIONS = {
   },
   skill: { accent: "#b261be", icon: "skill" },
   model: { accent: "#928a07", icon: null },
+  group: { accent: "#928a07", icon: "users" },
   thread: {
     accent: "#009c96",
     icon: "messages-square",

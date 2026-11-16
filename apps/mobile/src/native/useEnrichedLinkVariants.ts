@@ -61,12 +61,23 @@ export function withChipIcon(
 
 function presentation(
   url: string,
-  props: Pick<SelectableMarkdownTextProps, "linkCustomization" | "skills" | "models" | "textStyle">,
+  props: Pick<
+    SelectableMarkdownTextProps,
+    "linkCustomization" | "skills" | "models" | "groupMembers" | "textStyle"
+  >,
 ): MarkdownLinkCustomization | undefined {
   const custom = props.linkCustomization?.(url);
   if (custom) return custom;
   const context = enrichedContextLinkCustomization(url);
   if (context) return context;
+  const member = props.groupMembers?.find((item) => item.source === url);
+  if (member) {
+    return {
+      label: member.label,
+      icon: CONTEXT_CHIP_ICON_SOURCES.users,
+      chip: { accent: contextChipPresentation("group").accent, tintsIcon: true },
+    };
+  }
   const skill = enrichedSkillReference(url, props.skills);
   if (skill)
     return {
@@ -108,7 +119,7 @@ export function useEnrichedLinkVariants(
   props: SelectableMarkdownTextProps,
   fileHrefs: ReadonlySet<string>,
 ) {
-  const { linkCustomization, skills, models, textStyle, fileEmbedLabel } = props;
+  const { linkCustomization, skills, models, groupMembers, textStyle, fileEmbedLabel } = props;
   const theme = useUniwindTheme();
   const links = useMemo(() => {
     const byUrl = new Map<string, MarkdownLinkCustomization>();
@@ -121,11 +132,11 @@ export function useEnrichedLinkVariants(
             color: textStyle.fileTextColor,
             icon: markdownFileIconSource(resolveMarkdownFileIcon(label)),
           }
-        : presentation(url, { linkCustomization, skills, models, textStyle });
+        : presentation(url, { linkCustomization, skills, models, groupMembers, textStyle });
       if (value) byUrl.set(url, value);
     }
     return byUrl;
-  }, [urls, linkCustomization, skills, models, textStyle, fileHrefs, fileEmbedLabel]);
+  }, [urls, linkCustomization, skills, models, groupMembers, textStyle, fileHrefs, fileEmbedLabel]);
   const chipForegrounds = useMemo(
     () =>
       new Map(

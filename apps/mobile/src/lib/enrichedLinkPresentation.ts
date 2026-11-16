@@ -191,11 +191,37 @@ export function enrichedModelDetails(model: SelectableMarkdownModel) {
   return `${model.providerLabel}\n${model.source}`;
 }
 
+export interface EnrichedGroupMemberMention {
+  readonly source: string;
+  readonly label: string;
+  readonly isPrimary: boolean;
+}
+
+export function enrichedGroupMemberLinkRegex(
+  members?: ReadonlyArray<Pick<EnrichedGroupMemberMention, "source">>,
+) {
+  if (!members?.length) return null;
+  const alternatives = [...new Set(members.map((member) => member.source))]
+    .filter((source) => source.length > 1)
+    .sort((left, right) => right.length - left.length)
+    .map((source) => source.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (alternatives.length === 0) return null;
+  return new RegExp(
+    `(?<=^|[\\s(])(?:${alternatives.join("|")})(?=$|[\\s,"']|[.,:;!?\\)\\]}'"]+(?=$|[\\s,"']))`,
+    "u",
+  );
+}
+
 export function enrichedTextLinkRegex(
   skills?: ReadonlyArray<SelectableMarkdownSkill>,
   models?: ReadonlyArray<SelectableMarkdownModel>,
+  groupMembers?: ReadonlyArray<Pick<EnrichedGroupMemberMention, "source">>,
 ) {
-  const patterns = [enrichedSkillLinkRegex(skills), enrichedModelLinkRegex(models)]
+  const patterns = [
+    enrichedSkillLinkRegex(skills),
+    enrichedModelLinkRegex(models),
+    enrichedGroupMemberLinkRegex(groupMembers),
+  ]
     .filter((pattern) => pattern !== null)
     .map((pattern) => `(?:${pattern.source})`);
   return patterns.length ? new RegExp(patterns.join("|"), "u") : null;

@@ -46,6 +46,7 @@ const lucideIcons = [
   "mouse-pointer-click",
   "server",
   "terminal",
+  "users",
 ];
 
 async function lucideSvg(name) {

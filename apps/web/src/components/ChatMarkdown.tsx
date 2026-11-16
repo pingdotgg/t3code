@@ -1,3 +1,4 @@
+import type { ThreadGroup } from "@t3tools/client-runtime/state/thread-group";
 import { clientHostEnvironmentAtom } from "../state/clientHostEnvironment";
 import { buildFileLinkParentSuffixByPath, fileLinkLabel } from "@t3tools/shared/fileLinks";
 import {
@@ -246,6 +247,7 @@ interface ChatMarkdownProps {
   onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
   isStreaming?: boolean;
   skills?: ReadonlyArray<ServerProviderSkill>;
+  group?: ThreadGroup | null;
   className?: string;
   lineBreaks?: boolean;
   parseRawHtml?: boolean;
@@ -517,6 +519,7 @@ function useChatMarkdownState({
   onTaskListChange,
   isStreaming = false,
   skills = EMPTY_MARKDOWN_SKILLS,
+  group = null,
   onUseArtifactTemplate,
   onRunShellCommand,
   imageBaseDir,
@@ -1002,6 +1005,7 @@ function useChatMarkdownState({
     resolvedTheme,
     pullRequestsEnabled,
     skills,
+    group,
     threadRef,
     updateThreadPullRequestLink,
   };
@@ -1064,10 +1068,10 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <div {...props}>{children}</div>;
   },
   p: function MarkdownParagraph({ node: _node, children, ...props }) {
-    const { skills, threadRef, environmentId } = use(ChatMarkdownRendererContext);
+    const { skills, threadRef, environmentId, group } = use(ChatMarkdownRendererContext);
     return (
       <p {...props}>
-        {renderInlineChipMarkdownChildren(children, skills, threadRef, environmentId)}
+        {renderInlineChipMarkdownChildren(children, skills, threadRef, environmentId, group)}
       </p>
     );
   },
@@ -1107,12 +1111,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   li: function MarkdownListItem({ node, children, ...props }) {
-    const { skills, threadRef, environmentId } = use(ChatMarkdownRendererContext);
+    const { skills, threadRef, environmentId, group } = use(ChatMarkdownRendererContext);
     // Resolve checkbox markers by offset to avoid rerendering list items on every streamed token.
     const isTaskItem = String(props.className ?? "").includes("task-list-item");
     return (
       <li {...props} data-list-item-offset={isTaskItem ? node?.position?.start.offset : undefined}>
-        {renderInlineChipMarkdownChildren(children, skills, threadRef, environmentId)}
+        {renderInlineChipMarkdownChildren(children, skills, threadRef, environmentId, group)}
       </li>
     );
   },

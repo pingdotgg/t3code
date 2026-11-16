@@ -1,3 +1,4 @@
+import { groupMentionOccurrences } from "@t3tools/client-runtime/state/thread-group";
 import { decodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import {
   collectComposerContextReferences,
@@ -243,9 +244,22 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         : urls,
     );
   };
+  const groupMembers = useMemo(() => {
+    const found = new Map<string, { source: string; label: string; isPrimary: boolean }>();
+    for (const mention of groupMentionOccurrences(markdown, props.group)) {
+      if (!found.has(mention.source)) {
+        found.set(mention.source, {
+          source: mention.source,
+          label: mention.label,
+          isPrimary: mention.isPrimary,
+        });
+      }
+    }
+    return [...found.values()];
+  }, [markdown, props.group]);
   const textLinkRegex = useMemo(
-    () => enrichedTextLinkRegex(props.skills, props.models),
-    [props.skills, props.models],
+    () => enrichedTextLinkRegex(props.skills, props.models, groupMembers),
+    [props.skills, props.models, groupMembers],
   );
   // Recognized text links are added as the text is drawn, so
   // onLinksChange never reports them. Joined so a streaming tick keeps the value.
@@ -259,7 +273,11 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const linkUrls = textLinkKey
     ? [...new Set([...parsedLinkUrls, ...textLinkKey.split("\n")])]
     : parsedLinkUrls;
-  const { linkVariants, linkPillContent } = useEnrichedLinkVariants(linkUrls, props, fileHrefs);
+  const { linkVariants, linkPillContent } = useEnrichedLinkVariants(
+    linkUrls,
+    { ...props, groupMembers },
+    fileHrefs,
+  );
   const linkRecognition = useMemo(() => ({ text: textLinkRegex ?? undefined }), [textLinkRegex]);
   const [activeMenu, setActiveMenu] = useState<{
     url: string;

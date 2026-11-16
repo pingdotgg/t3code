@@ -1143,9 +1143,7 @@ function ThreadRouteContent(
           historyControls={historyControls}
           activeThreadBusy={composer.activeThreadBusy}
           canStopThread={
-            awaitingBootstrapTurn ||
-            composer.interruptibleRunId !== null ||
-            groupWorking
+            awaitingBootstrapTurn || composer.interruptibleRunId !== null || groupWorking
           }
           queuedRunEdit={composer.queuedRunEdit}
           composerDraftKey={composer.composerDraftKey}
