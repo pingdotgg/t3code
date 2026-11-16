@@ -218,6 +218,8 @@ function codeBlockElement(
   return undefined;
 }
 
+const NO_GROUP_MENTIONS: ReadonlyMap<string, string> = new Map();
+
 export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const { renderImage, resolveImageSource, fileEmbedLabel } = props;
   const { themeAppearance, mathRenderingEnabled } = useAppearancePreferences();
@@ -244,22 +246,24 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         : urls,
     );
   };
-  const groupMembers = useMemo(() => {
-    const found = new Map<string, { source: string; label: string; isPrimary: boolean }>();
-    for (const mention of groupMentionOccurrences(markdown, props.group)) {
-      if (!found.has(mention.source)) {
-        found.set(mention.source, {
-          source: mention.source,
-          label: mention.label,
-          isPrimary: mention.isPrimary,
-        });
-      }
-    }
-    return [...found.values()];
-  }, [markdown, props.group]);
+  // Keyed by text so a streamed token that names nobody new keeps the regex and chips.
+  const groupMentionKey = [
+    ...new Set(
+      groupMentionOccurrences(markdown, props.group).map(
+        (mention) => `${mention.source}\t${mention.label}`,
+      ),
+    ),
+  ].join("\n");
+  const groupMentions = useMemo(
+    () =>
+      groupMentionKey
+        ? new Map(groupMentionKey.split("\n").map((line) => line.split("\t") as [string, string]))
+        : NO_GROUP_MENTIONS,
+    [groupMentionKey],
+  );
   const textLinkRegex = useMemo(
-    () => enrichedTextLinkRegex(props.skills, props.models, groupMembers),
-    [props.skills, props.models, groupMembers],
+    () => enrichedTextLinkRegex(props.skills, props.models, [...groupMentions.keys()]),
+    [props.skills, props.models, groupMentions],
   );
   // Recognized text links are added as the text is drawn, so
   // onLinksChange never reports them. Joined so a streaming tick keeps the value.
@@ -275,8 +279,9 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     : parsedLinkUrls;
   const { linkVariants, linkPillContent } = useEnrichedLinkVariants(
     linkUrls,
-    { ...props, groupMembers },
+    props,
     fileHrefs,
+    groupMentions,
   );
   const linkRecognition = useMemo(() => ({ text: textLinkRegex ?? undefined }), [textLinkRegex]);
   const [activeMenu, setActiveMenu] = useState<{

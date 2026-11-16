@@ -22,7 +22,7 @@ import {
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
-import type { ThreadGroup } from "@t3tools/client-runtime/state/thread-group";
+import { sameThreadGroup, type ThreadGroup } from "@t3tools/client-runtime/state/thread-group";
 import { observeResize } from "~/lib/observeResize";
 import { useStableCallback } from "~/hooks/useStableCallback";
 
@@ -438,6 +438,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(
     () => listState.rememberedPosition?.disclosures?.workGroups ?? new Set(),
   );
+  const [stableGroup, setStableGroup] = useState(group ?? null);
+  if (!sameThreadGroup(stableGroup, group)) setStableGroup(group ?? null);
   const [expandedAttemptIds, setExpandedAttemptIds] = useState<ReadonlySet<RunAttemptId>>(
     () => listState.rememberedPosition?.disclosures?.attempts ?? new Set(),
   );
@@ -1121,7 +1123,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     workspaceRoot,
     skills,
     runs,
-    group: group ?? null,
+    group: stableGroup,
     activeThreadEnvironmentId,
     onRevertToTurnCount,
     onRunShellCommand,

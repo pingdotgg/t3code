@@ -1,6 +1,7 @@
 import {
   groupMentionOccurrences,
   groupRowSpeaker,
+  sameThreadGroup,
   isQuietPass,
   quietPassLine,
   type ThreadGroup,
@@ -2905,6 +2906,8 @@ const THREAD_FEED_MAINTAIN_SCROLL_AT_END = {
 } as const;
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
+  const [group, setGroup] = useState(props.group);
+  if (!sameThreadGroup(group, props.group)) setGroup(props.group);
   const formatMessageTime = useMessageTimeFormatter();
   const { listRef, onIsAtEndChange, onHeaderMaterialVisibilityChange } = props;
   const workflowOpening = useWorkflowOpening(props.detailRef);
@@ -3534,7 +3537,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const renderReasoning = (text: string) => (
     <AssistantMarkdownContent
       markdown={text}
-      group={props.group}
       environmentId={props.environmentId}
       markdownStyles={markdownStyles.assistant}
       linkHandlers={markdownLinkHandlers}
@@ -3967,7 +3969,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             />
           ) : null}
           {renderFeedEntry(info, {
-            group: props.group,
+            group,
             runs: structure?.projection.runs ?? [],
             userMessageGrouping: info.item.userMessageGrouping,
             formatMessageTime,

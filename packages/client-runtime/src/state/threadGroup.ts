@@ -24,6 +24,13 @@ export interface ThreadGroupParticipant {
 
 type GroupLike = ThreadGroup | null | undefined;
 
+/**
+ * Thread events replace the whole thread, so an unchanged group arrives as a new object. Rows
+ * keep the old one while this holds, so their memoized markdown does not redraw.
+ */
+export const sameThreadGroup = (left: GroupLike, right: GroupLike): boolean =>
+  left === right || JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+
 export const isGroupActive = (group: GroupLike): group is ThreadGroup => group?.status === "active";
 
 /** The server's own rule: a reply is a pass only when it says exactly `PASS`. */
@@ -84,7 +91,6 @@ export function groupMentionOccurrences(
 ): ReadonlyArray<GroupMentionOccurrence> {
   if (group == null) return [];
   const members = listedParticipants(group, options?.seatedOnly === true);
-  // A handle invited again names its newest seat, which comes last.
   const byHandle = new Map(members.map((member) => [member.handle.toLowerCase(), member]));
   const [primary] = members;
   if (primary !== undefined) byHandle.set("primary", primary);

@@ -61,19 +61,17 @@ export function withChipIcon(
 
 function presentation(
   url: string,
-  props: Pick<
-    SelectableMarkdownTextProps,
-    "linkCustomization" | "skills" | "models" | "groupMembers" | "textStyle"
-  >,
+  props: Pick<SelectableMarkdownTextProps, "linkCustomization" | "skills" | "models" | "textStyle">,
+  groupMentions: ReadonlyMap<string, string>,
 ): MarkdownLinkCustomization | undefined {
   const custom = props.linkCustomization?.(url);
   if (custom) return custom;
   const context = enrichedContextLinkCustomization(url);
   if (context) return context;
-  const member = props.groupMembers?.find((item) => item.source === url);
-  if (member) {
+  const member = groupMentions.get(url);
+  if (member !== undefined) {
     return {
-      label: member.label,
+      label: member,
       icon: CONTEXT_CHIP_ICON_SOURCES.users,
       chip: { accent: contextChipPresentation("group").accent, tintsIcon: true },
     };
@@ -118,8 +116,9 @@ export function useEnrichedLinkVariants(
   urls: ReadonlyArray<string>,
   props: SelectableMarkdownTextProps,
   fileHrefs: ReadonlySet<string>,
+  groupMentions: ReadonlyMap<string, string>,
 ) {
-  const { linkCustomization, skills, models, groupMembers, textStyle, fileEmbedLabel } = props;
+  const { linkCustomization, skills, models, textStyle, fileEmbedLabel } = props;
   const theme = useUniwindTheme();
   const links = useMemo(() => {
     const byUrl = new Map<string, MarkdownLinkCustomization>();
@@ -132,11 +131,20 @@ export function useEnrichedLinkVariants(
             color: textStyle.fileTextColor,
             icon: markdownFileIconSource(resolveMarkdownFileIcon(label)),
           }
-        : presentation(url, { linkCustomization, skills, models, groupMembers, textStyle });
+        : presentation(url, { linkCustomization, skills, models, textStyle }, groupMentions);
       if (value) byUrl.set(url, value);
     }
     return byUrl;
-  }, [urls, linkCustomization, skills, models, groupMembers, textStyle, fileHrefs, fileEmbedLabel]);
+  }, [
+    urls,
+    linkCustomization,
+    skills,
+    models,
+    groupMentions,
+    textStyle,
+    fileHrefs,
+    fileEmbedLabel,
+  ]);
   const chipForegrounds = useMemo(
     () =>
       new Map(

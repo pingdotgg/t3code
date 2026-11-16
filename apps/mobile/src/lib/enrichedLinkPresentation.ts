@@ -9,7 +9,6 @@ import {
 } from "./composerChipPresentation";
 import { formatComposerModelMention } from "@t3tools/client-runtime/composer-model-mentions";
 import type {
-  SelectableMarkdownGroupMember,
   SelectableMarkdownModel,
   SelectableMarkdownSkill,
 } from "../native/SelectableMarkdownText.types";
@@ -192,17 +191,14 @@ export function enrichedModelDetails(model: SelectableMarkdownModel) {
   return `${model.providerLabel}\n${model.source}`;
 }
 
-export function enrichedGroupMemberLinkRegex(
-  members?: ReadonlyArray<Pick<SelectableMarkdownGroupMember, "source">>,
-) {
-  if (!members?.length) return null;
-  const alternatives = [...new Set(members.map((member) => member.source))]
-    .filter((source) => source.length > 1)
+// Same endings as the shared scan's TRAILING_PUNCTUATION, so the two agree on what is a mention.
+function groupMentionLinkRegex(sources: ReadonlyArray<string>) {
+  if (!sources.length) return null;
+  const alternatives = [...sources]
     .sort((left, right) => right.length - left.length)
     .map((source) => source.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  if (alternatives.length === 0) return null;
   return new RegExp(
-    `(?<=^|[\\s(])(?:${alternatives.join("|")})(?=$|[\\s,"']|[.,:;!?\\)\\]}'"]+(?=$|[\\s,"']))`,
+    `(?<=^|[\\s(])(?:${alternatives.join("|")})(?=$|\\s|[.,:;!?)\\]}'"]+(?=$|\\s))`,
     "u",
   );
 }
@@ -210,12 +206,12 @@ export function enrichedGroupMemberLinkRegex(
 export function enrichedTextLinkRegex(
   skills?: ReadonlyArray<SelectableMarkdownSkill>,
   models?: ReadonlyArray<SelectableMarkdownModel>,
-  groupMembers?: ReadonlyArray<Pick<SelectableMarkdownGroupMember, "source">>,
+  groupMentionSources: ReadonlyArray<string> = [],
 ) {
   const patterns = [
     enrichedSkillLinkRegex(skills),
     enrichedModelLinkRegex(models),
-    enrichedGroupMemberLinkRegex(groupMembers),
+    groupMentionLinkRegex(groupMentionSources),
   ]
     .filter((pattern) => pattern !== null)
     .map((pattern) => `(?:${pattern.source})`);

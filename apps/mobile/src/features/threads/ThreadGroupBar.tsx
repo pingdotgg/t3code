@@ -109,6 +109,7 @@ export function ThreadGroupBar({ thread }: { readonly thread: EnvironmentThreadS
             accessibilityRole="button"
             accessibilityLabel="Group actions"
             className="rounded-full p-2"
+            hitSlop={8}
           >
             <SymbolView name="ellipsis" size={16} tintColorClassName="accent-foreground" />
           </Pressable>

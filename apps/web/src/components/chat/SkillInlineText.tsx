@@ -125,7 +125,8 @@ export function renderInlineChipMarkdownChildren(
         skills,
         threadRef,
         environmentId,
-        group,
+        // Routing reads the raw prompt, where `**@astra**` has `*` before the `@` and names nobody.
+        null,
       ),
     );
   });

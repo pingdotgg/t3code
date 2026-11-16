@@ -197,7 +197,9 @@ export function ComposerEditor({
             onInertChipPress?.();
             return;
           }
-          const member = groupMentionOccurrences(selection.source, props.group)[0];
+          const member = groupMentionOccurrences(selection.source, props.group, {
+            seatedOnly: true,
+          })[0];
           if (member?.source === selection.source) return;
           const path = composerMentionPath(selection.source, draft.context);
           if (path && onOpenMention) {

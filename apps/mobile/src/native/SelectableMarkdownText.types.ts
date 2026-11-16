@@ -29,12 +29,6 @@ export interface SelectableMarkdownSkill {
   readonly path?: string;
 }
 
-export interface SelectableMarkdownGroupMember {
-  readonly source: string;
-  readonly label: string;
-  readonly isPrimary: boolean;
-}
-
 export interface SelectableMarkdownModel {
   readonly source: string;
   readonly label: string;
@@ -84,7 +78,6 @@ export interface SelectableMarkdownTextProps {
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly models?: ReadonlyArray<SelectableMarkdownModel>;
   readonly group?: ThreadGroup | null;
-  readonly groupMembers?: ReadonlyArray<SelectableMarkdownGroupMember>;
   readonly preserveSoftBreaks?: boolean;
   readonly onLinkPress?: (href: string) => void;
   readonly fileContextMenu?: (href: string) => MarkdownFileContextMenu | undefined;
