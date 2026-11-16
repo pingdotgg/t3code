@@ -1,3 +1,5 @@
+import type { ThreadGroup } from "@t3tools/client-runtime/state/thread-group";
+
 export interface NativeMarkdownTextStyle {
   readonly selectionColor?: string;
   readonly selectionHandleColor?: string;
@@ -75,6 +77,7 @@ export interface SelectableMarkdownTextProps {
   readonly textStyle: NativeMarkdownTextStyle;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly models?: ReadonlyArray<SelectableMarkdownModel>;
+  readonly group?: ThreadGroup | null;
   readonly preserveSoftBreaks?: boolean;
   readonly onLinkPress?: (href: string) => void;
   readonly fileContextMenu?: (href: string) => MarkdownFileContextMenu | undefined;

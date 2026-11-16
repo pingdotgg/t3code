@@ -140,7 +140,7 @@ export function ComposerEditor({
   ref,
   skills = EMPTY_SKILLS,
   models = EMPTY_MODELS,
-  groupHandles,
+  group,
   selection,
   style,
   textStyle,
@@ -186,7 +186,7 @@ export function ComposerEditor({
   const chipTextColor = createNativeComposerTheme(theme).text;
   const tokensJson = useMemo(() => {
     return JSON.stringify(
-      composerContextEditorTokens(props.value, tokens, skillLabels, modelTokens, groupHandles).map(
+      composerContextEditorTokens(props.value, tokens, skillLabels, modelTokens, group).map(
         (token) => {
           const model = token.type === "model" ? modelsBySource.get(token.source) : undefined;
           const record =
@@ -202,7 +202,7 @@ export function ComposerEditor({
             token.type === "mention" ? token.value : contextRecordFileName(record),
           );
           return {
-            type: token.type,
+            type: token.type === "group" ? "mention" : token.type,
             source: token.source,
             start: token.start,
             end: token.end,
@@ -212,13 +212,15 @@ export function ComposerEditor({
               chipTextColor,
             ),
             label:
-              token.type === "skill"
-                ? (skillLabels.get(token.value) ?? token.value)
-                : model
-                  ? model.label
-                  : token.type === "context"
-                    ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · unavailable"}`
-                    : basename(token.value),
+              token.type === "group"
+                ? token.label
+                : token.type === "skill"
+                  ? (skillLabels.get(token.value) ?? token.value)
+                  : model
+                    ? model.label
+                    : token.type === "context"
+                      ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · unavailable"}`
+                      : basename(token.value),
             detail: token.type === "context" ? composerChipSizeSuffix(record) : "",
             iconUri: model ? modelChipIconUri(model) : contextChipIconUri(icon),
             tintsIcon: model ? modelChipIcon(model).tintsIcon : icon.kind === "chip",
@@ -233,7 +235,7 @@ export function ComposerEditor({
     skillLabels,
     modelsBySource,
     modelTokens,
-    groupHandles,
+    group,
     theme,
     chipTextColor,
   ]);

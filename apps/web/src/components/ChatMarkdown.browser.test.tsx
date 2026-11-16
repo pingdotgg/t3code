@@ -9,7 +9,7 @@ import { act, render } from "../../test/render";
 import "../index.css";
 
 import { filesystemEnvironment } from "../state/filesystem";
-import { useRightPanelStore } from "../rightPanelStore";
+import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { remarkEnableOrderedListNumbers } from "@t3tools/shared/markdownPipeline";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 import { HostImageUrlContext } from "./chat/hostImageUrl";
@@ -607,6 +607,64 @@ describe("ChatMarkdown skill chips", () => {
     expect(copy.clipboardData!.getData("text/html")).toContain(
       "Run $review with model:codex/gpt-6.1 now",
     );
+  });
+
+  it("opens a mentioned peer's work in the thread's environment and copies its handle", async () => {
+    setup();
+    const threadRef = {
+      environmentId: EnvironmentId.make("group-workspace"),
+      threadId: ThreadId.make("group-thread"),
+    };
+    const peerId = ThreadId.make("astra-thread");
+    const previous = useRightPanelStore.getState();
+    using restore = new DisposableStack();
+    restore.defer(() => useRightPanelStore.setState(previous, true));
+    useRightPanelStore.setState(useRightPanelStore.getInitialState(), true);
+    await using screen = await renderText("Ask @astra, then @primary.", {
+      threadRef,
+      group: {
+        status: "active",
+        primary: { model: "fable-5", label: "Fable", handle: "fable" },
+        seats: [
+          {
+            threadId: peerId,
+            handle: "astra",
+            label: "Astra",
+            status: "seated",
+            joinedAfterRun: 0,
+          },
+        ],
+        discussion: null,
+        closedBecause: null,
+        closedAt: null,
+      },
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Group member Astra" }));
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef),
+    ).toMatchObject({
+      isOpen: true,
+      activeSurfaceId: `side-chat:${peerId}`,
+      surfaces: [{ kind: "side-chat", threadId: peerId }],
+    });
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, {
+        ...threadRef,
+        environmentId: EnvironmentId.make("other-workspace"),
+      }).isOpen,
+    ).toBe(false);
+    expect(buttonsLabelled(screen.container, "Primary Fable")).toEqual([]);
+
+    const paragraph = screen.container.querySelector("p")!;
+    window.getSelection()!.selectAllChildren(paragraph);
+    const copy = new ClipboardEvent("copy", {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: new DataTransfer(),
+    });
+    paragraph.dispatchEvent(copy);
+    expect(copy.clipboardData!.getData("text/plain")).toBe("Ask @astra, then @primary.");
   });
 });
 

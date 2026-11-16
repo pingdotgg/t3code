@@ -103,6 +103,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
               isStreaming={Boolean(row.message.streaming)}
               lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
               skills={ctx.skills}
+              group={ctx.group}
               headingLevelOffset={MESSAGE_HEADING_LEVEL}
               onUseArtifactTemplate={ctx.onUseArtifactTemplate}
               onRunShellCommand={ctx.onRunShellCommand}
@@ -162,6 +163,7 @@ export function SentMessageTimelineRow({
           threadRef={ctx.threadRef ?? undefined}
           lineBreaks={shouldPreserveAssistantLineBreaks(row.text)}
           skills={ctx.skills}
+          group={ctx.group}
           headingLevelOffset={MESSAGE_HEADING_LEVEL}
           onUseArtifactTemplate={ctx.onUseArtifactTemplate}
           onRunShellCommand={ctx.onRunShellCommand}

@@ -191,11 +191,28 @@ export function enrichedModelDetails(model: SelectableMarkdownModel) {
   return `${model.providerLabel}\n${model.source}`;
 }
 
+// Same endings as the shared scan's TRAILING_PUNCTUATION, so the two agree on what is a mention.
+function groupMentionLinkRegex(sources: ReadonlyArray<string>) {
+  if (!sources.length) return null;
+  const alternatives = [...sources]
+    .sort((left, right) => right.length - left.length)
+    .map((source) => source.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(
+    `(?<=^|[\\s(])(?:${alternatives.join("|")})(?=$|\\s|[.,:;!?)\\]}'"]+(?=$|\\s))`,
+    "u",
+  );
+}
+
 export function enrichedTextLinkRegex(
   skills?: ReadonlyArray<SelectableMarkdownSkill>,
   models?: ReadonlyArray<SelectableMarkdownModel>,
+  groupMentionSources: ReadonlyArray<string> = [],
 ) {
-  const patterns = [enrichedSkillLinkRegex(skills), enrichedModelLinkRegex(models)]
+  const patterns = [
+    enrichedSkillLinkRegex(skills),
+    enrichedModelLinkRegex(models),
+    groupMentionLinkRegex(groupMentionSources),
+  ]
     .filter((pattern) => pattern !== null)
     .map((pattern) => `(?:${pattern.source})`);
   return patterns.length ? new RegExp(patterns.join("|"), "u") : null;

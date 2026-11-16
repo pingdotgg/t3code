@@ -1236,6 +1236,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       cwd={props.markdownCwd}
       threadRef={ctx.threadRef ?? undefined}
       skills={props.skills}
+      group={ctx.group}
       className="text-message-foreground user-message-markdown"
       lineBreaks
       parseRawHtml={false}

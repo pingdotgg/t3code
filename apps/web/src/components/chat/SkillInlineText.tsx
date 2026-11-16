@@ -1,4 +1,8 @@
 import { collectComposerModelMentions } from "@t3tools/client-runtime/composerModelMentions";
+import {
+  groupMentionOccurrences,
+  type ThreadGroup,
+} from "@t3tools/client-runtime/state/thread-group";
 import type { EnvironmentId, ScopedThreadRef, ServerProviderSkill } from "@t3tools/contracts";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { Children, cloneElement, isValidElement, type ReactNode } from "react";
@@ -8,6 +12,7 @@ import { useRightPanelStore } from "~/rightPanelStore";
 import { SKILL_CHIP_ICON_SVG } from "../composerInlineChip";
 import { ContextChipPopover } from "../contextChipParts";
 import { Button } from "../ui/button";
+import { GroupMemberChip } from "./GroupMemberChip";
 import { ModelMentionChip } from "./ModelMentionChip";
 
 function SkillInlineText(props: {
@@ -15,6 +20,7 @@ function SkillInlineText(props: {
   skills: ReadonlyArray<ServerProviderSkill>;
   threadRef: ScopedThreadRef | undefined;
   environmentId: EnvironmentId | null;
+  group: ThreadGroup | null;
 }) {
   const chips: Array<{ start: number; end: number; node: ReactNode }> = [];
   for (const { start, end, skill, rawText } of matchInlineSkills(props.text, props.skills)) {
@@ -28,6 +34,27 @@ function SkillInlineText(props: {
           description={skillPopoverDescription(skill)}
           copyMarkdown={rawText}
           onViewInstructions={skillInstructionsOpener(props.threadRef, skill)}
+        />
+      ),
+    });
+  }
+  for (const mention of groupMentionOccurrences(props.text, props.group)) {
+    const member = mention.member;
+    const threadRef = props.threadRef;
+    chips.push({
+      start: mention.start,
+      end: mention.end,
+      node: (
+        <GroupMemberChip
+          key={`${mention.start}:group`}
+          label={mention.label}
+          isPrimary={mention.isPrimary}
+          source={mention.source}
+          onOpenWork={
+            member === "primary" || threadRef === undefined
+              ? undefined
+              : () => useRightPanelStore.getState().openSideChat(threadRef, member)
+          }
         />
       ),
     });
@@ -72,6 +99,7 @@ export function renderInlineChipMarkdownChildren(
   skills: ReadonlyArray<ServerProviderSkill>,
   threadRef: ScopedThreadRef | undefined,
   environmentId: EnvironmentId | null,
+  group: ThreadGroup | null,
 ): ReactNode {
   return Children.map(children, (child) => {
     if (typeof child === "string") {
@@ -81,6 +109,7 @@ export function renderInlineChipMarkdownChildren(
           skills={skills}
           threadRef={threadRef}
           environmentId={environmentId}
+          group={group}
         />
       );
     }
@@ -98,7 +127,14 @@ export function renderInlineChipMarkdownChildren(
     return cloneElement(
       child,
       undefined,
-      renderInlineChipMarkdownChildren(child.props.children, skills, threadRef, environmentId),
+      renderInlineChipMarkdownChildren(
+        child.props.children,
+        skills,
+        threadRef,
+        environmentId,
+        // Routing reads the raw prompt, where `**@astra**` has `*` before the `@` and names nobody.
+        null,
+      ),
     );
   });
 }

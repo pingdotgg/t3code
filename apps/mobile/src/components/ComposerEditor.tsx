@@ -3,6 +3,7 @@ import { ComposerContextId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { groupMentionOccurrences } from "@t3tools/client-runtime/state/thread-group";
 import { useEffect, useState } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
@@ -196,6 +197,10 @@ export function ComposerEditor({
             onInertChipPress?.();
             return;
           }
+          const member = groupMentionOccurrences(selection.source, props.group, {
+            seatedOnly: true,
+          })[0];
+          if (member?.source === selection.source) return;
           const path = composerMentionPath(selection.source, draft.context);
           if (path && onOpenMention) {
             onOpenMention(path);
