@@ -76,6 +76,7 @@ import { canTurnThreadIntoProject, turnThreadIntoProject } from "./turnThreadInt
 import { threadCanArchive } from "../home/threadArchive";
 import {
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
+  canMarkThreadUnread,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozePresets,
@@ -910,11 +911,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const markThreadUnread = useAtomCommand(threadEnvironment.markUnread, { reportFailure: false });
-  const canMarkUnread =
-    status === "ready" &&
-    thread.lastVisitedAt !== undefined &&
-    thread.latestRun?.completedAt != null &&
-    !threadHasUnseenCompletion(thread);
+  const canMarkUnread = canMarkThreadUnread(thread, status);
   const handleMarkUnread = useCallback(async () => {
     if (!canMarkUnread) return;
     const result = await markThreadUnread({

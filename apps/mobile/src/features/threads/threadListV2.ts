@@ -257,6 +257,19 @@ export function threadHasUnseenCompletion(
   return completedAtMs > lastVisitedAtMs;
 }
 
+/** The server rejects Mark unread without a completed run; older servers cannot persist it. */
+export function canMarkThreadUnread(
+  thread: Pick<EnvironmentThreadShell, "latestRun" | "lastVisitedAt">,
+  status: ThreadListV2Status,
+): boolean {
+  return (
+    status === "ready" &&
+    thread.lastVisitedAt !== undefined &&
+    thread.latestRun?.completedAt != null &&
+    !threadHasUnseenCompletion(thread)
+  );
+}
+
 export function resolveThreadListV2WokeAt(
   thread: EnvironmentThreadShell,
   options: { readonly now: string },
