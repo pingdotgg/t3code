@@ -77,6 +77,8 @@ const SearchRequest = Schema.Struct({
   ),
   /** For each short word outside ASCII, the spellings a hit must contain one of. */
   shortSpellings: Schema.fromJsonString(Schema.Array(Schema.Array(Schema.String))),
+  /** How many of the newest hits to read. */
+  hitLimit: Schema.Number,
   projectId: Schema.NullOr(ProjectId),
   /** Threads the caller already lists, left out before the hit limit. */
   excludedThreadIds: TokenList,
@@ -172,14 +174,16 @@ function buildMessageSearch(
   const narrowing = short.filter((token) => !NON_ASCII.test(token));
   const phrases = long.map((token) => `"${token.replaceAll('"', '""')}"`).join(" ");
   // An exact query's words sit together, so the index reads only hits that hold them that
-  // close: words spread over a message would otherwise use up the hit limit. The distance
-  // covers the widest phrase the matcher accepts, so it never drops a match.
+  // close. The distance covers the widest phrase the matcher accepts, so it never drops a match.
   const near =
     exact && long.length > 1
       ? words.join(" ").length + (words.length - 1) * EXACT_PHRASE_GAP
       : null;
   return {
     match: !indexed ? null : near === null ? phrases : `NEAR(${phrases}, ${near})`,
+    // The matcher drops most hits that hold a phrase's words close but not together, so
+    // a phrase reads every candidate: the newest ones would otherwise hide an older match.
+    hitLimit: near === null ? MESSAGE_HIT_LIMIT : MESSAGE_CANDIDATE_LIMIT,
     substrings: (indexed ? narrowing : [...long, ...narrowing]).map((token) => ({
       token,
       accentInsensitive: accentInsensitiveGlob(token),
@@ -228,7 +232,14 @@ export function buildSearchSnippet(text: string, matchStart: number): string {
 // accented queries and non-Latin case can still miss: "fermée"/"fermee", "ОШИБКА"/"ошибка".
 export const messageHitsQuery = (
   sql: SqlClient.SqlClient,
-  { match, substrings, shortSpellings, projectId, excludedThreadIds }: typeof SearchRequest.Encoded,
+  {
+    match,
+    substrings,
+    shortSpellings,
+    hitLimit,
+    projectId,
+    excludedThreadIds,
+  }: typeof SearchRequest.Encoded,
 ) => sql`
     WITH eligible AS MATERIALIZED (
       SELECT threads.thread_id, threads.project_id
@@ -327,7 +338,7 @@ export const messageHitsQuery = (
     -- The index's own rowid, so FTS5 returns hits newest first and stops at
     -- the limit; ordering by the messages table's rowid sorts every hit.
     ORDER BY "messageRowid" DESC
-    LIMIT ${MESSAGE_HIT_LIMIT}
+    LIMIT ${hitLimit}
   `;
 
 const TitleCandidateRow = Schema.Struct({

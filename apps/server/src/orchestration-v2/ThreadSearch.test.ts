@@ -292,7 +292,7 @@ it.layer(layerTest)("ThreadSearch", (it) => {
       for (const match of ['"needle"', null]) {
         const plan = yield* sql<{
           readonly detail: string;
-        }>`EXPLAIN QUERY PLAN ${ThreadSearch.messageHitsQuery(sql, { match, substrings: "[]", shortSpellings: "[]", projectId: null, excludedThreadIds: "[]" })}`;
+        }>`EXPLAIN QUERY PLAN ${ThreadSearch.messageHitsQuery(sql, { match, substrings: "[]", shortSpellings: "[]", hitLimit: 2000, projectId: null, excludedThreadIds: "[]" })}`;
         assert.isFalse(
           plan.some((row) => row.detail.includes("TEMP B-TREE")),
           plan.map((row) => row.detail).join("\n"),
@@ -727,15 +727,18 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
         search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
       assert.sameMembers(yield* threadIds("missing osprey files"), [together, wrapped, apart]);
       assert.sameMembers(yield* threadIds('"missing osprey files"'), [together, wrapped]);
-      // Newer messages with the words apart do not use up the hit limit.
-      yield* sql`
-        WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000)
+      // Newer messages with the words apart, or close but not together, do not hide the phrase:
+      // the first would fill the candidates the index reads, the second the hits it returns.
+      const addNewer = (id: string, text: string, count: number) => sql`
+        WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${count})
         INSERT INTO orchestration_v2_projection_messages
           (message_id, thread_id, role, streaming, created_at, updated_at, payload_json)
-        SELECT 'exact-apart:' || i, ${apart}, 'user', 0,
-          ${DateTime.formatIso(at(5))}, ${DateTime.formatIso(at(5))}, json_object('text', ${apartText})
+        SELECT ${id} || i, ${apart}, 'user', 0,
+          ${DateTime.formatIso(at(5))}, ${DateTime.formatIso(at(5))}, json_object('text', ${text})
         FROM n
       `;
+      yield* addNewer("exact-apart:", apartText, 10_000);
+      yield* addNewer("exact-close:", "missing the osprey files", 2000);
       assert.sameMembers(yield* threadIds('"missing osprey files"'), [together, wrapped]);
     }),
   );
