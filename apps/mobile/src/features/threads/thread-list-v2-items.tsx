@@ -1760,9 +1760,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   if (!canOperateThread)
     return <View style={rowAppearance.swipeContainerStyle}>{rowContent(() => {})}</View>;
 
+  const customSnoozeSheet = customSnoozeOpen && (
+    <CustomSnoozeSheet onClose={() => setCustomSnoozeOpen(false)} onSnooze={handleSnooze} />
+  );
+
   if (swipePrimaryAction === null) {
     return (
       <View style={rowAppearance.swipeContainerStyle}>
+        {customSnoozeSheet}
         <Menu
           accessibilityLabel={rowAccessibilityLabel}
           actions={menuActions}
@@ -1777,9 +1782,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   return (
     <View collapsable={false}>
-      {customSnoozeOpen && (
-        <CustomSnoozeSheet onClose={() => setCustomSnoozeOpen(false)} onSnooze={handleSnooze} />
-      )}
+      {customSnoozeSheet}
       <ThreadSwipeable
         dormant={dormant}
         threadKey={`${thread.environmentId}:${thread.id}`}
