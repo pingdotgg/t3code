@@ -3433,7 +3433,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               section === "snoozed" ||
                               section === "settled"
                                 ? `shelf:${section}`
-                                : undefined)
+                                : section === "active" && idleShelfEnabled
+                                  ? "shelf:idle"
+                                  : undefined)
                             }
                             variantAction={
                               section === "snoozed"

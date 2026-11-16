@@ -252,6 +252,43 @@ describe("the Idle shelf", () => {
     await vi.waitFor(() => expect(row.query()).toBeNull());
   });
 
+  it("links the idle rows to their header for the arrow keys", async () => {
+    using stack = new DisposableStack();
+    const previousSettings = getClientSettings();
+    stack.defer(() => __setClientSettingsForTests(previousSettings));
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS });
+    window.localStorage.removeItem("t3code:sidebar:idle-expanded");
+    vi.mocked(useProjects).mockReturnValue([project("active")]);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: null,
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: null,
+    });
+    vi.mocked(useQuietThreadShells).mockReturnValue([
+      makeThreadFixture({
+        id: ThreadId.make("thread-idle"),
+        environmentId: EnvironmentId.make("local"),
+        projectId: ProjectId.make("active"),
+        title: "Idle thread",
+      }),
+    ]);
+
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+
+    const header = screen.container.querySelector<HTMLElement>('[data-sidebar-row="shelf:idle"]');
+    expect(header).not.toBeNull();
+    const row = screen.container.querySelector<HTMLElement>('[data-sidebar-parent="shelf:idle"]');
+    expect(row).not.toBeNull();
+  });
+
   it("keeps a running thread visible when the shelf folds", async () => {
     using stack = new DisposableStack();
     const previousSettings = getClientSettings();
