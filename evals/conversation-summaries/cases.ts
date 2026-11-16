@@ -20,14 +20,23 @@ export interface LeafCase {
   readonly mustNot: ReadonlyArray<string>;
 }
 
-/** Statements that hand the peer's Postgres proposal to the user or to the thread's agent. */
+/** Words that keep a choice open or point away from Postgres before it is named. */
+const open = String.raw`(?:not|never|against|between|whether|if|or|wait|waiting|before|keep|keeping|rather than|instead of)`;
+/** `target` within the clause, with no `open` word before it. */
+const toward = (target: string) => String.raw`(?:(?!\b${open}\b)[^.;]){0,60}\b${target}\b`;
+
+/**
+ * Statements that hand the peer's Postgres proposal to the user or to the thread's agent, whom the
+ * summarizer sees as `assistant`. Regexes, so they miss paraphrase; read the statements too.
+ */
 const misattributed = [
-  String.raw`\buser (decided|chose|wants|wanted|asked) to (drop Redis|use Postgres|keep Redis)`,
-  String.raw`\buser's decision to (drop Redis|use Postgres|keep Redis)`,
-  // The verb must follow the user directly, so "has yet to decide" and "never agreed" stay open.
-  String.raw`\buser\s+(?:(?:has|had|then|also|finally|ultimately|eventually|now)\s+)*(?:decided|chose|chosen|picked|selected|opted|went with|goes with|settled on|agreed|accepted|approved|adopted|endorsed|signed off)\b(?:(?!\b(?:not|never|against|between|whether)\b)[^.;]){0,60}\b(?:Postgres|Astra|proposal|suggestion)\b`,
+  String.raw`\buser asked to (?:drop Redis|use Postgres|keep Redis)`,
+  String.raw`\buser\s+(?:(?:is|has|had|then|also|later|finally|ultimately|eventually|now)\s+)*(?:decided|chose|chosen|picked|selected|opted|wants|wanted|going with|went with|goes with|settled on|agreed|accepted|approved|adopted|endorsed|signed off)\b${toward("(?:Postgres|Astra|proposal|suggestion)")}`,
+  String.raw`\buser's (?:decision|choice|pick|preference)\b${toward("Postgres")}`,
+  String.raw`\b(?:per|according to) the user\b${toward("Postgres")}`,
   String.raw`\bPostgres\b[^.;]{0,60}(?:\b(?:per|according to|as (?:decided|requested|chosen|approved) by)\s+the user\b|\bat the user's (?:request|direction)\b)`,
-  String.raw`\bagent\s+(?:(?:also|first|then|initially|had|has)\s+)*(?:propos(?:ed|es)|suggest(?:ed|s)|recommend(?:ed|s)|push(?:ed|es) for)\b(?:(?!\b(?:not|never|against|keep|keeping)\b)[^.;]){0,60}\bPostgres\b|\bagent's (?:proposal|suggestion|recommendation)\b[^.;]{0,40}\bPostgres\b`,
+  String.raw`\b(?:agent|assistant)\s+(?:(?:also|first|then|initially|had|has)\s+)*(?:propos(?:ed|es)|suggest(?:ed|s)|recommend(?:ed|s)|push(?:ed|es) for|answered|said|replied|argued|wants|wanted)\b${toward("Postgres")}`,
+  String.raw`\b(?:agent|assistant)'s (?:proposal|suggestion|recommendation)\b${toward("Postgres")}`,
 ];
 
 /** The group exchange both peer cases send: the user asks, Astra proposes, the agent disagrees. */
@@ -56,7 +65,8 @@ export const leafCases: ReadonlyArray<LeafCase> = [
     mustMention: ["Astra", "Postgres"],
     attributed: [
       {
-        when: "(?:[Pp]ropos|[Ss]uggest)\\w*[^.]{0,80}Postgres|Postgres[^.]{0,80}(?:[Pp]ropos|[Ss]uggest)\\w*",
+        // A verb, not "the proposal", so a statement that credits no one stays open.
+        when: `(?:propos|suggest|recommend)(?:ed|es|s)\\b${toward("Postgres")}|Postgres\\b[^.]{0,80}\\b(?:propos|suggest|recommend)ed\\b`,
         require: "Astra",
       },
     ],
