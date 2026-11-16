@@ -9,15 +9,39 @@ import { openCommandPalette } from "../commandPaletteBus";
 import { primaryServerKeybindingsAtom } from "../state/server";
 
 const browse = vi.hoisted(() => ({ isPending: false }));
-const scopes = vi.hoisted(() => ({ denied: undefined as string | undefined }));
+const scopes = vi.hoisted(() => ({
+  denied: undefined as string | undefined,
+  sourceControl: undefined as unknown,
+}));
 
 function setup({
   isBrowsePending = false,
   deniedScope,
-}: { isBrowsePending?: boolean; deniedScope?: string | undefined } = {}) {
+  sourceControl,
+}: { isBrowsePending?: boolean; deniedScope?: string | undefined; sourceControl?: unknown } = {}) {
   browse.isPending = isBrowsePending;
   scopes.denied = deniedScope;
+  scopes.sourceControl = sourceControl;
 }
+const githubAvailable = {
+  versionControlSystems: [],
+  sourceControlProviders: [
+    {
+      kind: "github",
+      label: "GitHub",
+      status: "available",
+      version: { _tag: "None" },
+      installHint: "Install GitHub CLI",
+      detail: { _tag: "None" },
+      auth: {
+        status: "authenticated",
+        account: { _tag: "Some", value: "demo" },
+        host: { _tag: "None" },
+        detail: { _tag: "None" },
+      },
+    },
+  ],
+};
 
 vi.mock("@effect/atom-react", async (original) => ({
   ...(await original<typeof import("@effect/atom-react")>()),
@@ -51,7 +75,8 @@ vi.mock("../hooks/useHandleNewThread", () => ({
 vi.mock("../hooks/useOpenPanelPullRequestUrl", () => ({ useOpenPanelPullRequestUrl: () => null }));
 vi.mock("../connection/useDesktopLocalBootstraps", () => ({ useDesktopLocalBootstraps: () => [] }));
 vi.mock("../state/use-atom-command", () => ({
-  useAtomCommand: () => async () => ({ _tag: "Success", value: undefined }),
+  // The add-project destination step starts a clone and follows its project id.
+  useAtomCommand: () => async () => ({ _tag: "Success", value: { projectId: "project-cloned" } }),
 }));
 vi.mock("../state/use-atom-query-runner", () => ({
   useAtomQueryRunner: () => async () => ({ _tag: "Success", value: undefined }),
@@ -106,7 +131,11 @@ vi.mock("../state/filesystem", async (original) => ({
 }));
 vi.mock("../state/query", async (original) => ({
   ...(await original<typeof import("../state/query")>()),
-  useEnvironmentQuery: () => ({ data: undefined, isLoading: false, isPending: browse.isPending }),
+  useEnvironmentQuery: () => ({
+    data: scopes.sourceControl,
+    isLoading: false,
+    isPending: browse.isPending,
+  }),
 }));
 vi.mock("./settings/useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [],
@@ -233,4 +262,16 @@ it.each([
   await expect.element(submit).toBeEnabled();
   await userEvent.keyboard("{Tab}");
   await expect.element(submit).toHaveFocus();
+});
+
+it("tells screen readers whether a new project will be published", async () => {
+  setup({ sourceControl: githubAvailable });
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await page.getByText("New project", { exact: true }).click();
+  await page.getByRole("combobox").fill("demo-project");
+  const option = page.getByRole("option", { name: /Create private repository/ });
+  await expect.element(option).toHaveAttribute("aria-checked", "false");
+  await option.click();
+  await expect.element(option).toHaveAttribute("aria-checked", "true");
 });
