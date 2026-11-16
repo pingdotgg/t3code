@@ -625,6 +625,10 @@ export interface ProjectionStoreV2Shape {
   readonly getThread: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2AppThread, ProjectionStoreV2Error>;
+  /** Like getThread, but a missing thread is null, so an expected miss is not an error span. */
+  readonly findThread: (
+    threadId: ThreadId,
+  ) => Effect.Effect<OrchestrationV2AppThread | null, ProjectionStoreV2Error>;
   readonly getLimitRecoveryCandidates: (options: {
     readonly now: DateTime.Utc;
     readonly autoResume: boolean;
@@ -5611,26 +5615,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ),
       );
 
+    const selectThread = (threadId: ThreadId) =>
+      sql<PayloadRow>`
+        SELECT payload_json FROM orchestration_v2_projection_threads
+        WHERE thread_id = ${threadId}
+      `.pipe(
+        Effect.flatMap((rows) =>
+          rows[0] === undefined ? Effect.succeed(null) : decodeThreadPayload(rows[0].payload_json),
+        ),
+        Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
+      );
+
     const getThread: ProjectionStoreV2Shape["getThread"] = Effect.fn("ProjectionStore.getThread")(
       function* (threadId) {
-        const rows = yield* sql<PayloadRow>`
-          SELECT payload_json FROM orchestration_v2_projection_threads
-          WHERE thread_id = ${threadId}
-        `;
-        if (rows[0] === undefined) {
-          return yield* new ProjectionStoreThreadNotFoundError({ threadId });
-        }
-        return yield* decodeThreadPayload(rows[0].payload_json);
+        const thread = yield* selectThread(threadId);
+        if (thread === null) return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+        return thread;
       },
-      (effect, threadId) =>
-        effect.pipe(
-          Effect.mapError((cause) =>
-            isProjectionStoreThreadNotFoundError(cause)
-              ? cause
-              : new ProjectionStoreReadError({ threadId, cause }),
-          ),
-        ),
     );
+
+    const findThread: ProjectionStoreV2Shape["findThread"] = Effect.fn(
+      "ProjectionStore.findThread",
+    )(selectThread);
 
     const requireThread = Effect.fn("ProjectionStore.requireThread")(function* (
       threadId: ThreadId,
@@ -9292,6 +9298,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadShell: readOnReader(getThreadShell),
       findGuestShareThreadId: readOnReader(findGuestShareThreadId),
       getThread: readOnReader(getThread),
+      findThread: readOnReader(findThread),
       getSettlementCandidates: readOnReader(getSettlementCandidates),
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),
       getThreadTitles: readOnReader(getThreadTitles),
