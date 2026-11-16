@@ -408,7 +408,7 @@ const LIMITED_METHODS = [
   "assets.createUrl",
   "secrets.answerRequest",
   "panels.respond",
-  ...["comment","replyToThread","updateComment","setReaction","setThreadResolution","submitReview","requestReviewers","reviewerCandidates","labelCandidates","setLabels","update","stack","reviewGuide"].map(method=>`pullRequests.${method}`),
+  ...["comment","replyToThread","updateComment","setReaction","setThreadResolution","submitReview","requestReviewers","reviewerCandidates","labelCandidates","setLabels","update","stack","reviewGuide","runAction","generateReviewGuide"].map(method=>`pullRequests.${method}`),
   "server.listTextGeneratorModels",
   "terminal.attach",
   "terminal.open",

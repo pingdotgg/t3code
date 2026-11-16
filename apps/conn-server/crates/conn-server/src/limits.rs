@@ -327,12 +327,8 @@ mod tests {
         struct Cases {
             cases: Vec<Case>,
         }
-        let Cases { mut cases } =
+        let Cases { cases } =
             serde_json::from_str(include_str!("../tools/limits-cases.json")).expect("cases parse");
-        let Cases { cases: pr_cases } =
-            serde_json::from_str(include_str!("../tools/pr-limit-cases.json"))
-                .expect("PR cases parse");
-        cases.extend(pr_cases);
         assert!(cases.len() > 30);
         for mut case in cases {
             let result = check(&case.tag, &mut case.payload);

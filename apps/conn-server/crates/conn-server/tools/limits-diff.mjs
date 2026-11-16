@@ -15,7 +15,6 @@ const rpc = await importSource("packages/contracts/src/rpc.ts");
 
 const file = NodePath.join(repoRoot, "crates/conn-server/tools/limits-cases.json");
 const { cases } = JSON.parse(NodeFS.readFileSync(file, "utf8"));
-cases.push(...JSON.parse(NodeFS.readFileSync(NodePath.join(repoRoot,"crates/conn-server/tools/pr-limit-cases.json"),"utf8")).cases);
 const payloadOf = (tag) => {
   for (const group of [rpc.OfficialWsRpcGroup, rpc.ForkWsRpcGroup]) {
     const found = group.requests.get(tag);

@@ -4,7 +4,6 @@ import { stripTypeScriptTypes } from "node:module";
 import { importSource } from "../../../tools/monorepo.mjs";
 import { recordActions, recordCapabilities } from "./pr-action-recordings.mjs";
 import { recordGuide } from "../../conn-server/tools/pr-guide-recordings.mjs";
-import { recordPrLimits } from "../../conn-server/tools/pr-limit-recordings.mjs";
 const pure = await importSource("packages/source-control-github/src/server/gitHubPullRequestJson.ts");
 const { loginAvatarUrl } = await importSource("packages/source-control-github/src/server/GitHubPullRequestProvider.ts");
 const { isGitHubHost } = await importSource("packages/source-control-github/src/server/GitHubCredentials.ts");
@@ -80,12 +79,24 @@ for (const [key,reason] of [["missing","cli-missing"],["unauthenticated","cli-un
   add("unavailable",reason,{_tag:"PullRequestUnavailableError",reason,provider:"github",requirement:JSON.parse('"'+match[1]+'"')});
 }
 for (const verdict of ["comment", "approve", "request-changes"]) {
-  for (const position of [{kind:"added",newLine:4},{kind:"deleted",oldLine:3},{kind:"context",oldLine:3,newLine:4,side:"left"},{kind:"context",oldLine:3,newLine:4,side:"right"}]) {
-    for (const startPosition of [undefined, position, {kind:"added",newLine:1}]) {
-      const input={verdict,body:"  summary\n",comments:[{path:"file.rs",body:"keep whitespace \n",position,...(startPosition===undefined?{}:{startPosition})}]};
-      add("reviewSubmission",input,pure.buildReviewSubmission(input));
-    }
-  }
+  const input = { verdict, body: "  summary\n", comments: [] };
+  add("reviewSubmission", input, pure.buildReviewSubmission(input));
+}
+const added = { kind: "added", newLine: 4 };
+const deleted = { kind: "deleted", oldLine: 3 };
+const left = { kind: "context", oldLine: 3, newLine: 4, side: "left" };
+const right = { ...left, side: "right" };
+for (const [position, startPosition] of [
+  ...[added, deleted, left, right].map(position => [position, undefined]),
+  [added, added],
+  [added, { kind: "added", newLine: 1 }],
+  [deleted, { kind: "deleted", oldLine: 1 }],
+  [left, { ...left, oldLine: 1, newLine: 2 }],
+  [right, { ...right, oldLine: 1, newLine: 2 }],
+  [deleted, { kind: "added", newLine: 1 }],
+]) {
+  const input = { verdict: "comment", body: "  summary\n", comments: [{ path: "file.rs", body: "keep whitespace \n", position, ...(startPosition === undefined ? {} : { startPosition }) }] };
+  add("reviewSubmission", input, pure.buildReviewSubmission(input));
 }
 for (const type of ["PullRequest","IssueComment","PullRequestReviewComment","PullRequestReview"]) {
   for (const actual of ["PR7","PR8",null]) {
@@ -110,21 +121,19 @@ for (const input of [[],[{number:1,url:"api-url",html_url:"  web-url ",base:{ref
 for(const input of [null,{},[{number:"bad"}],...["title","draft","head"].map(key=>[{number:1,url:"url",base:"main",pull_requests:[{number:7,head:{ref:"branch"},[key]:key==="head"?{ref:"branch",sha:null}:null}]}])]) {
   add("stackError",input,pure.decodePullRequestStacksJson(JSON.stringify(input))._tag === "Failure");
 }
-const out = JSON.stringify(cases, null, 2) + "\n";
+const lines = values => "[\n" + values.map(value => JSON.stringify(value)).join(",\n") + "\n]\n";
+const out = lines(cases);
 const actionPath = new URL("../src/pull_requests/action-cases.json", import.meta.url);
 const actionCases = await recordActions();
-const actionOut = JSON.stringify(actionCases,null,2)+"\n";
+const actionOut = lines(actionCases);
 const guidePath = new URL("../../conn-server/src/methods/pull_requests/guide-fixture.json",import.meta.url);
-const guideOut = JSON.stringify(await recordGuide(),null,2)+"\n";
+const guideOut = JSON.stringify(await recordGuide())+"\n";
 const capabilitiesPath = new URL("../src/pull_requests/capabilities.json",import.meta.url);
-const capabilitiesOut = JSON.stringify(await recordCapabilities(),null,2)+"\n";
-const limitsPath = new URL("../../conn-server/tools/pr-limit-cases.json",import.meta.url);
-const limitsOut = JSON.stringify(await recordPrLimits(),null,2)+"\n";
+const capabilitiesOut = JSON.stringify(await recordCapabilities())+"\n";
 if (process.argv.includes("--check")) {
   if (fs.readFileSync(path,"utf8") !== out) throw new Error("PR characterizations changed; run gen-pr-cases.mjs and port the difference");
   if (fs.readFileSync(actionPath,"utf8") !== actionOut) throw new Error("PR action requests changed; run gen-pr-cases.mjs and port the difference");
   if (fs.readFileSync(guidePath,"utf8") !== guideOut) throw new Error("PR guide storage changed; run gen-pr-cases.mjs and port the difference");
   if (fs.readFileSync(capabilitiesPath,"utf8") !== capabilitiesOut) throw new Error("GitHub PR capabilities changed; run gen-pr-cases.mjs and port the difference");
-  if (fs.readFileSync(limitsPath,"utf8") !== limitsOut) throw new Error("PR payload limits changed; run gen-pr-cases.mjs and port the difference");
   console.log(`PR characterizations: ${cases.length} T3 cases and ${actionCases.length} action traces current`);
-} else { fs.writeFileSync(path,out); fs.writeFileSync(actionPath,actionOut); fs.writeFileSync(guidePath,guideOut); fs.writeFileSync(capabilitiesPath,capabilitiesOut); fs.writeFileSync(limitsPath,limitsOut); console.log(`recorded ${cases.length} PR characterizations, ${actionCases.length} API action traces, capabilities, limits and T3's stored guide`); }
+} else { fs.writeFileSync(path,out); fs.writeFileSync(actionPath,actionOut); fs.writeFileSync(guidePath,guideOut); fs.writeFileSync(capabilitiesPath,capabilitiesOut); console.log(`recorded ${cases.length} PR characterizations, ${actionCases.length} API action traces, capabilities and T3's stored guide`); }

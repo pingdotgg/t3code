@@ -570,6 +570,8 @@ const decodeEach = (client) =>
     yield* call("pullRequests.labelCandidates", prRef);
     yield* call("pullRequests.setLabels", { ...prRef, labels: ["bug"], applied: true });
     yield* call("pullRequests.update", { ...prRef, body: "Edited" });
+    yield* call("pullRequests.runAction", { ...prRef, action: "close" });
+    yield* call("pullRequests.generateReviewGuide", prRef);
     yield* call("pullRequests.stack", prRef);
     yield* call("pullRequests.reviewGuide", prRef);
     yield* call("pullRequests.reportState", { reference: prRef, state: "open" });

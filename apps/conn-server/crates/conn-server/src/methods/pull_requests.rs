@@ -51,6 +51,19 @@ fn array(v: Option<&Value>) -> &[Value] {
 fn operation_error(operation: &str, detail: &str) -> Failure {
     Failure::Fail(json!({"_tag":"PullRequestOperationError","operation":operation,"detail":detail}))
 }
+fn action_unavailable(input: &Value) -> Failure {
+    let detail = if text(input, "action") == "delete-branch" {
+        "This host cannot delete a change request's source branch.".into()
+    } else if input.get("stackNumber").is_some() {
+        "This stack action is not supported or has no expected head revision.".into()
+    } else {
+        format!(
+            "This host cannot {} a change request.",
+            text(input, "action")
+        )
+    };
+    operation_error("runAction", &detail)
+}
 fn unsupported() -> Failure {
     Failure::Fail(json!({"_tag":"PullRequestUnavailableError","reason":"provider-unsupported"}))
 }
@@ -285,29 +298,24 @@ impl Panel {
 
         id
     }
-    async fn call(&self, method: &str, input: Value) -> Result<Value, Failure> {
-        if !actions::is_mutation(method) {
-            return self.call_inner(method, input).await;
-        }
-        let project = self.resolve(&input).await?;
-        let invalidation = MutationReads {
-            panel: self,
-            reference: (
-                project.host,
-                project.repository.to_lowercase(),
-                input.get("number").cloned().unwrap_or(Value::Null),
-            ),
-        };
-        self.invalidate_cached(Some(&invalidation.reference), false);
-        let result = self.call_inner(method, input).await;
-        drop(invalidation);
-        if result.is_ok() {
-            self.refreshes.send_modify(|v| *v = v.saturating_add(1));
-        }
-        result
+    fn guide_unavailable(&self) -> Failure {
+        let off = self.environment.as_ref().is_some_and(|environment| {
+            environment.settings.for_client().get("reviewGuidesEnabled")
+                == Some(&Value::Bool(false))
+        });
+        operation_error(
+            "generateReviewGuide",
+            if off {
+                "Review guides are off. Turn them on in Settings → Source Control."
+            } else {
+                "This server cannot generate review guides yet."
+            },
+        )
     }
-    async fn call_inner(&self, method: &str, input: Value) -> Result<Value, Failure> {
-        actions::validate(method, &input).map_err(|e| host_error(&e, method))?;
+    async fn call(&self, method: &str, input: Value) -> Result<Value, Failure> {
+        if method == "generateReviewGuide" && input.get("expectedAccountId").is_none() {
+            return Err(self.guide_unavailable());
+        }
         if method == "reviewGuide" {
             let shell = self.engine.shell_snapshot().await.map_err(|_| {
                 operation_error(
@@ -399,6 +407,18 @@ impl Panel {
             })?
         };
 
+        if method == "runAction" && input.get("expectedAccountId").is_none() {
+            self.invalidate_cached(
+                Some(&(
+                    project.host,
+                    project.repository.to_lowercase(),
+                    input.get("number").cloned().unwrap_or(Value::Null),
+                )),
+                false,
+            );
+            return Err(action_unavailable(&input));
+        }
+
         let client = self
             .client(
                 &project,
@@ -409,8 +429,6 @@ impl Panel {
                 },
             )
             .await?;
-
-        let scope = self.credential_scope(&client);
 
         let identity = if method.starts_with("routing")
             || (method != "diff" && input.get("expectedAccountId").is_some())
@@ -446,6 +464,25 @@ impl Panel {
             }
             return Ok(identity);
         }
+        if method == "generateReviewGuide" {
+            return Err(self.guide_unavailable());
+        }
+        let invalidation =
+            (actions::is_mutation(method) || method == "runAction").then(|| MutationReads {
+                panel: self,
+                reference: (
+                    project.host.clone(),
+                    project.repository.to_lowercase(),
+                    input.get("number").cloned().unwrap_or(Value::Null),
+                ),
+            });
+        if let Some(invalidation) = &invalidation {
+            self.invalidate_cached(Some(&invalidation.reference), false);
+        }
+        if method == "runAction" {
+            return Err(action_unavailable(&input));
+        }
+        actions::validate(method, &input).map_err(|e| host_error(&e, method))?;
         let lookup = Lookup::new(
             &project.repository,
             input.get("number").and_then(Value::as_u64).unwrap_or(0),
@@ -479,10 +516,16 @@ impl Panel {
         if actions::is_mutation(method)
             || matches!(method, "reviewerCandidates" | "labelCandidates")
         {
-            return client
+            let result = client
                 .action(&lookup, method, &input)
                 .await
                 .map_err(|e| host_error(&e, method));
+            drop(invalidation);
+            if result.is_ok() && actions::is_mutation(method) {
+                self.refreshes
+                    .send_modify(|value| *value = value.saturating_add(1));
+            }
+            return result;
         }
         if method == "setFilesViewed" {
             client
@@ -494,6 +537,7 @@ impl Panel {
 
             return Ok(Value::Null);
         }
+        let scope = self.credential_scope(&client);
         let key = json!([
             scope,
             method,
@@ -1224,9 +1268,9 @@ fn register_panel(table: &mut MethodTable, panel: Arc<Panel>) {
     unary!("pullRequests.labelCandidates", label_candidates);
     unary!("pullRequests.setLabels", set_labels);
     unary!("pullRequests.update", update);
-    // runAction needs guarded Git/stack operations and engine merge/link synchronization.
+    unary!("pullRequests.runAction", run_action);
     unary!("pullRequests.stack", stack);
-    // Generation needs owned background runs, scratch checkouts, diff normalization and writes.
+    unary!("pullRequests.generateReviewGuide", generate_review_guide);
     unary!("pullRequests.reviewGuide", review_guide);
 
     unary!("pullRequests.listStats", list_stats);

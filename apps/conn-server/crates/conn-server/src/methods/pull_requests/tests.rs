@@ -502,13 +502,24 @@ async fn actions_decode_and_success_notifies_but_failure_still_invalidates() {
         "next read reaches GitHub after failure"
     );
     let before = count.load(Ordering::Relaxed);
-    let mut input = reference();
-    input["expectedAccountId"] = json!("wrong");
-    input["body"] = json!("do not send");
-    assert!(
-        call(&table, "pullRequests.comment", input).await.is_err(),
-        "mutation verifies routed account"
-    );
+    let cached = panel.cache.len();
+    for body in ["do not send", " \n"] {
+        let mut input = reference();
+        input["expectedAccountId"] = json!("wrong");
+        input["body"] = json!(body);
+        let error = call(&table, "pullRequests.comment", input)
+            .await
+            .expect_err("wrong account");
+        assert!(
+            matches!(error, Failure::Fail(ref value) if value["operation"] == "routeIdentity"),
+            "routing precedes validation: {error:?}"
+        );
+        assert_eq!(
+            panel.cache.len(),
+            cached,
+            "wrong accounts do not invalidate reads"
+        );
+    }
     assert_eq!(
         count.load(Ordering::Relaxed),
         before,
@@ -551,6 +562,70 @@ async fn actions_decode_and_success_notifies_but_failure_still_invalidates() {
         );
     }
     task.abort();
+}
+
+#[tokio::test]
+async fn unavailable_actions_and_guide_generation_return_typed_refusals() {
+    let dir = TestDir::new();
+    let mut panel = panel(shell(&dir.0), &dir, "http://127.0.0.1:1");
+    let environment = Arc::new(
+        ServerEnvironment::load(&dir.0, Some("Refusals".into()), dir.0.clone())
+            .expect("environment"),
+    );
+    Arc::get_mut(&mut panel).expect("new panel").environment = Some(environment.clone());
+    let mut table = MethodTable::new();
+    register_panel(&mut table, panel.clone());
+    for enabled in [false, true] {
+        environment
+            .settings
+            .update(json!({"reviewGuidesEnabled":enabled}), None)
+            .expect("settings");
+        let error = call(&table, "pullRequests.generateReviewGuide", reference())
+            .await
+            .expect_err("generation refused");
+        let detail = if enabled {
+            "This server cannot generate review guides yet."
+        } else {
+            "Review guides are off. Turn them on in Settings → Source Control."
+        };
+        assert!(
+            matches!(error, Failure::Fail(ref value) if value["_tag"] == "PullRequestOperationError" && value["operation"] == "generateReviewGuide" && value["detail"] == detail),
+            "{error:?}"
+        );
+    }
+    for action in [
+        "merge",
+        "ready",
+        "draft",
+        "close",
+        "reopen",
+        "delete-branch",
+        "update-branch",
+        "enable-auto-merge",
+        "disable-auto-merge",
+        "revert",
+        "approve-workflows",
+    ] {
+        let mut input = reference();
+        input["action"] = json!(action);
+        let error = call(&table, "pullRequests.runAction", input)
+            .await
+            .expect_err("action refused");
+        let detail = if action == "delete-branch" {
+            "This host cannot delete a change request's source branch.".into()
+        } else {
+            format!("This host cannot {action} a change request.")
+        };
+        assert!(
+            matches!(error, Failure::Fail(ref value) if value["_tag"] == "PullRequestOperationError" && value["operation"] == "runAction" && value["detail"] == detail),
+            "{action}: {error:?}"
+        );
+    }
+    assert_eq!(
+        *panel.refreshes.borrow(),
+        0,
+        "refusals never announce success"
+    );
 }
 
 #[tokio::test]
