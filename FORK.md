@@ -40,11 +40,11 @@ file before you merge upstream, build, or change shared UI. Upstream's
 Conn ships to three targets (Nick, 2026-11-16). The nightly sync follows upstream only for
 what serves them.
 
-| Target | Platform | Built from |
-| --- | --- | --- |
-| Desktop app | macOS | `apps/desktop`, `apps/web` |
-| iPhone app | iOS | `apps/mobile` |
-| Servers | Linux and macOS | `apps/server`, the T3 server on Nick's machines; `apps/conn-server`, the Conn Server, on Linux in Orbit containers (macOS later) |
+| Target      | Platform        | Built from                                                                                                                       |
+| ----------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Desktop app | macOS           | `apps/desktop`, `apps/web`                                                                                                       |
+| iPhone app  | iOS             | `apps/mobile`                                                                                                                    |
+| Servers     | Linux and macOS | `apps/server`, the T3 server on Nick's machines; `apps/conn-server`, the Conn Server, on Linux in Orbit containers (macOS later) |
 
 Out of scope: Windows, Android and the Linux desktop app (AppImage, deb, AUR), the hosted web
 app (app.t3.codes and its previews), the T3 Connect relay (`infra/relay`), and the marketing
