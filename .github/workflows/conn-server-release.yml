@@ -1,0 +1,126 @@
+name: Conn Server Release
+
+# Builds the tarball that Orbit downloads into its agent folder
+# (apps/conn-server/tools/release-tarball.mjs; crates/conn-server/DROP-IN.md, "Release tarball
+# for Orbit"): conn-server-<version>-linux-x64.tar.gz with the musl binary and the SDK host.
+#
+# - A pushed tag `conn-server-v<version>`: the version must equal the conn-server crate's; the
+#   run makes a GitHub Release with the tarball and its `.sha256` file. It is never marked
+#   Latest, so Conn's own releases stay the repository's latest.
+# - workflow_dispatch on a branch: builds and keeps the tarball as a workflow artifact only.
+#   On a tag it makes the Release, as a push does.
+#
+# Conn's release.yml takes tags `v*.*.*`; this one only `conn-server-v*`. Neither matches the
+# other's tags, and neither workflow starts the other.
+#
+# Action pins follow conn-server-ci.yml.
+
+on:
+  push:
+    tags:
+      - "conn-server-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conn-server-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  # Same as `channel` in apps/conn-server/rust-toolchain.toml; tools/check.sh fails when they differ.
+  RUST_TOOLCHAIN: "1.99.1"
+
+defaults:
+  run:
+    working-directory: apps/conn-server
+
+jobs:
+  tarball:
+    name: Release tarball (linux-x64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      # Only for `gh release create`, on a tag.
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            /apps/conn-server/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: x86_64-unknown-linux-musl
+
+      # musl-gcc compiles the bundled SQLite.
+      - name: Install musl tools
+        run: sudo apt-get update -q && sudo apt-get install -y -q musl-tools
+
+      # The tarball script and the SDK host install; Node as the T3 server pins it.
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "26.12.1"
+
+      - name: Version
+        id: version
+        run: |
+          version="$(cargo metadata --locked --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "conn-server") | .version')"
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "::error::No conn-server version in cargo metadata"; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            if [ "$GITHUB_REF_NAME" != "conn-server-v$version" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match the crate version $version (expected conn-server-v$version)"
+              exit 1
+            fi
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the tarball
+        run: node tools/release-tarball.mjs --out dist
+
+      - name: Summary
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          name="conn-server-$VERSION-linux-x64.tar.gz"
+          {
+            printf '**%s**: %s bytes\n\n' "$name" "$(stat -c %s "dist/$name")"
+            printf 'sha256: %s\n' "$(cut -d ' ' -f 1 "dist/$name.sha256")"
+          } >> "$GITHUB_STEP_SUMMARY"
+          (cd dist && sha256sum --check "$name.sha256")
+
+      - name: Upload the tarball
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: conn-server-${{ steps.version.outputs.version }}-linux-x64
+          path: apps/conn-server/dist/
+          retention-days: 14
+
+      - name: Create the GitHub Release
+        if: ${{ steps.version.outputs.release == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          name="conn-server-$VERSION-linux-x64.tar.gz"
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "conn-server $VERSION" \
+            --notes "The Conn Server $VERSION for Orbit's agent folder: the x86_64-unknown-linux-musl binary and the SDK host. sha256 $(cut -d ' ' -f 1 "dist/$name.sha256")." \
+            --verify-tag \
+            --latest=false \
+            "dist/$name" "dist/$name.sha256"

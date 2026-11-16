@@ -1,0 +1,773 @@
+{
+  "note": "ProviderAdapterV2Event list from ClaudeAdapterV2 (TS) for cli/e06_permissions.ndjson, via the wake test harness (tools/capture-ts); driver field dropped. Clock is the TestClock (epoch 0).",
+  "offered": [
+    {
+      "type": "user",
+      "message": {
+        "role": "user",
+        "content": "Ultrathink:\nUse the Bash tool twice, one call each, in this order: `touch denied.txt` then `touch allowed.txt`. If a call is denied, do not retry it; go on to the next. Then reply: done"
+      },
+      "parent_tool_use_id": null,
+      "uuid": "3d7b268d-0cd7-445b-9406-9b805d4b163f"
+    }
+  ],
+  "events": [
+    {
+      "type": "provider_turn.updated",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-1",
+          "strength": "weak"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "provider_thread.updated",
+      "providerThread": {
+        "id": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "driver": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "providerSessionId": "provider-session-claude-wake",
+        "appThreadId": "thread-claude-wake",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "claudeAgent",
+          "nativeId": "63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "active",
+        "firstRunOrdinal": null,
+        "lastRunOrdinal": null,
+        "handoffIds": [],
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "nativeMetadata": {
+          "claudeAttachmentBudget": {
+            "bytesUsed": 188,
+            "pagesUsed": 0
+          },
+          "title": "Claude attachment test"
+        }
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread-claude-wake",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-1",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 32098,
+          "maxTokens": 200000,
+          "inputTokens": 32066,
+          "cachedInputTokens": 0,
+          "outputTokens": 32,
+          "reasoningOutputTokens": 0,
+          "promptCacheTtlMs": 3600000,
+          "promptCacheExpiresAt": "1970-01-01T01:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:claudeAgent:native-item:toolu_013vpcpsPLYmZnii5PpFCJBd",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "parentNodeId": "node-attempt-1",
+        "rootNodeId": "node-attempt-1",
+        "kind": "tool_call",
+        "status": "running",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "toolu_013vpcpsPLYmZnii5PpFCJBd",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:claudeAgent:native-item:toolu_013vpcpsPLYmZnii5PpFCJBd",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "nodeId": "node:provider:claudeAgent:native-item:toolu_013vpcpsPLYmZnii5PpFCJBd",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "toolu_013vpcpsPLYmZnii5PpFCJBd",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 101,
+        "status": "running",
+        "title": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "type": "command_execution",
+        "input": "touch denied.txt"
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:runtime-request:runtime-request%3Aprovider%3AclaudeAgent%3Aprovider-turn%3Aprovider-turn%253Aprovider%253AclaudeAgent%253Anative-turn%253Aturn%25253Aattempt-1%3Anative-request%3Atoolu_013vpcpsPLYmZnii5PpFCJBd%3A7cbc6ae3-bb47-4c22-b0ee-ac7df43b5473",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "parentNodeId": "node:provider:claudeAgent:native-item:toolu_013vpcpsPLYmZnii5PpFCJBd",
+        "rootNodeId": "node-attempt-1",
+        "kind": "approval_request",
+        "status": "waiting",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "toolu_013vpcpsPLYmZnii5PpFCJBd",
+          "strength": "strong"
+        },
+        "runtimeRequestId": "runtime-request:provider:claudeAgent:provider-turn:provider-turn%3Aprovider%3AclaudeAgent%3Anative-turn%3Aturn%253Aattempt-1:native-request:toolu_013vpcpsPLYmZnii5PpFCJBd:7cbc6ae3-bb47-4c22-b0ee-ac7df43b5473",
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "runtime_request.updated",
+      "runtimeRequest": {
+        "id": "runtime-request:provider:claudeAgent:provider-turn:provider-turn%3Aprovider%3AclaudeAgent%3Anative-turn%3Aturn%253Aattempt-1:native-request:toolu_013vpcpsPLYmZnii5PpFCJBd:7cbc6ae3-bb47-4c22-b0ee-ac7df43b5473",
+        "nodeId": "node:runtime-request:runtime-request%3Aprovider%3AclaudeAgent%3Aprovider-turn%3Aprovider-turn%253Aprovider%253AclaudeAgent%253Anative-turn%253Aturn%25253Aattempt-1%3Anative-request%3Atoolu_013vpcpsPLYmZnii5PpFCJBd%3A7cbc6ae3-bb47-4c22-b0ee-ac7df43b5473",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeRequestRef": {
+          "driver": "claudeAgent",
+          "nativeId": "toolu_013vpcpsPLYmZnii5PpFCJBd",
+          "strength": "strong"
+        },
+        "kind": "command",
+        "status": "pending",
+        "responseCapability": {
+          "type": "live",
+          "providerSessionId": "provider-session-claude-wake",
+          "supportsFeedback": true
+        },
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "resolvedAt": null
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:runtime-request:runtime-request%3Aprovider%3AclaudeAgent%3Aprovider-turn%3Aprovider-turn%253Aprovider%253AclaudeAgent%253Anative-turn%253Aturn%25253Aattempt-1%3Anative-request%3Atoolu_013vpcpsPLYmZnii5PpFCJBd%3A7cbc6ae3-bb47-4c22-b0ee-ac7df43b5473",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "nodeId": "node:runtime-request:runtime-request%3Aprovider%3AclaudeAgent%3Aprovider-turn%3Aprovider-turn%253Aprovider%253AclaudeAgent%253Anative-turn%253Aturn%25253Aattempt-1%3Anative-request%3Atoolu_013vpcpsPLYmZnii5PpFCJBd%3A7cbc6ae3-bb47-4c22-b0ee-ac7df43b5473",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "toolu_013vpcpsPLYmZnii5PpFCJBd",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 102,
+        "status": "waiting",
+        "title": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "type": "approval_request",
+        "requestId": "runtime-request:provider:claudeAgent:provider-turn:provider-turn%3Aprovider%3AclaudeAgent%3Anative-turn%3Aturn%253Aattempt-1:native-request:toolu_013vpcpsPLYmZnii5PpFCJBd:7cbc6ae3-bb47-4c22-b0ee-ac7df43b5473",
+        "requestKind": "command",
+        "prompt": "touch denied.txt"
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread-claude-wake",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-1",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 32164,
+          "maxTokens": 200000,
+          "inputTokens": 32066,
+          "cachedInputTokens": 0,
+          "outputTokens": 98,
+          "reasoningOutputTokens": 0,
+          "promptCacheTtlMs": 3600000,
+          "promptCacheExpiresAt": "1970-01-01T01:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z"
+        },
+        "model": "claude-haiku-5-5"
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:claudeAgent:native-item:toolu_013vpcpsPLYmZnii5PpFCJBd",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "parentNodeId": "node-attempt-1",
+        "rootNodeId": "node-attempt-1",
+        "kind": "tool_call",
+        "status": "failed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "toolu_013vpcpsPLYmZnii5PpFCJBd",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "toolNonExecutionKind": "permission-rule",
+        "id": "turn-item:provider:claudeAgent:native-item:toolu_013vpcpsPLYmZnii5PpFCJBd",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "nodeId": "node:provider:claudeAgent:native-item:toolu_013vpcpsPLYmZnii5PpFCJBd",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "toolu_013vpcpsPLYmZnii5PpFCJBd",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 101,
+        "status": "failed",
+        "title": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "type": "command_execution",
+        "input": "touch denied.txt",
+        "output": "Error: The host denied this command."
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread-claude-wake",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-1",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 32238,
+          "maxTokens": 200000,
+          "inputTokens": 32206,
+          "cachedInputTokens": 32064,
+          "outputTokens": 32,
+          "reasoningOutputTokens": 0,
+          "promptCacheTtlMs": 3600000,
+          "promptCacheExpiresAt": "1970-01-01T01:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z"
+        },
+        "model": "claude-haiku-5-5"
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:claudeAgent:native-item:toolu_013Zci9bCa2ddZmEDJYonGbP",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "parentNodeId": "node-attempt-1",
+        "rootNodeId": "node-attempt-1",
+        "kind": "tool_call",
+        "status": "running",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "toolu_013Zci9bCa2ddZmEDJYonGbP",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:claudeAgent:native-item:toolu_013Zci9bCa2ddZmEDJYonGbP",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "nodeId": "node:provider:claudeAgent:native-item:toolu_013Zci9bCa2ddZmEDJYonGbP",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "toolu_013Zci9bCa2ddZmEDJYonGbP",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 103,
+        "status": "running",
+        "title": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "type": "command_execution",
+        "input": "touch allowed.txt"
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:runtime-request:runtime-request%3Aprovider%3AclaudeAgent%3Aprovider-turn%3Aprovider-turn%253Aprovider%253AclaudeAgent%253Anative-turn%253Aturn%25253Aattempt-1%3Anative-request%3Atoolu_013Zci9bCa2ddZmEDJYonGbP%3A13365c5b-be59-4bcc-940d-96eb6e1be2ab",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "parentNodeId": "node:provider:claudeAgent:native-item:toolu_013Zci9bCa2ddZmEDJYonGbP",
+        "rootNodeId": "node-attempt-1",
+        "kind": "approval_request",
+        "status": "waiting",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "toolu_013Zci9bCa2ddZmEDJYonGbP",
+          "strength": "strong"
+        },
+        "runtimeRequestId": "runtime-request:provider:claudeAgent:provider-turn:provider-turn%3Aprovider%3AclaudeAgent%3Anative-turn%3Aturn%253Aattempt-1:native-request:toolu_013Zci9bCa2ddZmEDJYonGbP:13365c5b-be59-4bcc-940d-96eb6e1be2ab",
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "runtime_request.updated",
+      "runtimeRequest": {
+        "id": "runtime-request:provider:claudeAgent:provider-turn:provider-turn%3Aprovider%3AclaudeAgent%3Anative-turn%3Aturn%253Aattempt-1:native-request:toolu_013Zci9bCa2ddZmEDJYonGbP:13365c5b-be59-4bcc-940d-96eb6e1be2ab",
+        "nodeId": "node:runtime-request:runtime-request%3Aprovider%3AclaudeAgent%3Aprovider-turn%3Aprovider-turn%253Aprovider%253AclaudeAgent%253Anative-turn%253Aturn%25253Aattempt-1%3Anative-request%3Atoolu_013Zci9bCa2ddZmEDJYonGbP%3A13365c5b-be59-4bcc-940d-96eb6e1be2ab",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeRequestRef": {
+          "driver": "claudeAgent",
+          "nativeId": "toolu_013Zci9bCa2ddZmEDJYonGbP",
+          "strength": "strong"
+        },
+        "kind": "command",
+        "status": "pending",
+        "responseCapability": {
+          "type": "live",
+          "providerSessionId": "provider-session-claude-wake",
+          "supportsFeedback": true
+        },
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "resolvedAt": null
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:runtime-request:runtime-request%3Aprovider%3AclaudeAgent%3Aprovider-turn%3Aprovider-turn%253Aprovider%253AclaudeAgent%253Anative-turn%253Aturn%25253Aattempt-1%3Anative-request%3Atoolu_013Zci9bCa2ddZmEDJYonGbP%3A13365c5b-be59-4bcc-940d-96eb6e1be2ab",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "nodeId": "node:runtime-request:runtime-request%3Aprovider%3AclaudeAgent%3Aprovider-turn%3Aprovider-turn%253Aprovider%253AclaudeAgent%253Anative-turn%253Aturn%25253Aattempt-1%3Anative-request%3Atoolu_013Zci9bCa2ddZmEDJYonGbP%3A13365c5b-be59-4bcc-940d-96eb6e1be2ab",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "toolu_013Zci9bCa2ddZmEDJYonGbP",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 104,
+        "status": "waiting",
+        "title": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "type": "approval_request",
+        "requestId": "runtime-request:provider:claudeAgent:provider-turn:provider-turn%3Aprovider%3AclaudeAgent%3Anative-turn%3Aturn%253Aattempt-1:native-request:toolu_013Zci9bCa2ddZmEDJYonGbP:13365c5b-be59-4bcc-940d-96eb6e1be2ab",
+        "requestKind": "command",
+        "prompt": "touch allowed.txt"
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread-claude-wake",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-1",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 32306,
+          "maxTokens": 200000,
+          "inputTokens": 32206,
+          "cachedInputTokens": 32064,
+          "outputTokens": 100,
+          "reasoningOutputTokens": 0,
+          "promptCacheTtlMs": 3600000,
+          "promptCacheExpiresAt": "1970-01-01T01:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z"
+        },
+        "model": "claude-haiku-5-5"
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:claudeAgent:native-item:toolu_013Zci9bCa2ddZmEDJYonGbP",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "parentNodeId": "node-attempt-1",
+        "rootNodeId": "node-attempt-1",
+        "kind": "tool_call",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "toolu_013Zci9bCa2ddZmEDJYonGbP",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:claudeAgent:native-item:toolu_013Zci9bCa2ddZmEDJYonGbP",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "nodeId": "node:provider:claudeAgent:native-item:toolu_013Zci9bCa2ddZmEDJYonGbP",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "toolu_013Zci9bCa2ddZmEDJYonGbP",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 103,
+        "status": "completed",
+        "title": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "type": "command_execution",
+        "input": "touch allowed.txt",
+        "output": "(Bash completed with no output)"
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread-claude-wake",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-1",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 32348,
+          "maxTokens": 200000,
+          "inputTokens": 32345,
+          "cachedInputTokens": 32204,
+          "outputTokens": 3,
+          "reasoningOutputTokens": 0,
+          "promptCacheTtlMs": 3600000,
+          "promptCacheExpiresAt": "1970-01-01T01:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z"
+        },
+        "model": "claude-haiku-5-5"
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:claudeAgent:native-item:msg_011CgzYHYyiyPoJqeUY23cJo%3Atext%3A0",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "parentNodeId": "node-attempt-1",
+        "rootNodeId": "node-attempt-1",
+        "kind": "assistant_message",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "msg_011CgzYHYyiyPoJqeUY23cJo:text:0",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z"
+      }
+    },
+    {
+      "type": "message.updated",
+      "message": {
+        "createdBy": "agent",
+        "creationSource": "provider",
+        "id": "message:provider:claudeAgent:native-item:msg_011CgzYHYyiyPoJqeUY23cJo%3Atext%3A0",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "nodeId": "node:provider:claudeAgent:native-item:msg_011CgzYHYyiyPoJqeUY23cJo%3Atext%3A0",
+        "role": "assistant",
+        "text": "done",
+        "attachments": [],
+        "streaming": false,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:claudeAgent:native-item:msg_011CgzYHYyiyPoJqeUY23cJo%3Atext%3A0",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "nodeId": "node:provider:claudeAgent:native-item:msg_011CgzYHYyiyPoJqeUY23cJo%3Atext%3A0",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "msg_011CgzYHYyiyPoJqeUY23cJo:text:0",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 105,
+        "status": "completed",
+        "title": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "type": "assistant_message",
+        "messageId": "message:provider:claudeAgent:native-item:msg_011CgzYHYyiyPoJqeUY23cJo%3Atext%3A0",
+        "text": "done",
+        "streaming": false
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread-claude-wake",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-1",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 32348,
+          "maxTokens": 200000,
+          "inputTokens": 32345,
+          "cachedInputTokens": 32204,
+          "outputTokens": 3,
+          "reasoningOutputTokens": 0,
+          "promptCacheTtlMs": 3600000,
+          "promptCacheExpiresAt": "1970-01-01T01:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z"
+        },
+        "model": "claude-haiku-5-5"
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread-claude-wake",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-1",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 32348,
+          "maxTokens": 200000,
+          "inputTokens": 32345,
+          "cachedInputTokens": 32204,
+          "outputTokens": 3,
+          "reasoningOutputTokens": 0,
+          "promptCacheTtlMs": 3600000,
+          "promptCacheExpiresAt": "1970-01-01T01:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z"
+        },
+        "model": "claude-haiku-5-5"
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "bf3e10e0-3d17-4529-a924-cee3c2fa07d8",
+          "strength": "weak"
+        },
+        "ordinal": 1,
+        "status": "completed",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z",
+        "model": "claude-haiku-5-5",
+        "turnTokenUsage": {
+          "models": [
+            "claude-haiku-5-5"
+          ],
+          "otherUsage": {
+            "inputTokens": 1327,
+            "outputTokens": 24
+          },
+          "usageScope": "main_agent",
+          "cachedInputTokens": 64268,
+          "cacheCreationTokens": 32343,
+          "reasoningTokens": 0,
+          "hasSubagents": false,
+          "usageStatus": "complete",
+          "inputTokens": 96617,
+          "outputTokens": 201
+        }
+      }
+    },
+    {
+      "type": "provider_thread.updated",
+      "providerThread": {
+        "id": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+        "driver": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "providerSessionId": "provider-session-claude-wake",
+        "appThreadId": "thread-claude-wake",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "claudeAgent",
+          "nativeId": "63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "active",
+        "firstRunOrdinal": 1,
+        "lastRunOrdinal": 1,
+        "handoffIds": [],
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "goal": null,
+        "pendingBackgroundTasks": [],
+        "nativeMetadata": {
+          "claudeAttachmentBudget": {
+            "bytesUsed": 188,
+            "pagesUsed": 0
+          },
+          "title": "Claude attachment test"
+        }
+      },
+      "pendingBackgroundWork": false
+    },
+    {
+      "type": "turn.terminal",
+      "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:63a61fe0-c42b-4ba1-bda8-011ffe61bfe3",
+      "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+      "runOrdinal": 1,
+      "status": "completed",
+      "failure": null,
+      "threadDisposition": "reusable"
+    }
+  ]
+}

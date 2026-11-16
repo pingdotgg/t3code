@@ -1,0 +1,23 @@
+# T3 testkit fixture variants that fail through this engine today, with the reason.
+# `<fixture>/<driver> reason`; `*/<driver>` covers every variant of a provider this server
+# does not offer. check.mjs fails when a variant not listed here fails, and when a listed one
+# passes (then remove it). Grouped by cause.
+
+# --- Providers this server does not offer (no provider, or not offered yet) ---
+*/kiro          provider: not built (ACP)
+*/acpRegistry   provider: not built (ACP registry)
+*/fx            provider: not built (ACP)
+*/cursor        provider: not built (Cursor SDK in the SDK host)
+*/opencode      provider: not built (OpenCode SDK in the SDK host)
+*/muse          provider: not built (Muse SDK in the SDK host)
+*/pi            provider: out of scope (AGENTS.md)
+
+# --- Grok (conn-provider-acp; its own replay shows these adapter events equal to T3's) ---
+# The provider replays all five equal to T3 in its own test (17 of 17). Here they fail in the
+# replay driver or the engine's projection.
+grok_subagent_lineage/grok           engine: a Grok subagent's provider thread is missing from the projection (the assertion gets null for its id)
+grok_background_bash/grok            driver: the replay agent never starts; the driver's replay gate and finish_held_run are not wired to the ACP stub
+grok_background_bash_fast_wake/grok  driver: as grok_background_bash
+grok_background_subagent/grok        driver: as grok_background_bash
+grok_monitor/grok                    driver: as grok_background_bash
+

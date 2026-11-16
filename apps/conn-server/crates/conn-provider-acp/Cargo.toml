@@ -1,0 +1,30 @@
+[package]
+name = "conn-provider-acp"
+description = "The ACP provider: Grok, Kiro, fx, Antigravity and ACP registry agents over the Agent Client Protocol on stdio."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+conn-contract.workspace = true
+conn-provider.workspace = true
+conn-provider-support.workspace = true
+conn-support.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# Subagent thread ids hash the native id (`IdAllocator.derive.subagentThread`); already in the
+# tree through conn-support.
+sha2.workspace = true
+# Signals the agent's process group at close and Stop, as T3 does; already in the tree.
+rustix = { workspace = true, features = ["process"] }
+tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "rt", "macros"] }
+
+[dev-dependencies]
+# examples/idle_memory.rs: live heap bytes of one idle session (the version conn-engine's
+# memory_load example uses). Dev only; not in the server binary.
+stats_alloc = "0.1"
+
+[lints]
+workspace = true

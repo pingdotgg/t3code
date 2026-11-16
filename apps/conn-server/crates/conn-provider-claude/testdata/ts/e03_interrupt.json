@@ -1,0 +1,489 @@
+{
+  "note": "ProviderAdapterV2Event list from ClaudeAdapterV2 (TS) for cli/e03_interrupt.ndjson, via the wake test harness (tools/capture-ts); driver field dropped. Clock is the TestClock (epoch 0).",
+  "offered": [
+    {
+      "type": "user",
+      "message": {
+        "role": "user",
+        "content": "Ultrathink:\nWrite the numbers 1 to 400 as words, one per line. No other text."
+      },
+      "parent_tool_use_id": null,
+      "uuid": "9682c15f-29a9-4f77-9847-b70be8090736"
+    },
+    {
+      "type": "user",
+      "message": {
+        "role": "user",
+        "content": "Ultrathink:\nReply only: alive"
+      },
+      "parent_tool_use_id": null,
+      "uuid": "6175f90e-2d9a-4d02-a858-8455cec1878d"
+    }
+  ],
+  "events": [
+    {
+      "type": "provider_turn.updated",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:c3eedd41-014c-4c05-b38c-6ef4ea5defee",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-1",
+          "strength": "weak"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "provider_thread.updated",
+      "providerThread": {
+        "id": "provider-thread:provider:claudeAgent:native-thread:c3eedd41-014c-4c05-b38c-6ef4ea5defee",
+        "driver": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "providerSessionId": "provider-session-claude-wake",
+        "appThreadId": "thread-claude-wake",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "claudeAgent",
+          "nativeId": "c3eedd41-014c-4c05-b38c-6ef4ea5defee",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "active",
+        "firstRunOrdinal": null,
+        "lastRunOrdinal": null,
+        "handoffIds": [],
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "nativeMetadata": {
+          "claudeAttachmentBudget": {
+            "bytesUsed": 80,
+            "pagesUsed": 0
+          },
+          "title": "Claude attachment test"
+        }
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread-claude-wake",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:c3eedd41-014c-4c05-b38c-6ef4ea5defee",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-1",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 30256,
+          "maxTokens": 200000,
+          "inputTokens": 30225,
+          "cachedInputTokens": 0,
+          "outputTokens": 31,
+          "reasoningOutputTokens": 0,
+          "promptCacheTtlMs": 3600000,
+          "promptCacheExpiresAt": "1970-01-01T01:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread-claude-wake",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:c3eedd41-014c-4c05-b38c-6ef4ea5defee",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-1",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 30256,
+          "maxTokens": 200000,
+          "inputTokens": 30225,
+          "cachedInputTokens": 0,
+          "outputTokens": 31,
+          "reasoningOutputTokens": 0,
+          "promptCacheTtlMs": 3600000,
+          "promptCacheExpiresAt": "1970-01-01T01:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread-claude-wake",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:c3eedd41-014c-4c05-b38c-6ef4ea5defee",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-1",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 30256,
+          "maxTokens": 200000,
+          "inputTokens": 30225,
+          "cachedInputTokens": 0,
+          "outputTokens": 31,
+          "reasoningOutputTokens": 0,
+          "promptCacheTtlMs": 3600000,
+          "promptCacheExpiresAt": "1970-01-01T01:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:c3eedd41-014c-4c05-b38c-6ef4ea5defee",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-1",
+          "strength": "weak"
+        },
+        "ordinal": 1,
+        "status": "interrupted",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z",
+        "turnTokenUsage": {
+          "usageStatus": "unavailable",
+          "usageScope": "main_agent",
+          "hasSubagents": false
+        }
+      }
+    },
+    {
+      "type": "provider_thread.updated",
+      "providerThread": {
+        "id": "provider-thread:provider:claudeAgent:native-thread:c3eedd41-014c-4c05-b38c-6ef4ea5defee",
+        "driver": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "providerSessionId": "provider-session-claude-wake",
+        "appThreadId": "thread-claude-wake",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "claudeAgent",
+          "nativeId": "c3eedd41-014c-4c05-b38c-6ef4ea5defee",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "idle",
+        "firstRunOrdinal": 1,
+        "lastRunOrdinal": 1,
+        "handoffIds": [],
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "goal": null,
+        "pendingBackgroundTasks": [],
+        "nativeMetadata": {
+          "claudeAttachmentBudget": {
+            "bytesUsed": 80,
+            "pagesUsed": 0
+          },
+          "title": "Claude attachment test"
+        }
+      },
+      "pendingBackgroundWork": false
+    },
+    {
+      "type": "turn.terminal",
+      "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:c3eedd41-014c-4c05-b38c-6ef4ea5defee",
+      "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+      "runOrdinal": 1,
+      "status": "interrupted",
+      "failure": null,
+      "threadDisposition": "reusable"
+    },
+    {
+      "type": "provider_turn.updated",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-2",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:c3eedd41-014c-4c05-b38c-6ef4ea5defee",
+        "nodeId": "node-attempt-2",
+        "runAttemptId": "attempt-2",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-2",
+          "strength": "weak"
+        },
+        "ordinal": 2,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "provider_thread.updated",
+      "providerThread": {
+        "id": "provider-thread:provider:claudeAgent:native-thread:c3eedd41-014c-4c05-b38c-6ef4ea5defee",
+        "driver": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "providerSessionId": "provider-session-claude-wake",
+        "appThreadId": "thread-claude-wake",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "claudeAgent",
+          "nativeId": "c3eedd41-014c-4c05-b38c-6ef4ea5defee",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "active",
+        "firstRunOrdinal": 1,
+        "lastRunOrdinal": 1,
+        "handoffIds": [],
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "goal": null,
+        "pendingBackgroundTasks": [],
+        "nativeMetadata": {
+          "claudeAttachmentBudget": {
+            "bytesUsed": 112,
+            "pagesUsed": 0
+          },
+          "title": "Claude attachment test"
+        }
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread-claude-wake",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-2",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:c3eedd41-014c-4c05-b38c-6ef4ea5defee",
+        "nodeId": "node-attempt-2",
+        "runAttemptId": "attempt-2",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-2",
+          "strength": "strong"
+        },
+        "ordinal": 2,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 30272,
+          "maxTokens": 200000,
+          "inputTokens": 30267,
+          "cachedInputTokens": 21882,
+          "outputTokens": 5,
+          "reasoningOutputTokens": 0,
+          "promptCacheTtlMs": 3600000,
+          "promptCacheExpiresAt": "1970-01-01T01:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:claudeAgent:native-item:msg_011CgzYFqqBpmgYUT3FTgMXw%3Atext%3A0",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-2",
+        "parentNodeId": "node-attempt-2",
+        "rootNodeId": "node-attempt-2",
+        "kind": "assistant_message",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:c3eedd41-014c-4c05-b38c-6ef4ea5defee",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-2",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "msg_011CgzYFqqBpmgYUT3FTgMXw:text:0",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z"
+      }
+    },
+    {
+      "type": "message.updated",
+      "message": {
+        "createdBy": "agent",
+        "creationSource": "provider",
+        "id": "message:provider:claudeAgent:native-item:msg_011CgzYFqqBpmgYUT3FTgMXw%3Atext%3A0",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-2",
+        "nodeId": "node:provider:claudeAgent:native-item:msg_011CgzYFqqBpmgYUT3FTgMXw%3Atext%3A0",
+        "role": "assistant",
+        "text": "alive",
+        "attachments": [],
+        "streaming": false,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:claudeAgent:native-item:msg_011CgzYFqqBpmgYUT3FTgMXw%3Atext%3A0",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-2",
+        "nodeId": "node:provider:claudeAgent:native-item:msg_011CgzYFqqBpmgYUT3FTgMXw%3Atext%3A0",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:c3eedd41-014c-4c05-b38c-6ef4ea5defee",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-2",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "msg_011CgzYFqqBpmgYUT3FTgMXw:text:0",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 202,
+        "status": "completed",
+        "title": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "type": "assistant_message",
+        "messageId": "message:provider:claudeAgent:native-item:msg_011CgzYFqqBpmgYUT3FTgMXw%3Atext%3A0",
+        "text": "alive",
+        "streaming": false
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread-claude-wake",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-2",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:c3eedd41-014c-4c05-b38c-6ef4ea5defee",
+        "nodeId": "node-attempt-2",
+        "runAttemptId": "attempt-2",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-2",
+          "strength": "strong"
+        },
+        "ordinal": 2,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 30349,
+          "maxTokens": 200000,
+          "inputTokens": 30267,
+          "cachedInputTokens": 21882,
+          "outputTokens": 82,
+          "reasoningOutputTokens": 0,
+          "promptCacheTtlMs": 3600000,
+          "promptCacheExpiresAt": "1970-01-01T01:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z"
+        },
+        "model": "claude-haiku-5-5"
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-2",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:c3eedd41-014c-4c05-b38c-6ef4ea5defee",
+        "nodeId": "node-attempt-2",
+        "runAttemptId": "attempt-2",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "c83a4531-a45d-436d-8199-e178fd4b4514",
+          "strength": "weak"
+        },
+        "ordinal": 2,
+        "status": "completed",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z",
+        "model": "claude-haiku-5-5",
+        "turnTokenUsage": {
+          "models": [
+            "claude-haiku-5-5"
+          ],
+          "otherUsage": {
+            "inputTokens": 0,
+            "outputTokens": 0
+          },
+          "usageScope": "main_agent",
+          "cachedInputTokens": 21882,
+          "cacheCreationTokens": 8383,
+          "reasoningTokens": 78,
+          "hasSubagents": false,
+          "usageStatus": "complete",
+          "inputTokens": 30267,
+          "outputTokens": 82
+        }
+      }
+    },
+    {
+      "type": "provider_thread.updated",
+      "providerThread": {
+        "id": "provider-thread:provider:claudeAgent:native-thread:c3eedd41-014c-4c05-b38c-6ef4ea5defee",
+        "driver": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "providerSessionId": "provider-session-claude-wake",
+        "appThreadId": "thread-claude-wake",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "claudeAgent",
+          "nativeId": "c3eedd41-014c-4c05-b38c-6ef4ea5defee",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "active",
+        "firstRunOrdinal": 1,
+        "lastRunOrdinal": 1,
+        "handoffIds": [],
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "goal": null,
+        "pendingBackgroundTasks": [],
+        "nativeMetadata": {
+          "claudeAttachmentBudget": {
+            "bytesUsed": 112,
+            "pagesUsed": 0
+          },
+          "title": "Claude attachment test"
+        }
+      },
+      "pendingBackgroundWork": false
+    },
+    {
+      "type": "turn.terminal",
+      "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:c3eedd41-014c-4c05-b38c-6ef4ea5defee",
+      "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-2",
+      "runOrdinal": 1,
+      "status": "completed",
+      "failure": null,
+      "threadDisposition": "reusable"
+    }
+  ]
+}

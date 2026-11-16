@@ -1,0 +1,108 @@
+name: Conn Server checks
+
+# apps/conn-server/tools/check.sh: every Conn Server check that needs no model, against the
+# contract, the web client and apps/server of this same tree. Generated files that drift from
+# the tree fail here. Runs on changes to the Conn Server or to the contract.
+#
+# The nightly upstream sync never runs this job (FORK.md, "Conn Server"): ForkBot's sync/*
+# branches are not watched, and the job skips a push to main or a pull request that carries a
+# ForkBot commit or comes from a sync/* branch.
+
+on:
+  pull_request:
+    paths:
+      - apps/conn-server/**
+      - packages/contracts/**
+      - .github/workflows/conn-server-checks.yml
+  push:
+    branches:
+      - main
+    paths:
+      - apps/conn-server/**
+      - packages/contracts/**
+      - .github/workflows/conn-server-checks.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conn-server-checks-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # Same as `channel` in apps/conn-server/rust-toolchain.toml; tools/check.sh fails when they differ.
+  RUST_TOOLCHAIN: "1.99.1"
+
+jobs:
+  checks:
+    name: Conn Server checks
+    if: >-
+      !startsWith(github.head_ref, 'sync/') &&
+      github.event.head_commit.author.email != 'forkbot@nckrtl.local' &&
+      !contains(github.event.commits.*.author.email, 'forkbot@nckrtl.local')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        env:
+          VP_DOWNLOAD_TIMEOUT: "120"
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
+
+      - name: Cache pnpm store
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/share/pnpm/store
+          key: conn-server-pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: conn-server-pnpm-${{ runner.os }}-
+
+      - name: Install Conn dependencies
+        run: vp i
+
+      # The Claude conformance checks and instances-flow run the real Agent SDK in the SDK host.
+      - name: Install the SDK host
+        working-directory: apps/conn-server/helpers/sdk-host
+        run: npm ci --no-audit --no-fund --ignore-scripts
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+
+      - name: Cache Cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            apps/conn-server/target
+          key: conn-server-check-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('apps/conn-server/Cargo.lock') }}
+          restore-keys: conn-server-check-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-deny@0.20.2
+
+      # Every check that needs no model; none calls one.
+      - name: tools/check.sh
+        working-directory: apps/conn-server
+        run: tools/check.sh

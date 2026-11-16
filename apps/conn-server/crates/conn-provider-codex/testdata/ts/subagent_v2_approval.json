@@ -1,0 +1,1427 @@
+{
+  "note": "ProviderAdapterV2 calls and events from CodexAdapterV2 (TS) replaying cli/subagent_v2_approval.ndjson through the orchestrator fixture runner at b12470dcad; driver dropped.",
+  "capturedOn": "2026-11-14",
+  "startTurn": [
+    {
+      "appThread": {
+        "createdBy": "user",
+        "creationSource": "web",
+        "id": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "projectId": "project:fixture:subagent_v2_approval:f2604e9d-55b7-45de-a716-838867faae7e",
+        "title": "Replay fixture: subagent_v2_approval",
+        "providerInstanceId": "codex",
+        "modelSelection": {
+          "instanceId": "codex",
+          "model": "gpt-6-luna"
+        },
+        "runtimeMode": "full-access",
+        "interactionMode": "default",
+        "branch": null,
+        "worktreePath": null,
+        "pullRequests": [],
+        "activeProviderThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "lineage": {
+          "parentThreadId": null,
+          "relationshipToParent": null,
+          "rootThreadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7"
+        },
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.001Z",
+        "archivedAt": null,
+        "settledOverride": null,
+        "settledAt": null,
+        "snoozedUntil": null,
+        "snoozedAt": null,
+        "lastVisitedAt": "1970-01-01T00:00:00.000Z",
+        "deletedAt": null
+      },
+      "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+      "runOrdinal": 1,
+      "providerTurnOrdinal": 1,
+      "nativeThreadHasTurns": false,
+      "attemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+      "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+      "providerThread": {
+        "id": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "providerSessionId": "provider-session:provider-instance:codex:shared",
+        "appThreadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "codex",
+          "nativeId": "01a0da41-a28d-7271-b6f6-59123b5bb248",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "active",
+        "firstRunOrdinal": 1,
+        "lastRunOrdinal": 1,
+        "handoffIds": [],
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.001Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "contextUsage": null
+      },
+      "message": {
+        "messageId": "message:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1:a209c1b9-9d82-4ff3-ba27-8bd6853514a5",
+        "text": "Do not run any commands yourself. Spawn one subagent whose only task is to run this exact shell command: printf 'subagent approval fixture' > subagent-approval.txt and then reply with exactly: Written. Wait for it to finish, then reply with exactly what it said.",
+        "attachments": [],
+        "createdBy": "user",
+        "creationSource": "web"
+      },
+      "modelSelection": {
+        "instanceId": "codex",
+        "model": "gpt-6-luna"
+      },
+      "runtimePolicy": {
+        "runtimeMode": "full-access",
+        "interactionMode": "default",
+        "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-subagent_v2_approval-P812lZ",
+        "approvalPolicy": "untrusted",
+        "sandboxPolicy": {
+          "type": "readOnly"
+        }
+      }
+    }
+  ],
+  "respond": [
+    {
+      "requestId": "runtime-request:provider:codex:provider-turn:provider-turn%3Aprovider%3Acodex%3Anative-turn%3A01a0da41-a31f-7741-bda3-ebc5ad36c38f:native-request:exec-27a5374a-5e64-4a9b-88ff-8e1f77aa9745:60ae850c-0af3-4468-9967-365ecc316207",
+      "decision": "accept"
+    }
+  ],
+  "events": [
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "2026-11-14T18:55:08.496Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "app_thread.created",
+      "appThread": {
+        "createdBy": "agent",
+        "creationSource": "provider",
+        "id": "thread:subagent:23fd4893fd0c85be",
+        "projectId": "project:fixture:subagent_v2_approval:f2604e9d-55b7-45de-a716-838867faae7e",
+        "title": "/root/fixture_writer",
+        "providerInstanceId": "codex",
+        "modelSelection": {
+          "instanceId": "codex",
+          "model": "gpt-6-luna",
+          "options": []
+        },
+        "runtimeMode": "full-access",
+        "interactionMode": "default",
+        "branch": null,
+        "worktreePath": null,
+        "pullRequests": [],
+        "activeProviderThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "lineage": {
+          "parentThreadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+          "relationshipToParent": "subagent",
+          "rootThreadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7"
+        },
+        "forkedFrom": {
+          "type": "node",
+          "nodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a"
+        },
+        "createdAt": "1970-01-01T00:00:00.002Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "archivedAt": null,
+        "settledOverride": null,
+        "settledAt": null,
+        "snoozedUntil": null,
+        "snoozedAt": null,
+        "lastVisitedAt": null,
+        "deletedAt": null,
+        "titleRegeneration": null,
+        "linkedPullRequest": null,
+        "pinnedAt": null,
+        "pinOrderKey": null,
+        "autoSettleDisabledAt": null,
+        "guestShare": null
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "subagent",
+        "status": "running",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "call_KrtWrCMa1IBTJ4JEr5CvdJMs",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.002Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a%3Athread-root",
+        "threadId": "thread:subagent:23fd4893fd0c85be",
+        "runId": null,
+        "parentNodeId": null,
+        "rootNodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a%3Athread-root",
+        "kind": "root_turn",
+        "status": "running",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerTurnId": null,
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "call_KrtWrCMa1IBTJ4JEr5CvdJMs:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.002Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "provider_thread.updated",
+      "providerThread": {
+        "id": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "providerSessionId": "provider-session:provider-instance:codex:shared",
+        "appThreadId": "thread:subagent:23fd4893fd0c85be",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "codex",
+          "nativeId": "01a0da41-bc86-72e1-a30c-e59a4079f55a",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "idle",
+        "firstRunOrdinal": null,
+        "lastRunOrdinal": null,
+        "handoffIds": [],
+        "forkedFrom": {
+          "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+          "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f"
+        },
+        "createdAt": "1970-01-01T00:00:00.002Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z"
+      }
+    },
+    {
+      "type": "subagent.updated",
+      "subagent": {
+        "id": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "origin": "provider_native",
+        "createdBy": "agent",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "childThreadId": "thread:subagent:23fd4893fd0c85be",
+        "nativeTaskRef": {
+          "driver": "codex",
+          "nativeId": "call_KrtWrCMa1IBTJ4JEr5CvdJMs:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+          "strength": "strong"
+        },
+        "prompt": "",
+        "title": "/root/fixture_writer",
+        "model": null,
+        "status": "running",
+        "result": null,
+        "startedAt": "1970-01-01T00:00:00.002Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.002Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "call_KrtWrCMa1IBTJ4JEr5CvdJMs:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 101,
+        "status": "running",
+        "title": "/root/fixture_writer",
+        "startedAt": "1970-01-01T00:00:00.002Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "type": "subagent",
+        "subagentId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "origin": "provider_native",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "childThreadId": "thread:subagent:23fd4893fd0c85be",
+        "prompt": "",
+        "result": null
+      }
+    },
+    {
+      "type": "subagent.updated",
+      "subagent": {
+        "id": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "origin": "provider_native",
+        "createdBy": "agent",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "childThreadId": "thread:subagent:23fd4893fd0c85be",
+        "nativeTaskRef": {
+          "driver": "codex",
+          "nativeId": "call_KrtWrCMa1IBTJ4JEr5CvdJMs:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+          "strength": "strong"
+        },
+        "prompt": "",
+        "title": "/root/fixture_writer",
+        "model": null,
+        "status": "running",
+        "result": null,
+        "startedAt": "2026-09-25T20:28:56.000Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.002Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "call_KrtWrCMa1IBTJ4JEr5CvdJMs:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 101,
+        "status": "running",
+        "title": "/root/fixture_writer",
+        "startedAt": "2026-09-25T20:28:56.000Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "type": "subagent",
+        "subagentId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "origin": "provider_native",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "childThreadId": "thread:subagent:23fd4893fd0c85be",
+        "prompt": "",
+        "result": null
+      }
+    },
+    {
+      "type": "provider_thread.updated",
+      "providerThread": {
+        "id": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "providerSessionId": "provider-session:provider-instance:codex:shared",
+        "appThreadId": "thread:subagent:23fd4893fd0c85be",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "codex",
+          "nativeId": "01a0da41-bc86-72e1-a30c-e59a4079f55a",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "active",
+        "firstRunOrdinal": null,
+        "lastRunOrdinal": null,
+        "handoffIds": [],
+        "forkedFrom": {
+          "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+          "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f"
+        },
+        "createdAt": "1970-01-01T00:00:00.002Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z"
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:subagent:23fd4893fd0c85be",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0da41-bcb8-7a32-ad7a-f16d41eac795",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "nodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a%3Athread-root",
+        "runAttemptId": null,
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0da41-bcb8-7a32-ad7a-f16d41eac795",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "2026-09-25T20:28:56.000Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a%3Athread-root",
+        "threadId": "thread:subagent:23fd4893fd0c85be",
+        "runId": null,
+        "parentNodeId": null,
+        "rootNodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a%3Athread-root",
+        "kind": "root_turn",
+        "status": "running",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-bcb8-7a32-ad7a-f16d41eac795",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "call_KrtWrCMa1IBTJ4JEr5CvdJMs:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "2026-09-25T20:28:56.000Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "2026-11-14T18:55:08.496Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 16107,
+          "maxTokens": 258400,
+          "inputTokens": 15998,
+          "cachedInputTokens": 0,
+          "outputTokens": 109,
+          "reasoningOutputTokens": 46,
+          "updatedAt": "1970-01-01T00:00:00.002Z"
+        }
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:%5B%2201a0da41-a31f-7741-bda3-ebc5ad36c38f%22%2C%22rs_03696b8961937e5c016ab6d989e28087d0ba611ea28e22e961%22%2C%22summary%22%2C0%5D",
+        "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "reasoning",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "rs_03696b8961937e5c016ab6d989e28087d0ba611ea28e22e961",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.002Z",
+        "completedAt": "1970-01-01T00:00:00.002Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:%5B%2201a0da41-a31f-7741-bda3-ebc5ad36c38f%22%2C%22rs_03696b8961937e5c016ab6d989e28087d0ba611ea28e22e961%22%2C%22summary%22%2C0%5D",
+        "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:%5B%2201a0da41-a31f-7741-bda3-ebc5ad36c38f%22%2C%22rs_03696b8961937e5c016ab6d989e28087d0ba611ea28e22e961%22%2C%22summary%22%2C0%5D",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "rs_03696b8961937e5c016ab6d989e28087d0ba611ea28e22e961",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 102,
+        "status": "completed",
+        "title": null,
+        "startedAt": "1970-01-01T00:00:00.002Z",
+        "completedAt": "1970-01-01T00:00:00.002Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "type": "reasoning",
+        "text": "**Waiting for agent**",
+        "streaming": false
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:%5B%2201a0da41-bcb8-7a32-ad7a-f16d41eac795%22%2C%22rs_0ea6a125bc4e7661016ab6d98afc1c87d08fca86b24dc3e360%22%2C%22summary%22%2C0%5D",
+        "threadId": "thread:subagent:23fd4893fd0c85be",
+        "runId": null,
+        "parentNodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a%3Athread-root",
+        "rootNodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a%3Athread-root",
+        "kind": "reasoning",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-bcb8-7a32-ad7a-f16d41eac795",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "rs_0ea6a125bc4e7661016ab6d98afc1c87d08fca86b24dc3e360",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.002Z",
+        "completedAt": "1970-01-01T00:00:00.002Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:%5B%2201a0da41-bcb8-7a32-ad7a-f16d41eac795%22%2C%22rs_0ea6a125bc4e7661016ab6d98afc1c87d08fca86b24dc3e360%22%2C%22summary%22%2C0%5D",
+        "threadId": "thread:subagent:23fd4893fd0c85be",
+        "runId": null,
+        "nodeId": "node:provider:codex:native-item:%5B%2201a0da41-bcb8-7a32-ad7a-f16d41eac795%22%2C%22rs_0ea6a125bc4e7661016ab6d98afc1c87d08fca86b24dc3e360%22%2C%22summary%22%2C0%5D",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-bcb8-7a32-ad7a-f16d41eac795",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "rs_0ea6a125bc4e7661016ab6d98afc1c87d08fca86b24dc3e360",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 101,
+        "status": "completed",
+        "title": null,
+        "startedAt": "1970-01-01T00:00:00.002Z",
+        "completedAt": "1970-01-01T00:00:00.002Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "type": "reasoning",
+        "text": "**Preparing fixture creation**",
+        "streaming": false
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:exec-27a5374a-5e64-4a9b-88ff-8e1f77aa9745",
+        "threadId": "thread:subagent:23fd4893fd0c85be",
+        "runId": null,
+        "parentNodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a%3Athread-root",
+        "rootNodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a%3Athread-root",
+        "kind": "tool_call",
+        "status": "running",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-bcb8-7a32-ad7a-f16d41eac795",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "exec-27a5374a-5e64-4a9b-88ff-8e1f77aa9745",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "2026-09-25T20:29:05.794Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:exec-27a5374a-5e64-4a9b-88ff-8e1f77aa9745",
+        "threadId": "thread:subagent:23fd4893fd0c85be",
+        "runId": null,
+        "nodeId": "node:provider:codex:native-item:exec-27a5374a-5e64-4a9b-88ff-8e1f77aa9745",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-bcb8-7a32-ad7a-f16d41eac795",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "exec-27a5374a-5e64-4a9b-88ff-8e1f77aa9745",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 102,
+        "status": "running",
+        "title": null,
+        "startedAt": "2026-09-25T20:29:05.794Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "type": "command_execution",
+        "input": "/bin/bash -lc \"printf 'subagent approval fixture' > subagent-approval.txt\""
+      }
+    },
+    {
+      "type": "subagent.updated",
+      "subagent": {
+        "id": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "origin": "provider_native",
+        "createdBy": "agent",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "childThreadId": "thread:subagent:23fd4893fd0c85be",
+        "nativeTaskRef": {
+          "driver": "codex",
+          "nativeId": "call_KrtWrCMa1IBTJ4JEr5CvdJMs:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+          "strength": "strong"
+        },
+        "prompt": "",
+        "title": "/root/fixture_writer",
+        "model": null,
+        "status": "running",
+        "result": null,
+        "startedAt": "2026-09-25T20:28:56.000Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "progress": "/bin/bash -lc \"printf 'subagent approval fixture' > subagent-approval.txt\""
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "call_KrtWrCMa1IBTJ4JEr5CvdJMs:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 101,
+        "status": "running",
+        "title": "/root/fixture_writer",
+        "startedAt": "2026-09-25T20:28:56.000Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "type": "subagent",
+        "subagentId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "origin": "provider_native",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "childThreadId": "thread:subagent:23fd4893fd0c85be",
+        "prompt": "",
+        "progress": "/bin/bash -lc \"printf 'subagent approval fixture' > subagent-approval.txt\"",
+        "result": null
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:runtime-request:runtime-request%3Aprovider%3Acodex%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Acodex%253Anative-turn%253A01a0da41-a31f-7741-bda3-ebc5ad36c38f%3Anative-request%3Aexec-27a5374a-5e64-4a9b-88ff-8e1f77aa9745%3A60ae850c-0af3-4468-9967-365ecc316207",
+        "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "approval_request",
+        "status": "waiting",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "exec-27a5374a-5e64-4a9b-88ff-8e1f77aa9745",
+          "strength": "strong"
+        },
+        "runtimeRequestId": "runtime-request:provider:codex:provider-turn:provider-turn%3Aprovider%3Acodex%3Anative-turn%3A01a0da41-a31f-7741-bda3-ebc5ad36c38f:native-request:exec-27a5374a-5e64-4a9b-88ff-8e1f77aa9745:60ae850c-0af3-4468-9967-365ecc316207",
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.002Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:runtime-request:runtime-request%3Aprovider%3Acodex%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Acodex%253Anative-turn%253A01a0da41-a31f-7741-bda3-ebc5ad36c38f%3Anative-request%3Aexec-27a5374a-5e64-4a9b-88ff-8e1f77aa9745%3A60ae850c-0af3-4468-9967-365ecc316207",
+        "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:runtime-request:runtime-request%3Aprovider%3Acodex%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Acodex%253Anative-turn%253A01a0da41-a31f-7741-bda3-ebc5ad36c38f%3Anative-request%3Aexec-27a5374a-5e64-4a9b-88ff-8e1f77aa9745%3A60ae850c-0af3-4468-9967-365ecc316207",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "exec-27a5374a-5e64-4a9b-88ff-8e1f77aa9745",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 104,
+        "status": "waiting",
+        "title": null,
+        "startedAt": "1970-01-01T00:00:00.002Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "type": "approval_request",
+        "requestId": "runtime-request:provider:codex:provider-turn:provider-turn%3Aprovider%3Acodex%3Anative-turn%3A01a0da41-a31f-7741-bda3-ebc5ad36c38f:native-request:exec-27a5374a-5e64-4a9b-88ff-8e1f77aa9745:60ae850c-0af3-4468-9967-365ecc316207",
+        "requestKind": "command",
+        "prompt": "/bin/bash -lc \"printf 'subagent approval fixture' > subagent-approval.txt\""
+      }
+    },
+    {
+      "type": "runtime_request.updated",
+      "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "runtimeRequest": {
+        "id": "runtime-request:provider:codex:provider-turn:provider-turn%3Aprovider%3Acodex%3Anative-turn%3A01a0da41-a31f-7741-bda3-ebc5ad36c38f:native-request:exec-27a5374a-5e64-4a9b-88ff-8e1f77aa9745:60ae850c-0af3-4468-9967-365ecc316207",
+        "nodeId": "node:runtime-request:runtime-request%3Aprovider%3Acodex%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Acodex%253Anative-turn%253A01a0da41-a31f-7741-bda3-ebc5ad36c38f%3Anative-request%3Aexec-27a5374a-5e64-4a9b-88ff-8e1f77aa9745%3A60ae850c-0af3-4468-9967-365ecc316207",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+        "nativeRequestRef": {
+          "driver": "codex",
+          "nativeId": "exec-27a5374a-5e64-4a9b-88ff-8e1f77aa9745",
+          "strength": "strong"
+        },
+        "kind": "command",
+        "status": "pending",
+        "responseCapability": {
+          "type": "live",
+          "providerSessionId": "provider-session:provider-instance:codex:shared"
+        },
+        "createdAt": "1970-01-01T00:00:00.002Z",
+        "resolvedAt": null
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:exec-27a5374a-5e64-4a9b-88ff-8e1f77aa9745",
+        "threadId": "thread:subagent:23fd4893fd0c85be",
+        "runId": null,
+        "parentNodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a%3Athread-root",
+        "rootNodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a%3Athread-root",
+        "kind": "tool_call",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-bcb8-7a32-ad7a-f16d41eac795",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "exec-27a5374a-5e64-4a9b-88ff-8e1f77aa9745",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "2026-09-25T20:29:05.794Z",
+        "completedAt": "1970-01-01T00:00:00.003Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:exec-27a5374a-5e64-4a9b-88ff-8e1f77aa9745",
+        "threadId": "thread:subagent:23fd4893fd0c85be",
+        "runId": null,
+        "nodeId": "node:provider:codex:native-item:exec-27a5374a-5e64-4a9b-88ff-8e1f77aa9745",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-bcb8-7a32-ad7a-f16d41eac795",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "exec-27a5374a-5e64-4a9b-88ff-8e1f77aa9745",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 102,
+        "status": "completed",
+        "title": null,
+        "startedAt": "2026-09-25T20:29:05.794Z",
+        "completedAt": "1970-01-01T00:00:00.003Z",
+        "updatedAt": "1970-01-01T00:00:00.003Z",
+        "type": "command_execution",
+        "input": "/bin/bash -lc \"printf 'subagent approval fixture' > subagent-approval.txt\"",
+        "exitCode": 0
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:subagent:23fd4893fd0c85be",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0da41-bcb8-7a32-ad7a-f16d41eac795",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "nodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a%3Athread-root",
+        "runAttemptId": null,
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0da41-bcb8-7a32-ad7a-f16d41eac795",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "2026-09-25T20:28:56.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 17491,
+          "maxTokens": 258400,
+          "inputTokens": 17352,
+          "cachedInputTokens": 0,
+          "outputTokens": 139,
+          "reasoningOutputTokens": 74,
+          "updatedAt": "1970-01-01T00:00:00.003Z"
+        }
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:msg_0ea6a125bc4e7661016ab6d993285087d0bc47d8d520fbc6a7",
+        "threadId": "thread:subagent:23fd4893fd0c85be",
+        "runId": null,
+        "parentNodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a%3Athread-root",
+        "rootNodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a%3Athread-root",
+        "kind": "assistant_message",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-bcb8-7a32-ad7a-f16d41eac795",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "msg_0ea6a125bc4e7661016ab6d993285087d0bc47d8d520fbc6a7",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "2026-09-25T20:29:07.365Z",
+        "completedAt": "1970-01-01T00:00:00.003Z"
+      }
+    },
+    {
+      "type": "message.updated",
+      "message": {
+        "createdBy": "agent",
+        "creationSource": "provider",
+        "id": "message:provider:codex:native-item:msg_0ea6a125bc4e7661016ab6d993285087d0bc47d8d520fbc6a7",
+        "threadId": "thread:subagent:23fd4893fd0c85be",
+        "runId": null,
+        "nodeId": "node:provider:codex:native-item:msg_0ea6a125bc4e7661016ab6d993285087d0bc47d8d520fbc6a7",
+        "role": "assistant",
+        "text": "Written.",
+        "attachments": [],
+        "streaming": false,
+        "createdAt": "2026-09-25T20:29:07.365Z",
+        "updatedAt": "1970-01-01T00:00:00.003Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:msg_0ea6a125bc4e7661016ab6d993285087d0bc47d8d520fbc6a7",
+        "threadId": "thread:subagent:23fd4893fd0c85be",
+        "runId": null,
+        "nodeId": "node:provider:codex:native-item:msg_0ea6a125bc4e7661016ab6d993285087d0bc47d8d520fbc6a7",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-bcb8-7a32-ad7a-f16d41eac795",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "msg_0ea6a125bc4e7661016ab6d993285087d0bc47d8d520fbc6a7",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 103,
+        "status": "completed",
+        "title": null,
+        "startedAt": "2026-09-25T20:29:07.365Z",
+        "completedAt": "1970-01-01T00:00:00.003Z",
+        "updatedAt": "1970-01-01T00:00:00.003Z",
+        "type": "assistant_message",
+        "phase": "final_answer",
+        "messageId": "message:provider:codex:native-item:msg_0ea6a125bc4e7661016ab6d993285087d0bc47d8d520fbc6a7",
+        "text": "Written.",
+        "streaming": false
+      }
+    },
+    {
+      "type": "subagent.updated",
+      "subagent": {
+        "id": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "origin": "provider_native",
+        "createdBy": "agent",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "childThreadId": "thread:subagent:23fd4893fd0c85be",
+        "nativeTaskRef": {
+          "driver": "codex",
+          "nativeId": "call_KrtWrCMa1IBTJ4JEr5CvdJMs:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+          "strength": "strong"
+        },
+        "prompt": "",
+        "title": "/root/fixture_writer",
+        "model": null,
+        "status": "running",
+        "result": "Written.",
+        "startedAt": "2026-09-25T20:28:56.000Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.003Z",
+        "progress": "/bin/bash -lc \"printf 'subagent approval fixture' > subagent-approval.txt\""
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "call_KrtWrCMa1IBTJ4JEr5CvdJMs:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 101,
+        "status": "running",
+        "title": "/root/fixture_writer",
+        "startedAt": "2026-09-25T20:28:56.000Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.003Z",
+        "type": "subagent",
+        "subagentId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "origin": "provider_native",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "childThreadId": "thread:subagent:23fd4893fd0c85be",
+        "prompt": "",
+        "progress": "/bin/bash -lc \"printf 'subagent approval fixture' > subagent-approval.txt\"",
+        "result": "Written."
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:subagent:23fd4893fd0c85be",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0da41-bcb8-7a32-ad7a-f16d41eac795",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "nodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a%3Athread-root",
+        "runAttemptId": null,
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0da41-bcb8-7a32-ad7a-f16d41eac795",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "2026-09-25T20:28:56.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 17521,
+          "maxTokens": 258400,
+          "inputTokens": 17515,
+          "cachedInputTokens": 17152,
+          "outputTokens": 6,
+          "reasoningOutputTokens": 0,
+          "updatedAt": "1970-01-01T00:00:00.003Z"
+        }
+      }
+    },
+    {
+      "type": "subagent.updated",
+      "subagent": {
+        "id": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "origin": "provider_native",
+        "createdBy": "agent",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "childThreadId": "thread:subagent:23fd4893fd0c85be",
+        "nativeTaskRef": {
+          "driver": "codex",
+          "nativeId": "call_KrtWrCMa1IBTJ4JEr5CvdJMs:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+          "strength": "strong"
+        },
+        "prompt": "",
+        "title": "/root/fixture_writer",
+        "model": null,
+        "status": "completed",
+        "result": "Written.",
+        "startedAt": "2026-09-25T20:28:56.000Z",
+        "completedAt": "1970-01-01T00:00:00.003Z",
+        "updatedAt": "1970-01-01T00:00:00.003Z",
+        "progress": "/bin/bash -lc \"printf 'subagent approval fixture' > subagent-approval.txt\""
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "call_KrtWrCMa1IBTJ4JEr5CvdJMs:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 101,
+        "status": "completed",
+        "title": "/root/fixture_writer",
+        "startedAt": "2026-09-25T20:28:56.000Z",
+        "completedAt": "1970-01-01T00:00:00.003Z",
+        "updatedAt": "1970-01-01T00:00:00.003Z",
+        "type": "subagent",
+        "subagentId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "origin": "provider_native",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "childThreadId": "thread:subagent:23fd4893fd0c85be",
+        "prompt": "",
+        "progress": "/bin/bash -lc \"printf 'subagent approval fixture' > subagent-approval.txt\"",
+        "result": "Written."
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:subagent:23fd4893fd0c85be",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0da41-bcb8-7a32-ad7a-f16d41eac795",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "nodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a%3Athread-root",
+        "runAttemptId": null,
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0da41-bcb8-7a32-ad7a-f16d41eac795",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "completed",
+        "startedAt": "2026-09-25T20:28:56.000Z",
+        "completedAt": "2026-09-25T20:29:07.000Z",
+        "turnTokenUsage": {
+          "usageStatus": "complete",
+          "usageScope": "main_agent",
+          "inputTokens": 34867,
+          "cachedInputTokens": 17152,
+          "cacheCreationTokens": 0,
+          "outputTokens": 145,
+          "reasoningTokens": 74,
+          "hasSubagents": false
+        }
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a%3Athread-root",
+        "threadId": "thread:subagent:23fd4893fd0c85be",
+        "runId": null,
+        "parentNodeId": null,
+        "rootNodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a%3Athread-root",
+        "kind": "root_turn",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-bcb8-7a32-ad7a-f16d41eac795",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "call_KrtWrCMa1IBTJ4JEr5CvdJMs:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "2026-09-25T20:28:56.000Z",
+        "completedAt": "2026-09-25T20:29:07.000Z"
+      }
+    },
+    {
+      "type": "provider_thread.updated",
+      "providerThread": {
+        "id": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "providerSessionId": "provider-session:provider-instance:codex:shared",
+        "appThreadId": "thread:subagent:23fd4893fd0c85be",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "codex",
+          "nativeId": "01a0da41-bc86-72e1-a30c-e59a4079f55a",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "idle",
+        "firstRunOrdinal": null,
+        "lastRunOrdinal": null,
+        "handoffIds": [],
+        "forkedFrom": {
+          "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+          "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f"
+        },
+        "createdAt": "1970-01-01T00:00:00.002Z",
+        "updatedAt": "2026-09-25T20:29:07.000Z"
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "subagent",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "call_KrtWrCMa1IBTJ4JEr5CvdJMs:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "2026-09-25T20:28:56.000Z",
+        "completedAt": "2026-09-25T20:29:07.000Z"
+      }
+    },
+    {
+      "type": "subagent.updated",
+      "subagent": {
+        "id": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "origin": "provider_native",
+        "createdBy": "agent",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "childThreadId": "thread:subagent:23fd4893fd0c85be",
+        "nativeTaskRef": {
+          "driver": "codex",
+          "nativeId": "call_KrtWrCMa1IBTJ4JEr5CvdJMs:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+          "strength": "strong"
+        },
+        "prompt": "",
+        "title": "/root/fixture_writer",
+        "model": null,
+        "status": "completed",
+        "result": "Written.",
+        "startedAt": "2026-09-25T20:28:56.000Z",
+        "completedAt": "1970-01-01T00:00:00.003Z",
+        "updatedAt": "1970-01-01T00:00:00.003Z",
+        "progress": "/bin/bash -lc \"printf 'subagent approval fixture' > subagent-approval.txt\""
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "call_KrtWrCMa1IBTJ4JEr5CvdJMs:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 101,
+        "status": "completed",
+        "title": "/root/fixture_writer",
+        "startedAt": "2026-09-25T20:28:56.000Z",
+        "completedAt": "1970-01-01T00:00:00.003Z",
+        "updatedAt": "1970-01-01T00:00:00.003Z",
+        "type": "subagent",
+        "subagentId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "origin": "provider_native",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "childThreadId": "thread:subagent:23fd4893fd0c85be",
+        "prompt": "",
+        "progress": "/bin/bash -lc \"printf 'subagent approval fixture' > subagent-approval.txt\"",
+        "result": "Written."
+      }
+    },
+    {
+      "type": "subagent.updated",
+      "subagent": {
+        "id": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "origin": "provider_native",
+        "createdBy": "agent",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "childThreadId": "thread:subagent:23fd4893fd0c85be",
+        "nativeTaskRef": {
+          "driver": "codex",
+          "nativeId": "call_KrtWrCMa1IBTJ4JEr5CvdJMs:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+          "strength": "strong"
+        },
+        "prompt": "",
+        "title": "/root/fixture_writer",
+        "model": null,
+        "status": "completed",
+        "result": "Written.",
+        "startedAt": "2026-09-25T20:28:56.000Z",
+        "completedAt": "1970-01-01T00:00:00.003Z",
+        "updatedAt": "1970-01-01T00:00:00.003Z",
+        "progress": "/bin/bash -lc \"printf 'subagent approval fixture' > subagent-approval.txt\""
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "call_KrtWrCMa1IBTJ4JEr5CvdJMs:01a0da41-bc86-72e1-a30c-e59a4079f55a",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 101,
+        "status": "completed",
+        "title": "/root/fixture_writer",
+        "startedAt": "2026-09-25T20:28:56.000Z",
+        "completedAt": "1970-01-01T00:00:00.003Z",
+        "updatedAt": "1970-01-01T00:00:00.003Z",
+        "type": "subagent",
+        "subagentId": "node:provider:codex:native-item:call_KrtWrCMa1IBTJ4JEr5CvdJMs%3A01a0da41-bc86-72e1-a30c-e59a4079f55a",
+        "origin": "provider_native",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "childThreadId": "thread:subagent:23fd4893fd0c85be",
+        "prompt": "",
+        "progress": "/bin/bash -lc \"printf 'subagent approval fixture' > subagent-approval.txt\"",
+        "result": "Written."
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "2026-11-14T18:55:08.496Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 16161,
+          "maxTokens": 258400,
+          "inputTokens": 16129,
+          "cachedInputTokens": 15104,
+          "outputTokens": 32,
+          "reasoningOutputTokens": 8,
+          "updatedAt": "1970-01-01T00:00:00.003Z"
+        }
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:msg_03696b8961937e5c016ab6d995012487d099704aa73dea56e6",
+        "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "assistant_message",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "msg_03696b8961937e5c016ab6d995012487d099704aa73dea56e6",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "2026-09-25T20:29:09.292Z",
+        "completedAt": "1970-01-01T00:00:00.003Z"
+      }
+    },
+    {
+      "type": "message.updated",
+      "message": {
+        "createdBy": "agent",
+        "creationSource": "provider",
+        "id": "message:provider:codex:native-item:msg_03696b8961937e5c016ab6d995012487d099704aa73dea56e6",
+        "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:msg_03696b8961937e5c016ab6d995012487d099704aa73dea56e6",
+        "role": "assistant",
+        "text": "Written.",
+        "attachments": [],
+        "streaming": false,
+        "createdAt": "2026-09-25T20:29:09.292Z",
+        "updatedAt": "1970-01-01T00:00:00.003Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:msg_03696b8961937e5c016ab6d995012487d099704aa73dea56e6",
+        "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asubagent_v2_approval%3Aproject%3Aproject%253Afixture%253Asubagent_v2_approval%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:msg_03696b8961937e5c016ab6d995012487d099704aa73dea56e6",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "msg_03696b8961937e5c016ab6d995012487d099704aa73dea56e6",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 105,
+        "status": "completed",
+        "title": null,
+        "startedAt": "2026-09-25T20:29:09.292Z",
+        "completedAt": "1970-01-01T00:00:00.003Z",
+        "updatedAt": "1970-01-01T00:00:00.003Z",
+        "type": "assistant_message",
+        "phase": "final_answer",
+        "messageId": "message:provider:codex:native-item:msg_03696b8961937e5c016ab6d995012487d099704aa73dea56e6",
+        "text": "Written.",
+        "streaming": false
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "2026-11-14T18:55:08.496Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 16230,
+          "maxTokens": 258400,
+          "inputTokens": 16224,
+          "cachedInputTokens": 15104,
+          "outputTokens": 6,
+          "reasoningOutputTokens": 0,
+          "updatedAt": "1970-01-01T00:00:00.003Z"
+        }
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:subagent_v2_approval:project:project%3Afixture%3Asubagent_v2_approval%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "completed",
+        "startedAt": "2026-11-14T18:55:08.496Z",
+        "completedAt": "2026-09-25T20:29:09.000Z",
+        "turnTokenUsage": {
+          "usageStatus": "complete",
+          "usageScope": "main_agent",
+          "inputTokens": 48351,
+          "cachedInputTokens": 30208,
+          "cacheCreationTokens": 0,
+          "outputTokens": 147,
+          "reasoningTokens": 54,
+          "hasSubagents": true,
+          "models": [
+            "gpt-6-luna"
+          ]
+        },
+        "model": "gpt-6-luna"
+      }
+    },
+    {
+      "type": "turn.terminal",
+      "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asubagent_v2_approval%253Aproject%253Aproject%25253Afixture%25253Asubagent_v2_approval%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+      "providerTurnId": "provider-turn:provider:codex:native-turn:01a0da41-a31f-7741-bda3-ebc5ad36c38f",
+      "runOrdinal": 1,
+      "status": "completed",
+      "failure": null,
+      "threadDisposition": "reusable"
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+# Grok transcripts that cannot pass yet, with the reason. The replay test fails when a listed
+# one passes or an unlisted one fails. Format: <fixture> <reason>

@@ -1,0 +1,1284 @@
+{
+  "note": "ProviderAdapterV2Event list from ClaudeAdapterV2 (TS) for cli/e12_subagent.ndjson, via the wake test harness (tools/capture-ts); driver field dropped. Clock is the TestClock (epoch 0).",
+  "offered": [
+    {
+      "type": "user",
+      "message": {
+        "role": "user",
+        "content": "Ultrathink:\nUse the Agent tool with subagent_type general-purpose. Tell the subagent: run the Bash command `echo sub-ok` and reply with its output only. Then tell me what it said, in three words or fewer."
+      },
+      "parent_tool_use_id": null,
+      "uuid": "af0f4dcd-f4b3-4e1e-ac27-4b0fbe234d7b"
+    }
+  ],
+  "events": [
+    {
+      "type": "provider_turn.updated",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-1",
+          "strength": "weak"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "provider_thread.updated",
+      "providerThread": {
+        "id": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "driver": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "providerSessionId": "provider-session-claude-wake",
+        "appThreadId": "thread-claude-wake",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "claudeAgent",
+          "nativeId": "2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "active",
+        "firstRunOrdinal": null,
+        "lastRunOrdinal": null,
+        "handoffIds": [],
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "nativeMetadata": {
+          "claudeAttachmentBudget": {
+            "bytesUsed": 207,
+            "pagesUsed": 0
+          },
+          "title": "Claude attachment test"
+        }
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread-claude-wake",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-1",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 32042,
+          "maxTokens": 200000,
+          "inputTokens": 32011,
+          "cachedInputTokens": 0,
+          "outputTokens": 31,
+          "reasoningOutputTokens": 0,
+          "promptCacheTtlMs": 3600000,
+          "promptCacheExpiresAt": "1970-01-01T01:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "type": "provider_thread.updated",
+      "providerThread": {
+        "id": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "driver": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "providerSessionId": "provider-session-claude-wake",
+        "appThreadId": "thread-claude-wake",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "claudeAgent",
+          "nativeId": "2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "active",
+        "firstRunOrdinal": null,
+        "lastRunOrdinal": null,
+        "handoffIds": [],
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "pendingBackgroundTasks": [],
+        "goal": null,
+        "nativeMetadata": {
+          "claudeAttachmentBudget": {
+            "bytesUsed": 207,
+            "pagesUsed": 0
+          },
+          "title": "Claude attachment test"
+        }
+      },
+      "pendingBackgroundWork": false
+    },
+    {
+      "type": "app_thread.created",
+      "appThread": {
+        "createdBy": "agent",
+        "creationSource": "provider",
+        "id": "thread:subagent:577204032c49e53f",
+        "projectId": "project-thread-claude-wake",
+        "title": "Run echo sub-ok",
+        "providerInstanceId": "claudeAgent",
+        "modelSelection": {
+          "instanceId": "claudeAgent",
+          "model": "claude-sonnet-4-6"
+        },
+        "runtimeMode": "full-access",
+        "interactionMode": "default",
+        "branch": null,
+        "worktreePath": null,
+        "activeProviderThreadId": null,
+        "lineage": {
+          "parentThreadId": "thread-claude-wake",
+          "relationshipToParent": "subagent",
+          "rootThreadId": "thread-claude-wake"
+        },
+        "forkedFrom": {
+          "type": "node",
+          "nodeId": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5"
+        },
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "archivedAt": null,
+        "settledOverride": null,
+        "settledAt": null,
+        "lastVisitedAt": null,
+        "deletedAt": null,
+        "titleRegeneration": null,
+        "linkedPullRequest": null,
+        "pullRequests": [],
+        "snoozedUntil": null,
+        "snoozedAt": null,
+        "pinnedAt": null,
+        "pinOrderKey": null,
+        "autoSettleDisabledAt": null,
+        "guestShare": null
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "parentNodeId": "node-attempt-1",
+        "rootNodeId": "node-attempt-1",
+        "kind": "subagent",
+        "status": "running",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "a64d7f2917f9109b5",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "subagent.updated",
+      "subagent": {
+        "id": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "parentNodeId": "node-attempt-1",
+        "origin": "provider_native",
+        "createdBy": "agent",
+        "driver": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "providerThreadId": null,
+        "childThreadId": "thread:subagent:577204032c49e53f",
+        "nativeTaskRef": {
+          "driver": "claudeAgent",
+          "nativeId": "a64d7f2917f9109b5",
+          "strength": "strong"
+        },
+        "prompt": "Run the Bash command `echo sub-ok` and reply with its output only.",
+        "title": "Run echo sub-ok",
+        "model": null,
+        "result": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "status": "running",
+        "modelSelection": {
+          "instanceId": "claudeAgent",
+          "model": "claude-sonnet-4-6"
+        },
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.000Z"
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Athread-root",
+        "threadId": "thread:subagent:577204032c49e53f",
+        "runId": null,
+        "parentNodeId": null,
+        "rootNodeId": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Athread-root",
+        "kind": "root_turn",
+        "status": "running",
+        "countsForRun": false,
+        "providerThreadId": null,
+        "providerTurnId": null,
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "a64d7f2917f9109b5",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "message.updated",
+      "message": {
+        "createdBy": "agent",
+        "creationSource": "provider",
+        "id": "message:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Aprompt",
+        "threadId": "thread:subagent:577204032c49e53f",
+        "runId": null,
+        "nodeId": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Athread-root",
+        "role": "user",
+        "senderThreadId": "thread-claude-wake",
+        "workflowScript": false,
+        "text": "Run the Bash command `echo sub-ok` and reply with its output only.",
+        "attachments": [],
+        "streaming": false,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Aprompt",
+        "threadId": "thread:subagent:577204032c49e53f",
+        "runId": null,
+        "nodeId": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Athread-root",
+        "providerThreadId": null,
+        "providerTurnId": null,
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "task:a64d7f2917f9109b5:prompt",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 100,
+        "status": "completed",
+        "title": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "messageId": "message:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Aprompt",
+        "text": "Run the Bash command `echo sub-ok` and reply with its output only.",
+        "createdBy": "agent",
+        "creationSource": "provider",
+        "type": "user_message",
+        "senderThreadId": "thread-claude-wake",
+        "workflowScript": false,
+        "inputIntent": "turn_start",
+        "attachments": []
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Asubagent",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "nodeId": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "a64d7f2917f9109b5",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 101,
+        "status": "running",
+        "title": "Run echo sub-ok",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "type": "subagent",
+        "subagentId": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5",
+        "origin": "provider_native",
+        "driver": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "childThreadId": "thread:subagent:577204032c49e53f",
+        "prompt": "Run the Bash command `echo sub-ok` and reply with its output only.",
+        "result": null
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread-claude-wake",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-1",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 32155,
+          "maxTokens": 200000,
+          "inputTokens": 32011,
+          "cachedInputTokens": 0,
+          "outputTokens": 144,
+          "reasoningOutputTokens": 0,
+          "promptCacheTtlMs": 3600000,
+          "promptCacheExpiresAt": "1970-01-01T01:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z"
+        },
+        "model": "claude-haiku-5-5"
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread-claude-wake",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-1",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 32569,
+          "maxTokens": 200000,
+          "inputTokens": 32564,
+          "cachedInputTokens": 32009,
+          "outputTokens": 5,
+          "reasoningOutputTokens": 0,
+          "promptCacheTtlMs": 3600000,
+          "promptCacheExpiresAt": "1970-01-01T01:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z"
+        },
+        "model": "claude-haiku-5-5"
+      }
+    },
+    {
+      "type": "subagent.updated",
+      "subagent": {
+        "id": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "parentNodeId": "node-attempt-1",
+        "origin": "provider_native",
+        "createdBy": "agent",
+        "driver": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "providerThreadId": null,
+        "childThreadId": "thread:subagent:577204032c49e53f",
+        "nativeTaskRef": {
+          "driver": "claudeAgent",
+          "nativeId": "a64d7f2917f9109b5",
+          "strength": "strong"
+        },
+        "prompt": "Run the Bash command `echo sub-ok` and reply with its output only.",
+        "title": "Run echo sub-ok",
+        "model": "claude-haiku-5-5",
+        "result": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "status": "running",
+        "modelSelection": {
+          "instanceId": "claudeAgent",
+          "model": "claude-haiku-5-5"
+        },
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.000Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Asubagent",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "nodeId": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "a64d7f2917f9109b5",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 101,
+        "status": "running",
+        "title": "Run echo sub-ok",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "type": "subagent",
+        "subagentId": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5",
+        "origin": "provider_native",
+        "driver": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "childThreadId": "thread:subagent:577204032c49e53f",
+        "prompt": "Run the Bash command `echo sub-ok` and reply with its output only.",
+        "result": null
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:claudeAgent:native-item:toolu_01At7jrCbdhTkdqeCNsG8wYz",
+        "threadId": "thread:subagent:577204032c49e53f",
+        "runId": null,
+        "parentNodeId": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Athread-root",
+        "rootNodeId": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Athread-root",
+        "kind": "tool_call",
+        "status": "running",
+        "countsForRun": false,
+        "providerThreadId": null,
+        "providerTurnId": null,
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "toolu_01At7jrCbdhTkdqeCNsG8wYz",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:claudeAgent:native-item:toolu_01At7jrCbdhTkdqeCNsG8wYz",
+        "threadId": "thread:subagent:577204032c49e53f",
+        "runId": null,
+        "nodeId": "node:provider:claudeAgent:native-item:toolu_01At7jrCbdhTkdqeCNsG8wYz",
+        "providerThreadId": null,
+        "providerTurnId": null,
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "toolu_01At7jrCbdhTkdqeCNsG8wYz",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 101,
+        "status": "running",
+        "title": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "type": "command_execution",
+        "input": "echo sub-ok"
+      }
+    },
+    {
+      "type": "subagent.updated",
+      "subagent": {
+        "id": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "parentNodeId": "node-attempt-1",
+        "origin": "provider_native",
+        "createdBy": "agent",
+        "driver": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "providerThreadId": null,
+        "childThreadId": "thread:subagent:577204032c49e53f",
+        "nativeTaskRef": {
+          "driver": "claudeAgent",
+          "nativeId": "a64d7f2917f9109b5",
+          "strength": "strong"
+        },
+        "prompt": "Run the Bash command `echo sub-ok` and reply with its output only.",
+        "title": "Run echo sub-ok",
+        "model": "claude-haiku-5-5",
+        "result": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "status": "running",
+        "modelSelection": {
+          "instanceId": "claudeAgent",
+          "model": "claude-haiku-5-5"
+        },
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "progress": "Running Print sub-ok text"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Asubagent",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "nodeId": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "a64d7f2917f9109b5",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 101,
+        "status": "running",
+        "title": "Run echo sub-ok",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "type": "subagent",
+        "subagentId": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5",
+        "origin": "provider_native",
+        "driver": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "childThreadId": "thread:subagent:577204032c49e53f",
+        "prompt": "Run the Bash command `echo sub-ok` and reply with its output only.",
+        "progress": "Running Print sub-ok text",
+        "result": null
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:claudeAgent:native-item:toolu_01At7jrCbdhTkdqeCNsG8wYz",
+        "threadId": "thread:subagent:577204032c49e53f",
+        "runId": null,
+        "parentNodeId": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Athread-root",
+        "rootNodeId": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Athread-root",
+        "kind": "tool_call",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": null,
+        "providerTurnId": null,
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "toolu_01At7jrCbdhTkdqeCNsG8wYz",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:claudeAgent:native-item:toolu_01At7jrCbdhTkdqeCNsG8wYz",
+        "threadId": "thread:subagent:577204032c49e53f",
+        "runId": null,
+        "nodeId": "node:provider:claudeAgent:native-item:toolu_01At7jrCbdhTkdqeCNsG8wYz",
+        "providerThreadId": null,
+        "providerTurnId": null,
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "toolu_01At7jrCbdhTkdqeCNsG8wYz",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 101,
+        "status": "completed",
+        "title": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "type": "command_execution",
+        "input": "echo sub-ok",
+        "output": "sub-ok"
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:claudeAgent:native-item:msg_011Cgzqpm7pFVDJ9DWQ7owhn%3Atext%3A0",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "parentNodeId": "node-attempt-1",
+        "rootNodeId": "node-attempt-1",
+        "kind": "assistant_message",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "msg_011Cgzqpm7pFVDJ9DWQ7owhn:text:0",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z"
+      }
+    },
+    {
+      "type": "message.updated",
+      "message": {
+        "createdBy": "agent",
+        "creationSource": "provider",
+        "id": "message:provider:claudeAgent:native-item:msg_011Cgzqpm7pFVDJ9DWQ7owhn%3Atext%3A0",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "nodeId": "node:provider:claudeAgent:native-item:msg_011Cgzqpm7pFVDJ9DWQ7owhn%3Atext%3A0",
+        "role": "assistant",
+        "text": "I've started the subagent, which is running `echo sub-ok` in the background. I'll report what it said once its result comes back.",
+        "attachments": [],
+        "streaming": false,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:claudeAgent:native-item:msg_011Cgzqpm7pFVDJ9DWQ7owhn%3Atext%3A0",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "nodeId": "node:provider:claudeAgent:native-item:msg_011Cgzqpm7pFVDJ9DWQ7owhn%3Atext%3A0",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "msg_011Cgzqpm7pFVDJ9DWQ7owhn:text:0",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 103,
+        "status": "completed",
+        "title": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "type": "assistant_message",
+        "messageId": "message:provider:claudeAgent:native-item:msg_011Cgzqpm7pFVDJ9DWQ7owhn%3Atext%3A0",
+        "text": "I've started the subagent, which is running `echo sub-ok` in the background. I'll report what it said once its result comes back.",
+        "streaming": false
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread-claude-wake",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-1",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 32672,
+          "maxTokens": 200000,
+          "inputTokens": 32564,
+          "cachedInputTokens": 32009,
+          "outputTokens": 108,
+          "reasoningOutputTokens": 0,
+          "promptCacheTtlMs": 3600000,
+          "promptCacheExpiresAt": "1970-01-01T01:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z"
+        },
+        "model": "claude-haiku-5-5"
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread-claude-wake",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-1",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 32672,
+          "maxTokens": 200000,
+          "inputTokens": 32564,
+          "cachedInputTokens": 32009,
+          "outputTokens": 108,
+          "reasoningOutputTokens": 0,
+          "promptCacheTtlMs": 3600000,
+          "promptCacheExpiresAt": "1970-01-01T01:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z"
+        },
+        "model": "claude-haiku-5-5"
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "nodeId": "node-attempt-1",
+        "runAttemptId": "attempt-1",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "cf63b311-11aa-421e-ad5f-201f3363a37a",
+          "strength": "weak"
+        },
+        "ordinal": 1,
+        "status": "completed",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z",
+        "model": "claude-haiku-5-5",
+        "turnTokenUsage": {
+          "models": [
+            "claude-haiku-5-5"
+          ],
+          "otherUsage": {
+            "inputTokens": 22417,
+            "outputTokens": 119
+          },
+          "usageScope": "main_agent",
+          "cachedInputTokens": 32009,
+          "cacheCreationTokens": 32562,
+          "reasoningTokens": 68,
+          "hasSubagents": true,
+          "usageStatus": "complete",
+          "inputTokens": 64575,
+          "outputTokens": 252
+        }
+      }
+    },
+    {
+      "type": "provider_thread.updated",
+      "providerThread": {
+        "id": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "driver": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "providerSessionId": "provider-session-claude-wake",
+        "appThreadId": "thread-claude-wake",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "claudeAgent",
+          "nativeId": "2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "active",
+        "firstRunOrdinal": 1,
+        "lastRunOrdinal": 1,
+        "handoffIds": [],
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "goal": null,
+        "pendingBackgroundTasks": [],
+        "nativeMetadata": {
+          "claudeAttachmentBudget": {
+            "bytesUsed": 207,
+            "pagesUsed": 0
+          },
+          "title": "Claude attachment test"
+        }
+      },
+      "pendingBackgroundWork": false
+    },
+    {
+      "type": "turn.terminal",
+      "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+      "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+      "runOrdinal": 1,
+      "status": "completed",
+      "failure": null,
+      "threadDisposition": "reusable"
+    },
+    {
+      "type": "message.updated",
+      "message": {
+        "createdBy": "agent",
+        "creationSource": "provider",
+        "id": "message:provider:claudeAgent:native-item:4bd52588-ac00-4638-8cf6-8ccd4f110ec2",
+        "threadId": "thread:subagent:577204032c49e53f",
+        "runId": null,
+        "nodeId": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Athread-root",
+        "role": "assistant",
+        "text": "sub-ok",
+        "attachments": [],
+        "streaming": false,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:claudeAgent:native-item:4bd52588-ac00-4638-8cf6-8ccd4f110ec2",
+        "threadId": "thread:subagent:577204032c49e53f",
+        "runId": null,
+        "nodeId": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Athread-root",
+        "providerThreadId": null,
+        "providerTurnId": null,
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "4bd52588-ac00-4638-8cf6-8ccd4f110ec2",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 102,
+        "status": "completed",
+        "title": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "messageId": "message:provider:claudeAgent:native-item:4bd52588-ac00-4638-8cf6-8ccd4f110ec2",
+        "text": "sub-ok",
+        "type": "assistant_message",
+        "streaming": false
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "parentNodeId": "node-attempt-1",
+        "rootNodeId": "node-attempt-1",
+        "kind": "subagent",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "a64d7f2917f9109b5",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z"
+      }
+    },
+    {
+      "type": "subagent.updated",
+      "subagent": {
+        "id": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "parentNodeId": "node-attempt-1",
+        "origin": "provider_native",
+        "createdBy": "agent",
+        "driver": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "providerThreadId": null,
+        "childThreadId": "thread:subagent:577204032c49e53f",
+        "nativeTaskRef": {
+          "driver": "claudeAgent",
+          "nativeId": "a64d7f2917f9109b5",
+          "strength": "strong"
+        },
+        "prompt": "Run the Bash command `echo sub-ok` and reply with its output only.",
+        "title": "Run echo sub-ok",
+        "model": "claude-haiku-5-5",
+        "result": "sub-ok",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "status": "completed",
+        "modelSelection": {
+          "instanceId": "claudeAgent",
+          "model": "claude-haiku-5-5"
+        },
+        "completedAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "progress": "Running Print sub-ok text"
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Athread-root",
+        "threadId": "thread:subagent:577204032c49e53f",
+        "runId": null,
+        "parentNodeId": null,
+        "rootNodeId": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Athread-root",
+        "kind": "root_turn",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": null,
+        "providerTurnId": null,
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "a64d7f2917f9109b5",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Asubagent",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-1",
+        "nodeId": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "a64d7f2917f9109b5",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 101,
+        "status": "completed",
+        "title": "Run echo sub-ok",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "type": "subagent",
+        "subagentId": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5",
+        "origin": "provider_native",
+        "driver": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "childThreadId": "thread:subagent:577204032c49e53f",
+        "prompt": "Run the Bash command `echo sub-ok` and reply with its output only.",
+        "progress": "Running Print sub-ok text",
+        "result": "sub-ok"
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-2",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "nodeId": "node-attempt-2",
+        "runAttemptId": "attempt-2",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-2",
+          "strength": "weak"
+        },
+        "ordinal": 2,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "provider_thread.updated",
+      "providerThread": {
+        "id": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "driver": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "providerSessionId": "provider-session-claude-wake",
+        "appThreadId": "thread-claude-wake",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "claudeAgent",
+          "nativeId": "2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "active",
+        "firstRunOrdinal": 1,
+        "lastRunOrdinal": 1,
+        "handoffIds": [],
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "goal": null,
+        "pendingBackgroundTasks": [],
+        "nativeMetadata": {
+          "claudeAttachmentBudget": {
+            "bytesUsed": 207,
+            "pagesUsed": 0
+          },
+          "title": "Claude attachment test"
+        }
+      }
+    },
+    {
+      "type": "provider_thread.updated",
+      "providerThread": {
+        "id": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "driver": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "providerSessionId": "provider-session-claude-wake",
+        "appThreadId": "thread-claude-wake",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "claudeAgent",
+          "nativeId": "2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "active",
+        "firstRunOrdinal": 1,
+        "lastRunOrdinal": 1,
+        "handoffIds": [],
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "goal": null,
+        "pendingBackgroundTasks": [],
+        "nativeMetadata": {
+          "claudeAttachmentBudget": {
+            "bytesUsed": 207,
+            "pagesUsed": 0
+          },
+          "title": "Claude attachment test"
+        }
+      },
+      "pendingBackgroundWork": false
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread-claude-wake",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-2",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "nodeId": "node-attempt-2",
+        "runAttemptId": "attempt-2",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-2",
+          "strength": "strong"
+        },
+        "ordinal": 2,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 33220,
+          "maxTokens": 200000,
+          "inputTokens": 33214,
+          "cachedInputTokens": 32562,
+          "outputTokens": 6,
+          "reasoningOutputTokens": 0,
+          "promptCacheTtlMs": 3600000,
+          "promptCacheExpiresAt": "1970-01-01T01:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:claudeAgent:native-item:msg_011Cgzqpzp5QCckzEk7iV25X%3Atext%3A0",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-2",
+        "parentNodeId": "node-attempt-2",
+        "rootNodeId": "node-attempt-2",
+        "kind": "assistant_message",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-2",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "msg_011Cgzqpzp5QCckzEk7iV25X:text:0",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z"
+      }
+    },
+    {
+      "type": "message.updated",
+      "message": {
+        "createdBy": "agent",
+        "creationSource": "provider",
+        "id": "message:provider:claudeAgent:native-item:msg_011Cgzqpzp5QCckzEk7iV25X%3Atext%3A0",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-2",
+        "nodeId": "node:provider:claudeAgent:native-item:msg_011Cgzqpzp5QCckzEk7iV25X%3Atext%3A0",
+        "role": "assistant",
+        "text": "The subagent said: **sub-ok**",
+        "attachments": [],
+        "streaming": false,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:claudeAgent:native-item:msg_011Cgzqpzp5QCckzEk7iV25X%3Atext%3A0",
+        "threadId": "thread-claude-wake",
+        "runId": "run-attempt-2",
+        "nodeId": "node:provider:claudeAgent:native-item:msg_011Cgzqpzp5QCckzEk7iV25X%3Atext%3A0",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-2",
+        "nativeItemRef": {
+          "driver": "claudeAgent",
+          "nativeId": "msg_011Cgzqpzp5QCckzEk7iV25X:text:0",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 202,
+        "status": "completed",
+        "title": null,
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "type": "assistant_message",
+        "messageId": "message:provider:claudeAgent:native-item:msg_011Cgzqpzp5QCckzEk7iV25X%3Atext%3A0",
+        "text": "The subagent said: **sub-ok**",
+        "streaming": false
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread-claude-wake",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-2",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "nodeId": "node-attempt-2",
+        "runAttemptId": "attempt-2",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "turn:attempt-2",
+          "strength": "strong"
+        },
+        "ordinal": 2,
+        "status": "running",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 33278,
+          "maxTokens": 200000,
+          "inputTokens": 33214,
+          "cachedInputTokens": 32562,
+          "outputTokens": 64,
+          "reasoningOutputTokens": 0,
+          "promptCacheTtlMs": 3600000,
+          "promptCacheExpiresAt": "1970-01-01T01:00:00.000Z",
+          "updatedAt": "1970-01-01T00:00:00.000Z"
+        },
+        "model": "claude-haiku-5-5"
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "providerTurn": {
+        "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-2",
+        "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "nodeId": "node-attempt-2",
+        "runAttemptId": "attempt-2",
+        "nativeTurnRef": {
+          "driver": "claudeAgent",
+          "nativeId": "9ee10e18-860f-4de5-81e1-da60188b09d1",
+          "strength": "weak"
+        },
+        "ordinal": 2,
+        "status": "completed",
+        "startedAt": "1970-01-01T00:00:00.000Z",
+        "completedAt": "1970-01-01T00:00:00.000Z",
+        "model": "claude-haiku-5-5",
+        "turnTokenUsage": {
+          "models": [
+            "claude-haiku-5-5"
+          ],
+          "otherUsage": {
+            "inputTokens": 22799,
+            "outputTokens": 7
+          },
+          "usageScope": "main_agent",
+          "cachedInputTokens": 32562,
+          "cacheCreationTokens": 648,
+          "reasoningTokens": 49,
+          "hasSubagents": false,
+          "usageStatus": "complete",
+          "inputTokens": 33214,
+          "outputTokens": 64
+        }
+      }
+    },
+    {
+      "type": "provider_thread.updated",
+      "providerThread": {
+        "id": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+        "driver": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "providerSessionId": "provider-session-claude-wake",
+        "appThreadId": "thread-claude-wake",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "claudeAgent",
+          "nativeId": "2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "active",
+        "firstRunOrdinal": 1,
+        "lastRunOrdinal": 1,
+        "handoffIds": [],
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.000Z",
+        "goal": null,
+        "pendingBackgroundTasks": [],
+        "nativeMetadata": {
+          "claudeAttachmentBudget": {
+            "bytesUsed": 207,
+            "pagesUsed": 0
+          },
+          "title": "Claude attachment test"
+        }
+      },
+      "pendingBackgroundWork": false
+    },
+    {
+      "type": "turn.terminal",
+      "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
+      "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-2",
+      "runOrdinal": 1,
+      "status": "completed",
+      "failure": null,
+      "threadDisposition": "reusable"
+    }
+  ]
+}

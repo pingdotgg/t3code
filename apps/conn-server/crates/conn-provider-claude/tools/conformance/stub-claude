@@ -1,0 +1,240 @@
+#!/usr/bin/env node
+// A stand-in for the `claude` CLI, for the conformance check. It records what it was started
+// with (argv, environment, working directory) and every line it reads on stdin, and replays a
+// recorded CLI transcript. No model is called.
+//
+// Layout, next to this file (resolved through symlinks):
+//   scripts/<n>.ndjson   the transcript for the n-th start (0-based), else scripts/default.ndjson
+//   records/<n>.json     what the n-th start saw (written on every stdin line and at exit)
+//
+// A transcript is the recorder's format: one {dir, msg} per line. `in` lines are written to
+// stdout; an `out` line waits for a matching message from the host (same control subtype, or a
+// prompt with the same priority). Host control requests that the transcript does not expect are
+// answered with a canned success. A `can_use_tool` request waits for the host's answer.
+// Session ids, prompt uuids and control request ids in the transcript are mapped to the host's.
+
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { createInterface } from "node:readline";
+
+const here = path.dirname(fs.realpathSync(process.argv[1]));
+const recordsDir = path.join(here, "records");
+fs.mkdirSync(recordsDir, { recursive: true });
+const index = fs.readdirSync(recordsDir).filter((f) => f.endsWith(".json")).length;
+const recordPath = path.join(recordsDir, `${index}.json`);
+
+const argv = process.argv.slice(2);
+const record = { argv, env: { ...process.env }, cwd: process.cwd(), stdin: [] };
+// Written aside, then renamed: a start killed mid-write (a Stop during boot) keeps the last
+// whole record, never an empty file.
+const save = () => {
+  fs.writeFileSync(`${recordPath}.tmp`, `${JSON.stringify(record, null, 1)}\n`);
+  fs.renameSync(`${recordPath}.tmp`, recordPath);
+};
+// Reserve the index at once, so a second start counts this one.
+save();
+
+const flag = (name) => {
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === name) return argv[i + 1];
+    if (argv[i].startsWith(`${name}=`)) return argv[i].slice(name.length + 1);
+  }
+  return undefined;
+};
+const sessionId = flag("--session-id") ?? flag("--resume") ?? "stub-session";
+
+const scriptPath = [path.join(here, "scripts", `${index}.ndjson`), path.join(here, "scripts", "default.ndjson")].find(
+  (p) => fs.existsSync(p),
+);
+const script = scriptPath
+  ? fs
+      .readFileSync(scriptPath, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+  : [];
+const recordedSession = script.find((l) => typeof l.msg?.session_id === "string" && l.msg.session_id !== "")?.msg
+  .session_id;
+
+const replacements = new Map();
+if (recordedSession) replacements.set(recordedSession, sessionId);
+// Whole JSON strings only, so `req_1` does not touch `req_12`.
+const rewrite = (msg) => {
+  let text = JSON.stringify(msg);
+  for (const [from, to] of replacements) text = text.split(JSON.stringify(from)).join(JSON.stringify(to));
+  return text;
+};
+
+// A transcript the SDK's session-file functions can read (forkSession, getSessionMessages).
+const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(process.env.HOME ?? "/", ".claude");
+const transcriptDir = path.join(configDir, "projects", process.cwd().replace(/[^a-zA-Z0-9]/g, "-"));
+let lastUuid = null;
+let entry = 0;
+const transcript = (type, message) => {
+  fs.mkdirSync(transcriptDir, { recursive: true });
+  entry += 1;
+  const uuid = `00000000-0000-4000-8000-${String(index).padStart(4, "0")}${String(entry).padStart(8, "0")}`;
+  const line = {
+    type,
+    uuid,
+    parentUuid: lastUuid,
+    sessionId,
+    cwd: process.cwd(),
+    timestamp: new Date(0).toISOString(),
+    isSidechain: false,
+    userType: "external",
+    version: "2.1.322",
+    message,
+  };
+  lastUuid = uuid;
+  fs.appendFileSync(path.join(transcriptDir, `${sessionId}.jsonl`), `${JSON.stringify(line)}\n`);
+};
+
+const canned = (request) => {
+  switch (request?.subtype) {
+    case "mcp_set_servers":
+      return { added: Object.keys(request.servers ?? {}), removed: [], errors: {} };
+    case "initialize":
+      return { commands: [], agents: [], output_style: "default", available_output_styles: [], models: [], account: {} };
+    default:
+      return {};
+  }
+};
+
+// `hold-<n>` names a control request subtype this start never answers: from that request on it
+// writes nothing, as a CLI that is still booting.
+const hold = (() => {
+  try {
+    return fs.readFileSync(path.join(here, `hold-${index}`), "utf8").trim();
+  } catch {
+    return undefined;
+  }
+})();
+let holding = false;
+const write = (text) => {
+  if (!holding) process.stdout.write(`${text}\n`);
+};
+
+// Host lines not consumed yet.
+const inbox = [];
+let wake = null;
+let closed = false;
+const nextHost = () =>
+  new Promise((resolve) => {
+    const take = () => {
+      if (inbox.length > 0) return resolve(inbox.shift());
+      if (closed) return resolve(undefined);
+      wake = take;
+    };
+    take();
+  });
+
+const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
+input.on("line", (line) => {
+  record.stdin.push(line);
+  save();
+  let msg;
+  try {
+    msg = JSON.parse(line);
+  } catch {
+    return;
+  }
+  if (hold !== undefined && msg?.type === "control_request" && msg.request?.subtype === hold) {
+    holding = true;
+    record.held = hold;
+    save();
+  }
+  inbox.push(msg);
+  const w = wake;
+  wake = null;
+  w?.();
+});
+input.on("close", () => {
+  closed = true;
+  const w = wake;
+  wake = null;
+  w?.();
+});
+
+const answerUnexpected = (msg) => {
+  if (msg?.type === "control_request") {
+    write(
+      JSON.stringify({
+        type: "control_response",
+        response: { subtype: "success", request_id: msg.request_id, response: canned(msg.request) },
+      }),
+    );
+  }
+};
+
+const matches = (expected, msg) => {
+  if (msg?.type !== expected.type) return false;
+  if (expected.type === "control_request") return msg.request?.subtype === expected.request?.subtype;
+  if (expected.type === "user") return (msg.priority ?? null) === (expected.priority ?? null);
+  return false;
+};
+
+async function waitFor(expected) {
+  for (;;) {
+    const msg = await nextHost();
+    if (msg === undefined) return undefined;
+    if (matches(expected, msg)) return msg;
+    if (msg.type === "control_response") continue;
+    answerUnexpected(msg);
+  }
+}
+
+async function waitForAnswer(requestId) {
+  for (;;) {
+    const msg = await nextHost();
+    if (msg === undefined) return undefined;
+    if (msg.type === "control_response" && msg.response?.request_id === requestId) return msg;
+    answerUnexpected(msg);
+  }
+}
+
+async function main() {
+  for (let i = 0; i < script.length; i++) {
+    const { dir, msg } = script[i];
+    if (dir === "out") {
+      if (msg.type === "control_response") continue;
+      const got = await waitFor(msg);
+      if (got === undefined) break;
+      if (msg.type === "control_request" && typeof msg.request_id === "string") {
+        replacements.set(msg.request_id, got.request_id);
+      }
+      if (msg.type === "user") {
+        if (typeof msg.uuid === "string" && typeof got.uuid === "string") replacements.set(msg.uuid, got.uuid);
+        if (msg.priority === undefined) transcript("user", got.message);
+      }
+      continue;
+    }
+    write(rewrite(msg));
+    if (msg.type === "assistant" && msg.parent_tool_use_id == null) transcript("assistant", msg.message);
+    if (msg.type === "control_request" && msg.request?.subtype === "can_use_tool") {
+      const answer = await waitForAnswer(msg.request_id);
+      if (answer === undefined) break;
+    }
+  }
+  // Answer whatever else arrives until the host closes stdin.
+  for (;;) {
+    const msg = await nextHost();
+    if (msg === undefined) break;
+    answerUnexpected(msg);
+  }
+  // Absent when the start was killed (SIGKILL cannot be caught).
+  record.exit = "stdin closed";
+  save();
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => {
+  record.signal = "SIGTERM";
+  save();
+  process.exit(143);
+});
+
+main().catch((error) => {
+  process.stderr.write(`stub-claude: ${error?.stack ?? error}\n`);
+  process.exit(1);
+});

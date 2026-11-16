@@ -11,6 +11,8 @@ const TEST_EXCLUDE = [
   "**/dist/**",
   "**/dist-electron/**",
   "**/.{idea,git,cache,output,temp}/**",
+  // The Conn Server (Rust) has its own checks; its tools/*.test.ts run inside apps/server.
+  "apps/conn-server/**",
 ];
 
 // Directories whose tests belong to a package's own test config. desktop also
@@ -179,6 +181,8 @@ export default defineConfig({
   fmt: {
     ignorePatterns: [
       ".repos/**",
+      // The Conn Server (Rust) formats and checks itself (apps/conn-server/tools/check.sh).
+      "apps/conn-server/**",
       "infra/task-cache/vendor/**",
       // Macroscope requires one glob per line; Markdown formatting corrupts it.
       ".macroscope/ignore.md",
@@ -215,6 +219,7 @@ export default defineConfig({
     ignorePatterns: [
       ".repos",
       ".repos/**",
+      "apps/conn-server/**",
       "infra/task-cache/vendor/**",
       "dist",
       "dist-electron",

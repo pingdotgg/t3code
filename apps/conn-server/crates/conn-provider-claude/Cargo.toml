@@ -1,0 +1,30 @@
+[package]
+name = "conn-provider-claude"
+description = "The Claude provider: runs Claude through the Agent SDK in a Node helper."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+conn-support.workspace = true
+conn-contract.workspace = true
+conn-provider.workspace = true
+conn-provider-support.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+# The CLI's per-user task folder is named after the uid (`claude-<uid>`); rustix is already in
+# the build through conn-provider-support.
+rustix = { workspace = true, features = ["process"] }
+tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "rt", "macros"] }
+
+[dev-dependencies]
+# The live MCP test serves a tiny HTTP MCP server.
+tokio = { workspace = true, features = ["net"] }
+# The conformance example sends the server's own MCP instructions text.
+conn-mcp.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,13 @@
+# Standalone (own workspace): checks the recordings in ../sessions decode with conn-wire.
+# Run: cargo test --manifest-path fixtures/decode-check/Cargo.toml
+[package]
+name = "conn-fixtures-decode-check"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+conn-wire = { path = "../../crates/conn-wire" }
+serde_json = "1"

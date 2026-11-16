@@ -35,6 +35,32 @@ file before you merge upstream, build, or change shared UI. Upstream's
   covered unless they call those scripts (or the packaging/sign entrypoints)
   before copying a bundle into `/Applications`.
 
+## Conn Server
+
+`apps/conn-server` is the Conn Server: our own Rust server behind the T3 client contract. It
+came in with its history from `hardimpactdev/conn-server` on 2026-11-15. Its own `AGENTS.md`
+and `README.md` apply there. It is not a pnpm workspace package, and Conn's builds, desktop
+and mobile apps do not use it. Its tools read the contract, the web client and `apps/server`
+from this tree.
+
+- **Checks.** `conn-server-ci.yml` (format, clippy, tests, cargo-deny, the musl build) runs on
+  pull requests and pushes to `main` that change `apps/conn-server`. `conn-server-checks.yml`
+  (`apps/conn-server/tools/check.sh`) runs on changes to `apps/conn-server` or
+  `packages/contracts`.
+- **The nightly sync skips them, for now** (Nick, 2026-11-15). The workflows do not watch
+  `sync/*` branches, and each job skips a push or pull request that carries a ForkBot commit
+  (`forkbot@nckrtl.local`) or comes from a `sync/*` branch. The sync never runs or waits for a
+  Conn Server check. Drift it brings in fails at the next Conn Server or contract change;
+  `apps/conn-server/tools/follow-conn.sh` shows it at once.
+- **Release.** A tag `conn-server-v<version>` (the `conn-server` crate's version) runs
+  `conn-server-release.yml`. It makes a GitHub Release on `nckrtl/conn` with
+  `conn-server-<version>-linux-x64.tar.gz` and its `.sha256`, not marked Latest; Orbit
+  downloads it. Conn's `release.yml` takes only `v*.*.*` tags, so neither starts the other.
+- **Exclusions.** Root Vite+ format, lint and test configs ignore `apps/conn-server/**`,
+  `.github/scripts/ci-changes.cjs` treats it and the `conn-server-*` workflows as inert for
+  Conn's CI, and `.gitignore` re-includes `apps/conn-server/helpers/sdk-host/build/`. On a
+  sync, keep these lines.
+
 ## What the fork changes
 
 Paths below are relative to the repository root unless a source list gives

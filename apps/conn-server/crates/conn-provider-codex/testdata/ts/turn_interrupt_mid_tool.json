@@ -1,0 +1,326 @@
+{
+  "note": "ProviderAdapterV2 calls and events from CodexAdapterV2 (TS) replaying cli/turn_interrupt_mid_tool.ndjson through the orchestrator fixture runner at 5b571fe04a; driver dropped.",
+  "capturedOn": "2026-11-13",
+  "startTurn": [
+    {
+      "appThread": {
+        "createdBy": "user",
+        "creationSource": "web",
+        "id": "thread:fixture:turn_interrupt_mid_tool:project:project%3Afixture%3Aturn_interrupt_mid_tool%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "projectId": "project:fixture:turn_interrupt_mid_tool:f2604e9d-55b7-45de-a716-838867faae7e",
+        "title": "Replay fixture: turn_interrupt_mid_tool",
+        "providerInstanceId": "codex",
+        "modelSelection": { "instanceId": "codex", "model": "gpt-6-luna" },
+        "runtimeMode": "full-access",
+        "interactionMode": "default",
+        "branch": null,
+        "worktreePath": null,
+        "pullRequests": [],
+        "activeProviderThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "lineage": {
+          "parentThreadId": null,
+          "relationshipToParent": null,
+          "rootThreadId": "thread:fixture:turn_interrupt_mid_tool:project:project%3Afixture%3Aturn_interrupt_mid_tool%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7"
+        },
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.001Z",
+        "archivedAt": null,
+        "settledOverride": null,
+        "settledAt": null,
+        "snoozedUntil": null,
+        "snoozedAt": null,
+        "lastVisitedAt": "1970-01-01T00:00:00.000Z",
+        "deletedAt": null
+      },
+      "threadId": "thread:fixture:turn_interrupt_mid_tool:project:project%3Afixture%3Aturn_interrupt_mid_tool%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "runId": "run:thread:thread%3Afixture%3Aturn_interrupt_mid_tool%3Aproject%3Aproject%253Afixture%253Aturn_interrupt_mid_tool%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+      "runOrdinal": 1,
+      "providerTurnOrdinal": 1,
+      "nativeThreadHasTurns": false,
+      "attemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+      "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+      "providerThread": {
+        "id": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "providerSessionId": "provider-session:provider-instance:codex:shared",
+        "appThreadId": "thread:fixture:turn_interrupt_mid_tool:project:project%3Afixture%3Aturn_interrupt_mid_tool%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "codex",
+          "nativeId": "01a0d60e-f7cc-7a50-bdff-90174e2c3b56",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "active",
+        "firstRunOrdinal": 1,
+        "lastRunOrdinal": 1,
+        "handoffIds": [],
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.001Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "contextUsage": null
+      },
+      "message": {
+        "messageId": "message:thread:thread%3Afixture%3Aturn_interrupt_mid_tool%3Aproject%3Aproject%253Afixture%253Aturn_interrupt_mid_tool%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1:a209c1b9-9d82-4ff3-ba27-8bd6853514a5",
+        "text": "Run this exact local command: `node -e \"console.log('interrupt fixture tool started'); setTimeout(() => {}, 30000)\"`. Do not answer until it completes, then respond exactly: interrupt fixture should not finish naturally.",
+        "attachments": [],
+        "createdBy": "user",
+        "creationSource": "web"
+      },
+      "modelSelection": { "instanceId": "codex", "model": "gpt-6-luna" },
+      "runtimePolicy": {
+        "runtimeMode": "full-access",
+        "interactionMode": "default",
+        "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-turn_interrupt_mid_tool-6SpYK1",
+        "approvalPolicy": "never",
+        "sandboxPolicy": {
+          "type": "workspaceWrite",
+          "writableRoots": [],
+          "readOnlyAccess": { "type": "fullAccess" },
+          "networkAccess": false
+        }
+      }
+    }
+  ],
+  "respond": [],
+  "events": [
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:turn_interrupt_mid_tool:project:project%3Afixture%3Aturn_interrupt_mid_tool%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0d60e-f90f-7f23-b6ba-9ca7ee20b5cd",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0d60e-f90f-7f23-b6ba-9ca7ee20b5cd",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "2026-11-13T12:14:34.077Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:%5B%2201a0d60e-f90f-7f23-b6ba-9ca7ee20b5cd%22%2C%22rs_02867d76e88a025b016ab5c669424c87d09ca784eb308b0650%22%2C%22summary%22%2C0%5D",
+        "threadId": "thread:fixture:turn_interrupt_mid_tool:project:project%3Afixture%3Aturn_interrupt_mid_tool%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Aturn_interrupt_mid_tool%3Aproject%3Aproject%253Afixture%253Aturn_interrupt_mid_tool%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "reasoning",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d60e-f90f-7f23-b6ba-9ca7ee20b5cd",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "rs_02867d76e88a025b016ab5c669424c87d09ca784eb308b0650",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.002Z",
+        "completedAt": "1970-01-01T00:00:00.002Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:%5B%2201a0d60e-f90f-7f23-b6ba-9ca7ee20b5cd%22%2C%22rs_02867d76e88a025b016ab5c669424c87d09ca784eb308b0650%22%2C%22summary%22%2C0%5D",
+        "threadId": "thread:fixture:turn_interrupt_mid_tool:project:project%3Afixture%3Aturn_interrupt_mid_tool%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Aturn_interrupt_mid_tool%3Aproject%3Aproject%253Afixture%253Aturn_interrupt_mid_tool%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:%5B%2201a0d60e-f90f-7f23-b6ba-9ca7ee20b5cd%22%2C%22rs_02867d76e88a025b016ab5c669424c87d09ca784eb308b0650%22%2C%22summary%22%2C0%5D",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d60e-f90f-7f23-b6ba-9ca7ee20b5cd",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "rs_02867d76e88a025b016ab5c669424c87d09ca784eb308b0650",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 101,
+        "status": "completed",
+        "title": null,
+        "startedAt": "1970-01-01T00:00:00.002Z",
+        "completedAt": "1970-01-01T00:00:00.002Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "type": "reasoning",
+        "text": "**Running exact command**",
+        "streaming": false
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:exec-0ce96e49-aa1c-4bae-b4f8-687a7473017c",
+        "threadId": "thread:fixture:turn_interrupt_mid_tool:project:project%3Afixture%3Aturn_interrupt_mid_tool%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Aturn_interrupt_mid_tool%3Aproject%3Aproject%253Afixture%253Aturn_interrupt_mid_tool%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "tool_call",
+        "status": "running",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d60e-f90f-7f23-b6ba-9ca7ee20b5cd",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "exec-0ce96e49-aa1c-4bae-b4f8-687a7473017c",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "2026-09-25T00:55:07.619Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:exec-0ce96e49-aa1c-4bae-b4f8-687a7473017c",
+        "threadId": "thread:fixture:turn_interrupt_mid_tool:project:project%3Afixture%3Aturn_interrupt_mid_tool%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Aturn_interrupt_mid_tool%3Aproject%3Aproject%253Afixture%253Aturn_interrupt_mid_tool%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:exec-0ce96e49-aa1c-4bae-b4f8-687a7473017c",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d60e-f90f-7f23-b6ba-9ca7ee20b5cd",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "exec-0ce96e49-aa1c-4bae-b4f8-687a7473017c",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 102,
+        "status": "running",
+        "title": null,
+        "startedAt": "2026-09-25T00:55:07.619Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "type": "command_execution",
+        "input": "/bin/bash -lc \"node -e \\\"console.log('interrupt fixture tool started'); setTimeout(() => {}, 30000)\\\"\"",
+        "completionWake": "always"
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:turn_interrupt_mid_tool:project:project%3Afixture%3Aturn_interrupt_mid_tool%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0d60e-f90f-7f23-b6ba-9ca7ee20b5cd",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0d60e-f90f-7f23-b6ba-9ca7ee20b5cd",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "2026-11-13T12:14:34.077Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 17953,
+          "maxTokens": 258400,
+          "inputTokens": 17855,
+          "cachedInputTokens": 11008,
+          "outputTokens": 98,
+          "reasoningOutputTokens": 25,
+          "updatedAt": "1970-01-01T00:00:00.003Z"
+        }
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:turn_interrupt_mid_tool:project:project%3Afixture%3Aturn_interrupt_mid_tool%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0d60e-f90f-7f23-b6ba-9ca7ee20b5cd",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0d60e-f90f-7f23-b6ba-9ca7ee20b5cd",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "interrupted",
+        "startedAt": "2026-11-13T12:14:34.077Z",
+        "completedAt": "2026-09-25T00:55:07.000Z",
+        "turnTokenUsage": {
+          "usageStatus": "partial",
+          "usageScope": "main_agent",
+          "inputTokens": 17855,
+          "cachedInputTokens": 11008,
+          "cacheCreationTokens": 0,
+          "outputTokens": 98,
+          "reasoningTokens": 25,
+          "hasSubagents": false,
+          "models": ["gpt-6-luna"]
+        },
+        "model": "gpt-6-luna"
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:exec-0ce96e49-aa1c-4bae-b4f8-687a7473017c",
+        "threadId": "thread:fixture:turn_interrupt_mid_tool:project:project%3Afixture%3Aturn_interrupt_mid_tool%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Aturn_interrupt_mid_tool%3Aproject%3Aproject%253Afixture%253Aturn_interrupt_mid_tool%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "tool_call",
+        "status": "interrupted",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d60e-f90f-7f23-b6ba-9ca7ee20b5cd",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "exec-0ce96e49-aa1c-4bae-b4f8-687a7473017c",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "2026-09-25T00:55:07.619Z",
+        "completedAt": "2026-09-25T00:55:07.000Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:exec-0ce96e49-aa1c-4bae-b4f8-687a7473017c",
+        "threadId": "thread:fixture:turn_interrupt_mid_tool:project:project%3Afixture%3Aturn_interrupt_mid_tool%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Aturn_interrupt_mid_tool%3Aproject%3Aproject%253Afixture%253Aturn_interrupt_mid_tool%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:exec-0ce96e49-aa1c-4bae-b4f8-687a7473017c",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d60e-f90f-7f23-b6ba-9ca7ee20b5cd",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "exec-0ce96e49-aa1c-4bae-b4f8-687a7473017c",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 102,
+        "status": "interrupted",
+        "title": null,
+        "startedAt": "2026-09-25T00:55:07.619Z",
+        "completedAt": "2026-09-25T00:55:07.000Z",
+        "updatedAt": "2026-09-25T00:55:07.000Z",
+        "type": "command_execution",
+        "input": "/bin/bash -lc \"node -e \\\"console.log('interrupt fixture tool started'); setTimeout(() => {}, 30000)\\\"\""
+      }
+    },
+    {
+      "type": "turn.terminal",
+      "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Aturn_interrupt_mid_tool%253Aproject%253Aproject%25253Afixture%25253Aturn_interrupt_mid_tool%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+      "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d60e-f90f-7f23-b6ba-9ca7ee20b5cd",
+      "runOrdinal": 1,
+      "status": "interrupted",
+      "failure": null,
+      "threadDisposition": "reusable"
+    }
+  ]
+}
