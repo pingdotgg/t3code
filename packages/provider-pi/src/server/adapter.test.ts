@@ -183,7 +183,7 @@ interface FakePi {
   /** T3 extension's service tier as each prompt was sent; Pi resets it with each session. */
   readonly promptServiceTiers: ReadonlyArray<string | null>;
   /** Pi reloads extensions without the adapter seeing it, e.g. a user extension's ctx.newSession(). */
-  readonly reloadExtensions: () => void;
+  readonly reloadExtensions: (newSessionFile?: string) => void;
   /** Pi before 0.99 acknowledges prompts without a disposition. */
   readonly omitPromptDisposition: () => void;
   readonly queueStats: (data: unknown) => void;
@@ -433,8 +433,9 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     promptThinkingLevels,
     promptModels,
     promptServiceTiers,
-    reloadExtensions: () => {
+    reloadExtensions: (newSessionFile) => {
       serviceTier = null;
+      if (newSessionFile !== undefined) sessionFile = newSessionFile;
     },
     omitPromptDisposition: () => {
       promptDisposition = false;
@@ -2759,6 +2760,46 @@ describe("PiAdapterV2", () => {
           `/${PI_T3_SERVICE_TIER_COMMAND} ultrafast`,
           `/${PI_T3_SERVICE_TIER_COMMAND}`,
         ],
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("tracks the session file a user extension switches to during a turn", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      assert.equal(providerThread.nativeThreadRef?.nativeId, FAKE_SESSION_FILE);
+      const childFile = "/fake/extension-child.jsonl";
+
+      // An extension command such as /handoff calls ctx.newSession(); later prompts go to its file.
+      yield* startTurn(runtime, providerThread, "default", [], "/handoff", undefined, 1);
+      yield* fake.takeRequest("prompt");
+      fake.reloadExtensions(childFile);
+      yield* fake.emit({ type: "response", command: "prompt", success: true });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+
+      yield* startTurn(runtime, providerThread, "default", [], "prompt B", undefined, 2);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "agent_end", messages: [], willRetry: false });
+      yield* fake.emit({ type: "agent_settled" });
+      const idle = yield* takeEvent(
+        (event) =>
+          event.type === "provider_thread.updated" && event.providerThread.status === "idle",
+      );
+      yield* takeEvent((event) => event.type === "turn.terminal");
+
+      // The persisted ref is what a later resume passes to switch_session.
+      assert.equal(
+        idle.type === "provider_thread.updated"
+          ? idle.providerThread.nativeThreadRef?.nativeId
+          : undefined,
+        childFile,
       );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
