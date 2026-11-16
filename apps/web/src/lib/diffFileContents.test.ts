@@ -71,12 +71,12 @@ describe("createGitDiffFileContentsLoader", () => {
     const longContext = `${"y".repeat(20_000)}CONTEXT_TAIL`;
     const oldLines = originalLines.map((line, index) => (index === 4 ? longContext : line));
     const newLines = oldLines.map((line, index) => (index === 29 ? longChange : line));
-    const fileDiff = parsePartialFileDiff(
+    const patchFor = (path: string) =>
       [
-        "diff --git a/src/file01.ts b/src/file01.ts",
+        `diff --git a/${path} b/${path}`,
         "index 1111111..2222222 100644",
-        "--- a/src/file01.ts",
-        "+++ b/src/file01.ts",
+        `--- a/${path}`,
+        `+++ b/${path}`,
         "@@ -27,7 +27,7 @@",
         " line 27",
         " line 28",
@@ -87,9 +87,16 @@ describe("createGitDiffFileContentsLoader", () => {
         " line 32",
         " line 33",
         "",
-      ].join("\n"),
-    );
-    const commentOn = (line: number) =>
+      ].join("\n");
+    const load = loaderReturning(toContents(oldLines), toContents(newLines));
+    // A virtualized view hydrates a copy of the file it loaded contents for, then assigns it
+    // over the file the host last supplied, which a refresh re-parsed.
+    const expand = async (path: string) => {
+      const loadedFor = parsePartialFileDiff(patchFor(path));
+      const supplied = parsePartialFileDiff(patchFor(path));
+      return Object.assign(supplied, hydratePartialDiff("clone", loadedFor, await load(loadedFor)));
+    };
+    const commentOn = (fileDiff: FileDiffMetadata, line: number) =>
       buildDiffReviewComment({
         id: "comment",
         sectionId: "section",
@@ -100,20 +107,19 @@ describe("createGitDiffFileContentsLoader", () => {
         text: "",
       })?.diff;
 
-    expect(fileDiff.additionLines[3]).toBe(
+    const partial = parsePartialFileDiff(patchFor("src/file01.ts"));
+    expect(partial.additionLines[3]).toBe(
       `${"x".repeat(10_000)} … 10013 more characters not shown\n`,
     );
-    expect(commentOn(30)).toBe(`@@ -0,0 +30,1 @@\n+${longChange}`);
+    expect(commentOn(partial, 30)).toBe(`@@ -0,0 +30,1 @@\n+${longChange}`);
 
-    const loaded = await loaderReturning(toContents(oldLines), toContents(newLines))(fileDiff);
-    expect(commentOn(30)).toBe(`@@ -0,0 +30,1 @@\n+${longChange}`);
+    const first = await expand("src/file01.ts");
+    for (let index = 2; index <= 21; index += 1) await expand(`src/file${index}.ts`);
 
-    // A virtualized view hydrates a copy, then assigns it over the file the host last supplied.
-    Object.assign(fileDiff, hydratePartialDiff("clone", fileDiff, loaded));
-    expect(fileDiff.additionLines).toHaveLength(40);
-    expect(Math.max(...fileDiff.additionLines.map((line) => line.length))).toBeLessThan(10_100);
-    expect(commentOn(30)).toBe(`@@ -0,0 +30,1 @@\n+${longChange}`);
-    expect(commentOn(5)).toBe(`@@ -5,1 +5,1 @@\n ${longContext}`);
+    expect(first.additionLines).toHaveLength(40);
+    expect(Math.max(...first.additionLines.map((line) => line.length))).toBeLessThan(10_100);
+    expect(commentOn(first, 30)).toBe(`@@ -0,0 +30,1 @@\n+${longChange}`);
+    expect(commentOn(first, 5)).toBe(`@@ -5,1 +5,1 @@\n ${longContext}`);
   });
 
   it.each([

@@ -7,10 +7,11 @@ const CLAMP_SLACK = 100;
 type DiffLines = Pick<FileDiffMetadata, "additionLines" | "deletionLines">;
 
 const fullLinesByClampedLines = new WeakMap<ReadonlyArray<string>, string[]>();
-// Pierre builds a hydrated file's line arrays itself, and may hydrate another object than the
-// one it loaded contents for. Its cache key is all that links the two; whole files stay bounded.
-const HYDRATED_FILE_LIMIT = 20;
-const fullLinesByHydratedCacheKey = new Map<string, DiffLines>();
+// Pierre builds a hydrated file's line arrays itself, and may hydrate a copy of the file it
+// loaded contents for onto another object. Its copies keep own properties, so the full lines
+// ride on the file and live exactly as long as it does. A symbol stays out of worker messages.
+const fullLinesOfHydratedFile = Symbol("fullLinesOfHydratedFile");
+type HydratableFile = FileDiffMetadata & { [fullLinesOfHydratedFile]?: DiffLines | undefined };
 
 function isLong(line: string): boolean {
   return line.length > RENDERED_LINE_LENGTH + CLAMP_SLACK;
@@ -46,11 +47,8 @@ export function clampLongDiffLines(file: FileDiffMetadata): FileDiffMetadata {
 }
 
 /** The lines of `file` as they are in the source, for anything that leaves the diff view. */
-export function getFullDiffLines(file: FileDiffMetadata): DiffLines {
-  const hydrated =
-    file.isPartial || file.cacheKey === undefined
-      ? undefined
-      : fullLinesByHydratedCacheKey.get(file.cacheKey);
+export function getFullDiffLines(file: HydratableFile): DiffLines {
+  const hydrated = file.isPartial ? undefined : file[fullLinesOfHydratedFile];
   return {
     additionLines:
       fullLinesByClampedLines.get(file.additionLines) ??
@@ -63,22 +61,13 @@ export function getFullDiffLines(file: FileDiffMetadata): DiffLines {
   };
 }
 
-/** Cuts the lines of contents loaded to hydrate `file`, and keeps the full ones for it. */
-export function clampHydrationLines(file: FileDiffMetadata, lines: DiffLines): DiffLines {
-  if (file.cacheKey === undefined) return lines;
+/** Cuts the lines of contents loaded to hydrate `file`, and keeps the full ones on it. */
+export function clampHydrationLines(file: HydratableFile, lines: DiffLines): DiffLines {
   const additionLines = clampLines(lines.additionLines);
   const deletionLines =
     lines.deletionLines === lines.additionLines ? additionLines : clampLines(lines.deletionLines);
-  if (additionLines === lines.additionLines && deletionLines === lines.deletionLines) return lines;
-
-  const hydratedCacheKey = `${file.cacheKey}:hydrated`;
-  fullLinesByHydratedCacheKey.delete(hydratedCacheKey);
-  fullLinesByHydratedCacheKey.set(hydratedCacheKey, lines);
-  if (fullLinesByHydratedCacheKey.size > HYDRATED_FILE_LIMIT) {
-    for (const oldest of fullLinesByHydratedCacheKey.keys()) {
-      fullLinesByHydratedCacheKey.delete(oldest);
-      break;
-    }
-  }
-  return { additionLines, deletionLines };
+  const clamped = additionLines !== lines.additionLines || deletionLines !== lines.deletionLines;
+  // Set even when nothing was cut, so a copy overwrites what an abandoned load left behind.
+  file[fullLinesOfHydratedFile] = clamped ? lines : undefined;
+  return clamped ? { additionLines, deletionLines } : lines;
 }
