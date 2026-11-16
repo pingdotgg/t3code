@@ -1,4 +1,4 @@
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ThreadContextRecord, ProjectId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { MessagesSquareIcon } from "lucide-react";
@@ -6,6 +6,7 @@ import { MessagesSquareIcon } from "lucide-react";
 import { useProject, useThreadShell } from "~/state/entities";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { useEnvironmentQuery } from "~/state/query";
+import { beginLayoutContentDrag } from "~/layout/layoutDrag";
 import { ContextChip, ContextChipLabel } from "./ContextChip";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -15,6 +16,7 @@ export function ThreadContextChip(props: {
   projectId?: ProjectId | null;
   copyMarkdown?: string;
   unreadable?: boolean;
+  inPromptEditor?: boolean;
 }) {
   const { environmentId, threadId } = props.record;
   const shell = useThreadShell({ environmentId, threadId });
@@ -45,6 +47,13 @@ export function ThreadContextChip(props: {
               />
             }
             aria-label={`Thread, ${title}`}
+            onPointerDown={(event) => {
+              if (props.inPromptEditor) return;
+              beginLayoutContentDrag(event, {
+                kind: "thread",
+                threadRef: scopeThreadRef(environmentId, threadId),
+              });
+            }}
             data-markdown-copy={props.copyMarkdown}
             className="no-underline"
           >

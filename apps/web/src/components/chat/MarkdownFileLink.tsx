@@ -10,8 +10,10 @@ import { memo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { FolderIcon } from "lucide-react";
 
 import { contextMenuSourceOf } from "../../contextMenuSource";
+import { beginLayoutContentDrag } from "../../layout/layoutDrag";
 import { readLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
+import { fileSurface } from "../../rightPanelStore";
 import { shouldOpenMarkdownFileLinkInEditor } from "../../markdown-links";
 import type { markdownFileCopyPaths } from "../../markdownFileHostPath";
 import { documentChipKindForFileName } from "../../pierre-icons";
@@ -35,6 +37,7 @@ interface MarkdownFileLinkProps {
   isAppBundle?: boolean;
   workspaceRelativePath: string | null;
   panelPath: string | null;
+  searchesWorkspace: boolean;
   line?: number | undefined;
   label: string;
   copyMarkdown: string;
@@ -60,6 +63,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   isAppBundle = false,
   workspaceRelativePath,
   panelPath,
+  searchesWorkspace,
   line,
   label,
   copyMarkdown,
@@ -321,6 +325,8 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
     canOpenInPanel,
   });
   const chipKind = documentChipKindForFileName(iconPath) ?? "mention";
+  const layoutDragThreadRef =
+    threadRef && panelPath && !searchesWorkspace && !useBrowserPrimaryAction ? threadRef : null;
 
   return (
     <Tooltip>
@@ -330,7 +336,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
             <ContextChip
               kind={chipKind}
               dir="ltr"
-              render={<a href={href} />}
+              render={<a href={href} draggable={layoutDragThreadRef ? false : undefined} />}
               className={MARKDOWN_FILE_LINK_CLASS_NAME}
               data-markdown-copy={copyMarkdown}
               onClick={(event) => {
@@ -347,6 +353,14 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
                 handleOpenInFilePreview();
               }}
               onContextMenu={handleContextMenu}
+              onPointerDown={(event) => {
+                if (!layoutDragThreadRef || !panelPath) return;
+                beginLayoutContentDrag(event, {
+                  kind: "surface",
+                  threadRef: layoutDragThreadRef,
+                  surface: fileSurface(panelPath, line ?? null, 0),
+                });
+              }}
             >
               <FileTagChipContent
                 icon={
@@ -405,6 +419,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.environmentId === next.environmentId &&
     previous.workspaceRelativePath === next.workspaceRelativePath &&
     previous.panelPath === next.panelPath &&
+    previous.searchesWorkspace === next.searchesWorkspace &&
     previous.line === next.line &&
     previous.label === next.label &&
     previous.copyMarkdown === next.copyMarkdown &&

@@ -554,6 +554,7 @@ function beginLayoutDrag(
   const start = { x: event.clientX, y: event.clientY };
   const pointerId = event.pointerId;
   const takesDrag = (composer: HTMLElement) => composerTakesDrag(source, composer);
+  const clearSelection = () => document.getSelection()?.removeAllRanges();
   let started = false;
 
   const move = (moveEvent: PointerEvent) => {
@@ -563,6 +564,8 @@ function beginLayoutDrag(
         return;
       }
       started = true;
+      clearSelection();
+      document.addEventListener("selectionchange", clearSelection);
     }
     moveEvent.preventDefault();
     const point = { x: moveEvent.clientX, y: moveEvent.clientY };
@@ -578,6 +581,7 @@ function beginLayoutDrag(
     window.removeEventListener("pointercancel", cancel, true);
     window.removeEventListener("keydown", key, true);
     window.removeEventListener("blur", cancel);
+    document.removeEventListener("selectionchange", clearSelection);
     if (!started) return;
     endThreadContextDrag();
     if (drop && !(threadRef && dropThreadContext(drop, [threadRef], takesDrag))) dropLayoutDrag();
