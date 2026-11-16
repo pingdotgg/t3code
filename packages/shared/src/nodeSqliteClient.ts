@@ -352,8 +352,9 @@ const READER_POOL_SIZE = 4;
 const READER_STARTUP_TIMEOUT = Duration.seconds(10);
 const READER_RETRY_DELAY = Duration.seconds(1);
 const READER_RETRY_MAX_DELAY = Duration.minutes(1);
-// node:sqlite cannot interrupt a statement, so an abandoned read keeps its thread and connection
-// until the statement returns. Past this many, an abandoned read keeps its reader busy instead.
+// node:sqlite cannot interrupt a statement. A waiting read replaces a reader left running abandoned
+// work only after this long, and only while fewer than this many replaced readers still run.
+const ABANDONED_READER_GRACE_MS = 250;
 const MAX_RETIRING_READERS = READER_POOL_SIZE;
 
 // Bind transactions to one worker; fail after its exit instead of resuming outside the transaction on a replacement.
@@ -362,7 +363,7 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
   readonly role: "reader" | "writer";
   readonly readOnly: boolean;
   readonly onReply?: () => void;
-  readonly pool?: { retiring: number };
+  readonly onIdle?: () => void;
 }) {
   const label = options.role === "reader" ? "Database reader" : "Database writer";
   const readOnly = options.readOnly;
@@ -371,6 +372,7 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
         readonly worker: NodeWorkerThreads.Worker;
         readonly connection: Connection;
         readonly started: Promise<WorkerStartup>;
+        readonly pending: ReadonlyMap<number, unknown>;
       }
     | undefined;
   let nextRequestId = 0;
@@ -406,7 +408,8 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
       stoppedMessage = message;
       if (options.role === "writer") writerStopped = message;
       announce({ type: "unavailable", message });
-      if (current?.worker === worker) current = undefined;
+      const wasCurrent = current?.worker === worker;
+      if (wasCurrent) current = undefined;
       for (const [id, request] of pending) {
         request.resume(
           request.endsTransaction
@@ -415,7 +418,7 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
         );
       }
       pending.clear();
-      worker.unref();
+      if (wasCurrent) options.onIdle?.();
     };
     worker.on("message", (reply: WorkerReply | WorkerStartup) => {
       if ("type" in reply) {
@@ -432,7 +435,10 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
         return;
       }
       pending.delete(reply.id);
-      if (pending.size === 0) worker.unref();
+      if (pending.size === 0) {
+        worker.unref();
+        if (current?.worker === worker) options.onIdle?.();
+      }
       options.onReply?.();
       if ("rows" in reply && request.rows.length > 0) {
         for (const row of reply.rows) request.rows.push(row);
@@ -474,16 +480,6 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
           const cached = input.cached && !hasLargeBinding(input.params);
           // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
           worker.postMessage({ id, safeIntegers, ...input, cached, received });
-          const pool = options.pool;
-          if (pool === undefined) return;
-          return Effect.sync(() => {
-            if (!pending.has(id) || pool.retiring >= MAX_RETIRING_READERS) return;
-            pool.retiring++;
-            worker.once("exit", () => pool.retiring--);
-            // terminate() references the worker again, so stop must unref it afterward.
-            void worker.terminate();
-            stop(`${label} abandoned a running statement`);
-          });
         });
         // A posted write runs to the end, as it did on the event loop; the caller and its lock
         // must not move on while the worker is still applying it. Reads stay cancellable.
@@ -520,8 +516,19 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
         return Stream.die(new UnsupportedNodeSqliteOperationError());
       },
     });
-    current = { worker, connection, started };
+    current = { worker, connection, started, pending };
     return current;
+  };
+
+  const retire = (worker: NodeWorkerThreads.Worker) => {
+    if (current?.worker === worker) current = undefined;
+    return worker.terminate();
+  };
+  // Termination waits for a running statement, which may run long after its caller left.
+  const abandon = (worker: NodeWorkerThreads.Worker) => {
+    const exited = retire(worker);
+    worker.unref();
+    return exited;
   };
 
   yield* Effect.addFinalizer(() =>
@@ -536,16 +543,12 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
           open.worker.postMessage({ type: "close" });
         });
       }
-      await open.worker.terminate();
+      if (open.pending.size > 0) void abandon(open.worker);
+      else await retire(open.worker);
     }),
   );
 
-  const retire = (worker: NodeWorkerThreads.Worker) => {
-    if (current?.worker === worker) current = undefined;
-    void worker.terminate();
-  };
-
-  return Effect.suspend((): Effect.Effect<Connection, SqlError> => {
+  const acquire = Effect.suspend((): Effect.Effect<Connection, SqlError> => {
     if (current === undefined && writerStopped !== undefined) {
       return Effect.fail(failedWith({ message: writerStopped }, "execute"));
     }
@@ -574,7 +577,7 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
             ? Effect.succeed(entry.connection)
             : Effect.fail(failedWith({ message: `${label} stopped while starting` }, "open"));
         }
-        retire(entry.worker);
+        void retire(entry.worker);
         return Effect.fail(
           failedWith(
             outcome ?? {
@@ -586,6 +589,11 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
       },
     );
   });
+  return {
+    acquire,
+    busy: () => current !== undefined && current.pending.size > 0,
+    retire: () => (current === undefined ? Promise.resolve() : abandon(current.worker)),
+  };
 });
 
 const startFailure = (error: SqlError) => {
@@ -600,9 +608,11 @@ const startFailure = (error: SqlError) => {
 // one background retry starts it again.
 const makeReader = Effect.fnUntraced(function* (
   filename: string,
-  pool: { unavailable: boolean; retiring: number },
+  pool: { unavailable: boolean },
+  onIdle: () => void,
 ) {
-  const acquire = yield* makeWorkerConnection({ filename, role: "reader", readOnly: true, pool });
+  const reader = yield* makeWorkerConnection({ filename, role: "reader", readOnly: true, onIdle });
+  const acquire = reader.acquire;
   const scope = yield* Effect.scope;
   const context = yield* Effect.context<never>();
 
@@ -629,7 +639,7 @@ const makeReader = Effect.fnUntraced(function* (
       }),
     );
 
-  return Effect.suspend((): Effect.Effect<Connection | undefined> =>
+  const acquireOrFallBack = Effect.suspend((): Effect.Effect<Connection | undefined> =>
     pool.unavailable
       ? Effect.undefined
       : acquire.pipe(
@@ -651,6 +661,7 @@ const makeReader = Effect.fnUntraced(function* (
           }),
         ),
   );
+  return { ...reader, acquire: acquireOrFallBack };
 });
 
 // A checkpoint copies WAL pages into the database and syncs it. On the writer's thread every
@@ -913,12 +924,12 @@ const make = Effect.fn("makeWithDatabase")(function* (
   const writerWorker = options.writerWorker === true && isFileDatabase;
   let checkpointAfterWrite: (() => void) | undefined;
   const writerConnection: Effect.Effect<Connection, SqlError> = writerWorker
-    ? yield* makeWorkerConnection({
+    ? (yield* makeWorkerConnection({
         filename: options.filename,
         role: "writer",
         readOnly: options.readonly ?? false,
         onReply: () => checkpointAfterWrite?.(),
-      })
+      })).acquire
     : Effect.succeed(yield* makeConnection);
   // Opening now fails the layer for a file that is not a database, not its first query.
   const opened = yield* writerConnection;
@@ -933,22 +944,88 @@ const make = Effect.fn("makeWithDatabase")(function* (
       );
     }
   }
-  const readerPool = { unavailable: false, retiring: 0 };
+  const readerPool = { unavailable: false };
+  // An abandoned reader still runs statements whose callers left, so it cannot take another read.
+  type ReaderState =
+    | { readonly name: "idle" }
+    | { readonly name: "live" }
+    | { readonly name: "abandoned"; readonly since: number };
+  const idle: ReaderState = { name: "idle" };
+  const live: ReaderState = { name: "live" };
+  const readerWaiters = new Set<() => void>();
+  const readersChanged = () => {
+    for (const wake of Array.from(readerWaiters)) wake();
+  };
   const readers =
     options.readerWorker && isFileDatabase
       ? yield* Effect.forEach(Array.from({ length: READER_POOL_SIZE }), () =>
-          Effect.map(
-            Effect.all([makeReader(options.filename, readerPool), Semaphore.make(1)]),
-            ([acquire, lock]) => ({
-              acquire,
+          Effect.gen(function* () {
+            const lock = yield* Semaphore.make(1);
+            const reader = yield* makeReader(options.filename, readerPool, () => {
+              if (slot.state.name !== "abandoned") return;
+              slot.state = idle;
+              readersChanged();
+            });
+            const slot: typeof reader & { lock: Semaphore.Semaphore; state: ReaderState } = {
+              ...reader,
               lock,
-              claimed: false,
-            }),
-          ),
+              state: idle,
+            };
+            return slot;
+          }),
         )
       : [];
-  // One permit per slot, so a queued read waits for any reader, not one it picked while all were busy.
-  const readerAdmission = yield* Semaphore.make(readers.length);
+  type Reader = (typeof readers)[number];
+  let retiringReaders = 0;
+
+  // Returns the claimed reader, or how long until an abandoned one may be replaced.
+  const claimReader = (now: number): Reader | number | undefined => {
+    // The lowest idle reader wins, so idle readers never start a worker.
+    const idleReader = readers.find((reader) => reader.state.name === "idle");
+    if (idleReader !== undefined) {
+      idleReader.state = live;
+      return idleReader;
+    }
+    if (retiringReaders >= MAX_RETIRING_READERS) return undefined;
+    let wait: number | undefined;
+    for (const reader of readers) {
+      if (reader.state.name !== "abandoned") continue;
+      const remaining = reader.state.since + ABANDONED_READER_GRACE_MS - now;
+      if (remaining > 0) {
+        wait = Math.min(wait ?? remaining, remaining);
+        continue;
+      }
+      retiringReaders++;
+      void reader.retire().then(() => {
+        retiringReaders--;
+        readersChanged();
+      });
+      reader.state = live;
+      return reader;
+    }
+    return wait;
+  };
+  // A wake hands over nothing, so a waiter interrupted after its wake loses no reader.
+  const readersChange = Effect.callback<void>((resume) => {
+    const wake = () => {
+      readerWaiters.delete(wake);
+      resume(Effect.void);
+    };
+    readerWaiters.add(wake);
+    return Effect.sync(() => readerWaiters.delete(wake));
+  });
+  const waitForReader = (restore: typeof Effect.interruptible) =>
+    Effect.withFiber((fiber) => {
+      const clock = fiber.getRef(Clock.Clock);
+      const attempt: Effect.Effect<Reader> = Effect.suspend(() => {
+        const claimed = claimReader(clock.currentTimeMillisUnsafe());
+        if (typeof claimed === "object") return Effect.succeed(claimed);
+        const change =
+          claimed === undefined ? readersChange : Effect.timeoutOption(readersChange, claimed);
+        return Effect.andThen(restore(change), attempt);
+      });
+      return attempt;
+    });
 
   interface Target {
     readonly name: Acquired["connection"];
@@ -971,23 +1048,22 @@ const make = Effect.fn("makeWithDatabase")(function* (
       if (readers.length === 0 || readerPool.unavailable || !Context.get(fiber.context, ReadOnly)) {
         return writer;
       }
-      const claim = Effect.andThen(
-        restore(readerAdmission.take(1)),
-        Effect.suspend(() => {
-          // Holding a permit leaves a slot idle; the lowest wins, so idle slots never start a worker.
-          const reader = readers.find((slot) => !slot.claimed)!;
-          reader.claimed = true;
-          const release = Effect.andThen(
-            Effect.sync(() => {
-              reader.claimed = false;
-            }),
-            readerAdmission.release(1),
-          );
-          return Effect.as(claimed(release), reader);
-        }),
+      const claim = Effect.tap(waitForReader(restore), (reader) =>
+        claimed(
+          Effect.withFiber((releasing) => {
+            reader.state = reader.busy()
+              ? {
+                  name: "abandoned",
+                  since: releasing.getRef(Clock.Clock).currentTimeMillisUnsafe(),
+                }
+              : idle;
+            readersChanged();
+            return Effect.void;
+          }),
+        ),
       );
       return Effect.flatMap(
-        // A scheduler yield after taking the permit must not precede its release finalizer.
+        // A scheduler yield after claiming a reader must not precede its release finalizer.
         Effect.provideService(claim, Scheduler.PreventSchedulerYield, true),
         (reader) =>
           Effect.flatMap(
