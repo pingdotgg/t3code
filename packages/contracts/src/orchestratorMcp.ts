@@ -486,6 +486,8 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   runCount: NonNegativeInt,
   itemCount: NonNegativeInt,
   pendingRequestCount: NonNegativeInt,
+  /** Queued follow-ups held after a failed run; they start only when the user presses Resume. Absent from linked environments that predate it. */
+  queueHeld: Schema.optional(Schema.Boolean),
   archived: Schema.Boolean,
   settled: Schema.Boolean,
   settledAt: Schema.NullOr(IsoDateTime),

@@ -289,6 +289,7 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     const held = yield* service.readThread(makeScope(), { threadId: parentThreadId });
     expect(held.thread.status).toBe("failed");
     expect(held.thread.latestRunId).toBe(activeRunId);
+    expect(held.thread.queueHeld).toBe(true);
 
     Object.assign(projection, {
       runs: [makeRun({ id: activeRunId, ordinal: 1, status: "completed" })],
