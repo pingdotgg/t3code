@@ -72,6 +72,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -15172,6 +15173,111 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  it.effect(
+    "denies a tool request with no wake pending when a user turn attaches during the callback",
+    () => {
+      // Pause the callback fiber after its first active-turn read, so a user turn can attach
+      // before the waiter reads it again. With no wake pending, that turn has no wake token.
+      const paused = Promise.withResolvers<void>();
+      let release: (() => void) | undefined;
+      let armed = false;
+      let holdNext = false;
+      const base = new Scheduler.MixedScheduler();
+      const scheduler: Scheduler.Scheduler = {
+        executionMode: base.executionMode,
+        shouldYield: (fiber) => {
+          if (!armed) return base.shouldYield(fiber);
+          armed = false;
+          holdNext = true;
+          return true;
+        },
+        makeDispatcher: () => {
+          const dispatcher = base.makeDispatcher();
+          return {
+            scheduleTask: (task, priority) => {
+              if (!holdNext) return dispatcher.scheduleTask(task, priority);
+              holdNext = false;
+              release = () => dispatcher.scheduleTask(task, priority);
+              paused.resolve();
+            },
+            flush: () => dispatcher.flush(),
+          };
+        },
+      };
+      return Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-no-wake-gap-1"),
+            text: "Run the build.",
+            attachments: [],
+            runtimePolicy: earlyWakeApprovalPolicy,
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* harness.awaitTerminal(1);
+
+        // @effect-diagnostics-next-line abortControllerInEffect:off - Claude, not the test fiber, owns the request.
+        const withdrawal = new AbortController();
+        let first = true;
+        const decision = yield* Effect.promise(() =>
+          harness.getOpenedOptions()!.canUseTool!(
+            "Bash",
+            { command: "ls" },
+            {
+              get signal() {
+                if (first) armed = true;
+                first = false;
+                return withdrawal.signal;
+              },
+              toolUseID: "toolu_01NoWakeGapBash",
+              requestId: "request-no-wake-gap-bash",
+            },
+          ),
+        ).pipe(Effect.forkScoped);
+        yield* Effect.promise(() => paused.promise);
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-no-wake-gap-2"),
+            text: "Status?",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            runtimePolicy: earlyWakeApprovalPolicy,
+          }),
+        );
+        release!();
+        const outcome = yield* Effect.raceFirst(
+          Queue.take(harness.runtimeRequestReceipts).pipe(
+            Effect.map((event) => ({ type: "request", event }) as const),
+          ),
+          Fiber.join(decision).pipe(
+            Effect.map((result) => ({ type: "decision", result }) as const),
+          ),
+        );
+        assert.equal(outcome.type, "decision", "The user turn took a request it does not own");
+        if (outcome.type !== "decision") return;
+        assert.equal(outcome.result?.behavior, "deny");
+        assert.isFalse(harness.events.some((event) => event.type === "runtime_request.updated"));
+      }).pipe(
+        Effect.provideService(Scheduler.Scheduler, scheduler),
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      );
+    },
   );
 
   it.effect(

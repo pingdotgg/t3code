@@ -12082,6 +12082,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               // tool_use under a second run.
               return context !== null &&
                 context.nativeThreadId === nativeThreadId &&
+                token !== undefined &&
                 wakeTokenByTurn.get(context) === token &&
                 !(yield* isToolUseBuffered(nativeThreadId, toolUseId)) &&
                 (yield* isOwnQuery)
