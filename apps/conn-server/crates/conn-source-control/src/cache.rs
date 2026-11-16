@@ -130,6 +130,11 @@ impl<K: Eq + Hash + Clone, V: Clone> TtlCache<K, V> {
         self.lock().entries.remove(key);
     }
 
+    /// Invalidates a bounded set of related reads, including lookups still in flight.
+    pub fn invalidate_where(&self, matches: impl Fn(&K) -> bool) {
+        self.lock().entries.retain(|key, _| !matches(key));
+    }
+
     /// How many keys are held, for tests.
     pub fn len(&self) -> usize {
         self.lock().entries.len()
@@ -186,6 +191,8 @@ mod tests {
                 .await;
         }
         assert_eq!(cache.len(), 2, "bounded");
+        cache.invalidate_where(|key| *key == 4);
+        assert_eq!(cache.len(), 1, "matching keys invalidated");
         cache.invalidate_all();
         assert!(cache.is_empty(), "invalidated");
     }

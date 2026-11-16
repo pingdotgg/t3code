@@ -58,6 +58,7 @@ pub struct McpConfig {
     pub annotations: Option<conn_features::annotations::Annotations>,
     /// The store also used by secrets.answerRequest.
     pub secrets: Option<conn_features::secrets::SecretRequests>,
+    pub test_logins: Option<conn_features::test_logins::TestLogins>,
     /// The broker also used by panels.requests and panels.respond.
     pub panels: Option<conn_features::panels::PanelBroker>,
 }
@@ -92,6 +93,8 @@ pub struct ThreadCaller {
     pub thread_id: String,
     pub provider_session_id: String,
     pub provider_instance_id: String,
+    /// Captured when the provider session starts, not re-read on each call.
+    pub preview: bool,
     /// A delegated child: it hands its work back to its parent.
     pub subagent: bool,
 }

@@ -173,6 +173,16 @@ const program = Effect.gen(function* () {
   } else {
     yield* decodeCall(client, "secrets.answerRequest", { threadId: "missing", turnItemId: "missing", answer: { type: "decline" } });
     yield* decodeCall(client, "panels.respond", { requestId: "unknown", ok: true });
+    const login = yield* client["testLogins.save"]({ url: " http://localhost/login ", username: "tester", password: "fixture-only", otpSecret: " TEST " });
+    decodedTags.add("testLogins.save");
+    check("test login summary excludes secrets", login.createdBy === "user" && login.hasOtp && !("password" in login) && !("otpSecret" in login));
+    yield* decodeCall(client, "testLogins.list", {});
+    yield* decodeCall(client, "testLogins.update", { id: login.id, label: "Updated", otpSecret: null });
+    const revealed = yield* client["testLogins.reveal"]({ id: login.id });
+    decodedTags.add("testLogins.reveal");
+    check("test login reveal preserves password and clears OTP", revealed.password === "fixture-only" && revealed.otpSecret === null);
+    yield* decodeCall(client, "testLogins.remove", { id: login.id });
+    yield* decodeCall(client, "testLogins.reveal", { id: login.id });
 
     const [config] = yield* take(client.subscribeServerConfig({}), 1);
     check(
@@ -563,6 +573,21 @@ const decodeEach = (client) =>
     yield* call("shell.openInEditor", { cwd: repo, editor: "vscode" });
     yield* call("terminal.clear", { threadId: none, terminalId: "default" });
     yield* call("terminal.observe", { threadId: none, terminalId: "default" });
+    const prRef = { projectId: none, host: "github.com", repository: "a/b", number: 7 };
+    for (const tag of ["pullRequests.summary", "pullRequests.detail", "pullRequests.preview", "pullRequests.routing", "pullRequests.checks", "pullRequests.activity", "pullRequests.filesViewed", "pullRequests.changeBreakdown", "pullRequests.linkedThreads"]) {
+      yield* call(tag, prRef);
+    }
+    yield* call("pullRequests.routingIdentity", { host: "github.com" });
+    yield* call("pullRequests.list", { state: "open" });
+    yield* call("pullRequests.listStats", { refs: [prRef] });
+    yield* call("pullRequests.filterOptions", { kind: "labels" });
+    yield* call("pullRequests.threadComments", { ...prRef, threadId: "review-thread", cursor: "next-comments" });
+    yield* call("pullRequests.diffFileContents", { ...prRef, changeType: "change", oldPath: "a.txt", newPath: "a.txt" });
+    yield* call("pullRequests.setFilesViewed", { ...prRef, files: [{ path: "a.txt", viewed: true }] });
+    yield* call("pullRequests.reportState", { reference: prRef, state: "open" });
+    yield* call("pullRequests.invalidate", { reference: prRef });
+    yield* call("pullRequests.subscribeRefreshes", {});
+    yield* call("pullRequests.subscribeLinkedThreadRefreshes", {});
     // Source control: GitHub probed, with no login or token of this machine (sealedEnv).
     yield* call("server.discoverSourceControl", {});
     // As a T3 server without an app client id: typed refusals, signed-out, not starred.

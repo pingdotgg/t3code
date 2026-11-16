@@ -170,6 +170,9 @@ pub fn capabilities(restart: &crate::restart::Restart) -> ExecutionEnvironmentCa
         max_upload_bytes: i64::try_from(conn_files::attachments::MAX_FILE_BYTES)
             .unwrap_or(i64::MAX),
     });
+    capabilities.pull_requests = Some(true);
+    capabilities.pull_request_checks = Some(true);
+    capabilities.linked_thread_refreshes = Some(true);
     capabilities.thread_force_stop = Some(true);
     capabilities.shell_thread_families = Some(true);
     capabilities.shell_older_settled = Some(true);
@@ -264,6 +267,9 @@ mod tests {
                 "fileAttachments",
                 "ignoredFileListing",
                 "ignoredFileSearch",
+                "linkedThreadRefreshes",
+                "pullRequestChecks",
+                "pullRequests",
                 "shellOlderSettled",
                 "shellThreadFamilies",
                 "threadForceStop"

@@ -174,3 +174,11 @@ packages/contracts/src/agentPanels.ts
 apps/server/src/orchestration-v2/workflowScriptQuery.ts
 apps/server/src/orchestration-v2/workflowFileRead.ts
 apps/server/src/serverRestart.ts
+
+[crates/conn-features/src/test_logins]
+apps/server/src/credentials/TestLoginStore.ts
+packages/contracts/src/credentials.ts
+
+[crates/conn-mcp/src/tools/test_logins.rs]
+apps/server/src/credentials/credentialOrigin.ts
+apps/server/src/mcp/toolkits/credentials

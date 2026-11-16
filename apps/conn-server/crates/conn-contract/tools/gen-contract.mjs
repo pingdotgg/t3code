@@ -169,6 +169,8 @@ const EXTRA_ROOTS = [
   "ChatAttachment",
   "ProviderApprovalDecision",
   "ProviderUserInputAnswers",
+  "PullRequestDiffInput",
+  "PullRequestDiffResult",
 ];
 const rootNames = new Set(EXTRA_ROOTS);
 for (const [file, mod] of modules) {

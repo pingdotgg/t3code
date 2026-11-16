@@ -290,6 +290,8 @@ const secretsRs = rustfmt(
     `// Source: ${SECRETS_FILE} (secretSettingsFields per group), packages/source-control-github/src/shared/definition.ts,`,
     "// secrets/secretProviderDefinitions.ts.",
     "",
+    `pub(super) const DEFAULT_AGENT_BROWSER_ACCESS: bool = ${settings.DEFAULT_SERVER_SETTINGS.enableAgentBrowserAccess};`,
+    "",
     "/// Secret fields of `providerInstances.*.config`, by the instance's `driver`.",
     "pub(super) const PROVIDER_CONFIG: &[(&str, &[&str])] = &[",
     ...providerFields.map(([driver, fields]) => `(${str(driver)}, ${strs(fields)}),`),
@@ -409,6 +411,10 @@ const LIMITED_METHODS = [
   "orchestration.getWorkflowScript",
   "orchestration.stopWorkflow",
   "secrets.answerRequest",
+  "testLogins.save",
+  "testLogins.update",
+  "testLogins.remove",
+  "testLogins.reveal",
   "panels.respond",
   "server.listTextGeneratorModels",
   "terminal.attach",
@@ -444,7 +450,8 @@ function limitNode(ast) {
   if ((ast.checks ?? []).some((c) => c.annotations?.expected === "a non-blank string")) node.nonBlank = true;
   for (const r of representations(ast)) {
     const p = r.payload;
-    if (r.id === "effect/schema/isMaxLength") node.maxLength = p.maxLength;
+    if (r.id === "effect/schema/isMinLength") node.minLength = p.minLength;
+    else if (r.id === "effect/schema/isMaxLength") node.maxLength = p.maxLength;
     else if (r.id === "effect/schema/isPattern") {
       // JS `i`, `m`, `s` are inline flags in Rust's regex; `u` changes nothing for these.
       const flags = p.flags.replace("u", "");

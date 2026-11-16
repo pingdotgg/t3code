@@ -35,6 +35,7 @@ struct RawLimit {
     variants: HashMap<String, RawLimit>,
     #[serde(default)]
     non_blank: bool,
+    min_length: Option<usize>,
     max_length: Option<usize>,
     pattern: Option<String>,
     max_properties: Option<usize>,
@@ -50,6 +51,7 @@ struct Limit {
     values: Option<Box<Limit>>,
     variants: Vec<(String, Limit)>,
     non_blank: bool,
+    min_length: Option<usize>,
     max_length: Option<usize>,
     pattern: Option<(String, Regex)>,
     max_properties: Option<usize>,
@@ -87,6 +89,7 @@ impl Limit {
             values: raw.values.map(|v| Box::new(Self::build(*v))),
             variants,
             non_blank: raw.non_blank,
+            min_length: raw.min_length,
             max_length: raw.max_length,
             pattern,
             max_properties: raw.max_properties,
@@ -155,6 +158,11 @@ impl Limit {
     fn text_problem(&self, text: &str, path: &[String]) -> Option<String> {
         if self.non_blank && text.is_empty() {
             return Some(at("a non-blank string".to_owned(), path));
+        }
+        if let Some(min) = self.min_length
+            && text.encode_utf16().count() < min
+        {
+            return Some(at(format!("a value with a length of at least {min}"), path));
         }
         if let Some(max) = self.max_length {
             let length = text.encode_utf16().count();

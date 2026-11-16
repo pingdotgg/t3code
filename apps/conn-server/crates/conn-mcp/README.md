@@ -199,8 +199,8 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `device_open` | not served | actsAsCaller | server: devices | D |
 | `device_screenshot` | not served | readsAsCaller | server: devices | D |
 | `device_close` | not served | actsAsCaller | server: devices | |
-| `panel_open` | not served | actsAsCaller | desktop client: panels | |
-| `database_query` | not served | actsAsCaller | desktop client: panels (the database panel) | |
+| `panel_open` | served | actsAsCaller | desktop client: panels | |
+| `database_query` | served | actsAsCaller | desktop client: panels (the database panel) | |
 | `mcp_connect` | not served | actsAsCaller | desktop client: panels (the MCP panel) | |
 | `mcp_call` | not served | actsAsCaller | desktop client: panels (the MCP panel) | |
 | `html_preview` | not served | readsAsCaller | server: HTML renders (`HtmlRender`) | O |
@@ -209,10 +209,10 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `annotations_claim` | served | actsAsCaller | | |
 | `annotations_complete` | served | actsAsCaller | | |
 | `annotations_release` | served | actsAsCaller | | |
-| `request_credentials` | not served | readsAsCaller | server: credentials | |
+| `request_credentials` | served | readsAsCaller | server: credentials | |
 | `fill_credential` | not served | actsAsCaller | server: credentials | |
-| `save_test_login` | not served | actsAsCaller | server: credentials (test logins) | |
-| `request_secret` | not served | actsAsCaller | server: secret requests | O |
+| `save_test_login` | served | actsAsCaller | server: credentials (test logins) | |
+| `request_secret` | served | actsAsCaller | server: secret requests | O |
 | `t3_environment_links` | not served | reads | server: peer links; hidden while links are off | O |
 | `t3_environment_link` | not served | writesEnvironment | server: peer links; hidden while links are off | O |
 | `t3_environment_unlink` | not served | writesEnvironment | server: peer links; hidden while links are off | |
@@ -337,3 +337,16 @@ not served. [conn-features](../conn-features/README.md#secret-requests-and-panel
 secret and panel bounds that differ from T3.
 `mcp_call` and `mcp_connect` go through the same panel broker, with T3's 90-second action
 timeout.
+
+## Test logins and database panel
+
+`save_test_login` and `request_credentials` use the shared test-login store. They return
+metadata only. They are hidden from outside clients; saving requires a live calling
+thread, while listing also works after its run ends. Both require the session’s `preview`
+capability, captured from global or project “Agent browser access” at session start.
+`fill_credential` and the site credential RPCs remain unserved until the desktop preview relay exists.
+
+`database_query` sends the SQL and connection name to the existing desktop panel broker,
+waits up to 90 seconds, and returns the desktop's result with `shownOn`. The desktop owns
+read-only enforcement, query limits and the 20-row preview, as in T3. The Linux server
+opens no database connection and needs no database driver. No desktop means a clear error.

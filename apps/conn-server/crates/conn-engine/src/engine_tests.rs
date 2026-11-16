@@ -2541,6 +2541,7 @@ async fn reported_background_work_holds_the_session_and_shows_in_the_shell() {
 
 #[derive(Default)]
 struct RecordingHost {
+    sessions: Mutex<Vec<crate::AgentSession>>,
     revoked: Mutex<Vec<String>>,
     released: Mutex<Vec<Value>>,
     closed: Mutex<Vec<(String, crate::ThreadClose)>>,
@@ -2548,6 +2549,7 @@ struct RecordingHost {
 
 impl crate::EngineHost for RecordingHost {
     fn agent_tools(&self, session: crate::AgentSession) -> Option<crate::AgentTools> {
+        self.sessions.lock().unwrap().push(session.clone());
         Some(crate::AgentTools {
             servers: vec![conn_provider::McpServer {
                 name: "t3-code".into(),
@@ -2617,6 +2619,10 @@ async fn the_host_grants_tools_claims_attachments_and_hears_closes() {
     let p = run_to_end(&engine, "t1", "run:t1:1").await;
     assert_eq!(p["messages"][0]["attachments"][0]["id"], "t1-1");
     assert_eq!(provider.mcp_servers.lock().unwrap()[0].name, "t3-code");
+    assert_eq!(
+        host.sessions.lock().unwrap()[0].project_id.as_deref(),
+        Some(project_id().as_str())
+    );
 
     // A refused message gives its claimed files back.
     let mut refused = message("missing", "c3", "nope");

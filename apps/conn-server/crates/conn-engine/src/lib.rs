@@ -204,6 +204,7 @@ pub trait EngineHost: Send + Sync {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AgentSession {
     pub thread_id: String,
+    pub project_id: Option<String>,
     pub provider_instance_id: String,
     /// The thread is a delegated child (`lineage.relationshipToParent: subagent`).
     pub subagent: bool,

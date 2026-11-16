@@ -341,7 +341,7 @@ function inputRule(ast) {
     if (annotations.expected === "a non-blank string") return [{id:"nonBlank",expected:annotations.expected}];
     const r = annotations.representation;
     if (r === undefined) return [];
-    const supported = ["isMinLength","isMaxLength","isInt","isGreaterThanOrEqualTo","isLessThanOrEqualTo","isPattern"];
+    const supported = ["isTrimmed","isMinLength","isMaxLength","isInt","isGreaterThanOrEqualTo","isLessThanOrEqualTo","isPattern"];
     const id = r.id.replace("effect/schema/", "");
     if (!supported.includes(id)) throw new Error(`thread tool input needs check ${r.id}`);
     return [{id,expected:annotations.expected,...r.payload}];
@@ -349,10 +349,10 @@ function inputRule(ast) {
   return rule;
 }
 const threadInputs = {};
-for (const [module,name] of [["attachment","AttachmentToolkit"],["worktree","WorktreeToolkit"],["orchestrator","OrchestratorToolkit"],["toolSearch","ToolSearchToolkit"],["panels","PanelsToolkit"]]) {
+for (const [module,name] of [["attachment","AttachmentToolkit"],["worktree","WorktreeToolkit"],["orchestrator","OrchestratorToolkit"],["toolSearch","ToolSearchToolkit"],["credentials","CredentialsToolkit"],["panels","PanelsToolkit"]]) {
   const toolkit = (await src(`mcp/toolkits/${module}/tools.ts`))[name];
   for (const [name,tool] of Object.entries(toolkit.tools)) {
-    if (!["create_threads","t3_attachment_prepare_upload","t3_attachment_discard","t3_thread_send_attachments","t3_worktree_handoff","t3_worktree_list","t3_workflow_stop","tool_search","mcp_call","mcp_connect"].includes(name)) continue;
+    if (!["create_threads","t3_attachment_prepare_upload","t3_attachment_discard","t3_thread_send_attachments","t3_worktree_handoff","t3_worktree_list","t3_workflow_stop","tool_search","save_test_login","request_credentials","database_query","mcp_call","mcp_connect"].includes(name)) continue;
     threadInputs[name] = inputRule(tool.parametersSchema.ast);
   }
 }
@@ -363,9 +363,12 @@ const failureMessages = /const SECRET_REQUEST_FAILURE_MESSAGES = \{([\s\S]+?)\} 
 if (!failureMessages) throw new Error("Secret request failure messages moved");
 const reasons = [...failureMessages.matchAll(/^  (\w+):/gm)].map((m) => m[1]);
 const secretTexts = JSON.stringify({ notes: secretContracts.SECRET_REQUEST_UNSAVED_NOTE, errors: Object.fromEntries(reasons.map((reason) => [reason, new secretContracts.SecretRequestError({reason}).message])) }) + "\n";
+const { PreviewAutomationUnavailableError } = await import(NodeURL.pathToFileURL(NodePath.join(repo,"packages/contracts/src/previewAutomation.ts")).href);
+const previewUnavailable = new PreviewAutomationUnavailableError({capability:"preview", environmentId:"fixture"}).message;
 const outputs = [
   [searchOut, searchText, "tool search cases"],
   [exposureLimitsOut, exposureLimits, "tool search limits"],
+  [NodePath.join(here,"..","src","preview-unavailable.txt"),previewUnavailable,"preview capability refusal"],
   [threadInputsOut,`${JSON.stringify(threadInputs)}\n`,"thread tool input checks"],
   [NodePath.join(here, "..", "..", "conn-features", "src", "secret-texts.json"), secretTexts, "secret request texts"],
   [out, text, `${catalog.length} tools`],

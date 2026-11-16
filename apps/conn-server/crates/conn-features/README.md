@@ -10,8 +10,9 @@ with its state and what it needs from outside the server.
 | --- | --- | --- | --- |
 | Scheduled tasks | `scheduledTasks.subscribe`, `upsert`, `setEnabled`, `delete`, `runNow`, `rotateWebhookToken`, `listWebhookDeliveries`, `getWebhookDelivery`; the route `/api/hooks/<task id>/<token>` | `schedule_task`, `list_scheduled_tasks`, `delete_scheduled_task`, `run_scheduled_task_now` | Webhook coalescing windows (a save with `coalesceKey` is refused), the T3 Connect relay, managed policy. `fresh_session` tasks are served: each bound run is sent with `freshContext` |
 | Annotations | `annotations.subscribe`, `create`, `remove` | `annotations_list`, `annotations_claim`, `annotations_complete`, `annotations_release` | |
+| Test logins | `testLogins.list`, `save`, `update`, `remove`, `reveal` | `save_test_login`, `request_credentials` | Browser filling needs the desktop preview relay. |
 | Secret requests | `secrets.answerRequest` | `request_secret` | Secret-provider references are not advertised; reference answers fail as unreadable. |
-| Panels | `panels.requests`, `panels.respond` | `panel_open` | Browser URL/tab automation needs the unimplemented desktop preview manager and relay. Showing the browser panel without a URL or tab id works. T3 leaves these RPCs unmounted; this server mounts them. |
+| Panels | `panels.requests`, `panels.respond` | `panel_open`, `database_query` | Browser URL/tab automation needs the unimplemented desktop preview manager and relay. Showing the browser panel without a URL or tab id works. T3 leaves these RPCs unmounted; this server mounts them. |
 
 ## Annotations (`src/annotations`)
 
@@ -177,3 +178,13 @@ Bounds differ from T3: 64 simultaneous secret waits, 1,024 retained answers and 
 A full store or wait limit refuses the request; a full desktop queue refuses delivery.
 Panel responses cap device names at 200 and errors at 8,192 UTF-16 units; T3 leaves both
 unbounded. Secret-provider references and browser URL/tab automation are not served.
+
+## Test logins
+
+`test_logins` reads and writes the settings secret store's `test-logins.bin`, with T3's
+version 1 format. It keeps no login cache. A shared lock serializes disk operations on
+`spawn_blocking`; list and save return metadata, and only `reveal` returns secrets.
+The store refuses more than 1,024 logins or a file over 16 MiB (T3 has no such caps).
+These RPCs are mounted here; T3 currently declares them without mounting them.
+A corrupt file fails without being overwritten. Password bytes are preserved; labels,
+URLs and OTP setup values follow T3's trimming rules.

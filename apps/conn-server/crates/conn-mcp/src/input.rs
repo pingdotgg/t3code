@@ -201,6 +201,9 @@ fn decode(
             .map(|s| s.encode_utf16().count())
             .or_else(|| value.as_array().map(Vec::len));
         let valid = match check["id"].as_str().unwrap_or_default() {
+            "isTrimmed" => value
+                .as_str()
+                .is_some_and(|s| s == conn_support::text::js_trim(s)),
             "nonBlank" => value
                 .as_str()
                 .is_some_and(|s| !conn_support::text::js_trim(s).is_empty()),
@@ -234,6 +237,23 @@ fn decode(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    #[test]
+    fn trimmed_check_uses_javascript_whitespace() {
+        for (domain, allowed) in [
+            ("\u{feff}example.test", false),
+            ("example.test\u{feff}", false),
+            ("\u{0085}example.test", true),
+            ("example.test\u{0085}", true),
+        ] {
+            let mut args = serde_json::from_value(json!({"domain":domain})).unwrap();
+            assert_eq!(
+                check("request_credentials", &mut args).is_ok(),
+                allowed,
+                "{domain:?}"
+            );
+        }
+    }
     #[test]
     fn every_generated_rule_compiles() {
         assert!(
