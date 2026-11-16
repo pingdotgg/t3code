@@ -434,9 +434,14 @@ it.each(["left", "right"] as const)(
   },
 );
 
-it.each(["beside", "into"] as const)(
-  "drops a file %s a standalone Files pane where the Files pane was",
-  async (where) => {
+it.each([
+  { where: "beside", opened: "a new" },
+  { where: "into", opened: "a new" },
+  { where: "beside", opened: "an already open" },
+  { where: "into", opened: "an already open" },
+] as const)(
+  "drops a $opened file $where a standalone Files pane where the Files pane was",
+  async ({ where, opened }) => {
     using fixture = setupPullRequestDrop();
     const { chatPaneId } = fixture;
     const tabFor = (surfaceId: string) =>
@@ -445,6 +450,9 @@ it.each(["beside", "into"] as const)(
       );
     await using _screen = await render(<SurfaceSync />);
     await act(() => {
+      if (opened === "an already open") {
+        useRightPanelStore.getState().openFile(pullRequestThreadRef, "src/app.ts", 12);
+      }
       requestLayoutSurfacePlacement(pullRequestThreadRef, {
         kind: "split",
         paneId: chatPaneId,
@@ -454,6 +462,7 @@ it.each(["beside", "into"] as const)(
     });
     const files = tabFor("files")!;
     expect(files.pane.id).not.toBe(chatPaneId);
+    if (opened === "an already open") expect(tabFor("file:src/app.ts")!.pane.id).toBe(chatPaneId);
     const source: LayoutDragSource = {
       kind: "surface",
       threadRef: pullRequestThreadRef,
@@ -472,6 +481,9 @@ it.each(["beside", "into"] as const)(
     });
     const file = tabFor("file:src/app.ts")!;
     expect(tabFor("files")).toBeUndefined();
+    expect(
+      findLayoutSurfaceTabs(useLayoutStore.getState().layout, pullRequestThreadRef),
+    ).toHaveLength(1);
     expect(file.column.id).toBe(files.column.id);
     expect(file.pane.tabs.map((tab) => tab.id)).toEqual([file.tab.id]);
     if (where === "into") expect(file.pane.id).toBe(files.pane.id);

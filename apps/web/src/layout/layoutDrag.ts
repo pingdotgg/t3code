@@ -468,18 +468,22 @@ export function commitLayoutDrop(
     store.focusWorkspace(destination.workspaceId);
   } else if (source.kind === "surface") {
     const owner = layoutDragSurfaceOwner(source);
-    const existing = layoutDragSourceTab(store.layout, source) !== null;
+    const existing = layoutDragSourceTab(store.layout, source);
     const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, owner);
     const reopensOthers =
+      !existing &&
       source.surface.kind !== "thread-terminal" &&
       !panel.isOpen &&
       panel.surfaces.some((surface) => surface.id !== source.surface.id);
-    if (!existing && !reopensOthers) requestLayoutSurfacePlacement(owner, destination);
+    if (existing) store.moveTab(existing.tab.id, destination);
+    else if (!reopensOthers) requestLayoutSurfacePlacement(owner, destination);
     openLayoutDragSurface(source.threadRef, source.surface);
-    const layout = useLayoutStore.getState().layout;
-    const placed = existing || reopensOthers ? layoutDragSourceTab(layout, source) : null;
-    const landing = placed ? layoutDropDestination(layout, target, workspaceId) : null;
-    if (placed && landing) useLayoutStore.getState().moveTab(placed.tab.id, landing);
+    if (reopensOthers) {
+      const layout = useLayoutStore.getState().layout;
+      const placed = layoutDragSourceTab(layout, source);
+      const landing = placed ? layoutDropDestination(layout, target, workspaceId) : null;
+      if (placed && landing) useLayoutStore.getState().moveTab(placed.tab.id, landing);
+    }
   } else {
     store.placeContent(layoutDragContent(source), destination);
   }
