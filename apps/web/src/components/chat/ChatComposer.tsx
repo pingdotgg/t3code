@@ -154,7 +154,7 @@ import { ComposerSpeechButton } from "./ComposerSpeechButton";
 import { VoiceInputErrorPill } from "./VoiceInputErrorPill";
 import { COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME } from "./ComposerPrimaryActions";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
-import { shortcutLabelForCommand } from "../../keybindings";
+import { shortcutLabelForCommand, type ShortcutMatchContext } from "../../keybindings";
 import {
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -441,6 +441,7 @@ export interface ChatComposerProps {
   resolvedTheme: "light" | "dark";
   settings: UnifiedSettings;
   keybindings: ResolvedKeybindingsConfig;
+  getShortcutContext: (eventTarget: EventTarget | null) => ShortcutMatchContext;
   terminalOpen: boolean;
   gitCwd: string | null;
   pullRequestProjectId: ProjectId | null;
@@ -557,6 +558,7 @@ export function ChatComposer(props: ChatComposerProps) {
     resolvedTheme,
     settings,
     keybindings,
+    getShortcutContext,
     terminalOpen,
     gitCwd,
     pullRequestProjectId,
@@ -2271,6 +2273,7 @@ export function ChatComposer(props: ChatComposerProps) {
       const intent = composerSubmissionIntentForKey({
         event,
         keybindings,
+        context: getShortcutContext(event.target),
         isSoftwareKeyboardOpen,
         isDraftThread: routeKind === "draft",
         isRunning: phase === "running" || phase === "connecting",
@@ -2411,6 +2414,7 @@ export function ChatComposer(props: ChatComposerProps) {
   const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem?: boolean) =>
     composerCommandKeyHandler({
       keybindings,
+      getShortcutContext,
       sendShortcut: settings.sendShortcut,
       routeKind,
       phase,
@@ -3677,6 +3681,7 @@ export function ChatComposer(props: ChatComposerProps) {
                 <ComposerCommandMenuLayer
                   anchor={composerMenuAnchor}
                   maxWidth={COMPOSER_MENU_MAX_WIDTH_PX}
+                  canOverflowTop
                 >
                   <ComposerStashMenu
                     composerFormRef={composerFormRef}
@@ -3829,7 +3834,7 @@ export function ChatComposer(props: ChatComposerProps) {
               <div
                 data-chat-composer-actions="right"
                 data-chat-composer-transition-actions="true"
-                className="z-1 flex w-max max-w-full items-center justify-end gap-1.5 self-start justify-self-end [grid-area:prompt]"
+                className="z-1 flex w-max max-w-full items-center justify-end gap-1.5 self-start justify-self-end [grid-area:prompt] in-data-composer-multiline:self-end"
               >
                 {composerAttachButton}
                 <ComposerFooterPrimaryActions
@@ -3907,12 +3912,15 @@ export function ChatComposer(props: ChatComposerProps) {
               </div>
             </div>
             {speechInput.preview ? (
+              // column-reverse pins the scroll to the bottom; the single inner div keeps the text in normal order.
               <div
                 aria-label="Live transcription"
-                className="mx-3 mb-3 max-h-32 overflow-y-auto rounded-control surface-well px-3 py-2 text-body leading-relaxed break-words whitespace-pre-wrap sm:mx-4"
+                className="mx-3 mb-3 flex max-h-32 flex-col-reverse overflow-y-auto rounded-control surface-well px-3 py-2 text-body leading-relaxed break-words whitespace-pre-wrap sm:mx-4"
               >
-                <span>{speechInput.preview.committed}</span>
-                <span className="text-muted-foreground">{speechInput.preview.tentative}</span>
+                <div>
+                  <span>{speechInput.preview.committed}</span>
+                  <span className="text-muted-foreground">{speechInput.preview.tentative}</span>
+                </div>
               </div>
             ) : null}
           </div>
