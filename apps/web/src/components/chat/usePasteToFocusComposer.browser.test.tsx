@@ -16,6 +16,7 @@ import { AppRoot } from "~/AppRoot";
 // keeps that out of the test's timeout.
 import "~/components/ChatView";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import { rememberCopiedComposerAttachments } from "~/lib/copiedComposerAttachments";
 import { getRouter } from "~/router";
 import {
   ENVIRONMENT_ID,
@@ -146,9 +147,14 @@ it("a copied image chip pasted outside the composer lands in it as a chip", asyn
     sizeBytes: PNG.length,
   } satisfies ComposerContextRecord;
 
+  using _uploads = acceptAttachmentUploads();
+  // Copying a chip in T3 Code keeps its file for the paste.
+  const shot = new File([PNG], "shot.png", { type: "image/png" });
+  rememberCopiedComposerAttachments(ENVIRONMENT_ID, new Map([[record.attachmentId, shot]]));
+
   (document.activeElement as HTMLElement | null)?.blur();
   pasteOnPage((data) => {
-    data.items.add(new File([PNG], "shot.png", { type: "image/png" }));
+    data.items.add(shot);
     data.setData("text/plain", formatComposerContextReference(record));
     data.setData(
       COMPOSER_CONTEXT_CLIPBOARD_MIME,
@@ -160,7 +166,19 @@ it("a copied image chip pasted outside the composer lands in it as a chip", asyn
     );
   });
 
+  await vi.waitFor(() => {
+    const editor = page.getByTestId("composer-editor").element();
+    const label = editor.querySelector('[data-slot="context-chip-label"]');
+    expect(label?.textContent).toMatch(/^shot\.png/);
+    expect(editor.querySelector("[data-context-unresolved]")).toBeNull();
+  });
+  await userEvent.keyboard("{Enter}");
+
+  // The sent message holds the copied image once: the clipboard's own copy of the file must not
+  // become a second attachment.
   await vi.waitFor(() =>
-    expect(page.getByTestId("composer-editor").element().textContent).toContain("shot.png"),
+    expect(dispatchedCommands().map((command) => command.type)).toContain("message.dispatch"),
   );
+  const sent = dispatchedCommands().find((command) => command.type === "message.dispatch");
+  expect(sent).toMatchObject({ attachments: [expect.objectContaining({ name: "shot.png" })] });
 });
