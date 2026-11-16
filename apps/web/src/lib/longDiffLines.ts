@@ -19,16 +19,16 @@ function clampLine(line: string): string {
 }
 
 // Clamped patch lines keep their originals so stale-content checks compare real text.
-const unclampedLines = new WeakMap<ReadonlyArray<string>, ReadonlyArray<string>>();
+const unclampedLines = new WeakMap<ReadonlyArray<string>, string[]>();
 
-function clampLines(lines: ReadonlyArray<string>): string[] | null {
+function clampLines(lines: string[]): string[] | null {
   if (lines.every((line) => line.length <= MAX_RENDERED_DIFF_LINE_LENGTH)) return null;
   const clamped = lines.map(clampLine);
   unclampedLines.set(clamped, lines);
   return clamped;
 }
 
-export function getUnclampedLines(lines: ReadonlyArray<string>): ReadonlyArray<string> {
+export function getUnclampedLines(lines: string[]): string[] {
   return unclampedLines.get(lines) ?? lines;
 }
 

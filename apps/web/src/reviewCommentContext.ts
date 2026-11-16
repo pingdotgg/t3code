@@ -3,6 +3,7 @@ import { PullRequestContextMetadata, type PullRequestReviewPosition } from "@t3t
 import * as Schema from "effect/Schema";
 
 import { isLineInFileDiff } from "./components/pullRequest/pullRequestDiff.logic";
+import { getUnclampedLines } from "./lib/longDiffLines";
 
 const ReviewCommentSelectionSchema = Schema.Struct({
   start: Schema.Number,
@@ -461,15 +462,21 @@ export function buildDiffReviewComment(input: {
   range: SelectedLineRange;
   text: string;
 }): ReviewCommentContext | null {
-  const includeExpandedContext = !input.fileDiff.isPartial;
+  // The agent gets the full source text, not the rendered long-line marker.
+  const fileDiff = {
+    ...input.fileDiff,
+    additionLines: getUnclampedLines(input.fileDiff.additionLines),
+    deletionLines: getUnclampedLines(input.fileDiff.deletionLines),
+  };
+  const includeExpandedContext = !fileDiff.isPartial;
   const startIndex = findDiffReviewLineIndex(
-    input.fileDiff,
+    fileDiff,
     input.range.start,
     input.range.side,
     includeExpandedContext,
   );
   const endIndex = findDiffReviewLineIndex(
-    input.fileDiff,
+    fileDiff,
     input.range.end,
     input.range.endSide ?? input.range.side,
     includeExpandedContext,
@@ -478,7 +485,7 @@ export function buildDiffReviewComment(input: {
 
   const normalizedStartIndex = Math.min(startIndex, endIndex);
   const normalizedEndIndex = Math.max(startIndex, endIndex);
-  const selectedLines = buildDiffReviewLines(input.fileDiff, includeExpandedContext, {
+  const selectedLines = buildDiffReviewLines(fileDiff, includeExpandedContext, {
     startIndex: normalizedStartIndex,
     endIndex: normalizedEndIndex,
   });

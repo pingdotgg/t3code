@@ -11,6 +11,7 @@ import {
   resolveDiffReviewPosition,
   restoreDiffReviewCommentRange,
 } from "./reviewCommentContext";
+import { getRenderablePatch } from "./lib/diffRendering";
 
 describe("review comment context parsing", () => {
   it("keeps attribute-like and closing-block text as data in file comments", () => {
@@ -74,6 +75,32 @@ describe("review comment context parsing", () => {
         fenceLanguage: "diff",
       }),
     );
+  });
+
+  it("sends the full text of a line the diff renders clamped", () => {
+    const long = `${"x".repeat(12_000)}CRITICAL_TAIL`;
+    const parsed = getRenderablePatch(
+      [
+        "diff --git a/a.ts b/a.ts",
+        "--- a/a.ts",
+        "+++ b/a.ts",
+        "@@ -1 +1 @@",
+        "-a",
+        `+${long}`,
+        "",
+      ].join("\n"),
+    );
+    if (parsed?.kind !== "files") throw new Error("Expected a parsed patch.");
+    const comment = buildDiffReviewComment({
+      id: "comment-long",
+      sectionId: "turn:1",
+      sectionTitle: "Turn 1",
+      filePath: "a.ts",
+      fileDiff: parsed.files[0]!,
+      range: { start: 1, side: "additions", end: 1, endSide: "additions" },
+      text: "Check the tail.",
+    });
+    expect(comment?.diff).toBe(`@@ -0,0 +1,1 @@\n+${long}`);
   });
 
   it("keeps a selection's trailing blank line and whitespace in the rendered excerpt", () => {
