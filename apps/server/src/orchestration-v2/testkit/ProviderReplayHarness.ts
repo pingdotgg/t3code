@@ -528,7 +528,7 @@ export function layerWithRegistry<Error>(
             Effect.succeed({ sent: false, sentThisAttempt: false, uncertain: false }),
           readSentDeliveries: () => Effect.succeed([]),
           recordViews: () => Effect.void,
-          recall: () => Effect.succeed(null),
+          recall: () => Effect.succeed({ _tag: "Skipped", reason: "no_match" }),
         }),
         layerContextHandoffServiceProvided,
         layerEventSinkProvided,

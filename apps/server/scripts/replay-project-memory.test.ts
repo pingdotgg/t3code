@@ -77,19 +77,6 @@ it.effect("replays invented facts through recall and names the gate", () =>
     assert.equal(match?.characters, "Change cache keys to include tenant IDs.".length);
     assert.isAbove(match?.candidatesMs ?? -1, -1);
     assert.equal(typeof match?.candidatesMs, "number");
-    assert.equal(match?.top[0]?.factId, "fact-one");
-    assert.equal(match?.top[0]?.passedGate, true);
-    for (const key of [
-      "holographic",
-      "lexical",
-      "tokenOverlap",
-      "temporalDecay",
-      "reinforcement",
-      "trust",
-      "combined",
-    ] as const) {
-      assert.equal(typeof match?.top[0]?.score[key], "number");
-    }
     assert.equal(byId.get("greeting")?.gate, "not_substantive");
     assert.equal(byId.get("greeting")?.candidatesMs, null);
     assert.deepEqual(byId.get("greeting")?.deliveredFactIds, []);

@@ -204,6 +204,9 @@ const message = (
   },
 });
 
+const attachedComposer = (outcome: ProjectKnowledge.RecallOutcome) =>
+  outcome._tag === "Attached" ? outcome.composer : null;
+
 const createFact = (projectId: ProjectId, id = "fact-one") =>
   ({
     action: "create",
@@ -1768,14 +1771,16 @@ it.effect("browsing searches can opt out of reinforcing retrieval counts", () =>
       (listed) => listed.facts[0]?.retrievalCount,
     );
     const recalled = Effect.fn("test.recalled")(function* (requestId: string, query: string) {
-      const composer = yield* knowledge.recall({
-        projectId,
-        threadId: ThreadId.make("recall-thread"),
-        requestId: CommandId.make(requestId),
-        query,
-        composer: { text: query, records: [] },
-        knowledgeAllowance: 48000,
-      });
+      const composer = attachedComposer(
+        yield* knowledge.recall({
+          projectId,
+          threadId: ThreadId.make("recall-thread"),
+          requestId: CommandId.make(requestId),
+          query,
+          composer: { text: query, records: [] },
+          knowledgeAllowance: 48000,
+        }),
+      );
       const record = composer?.records.find((item) => item.kind === "project-knowledge");
       return record?.kind === "project-knowledge" && "knowledge" in record
         ? record.knowledge.selections.flatMap((selection) =>
@@ -1844,15 +1849,17 @@ it.effect(
         overrides: Partial<Parameters<typeof knowledge.recall>[0]> = {},
         requestId = "recall",
       ) =>
-        knowledge.recall({
-          projectId,
-          threadId,
-          requestId: CommandId.make(requestId),
-          query,
-          composer: { text: query, records: [] },
-          knowledgeAllowance: 48000,
-          ...overrides,
-        });
+        knowledge
+          .recall({
+            projectId,
+            threadId,
+            requestId: CommandId.make(requestId),
+            query,
+            composer: { text: query, records: [] },
+            knowledgeAllowance: 48000,
+            ...overrides,
+          })
+          .pipe(Effect.map(attachedComposer));
 
       const recalled = yield* recall();
       const record = recalled?.records[0];
@@ -1989,14 +1996,16 @@ it.effect("does not recall a fact the thread's agent has already been shown", ()
     for (const [id, content] of Object.entries(contents))
       yield* knowledge.mutate({ ...createFact(projectId, id), content }, { kind: "user" });
     const recall = (threadId: ThreadId, requestId: string) =>
-      knowledge.recall({
-        projectId,
-        threadId,
-        requestId: CommandId.make(requestId),
-        query,
-        composer: { text: query, records: [] },
-        knowledgeAllowance: 48000,
-      });
+      knowledge
+        .recall({
+          projectId,
+          threadId,
+          requestId: CommandId.make(requestId),
+          query,
+          composer: { text: query, records: [] },
+          knowledgeAllowance: 48000,
+        })
+        .pipe(Effect.map(attachedComposer));
     const recalledIn = Effect.fn("test.recalledIn")(function* (thread: string, request = thread) {
       const composer = yield* recall(ThreadId.make(thread), `recall-${request}`);
       return (composer?.records ?? []).flatMap((record) =>
@@ -2187,14 +2196,16 @@ it.effect("recalls unseen facts beyond a full page of facts the thread has read"
       ids.slice(0, 9),
     );
     const query = "Change cache keys to include tenant IDs.";
-    const recalled = yield* knowledge.recall({
-      projectId,
-      threadId,
-      requestId: CommandId.make("recall-after-first-page"),
-      query,
-      composer: { text: query, records: [] },
-      knowledgeAllowance: 48000,
-    });
+    const recalled = attachedComposer(
+      yield* knowledge.recall({
+        projectId,
+        threadId,
+        requestId: CommandId.make("recall-after-first-page"),
+        query,
+        composer: { text: query, records: [] },
+        knowledgeAllowance: 48000,
+      }),
+    );
     const record = recalled?.records[0];
     assert.equal(record?.kind, "project-knowledge");
     if (record?.kind !== "project-knowledge" || !("knowledge" in record)) return;
@@ -3165,14 +3176,6 @@ it.effect("automatic corroboration appends validated sources without rewriting c
   }).pipe(Effect.provide(layerTest)),
 );
 
-const recallOutcomeFields = (outcome: unknown) =>
-  outcome !== null && typeof outcome === "object" && "_tag" in outcome
-    ? {
-        _tag: outcome._tag,
-        ...("reason" in outcome ? { reason: outcome.reason } : {}),
-      }
-    : outcome;
-
 it.effect(
   "returns a timed-out outcome when a recall store read is still open after one second",
   () =>
@@ -3198,7 +3201,7 @@ it.effect(
       yield* TestClock.adjust("999 millis");
       assert.isUndefined(pending.pollUnsafe());
       yield* TestClock.adjust("1 millis");
-      assert.deepEqual(recallOutcomeFields(yield* Fiber.join(pending)), {
+      assert.deepEqual(yield* Fiber.join(pending), {
         _tag: "Omitted",
         reason: "timed_out",
       });
@@ -3313,12 +3316,33 @@ it.effect("reads the recall lookup on the reader connection", () =>
           Effect.provideService(Statement.CurrentTransformer, observe),
           Effect.provideService(Statement.SpanPropagationEnabled, true),
         );
-      const connections = spans.map((span) => span.attributes.get("db.connection"));
+      const connectionOf = (span: Tracer.Span): unknown => {
+        const own = span.attributes.get("db.connection");
+        if (typeof own === "string") return own;
+        const parent = span.parent._tag === "Some" ? span.parent.value : undefined;
+        return parent?._tag === "Span" ? connectionOf(parent) : own;
+      };
+      const connections = spans.map((span) => {
+        const parent = span.parent._tag === "Some" ? span.parent.value : undefined;
+        return {
+          name: parent?._tag === "Span" ? parent.name : span.name,
+          connection: connectionOf(span),
+        };
+      });
       assert.isAbove(connections.length, 0);
       assert.isTrue(
-        connections.every((connection) => connection === "reader"),
+        connections.every((span) => span.connection === "reader"),
         JSON.stringify(connections),
       );
+      for (const name of [
+        "ProjectKnowledgeStore.seenFactIds",
+        "ProjectKnowledgeStore.recallCandidates",
+        "ProjectKnowledgeStore.find",
+      ])
+        assert.isTrue(
+          connections.some((span) => span.name === name),
+          JSON.stringify(connections),
+        );
     }).pipe(Effect.provide(layerFile));
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
@@ -3332,14 +3356,16 @@ it.effect(
       const query = "cache keys tenant";
       yield* createProject(projectId);
       const recall = (requestId: string) =>
-        knowledge.recall({
-          projectId,
-          threadId: ThreadId.make("recall-thread"),
-          requestId: CommandId.make(requestId),
-          query,
-          composer: { text: query, records: [] },
-          knowledgeAllowance: 48000,
-        });
+        knowledge
+          .recall({
+            projectId,
+            threadId: ThreadId.make("recall-thread"),
+            requestId: CommandId.make(requestId),
+            query,
+            composer: { text: query, records: [] },
+            knowledgeAllowance: 48000,
+          })
+          .pipe(Effect.map(attachedComposer));
       assert.isNull(yield* recall("recall-empty"));
       for (const id of ["first", "second", "third"])
         yield* knowledge.mutate(createFact(projectId, id), { kind: "user" });

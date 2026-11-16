@@ -156,6 +156,11 @@ const withoutForgotten = (
   );
 };
 
+const ftsMatch = (terms: ReadonlyArray<string>) =>
+  terms
+    .map((term) => `"${term.replaceAll('"', '""')}"${Buffer.byteLength(term) >= 4 ? "*" : ""}`)
+    .join(" OR ");
+
 export const makeStore = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const columns = sql`
@@ -276,9 +281,7 @@ export const makeStore = Effect.gen(function* () {
   ) {
     const recallable = sql`f.status = 'saved' AND f.trust >= ${minTrust}
       AND (${includeSuperseded ? 1 : 0} = 1 OR f.superseded_by_id IS NULL)`;
-    const ftsQuery = terms
-      .map((term) => `"${term.replaceAll('"', '""')}"${Buffer.byteLength(term) >= 4 ? "*" : ""}`)
-      .join(" OR ");
+    const ftsQuery = ftsMatch(terms);
     const lexical =
       ftsQuery === ""
         ? []
@@ -304,6 +307,29 @@ export const makeStore = Effect.gen(function* () {
       facts: yield* findMany(projectId, ids.slice(0, 1000)),
       ranks: new Map(lexical.map((row) => [row.id, row.rank])),
       partial: ids.length > 1000,
+    };
+  });
+  const recallCandidates = Effect.fn("ProjectKnowledgeStore.recallCandidates")(function* (
+    projectId: ProjectId,
+    terms: ReadonlyArray<string>,
+    minTrust: number,
+  ) {
+    const ftsQuery = ftsMatch(terms);
+    if (ftsQuery === "")
+      return { facts: [], ranks: new Map<ProjectFactId, number>(), partial: false };
+    const rows = yield* sql<{ readonly id: ProjectFactId; readonly rank: number }>`
+      SELECT f.id, bm25(project_knowledge_fts) AS rank
+      FROM project_knowledge_fts JOIN project_knowledge_facts f ON f.rowid = project_knowledge_fts.rowid
+      WHERE project_knowledge_fts MATCH ${ftsQuery} AND f.project_id = ${projectId}
+        AND f.status = 'saved' AND f.trust >= ${minTrust} AND f.superseded_by_id IS NULL
+      ORDER BY rank ASC, f.updated_at DESC, f.id ASC LIMIT 40`;
+    return {
+      facts: yield* findMany(
+        projectId,
+        rows.map((row) => row.id),
+      ),
+      ranks: new Map(rows.map((row) => [row.id, row.rank])),
+      partial: false,
     };
   });
   const findDuplicateContent = Effect.fn("ProjectKnowledgeStore.findDuplicateContent")(function* (
@@ -770,6 +796,7 @@ export const makeStore = Effect.gen(function* () {
     record,
     recordSearch,
     candidates,
+    recallCandidates,
     similar,
     findDuplicateContent,
     recordHistory,

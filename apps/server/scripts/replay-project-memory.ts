@@ -32,7 +32,7 @@ import * as HolographicMemory from "../src/project/knowledge/HolographicMemory.t
 import * as ProjectKnowledge from "../src/project/knowledge/ProjectKnowledge.ts";
 
 const KNOWLEDGE_ALLOWANCE = 48_000;
-const RECALL_TIMEOUT = "1 hour";
+const RECALL_TIMEOUT = "1 second";
 const GATES = [
   "hand_picked",
   "slash",
@@ -91,7 +91,6 @@ export interface ReplayRow {
   readonly scoringMs: number | null;
   readonly resolveMs: number | null;
   readonly seenMs: number | null;
-  readonly top: ProjectKnowledge.ProjectMemoryRecallCapture["top"];
 }
 
 interface Distribution {
@@ -483,11 +482,31 @@ const stageMs = (name: string): number | null => {
   return found.reduce((sum, span) => sum + span.ms, 0);
 };
 
-const deliveredFactIds = (
-  composer: { records: ReadonlyArray<{ kind: string }> } | null,
-): Array<string> => {
-  if (!composer) return [];
-  return composer.records.flatMap((record) => {
+const recallGate = (outcome: ProjectKnowledge.RecallOutcome): (typeof GATES)[number] => {
+  switch (outcome._tag) {
+    case "Attached":
+      return "delivered";
+    case "Omitted":
+      return outcome.reason === "timed_out" ? "timeout" : "failed";
+    case "Skipped":
+      switch (outcome.reason) {
+        case "slash":
+          return "slash";
+        case "hand_attached":
+          return "hand_picked";
+        case "not_substantive":
+          return "not_substantive";
+        case "no_budget":
+          return "allowance";
+        case "no_match":
+          return "no_match";
+      }
+  }
+};
+
+const deliveredFactIds = (outcome: ProjectKnowledge.RecallOutcome): Array<string> => {
+  if (outcome._tag !== "Attached") return [];
+  return outcome.composer.records.flatMap((record) => {
     if (record.kind !== "project-knowledge" || !("knowledge" in record)) return [];
     const knowledge = record.knowledge as {
       selections: ReadonlyArray<{ kind: string; factId?: string }>;
@@ -580,10 +599,9 @@ const loadFacts = Effect.fn("replay.loadFacts")(function* (
 
 const measureMessage = Effect.fn("replay.measureMessage")(function* (message: NormalizedMessage) {
   const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
-  const capture: ProjectKnowledge.ProjectMemoryRecallCapture = { outcome: "failed", top: [] };
   spans.length = 0;
   const started = performance.now();
-  const composer = yield* knowledge
+  const outcome = yield* knowledge
     .recall({
       projectId: ProjectId.make(message.projectId),
       threadId: ThreadId.make(message.threadId),
@@ -591,8 +609,6 @@ const measureMessage = Effect.fn("replay.measureMessage")(function* (message: No
       query: message.text,
       composer: { text: message.text, records: [] },
       knowledgeAllowance: KNOWLEDGE_ALLOWANCE,
-      timeout: RECALL_TIMEOUT,
-      capture,
     })
     .pipe(Effect.provideService(Tracer.Tracer, tracer));
   const wallMs = performance.now() - started;
@@ -602,14 +618,15 @@ const measureMessage = Effect.fn("replay.measureMessage")(function* (message: No
     threadId: message.threadId,
     createdBy: message.createdBy,
     characters: message.text.length,
-    gate: capture.outcome,
-    deliveredFactIds: deliveredFactIds(composer),
+    gate: recallGate(outcome),
+    deliveredFactIds: deliveredFactIds(outcome),
     wallMs,
-    candidatesMs: stageMs("ProjectKnowledgeStore.candidates"),
+    candidatesMs:
+      stageMs("ProjectKnowledgeStore.recallCandidates") ??
+      stageMs("ProjectKnowledgeStore.candidates"),
     scoringMs: stageMs("HolographicMemory.scoreCandidates"),
     resolveMs: stageMs("ProjectKnowledge.resolveMatches"),
     seenMs: stageMs("ProjectKnowledgeStore.seenFactIds"),
-    top: capture.top,
   };
   return row;
 });
@@ -643,8 +660,6 @@ export const replayProjectMemory = Effect.fn("replay.projectMemory")(function* (
           query: "warmup cache tenant isolation keys",
           composer: { text: "warmup cache tenant isolation keys", records: [] },
           knowledgeAllowance: KNOWLEDGE_ALLOWANCE,
-          timeout: RECALL_TIMEOUT,
-          capture: { outcome: "failed", top: [] },
         })
         .pipe(Effect.provideService(Tracer.Tracer, tracer));
     }

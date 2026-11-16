@@ -7,6 +7,7 @@ import { prepareKnowledgeDelivery } from "../project/knowledge/delivery.ts";
 import { ConversationSummaryRuntime } from "../project/conversationSummaries/conversationSummarySchedule.ts";
 import {
   CommandId,
+  ComposerContextId,
   latestProviderTurnForAttempt,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ContextHandoff,
@@ -1945,34 +1946,46 @@ export const layer: Layer.Layer<
         {
           // Recall adds related saved facts to the message, so no one has to pick them by hand.
           // Its text tells the agent to call T3 tools, so a session without them gets none.
-          const recalled =
-            !supportsT3Tools || noteContinuation || initialDeliveryState.sent
-              ? null
-              : yield* knowledge.recall({
-                  projectId: projection.thread.projectId,
-                  threadId: projection.thread.id,
-                  requestId: CommandId.make(`memory-recall:${attempt.id}`),
-                  query: providerMessage.text,
-                  composer: pstackComposer,
-                  knowledgeAllowance: budget.knowledgeAllowance,
-                  turn: {
-                    messageId: message.id,
-                    attemptId: attempt.id,
-                    providerInstanceId: run.providerInstanceId,
-                    providerThreadId: runningProviderThread.id,
-                    nativeThreadId: runningProviderThread.nativeThreadRef?.nativeId ?? null,
-                  },
+          if (supportsT3Tools && !noteContinuation && !initialDeliveryState.sent) {
+            const recalled = yield* knowledge.recall({
+              projectId: projection.thread.projectId,
+              threadId: projection.thread.id,
+              requestId: CommandId.make(`memory-recall:${attempt.id}`),
+              query: providerMessage.text,
+              composer: pstackComposer,
+              knowledgeAllowance: budget.knowledgeAllowance,
+              turn: {
+                messageId: message.id,
+                attemptId: attempt.id,
+                providerInstanceId: run.providerInstanceId,
+                providerThreadId: runningProviderThread.id,
+                nativeThreadId: runningProviderThread.nativeThreadRef?.nativeId ?? null,
+              },
+            });
+            switch (recalled._tag) {
+              case "Attached": {
+                const withRecall = yield* prepareDelivery(recalled.composer).pipe(Effect.option);
+                if (Option.isSome(withRecall)) {
+                  recalledComposer = recalled.composer;
+                  knowledgeDelivery = withRecall.value;
+                  composer = knowledgeDelivery.composer;
+                  initialDeliveryState = yield* knowledgeDelivery.readState;
+                  userText = initialDeliveryState.sent ? composer.baseText : composer.text;
+                }
+                break;
+              }
+              case "Omitted":
+                composer.omissions.push({
+                  contextId: ComposerContextId.make("recall"),
+                  label: "Recalled project memory",
+                  reason: "recall_failed",
                 });
-          const withRecall =
-            recalled === null
-              ? Option.none()
-              : yield* prepareDelivery(recalled).pipe(Effect.option);
-          if (Option.isSome(withRecall)) {
-            recalledComposer = recalled;
-            knowledgeDelivery = withRecall.value;
-            composer = knowledgeDelivery.composer;
-            initialDeliveryState = yield* knowledgeDelivery.readState;
-            userText = initialDeliveryState.sent ? composer.baseText : composer.text;
+                break;
+              case "Skipped":
+                break;
+              default:
+                recalled satisfies never;
+            }
           }
           yield* knowledgeDelivery.checkBudget(budget, initialDeliveryState.sent);
           if (!(yield* isCurrentAttemptInStatus("running"))) return;
