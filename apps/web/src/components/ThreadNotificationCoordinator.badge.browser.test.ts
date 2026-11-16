@@ -1,5 +1,9 @@
 import type { AnyRouter } from "@tanstack/react-router";
-import { EnvironmentId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type DesktopThreadNotification,
+  type DesktopThreadNotificationTarget,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";
@@ -107,6 +111,16 @@ class TestNotification extends EventTarget {
     super();
     TestNotification.sent.push(this);
   }
+}
+
+function pendingDelivery() {
+  let resolve!: (shown: boolean) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<boolean>((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  return { promise, resolve, reject };
 }
 
 const thread = {
@@ -291,6 +305,133 @@ it("presents completion notifications and sound as soon as the shell completes",
   );
   expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Thread completed"]);
   expect(state.sound).toHaveBeenCalledWith("completion", expect.any(Function));
+});
+
+it("uses native Windows completion notifications without a persistent browser banner", async () => {
+  await using app = setup();
+  const show = vi.fn<(notification: DesktopThreadNotification) => Promise<boolean>>(
+    async () => true,
+  );
+  const close = vi.fn(async () => undefined);
+  let activate: ((target: DesktopThreadNotificationTarget) => void) | undefined;
+  using _bridge = stubGlobal("desktopBridge", {
+    getClientPlatform: () => "win32",
+    showThreadNotification: show,
+    closeThreadNotification: close,
+    setThreadNotificationReady: async () => true,
+    onThreadNotificationActivated: (
+      listener: (target: DesktopThreadNotificationTarget) => void,
+    ) => {
+      activate = listener;
+      return () => {
+        activate = undefined;
+      };
+    },
+    onNotificationBadgeClear: () => () => undefined,
+  });
+  app.start();
+  using _timers = fakeTimers();
+  state.shells.set(
+    "one",
+    shell({
+      latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:00:01.000Z" },
+    }),
+  );
+  await vi.runOnlyPendingTimersAsync();
+  expect(show).toHaveBeenCalledWith(
+    expect.objectContaining({
+      environmentId: "one",
+      threadId: "thread",
+      title: "Thread completed",
+      body: "Test thread",
+    }),
+  );
+  expect(TestNotification.sent).toEqual([]);
+  const shown = show.mock.calls[0]![0];
+  activate!({ id: shown.id, environmentId: shown.environmentId, threadId: shown.threadId });
+  expect(state.navigate).toHaveBeenCalledWith({
+    to: "/$environmentId/$threadId",
+    params: { environmentId: "one", threadId: "thread" },
+  });
+  state.mode = "off";
+  app.changeSettings();
+  expect(close).toHaveBeenCalledWith(shown.id);
+});
+
+it("falls back to a tracked browser notification when native delivery fails", async () => {
+  await using app = setup();
+  state.mode = "notifications-and-sound";
+  const delivery = pendingDelivery();
+  const show = vi.fn<(notification: DesktopThreadNotification) => Promise<boolean>>(
+    () => delivery.promise,
+  );
+  const close = vi.fn(async () => undefined);
+  using _bridge = stubGlobal("desktopBridge", {
+    getClientPlatform: () => "win32",
+    showThreadNotification: show,
+    closeThreadNotification: close,
+    setThreadNotificationReady: async () => true,
+    onThreadNotificationActivated: () => () => undefined,
+    onNotificationBadgeClear: () => () => undefined,
+    revealWindow: async () => undefined,
+  });
+  app.start();
+  state.badge.mockClear();
+  state.shells.set("one", shell({ hasPendingApprovals: true }));
+  const shown = show.mock.calls[0]![0];
+  delivery.resolve(false);
+  await delivery.promise.catch(() => undefined);
+
+  expect(TestNotification.sent).toHaveLength(1);
+  const notification = TestNotification.sent[0]!;
+  expect(notification.title).toBe("Approval needed");
+  expect(notification.options).toMatchObject({ body: "Test thread", tag: shown.tag });
+  expect(state.badge).toHaveBeenLastCalledWith(1);
+  expect(state.badge.mock.calls).not.toContainEqual([0]);
+  expect(state.sound).toHaveBeenCalledTimes(1);
+  expect(close).toHaveBeenCalledWith(shown.id);
+  notification.dispatchEvent(new Event("click"));
+  expect(state.navigate).toHaveBeenCalledWith({
+    to: "/$environmentId/$threadId",
+    params: { environmentId: "one", threadId: "thread" },
+  });
+  state.mode = "off";
+  app.changeSettings();
+  expect(notification.close).toHaveBeenCalled();
+  expect(state.badge).toHaveBeenLastCalledWith(0);
+});
+
+it("does not let a replaced native delivery failure replace the newer notification", async () => {
+  await using app = setup();
+  const delivery = pendingDelivery();
+  const show = vi
+    .fn<(notification: DesktopThreadNotification) => Promise<boolean>>(async () => true)
+    .mockReturnValueOnce(delivery.promise);
+  const close = vi.fn(async () => undefined);
+  using _bridge = stubGlobal("desktopBridge", {
+    getClientPlatform: () => "win32",
+    showThreadNotification: show,
+    closeThreadNotification: close,
+    setThreadNotificationReady: async () => true,
+    onThreadNotificationActivated: () => () => undefined,
+    onNotificationBadgeClear: () => () => undefined,
+  });
+  app.start();
+  state.shells.set("one", shell({ hasPendingApprovals: true }));
+  state.shells.set("one", shell({ hasPendingUserInput: true }));
+  expect(show).toHaveBeenCalledTimes(2);
+  const replaced = show.mock.calls[0]![0];
+  const current = show.mock.calls[1]![0];
+  delivery.reject(new Error("old delivery failed"));
+  await delivery.promise.catch(() => undefined);
+
+  expect(TestNotification.sent).toEqual([]);
+  expect(close).toHaveBeenCalledWith(replaced.id);
+  expect(close).not.toHaveBeenCalledWith(current.id);
+  expect(state.badge).toHaveBeenLastCalledWith(1);
+  state.mode = "off";
+  app.changeSettings();
+  expect(close).toHaveBeenCalledWith(current.id);
 });
 
 it.each([false, true])(

@@ -1,6 +1,10 @@
 export const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 export const TO_LOCAL_BACKEND_PATH_CHANNEL = "desktop:to-local-backend-path";
 export const SET_NOTIFICATION_BADGE_CHANNEL = "desktop:set-notification-badge";
+export const SHOW_THREAD_NOTIFICATION_CHANNEL = "desktop:show-thread-notification";
+export const CLOSE_THREAD_NOTIFICATION_CHANNEL = "desktop:close-thread-notification";
+export const THREAD_NOTIFICATION_READY_CHANNEL = "desktop:thread-notification-ready";
+export const THREAD_NOTIFICATION_ACTIVATED_CHANNEL = "desktop:thread-notification-activated";
 export const PICK_PROJECT_FAVICON_CHANNEL = "desktop:pick-project-favicon";
 export const PICK_THEME_FILES_CHANNEL = "desktop:pick-theme-files";
 export const SET_THEME_CHANNEL = "desktop:set-theme";
