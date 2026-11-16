@@ -36,6 +36,7 @@ async function renderFocusedMinimap(onSelect = vi.fn()) {
           hasPersistentGutter
           hitStripWidth={24}
           currentIndex={0}
+          atEnd={false}
           items={items}
           stripMap={new Map()}
           onWheel={() => {}}
