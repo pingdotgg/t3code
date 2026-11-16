@@ -493,6 +493,44 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
     ),
   );
 
+  it.effect.each([
+    [
+      "an unreadable success payload",
+      { type: "result", subtype: "success", structured_output: { title: 42 } },
+      "invalid-output",
+    ],
+    ["running out of structured output retries", structuredOutputFailure, "invalid-output"],
+    [
+      "an execution error",
+      { type: "result", subtype: "error_during_execution", is_error: true, errors: [apiError] },
+      undefined,
+    ],
+    [
+      "an API error result",
+      { type: "result", subtype: "success", is_error: true, result: apiError },
+      undefined,
+    ],
+  ] as const)("labels %s by whether the model answered", ([, result, kind]) =>
+    withFakeClaudeEnv(
+      { output: JSON.stringify([{ type: "system", subtype: "init" }, result]) },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            textGeneration.generateThreadTitle({
+              cwd: process.cwd(),
+              message: "Name this thread",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+              },
+            }),
+          );
+
+          expect(error.kind).toBe(kind);
+        }),
+    ),
+  );
+
   it.effect("does not report the raw result JSON when a failed run writes nothing to stderr", () =>
     withFakeClaudeEnv(
       { output: JSON.stringify(structuredOutputFailure), exitCode: 1 },
