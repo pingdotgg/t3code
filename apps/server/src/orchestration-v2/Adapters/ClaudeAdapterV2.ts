@@ -1431,10 +1431,7 @@ export const layerQueryRunner: Layer.Layer<
       const tracked = new Map<string, ClaudeProcessRow>();
       const identity = (row: ClaudeProcessRow) => `${row.pid} ${row.started}`;
       // After exit the CLI's pid may belong to an unrelated process, so only tracked jobs are roots.
-      const refresh = Effect.fn("ClaudeAgentSdkQueryRunner.trackDescendants")(function* (
-        cliRunning: boolean,
-      ) {
-        const rows = yield* readProcessTable;
+      const record = (rows: ReadonlyArray<ClaudeProcessRow>, cliRunning: boolean) => {
         const running = new Set(rows.map(identity));
         const roots = [
           ...(cliRunning ? [cliPid] : []),
@@ -1442,15 +1439,43 @@ export const layerQueryRunner: Layer.Layer<
         ];
         for (const row of claudeDescendants(rows, roots)) tracked.set(identity(row), row);
         return running;
-      });
-      const stop = refresh(false).pipe(
-        Effect.map((running) => {
+      };
+      const stop = readProcessTable.pipe(
+        Effect.map((rows) => {
+          const running = record(rows, false);
           for (const row of tracked.values()) {
             if (running.has(identity(row))) killClaudeDescendant(row);
           }
         }),
       );
-      return { refresh: refresh(true).pipe(Effect.asVoid), stop };
+      const refresh = readProcessTable.pipe(Effect.map((rows) => void record(rows, true)));
+      return {
+        record: (rows: ReadonlyArray<ClaudeProcessRow>) => void record(rows, true),
+        refresh,
+        stop,
+      };
+    };
+    // One process table read per poll serves every running CLI, so polling does not scale with sessions.
+    const pollTargets = new Set<(rows: ReadonlyArray<ClaudeProcessRow>) => void>();
+    let poller: Fiber.Fiber<unknown> | undefined;
+    const pollDescendants = (target: (rows: ReadonlyArray<ClaudeProcessRow>) => void) => {
+      pollTargets.add(target);
+      poller ??= runFork(
+        readProcessTable.pipe(
+          Effect.map((rows) => {
+            for (const recordRows of pollTargets) recordRows(rows);
+          }),
+          Effect.withSpan("ClaudeAgentSdkQueryRunner.trackDescendants"),
+          Effect.repeat(Schedule.spaced(CLAUDE_DESCENDANT_POLL)),
+        ),
+      );
+      return Effect.suspend(() => {
+        pollTargets.delete(target);
+        if (pollTargets.size > 0 || poller === undefined) return Effect.void;
+        const idle = poller;
+        poller = undefined;
+        return Fiber.interrupt(idle);
+      });
     };
 
     return ClaudeAgentSdkQueryRunner.of({
@@ -1560,12 +1585,8 @@ export const layerQueryRunner: Layer.Layer<
                 );
                 if (unit === undefined && child.pid !== undefined) {
                   const tracker = trackDescendants(child.pid);
-                  const polling = runFork(
-                    tracker.refresh.pipe(Effect.repeat(Schedule.spaced(CLAUDE_DESCENDANT_POLL))),
-                  );
-                  child.once("exit", () =>
-                    runFork(Fiber.interrupt(polling).pipe(Effect.andThen(tracker.stop))),
-                  );
+                  const unpoll = pollDescendants(tracker.record);
+                  child.once("exit", () => runFork(unpoll.pipe(Effect.andThen(tracker.stop))));
                   refreshDescendants = tracker.refresh;
                 }
                 return child;
