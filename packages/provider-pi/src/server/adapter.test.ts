@@ -2858,6 +2858,47 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("keeps the handoff session when Stop retires Pi before agent_settled", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread, "default", [], "/handoff");
+      yield* fake.takeRequest("prompt");
+      const running = yield* takeEvent((event) => event.type === "provider_turn.updated");
+      if (running.type !== "provider_turn.updated") return yield* Effect.die("Missing turn");
+      const childFile = "/fake/extension-child.jsonl";
+      fake.reloadExtensions(childFile);
+      fake.setStreaming(true);
+      yield* fake.emit({ type: "response", command: "prompt", success: true });
+      yield* fake.emit({ type: "agent_start" });
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: running.providerTurn.id,
+        requestRuntimeRestart: true,
+      });
+      const idle = yield* takeEvent(
+        (event) =>
+          event.type === "provider_thread.updated" && event.providerThread.status === "idle",
+      );
+      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      expect(terminal.type === "turn.terminal" ? terminal.status : null).toBe("interrupted");
+      expect(
+        idle.type === "provider_thread.updated"
+          ? idle.providerThread.nativeThreadRef?.nativeId
+          : null,
+      ).toBe(childFile);
+      yield* takeEvent(
+        (event) =>
+          event.type === "provider_session.updated" && event.providerSession.status === "stopped",
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each([false, true, "previous"] as const)(
     "resets applied thinking when returning to Pi default (failed first restore: %s)",
     (failFirstRestore) =>
