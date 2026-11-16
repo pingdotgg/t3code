@@ -140,6 +140,62 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
   );
 }
 
+/** True once the agent has the turn; the turn's fold row then carries the setup instead of the card. */
+export function worktreeSetupHandedOff(props: WorktreeSetupCardProps): boolean {
+  return props.turnStarted && worktreeSetupAgentStarted(props.snapshot);
+}
+
+/** The card's state on the turn's fold row: setup still running, or a failure to look at. */
+export function WorktreeSetupFoldChip(props: WorktreeSetupCardProps) {
+  const { snapshot } = props;
+  const running = snapshot.phase === "running";
+  const failed =
+    snapshot.phase === "failed" || snapshot.stages.some((stage) => stage.status === "failed");
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const now = useVisibleSecondClock(running && detailsOpen);
+  if (!running && !failed && !detailsOpen) return null;
+  const scriptName = snapshot.setupScript?.name ?? "Setup script";
+  return (
+    <>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={
+          running
+            ? `Background setup is still running: ${scriptName}. Show setup progress.`
+            : "Worktree setup failed. Show setup details."
+        }
+        onPress={() => setDetailsOpen(true)}
+        hitSlop={8}
+        className="ml-2 min-w-0 max-w-[55%] flex-row items-center gap-1 rounded-full border border-border px-2 py-1 active:opacity-70"
+      >
+        {running ? (
+          <AppActivityIndicator
+            size={Platform.OS === "android" ? 12 : "small"}
+            colorClassName="accent-icon-muted"
+            style={{
+              width: 12,
+              height: 12,
+              transform: Platform.OS === "android" ? undefined : [{ scale: 0.65 }],
+            }}
+          />
+        ) : (
+          <SymbolView
+            name="exclamationmark.circle"
+            size={12}
+            tintColorClassName="accent-danger-foreground"
+          />
+        )}
+        <Text numberOfLines={1} className="shrink text-2xs text-foreground-secondary">
+          {running ? "Background setup" : "Setup failed"}
+        </Text>
+      </Pressable>
+      {detailsOpen ? (
+        <SetupDetailsSheet {...props} now={now} onClose={() => setDetailsOpen(false)} />
+      ) : null}
+    </>
+  );
+}
+
 /** Holds the card's place until the server publishes the first setup snapshot. */
 // Same rows the first snapshot brings, so the card keeps its height when that snapshot lands.
 const PREPARING_STAGES: ReadonlyArray<WorktreeSetupStage> = WORKTREE_SETUP_STAGE_ORDER.filter(

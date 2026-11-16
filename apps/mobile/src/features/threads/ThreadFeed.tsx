@@ -39,6 +39,8 @@ import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import {
   WorktreePreparingHeader,
   WorktreeSetupCard,
+  WorktreeSetupFoldChip,
+  worktreeSetupHandedOff,
   type WorktreeSetupCardProps,
 } from "./worktree-setup-card";
 import * as Haptics from "expo-haptics";
@@ -1818,7 +1820,10 @@ function renderFeedEntry(
     | "onEditPendingMessage"
     | "threadId"
     | "workspaceRoot"
+    | "worktreeSetup"
   > & {
+    /** The fold row of the turn the worktree setup handed off to. */
+    readonly setupFoldRowId: string | null;
     readonly pendingFoldMessageId: string | null;
     readonly formatMessageTime: (input: string) => string;
     readonly copiedRowId: string | null;
@@ -1920,6 +1925,9 @@ function renderFeedEntry(
             iconColor={iconSubtleColor}
           />
         )}
+        {props.worktreeSetup && entry.id === props.setupFoldRowId ? (
+          <WorktreeSetupFoldChip {...props.worktreeSetup} />
+        ) : null}
         {entry.checkpointSummary ? (
           <TurnDiffStat
             checkpoint={entry.checkpointSummary}
@@ -3664,6 +3672,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const setupAnchorIndex = presentedFeed.findIndex(
     (entry) => entry.type === "message" && entry.message.role === "user",
   );
+  // Once the agent has the turn, its fold row carries the setup in place of the card's header.
+  const setupFoldRowId =
+    props.worktreeSetup && worktreeSetupHandedOff(props.worktreeSetup)
+      ? (presentedFeed.find((entry, index) => index > setupAnchorIndex && entry.type === "run-fold")
+          ?.id ?? null)
+      : null;
   const [groupFeed] = useState(createThreadFeedGrouping);
   const groupedFeed = groupFeed(presentedFeed, {
     workflowOpeningMessageId: workflowOpening?.messageId,
@@ -4001,6 +4015,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             environmentId: props.environmentId,
             dispatchingMessageId: props.dispatchingMessageId,
             pendingFoldMessageId,
+            setupFoldRowId,
+            worktreeSetup: props.worktreeSetup,
             onEditPendingMessage: props.onEditPendingMessage,
             onUseArtifactTemplate: props.onUseArtifactTemplate,
             threadId: props.threadId,
@@ -4040,7 +4056,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             workspaceRoot: props.workspaceRoot,
             workflowOpening,
           })}
-          {props.worktreeSetup && info.index === setupAnchorIndex ? (
+          {props.worktreeSetup && info.index === setupAnchorIndex && setupFoldRowId === null ? (
             <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
           ) : props.preparingWorktree && info.index === setupAnchorIndex ? (
             <WorktreePreparingHeader />
