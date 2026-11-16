@@ -687,6 +687,55 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("finds the newest Claude sessions in a large home beside empty ones", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-large-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const recentWorkspace = yield* makeTempDir("t3code-workspace-recent-");
+        const olderWorkspace = yield* makeTempDir("t3code-workspace-older-");
+        // More project folders than the discovery budget reads, in an order unrelated to age.
+        const folderCount = 12_000;
+        const recentCount = 40;
+        const newestMs = Date.parse("2026-03-01T00:00:00.000Z");
+        yield* Effect.sync(() => {
+          for (let index = 0; index < folderCount; index++) {
+            const age = (index * 7_919) % folderCount;
+            const directory = path.join(claudeHomePath, "projects", `-slug-${index}`);
+            const filePath = path.join(directory, `session-${index}.jsonl`);
+            const seconds = (newestMs - age * 60_000) / 1000;
+            NodeFS.mkdirSync(directory, { recursive: true });
+            NodeFS.writeFileSync(
+              filePath,
+              claudeSessionLine(age < recentCount ? recentWorkspace : olderWorkspace),
+            );
+            NodeFS.utimesSync(filePath, seconds, seconds);
+            NodeFS.utimesSync(directory, seconds, seconds);
+          }
+        });
+        const emptyHomes = [];
+        for (let index = 0; index < 40; index++) {
+          emptyHomes.push([
+            ProviderInstanceId.make(`claude-empty-${index}`),
+            {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              config: { homePath: yield* makeTempDir(`t3code-claude-empty-${index}-`) },
+            },
+          ] as const);
+        }
+
+        const result = yield* runScan({
+          claudeHomePath,
+          codexHomePath,
+          providerInstances: Object.fromEntries(emptyHomes),
+        });
+
+        expect(
+          result.candidates.find((candidate) => candidate.path === recentWorkspace)?.threadCount,
+        ).toBe(recentCount);
+      }),
+    );
+
     it.effect("honors provider instance home directory environment variables", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
