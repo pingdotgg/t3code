@@ -1,4 +1,13 @@
 import { EnvironmentId, type ServerConfig } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as Hash from "effect/Hash";
+import * as RcMap from "effect/RcMap";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 
 import { parseLegacyNewTaskDraftKey } from "../state/new-task-draft-key";
@@ -129,22 +138,45 @@ export function queuedAttachmentsStillUploading(input: {
   );
 }
 
+/** Equal by environment and attachment id; the request rides along for the upload. */
+class UploadKey implements Equal.Equal {
+  constructor(
+    readonly id: string,
+    readonly request: ComposerAttachmentUploadRequest | null,
+  ) {}
+  static of(request: ComposerAttachmentUploadRequest): UploadKey {
+    return new UploadKey(
+      composerAttachmentUploadKey(request.environmentId, request.attachment.id),
+      request,
+    );
+  }
+  [Equal.symbol](that: unknown): boolean {
+    return that instanceof UploadKey && that.id === this.id;
+  }
+  [Hash.symbol](): number {
+    return Hash.string(this.id);
+  }
+}
+
+/**
+ * Every upload of a composer attachment, shared by key: the composer holds the attachments it
+ * shows or has queued, and a send joins the upload already running instead of starting another.
+ * An upload is interrupted once nothing holds it.
+ */
 export function createComposerAttachmentUploadQueue(options: {
   readonly upload: (
     request: ComposerAttachmentUploadRequest,
     signal: AbortSignal,
     onProgress: (progress: number) => void,
-  ) => Promise<boolean>;
+  ) => Promise<string>;
+  /** Saves a finished upload's id; the upload is ready once this resolves. */
+  readonly onUploaded?: (
+    request: ComposerAttachmentUploadRequest,
+    uploadedId: string,
+  ) => Promise<void>;
   readonly onChange: (states: Readonly<Record<string, ComposerAttachmentUploadState>>) => void;
 }) {
-  const jobs = new Map<
-    string,
-    { readonly controller: AbortController; readonly done: Promise<void> }
-  >();
-  let desired = new Map<string, ComposerAttachmentUploadRequest>();
   let states: Readonly<Record<string, ComposerAttachmentUploadState>> = {};
-  let disposed = false;
-
   function setState(key: string, state: ComposerAttachmentUploadState | undefined) {
     const previous = states[key];
     if (
@@ -161,82 +193,139 @@ export function createComposerAttachmentUploadQueue(options: {
     options.onChange(states);
   }
 
-  function pump() {
-    if (disposed) return;
-    for (const [key, request] of desired) {
-      if (jobs.size >= 3) break;
-      if (jobs.has(key) || states[key]?.status === "ready" || states[key]?.status === "failed")
-        continue;
+  const permits = Semaphore.makeUnsafe(3);
+  // An interrupted transfer settles before its attachment can upload again.
+  const settling = new Map<string, Promise<void>>();
+  const running = new Set<Fiber.Fiber<string, ComposerAttachmentUploadError>>();
+
+  const transfer = (key: UploadKey) =>
+    Effect.suspend(() => {
+      const previous = settling.get(key.id);
       const controller = new AbortController();
-      setState(key, { status: "uploading", progress: 0 });
-      // Publish the job before starting async work, including synchronous test transports.
-      const done = Promise.resolve()
-        .then(() =>
-          options.upload(request, controller.signal, (progress) => {
-            if (controller.signal.aborted) return;
-            setState(key, {
-              status: "uploading",
-              progress: Math.floor(Math.max(0, Math.min(1, progress)) * 20) / 20,
+      let done: Promise<string> | undefined;
+      const start = () => {
+        if (states[key.id]?.status !== "uploading")
+          setState(key.id, { status: "uploading", progress: 0 });
+        done = options.upload(key.request!, controller.signal, (progress) => {
+          if (controller.signal.aborted) return;
+          setState(key.id, {
+            status: "uploading",
+            progress: Math.floor(Math.max(0, Math.min(1, progress)) * 20) / 20,
+          });
+        });
+        return done;
+      };
+      return Effect.promise(() => previous ?? Promise.resolve()).pipe(
+        Effect.andThen(Effect.tryPromise({ try: start, catch: uploadError })),
+        Semaphore.withPermits(permits, 1),
+        Effect.tap((uploadedId) =>
+          Effect.tryPromise({
+            try: () => options.onUploaded?.(key.request!, uploadedId) ?? Promise.resolve(),
+            catch: uploadError,
+          }),
+        ),
+        Effect.tap(() => Effect.sync(() => setState(key.id, { status: "ready" }))),
+        Effect.tapError((error) =>
+          Effect.sync(() => setState(key.id, { status: "failed", reason: error.message })),
+        ),
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            controller.abort();
+            const settled = (done ?? Promise.resolve("")).then(
+              () => undefined,
+              () => undefined,
+            );
+            settling.set(key.id, settled);
+            void settled.then(() => {
+              if (settling.get(key.id) === settled) settling.delete(key.id);
             });
           }),
-        )
-        .then((persisted) => {
-          if (!controller.signal.aborted && desired.has(key)) {
-            if (!persisted) desired.delete(key);
-            setState(key, persisted ? { status: "ready" } : undefined);
-          }
-        })
-        .catch((error: unknown) => {
-          if (!controller.signal.aborted && desired.has(key)) {
-            setState(key, {
-              status: "failed",
-              reason: error instanceof Error ? error.message : "Upload failed. Tap to retry.",
-            });
-          }
-        })
-        .finally(() => {
-          jobs.delete(key);
-          pump();
-        });
-      jobs.set(key, { controller, done });
+        ),
+      );
+    });
+
+  const scope = Scope.makeUnsafe();
+  const uploads = Effect.runSync(
+    Scope.provide(scope)(
+      RcMap.make({
+        lookup: Effect.fn("ComposerAttachmentUploads.lookup")(function* (key: UploadKey) {
+          setState(key.id, { status: "uploading", progress: 0 });
+          yield* Effect.addFinalizer(() => Effect.sync(() => setState(key.id, undefined)));
+          const fiber = yield* Effect.forkScoped(transfer(key));
+          running.add(fiber);
+          fiber.addObserver(() => running.delete(fiber));
+          return fiber;
+        }),
+      }),
+    ),
+  );
+
+  const holders = new Map<string, Scope.Closeable>();
+  let requested: ReadonlyArray<ComposerAttachmentUploadRequest> = [];
+  let disposed = false;
+  const release = (id: string) => {
+    const holder = holders.get(id);
+    if (!holder) return;
+    holders.delete(id);
+    Effect.runFork(Scope.close(holder, Exit.void));
+  };
+
+  /** Holds exactly these uploads; anything no longer requested and held nowhere else stops. */
+  function sync(requests: ReadonlyArray<ComposerAttachmentUploadRequest>) {
+    if (disposed) return;
+    requested = requests;
+    const keys = new Map(requests.map((request) => [UploadKey.of(request).id, request]));
+    for (const id of holders.keys()) {
+      if (!keys.has(id)) release(id);
+    }
+    for (const [id, request] of keys) {
+      if (holders.has(id)) continue;
+      const holder = Scope.makeUnsafe();
+      holders.set(id, holder);
+      Effect.runSync(Scope.provide(holder)(RcMap.get(uploads, UploadKey.of(request))));
     }
   }
 
   return {
-    sync(requests: ReadonlyArray<ComposerAttachmentUploadRequest>) {
-      if (disposed) return;
-      desired = new Map(
-        requests.map((request) => [
-          composerAttachmentUploadKey(request.environmentId, request.attachment.id),
-          request,
-        ]),
+    sync,
+    /** Uploads the attachment, joining its running upload when there is one. */
+    upload(request: ComposerAttachmentUploadRequest, signal?: AbortSignal): Promise<string> {
+      if (disposed) return Promise.reject(new Error("Upload cancelled."));
+      return Effect.runPromise(
+        RcMap.get(uploads, UploadKey.of(request)).pipe(Effect.flatMap(Fiber.join), Effect.scoped),
+        signal ? { signal } : undefined,
       );
-      for (const [key, job] of jobs) {
-        if (!desired.has(key)) job.controller.abort();
-      }
-      for (const key of Object.keys(states)) {
-        if (!desired.has(key)) setState(key, undefined);
-      }
-      for (const key of desired.keys()) {
-        if (!states[key]) setState(key, { status: "uploading", progress: 0 });
-      }
-      pump();
     },
     retry(environmentId: EnvironmentId, attachmentId: string) {
-      const key = composerAttachmentUploadKey(environmentId, attachmentId);
-      if (states[key]?.status !== "failed") return;
-      setState(key, undefined);
-      pump();
+      const id = composerAttachmentUploadKey(environmentId, attachmentId);
+      if (states[id]?.status !== "failed") return;
+      Effect.runSync(RcMap.invalidate(uploads, new UploadKey(id, null)));
+      release(id);
+      sync(requested);
     },
     async settled() {
-      while (jobs.size > 0) await Promise.all([...jobs.values()].map((job) => job.done));
+      while (running.size > 0) {
+        await Effect.runPromise(Fiber.awaitAll([...running]));
+      }
     },
     dispose() {
       disposed = true;
-      desired.clear();
-      for (const job of jobs.values()) job.controller.abort();
+      holders.clear();
+      Effect.runFork(Scope.close(scope, Exit.void));
       states = {};
       options.onChange(states);
     },
   };
 }
+
+function uploadError(cause: unknown): ComposerAttachmentUploadError {
+  return new ComposerAttachmentUploadError({
+    message: cause instanceof Error ? cause.message : "Upload failed. Tap to retry.",
+    cause,
+  });
+}
+
+class ComposerAttachmentUploadError extends Schema.TaggedError<ComposerAttachmentUploadError>()(
+  "ComposerAttachmentUploadError",
+  { message: Schema.String, cause: Schema.Defect() },
+) {}

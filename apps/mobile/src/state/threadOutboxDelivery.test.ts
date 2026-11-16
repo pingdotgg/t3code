@@ -84,6 +84,7 @@ vi.mock("../lib/uuid", () => ({
 vi.mock("../lib/attachmentUpload", () => ({
   prepareTurnAttachments: harness.prepareTurnAttachments,
 }));
+vi.mock("./composer-attachment-uploads", () => ({ uploadComposerAttachmentShared: vi.fn() }));
 
 vi.mock("./projects", () => ({ environmentProjects: {} }));
 

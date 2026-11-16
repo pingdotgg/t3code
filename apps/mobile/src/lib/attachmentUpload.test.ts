@@ -90,10 +90,32 @@ vi.mock("expo-file-system", () => ({
 }));
 
 import {
-  prepareTurnAttachments,
+  prepareTurnAttachments as prepareWithUploads,
   releasePendingAttachmentUploads,
+  uploadComposerAttachment,
   withUploadedMobileAttachmentReferences,
 } from "./attachmentUpload";
+
+/** Uploads each attachment directly, as the shared registry does for one holder. */
+function prepareTurnAttachments(
+  input: Omit<Parameters<typeof prepareWithUploads>[0], "uploadAttachment"> & {
+    readonly onUploadProgress?: (attachmentId: string, progress: number) => void;
+  },
+) {
+  const signal = input.signal ?? new AbortController().signal;
+  return prepareWithUploads({
+    ...input,
+    uploadAttachment: (attachment) =>
+      uploadComposerAttachment(
+        input.environmentId,
+        attachment,
+        signal,
+        input.onUploadProgress
+          ? (progress) => input.onUploadProgress?.(attachment.id, progress)
+          : undefined,
+      ),
+  });
+}
 import type { DraftComposerAttachment } from "./composerImages";
 
 const environmentId = EnvironmentId.make("environment-1");
@@ -730,17 +752,6 @@ describe("prepareTurnAttachments", () => {
     ).rejects.toThrow("Upload failed for 'report.pdf' (500).");
 
     expect(removeCallsFor("pending-existing-pdf")).toBe(0);
-  });
-
-  it("deletes the minted uploads when the owner abandons the send", async () => {
-    const result = await prepareTurnAttachments({
-      environmentId,
-      attachments: [file],
-      persistUploadedReferences: async () => "abandon",
-    });
-
-    expect(result.status).toBe("abandoned");
-    expect(removeCallsFor(MINTED_ID)).toBe(1);
   });
 });
 

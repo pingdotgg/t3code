@@ -72,6 +72,7 @@ import { pendingThreadCreationMessage } from "./pending-thread-creation";
 import {
   composerAttachmentUploadBlockReason,
   composerAttachmentUploadsAtom,
+  uploadComposerAttachmentShared,
 } from "./composer-attachment-uploads";
 import {
   appendComposerDraftAttachments,
@@ -514,6 +515,8 @@ export function useThreadComposerState(input: {
         environmentId: thread.environmentId,
         attachments: draft.attachments,
         supportsImageUploads: capabilities !== undefined,
+        uploadAttachment: (attachment) =>
+          uploadComposerAttachmentShared(thread.environmentId, attachment),
       }),
     );
     if (AsyncResult.isFailure(prepared)) {

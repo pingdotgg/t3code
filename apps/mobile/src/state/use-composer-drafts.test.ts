@@ -1241,9 +1241,11 @@ describe("mobile composer drafts", () => {
     });
     appendComposerDraftAttachments("environment-1:thread-1", [image]);
     await flushComposerDrafts();
+    // Without image uploads the image is inlined, so nothing goes through the upload registry.
     const preparing = prepareTurnAttachments({
       environmentId: EnvironmentId.make("environment-1"),
       attachments: [image],
+      uploadAttachment: vi.fn(),
     });
     onTestFinished(async () => {
       read.resolve();

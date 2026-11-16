@@ -49,6 +49,7 @@ import {
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
 import { composerAttachmentUploadsAtom } from "./composer-attachment-upload-states";
+import { uploadComposerAttachmentShared } from "./composer-attachment-uploads";
 import {
   queuedAttachmentsStillUploading,
   uploadingComposerAttachmentKeys,
@@ -233,6 +234,8 @@ export async function prepareQueuedMessageAttachments(queuedMessage: QueuedThrea
     environmentId: queuedMessage.environmentId,
     attachments: queuedMessage.attachments,
     supportsImageUploads: true,
+    uploadAttachment: (attachment) =>
+      uploadComposerAttachmentShared(queuedMessage.environmentId, attachment),
     persistUploadedReferences: async (draftAttachments) => {
       if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) {
         return "abandon";
