@@ -569,7 +569,7 @@ export function threadListV2ListItemsAreEqual(
 function resolveProjectFolderStatus(
   threads: readonly EnvironmentThreadShell[],
 ): ThreadListV2ProjectFolderListItem["status"] {
-  const statuses = new Set(threads.map(resolveThreadListV2Status));
+  const statuses = new Set(threads.map(resolveThreadListV2RowStatus));
   if (statuses.has("approval") || statuses.has("input") || statuses.has("request")) {
     return "attention";
   }

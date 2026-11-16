@@ -1008,6 +1008,34 @@ describe("buildThreadListV2ListItems", () => {
       expanded: false,
       status: "attention",
     });
+    const hiddenFailure = presentThreadShell(
+      remoteEnvironmentId,
+      makeRawThreadShell({
+        id: ThreadId.make("hidden"),
+        projectId: ProjectId.make("first-remote"),
+        status: "failed",
+        latestRunId: RunId.make("hidden-failed-run"),
+        latestRunCompletedAt: DateTime.makeUnsafe("2026-06-01T23:59:00.000Z"),
+        lastVisitedAt: DateTime.makeUnsafe(NOW),
+      }),
+    );
+    for (const [hiddenThread, status] of [
+      [hiddenFailure, null],
+      [{ ...hiddenFailure, lastVisitedAt: null }, "failed"],
+      [{ ...hiddenFailure, latestRun: null }, "failed"],
+    ] as const) {
+      const failureLayout = buildThreadListV2Items({
+        threads: threads.map((thread) => (thread.id === "hidden" ? hiddenThread : thread)),
+        environmentId: null,
+        searchQuery: "",
+        now: NOW,
+        projectFoldersEnabled: true,
+        snoozedShelfExpanded: true,
+        settledShelfExpanded: true,
+      });
+      const failureItems = buildThreadListV2ListItems({ ...input, items: failureLayout.items });
+      expect(failureItems.find((item) => item.type === "v2-project-folder")?.status).toBe(status);
+    }
     expect(threadJumpTarget(items, "thread.jump.2")?.id).toBe("selected");
     const expanded = buildThreadListV2ListItems({ ...input, collapsedProjectKeys: [] });
     expect(expanded.filter((item) => item.type === "v2-thread")).toHaveLength(threads.length);
