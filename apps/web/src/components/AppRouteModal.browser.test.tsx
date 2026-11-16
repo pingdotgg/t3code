@@ -32,6 +32,9 @@ describe("AppRouteModal", () => {
       </AppRouteModal>,
       { router: "/settings/general" },
     );
+    const settings = page.getByRole("dialog", { name: "Settings" });
+    // Base UI takes initial focus a frame after opening; let it land before Clerk's modal takes focus.
+    await expect.element(settings).toHaveFocus();
     // Clerk renders its account modal in its own root and dismisses on a document Esc listener.
     const foreignModal = document.body.appendChild(document.createElement("input"));
     using _foreignModal = { [Symbol.dispose]: () => foreignModal.remove() };
@@ -39,8 +42,6 @@ describe("AppRouteModal", () => {
     foreignModal.focus();
     await userEvent.keyboard("{Escape}");
 
-    await expect
-      .element(page.getByRole("dialog", { name: "Settings" }))
-      .toHaveAttribute("data-open");
+    await expect.element(settings).toHaveAttribute("data-open");
   });
 });
