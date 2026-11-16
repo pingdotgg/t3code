@@ -211,6 +211,8 @@ function makeSide(name) {
       child.stdout.on("data", (d) => (stdout += d));
       child.stderr.on("data", (d) => (stderr += d));
       child.on("close", (code) => resolve({ stdout, stderr, code }));
+      // A CLI that exits before reading stdin closes the pipe; its output and code still compare.
+      child.stdin.on("error", () => {});
       child.stdin.end(input);
     });
 
