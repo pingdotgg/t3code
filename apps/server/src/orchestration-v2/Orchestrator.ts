@@ -5275,9 +5275,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: updatedThread,
     });
     if (command.type === "thread.model-selection.set" || command.type === "provider.switch") {
-      const { runs } = yield* loadProjectionForCommand(command, ["runs"], { turnItemTypes: [] });
+      const { runs } = yield* loadProjectionForCommand(command, ["runs"], {
+        runStatuses: ["queued"],
+      });
       for (const run of runs) {
-        if (run.status !== "queued" || run.threadPickSuperseded === true) continue;
+        if (run.threadPickSuperseded === true) continue;
         yield* emit(
           events,
           command,
