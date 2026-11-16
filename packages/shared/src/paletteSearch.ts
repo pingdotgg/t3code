@@ -456,7 +456,9 @@ function matchExactPhrase(
   phrase: string,
   fields: ReadonlyArray<WeightedSearchField>,
 ): SearchFieldsMatch | null {
-  const words = phrase.split(" ");
+  // An empty word would match everywhere, and loop forever in `findWholePhrase`.
+  const words = phrase.split(" ").filter((word) => word.length > 0);
+  if (words.length === 0) return null;
   let best = 0;
   let primaryRange: SearchRange | undefined;
   for (const [position, weighted] of fields.entries()) {
@@ -651,7 +653,8 @@ function findExactPhrase(
     if (startsWordAt(text, match.index) && endsWordAt(text, end)) {
       return { start: match.index, end };
     }
-    pattern.lastIndex = match.index + 1;
+    // A whole character on: from an emoji's second half the pattern finds this match again.
+    pattern.lastIndex = match.index + (searched.codePointAt(match.index)! > 0xffff ? 2 : 1);
   }
   return null;
 }

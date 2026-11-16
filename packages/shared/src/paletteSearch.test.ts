@@ -408,6 +408,8 @@ describe("scoreThreadSearch beyond Latin text and titles", () => {
     const quotes = '"'.repeat(34);
     expect(foldSearchQuery(`a${quotes}x`)).toBe(`a${quotes}x`);
     expect(scoreThreadSearch(foldSearchQuery('"#"'), thread('Fix "" handling'), NOW)).toBeNull();
+    // A query folded elsewhere may hold stray spaces.
+    expect(scoreThreadSearch('" lag"', thread("Fix sidebar lag"), NOW)).not.toBeNull();
     const subject = thread("Trim model lists", {
       branch: "t3/cleanup-payloads",
       pullRequests: [{ number: 22889, title: "Smaller MCP payloads" }],
@@ -782,6 +784,8 @@ describe("scoreMessageMatch", () => {
       [`missing${" ".repeat(17)}osprey files`, '"missing osprey files"', null],
       // Whole words by the rule single words follow.
       ["quickFix JSONSchema", '"fix JSON"', { quality: 1.25, offset: 5 }],
+      // Past a place where the phrase only starts a longer word, emoji first or not.
+      ["🚀 launching, then 🚀 launch", '"🚀 launch"', { quality: 1.25, offset: 19 }],
       ["changed file", '"file"', { quality: 1, offset: 8 }],
       ["changed files", '"file"', null],
     ] as const) {
