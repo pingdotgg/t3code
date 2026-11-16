@@ -18,6 +18,7 @@ import {
 } from "@t3tools/contracts";
 
 import { act, render, stubGlobal } from "../../test/render";
+import { AppRouteModal } from "../components/AppRouteModal";
 import { GlobalVoiceInputIndicator } from "../components/chat/GlobalVoiceInputIndicator";
 import { VoiceInputSetup } from "../components/chat/VoiceInputSetup";
 import type { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
@@ -62,6 +63,9 @@ const mocks = vi.hoisted(() => ({
   storedDraft: "",
 }));
 
+vi.mock("../components/sidebar/mainAppLocation", () => ({
+  useCloseAppModal: () => () => Promise.resolve(),
+}));
 vi.mock("../state/session", () => ({
   useEnvironmentScope: (id: string) => mocks.canDictate.has(id),
   usePreparedConnection: (environmentId: string | null) => {
@@ -424,6 +428,31 @@ it.each([
   await vi.waitFor(() => expect(mocks.storedDraft).toBe("Earlier text dictated"));
   expect(mocks.transcribeCalls).toEqual(["env-a"]);
   expect(mocks.committed).not.toHaveBeenCalled();
+});
+
+it("finishes an off-screen recording with the keyboard while Settings is open", async () => {
+  setup({ destination: "env-a" });
+  mocks.storedDraft = "Earlier text";
+  await using screen = await render(
+    <>
+      <Probe ownerKey="thread-a" persistent />
+      <GlobalVoiceInputIndicator />
+    </>,
+  );
+  await act(() => mocks.voice.start());
+  await screen.rerender(
+    <>
+      <Probe ownerKey="thread-b" persistent />
+      <AppRouteModal label="Settings">
+        <button type="button">Settings control</button>
+      </AppRouteModal>
+    </>,
+  );
+  await expect.element(page.getByRole("dialog", { name: "Settings" })).toHaveFocus();
+  await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
+  await expect.element(page.getByRole("button", { name: "Finish voice input" })).toHaveFocus();
+  await userEvent.keyboard("{Enter}");
+  await vi.waitFor(() => expect(mocks.storedDraft).toBe("Earlier text dictated"));
 });
 
 it("reopens setup after reconnecting during a download and ignores its stale completion", async () => {
