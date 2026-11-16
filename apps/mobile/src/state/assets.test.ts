@@ -5,6 +5,7 @@ import {
   EnvironmentId,
   ThreadId,
   type AuthSessionState,
+  type AssetCreateUrlResult,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { Atom, AsyncResult } from "effect/reactivity";
@@ -61,6 +62,7 @@ vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
 vi.mock("./use-atom-query-runner", () => ({ useAtomQueryRunner: () => state.mint }));
 
 import { refreshAssetUrl, useRefreshAssetUrl, useAssetUrlState } from "./assets";
+import { appAtomRegistry } from "./atom-registry";
 
 const environmentId = EnvironmentId.make("asset-environment");
 const threadId = ThreadId.make("asset-thread");
@@ -69,6 +71,10 @@ const resource = { _tag: "media-file", threadId, path: "/repo/image.png" } as co
 beforeEach(() => {
   state.session = null;
   state.phase = "connected";
+  state.preparedConnectionAtom = Atom.make({
+    _tag: "Some",
+    value: { httpBaseUrl: "https://host.test" },
+  });
   state.assetQuery.mockReset().mockReturnValue(state.assetAtom);
   state.mint
     .mockReset()
@@ -132,4 +138,21 @@ it("rejects with the server's error and resolves null only without a connection"
 
   state.preparedConnectionAtom = Atom.make({ _tag: "None" });
   await expect(refreshAssetUrl(environmentId, resource)).resolves.toBeNull();
+});
+
+it("resolves a refreshed asset against the route that is current when minting finishes", async () => {
+  const connection = Atom.make({
+    _tag: "Some" as const,
+    value: { httpBaseUrl: "https://host.test" },
+  });
+  state.preparedConnectionAtom = connection;
+  const minted = Promise.withResolvers<AsyncResult.AsyncResult<AssetCreateUrlResult>>();
+  state.mint.mockReturnValueOnce(minted.promise);
+  const refreshed = useRefreshAssetUrl(environmentId, resource)();
+  appAtomRegistry.set(connection, {
+    _tag: "Some",
+    value: { httpBaseUrl: "https://relay.test" },
+  });
+  minted.resolve(AsyncResult.success({ relativeUrl: "/api/assets/image.png", expiresAt: 1 }));
+  await expect(refreshed).resolves.toBe("https://relay.test/api/assets/image.png");
 });
