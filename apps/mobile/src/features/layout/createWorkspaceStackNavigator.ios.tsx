@@ -447,13 +447,18 @@ function WorkspaceColumns(
               <EmptyDetailHeader onCompose={detailCompose} />
             </PaneContext>
             <ColumnContent column="empty-detail">
-              <WorkspaceEmptyDetail
-                tab={settingsOpen ? "settings" : selectedTab}
-                onStartNewTask={
-                  // Duo provides compose in the detail bar; iPad uses the empty-state action.
-                  detailCompose ? undefined : openNewTask
-                }
-              />
+              {/* Settings opens a page as it's shown, so its hidden tab skips the placeholder. */}
+              {headerOnly && settingsOpen ? (
+                <View className="flex-1 bg-screen" />
+              ) : (
+                <WorkspaceEmptyDetail
+                  tab={settingsOpen ? "settings" : selectedTab}
+                  onStartNewTask={
+                    // Duo provides compose in the detail bar; iPad uses the empty-state action.
+                    detailCompose ? undefined : openNewTask
+                  }
+                />
+              )}
             </ColumnContent>
           </Split.Screen>
           {screens.routes.map((route) => {
