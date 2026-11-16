@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS events (
   event     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_by_thread ON events(thread_id, seq);
+CREATE INDEX IF NOT EXISTS created_runs_by_command ON events(command_id, seq) WHERE type = 'run.created';
 CREATE TABLE IF NOT EXISTS threads (
   id          TEXT PRIMARY KEY,
   project_id  TEXT NOT NULL,
@@ -43,6 +44,10 @@ CREATE TABLE IF NOT EXISTS entities (
   body      TEXT NOT NULL,
   PRIMARY KEY (thread_id, kind, id)
 ) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS entities_waiting_secrets
+ON entities(thread_id, json_extract(body, '$.updatedAt') DESC, id DESC)
+WHERE kind = 'turnItems' AND json_extract(body, '$.type') = 'secret_request'
+  AND json_extract(body, '$.status') = 'waiting';
 CREATE TABLE IF NOT EXISTS projects (
   id             TEXT PRIMARY KEY,
   workspace_root TEXT NOT NULL UNIQUE,
@@ -139,7 +144,16 @@ fn collection_of(event_type: &str) -> Option<&'static str> {
 }
 
 /// Events that change only a row's body: they move the shell only when they add a row.
-fn streams_only(event_type: &str) -> bool {
+fn streams_only(event_type: &str, payload: &Value) -> bool {
+    if event_type == "turn-item.updated"
+        && matches!(
+            payload.get("type").and_then(Value::as_str),
+            Some("secret_request" | "link_request" | "user_message")
+        )
+    {
+        return false;
+    }
+
     matches!(
         event_type,
         "message.updated" | "turn-item.updated" | "node.updated" | "provider-turn.updated"
@@ -293,6 +307,23 @@ impl Store {
             .optional()
             .map(|seq| seq.map(|s| s as u64))
             .map_err(err)
+    }
+
+    pub(crate) fn created_run_status(&self, command_id: &str) -> StoreResult<Option<String>> {
+        let event: Option<String> = self.conn.query_row(
+            "SELECT event FROM events WHERE command_id = ?1 AND type = 'run.created' ORDER BY seq DESC LIMIT 1",
+            [command_id], |row| row.get(0),
+        ).optional().map_err(err)?;
+        event
+            .map(|event| {
+                parse(event).map(|e| {
+                    e["payload"]["status"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned()
+                })
+            })
+            .transpose()
     }
 
     pub(crate) fn thread_exists(&self, thread_id: &str) -> StoreResult<bool> {
@@ -842,6 +873,7 @@ impl Tx<'_> {
                 .map_err(err)?;
         }
 
+        let affects_shell = inserted || !streams_only(event_type, &payload);
         let mut event = json!({
             "id": format!("event:{seq}"),
             "threadId": thread_id,
@@ -870,7 +902,7 @@ impl Tx<'_> {
                 )
                 .map_err(err)?;
         }
-        if inserted || !streams_only(event_type) {
+        if affects_shell {
             match self.touched.iter_mut().find(|(id, _)| *id == thread_id) {
                 Some(entry) => entry.1 = seq,
                 None => self.touched.push((thread_id, seq)),

@@ -149,7 +149,7 @@ decoded="$scratch/decoded-tags"
 run "effect-client (conn-server)" \
   env DECODE_COVERAGE="$decoded" node crates/conn-server/tools/effect-client.mjs "$release/conn-server"
 run "effect-client (ack window)" \
-  node crates/conn-server/tools/effect-client.mjs "$release/examples/effect_fixture" --fixture
+  env DECODE_COVERAGE="$decoded" node crates/conn-server/tools/effect-client.mjs "$release/examples/effect_fixture" --fixture
 run "client-check" client_check
 # Every recording in fixtures/sessions (about 15 s).
 scenarios=()

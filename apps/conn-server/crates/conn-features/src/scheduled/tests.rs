@@ -118,6 +118,7 @@ impl Env {
             clock: Arc::new(self.clock.clone()),
             zone: TimeZone::get(zone).expect("zone"),
             runner: Arc::new(fake),
+            secret_requests: None,
             start_timer: timer,
         })
         .await
