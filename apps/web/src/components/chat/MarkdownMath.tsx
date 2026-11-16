@@ -24,10 +24,8 @@ export const MarkdownMath = memo(function MarkdownMath(props: {
     const viewport = viewportRef.current;
     const content = contentRef.current;
     if (!viewport || !content || props.focusable === false) return;
-    // No measure here: a read mid-commit forces a layout of everything the commit inserted, such
-    // as a whole thread on a thread switch. Observing delivers a first size after layout, and
-    // observeResize applies it before paint. Typesetting and streamed TeX can change content
-    // width without resizing the viewport, so the content is observed too.
+    // Measuring here would force a layout mid-commit; the observer's first delivery lands before paint.
+    // Typesetting and streamed TeX can change content width without resizing the viewport.
     return observeResize([viewport, content], () =>
       setOverflows(viewport.scrollWidth > viewport.clientWidth),
     );

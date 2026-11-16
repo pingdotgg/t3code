@@ -7,8 +7,6 @@ import "../../index.css";
 import { MarkdownMath } from "./MarkdownMath";
 
 it("mounts equations without reading layout mid-commit and still finds the one that overflows", async () => {
-  // A width read during the commit forces a layout of everything the commit inserted, such as
-  // the whole thread a thread switch opens, and later layout effects throw that layout away.
   using scrollWidth = vi.spyOn(Element.prototype, "scrollWidth", "get");
   let readsDuringCommit: number | null = null;
   await using screen = await render(
