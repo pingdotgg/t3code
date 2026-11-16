@@ -243,4 +243,60 @@ describe("MediaVideoPlayer", () => {
 
     expect(pause).not.toHaveBeenCalled();
   });
+
+  it("pauses a video a scroll container clipped when fullscreen ended", async () => {
+    const NativeIntersectionObserver = window.IntersectionObserver;
+    let video: HTMLVideoElement | null = null;
+    let videoReports = 0;
+    class CountingIntersectionObserver extends NativeIntersectionObserver {
+      constructor(callback: IntersectionObserverCallback) {
+        super((entries, observer) => {
+          for (const entry of entries) {
+            if (entry.target === video) videoReports += 1;
+          }
+          callback(entries, observer);
+        });
+      }
+    }
+    using _observer = stubGlobal("IntersectionObserver", CountingIntersectionObserver);
+    await using screen = await render(
+      <div
+        data-testid="scroller"
+        style={{ position: "relative", width: 414, height: 40, overflow: "hidden" }}
+      >
+        <MediaVideoPlayer
+          src="/asset/clip.mp4"
+          label="clip"
+          style={{ position: "absolute", left: 0, top: 100 }}
+        />
+      </div>,
+    );
+    const scroller = screen.getByTestId("scroller").element().getBoundingClientRect();
+    video = screen.getByLabelText("clip").element() as HTMLVideoElement;
+    const rect = video.getBoundingClientRect();
+    // The video sits inside the window but outside the box the container shows.
+    expect(rect.bottom).toBeLessThan(window.innerHeight);
+    expect(rect.right).toBeLessThan(window.innerWidth);
+    expect(rect.top).toBeGreaterThanOrEqual(scroller.bottom);
+
+    using pause = vi.spyOn(video, "pause");
+    Object.defineProperty(video, "webkitDisplayingFullscreen", { value: true, configurable: true });
+    await act(() => {
+      video?.dispatchEvent(new Event("play"));
+    });
+
+    // The container clips the video, but a fullscreen player must keep playing.
+    await vi.waitFor(() => expect(videoReports).toBeGreaterThan(0));
+    expect(pause).not.toHaveBeenCalled();
+
+    Object.defineProperty(video, "webkitDisplayingFullscreen", {
+      value: false,
+      configurable: true,
+    });
+    await act(() => {
+      video?.dispatchEvent(new Event("webkitendfullscreen"));
+    });
+
+    await vi.waitFor(() => expect(pause).toHaveBeenCalled());
+  });
 });
