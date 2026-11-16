@@ -1085,7 +1085,7 @@ it.layer(layerTest)("checkOpenCodeProviderStatus with configured server URL", (i
     }),
   );
 
-  it.effect("lists a project's OpenCode 2 agents and keeps them when a refresh fails", () =>
+  it.effect("lists global OpenCode 2 agents and keeps them when a refresh fails", () =>
     Effect.gen(function* () {
       runtimeMock.state.versionStdout = "opencode v2.0.18\n";
       let failed = false;
@@ -1119,6 +1119,8 @@ it.layer(layerTest)("checkOpenCodeProviderStatus with configured server URL", (i
         ]),
         loadAgents,
       );
+      // A workspace scan can beat the first machine status check.
+      NodeAssert.deepEqual(yield* loadAgents.latest, agents);
       const ready = yield* read;
       type AgentDescriptor = {
         readonly type?: string;
@@ -1151,6 +1153,32 @@ it.layer(layerTest)("checkOpenCodeProviderStatus with configured server URL", (i
       const empty = yield* read;
       NodeAssert.equal(empty.status, "ready");
       NodeAssert.equal(agentDescriptor(empty), undefined);
+    }),
+  );
+
+  it.effect("a workspace waits for the first in-flight OpenCode 2 agent read", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const agents = [Agent.Info.default(Agent.ID.make("researcher"))];
+      let reads = 0;
+      const loader = yield* makeOpenCode2AgentLoader(
+        Effect.gen(function* () {
+          reads++;
+          yield* Deferred.succeed(started, undefined);
+          yield* Deferred.await(release);
+          return agents;
+        }),
+      );
+      const probe = yield* Effect.forkChild(loader.read);
+      yield* Deferred.await(started);
+      const workspace = yield* Effect.forkChild(loader.latest);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(probe);
+      NodeAssert.deepEqual(yield* Fiber.join(workspace), agents);
+      NodeAssert.equal(reads, 1);
+      NodeAssert.deepEqual(yield* loader.latest, agents);
+      NodeAssert.equal(reads, 1);
     }),
   );
 

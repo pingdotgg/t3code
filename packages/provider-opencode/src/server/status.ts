@@ -13,6 +13,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import * as Semaphore from "effect/Semaphore";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
@@ -677,24 +678,33 @@ export interface OpenCode2AgentCatalog {
  */
 export interface OpenCode2AgentLoader {
   readonly read: Effect.Effect<OpenCode2AgentCatalog>;
-  /** The last list this loader read, without touching the server. */
+  /** Reuses the last successful list, loading it first if a workspace beats the status probe. */
   readonly latest: Effect.Effect<ReadonlyArray<OpenCode2Agent.Info>>;
 }
 
-export const makeOpenCode2AgentLoader = (
+export const makeOpenCode2AgentLoader = Effect.fn("OpenCodeStatus.makeAgentLoader")(function* (
   list: Effect.Effect<ReadonlyArray<OpenCode2Agent.Info>, OpenCodeRuntime.OpenCodeRuntimeError>,
-): Effect.Effect<OpenCode2AgentLoader> =>
-  Effect.sync(() => {
-    let agents: ReadonlyArray<OpenCode2Agent.Info> = [];
-    return {
-      read: Effect.gen(function* () {
-        const result = yield* Effect.exit(list);
-        if (result._tag === "Success") agents = result.value;
-        return { agents, ...(result._tag === "Failure" ? { failure: result.cause } : {}) };
-      }),
-      latest: Effect.sync(() => agents),
-    };
+): Effect.fn.Return<OpenCode2AgentLoader> {
+  const lock = yield* Semaphore.make(1);
+  let agents: ReadonlyArray<OpenCode2Agent.Info> = [];
+  let loaded = false;
+  const read = Effect.gen(function* () {
+    const result = yield* Effect.exit(list);
+    if (result._tag === "Success") {
+      agents = result.value;
+      loaded = true;
+    }
+    return { agents, ...(result._tag === "Failure" ? { failure: result.cause } : {}) };
   });
+  return {
+    read: lock.withPermit(read),
+    latest: lock.withPermit(
+      Effect.suspend(() =>
+        loaded ? Effect.succeed(agents) : Effect.map(read, (result) => result.agents),
+      ),
+    ),
+  };
+});
 
 function openCode2ModelCapabilities(
   model: OpenCode2Model,
