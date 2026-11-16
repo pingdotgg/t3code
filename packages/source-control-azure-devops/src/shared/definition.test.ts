@@ -157,6 +157,39 @@ describe("Azure DevOps repository keys", () => {
     ).toBe(false);
   });
 
+  it("matches a repository however its name is percent-encoded", () => {
+    const remoteUrl = "https://example@dev.azure.com/example/Sample%20(Beta)/_git/Sample%20(Beta)";
+    const canonicalKey = registry.repositoryKeyFromRemote(remoteUrl);
+    const identity: ChangeRequestProjectIdentity = {
+      canonicalKey,
+      locator: { source: "git-remote", remoteName: "origin", remoteUrl },
+    };
+    for (const url of [
+      "https://dev.azure.com/example/Sample%20%28Beta%29/_git/Sample%20%28Beta%29/pullrequest/7",
+      "https://dev.azure.com/example/Sample (Beta)/_git/Sample (Beta)/pullrequest/7",
+    ]) {
+      const link = parse(url)!;
+      expect(link.repository, url).toBe("example/sample%20(beta)/_git/sample%20(beta)");
+      expect(definition.isChangeRequestInRepository(identity, link), url).toBe(true);
+      expect(
+        definition.isChangeRequestInRepository(
+          {
+            ...identity,
+            canonicalKey: "dev.azure.com/example/sample%20%28beta%29/_git/sample%20%28beta%29",
+          },
+          link,
+        ),
+        url,
+      ).toBe(true);
+    }
+    // Links stored before keys had one spelling still resolve to their project.
+    expect(
+      registry.canonicalRepositoryKey(
+        "dev.azure.com/example/sample%20%28beta%29/_git/sample%20%28beta%29",
+      ),
+    ).toBe(canonicalKey);
+  });
+
   it("still drops .git from other hosts' repository keys", () => {
     expect(registry.repositoryKeyFromRemote("git@github.com:acme/tool.git")).toBe(
       "github.com/acme/tool",
