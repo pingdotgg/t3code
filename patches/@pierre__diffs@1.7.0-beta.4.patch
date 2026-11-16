@@ -1,5 +1,5 @@
 diff --git a/dist/editor/editor.js b/dist/editor/editor.js
-index b4c280390b52434f63fbe7916d81b150d9006fb4..8564980bdfe2ef8e17e8ab0a87627709091101ee 100644
+index b4c280390b52434f63fbe7916d81b150d9006fb4..cb7fb89a22c8adac9ea951b8767b5fd446347746 100644
 --- a/dist/editor/editor.js
 +++ b/dist/editor/editor.js
 @@ -95,6 +95,7 @@ var Editor = class {
@@ -38,7 +38,15 @@ index b4c280390b52434f63fbe7916d81b150d9006fb4..8564980bdfe2ef8e17e8ab0a87627709
  		const replacementFocusTargetIsContent = (event) => {
  			const target = event.composedPath()[0];
  			return target instanceof Node && this.#contentElement?.contains(target) === true;
-@@ -1397,6 +1412,7 @@ var Editor = class {
+@@ -1130,6 +1145,7 @@ var Editor = class {
+ 		this.#editorEventDisposes = [
+ 			addEventListener(contentEl, "focus", () => {
+ 				this.#contentHasFocus = true;
++				this.#retainSearchPanelFocus = false;
+ 				onFocus?.();
+ 				if (!this.#isContentMouseDown && !this.#isComposing && this.#focusRequest == null && this.#selections !== void 0 && this.#selections.length > 0) this.#setWindowSelection(this.#selections.at(-1));
+ 			}, { passive: true }),
+@@ -1397,6 +1413,7 @@ var Editor = class {
  		this.#resizeObserver = new ResizeObserver(this.#handleLayoutResize);
  		this.#resizeObserver.observe(contentEl);
  		this.#resizeObserver.observe(contentEl.parentElement);
@@ -46,7 +54,7 @@ index b4c280390b52434f63fbe7916d81b150d9006fb4..8564980bdfe2ef8e17e8ab0a87627709
  		this.#computeContentOffset(contentEl);
  	}
  	#handleCustomPasteEvent = async () => {
-@@ -1852,7 +1868,9 @@ var Editor = class {
+@@ -1852,7 +1869,9 @@ var Editor = class {
  		const change = textDocument.applyEdits(edits, true, selections, nextSelections, true);
  		if (change !== void 0) this.#applyChange(change, nextSelections);
  	}
@@ -57,7 +65,7 @@ index b4c280390b52434f63fbe7916d81b150d9006fb4..8564980bdfe2ef8e17e8ab0a87627709
  		const lineAnnotations = this.#lineAnnotations?.length ?? 0;
  		const prevGutterWidth = this.#gutterWidthCache;
  		const prevContentWidth = this.#contentWidthCache;
-@@ -1860,12 +1878,12 @@ var Editor = class {
+@@ -1860,12 +1879,12 @@ var Editor = class {
  		this.#contentWidthCache = void 0;
  		const gutterWidthChanged = this.#getGutterWidth() !== prevGutterWidth;
  		const contentWidthChanged = this.#getContentWidth() !== prevContentWidth;
