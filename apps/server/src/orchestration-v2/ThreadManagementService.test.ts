@@ -1092,7 +1092,12 @@ it.effect.each([
       { id: retiredId, contextUsage: { usedTokens: 1 }, updatedAt },
       { id: activeId, contextUsage: usage ? contextUsage : null, updatedAt },
     ];
-    const turnUsage = (usedTokens: number, at: string) => ({ usedTokens, updatedAt: at });
+    const turnUsage = (usedTokens: number, at: string) => ({
+      usedTokens,
+      inputTokens: 1_000,
+      outputTokens: 200,
+      updatedAt: at,
+    });
     const providerTurns = usage
       ? [
           { providerThreadId: activeId, tokenUsage: turnUsage(30_000, "2026-01-01T00:00:00Z") },
@@ -1134,6 +1139,9 @@ it.effect.each([
       threadId,
       providerThread: { id: activeId, contextUsage: usage ? contextUsage : null, updatedAt },
       latestTurnTokenUsage: usage ? turnUsage(40_000, "2026-01-01T00:01:00Z") : null,
+      totals: usage
+        ? { turnCount: 3, inputTokens: 3_000, cachedInputTokens: 0, outputTokens: 600 }
+        : null,
     });
   }),
 );
@@ -1150,11 +1158,21 @@ it.effect(
       const providerTurns = [
         {
           providerThreadId: retiredId,
-          tokenUsage: { usedTokens: 5_000, updatedAt: "2026-01-01T00:00:00Z" },
+          tokenUsage: {
+            usedTokens: 5_000,
+            inputTokens: 4_000,
+            outputTokens: 200,
+            updatedAt: "2026-01-01T00:00:00Z",
+          },
         },
         {
           providerThreadId: retiredId,
-          tokenUsage: { usedTokens: 7_000, updatedAt: "2026-01-01T00:01:00Z" },
+          tokenUsage: {
+            usedTokens: 7_000,
+            inputTokens: 6_000,
+            outputTokens: 300,
+            updatedAt: "2026-01-01T00:01:00Z",
+          },
         },
       ];
       const layerTest = ThreadManagementService.layer.pipe(
@@ -1189,7 +1207,13 @@ it.effect(
       expect(result).toStrictEqual({
         threadId,
         providerThread: null,
-        latestTurnTokenUsage: { usedTokens: 7_000, updatedAt: "2026-01-01T00:01:00Z" },
+        latestTurnTokenUsage: {
+          usedTokens: 7_000,
+          inputTokens: 6_000,
+          outputTokens: 300,
+          updatedAt: "2026-01-01T00:01:00Z",
+        },
+        totals: { turnCount: 2, inputTokens: 10_000, cachedInputTokens: 0, outputTokens: 500 },
       });
     }),
 );

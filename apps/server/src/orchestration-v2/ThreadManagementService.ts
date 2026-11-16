@@ -721,6 +721,24 @@ const make = Effect.gen(function* () {
       },
     );
     const providerThread = providerThreads[0];
+    const { providerTurns: allTurns } = yield* orchestrator.getThreadRecords(threadId, [
+      "providerTurns",
+    ]);
+    const reported = allTurns.flatMap((turn) =>
+      turn.tokenUsage === undefined ? [] : [turn.tokenUsage],
+    );
+    const totals =
+      reported.length === 0
+        ? null
+        : {
+            turnCount: reported.length,
+            inputTokens: reported.reduce((sum, usage) => sum + (usage.inputTokens ?? 0), 0),
+            cachedInputTokens: reported.reduce(
+              (sum, usage) => sum + (usage.cachedInputTokens ?? 0),
+              0,
+            ),
+            outputTokens: reported.reduce((sum, usage) => sum + (usage.outputTokens ?? 0), 0),
+          };
     return {
       threadId,
       providerThread:
@@ -732,6 +750,7 @@ const make = Effect.gen(function* () {
               updatedAt: providerThread.updatedAt,
             },
       latestTurnTokenUsage: providerTurns[0]?.tokenUsage ?? null,
+      totals,
     } satisfies OrchestrationV2ThreadUsage;
   });
 

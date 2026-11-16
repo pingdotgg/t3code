@@ -56,5 +56,15 @@ export function deriveThreadUsageRows(
     }
   }
 
+  const totals = usage?.totals ?? null;
+  if (totals !== null) {
+    rows.push({ label: "Input, all turns", value: formatContextWindowTokens(totals.inputTokens) });
+    rows.push({
+      label: "Output, all turns",
+      value: formatContextWindowTokens(totals.outputTokens),
+    });
+    rows.push({ label: "Turns", value: String(totals.turnCount) });
+  }
+
   return rows;
 }

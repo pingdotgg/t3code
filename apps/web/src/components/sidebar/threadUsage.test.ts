@@ -15,6 +15,7 @@ describe("deriveThreadUsageRows", () => {
         threadId: ThreadId.make("thread-1"),
         providerThread: null,
         latestTurnTokenUsage: null,
+        totals: null,
       }),
     ).toEqual([]);
   });
@@ -28,6 +29,7 @@ describe("deriveThreadUsageRows", () => {
         updatedAt: DateTime.makeUnsafe(updatedAt),
       },
       latestTurnTokenUsage: null,
+      totals: null,
     });
     expect(rows).toEqual([{ label: "Context", value: "50k / 200k (25%)" }]);
   });
@@ -41,6 +43,7 @@ describe("deriveThreadUsageRows", () => {
         updatedAt: DateTime.makeUnsafe(updatedAt),
       },
       latestTurnTokenUsage: null,
+      totals: null,
     });
     expect(rows).toEqual([{ label: "Context", value: "1.5k tokens" }]);
   });
@@ -55,6 +58,7 @@ describe("deriveThreadUsageRows", () => {
         outputTokens: 2_000,
         updatedAt,
       },
+      totals: null,
     });
     expect(rows).toEqual([
       { label: "Context", value: "12k tokens" },
@@ -77,6 +81,7 @@ describe("deriveThreadUsageRows", () => {
         maxTokens: 200_000,
         updatedAt,
       },
+      totals: null,
     });
     expect(rows[0]).toEqual({ label: "Context", value: "150k / 200k (75%)" });
   });
@@ -86,6 +91,7 @@ describe("deriveThreadUsageRows", () => {
       threadId: ThreadId.make("thread-1"),
       providerThread: null,
       latestTurnTokenUsage: { usedTokens: 220_000, maxTokens: 200_000, updatedAt },
+      totals: null,
     });
     expect(over[0]).toEqual({ label: "Context", value: "220k / 200k (100%)" });
 
@@ -93,7 +99,22 @@ describe("deriveThreadUsageRows", () => {
       threadId: ThreadId.make("thread-1"),
       providerThread: null,
       latestTurnTokenUsage: { usedTokens: 1_000, maxTokens: 0, updatedAt },
+      totals: null,
     });
     expect(zero[0]).toEqual({ label: "Context", value: "1k tokens" });
+  });
+
+  it("shows totals across all turns", () => {
+    const rows = deriveThreadUsageRows({
+      threadId: ThreadId.make("thread-1"),
+      providerThread: null,
+      latestTurnTokenUsage: null,
+      totals: { turnCount: 3, inputTokens: 3_000, cachedInputTokens: 0, outputTokens: 600 },
+    });
+    expect(rows).toEqual([
+      { label: "Input, all turns", value: "3k" },
+      { label: "Output, all turns", value: "600" },
+      { label: "Turns", value: "3" },
+    ]);
   });
 });

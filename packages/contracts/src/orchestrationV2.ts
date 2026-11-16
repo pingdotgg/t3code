@@ -3947,6 +3947,18 @@ export const OrchestrationV2ThreadUsage = Schema.Struct({
     }),
   ),
   latestTurnTokenUsage: Schema.NullOr(OrchestrationV2ProviderTurnTokenUsage),
+  /**
+   * Sums over every provider turn of the thread that reported usage. Input includes context
+   * re-sent on each model request, so this is tokens processed, not tokens billed.
+   */
+  totals: Schema.NullOr(
+    Schema.Struct({
+      turnCount: NonNegativeInt,
+      inputTokens: NonNegativeInt,
+      cachedInputTokens: NonNegativeInt,
+      outputTokens: NonNegativeInt,
+    }),
+  ),
 });
 export type OrchestrationV2ThreadUsage = typeof OrchestrationV2ThreadUsage.Type;
 
