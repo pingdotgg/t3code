@@ -1,5 +1,4 @@
 import {
-  ANTIGRAVITY_DEFAULT_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
@@ -27,6 +26,7 @@ import {
   getDefaultServerModel,
   getProviderModels,
   hasRuntimeModelCatalog,
+  isRuntimeModelDefaultAlias,
   resolveSelectableProvider,
 } from "./providerModels";
 import { ModelEsque } from "./components/chat/providerIconUtils";
@@ -84,7 +84,7 @@ function appendUnavailableDynamicModelSelection(
   if (!hasRuntimeModelCatalog(provider)) return options;
   const slug = normalizeCustomModelSlug(selectedModel);
   if (!slug) return options;
-  if (provider === "antigravity" && slug === ANTIGRAVITY_DEFAULT_MODEL) return options;
+  if (isRuntimeModelDefaultAlias(provider, slug)) return options;
 
   if (resolveSelectableModel(provider, slug, rawModels) !== null) return options;
   if (hiddenModels.includes(slug)) return options;
@@ -288,7 +288,7 @@ export function resolveAppModelSelectionForInstance(
       unavailableSelection &&
       !hiddenModels.includes(unavailableSelection) &&
       resolveSelectableModel(entry.driverKind, selectedModel, entry.models) === null &&
-      (entry.driverKind !== "antigravity" || unavailableSelection !== ANTIGRAVITY_DEFAULT_MODEL)
+      !isRuntimeModelDefaultAlias(entry.driverKind, unavailableSelection)
     ) {
       return unavailableSelection;
     }

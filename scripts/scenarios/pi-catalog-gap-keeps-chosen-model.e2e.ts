@@ -21,33 +21,45 @@ test(
   async ({ t3, app, screen, browser }) => {
     const project = await t3.project("demo");
     const fakePi = NodePath.join(T3_HOME, "bin/fake-pi");
-    await NodeFSP.writeFile(fakePi, FAKE_PI, { mode: 0o755 });
     const settingsPath = NodePath.join(T3_HOME, "userdata/settings.json");
-    const settings = JSON.parse(await NodeFSP.readFile(settingsPath, "utf8"));
-    settings.providerInstances.pi = { driver: "pi", enabled: true, config: { binaryPath: fakePi } };
-    settings.defaultModelSelection = { instanceId: "pi", model: CHOSEN_MODEL };
-    await NodeFSP.writeFile(settingsPath, JSON.stringify(settings));
+    const originalSettings = await NodeFSP.readFile(settingsPath, "utf8");
+    const settings = JSON.parse(originalSettings);
+    try {
+      await NodeFSP.writeFile(fakePi, FAKE_PI, { mode: 0o755 });
+      settings.providerInstances.pi = {
+        driver: "pi",
+        enabled: true,
+        config: { binaryPath: fakePi },
+      };
+      settings.defaultModelSelection = { instanceId: "pi", model: CHOSEN_MODEL };
+      await NodeFSP.writeFile(settingsPath, JSON.stringify(settings));
 
-    await t3.open();
-    // The composer shows a Pi model once the settings watcher has enabled Pi.
-    await expect(browser.locator("[data-chat-provider-model-picker-label]").first()).toHaveText(
-      /sonnet|default/i,
-      { timeout: 60_000 },
-    );
-    await app.screenshot("composer");
+      await t3.open();
+      // The composer shows a Pi model once the settings watcher has enabled Pi.
+      await expect(browser.locator("[data-chat-provider-model-picker-label]").first()).toHaveText(
+        /sonnet|default/i,
+        { timeout: 60_000 },
+      );
+      await app.screenshot("composer");
 
-    await screen.getByRole("textbox").fill("Which model is this?");
-    await screen.getByRole("textbox").press("Enter");
-    const { cli } = makeState(T3_HOME);
-    await expect
-      .poll(
-        async () => {
-          const listed = await runPromise(cli(["thread", "list", "--project", project, "--json"]));
-          const threads = JSON.parse(listed.stdout) as Array<{ model: string }>;
-          return threads[0]?.model ?? null;
-        },
-        { timeout: 30_000 },
-      )
-      .toBe(CHOSEN_MODEL);
+      await screen.getByRole("textbox").fill("Which model is this?");
+      await screen.getByRole("textbox").press("Enter");
+      const { cli } = makeState(T3_HOME);
+      await expect
+        .poll(
+          async () => {
+            const listed = await runPromise(
+              cli(["thread", "list", "--project", project, "--json"]),
+            );
+            const threads = JSON.parse(listed.stdout) as Array<{ model: string }>;
+            return threads[0]?.model ?? null;
+          },
+          { timeout: 30_000 },
+        )
+        .toBe(CHOSEN_MODEL);
+    } finally {
+      await NodeFSP.writeFile(settingsPath, originalSettings);
+      await NodeFSP.rm(fakePi, { force: true });
+    }
   },
 );
