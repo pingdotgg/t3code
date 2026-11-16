@@ -158,14 +158,20 @@ describe("layout drops of a thread's surfaces", () => {
       surfaceThreadRef,
     ).terminalOpen;
 
-  it.each<{ name: string; surface: LayoutDragSurface; opened: () => void }>([
+  it.each<{
+    name: string;
+    surface: LayoutDragSurface;
+    resolvesTo?: LayoutDragSurface;
+    opened: () => void;
+  }>([
     {
-      name: "a file at its line",
-      surface: fileSurface("src/app.ts", 42, 0),
+      name: "a file link at the path its click resolves, at its line",
+      surface: fileSurface("cloud/http.ts", 42, 0),
+      resolvesTo: fileSurface("packages/app/cloud/http.ts", 42, 0),
       opened: () =>
-        expect(panel().surfaces).toContainEqual(
-          expect.objectContaining({ id: "file:src/app.ts", revealLine: 42 }),
-        ),
+        expect(panel().surfaces).toEqual([
+          expect.objectContaining({ id: "file:packages/app/cloud/http.ts", revealLine: 42 }),
+        ]),
     },
     {
       name: "a turn's diff at its file",
@@ -189,17 +195,25 @@ describe("layout drops of a thread's surfaces", () => {
       surface: { id: "browser:tab-1", kind: "preview", resourceId: "tab-1" },
       opened: () => {},
     },
-  ])("opens $name when dropped", ({ surface, opened }) => {
+  ])("opens $name when dropped", async ({ surface, resolvesTo, opened }) => {
     using fixture = setupSurfaceDrop();
     const { chatPaneId } = fixture;
-    const source: LayoutDragSource = { kind: "surface", threadRef: surfaceThreadRef, surface };
+    const resolved = resolvesTo && Promise.resolve(resolvesTo);
+    const source: LayoutDragSource = {
+      kind: "surface",
+      threadRef: surfaceThreadRef,
+      surface,
+      ...(resolved ? { resolve: () => resolved } : {}),
+    };
     expect(terminalOpen()).toBe(false);
 
     expect(commitLayoutDrop(source, { kind: "side", paneId: chatPaneId, side: "right" })).toBe(
       true,
     );
-    if (surface.kind !== "thread-terminal") {
-      expect(panel()).toMatchObject({ isOpen: true, activeSurfaceId: surface.id });
+    await resolved;
+    const opens = resolvesTo ?? surface;
+    if (opens.kind !== "thread-terminal") {
+      expect(panel()).toMatchObject({ isOpen: true, activeSurfaceId: opens.id });
     }
     opened();
   });
