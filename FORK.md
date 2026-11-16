@@ -1459,6 +1459,27 @@ Merge of upstream `4ae66e2e86` (427 commits). Decisions worth keeping in mind:
 - `agentContextBudget.json` `mcpToolListJsonBytes` is 57,796 with the fork's
   toolkits.
 
+### Upstream sync: 2026-11-16
+
+Merge of upstream `6b7027b1f4` (302 commits). Decisions worth keeping in mind:
+
+- Upstream #32764 makes `McpToolAccess.toLayer` die unless every thread-bound
+  declaration's tool carries `McpSchema.EnabledWhen` =
+  `McpInvocationContext.hiddenFromOutsideClients`. Conn's annotations,
+  credentials (Vault) and panels toolkits now carry it on every tool; a new
+  fork tool that acts as the calling thread needs it too, or the server's MCP
+  layer fails to build. Outside clients get "Tool not found" for them.
+- Upstream moved the mobile thread sync status from the composer pill to the
+  header (#37076); the sync took that, so `ThreadDetailScreen.tsx` no longer
+  takes `threadSyncStatus`. The fork's `connectionCheckOnly` and
+  `<ConnSymbolScope>` stay.
+- `react-native-screens` is on upstream's `5.0.0-t3.57` with Conn's rebuilt
+  `-conn.tgz`; the Conn patch applied without changes.
+- `useCloseAppModal({ replace })` keeps the fork's option; upstream's fallback
+  now always replaces the history entry.
+- `agentContextBudget.json` `mcpToolListJsonBytes` is 59,401 with the fork's
+  toolkits.
+
 ### Vendored dependency patches
 
 Upstream vendors some dependencies as tarballs in `apps/mobile/deps`, which pnpm
