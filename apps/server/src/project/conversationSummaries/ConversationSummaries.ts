@@ -19,6 +19,7 @@ import {
   type KnowledgeSourceUnavailableReason,
   type MessageId,
   type OrchestrationV2ConversationMessage,
+  type OrchestrationV2HistoricalMessage,
   type OrchestrationV2RunStatus,
   type OrchestrationV2UserMessageInputIntent,
   type ProjectId,
@@ -31,6 +32,10 @@ import {
   summaryToolText,
   summaryToolTypes,
 } from "@t3tools/provider-core/server/conversationEvidence";
+import {
+  historicalMessage,
+  renderHistoricalMessage,
+} from "@t3tools/provider-core/server/handoffBudget";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
 import * as Context from "effect/Context";
@@ -816,7 +821,7 @@ const make = Effect.gen(function* () {
       const records = yield* projections
         .getThreadRecords(threadId, ["messages", "turnItems"], {
           messageRoles: ["user", "assistant"],
-          turnItemTypes: summaryToolTypes,
+          turnItemTypes: [...summaryToolTypes, "assistant_message"],
           turnItemStatuses: finalizedToolStatuses,
         })
         .pipe(Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }));
@@ -922,8 +927,13 @@ const make = Effect.gen(function* () {
           createdAt: message.createdAt,
         });
       }
+      const peerReplies = new Map<MessageId, OrchestrationV2HistoricalMessage>();
       for (const item of records.turnItems) {
         if (item.runId !== null && excluded.has(item.runId)) continue;
+        if (item.type === "assistant_message" && item.speaker !== undefined) {
+          const historical = historicalMessage(item);
+          if (historical !== null) peerReplies.set(item.messageId, historical);
+        }
         const text = summaryToolText(item);
         if (text === null) continue;
         all.push({
@@ -1080,11 +1090,18 @@ const make = Effect.gen(function* () {
 
       const summarizeLeaf = (chunk: ReadonlyArray<SummarySource>) =>
         publish({
-          messages: chunk.map((source) => ({
-            role: source.role,
-            text: source.text,
-            ...(source.ref.range === undefined ? {} : { range: source.ref.range }),
-          })),
+          messages: chunk.map((source) => {
+            const peer =
+              source.ref.kind === "message" ? peerReplies.get(source.ref.messageId) : undefined;
+            return {
+              role: peer?.role ?? source.role,
+              text:
+                peer === undefined
+                  ? source.text
+                  : renderHistoricalMessage({ ...peer, text: source.text }),
+              ...(source.ref.range === undefined ? {} : { range: source.ref.range }),
+            };
+          }),
           sources: chunk.map((source) => source.ref),
           ranges: chunk.map((source) => source.ref),
           position: leafPosition(DateTime.formatIso(chunk[0]!.createdAt), chunk[0]!.ref),

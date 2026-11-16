@@ -304,7 +304,7 @@ export function historicalMessage(
   };
 }
 
-function renderHistoricalMessage(message: OrchestrationV2HistoricalMessage): string {
+export function renderHistoricalMessage(message: OrchestrationV2HistoricalMessage): string {
   const source =
     message.speaker === undefined
       ? `${message.role}; ${message.kind}`
