@@ -1342,33 +1342,62 @@ describe("handoff delivery", () => {
   it.effect.each([
     {
       budget: 6_000,
+      tailCount: 0,
+      grows: false,
       shown: ["item:many-19", "item:many-18", "item:many-17"],
       line: `17 more summaries hold omitted items; list them with ${listCall}.`,
     },
     {
       budget: 1_400,
+      tailCount: 0,
+      grows: false,
       shown: [],
       line: `Not shown here: 20 conversation summaries hold omitted items; list them with ${listCall}.`,
     },
+    {
+      budget: 16_000,
+      tailCount: 50,
+      grows: false,
+      shown: [],
+      line: `Not shown here: 20 conversation summaries hold omitted items; list them with ${listCall}.`,
+    },
+    {
+      budget: 3_448,
+      tailCount: 50,
+      grows: true,
+      shown: [],
+      line: `Not shown here: 10 conversation summaries hold omitted items; list them with ${listCall}.`,
+    },
   ])(
     "still points at unsent summaries when their lines do not all fit: $budget",
-    ({ budget, shown, line }) =>
+    ({ budget, tailCount, grows, shown, line }) =>
       Effect.gen(function* () {
-        const tools = Array.from({ length: 20 }, (_, index) => ({
+        const indexText = (index: number) => (grows ? String(index).padStart(2, "0") : index);
+        const tools = Array.from({ length: grows ? 30 : 20 }, (_, index) => ({
           ...message(
-            `item:many-${index}`,
+            `item:many-${indexText(index)}`,
             "assistant",
             `Command: step ${index}\n${"o".repeat(8_000)}`,
           ),
           kind: "command_execution" as const,
         }));
+        const tail =
+          tailCount === 0
+            ? [message("item:many-kept", "user", "kept")]
+            : Array.from({ length: tailCount }, (_, index) =>
+                message(
+                  `item:tail-${indexText(index)}`,
+                  index % 2 === 0 ? "user" : "assistant",
+                  "k".repeat(grows ? 1 : 64),
+                ),
+              );
         const idFor = (index: number) => `summary:${index.toString(16).padStart(64, "0")}`;
         const source: OrchestrationV2ContextHandoff = {
           ...handoff,
           id: ContextHandoffId.make("handoff:many-unsent"),
           summaryText: "Coverage.",
           history: {
-            messages: [...tools, message("item:many-kept", "user", "kept")],
+            messages: [...tools, ...tail],
             coverage: "Coverage.",
             omittedItems: 0,
           },
@@ -1384,12 +1413,14 @@ describe("handoff delivery", () => {
           alreadyDeliveredItemIds: new Set(),
           summaries: () =>
             Effect.succeed(
-              tools.toReversed().map((tool, index) => ({
-                id: idFor(19 - index),
-                ...summaryScope,
-                coveredItemIds: [tool.itemId],
-                text: "S".repeat(40_000),
-              })),
+              (grows ? [...tools.slice(0, 9), tail[41]!] : tools.toReversed()).map(
+                (tool, index) => ({
+                  id: idFor(grows ? index : 19 - index),
+                  ...summaryScope,
+                  coveredItemIds: [tool.itemId],
+                  text: "S".repeat(40_000),
+                }),
+              ),
             ),
           inject: (input) => {
             injected = input;
@@ -1399,6 +1430,10 @@ describe("handoff delivery", () => {
         });
         yield* delivery.delivered;
         assert.include(injected.context, line);
+        assert.includeMembers(
+          injected.messages.map((entry) => entry.itemId),
+          tail.slice(-6).map((entry) => entry.itemId),
+        );
         for (const index of [19, 18, 17, 16]) {
           const named = `${idFor(index)} holds`;
           if (shown.includes(`item:many-${index}`)) assert.include(injected.context, named);
