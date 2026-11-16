@@ -1575,14 +1575,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     expandedCursor: number,
     cursorAdjacentToMention: boolean,
     contextIds: string[],
+    fromPaste = false,
   ) => {
     refreshWorkspaceSnapshotOnTyping();
+    // A paste is not typing: a terminal copy ending in `/rc` must not open the menu, so its
+    // trigger starts dismissed, as after Escape.
+    const updateTrigger = () => {
+      const candidate = cursorAdjacentToMention
+        ? null
+        : detectComposerTrigger(nextPrompt, expandedCursor);
+      if (fromPaste && candidate) dismissComposerTrigger(candidate);
+      else setComposerTrigger(candidate);
+    };
     if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
       if (activePendingProgress.activeQuestion.allowCustomAnswer === false) return;
       setComposerCursor(nextCursor);
-      setComposerTrigger(
-        cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
-      );
+      updateTrigger();
       onChangeActivePendingUserInputCustomAnswer(
         activePendingProgress.activeQuestion.id,
         nextPrompt,
@@ -1703,9 +1711,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       addComposerDraftFiles(attachmentDraftTarget, attachmentChanges.filesToRestore);
     }
     setComposerCursor(nextCursor);
-    setComposerTrigger(
-      cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
-    );
+    updateTrigger();
   };
   const onPromptChangeStable = useStableCallback(onPromptChange);
 

@@ -17,6 +17,12 @@ export function markAsClipboardEdit(tr: Transaction, event: "paste" | "cut"): Tr
   return tr.setMeta(CLIPBOARD_EDIT_META, event);
 }
 
+/** Pasted or dropped text, which the user did not type. */
+export function isPasteTransaction(tr: Transaction): boolean {
+  const uiEvent = tr.getMeta("uiEvent");
+  return uiEvent === "paste" || uiEvent === "drop" || tr.getMeta(CLIPBOARD_EDIT_META) === "paste";
+}
+
 function changeKindOf(tr: Transaction): ComposerChangeKind | null {
   if (!tr.docChanged) return null;
   const uiEvent = tr.getMeta("uiEvent");
