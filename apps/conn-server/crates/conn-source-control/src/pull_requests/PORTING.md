@@ -44,10 +44,12 @@ HTTP test checks the read scope and typed error status.
 `tools/gen-pr-cases.mjs` records 133 cases from T3's own normalization functions, including
 review ranges, subject ownership, candidates, malformed stacks and credential requirements.
 Its `pr-action-recordings.mjs` also runs T3's real GitHub API implementation on an in-memory
-HTTP client: 19 traces cover write documents, variables, REST paths, methods, bodies and
+HTTP client: 33 traces cover write documents, variables, REST paths, methods, bodies and
 GitHub refusals. Rust tests compare the requests and failure details exactly. This exposed
 and fixed the shared helper's missing `operationName`, discarded API error messages and
 overly broad GraphQL not-found classification. `tools/check.sh` checks both recordings for drift.
+The reaction cases come from the contract's literals; a new one must be implemented too.
+Panel capabilities are compared with T3's provider, with explicit omissions for unserved features.
 
 `pr-guide-recordings.mjs` writes and reads a guide through T3's actual SQLite repository. It
 records the table definition, stored JSON and decoded guide. The Rust RPC reads that row from
@@ -80,7 +82,7 @@ client's decoders. Tests never use a real login, model or GitHub API.
   holds at most 32 answers, retaining only answers up to 64 KiB encoded. Credentials have at
   most eight opaque scopes; reported states and observed thread views each cap at 2,048.
   Cached answers do not survive a restart. T3's ETag revalidation, token TTL, quota reserve
-  and Unix-socket HTTP transport are not added here.
+  and Unix-socket HTTP transport are not added here. Immutable PR node IDs are read on each write.
 - Listings read repositories separately instead of using one cross-repository search. This
   costs more requests on a large project list. Requests still have bounded concurrency and
   pagination; statistics use T3's alias renderer.

@@ -96,7 +96,7 @@
   {
     "method": "setReaction",
     "input": {
-      "content": "heart",
+      "content": "thumbs-up",
       "reacted": true
     },
     "requests": [
@@ -121,7 +121,77 @@
           "operationName": "AddReaction",
           "variables": {
             "subjectId": "PR7",
-            "content": "HEART"
+            "content": "THUMBS_UP"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "method": "setReaction",
+    "input": {
+      "subjectId": "C7",
+      "content": "thumbs-up",
+      "reacted": false
+    },
+    "requests": [
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "query PullRequestSubject($owner:String!$name:String!$number:Int!$subjectId:ID!){repository(owner:$owner name:$name){pullRequest(number:$number){id}}node(id:$subjectId){__typename id...on IssueComment{pullRequest{id}}...on PullRequestReviewComment{reviewCommentPullRequest:pullRequest{id}}...on PullRequestReview{reviewPullRequest:pullRequest{id}}}}",
+          "operationName": "PullRequestSubject",
+          "variables": {
+            "owner": "a",
+            "name": "b",
+            "number": 7,
+            "subjectId": "C7"
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "mutation RemoveReaction($subjectId:ID!$content:ReactionContent!){removeReaction(input:{subjectId:$subjectId content:$content}){reaction{content}}}",
+          "operationName": "RemoveReaction",
+          "variables": {
+            "subjectId": "C7",
+            "content": "THUMBS_UP"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "method": "setReaction",
+    "input": {
+      "content": "thumbs-down",
+      "reacted": true
+    },
+    "requests": [
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "query PullRequestNodeId($owner:String!$name:String!$number:Int!){repository(owner:$owner name:$name){pullRequest(number:$number){id}}}",
+          "operationName": "PullRequestNodeId",
+          "variables": {
+            "owner": "a",
+            "name": "b",
+            "number": 7
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "mutation AddReaction($subjectId:ID!$content:ReactionContent!){addReaction(input:{subjectId:$subjectId content:$content}){reaction{content}}}",
+          "operationName": "AddReaction",
+          "variables": {
+            "subjectId": "PR7",
+            "content": "THUMBS_DOWN"
           }
         }
       }
@@ -158,6 +228,426 @@
           "variables": {
             "subjectId": "C7",
             "content": "THUMBS_DOWN"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "method": "setReaction",
+    "input": {
+      "content": "laugh",
+      "reacted": true
+    },
+    "requests": [
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "query PullRequestNodeId($owner:String!$name:String!$number:Int!){repository(owner:$owner name:$name){pullRequest(number:$number){id}}}",
+          "operationName": "PullRequestNodeId",
+          "variables": {
+            "owner": "a",
+            "name": "b",
+            "number": 7
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "mutation AddReaction($subjectId:ID!$content:ReactionContent!){addReaction(input:{subjectId:$subjectId content:$content}){reaction{content}}}",
+          "operationName": "AddReaction",
+          "variables": {
+            "subjectId": "PR7",
+            "content": "LAUGH"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "method": "setReaction",
+    "input": {
+      "subjectId": "C7",
+      "content": "laugh",
+      "reacted": false
+    },
+    "requests": [
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "query PullRequestSubject($owner:String!$name:String!$number:Int!$subjectId:ID!){repository(owner:$owner name:$name){pullRequest(number:$number){id}}node(id:$subjectId){__typename id...on IssueComment{pullRequest{id}}...on PullRequestReviewComment{reviewCommentPullRequest:pullRequest{id}}...on PullRequestReview{reviewPullRequest:pullRequest{id}}}}",
+          "operationName": "PullRequestSubject",
+          "variables": {
+            "owner": "a",
+            "name": "b",
+            "number": 7,
+            "subjectId": "C7"
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "mutation RemoveReaction($subjectId:ID!$content:ReactionContent!){removeReaction(input:{subjectId:$subjectId content:$content}){reaction{content}}}",
+          "operationName": "RemoveReaction",
+          "variables": {
+            "subjectId": "C7",
+            "content": "LAUGH"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "method": "setReaction",
+    "input": {
+      "content": "hooray",
+      "reacted": true
+    },
+    "requests": [
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "query PullRequestNodeId($owner:String!$name:String!$number:Int!){repository(owner:$owner name:$name){pullRequest(number:$number){id}}}",
+          "operationName": "PullRequestNodeId",
+          "variables": {
+            "owner": "a",
+            "name": "b",
+            "number": 7
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "mutation AddReaction($subjectId:ID!$content:ReactionContent!){addReaction(input:{subjectId:$subjectId content:$content}){reaction{content}}}",
+          "operationName": "AddReaction",
+          "variables": {
+            "subjectId": "PR7",
+            "content": "HOORAY"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "method": "setReaction",
+    "input": {
+      "subjectId": "C7",
+      "content": "hooray",
+      "reacted": false
+    },
+    "requests": [
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "query PullRequestSubject($owner:String!$name:String!$number:Int!$subjectId:ID!){repository(owner:$owner name:$name){pullRequest(number:$number){id}}node(id:$subjectId){__typename id...on IssueComment{pullRequest{id}}...on PullRequestReviewComment{reviewCommentPullRequest:pullRequest{id}}...on PullRequestReview{reviewPullRequest:pullRequest{id}}}}",
+          "operationName": "PullRequestSubject",
+          "variables": {
+            "owner": "a",
+            "name": "b",
+            "number": 7,
+            "subjectId": "C7"
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "mutation RemoveReaction($subjectId:ID!$content:ReactionContent!){removeReaction(input:{subjectId:$subjectId content:$content}){reaction{content}}}",
+          "operationName": "RemoveReaction",
+          "variables": {
+            "subjectId": "C7",
+            "content": "HOORAY"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "method": "setReaction",
+    "input": {
+      "content": "confused",
+      "reacted": true
+    },
+    "requests": [
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "query PullRequestNodeId($owner:String!$name:String!$number:Int!){repository(owner:$owner name:$name){pullRequest(number:$number){id}}}",
+          "operationName": "PullRequestNodeId",
+          "variables": {
+            "owner": "a",
+            "name": "b",
+            "number": 7
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "mutation AddReaction($subjectId:ID!$content:ReactionContent!){addReaction(input:{subjectId:$subjectId content:$content}){reaction{content}}}",
+          "operationName": "AddReaction",
+          "variables": {
+            "subjectId": "PR7",
+            "content": "CONFUSED"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "method": "setReaction",
+    "input": {
+      "subjectId": "C7",
+      "content": "confused",
+      "reacted": false
+    },
+    "requests": [
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "query PullRequestSubject($owner:String!$name:String!$number:Int!$subjectId:ID!){repository(owner:$owner name:$name){pullRequest(number:$number){id}}node(id:$subjectId){__typename id...on IssueComment{pullRequest{id}}...on PullRequestReviewComment{reviewCommentPullRequest:pullRequest{id}}...on PullRequestReview{reviewPullRequest:pullRequest{id}}}}",
+          "operationName": "PullRequestSubject",
+          "variables": {
+            "owner": "a",
+            "name": "b",
+            "number": 7,
+            "subjectId": "C7"
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "mutation RemoveReaction($subjectId:ID!$content:ReactionContent!){removeReaction(input:{subjectId:$subjectId content:$content}){reaction{content}}}",
+          "operationName": "RemoveReaction",
+          "variables": {
+            "subjectId": "C7",
+            "content": "CONFUSED"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "method": "setReaction",
+    "input": {
+      "content": "heart",
+      "reacted": true
+    },
+    "requests": [
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "query PullRequestNodeId($owner:String!$name:String!$number:Int!){repository(owner:$owner name:$name){pullRequest(number:$number){id}}}",
+          "operationName": "PullRequestNodeId",
+          "variables": {
+            "owner": "a",
+            "name": "b",
+            "number": 7
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "mutation AddReaction($subjectId:ID!$content:ReactionContent!){addReaction(input:{subjectId:$subjectId content:$content}){reaction{content}}}",
+          "operationName": "AddReaction",
+          "variables": {
+            "subjectId": "PR7",
+            "content": "HEART"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "method": "setReaction",
+    "input": {
+      "subjectId": "C7",
+      "content": "heart",
+      "reacted": false
+    },
+    "requests": [
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "query PullRequestSubject($owner:String!$name:String!$number:Int!$subjectId:ID!){repository(owner:$owner name:$name){pullRequest(number:$number){id}}node(id:$subjectId){__typename id...on IssueComment{pullRequest{id}}...on PullRequestReviewComment{reviewCommentPullRequest:pullRequest{id}}...on PullRequestReview{reviewPullRequest:pullRequest{id}}}}",
+          "operationName": "PullRequestSubject",
+          "variables": {
+            "owner": "a",
+            "name": "b",
+            "number": 7,
+            "subjectId": "C7"
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "mutation RemoveReaction($subjectId:ID!$content:ReactionContent!){removeReaction(input:{subjectId:$subjectId content:$content}){reaction{content}}}",
+          "operationName": "RemoveReaction",
+          "variables": {
+            "subjectId": "C7",
+            "content": "HEART"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "method": "setReaction",
+    "input": {
+      "content": "rocket",
+      "reacted": true
+    },
+    "requests": [
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "query PullRequestNodeId($owner:String!$name:String!$number:Int!){repository(owner:$owner name:$name){pullRequest(number:$number){id}}}",
+          "operationName": "PullRequestNodeId",
+          "variables": {
+            "owner": "a",
+            "name": "b",
+            "number": 7
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "mutation AddReaction($subjectId:ID!$content:ReactionContent!){addReaction(input:{subjectId:$subjectId content:$content}){reaction{content}}}",
+          "operationName": "AddReaction",
+          "variables": {
+            "subjectId": "PR7",
+            "content": "ROCKET"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "method": "setReaction",
+    "input": {
+      "subjectId": "C7",
+      "content": "rocket",
+      "reacted": false
+    },
+    "requests": [
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "query PullRequestSubject($owner:String!$name:String!$number:Int!$subjectId:ID!){repository(owner:$owner name:$name){pullRequest(number:$number){id}}node(id:$subjectId){__typename id...on IssueComment{pullRequest{id}}...on PullRequestReviewComment{reviewCommentPullRequest:pullRequest{id}}...on PullRequestReview{reviewPullRequest:pullRequest{id}}}}",
+          "operationName": "PullRequestSubject",
+          "variables": {
+            "owner": "a",
+            "name": "b",
+            "number": 7,
+            "subjectId": "C7"
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "mutation RemoveReaction($subjectId:ID!$content:ReactionContent!){removeReaction(input:{subjectId:$subjectId content:$content}){reaction{content}}}",
+          "operationName": "RemoveReaction",
+          "variables": {
+            "subjectId": "C7",
+            "content": "ROCKET"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "method": "setReaction",
+    "input": {
+      "content": "eyes",
+      "reacted": true
+    },
+    "requests": [
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "query PullRequestNodeId($owner:String!$name:String!$number:Int!){repository(owner:$owner name:$name){pullRequest(number:$number){id}}}",
+          "operationName": "PullRequestNodeId",
+          "variables": {
+            "owner": "a",
+            "name": "b",
+            "number": 7
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "mutation AddReaction($subjectId:ID!$content:ReactionContent!){addReaction(input:{subjectId:$subjectId content:$content}){reaction{content}}}",
+          "operationName": "AddReaction",
+          "variables": {
+            "subjectId": "PR7",
+            "content": "EYES"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "method": "setReaction",
+    "input": {
+      "subjectId": "C7",
+      "content": "eyes",
+      "reacted": false
+    },
+    "requests": [
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "query PullRequestSubject($owner:String!$name:String!$number:Int!$subjectId:ID!){repository(owner:$owner name:$name){pullRequest(number:$number){id}}node(id:$subjectId){__typename id...on IssueComment{pullRequest{id}}...on PullRequestReviewComment{reviewCommentPullRequest:pullRequest{id}}...on PullRequestReview{reviewPullRequest:pullRequest{id}}}}",
+          "operationName": "PullRequestSubject",
+          "variables": {
+            "owner": "a",
+            "name": "b",
+            "number": 7,
+            "subjectId": "C7"
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/graphql",
+        "body": {
+          "query": "mutation RemoveReaction($subjectId:ID!$content:ReactionContent!){removeReaction(input:{subjectId:$subjectId content:$content}){reaction{content}}}",
+          "operationName": "RemoveReaction",
+          "variables": {
+            "subjectId": "C7",
+            "content": "EYES"
           }
         }
       }

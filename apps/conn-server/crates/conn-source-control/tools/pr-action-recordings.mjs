@@ -13,6 +13,13 @@ const [Api, Rest, Credentials, App, Access, Quota, Limits, Host] = await Promise
   importSource("packages/source-control-core/src/server/SourceControlRateLimit.ts"),
   importSource("packages/source-control-testing/src/TestSourceControlHost.ts"),
 ]);
+const { PullRequestReactionContent } = await importSource("packages/contracts/src/pullRequest.ts");
+
+export async function recordCapabilities() {
+  const Provider = await moduleOf("GitHubPullRequestProvider");
+  const provider = await Effect.runPromise(Effect.scoped(Provider.make.pipe(Effect.provideService(Api.GitHubPullRequestApi,{}))));
+  return provider.capabilities;
+}
 
 export async function recordActions() {
   const cases = [];
@@ -21,8 +28,10 @@ export async function recordActions() {
     ["replyToThread","replyToReviewThread",{threadId:"T7",body:"reply"}],
     ["setThreadResolution","setReviewThreadResolution",{threadId:"T7",resolved:true}],
     ["setThreadResolution","setReviewThreadResolution",{threadId:"T7",resolved:false}],
-    ["setReaction","setReaction",{content:"heart",reacted:true}],
-    ["setReaction","setReaction",{subjectId:"C7",content:"thumbs-down",reacted:false}],
+    ...PullRequestReactionContent.literals.flatMap(content=>[
+      ["setReaction","setReaction",{content,reacted:true}],
+      ["setReaction","setReaction",{subjectId:"C7",content,reacted:false}],
+    ]),
     ["updateComment","updateComment",{commentId:"C7",kind:"issue-comment",body:"issue"}],
     ["updateComment","updateComment",{commentId:"C7",kind:"review-comment",body:"review"}],
     ["update","updatePullRequest",{body:"",maintainerCanModify:false}],

@@ -159,6 +159,30 @@ fn reference() -> Value {
     json!({"projectId":"p1","host":"github.com","repository":"a/b","number":7})
 }
 
+#[test]
+fn panel_capabilities_follow_t3_except_the_explicitly_unserved_features() {
+    let mut expected: Value = serde_json::from_str(include_str!(
+        "../../../../conn-source-control/src/pull_requests/capabilities.json"
+    ))
+    .expect("T3 capabilities");
+    let fields = expected.as_object_mut().expect("capabilities");
+    fields.insert("actions".into(), json!([]));
+    fields.insert("mergeMethods".into(), json!([]));
+    for key in [
+        "deleteBranch",
+        "updateMethods",
+        "stackActions",
+        "withheldFileDiff",
+    ] {
+        fields.remove(key);
+    }
+    assert_eq!(
+        capabilities(),
+        expected,
+        "each capability follows T3 or has an explicit unsupported decision"
+    );
+}
+
 #[tokio::test]
 async fn github_actions_register_and_fail_unsigned_as_t3_does() {
     let dir = TestDir::new();

@@ -390,7 +390,10 @@ impl Panel {
         } else {
             self.resolve(&input).await.map_err(|error| {
                 if method == "reviewGuide" && text(&input, "host").is_empty() {
-                    operation_error("reviewGuide", "Could not identify this pull request's host.")
+                    operation_error(
+                        "reviewGuide",
+                        "Could not identify this pull request's host.",
+                    )
                 } else {
                     error
                 }
