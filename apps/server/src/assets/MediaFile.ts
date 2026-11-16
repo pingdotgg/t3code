@@ -128,3 +128,17 @@ export const streamMediaFile = (file: OpenMediaFile, offset: bigint, bytesToRead
       }),
   });
 };
+
+export const readDirectoryIdentity = Effect.fn("readDirectoryIdentity")(function* (
+  directoryPath: string,
+) {
+  return yield* Effect.tryPromise({
+    try: async () => {
+      const info = await NodeFSP.lstat(directoryPath, { bigint: true });
+      return info.isDirectory() && info.ino !== 0n
+        ? { device: info.dev.toString(), inode: info.ino.toString() }
+        : null;
+    },
+    catch: (cause) => new MediaFileStatError({ path: directoryPath, cause }),
+  });
+});
