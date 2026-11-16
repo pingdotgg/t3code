@@ -352,6 +352,9 @@ const READER_POOL_SIZE = 4;
 const READER_STARTUP_TIMEOUT = Duration.seconds(10);
 const READER_RETRY_DELAY = Duration.seconds(1);
 const READER_RETRY_MAX_DELAY = Duration.minutes(1);
+// node:sqlite cannot interrupt a statement, so an abandoned read keeps its thread and connection
+// until the statement returns. Past this many, an abandoned read keeps its reader busy instead.
+const MAX_RETIRING_READERS = READER_POOL_SIZE;
 
 // Bind transactions to one worker; fail after its exit instead of resuming outside the transaction on a replacement.
 const makeWorkerConnection = Effect.fnUntraced(function* (options: {
@@ -359,6 +362,7 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
   readonly role: "reader" | "writer";
   readonly readOnly: boolean;
   readonly onReply?: () => void;
+  readonly pool?: { retiring: number };
 }) {
   const label = options.role === "reader" ? "Database reader" : "Database writer";
   const readOnly = options.readOnly;
@@ -411,6 +415,7 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
         );
       }
       pending.clear();
+      worker.unref();
     };
     worker.on("message", (reply: WorkerReply | WorkerStartup) => {
       if ("type" in reply) {
@@ -469,6 +474,15 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
           const cached = input.cached && !hasLargeBinding(input.params);
           // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
           worker.postMessage({ id, safeIntegers, ...input, cached, received });
+          const pool = options.pool;
+          if (pool === undefined) return;
+          return Effect.sync(() => {
+            if (!pending.has(id) || pool.retiring >= MAX_RETIRING_READERS) return;
+            pool.retiring++;
+            worker.once("exit", () => pool.retiring--);
+            stop(`${label} abandoned a running statement`);
+            void worker.terminate();
+          });
         });
         // A posted write runs to the end, as it did on the event loop; the caller and its lock
         // must not move on while the worker is still applying it. Reads stay cancellable.
@@ -583,8 +597,11 @@ const startFailure = (error: SqlError) => {
 
 // A reader that cannot start turns off the whole pool, so routing never picks a dead slot, until
 // one background retry starts it again.
-const makeReader = Effect.fnUntraced(function* (filename: string, pool: { unavailable: boolean }) {
-  const acquire = yield* makeWorkerConnection({ filename, role: "reader", readOnly: true });
+const makeReader = Effect.fnUntraced(function* (
+  filename: string,
+  pool: { unavailable: boolean; retiring: number },
+) {
+  const acquire = yield* makeWorkerConnection({ filename, role: "reader", readOnly: true, pool });
   const scope = yield* Effect.scope;
   const context = yield* Effect.context<never>();
 
@@ -915,7 +932,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
       );
     }
   }
-  const readerPool = { unavailable: false };
+  const readerPool = { unavailable: false, retiring: 0 };
   const readers =
     options.readerWorker && isFileDatabase
       ? yield* Effect.forEach(Array.from({ length: READER_POOL_SIZE }), () =>
