@@ -1268,7 +1268,9 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
     ...withUnavailableThreadLinks(
       {
         ...props.linkHandlers,
-        ...(onImagePress ? { onImagePress: (href: string) => onImagePress(href, withGallery) } : {}),
+        ...(onImagePress
+          ? { onImagePress: (href: string) => onImagePress(href, withGallery) }
+          : {}),
         onLinkPress: (href) => props.linkHandlers.onLinkPress(href, props.reply),
         onFileContextMenuAction: (href, actionId) =>
           props.linkHandlers.onFileContextMenuAction(href, actionId, props.reply),
