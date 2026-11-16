@@ -15,16 +15,20 @@ const known = vi.hoisted(
       headBranch: "feature",
       baseBranch: "main",
       updatedAt: "2026-09-01T00:00:00Z",
+      author: { login: "octocat" },
     }) as PullRequestSummary,
 );
-const state = vi.hoisted(() => ({ restoredPreview: null as unknown }));
+const state = vi.hoisted(() => ({
+  restoredPreview: null as unknown,
+  error: null as string | null,
+}));
 vi.mock(import("~/state/query"), async (original) => ({
   ...(await original()),
   // The host has not answered the preview read yet.
   useEnvironmentQuery: ((atom: unknown) => ({
     data: state.restoredPreview,
     dataUpdatedAt: 0,
-    error: null,
+    error: state.error,
     failure: null,
     isPending: atom !== null,
     isSuccess: false,
@@ -53,6 +57,7 @@ function renderPreview() {
 }
 
 it("keeps a refreshing preview's state and title over an older known summary", async () => {
+  state.error = null;
   state.restoredPreview = {
     projectId: "project",
     repository: "owner/repo",
@@ -75,6 +80,7 @@ it("keeps a refreshing preview's state and title over an older known summary", a
 
 it("shows the known summary while the preview loads", async () => {
   state.restoredPreview = null;
+  state.error = null;
   await using screen = await render(
     <PullRequestLinkPreview
       link={<a href={known.url}>#1</a>}
@@ -89,4 +95,16 @@ it("shows the known summary while the preview loads", async () => {
   await userEvent.hover(screen.getByRole("link"));
 
   await expect.element(page.getByText("Known title")).toBeVisible();
+  expect(document.querySelector('[data-slot="skeleton"]')).not.toBeNull();
+});
+
+it("drops the opened placeholder when the preview fails", async () => {
+  state.restoredPreview = null;
+  state.error = "Preview failed";
+  await using screen = await renderPreview();
+
+  await userEvent.hover(screen.getByRole("link"));
+
+  await expect.element(page.getByText("Known title")).toBeVisible();
+  expect(document.querySelector('[data-slot="skeleton"]')).toBeNull();
 });

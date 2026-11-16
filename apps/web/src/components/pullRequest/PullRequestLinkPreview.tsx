@@ -18,6 +18,7 @@ import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useEnvironmentQuery } from "~/state/query";
 
 import { PreviewCard, PreviewCardPopup, PreviewCardTrigger } from "../ui/preview-card";
+import { Skeleton } from "../ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { pullRequestLinkSubject, pullRequestReviewOutcome } from "./pullRequestDetail.logic";
 import {
@@ -174,11 +175,15 @@ export function PullRequestLinkPreview({
                     <PullRequestActorAvatar actor={card.author} className="size-4" />
                     <span className="min-w-0">
                       <span className="block truncate">{authorLabel}</span>
-                      {preview === null ? null : (
+                      {preview !== null ? (
                         <span className="block">
                           opened <RelativeTime timestamp={preview.createdAt} />
                         </span>
-                      )}
+                      ) : previewQuery.error === null ? (
+                        <span className="flex h-lh items-center">
+                          <Skeleton className="h-3 w-20" />
+                        </span>
+                      ) : null}
                     </span>
                   </div>
                 )}
