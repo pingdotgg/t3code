@@ -378,7 +378,8 @@ interface ActivePiTurn {
   settleProbeGeneration: number;
   /** An extension may start compaction immediately after Pi emits agent_settled. */
   settleWhenIdle: boolean;
-  sawCompaction: boolean;
+  /** Pi fails a cancelled compact's response too; that is a stop, not a turn failure. */
+  compactionCancelled: boolean;
   manualCompactInFlight: boolean;
   activeCompaction: PiCompactionState | null;
   activeProviderRetry: PiProviderRetryState | null;
@@ -2314,7 +2315,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           case "compaction_start": {
             if (turn === null) return;
             turn.settleProbeGeneration += 1;
-            turn.sawCompaction = true;
             if (turn.activeCompaction !== null) {
               yield* emitCompaction(turn, turn.activeCompaction, "cancelled");
             }
@@ -2335,6 +2335,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               startedAt: observedAt,
             };
             turn.activeCompaction = null;
+            turn.compactionCancelled = event["aborted"] === true;
             const result = event["result"];
             if (result === null || result === undefined) {
               if (event["aborted"] === true) {
@@ -2514,7 +2515,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 }
                 return;
               }
-              if (!compactTurn.sawCompaction) {
+              if (!compactTurn.compactionCancelled) {
                 compactTurn.failure = makeProviderFailure({
                   message: recordString(event, "error") ?? "Pi compact failed.",
                   class: "provider_error",
@@ -3072,6 +3073,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
 
       const applySelection = Effect.fnUntraced(function* (modelSelection: ModelSelection) {
         const thinking = getModelSelectionStringOptionValue(modelSelection, "thinking");
+        // pi.setModel and /preset can change the model without an RPC event.
+        // Confirm cached selections against Pi before skipping them.
+        const modelCached =
+          modelSelection.model !== PI_INHERIT_MODEL_SLUG && modelSelection.model === appliedModel;
+        let modelDrifted = false;
+        if (modelCached || (thinking !== undefined && thinking === appliedThinking)) {
+          const state = yield* request({ type: "get_state" });
+          const stateModel = recordField(state, "model");
+          const piModel = `${recordString(stateModel, "provider")}/${recordString(stateModel, "id")}`;
+          modelDrifted = modelCached && piModel !== appliedModel;
+          appliedThinking = recordString(state, "thinkingLevel") ?? null;
+        }
         if (modelSelection.model === PI_INHERIT_MODEL_SLUG) {
           if (appliedModel !== null && baselineModel !== null) {
             const restoredModel = yield* request({ type: "set_model", ...baselineModel });
@@ -3094,7 +3107,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             yield* request({ type: "set_thinking_level", level: baselineThinking });
             appliedThinking = baselineThinking;
           }
-        } else if (modelSelection.model !== appliedModel) {
+        } else if (modelDrifted || modelSelection.model !== appliedModel) {
           // Extensions and models.json edits can add providers after the first discovery.
           if (findReportedPiModel(modelSelection.model, discoveredModels) === undefined) {
             yield* discoverModels();
@@ -3321,7 +3334,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               lastLiveUsedTokens: null,
               settleProbeGeneration: 0,
               settleWhenIdle: false,
-              sawCompaction: false,
+              compactionCancelled: false,
               manualCompactInFlight: compactCommand !== null,
               activeCompaction: null,
               activeProviderRetry: null,

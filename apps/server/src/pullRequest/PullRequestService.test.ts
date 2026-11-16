@@ -2419,6 +2419,34 @@ it.effect.each([
   }),
 );
 
+// regression: #37633 any checkout on the host routes the read, so name the host, not the repository
+it.effect("names the host when no project has a checkout on it for a host-routed read", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [project({ id: "wrapper", title: "Wrapper", workspaceRoot: "/work" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("gitlab"), {
+          getChangeRequestSummary: () => Effect.die("no checkout to read through"),
+        }),
+      ],
+    });
+    const error = yield* Effect.flip(
+      service.summary(
+        {
+          projectId: "wrapper" as ProjectId,
+          host: "gitlab.com",
+          repository: "acme/web",
+          number: 7,
+        },
+        { recoverTransientFailure: false },
+      ),
+    );
+    assert.strictEqual(error._tag, "PullRequestUnavailableError");
+    expect(error.message).not.toContain("acme/web is not a project");
+    expect(error.message).toContain("gitlab.com");
+  }),
+);
+
 it.effect("prefers a matching checkout over a non-repository project's directory", () =>
   Effect.gen(function* () {
     const seen: string[] = [];
