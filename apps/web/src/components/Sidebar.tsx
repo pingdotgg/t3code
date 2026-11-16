@@ -541,14 +541,18 @@ function useSidebarThreads(input: {
     : routeThreadOnly(workingThreads, routeRowThreadKey);
   // Folders list the idle threads inside each project, so they need no shelf.
   const idleShelfEnabled = folderGroups === null;
-  const routedActiveThreads = new Set(routeThreadOnly(activeThreads, routeRowThreadKey));
+  const routedActiveThreads = new Set(
+    routeThreadOnly(activeThreads, routeRowThreadKey).map(threadShellKey),
+  );
   const visibleActiveThreads = idleShelfEnabled
     ? idleShelfExpanded
       ? activeThreads
       : // Folding the shelf keeps the thread on screen and the threads an agent
         // is working on, which are not idle at all.
         activeThreads.filter(
-          (thread) => runningAmongIdle.has(thread) || routedActiveThreads.has(thread),
+          (thread) =>
+            runningAmongIdle.has(threadShellKey(thread)) ||
+            routedActiveThreads.has(threadShellKey(thread)),
         )
     : activeThreads;
   const projectFolders =
@@ -661,15 +665,17 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   const active: EnvironmentThreadShell[] = [];
   const working: EnvironmentThreadShell[] = [];
   // Without a Working shelf the running threads sit among the idle ones, so
-  // they are tracked to stay visible when the Idle shelf folds.
-  const runningAmongIdle = new Set<EnvironmentThreadShell>();
+  // they are tracked to stay visible when the Idle shelf folds. The key is
+  // tracked rather than the object, because an optimistic drop replaces it.
+  const runningAmongIdle = new Set<string>();
   const inbox = (thread: EnvironmentThreadShell, manuallyMoved = false) => {
     if (
       workingShelfEnabled &&
       (manuallyMoved ? isThreadWorking(thread) : inboxObservation.isWorking(thread))
     )
       return working;
-    if (!workingShelfEnabled && isThreadWorking(thread)) runningAmongIdle.add(thread);
+    if (!workingShelfEnabled && isThreadWorking(thread))
+      runningAmongIdle.add(threadShellKey(thread));
     return active;
   };
   const snoozed: EnvironmentThreadShell[] = [];
