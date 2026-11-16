@@ -1,14 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useAuth } from "@clerk/react";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
-import {
-  AuthRelayReadScope,
-  AuthRelayWriteScope,
-  type EnvironmentCloudLinkStateResult,
-  type EnvironmentId,
-} from "@t3tools/contracts";
+import { AuthRelayReadScope, AuthRelayWriteScope, type EnvironmentId } from "@t3tools/contracts";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
-import type { RelayManagedEndpointProviderKind } from "@t3tools/contracts/relay";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -32,24 +26,12 @@ import {
 } from "./linkEnvironmentAtoms";
 import { readCachedCloudLinkState, useCloudLinkState } from "./cloudLinkState";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
+import { isManagedTunnelActive } from "./t3ConnectState";
 
 export interface CloudLinkDesiredState {
   readonly managedTunnel: boolean;
   readonly publish: boolean;
   readonly holdWebhooksWhileOffline?: boolean;
-}
-
-// Require managed discovery: stale tunnel config after a publish-only switch causes endpoint_provider_not_managed.
-function isManagedTunnelActive(
-  linkState: EnvironmentCloudLinkStateResult,
-  relayProviderKind: RelayManagedEndpointProviderKind | undefined,
-) {
-  const localManagedTunnel = linkState.managedTunnelActive ?? linkState.linked;
-  return (
-    linkState.linkRevoked !== true &&
-    localManagedTunnel &&
-    (relayProviderKind === undefined || relayProviderKind === "cloudflare_tunnel")
-  );
 }
 
 const isManagedRelayRequestFailedError = Schema.is(ManagedRelay.ManagedRelayRequestFailedError);

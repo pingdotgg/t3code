@@ -55,106 +55,6 @@ describe("acpProviderOptionDescriptors", () => {
     ]);
   });
 
-  it("orders Qoder reasoning levels and badges High as the default", () => {
-    const descriptors = acpProviderOptionDescriptors({
-      configOptions: [
-        {
-          id: "reasoning_effort",
-          name: "Reasoning Effort",
-          category: "thought_level",
-          type: "select",
-          currentValue: "max",
-          options: [
-            { value: "high", name: "High" },
-            { value: "max", name: "Max" },
-            { value: "low", name: "Low" },
-            { value: "none", name: "None" },
-          ],
-        },
-      ],
-      modeState: undefined,
-    });
-
-    expect(descriptors).toEqual([
-      {
-        id: "reasoning_effort",
-        label: "Reasoning",
-        type: "select",
-        options: [
-          { id: "low", label: "Low" },
-          { id: "high", label: "High", isDefault: true },
-          { id: "max", label: "Extra High" },
-          { id: "none", label: "None" },
-        ],
-        currentValue: "max",
-        role: "reasoning",
-      },
-    ]);
-  });
-
-  it("does not badge High as the default for other thought levels", () => {
-    const descriptors = acpProviderOptionDescriptors({
-      configOptions: [
-        {
-          id: "thinking_level",
-          name: "Thinking Level",
-          category: "thought_level",
-          type: "select",
-          currentValue: "low",
-          options: [
-            { value: "high", name: "High" },
-            { value: "low", name: "Low" },
-          ],
-        },
-      ],
-      modeState: undefined,
-    });
-
-    expect(descriptors).toEqual([
-      {
-        id: "thinking_level",
-        label: "Reasoning",
-        type: "select",
-        options: [
-          { id: "low", label: "Low" },
-          { id: "high", label: "High" },
-        ],
-        currentValue: "low",
-        role: "reasoning",
-      },
-    ]);
-  });
-
-  it("keeps Max distinct when the model also offers Extra High", () => {
-    const descriptors = acpProviderOptionDescriptors({
-      configOptions: [
-        {
-          id: "reasoning",
-          name: "Reasoning Effort",
-          category: "thought_level",
-          type: "select",
-          currentValue: "xhigh",
-          options: [
-            { value: "max", name: "Max" },
-            { value: "xhigh", name: "XHigh" },
-            { value: "low", name: "low" },
-          ],
-        },
-      ],
-      modeState: undefined,
-    });
-
-    expect(descriptors[0]).toMatchObject({
-      label: "Reasoning",
-      currentValue: "xhigh",
-      options: [
-        { id: "low", label: "Low" },
-        { id: "xhigh", label: "Extra High" },
-        { id: "max", label: "Max" },
-      ],
-    });
-  });
-
   it("flattens grouped select choices and drops empty or duplicate values", () => {
     const descriptors = acpProviderOptionDescriptors({
       configOptions: [
@@ -280,6 +180,104 @@ describe("acpProviderOptionDescriptors", () => {
     expect(descriptors.map((descriptor) => descriptor.id)).toEqual([
       "unrelated",
       ACP_SESSION_MODE_OPTION_ID,
+    ]);
+  });
+
+  it("orders Qoder reasoning levels and badges High as the default", () => {
+    const descriptors = acpProviderOptionDescriptors({
+      configOptions: [
+        {
+          id: "reasoning_effort",
+          name: "Reasoning Effort",
+          category: "thought_level",
+          type: "select",
+          currentValue: "max",
+          options: [
+            { value: "high", name: "High" },
+            { value: "none", name: "None" },
+            { value: "max", name: "Max" },
+            { value: "low", name: "Low" },
+          ],
+        },
+      ],
+      modeState: undefined,
+    });
+
+    expect(descriptors).toEqual([
+      {
+        id: "reasoning_effort",
+        label: "Reasoning",
+        type: "select",
+        role: "reasoning",
+        currentValue: "max",
+        options: [
+          { id: "low", label: "Low" },
+          { id: "high", label: "High", isDefault: true },
+          { id: "max", label: "Extra High" },
+          { id: "none", label: "None" },
+        ],
+      },
+    ]);
+  });
+
+  it("keeps Max distinct when the model also offers Extra High", () => {
+    const descriptors = acpProviderOptionDescriptors({
+      configOptions: [
+        {
+          id: "reasoning_effort",
+          name: "Reasoning Effort",
+          category: "thought_level",
+          type: "select",
+          currentValue: "max",
+          options: [
+            { value: "max", name: "Max" },
+            { value: "xhigh", name: "Xhigh" },
+            { value: "low", name: "Low" },
+          ],
+        },
+      ],
+      modeState: undefined,
+    });
+
+    expect(descriptors[0]).toMatchObject({
+      options: [
+        { id: "low", label: "Low" },
+        { id: "xhigh", label: "Extra High" },
+        { id: "max", label: "Max" },
+      ],
+    });
+  });
+
+  it("does not badge High as the default for other thought levels", () => {
+    const descriptors = acpProviderOptionDescriptors({
+      configOptions: [
+        {
+          id: "thinking_level",
+          name: "Thinking Level",
+          category: "thought_level",
+          type: "select",
+          currentValue: "low",
+          options: [
+            { value: "high", name: "High" },
+            { value: "low", name: "Low" },
+          ],
+        },
+      ],
+      modeState: undefined,
+    });
+
+    expect(descriptors).toEqual([
+      {
+        id: "thinking_level",
+        label: "Reasoning",
+        type: "select",
+        options: [
+          { id: "low", label: "Low" },
+          { id: "high", label: "High" },
+        ],
+        currentValue: "low",
+        role: "reasoning",
+      },
     ]);
   });
 

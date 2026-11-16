@@ -13,7 +13,21 @@ const MAX_OPTION_CHOICES = 64;
 const MAX_TEXT_LENGTH = 256;
 const MAX_DESCRIPTION_LENGTH = 1_024;
 
-// Low through None, then Off. Extra-high aliases sit with xhigh, ahead of max.
+const boundedText = (value: string | null | undefined, maximumLength: number): string =>
+  (value ?? "").trim().slice(0, maximumLength);
+
+const boundedOpaqueValue = (value: string, maximumLength: number): string | undefined =>
+  value.length > 0 && value === value.trim() && value.length <= maximumLength ? value : undefined;
+
+const choiceId = (value: string): string | undefined =>
+  value === "" ? ACP_EMPTY_OPTION_VALUE : boundedOpaqueValue(value, MAX_TEXT_LENGTH);
+
+export function flattenSelectChoices(
+  options: EffectAcpSchema.SessionConfigSelectOptions,
+): ReadonlyArray<EffectAcpSchema.SessionConfigSelectOption> {
+  return options.flatMap((candidate) => ("value" in candidate ? [candidate] : candidate.options));
+}
+
 const THOUGHT_LEVEL_ORDER = [
   "minimal",
   "low",
@@ -30,45 +44,6 @@ const THOUGHT_LEVEL_ORDER = [
 const THOUGHT_LEVEL_RANK = new Map<string, number>(
   THOUGHT_LEVEL_ORDER.map((id, index) => [id, index]),
 );
-
-const boundedText = (value: string | null | undefined, maximumLength: number): string =>
-  (value ?? "").trim().slice(0, maximumLength);
-
-const boundedOpaqueValue = (value: string, maximumLength: number): string | undefined =>
-  value.length > 0 && value === value.trim() && value.length <= maximumLength ? value : undefined;
-
-const choiceId = (value: string): string | undefined =>
-  value === "" ? ACP_EMPTY_OPTION_VALUE : boundedOpaqueValue(value, MAX_TEXT_LENGTH);
-
-export function flattenSelectChoices(
-  options: EffectAcpSchema.SessionConfigSelectOptions,
-): ReadonlyArray<EffectAcpSchema.SessionConfigSelectOption> {
-  return options.flatMap((candidate) => ("value" in candidate ? [candidate] : candidate.options));
-}
-
-function selectChoices(
-  candidates: ReadonlyArray<{
-    readonly value: string;
-    readonly name: string;
-    readonly description?: string | null | undefined;
-  }>,
-): ReadonlyArray<ProviderOptionChoice> {
-  const seen = new Set<string>();
-  const choices: Array<ProviderOptionChoice> = [];
-  for (const candidate of candidates) {
-    const id = choiceId(candidate.value);
-    if (id === undefined || seen.has(id)) continue;
-    seen.add(id);
-    const description = boundedText(candidate.description, MAX_DESCRIPTION_LENGTH);
-    choices.push({
-      id,
-      label: boundedText(candidate.name, MAX_TEXT_LENGTH) || id,
-      ...(description ? { description } : {}),
-    });
-    if (choices.length === MAX_OPTION_CHOICES) break;
-  }
-  return choices;
-}
 
 function thoughtLevelLabel(id: string, fallback: string, separateMax: boolean): string {
   switch (id) {
@@ -118,6 +93,30 @@ function presentThoughtLevelChoices(
       label: thoughtLevelLabel(choice.id, choice.label, separateMax),
       ...(badgeHighAsDefault && choice.id === "high" ? { isDefault: true } : {}),
     }));
+}
+
+function selectChoices(
+  candidates: ReadonlyArray<{
+    readonly value: string;
+    readonly name: string;
+    readonly description?: string | null | undefined;
+  }>,
+): ReadonlyArray<ProviderOptionChoice> {
+  const seen = new Set<string>();
+  const choices: Array<ProviderOptionChoice> = [];
+  for (const candidate of candidates) {
+    const id = choiceId(candidate.value);
+    if (id === undefined || seen.has(id)) continue;
+    seen.add(id);
+    const description = boundedText(candidate.description, MAX_DESCRIPTION_LENGTH);
+    choices.push({
+      id,
+      label: boundedText(candidate.name, MAX_TEXT_LENGTH) || id,
+      ...(description ? { description } : {}),
+    });
+    if (choices.length === MAX_OPTION_CHOICES) break;
+  }
+  return choices;
 }
 
 export function acpProviderOptionDescriptors(input: {
