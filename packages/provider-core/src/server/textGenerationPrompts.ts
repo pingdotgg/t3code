@@ -535,7 +535,7 @@ export function buildKnowledgeCandidatesPrompt(input: KnowledgeCandidatesPromptI
     "Rules:",
     "- kind is one of decision, constraint, convention",
     "- only extract decisions the user made or accepted, constraints the project must respect, or conventions the code follows",
-    "- a peer is another model in the conversation, so attribute its words to it by name, never to the user or the agent",
+    "- a peer is another model in the conversation; its proposals are not the user's decisions unless the user accepted them",
     "- do not summarize the work, restate the task, or record transient status, plans, or guesses",
     "- content is one or two plain sentences that stand alone without this conversation",
     "- entities lists up to 5 short names of files, modules, tools, or concepts the knowledge is about",
@@ -551,15 +551,15 @@ export function buildKnowledgeCandidatesPrompt(input: KnowledgeCandidatesPromptI
     "",
     "Messages:",
     ...input.messages.map((message) => {
-      const role =
-        message.role === "peer"
-          ? `peer ${message.speaker.label} (${message.speaker.model})`
-          : message.role;
       const run =
         message.runId === undefined
-          ? ""
-          : ` (${threads.get(message.threadId ?? "") ?? "T?"}/${runs.get(message.runId)}, ${message.runOutcome ?? input.runOutcome})`;
-      return `[${message.ref}] ${role}${run}:\n${message.text}\n`;
+          ? undefined
+          : `${threads.get(message.threadId ?? "") ?? "T?"}/${runs.get(message.runId)}, ${message.runOutcome ?? input.runOutcome}`;
+      const role =
+        message.role === "peer"
+          ? `peer ${message.speaker.label} (${message.speaker.model}${run === undefined ? "" : `, ${run}`})`
+          : `${message.role}${run === undefined ? "" : ` (${run})`}`;
+      return `[${message.ref}] ${role}:\n${message.text}\n`;
     }),
   ].join("\n");
   const outputSchema = Schema.Struct({
