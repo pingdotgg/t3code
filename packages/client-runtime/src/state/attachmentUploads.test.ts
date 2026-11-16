@@ -249,4 +249,53 @@ describe("attachment upload registry", () => {
       queue.dispose();
     }),
   );
+  it.effect("restarts a failed upload when a send joins it instead of rejoining the failure", () =>
+    Effect.gen(function* () {
+      const upload = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("Server unavailable"))
+        .mockResolvedValue("uploaded-2");
+      const queue = createQueue({ upload, onChange: () => {} });
+      const local = request("photo");
+      queue.sync([local]);
+      yield* Effect.promise(() => queue.settled());
+      expect(queue.status(uploadKey(environmentId, "photo"))?.status).toBe("failed");
+
+      expect(yield* queue.upload(local)).toBe("uploaded-2");
+      expect(upload).toHaveBeenCalledTimes(2);
+      queue.dispose();
+    }),
+  );
+
+  it.effect("keeps a replacement upload's status when the upload it replaced is released", () =>
+    Effect.gen(function* () {
+      const replacement = Promise.withResolvers<string>();
+      const upload = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("Server unavailable"))
+        .mockImplementationOnce(() => replacement.promise);
+      let statuses: Readonly<Record<string, AttachmentUploadStatus>> = {};
+      const queue = createQueue({
+        upload,
+        onChange: (next) => {
+          statuses = next;
+        },
+      });
+      const local = request("photo");
+      const releaseFailed = queue.hold(local);
+      yield* Effect.promise(() => queue.settled());
+      queue.invalidate(uploadKey(environmentId, "photo"));
+      const releaseReplacement = queue.hold(local);
+      releaseFailed();
+      expect(statuses[uploadKey(environmentId, "photo")]).toEqual({
+        status: "uploading",
+        progress: 0,
+      });
+      replacement.resolve("uploaded-2");
+      yield* Effect.promise(() => queue.settled());
+      expect(statuses[uploadKey(environmentId, "photo")]).toEqual({ status: "ready" });
+      releaseReplacement();
+      queue.dispose();
+    }),
+  );
 });

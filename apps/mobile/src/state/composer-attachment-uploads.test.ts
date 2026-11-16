@@ -143,7 +143,9 @@ vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
   ) =>
     native.server.get(query.input.resource.attachmentId)
       ? { _tag: "Success", value: {} }
-      : { _tag: "Failure", error: { _tag: "AssetAttachmentNotFoundError" } },
+      : (await import("effect/reactivity")).AsyncResult.failure(
+          (await import("effect/Cause")).fail({ _tag: "AssetAttachmentNotFoundError" }),
+        ),
   runAtomCommand: async (
     _registry: unknown,
     command: unknown,
@@ -322,6 +324,24 @@ it.effect.each(["decode", "write"] as const)(
       expect(prepared.prepared.pendingAttachmentIds).toEqual(["pending-1"]);
       expect(native.transfer).toHaveBeenCalledTimes(1);
     }),
+);
+
+it.effect("uploads again at send time when the server swept a finished upload", () =>
+  Effect.gen(function* () {
+    const queue = worker();
+    yield* Effect.promise(() => queue.settled());
+    expect(uploadState()).toEqual({ status: "ready" });
+    // The server sweeps pending uploads nothing claimed, here while the draft sat unsent.
+    native.server.delete("pending-1");
+
+    const message = queuedMessage();
+    yield* Effect.promise(() => enqueueThreadOutboxMessage(message));
+    const prepared = yield* prepareQueuedMessageAttachments(message);
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") throw new Error("Outbox preparation abandoned");
+    expect(prepared.prepared.pendingAttachmentIds).toEqual(["pending-2"]);
+    expect(native.transfer).toHaveBeenCalledTimes(2);
+  }),
 );
 
 it("keeps an upload running when its message is sent mid-upload and records it on the message", async () => {

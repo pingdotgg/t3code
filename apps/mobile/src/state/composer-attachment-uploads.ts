@@ -6,6 +6,7 @@ import {
   attachmentUploadError,
   createAttachmentUploadRegistry,
 } from "@t3tools/client-runtime/state/attachment-uploads";
+import { verifyPersistedAttachmentUpload } from "@t3tools/client-runtime/state/attachments";
 import { Atom } from "effect/reactivity";
 
 import { uploadComposerAttachment } from "../lib/attachmentUpload";
@@ -21,6 +22,7 @@ import {
   type ComposerAttachmentUploadState,
 } from "../lib/composerAttachmentUploadQueue";
 import { appAtomRegistry } from "./atom-registry";
+import { assetEnvironment } from "./assets";
 import { environmentServerConfigsAtom } from "./server";
 import {
   flattenQueuedThreadMessages,
@@ -266,12 +268,28 @@ function composerAttachmentUploads() {
 }
 
 /** Every send uploads through here, so it joins the composer's upload of the same attachment. */
-export function uploadComposerAttachmentShared(
-  environmentId: EnvironmentId,
-  attachment: DraftComposerAttachment,
-) {
-  return composerAttachmentUploads().upload({ environmentId, attachment });
-}
+export const uploadComposerAttachmentShared = Effect.fn("ComposerAttachments.uploadForSend")(
+  function* (environmentId: EnvironmentId, attachment: DraftComposerAttachment) {
+    const uploads = composerAttachmentUploads();
+    const request = { environmentId, attachment };
+    const key = composerAttachmentUploadKey(environmentId, attachment.id);
+    // An upload that finished earlier can outlive the server's pending-upload sweep.
+    const finishedEarlier = uploads.status(key)?.status === "ready";
+    const uploadedId = yield* uploads.upload(request);
+    if (!finishedEarlier) return uploadedId;
+    const verification = yield* verifyPersistedAttachmentUpload({
+      registry: appAtomRegistry,
+      createAssetUrl: assetEnvironment.createUrl,
+      environmentId,
+      attachmentId: uploadedId,
+    });
+    if (verification.status === "verified") return uploadedId;
+    if (verification.status === "failed") return yield* attachmentUploadError(verification.error);
+    // Starting over verifies the saved id again and uploads the bytes when it is gone.
+    uploads.restart(key);
+    return yield* uploads.upload(request);
+  },
+);
 
 /**
  * Uploads draft and queued attachments to their environment as soon as it is connected and
