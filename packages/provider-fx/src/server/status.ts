@@ -131,9 +131,7 @@ const FxStatus = Schema.fromJsonString(
   }),
 );
 const decodeFxStatus = Schema.decodeUnknownOption(FxStatus);
-const FxModels = Schema.fromJsonString(
-  Schema.Struct({ ids: Schema.optional(Schema.Array(Schema.String)) }),
-);
+const FxModels = Schema.fromJsonString(Schema.Struct({ ids: Schema.Array(Schema.String) }));
 const decodeFxModels = Schema.decodeUnknownOption(FxModels);
 
 const VERSION_PROBE_TIMEOUT_MS = 10_000;
@@ -203,7 +201,7 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
     );
   const status = Option.flatMap(yield* read(["status", "--json"]), decodeFxStatus);
   const listed = Option.flatMap(yield* read(["models", "--json"]), decodeFxModels).pipe(
-    Option.map((models) => models.ids?.flatMap((id) => nonEmptyTrimmed(id) ?? []) ?? []),
+    Option.map((models) => models.ids.flatMap((id) => nonEmptyTrimmed(id) ?? [])),
   );
   const auth = fxAuth(Option.getOrUndefined(status)?.auth);
   const defaultModel = nonEmptyTrimmed(Option.getOrUndefined(status)?.model);
