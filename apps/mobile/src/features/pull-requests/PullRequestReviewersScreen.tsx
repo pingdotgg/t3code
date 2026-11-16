@@ -177,10 +177,15 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
         ) => {
           for (const batch of changeBatches(people)) await sendBatch(batch, requested);
         };
+        // A search result is keyed by what was typed, so the writes do not reach it on their own.
+        const refreshSearch =
+          hostQuery !== null && add.length + remove.length > 0 ? searchResult.refresh : null;
         // Removing first lets a host that keeps one reviewer take the new one.
-        void send(remove, false).then(() => send(add, true));
+        void send(remove, false)
+          .then(() => send(add, true))
+          .then(() => refreshSearch?.());
       }),
-    [navigation, draft, latest, request, target],
+    [navigation, draft, latest, request, target, hostQuery, searchResult.refresh],
   );
   const reviewerSearch: AppBarSearch | undefined = listCandidates
     ? {
