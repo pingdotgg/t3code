@@ -2,6 +2,8 @@ import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
@@ -20,8 +22,36 @@ it.effect.each(["merge", "disable-auto-merge"] as const)(
       const native = yield* GitLabCli.make.pipe(
         Effect.provide(
           TestSourceControlHost.layer({
+            git: {
+              remotes: () =>
+                Effect.succeed(
+                  Effect.succeed({
+                    remotes: [
+                      {
+                        name: "origin",
+                        url: `git@${selectedHost}:acme/web.git`,
+                        pushUrl: Option.none(),
+                        isPrimary: true,
+                      },
+                      {
+                        name: "gitlab",
+                        url: `git@${otherHost}:acme/web.git`,
+                        pushUrl: Option.none(),
+                        isPrimary: false,
+                      },
+                    ],
+                    freshness: {
+                      source: "live-local",
+                      observedAt: DateTime.makeUnsafe(0),
+                      expiresAt: Option.none(),
+                    },
+                  }),
+                ),
+            },
             process: {
               run: (input) => {
+                if (input.args[0] === "config")
+                  return Effect.succeed(TestSourceControlHost.processOutput(""));
                 // glab prefers a remote named `gitlab` to `origin`. The checkout's
                 // selected repository must still own every request and mutation.
                 const host = input.env?.GITLAB_HOST ?? otherHost;

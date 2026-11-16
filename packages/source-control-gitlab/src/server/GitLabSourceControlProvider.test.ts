@@ -1,4 +1,4 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { SourceControlProviderKind, VcsProcessExitError } from "@t3tools/contracts";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { refineUnknownRemoteProvider } from "@t3tools/source-control-core/server/discovery";
 import { processOutput } from "@t3tools/source-control-testing/TestSourceControlHost";
@@ -6,6 +6,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as DateTime from "effect/DateTime";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
@@ -183,6 +184,120 @@ it.effect.each([
       });
       if (expectedProvider === "github") assert.strictEqual(authCalls, 0);
     }),
+);
+
+it.effect.each([
+  [undefined, "gitlab.example.test:8443"],
+  ["gitlab.example.test:8443", "gitlab.example.test:8443"],
+  ["SSH.Example.Test", "ssh.example.test"],
+] as const)("resolves a split-host checkout for requested host %s", ([requestedHost, expected]) =>
+  Effect.gen(function* () {
+    const remoteUrl = "git@SSH.Example.Test:team/repo.git";
+    const provider = yield* makeProvider({
+      resolveHost: (input) => {
+        assert.deepStrictEqual(input, { cwd: "/repo", host: "SSH.Example.Test", remoteUrl });
+        return Effect.succeed({ cliHost: "SSH.Example.Test", webHost: "gitlab.example.test:8443" });
+      },
+    });
+    const resolve = provider.resolveRemoteWebHost;
+    assert.ok(resolve);
+    const host = yield* resolve({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: SourceControlProviderKind.make("gitlab"),
+          name: "GitLab",
+          baseUrl: "https://ssh.example.test",
+        },
+        remoteName: "origin",
+        remoteUrl,
+        ...(requestedHost === undefined ? {} : { requestedHost }),
+      },
+      resolveContext: () => Effect.die("Unexpected remote discovery"),
+    });
+    assert.strictEqual(host, expected);
+  }),
+);
+
+it.effect("keeps the login host's casing when configuration fails after provider routing", () =>
+  Effect.gen(function* () {
+    const cliHost = "SSH.Example.Test";
+    const remoteUrl = `git@${cliHost}:team/repo.git`;
+    const configHosts: string[] = [];
+    const requestHosts: Array<string | undefined> = [];
+    let configFails = false;
+    const services = GitLabCli.layer.pipe(
+      Layer.provideMerge(
+        TestSourceControlHost.layer({
+          git: {
+            remotes: () =>
+              Effect.succeed(
+                Effect.succeed({
+                  remotes: [
+                    { name: "origin", url: remoteUrl, pushUrl: Option.none(), isPrimary: true },
+                  ],
+                  freshness: {
+                    source: "live-local",
+                    observedAt: DateTime.makeUnsafe(0),
+                    expiresAt: Option.none(),
+                  },
+                }),
+              ),
+          },
+          process: {
+            run: (input) => {
+              if (input.args[0] !== "config") {
+                requestHosts.push(input.env?.GITLAB_HOST);
+                return Effect.succeed(processOutput('{"username":"reviewer"}'));
+              }
+              const configHost = input.args[4];
+              assert.ok(configHost);
+              configHosts.push(configHost);
+              return configFails
+                ? Effect.fail(
+                    new VcsProcessExitError({
+                      operation: input.operation,
+                      command: input.command,
+                      cwd: input.cwd,
+                      exitCode: 1,
+                      detail: "Configuration lookup failed.",
+                      failureKind: "command-failed",
+                    }),
+                  )
+                : Effect.succeed(processOutput("gitlab.example.test:8443"));
+            },
+          },
+        }),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const cli = yield* GitLabCli.GitLabCli;
+      const provider = yield* GitLabSourceControlProvider.make;
+      const resolve = provider.resolveRemoteWebHost;
+      assert.ok(resolve);
+      const host = yield* resolve({
+        cwd: "/repo",
+        context: {
+          provider: {
+            kind: SourceControlProviderKind.make("gitlab"),
+            name: "GitLab",
+            baseUrl: "https://ssh.example.test",
+          },
+          remoteName: "origin",
+          remoteUrl,
+          requestedHost: cliHost,
+        },
+        resolveContext: () => Effect.die("Unexpected remote discovery"),
+      });
+      assert.ok(host);
+      assert.strictEqual(host, "ssh.example.test");
+      configFails = true;
+      yield* cli.execute({ cwd: "/repo", host, args: ["api", "user"] });
+      yield* cli.execute({ cwd: "/repo", host, args: ["api", "user"] });
+    }).pipe(Effect.provide(services));
+    assert.deepStrictEqual(requestHosts, [cliHost, cliHost]);
+    assert.deepStrictEqual(configHosts, [cliHost, cliHost, cliHost]);
+  }),
 );
 
 it("parses authenticated GitLab auth status hosts with ports and single-label names", () => {
