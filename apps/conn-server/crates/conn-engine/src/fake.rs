@@ -785,7 +785,11 @@ impl Session for FakeSession {
                 }
             }
             *crate::lock(&self.turn) = Some(turn);
-            tokio::spawn(async move { emit(&tx, started).await });
+            if text.starts_with("latestart") {
+                emit(&tx, started).await;
+            } else {
+                tokio::spawn(async move { emit(&tx, started).await });
+            }
             Ok(())
         })
     }

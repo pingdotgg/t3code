@@ -263,12 +263,7 @@ async fn git_project(f: &Fixture) -> PathBuf {
 
 #[tokio::test(flavor = "current_thread")]
 async fn attachments_claim_bytes_reuse_canonical_metadata_and_refuse_foreign_ids() {
-    // Keep the parent active while the test sends and reuses attachment references.
-    let f = fixture_with(
-        "attachment-send",
-        None,
-        FakeProvider::new("claudeAgent").without_steering(),
-    );
+    let f = fixture("attachment-send");
     let (parent, caller) = running_parent(&f).await;
     let mut agent = Client::open(&f.service, caller).await;
     let prepared = agent.ok("t3_attachment_prepare_upload",json!({"upload":{"type":"file","name":"note.txt","mimeType":"text/plain","sizeBytes":3}})).await;
@@ -362,10 +357,12 @@ async fn attachments_claim_bytes_reuse_canonical_metadata_and_refuse_foreign_ids
     assert_eq!(std::fs::read(stored.path).unwrap(), b"abc");
     let mut tampered = attachment.clone();
     tampered["name"] = json!("forged.txt");
-    let reused = agent
+    // Steering may end the parent; its paired client can still reuse the attachments.
+    let mut outside = Client::open(&f.service, client(true)).await;
+    let reused = outside
         .ok(
             "t3_thread_send_attachments",
-            json!({"attachments":[tampered]}),
+            json!({"threadId":parent["threadId"],"attachments":[tampered]}),
         )
         .await;
     let projection = f
@@ -384,7 +381,6 @@ async fn attachments_claim_bytes_reuse_canonical_metadata_and_refuse_foreign_ids
     assert_eq!(message["attachments"][0]["name"], "note.txt");
     let mut foreign = attachment.clone();
     foreign["id"] = json!("other-00000000-0000-4000-8000-000000000001-txt");
-    let mut outside = Client::open(&f.service, client(true)).await;
     assert_eq!(
         outside
             .failure(

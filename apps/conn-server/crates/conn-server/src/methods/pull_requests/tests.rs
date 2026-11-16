@@ -139,6 +139,89 @@ fn reference() -> Value {
     json!({"projectId":"p1","host":"github.com","repository":"a/b","number":7})
 }
 
+#[test]
+fn panel_capabilities_follow_t3_except_the_explicitly_unserved_features() {
+    let mut expected: Value = serde_json::from_str(include_str!(
+        "../../../../conn-source-control/src/pull_requests/capabilities.json"
+    ))
+    .expect("T3 capabilities");
+    let fields = expected.as_object_mut().expect("capabilities");
+    fields.insert("actions".into(), json!([]));
+    fields.insert("mergeMethods".into(), json!([]));
+    for key in [
+        "deleteBranch",
+        "updateMethods",
+        "stackActions",
+        "withheldFileDiff",
+    ] {
+        fields.remove(key);
+    }
+    assert_eq!(
+        capabilities(),
+        expected,
+        "each capability follows T3 or has an explicit unsupported decision"
+    );
+}
+
+#[tokio::test]
+async fn github_actions_register_and_fail_unsigned_as_t3_does() {
+    let dir = TestDir::new();
+    let panel = panel(shell(&dir.0), &dir, "http://127.0.0.1:1");
+    std::fs::write(dir.0.join("gh"), "#!/bin/sh\nexit 1\n").expect("signed-out gh");
+    let mut table = MethodTable::new();
+    register_panel(&mut table, panel);
+    for (method, fields) in [
+        ("comment", json!({"body":"hello"})),
+        ("replyToThread", json!({"threadId":"thread","body":"hello"})),
+        (
+            "updateComment",
+            json!({"commentId":"comment","kind":"issue-comment","body":"hello"}),
+        ),
+        ("setReaction", json!({"content":"heart","reacted":true})),
+        (
+            "setThreadResolution",
+            json!({"threadId":"thread","resolved":true}),
+        ),
+        (
+            "submitReview",
+            json!({"verdict":"approve","body":"","comments":[]}),
+        ),
+        (
+            "requestReviewers",
+            json!({"reviewers":[{"id":"reviewer","kind":"user"}],"requested":true}),
+        ),
+        ("reviewerCandidates", json!({})),
+        ("labelCandidates", json!({})),
+        ("setLabels", json!({"labels":["bug"],"applied":true})),
+        ("update", json!({"body":"new body"})),
+        ("stack", json!({})),
+        ("reviewGuide", json!({})),
+    ] {
+        let mut input = reference();
+        input
+            .as_object_mut()
+            .expect("ref")
+            .extend(fields.as_object().expect("fields").clone());
+        let error = call(&table, &format!("pullRequests.{method}"), input)
+            .await
+            .expect_err(method);
+        assert!(
+            matches!(error, Failure::Fail(ref value) if value["_tag"] == "PullRequestUnavailableError" && value["reason"] == "cli-unauthenticated"),
+            "{method}: {error:?}"
+        );
+    }
+    let mut routed = reference();
+    routed["expectedAccountId"] = json!("12");
+    routed["body"] = json!("hello");
+    let error = call(&table, "pullRequests.comment", routed)
+        .await
+        .expect_err("account unavailable");
+    assert!(
+        matches!(error, Failure::Fail(ref value) if value["_tag"] == "PullRequestOperationError" && value["operation"] == "routeIdentity" && value["detail"] == "The signed-in account could not be verified before starting the operation."),
+        "{error:?}"
+    );
+}
+
 async fn api() -> (String, tokio::task::JoinHandle<()>, Arc<AtomicU64>) {
     let (base, task, calls, _) = counted_api(axum::http::StatusCode::OK).await;
     (base, task, calls)
@@ -161,8 +244,16 @@ async move {
         counter.fetch_add(1,Ordering::Relaxed);
 let query=text(&body,"query");
 let mut pr:Value=serde_json::from_str(include_str!("../../../../conn-source-control/src/pull_requests/sample.json")).expect("sample");
+
         let data=if query.contains("RoutingIdentityViewer") { json!({"viewer":{"databaseId":12,"login":"nick"}}) }
         else if query.contains("PullRequestStats") && body["variables"].get("_0_owner").is_some() {json!({"_0_repository":{"pullRequest":{"additions":10,"deletions":2}}})}
+        else if query.starts_with("mutation ") {
+            if body["variables"]["body"] == "fail" {return Json(json!({"errors":[{"message":"refused"}]}));}
+            json!({})
+        }
+        else if query.contains("PullRequestSubject") {json!({"repository":{"pullRequest":{"id":"PR7"}},"node":{"__typename":"IssueComment","id":"C7","pullRequest":{"id":"PR7"}}})}
+        else if query.contains("ReviewerCandidates") {json!({"repository":{"assignableUsers":{"nodes":[{"login":"reader","name":null,"avatarUrl":null}],"pageInfo":{"hasNextPage":false}},"pullRequest":{"author":{"login":"author"},"reviewRequests":{"nodes":[]}}}})}
+        else if query.contains("LabelCandidates") {json!({"repository":{"labels":{"nodes":[{"name":"bug","color":"abcdef","description":null}],"pageInfo":{"hasNextPage":false}},"pullRequest":{"labels":{"nodes":[]}}}})}
         else if query.contains("PullRequestSearch") {json!({"search":{"nodes":[pr],"pageInfo":{"hasNextPage":false}}})}
         else if query.contains("RepositoryLabels"){json!({"repository":{"labels":{"nodes":[{"name":"bug","color":"abcdef"}],"pageInfo":{"hasNextPage":false}}}})}
         else if query.contains("PullRequestFilesViewed")||query.contains("PullRequestFileStats"){json!({"repository":{"pullRequest":{"files":{"nodes":[{"path":"file.rs","viewerViewedState":"VIEWED","additions":7,"deletions":2}],"pageInfo":{"hasNextPage":false}}}}})}
@@ -175,7 +266,8 @@ pr["reviewDismissals"]=json!({"nodes":[],"pageInfo":{"hasNextPage":false}});
 pr["commits"]=json!({"nodes":[]});
 json!({"viewer":{"login":"nick"},"repository":{"pullRequest":pr,"mergeCommitAllowed":true,"squashMergeAllowed":true,"rebaseMergeAllowed":true,"autoMergeAllowed":true,"viewerPermission":"WRITE"}})};
         Json(json!({"data":data}))
-    }}));
+    }})).route("/repos/a/b/stacks",get(||async {Json(json!([]))})).fallback(||async {axum::http::StatusCode::NO_CONTENT});
+
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind");
@@ -272,6 +364,457 @@ async fn panel_reads_decode_and_refreshes_replace_cached_reads() {
         "refresh hits GitHub"
     );
     call(&table,"pullRequests.setFilesViewed",json!({"projectId":"p1","host":"github.com","repository":"a/b","number":7,"files":[{"path":"file.rs","viewed":false}]})).await.expect("unviewed");
+    task.abort();
+}
+
+#[tokio::test]
+async fn actions_decode_and_success_notifies_but_failure_still_invalidates() {
+    let dir = TestDir::new();
+    let (base, task, count) = api().await;
+    let panel = panel(shell(&dir.0), &dir, &base);
+    let mut table = MethodTable::new();
+    register_panel(&mut table, panel.clone());
+    for (method, fields) in [
+        ("comment", json!({"body":"comment"})),
+        ("replyToThread", json!({"threadId":"T7","body":"reply"})),
+        (
+            "updateComment",
+            json!({"commentId":"C7","kind":"issue-comment","body":"edit"}),
+        ),
+        (
+            "setReaction",
+            json!({"subjectId":"C7","content":"heart","reacted":false}),
+        ),
+        (
+            "setThreadResolution",
+            json!({"threadId":"T7","resolved":false}),
+        ),
+        (
+            "submitReview",
+            json!({"verdict":"approve","body":"","comments":[]}),
+        ),
+        (
+            "requestReviewers",
+            json!({"reviewers":[{"id":"reader","kind":"user"}],"requested":false}),
+        ),
+        ("setLabels", json!({"labels":["bug"],"applied":false})),
+        ("update", json!({"body":"","maintainerCanModify":false})),
+    ] {
+        call(&table, "pullRequests.summary", reference())
+            .await
+            .expect("warm cache");
+        let before = *panel.refreshes.borrow();
+        let mut input = reference();
+        input
+            .as_object_mut()
+            .expect("ref")
+            .extend(fields.as_object().expect("fields").clone());
+        assert_eq!(
+            call(&table, &format!("pullRequests.{method}"), input)
+                .await
+                .expect(method),
+            Value::Null,
+            "{method}"
+        );
+        assert_eq!(
+            *panel.refreshes.borrow(),
+            before + 1,
+            "{method} notifies the existing refresh stream"
+        );
+        assert!(panel.cache.is_empty(), "{method} invalidates its reads");
+    }
+    for method in ["reviewerCandidates", "labelCandidates"] {
+        let before = *panel.refreshes.borrow();
+        let result = call(&table, &format!("pullRequests.{method}"), reference())
+            .await
+            .expect(method);
+        assert_eq!(
+            result["candidates"].as_array().expect("candidates").len(),
+            1,
+            "{method} decodes"
+        );
+        assert_eq!(
+            *panel.refreshes.borrow(),
+            before,
+            "candidate reads do not notify"
+        );
+    }
+    assert_eq!(
+        call(&table, "pullRequests.stack", reference())
+            .await
+            .expect("stack"),
+        Value::Null,
+        "no stack decodes"
+    );
+    call(&table, "pullRequests.summary", reference())
+        .await
+        .expect("cache");
+    let before = *panel.refreshes.borrow();
+    let mut input = reference();
+    input["body"] = json!("fail");
+    let error = call(&table, "pullRequests.comment", input)
+        .await
+        .expect_err("failed write");
+    assert!(
+        matches!(error,Failure::Fail(ref value) if value["_tag"]=="PullRequestOperationError"&&value["operation"]=="comment"),
+        "{error:?}"
+    );
+    assert_eq!(
+        *panel.refreshes.borrow(),
+        before,
+        "failed writes do not announce success"
+    );
+    assert!(
+        panel.cache.is_empty(),
+        "failed writes discard possibly stale answers"
+    );
+    let before = count.load(Ordering::Relaxed);
+    call(&table, "pullRequests.summary", reference())
+        .await
+        .expect("reread");
+    assert_eq!(
+        count.load(Ordering::Relaxed),
+        before + 1,
+        "next read reaches GitHub after failure"
+    );
+    let before = count.load(Ordering::Relaxed);
+    let cached = panel.cache.len();
+    for (method, fields) in [
+        ("comment", json!({"body":"do not send"})),
+        ("comment", json!({"body":" \n"})),
+        ("runAction", json!({"action":"close"})),
+        ("generateReviewGuide", json!({})),
+    ] {
+        let mut input = reference();
+        input["expectedAccountId"] = json!("wrong");
+        input
+            .as_object_mut()
+            .expect("input")
+            .extend(fields.as_object().expect("fields").clone());
+        let error = call(&table, &format!("pullRequests.{method}"), input)
+            .await
+            .expect_err("wrong account");
+        assert!(
+            matches!(error, Failure::Fail(ref value) if value["operation"] == "routeIdentity"),
+            "routing precedes validation: {error:?}"
+        );
+        assert_eq!(
+            panel.cache.len(),
+            cached,
+            "wrong accounts do not invalidate reads"
+        );
+    }
+    assert_eq!(
+        count.load(Ordering::Relaxed),
+        before,
+        "mismatched routing sends no mutation or permissions read"
+    );
+    for (method, fields, detail) in [
+        (
+            "comment",
+            json!({"body":" \n"}),
+            "A comment cannot be empty.",
+        ),
+        (
+            "replyToThread",
+            json!({"threadId":"T7","body":" \n"}),
+            "A reply cannot be empty.",
+        ),
+        (
+            "updateComment",
+            json!({"commentId":"C7","kind":"review-comment","body":" \n"}),
+            "A comment cannot be empty.",
+        ),
+        ("update", json!({}), "Nothing was changed."),
+        (
+            "submitReview",
+            json!({"verdict":"comment","body":" \n","comments":[]}),
+            "A review needs a summary or at least one comment.",
+        ),
+    ] {
+        let mut input = reference();
+        input
+            .as_object_mut()
+            .expect("ref")
+            .extend(fields.as_object().expect("fields").clone());
+        let error = call(&table, &format!("pullRequests.{method}"), input)
+            .await
+            .expect_err(method);
+        assert!(
+            matches!(error,Failure::Fail(ref v) if v["detail"]==detail),
+            "{method}: {error:?}"
+        );
+    }
+    task.abort();
+}
+
+#[tokio::test]
+async fn unavailable_actions_and_guide_generation_return_typed_refusals() {
+    let dir = TestDir::new();
+    let mut panel = panel(shell(&dir.0), &dir, "http://127.0.0.1:1");
+    let environment = Arc::new(
+        ServerEnvironment::load(
+            &dir.0,
+            Some("Refusals".into()),
+            dir.0.clone(),
+            Default::default(),
+        )
+        .expect("environment"),
+    );
+    Arc::get_mut(&mut panel).expect("new panel").environment = Some(environment.clone());
+    let mut table = MethodTable::new();
+    register_panel(&mut table, panel.clone());
+    for enabled in [false, true] {
+        environment
+            .settings
+            .update(json!({"reviewGuidesEnabled":enabled}), None)
+            .expect("settings");
+        let error = call(&table, "pullRequests.generateReviewGuide", reference())
+            .await
+            .expect_err("generation refused");
+        let detail = if enabled {
+            "This server cannot generate review guides yet."
+        } else {
+            "Review guides are off. Turn them on in Settings → Source Control."
+        };
+        assert!(
+            matches!(error, Failure::Fail(ref value) if value["_tag"] == "PullRequestOperationError" && value["operation"] == "generateReviewGuide" && value["detail"] == detail),
+            "{error:?}"
+        );
+    }
+    for action in [
+        "merge",
+        "ready",
+        "draft",
+        "close",
+        "reopen",
+        "delete-branch",
+        "update-branch",
+        "enable-auto-merge",
+        "disable-auto-merge",
+        "revert",
+        "approve-workflows",
+    ] {
+        let mut input = reference();
+        input["action"] = json!(action);
+        let error = call(&table, "pullRequests.runAction", input)
+            .await
+            .expect_err("action refused");
+        let detail = if action == "delete-branch" {
+            "This host cannot delete a change request's source branch.".into()
+        } else {
+            format!("This host cannot {action} a change request.")
+        };
+        assert!(
+            matches!(error, Failure::Fail(ref value) if value["_tag"] == "PullRequestOperationError" && value["operation"] == "runAction" && value["detail"] == detail),
+            "{action}: {error:?}"
+        );
+    }
+    let mut stack = reference();
+    stack["action"] = json!("merge");
+    stack["stackNumber"] = json!(1);
+    let error = call(&table, "pullRequests.runAction", stack)
+        .await
+        .expect_err("stack action refused");
+    assert!(
+        matches!(error, Failure::Fail(ref value) if value["operation"] == "runAction" && value["detail"] == "This stack action is not supported or has no expected head revision."),
+        "{error:?}"
+    );
+    assert_eq!(
+        *panel.refreshes.borrow(),
+        0,
+        "refusals never announce success"
+    );
+}
+
+#[tokio::test]
+async fn cancelling_a_write_discards_reads_started_while_it_was_in_flight() {
+    use axum::{Json, Router, routing::post};
+    let started = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let observed = started.clone();
+    let resume = release.clone();
+    let router=Router::new().route("/graphql",post(move |Json(body):Json<Value>| {
+        let observed=observed.clone();
+        let resume=resume.clone();
+        async move {
+            if text(&body,"query").starts_with("mutation ") {
+                observed.notify_one();
+                resume.notified().await;
+            }
+            Json(json!({"data":{"repository":{"viewerPermission":"WRITE","pullRequest":{"id":"PR7","viewerDidAuthor":false}}}}))
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let base = format!("http://{}", listener.local_addr().expect("address"));
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router).await.expect("API");
+    });
+    let dir = TestDir::new();
+    let panel = panel(shell(&dir.0), &dir, &base);
+    let mut input = reference();
+    input["body"] = json!("write");
+    let mut write = Box::pin(panel.call("comment", input));
+    tokio::select! {
+        ()=started.notified()=>{},
+        result=&mut write=>panic!("write ended before gate: {result:?}"),
+    }
+    let key = ReadKey {
+        scope: 1,
+        method: "summary".into(),
+        host: "github.com".into(),
+        repo: "a/b".into(),
+        number: Some(7),
+        input: reference().to_string(),
+    };
+    panel
+        .cache
+        .get_with(
+            key,
+            |_| Duration::from_secs(60),
+            || async { Ok(json!({"old":true})) },
+        )
+        .await
+        .expect("cached read");
+    assert_eq!(
+        panel.cache.len(),
+        1,
+        "a read can finish while the write is running"
+    );
+    drop(write);
+    assert!(
+        panel.cache.is_empty(),
+        "cancellation runs the post-write invalidation too"
+    );
+    assert_eq!(
+        *panel.refreshes.borrow(),
+        0,
+        "cancelled write does not announce success"
+    );
+    release.notify_one();
+    task.abort();
+}
+
+#[tokio::test]
+async fn review_guide_reads_t3_storage_keeps_stale_head_and_survives_restart() {
+    let dir = TestDir::new();
+    let fixture: Value =
+        serde_json::from_str(include_str!("guide-fixture.json")).expect("T3 guide recording");
+    assert_eq!(
+        guides::load(
+            dir.0.join("statev2.sqlite"),
+            "github.com".into(),
+            "a/b".into(),
+            7
+        )
+        .await
+        .expect("absent database"),
+        Value::Null,
+        "fresh servers have no stored guide"
+    );
+    assert!(
+        !dir.0.join("statev2.sqlite").exists(),
+        "reading does not create T3's database"
+    );
+    let database =
+        rusqlite::Connection::open(dir.0.join("statev2.sqlite")).expect("guide database");
+    database
+        .execute_batch(text(&fixture, "schema"))
+        .expect("T3 table");
+    database.execute("INSERT INTO pull_request_review_guides (host,repository,number,guide_json) VALUES ('github.com','a/b',7,?1)",[text(&fixture,"stored")]).expect("T3 stored row");
+    let (base, task, _) = api().await;
+    for _ in 0..2 {
+        let mut panel = panel(shell(&dir.0), &dir, &base);
+        Arc::get_mut(&mut panel).expect("new panel").environment = Some(Arc::new(
+            ServerEnvironment::load(
+                &dir.0,
+                Some("Guide test".into()),
+                dir.0.clone(),
+                Default::default(),
+            )
+            .expect("environment"),
+        ));
+        let mut table = MethodTable::new();
+        register_panel(&mut table, panel);
+        let result = call(&table, "pullRequests.reviewGuide", reference())
+            .await
+            .expect("stored guide");
+        assert_eq!(
+            result["guide"], fixture["guide"],
+            "T3's actual stored JSON decodes with every section intact"
+        );
+        assert_eq!(result["run"], Value::Null, "no guide generation is running");
+        let raw: Value = serde_json::from_str(include_str!(
+            "../../../../conn-source-control/src/pull_requests/sample.json"
+        ))
+        .expect("sample");
+        assert_eq!(
+            result["currentHeadSha"], raw["headRefOid"],
+            "current head is read from GitHub; stale guide keeps its own head"
+        );
+        let mut missing = reference();
+        missing["number"] = json!(8);
+        assert_eq!(
+            call(&table, "pullRequests.reviewGuide", missing)
+                .await
+                .expect("missing guide")["guide"],
+            Value::Null,
+            "absence is null"
+        );
+        let mut wrong = reference();
+        wrong["projectId"] = json!("missing");
+        let error = call(&table, "pullRequests.reviewGuide", wrong)
+            .await
+            .expect_err("unknown project");
+        assert!(
+            matches!(error,Failure::Fail(ref v) if v["operation"]=="reviewGuide"&&v["detail"]=="Could not identify this pull request's host."),
+            "{error:?}"
+        );
+    }
+    let mut panel = panel(shell(&dir.0), &dir, &base);
+    Arc::get_mut(&mut panel).expect("new panel").environment = Some(Arc::new(
+        ServerEnvironment::load(
+            &dir.0,
+            Some("Guide test".into()),
+            dir.0.clone(),
+            Default::default(),
+        )
+        .expect("environment"),
+    ));
+    let mut table = MethodTable::new();
+    register_panel(&mut table, panel);
+    let mut bad_line = fixture["guide"].clone();
+    bad_line["stops"][0]["excerpts"][0]["start"] = json!(0);
+    let mut blank = fixture["guide"].clone();
+    blank["headSha"] = json!("  ");
+    let mut missing_attention = fixture["guide"].clone();
+    missing_attention["stops"][0]
+        .as_object_mut()
+        .expect("stop")
+        .remove("attention");
+    for corrupt in [
+        "broken".into(),
+        bad_line.to_string(),
+        blank.to_string(),
+        missing_attention.to_string(),
+        "x".repeat(8 * 1024 * 1024 + 1),
+    ] {
+        database
+            .execute(
+                "UPDATE pull_request_review_guides SET guide_json=?1",
+                [corrupt],
+            )
+            .expect("corrupt row");
+        let error = call(&table, "pullRequests.reviewGuide", reference())
+            .await
+            .expect_err("corrupt data");
+        assert!(
+            matches!(error,Failure::Fail(ref v) if v["operation"]=="reviewGuide"&&v["detail"]=="Could not read the stored review guide."),
+            "{error:?}"
+        );
+    }
     task.abort();
 }
 

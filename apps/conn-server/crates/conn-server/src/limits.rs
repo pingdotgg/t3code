@@ -1,5 +1,5 @@
 //! Payload limits that the contract's schemas check and the generated Rust types do not: a
-//! string's length and pattern, a number's range, a record's number of entries. The table is
+//! string's length and pattern, a number's range, array bounds and record entry counts. The table is
 //! generated (`limits/generated.rs`, by `tools/gen-upstream.mjs`) from the payload schemas in
 //! `packages/contracts/src/rpc.ts`, for the methods it lists.
 //!
@@ -10,8 +10,8 @@
 //! `tools/limits-cases.json` holds the cases; `tools/limits-diff.mjs` runs them through the T3
 //! contract's own decode and a test here through [`check`].
 //!
-//! A length counts UTF-16 code units, as JavaScript's `length` does. The T3 server checks a
-//! trimmed non-empty string's length after trimming; this check does the same.
+//! A string length counts UTF-16 code units, as JavaScript's `length` does. Fields with the
+//! contract's `TrimmedString` and `TrimmedNonEmptyString` transform are trimmed before checks.
 
 use std::{collections::HashMap, sync::OnceLock};
 
@@ -33,6 +33,9 @@ struct RawLimit {
     values: Option<Box<RawLimit>>,
     #[serde(default)]
     variants: HashMap<String, RawLimit>,
+    discriminator: Option<String>,
+    #[serde(default)]
+    trim: bool,
     #[serde(default)]
     non_blank: bool,
     min_length: Option<usize>,
@@ -51,6 +54,8 @@ struct Limit {
     keys: Option<Box<Limit>>,
     values: Option<Box<Limit>>,
     variants: Vec<(String, Limit)>,
+    discriminator: Option<String>,
+    trim: bool,
     non_blank: bool,
     min_length: Option<usize>,
     max_length: Option<usize>,
@@ -86,12 +91,14 @@ impl Limit {
             .collect();
         variants.sort_by(|a, b| a.0.cmp(&b.0));
         Self {
+            discriminator: raw.discriminator,
+            trim: raw.trim,
+            non_blank: raw.non_blank,
+            min_length: raw.min_length,
             fields,
             keys: raw.keys.map(|k| Box::new(Self::build(*k))),
             values: raw.values.map(|v| Box::new(Self::build(*v))),
             variants,
-            non_blank: raw.non_blank,
-            min_length: raw.min_length,
             max_length: raw.max_length,
             items: raw.items.map(|i| Box::new(Self::build(*i))),
             pattern,
@@ -111,36 +118,18 @@ impl Limit {
     fn problem(&self, value: &mut Value, path: &mut Vec<String>) -> Option<String> {
         match value {
             Value::String(text) => {
-                if self.non_blank {
-                    *text = conn_support::text::js_trim(text).to_owned();
+                if self.trim {
+                    let trimmed = conn_support::text::js_trim(text);
+                    if trimmed.len() != text.len() {
+                        *text = trimmed.to_owned();
+                    }
                 }
                 self.text_problem(text, path)
             }
             Value::Number(number) => self.number_problem(number.as_f64()?, path),
-            Value::Array(items) => {
-                if self.min_length.is_some_and(|min| items.len() < min) {
-                    return Some(at(
-                        format!(
-                            "an array with at least {} items",
-                            self.min_length.unwrap_or_default()
-                        ),
-                        path,
-                    ));
-                }
-                if let Some(limit) = &self.items {
-                    for (index, item) in items.iter_mut().enumerate() {
-                        path.push(index.to_string());
-                        let problem = limit.problem(item, path);
-                        path.pop();
-                        if problem.is_some() {
-                            return problem;
-                        }
-                    }
-                }
-                None
-            }
             Value::Object(map) => {
-                if let Some(Value::String(tag)) = map.get("_tag")
+                if let Some(Value::String(tag)) =
+                    map.get(self.discriminator.as_deref().unwrap_or("_tag"))
                     && let Some((_, variant)) = self.variants.iter().find(|(t, _)| t == tag)
                 {
                     return variant.problem(value, path);
@@ -176,6 +165,41 @@ impl Limit {
                     _ => None,
                 }
             }
+            Value::Array(values) => {
+                if let Some(min) = self.min_length
+                    && values.len() < min
+                {
+                    return Some(at(
+                        format!(
+                            "a value with a length of at least {min}, got {}",
+                            values.len()
+                        ),
+                        path,
+                    ));
+                }
+                if let Some(max) = self.max_length
+                    && values.len() > max
+                {
+                    return Some(at(
+                        format!(
+                            "a value with a length of at most {max}, got {}",
+                            values.len()
+                        ),
+                        path,
+                    ));
+                }
+                if let Some(limit) = &self.items {
+                    for (index, value) in values.iter_mut().enumerate() {
+                        path.push(index.to_string());
+                        let problem = limit.problem(value, path);
+                        path.pop();
+                        if problem.is_some() {
+                            return problem;
+                        }
+                    }
+                }
+                None
+            }
             _ => None,
         }
     }
@@ -184,10 +208,14 @@ impl Limit {
         if self.non_blank && text.is_empty() {
             return Some(at("a non-blank string".to_owned(), path));
         }
-        if let Some(min) = self.min_length
-            && text.encode_utf16().count() < min
-        {
-            return Some(at(format!("a value with a length of at least {min}"), path));
+        if let Some(min) = self.min_length {
+            let length = text.encode_utf16().count();
+            if length < min {
+                return Some(at(
+                    format!("a value with a length of at least {min}, got {length}"),
+                    path,
+                ));
+            }
         }
         if let Some(max) = self.max_length {
             let length = text.encode_utf16().count();
@@ -351,6 +379,9 @@ mod tests {
             check("assets.createUrl", &mut over),
             Err(Failure::Die(_))
         ));
+        let blank = problem("pullRequests.update", json!({"title":"\u{feff} \u{feff}"}))
+            .expect("blank after trimming");
+        assert_eq!(blank, r#"expected a non-blank string at ["title"]"#);
     }
 
     #[test]
