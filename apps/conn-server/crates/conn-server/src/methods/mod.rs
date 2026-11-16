@@ -10,6 +10,7 @@ use crate::table::MethodTable;
 
 mod annotations;
 mod files;
+mod mcp_apps;
 mod orchestration;
 mod panels;
 mod projects;
@@ -70,6 +71,7 @@ pub fn register_all(table: &mut MethodTable, deps: &Deps) {
     provider::register(table, deps);
     vcs::register(table, deps);
     files::register(table, deps);
+    mcp_apps::register(table, deps);
     terminal::register(table, deps);
     scheduled::register(table, deps);
     secrets::register(table, deps);

@@ -16,6 +16,9 @@ use serde_json::{Value, json};
 use crate::shell;
 
 const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS mcp_app_model_context (
+ thread_id TEXT NOT NULL, item_id TEXT NOT NULL, server TEXT NOT NULL, tool TEXT NOT NULL, text TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(thread_id,item_id)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS events (
   seq       INTEGER PRIMARY KEY,
   thread_id TEXT NOT NULL,
@@ -48,6 +51,7 @@ CREATE INDEX IF NOT EXISTS entities_waiting_secrets
 ON entities(thread_id, json_extract(body, '$.updatedAt') DESC, id DESC)
 WHERE kind = 'turnItems' AND json_extract(body, '$.type') = 'secret_request'
   AND json_extract(body, '$.status') = 'waiting';
+CREATE INDEX IF NOT EXISTS mcp_app_items ON entities(id, thread_id) WHERE kind='turnItems';
 CREATE TABLE IF NOT EXISTS projects (
   id             TEXT PRIMARY KEY,
   workspace_root TEXT NOT NULL UNIQUE,
@@ -856,6 +860,14 @@ impl Tx<'_> {
         } else if event_type.starts_with("thread.") {
             let project_id = payload["projectId"].as_str().unwrap_or_default().to_owned();
             let deleted = event_type == "thread.deleted";
+            if deleted {
+                self.tx
+                    .execute(
+                        "DELETE FROM mcp_app_model_context WHERE thread_id=?1",
+                        [&thread_id],
+                    )
+                    .map_err(err)?;
+            }
             self.tx
                 .execute(
                     "INSERT INTO threads (id, project_id, deleted, activity_at, thread) VALUES (?1, ?2, ?3, ?4, ?5)

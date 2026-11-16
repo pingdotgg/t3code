@@ -1373,7 +1373,41 @@ impl<E: Env> Mapper<E> {
                     }
                     "mcpToolCall" | "dynamicToolCall" => {
                         turn.running_tools.retain(|t| t["id"] != item["id"]);
+                        let start = out.len();
                         tool_artifacts(&mut self.env, turn, item, None, out);
+                        let uri = item
+                            .pointer("/mcpAppUi/resourceUri")
+                            .or_else(|| item.get("mcpAppResourceUri"))
+                            .or_else(|| item.pointer("/appContext/resourceUri"))
+                            .and_then(Value::as_str);
+                        if kind == "mcpToolCall"
+                            && item.get("result").is_some_and(|v| !v.is_null())
+                            && item.get("error").is_none_or(Value::is_null)
+                            && let Some(uri) = uri.filter(|uri| uri.starts_with("ui://"))
+                        {
+                            for output in out.iter_mut().skip(start) {
+                                if let Out::Event(ProviderEvent::TurnItemUpdated { turn_item }) =
+                                    output
+                                {
+                                    *output = Out::Event(ProviderEvent::McpAppCapture {
+                                        turn_item: turn_item.clone(),
+                                        source: conn_provider::mcp_apps::Source {
+                                            server: item
+                                                .get("server")
+                                                .and_then(Value::as_str)
+                                                .unwrap_or_default()
+                                                .into(),
+                                            tool: item
+                                                .get("tool")
+                                                .and_then(Value::as_str)
+                                                .unwrap_or_default()
+                                                .into(),
+                                            resource_uri: uri.into(),
+                                        },
+                                    });
+                                }
+                            }
+                        }
                     }
                     "fileChange" => {
                         turn.file_change_kinds.remove(&id);

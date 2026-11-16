@@ -25,6 +25,7 @@ mod checkpoint;
 mod clock;
 mod commands;
 mod engine;
+mod mcp_apps;
 
 /// Locks a std mutex. A poisoned lock means a thread panicked while it held the lock: a bug.
 /// With `panic = "abort"` a release build stops at the panic itself.
@@ -168,6 +169,16 @@ pub trait EngineHost: Send + Sync {
     /// The message that claimed `attachments` was refused: remove the copies.
     fn release_attachments(&self, _attachments: Value) -> BoxFuture<'_, ()> {
         Box::pin(std::future::ready(()))
+    }
+
+    /// Stores a bounded, sandboxed MCP App document as a thread attachment.
+    fn snapshot_mcp_app(
+        &self,
+        _thread: String,
+        _source: conn_provider::mcp_apps::Source,
+        _contents: Value,
+    ) -> BoxFuture<'_, Result<Option<Value>, String>> {
+        Box::pin(async { Ok(None) })
     }
 
     /// Creates a git worktree for `launchThread` with a `worktree` strategy.

@@ -85,7 +85,7 @@ hidden while linked environments are off; `watch_pull_request`/`unwatch_pull_req
 from delegated children. Preview, device and panel tools are listed to everyone and fail without
 the capability.
 
-**Served: 44 of 87.** Definitions come byte for byte from `apps/server`. Each served tool has
+**Served: 46 of 87.** Definitions come byte for byte from `apps/server`. Each served tool has
 a unit test and `parity.mjs` steps.
 
 Where they differ, because the engine does not do it yet:
@@ -219,7 +219,7 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `t3_theme_set` | not served | writesEnvironment | server: themes | |
 | `t3_project_clone` | not served | writesEnvironment | server: project clone tracking (`ProjectCloneTracker`, source control repositories) | |
 
-The generated catalog serves 44 tools. `tools.implemented` is the source of the served set.
+The generated catalog serves 46 tools. `tools.implemented` is the source of the served set.
 The batch, attachment and worktree port's constraints and test mapping are in [PORTING.md](PORTING.md).
 
 **Named but not served (12):** `device_list`, `device_open`,
@@ -365,3 +365,8 @@ pinning. No browser capability is advertised and no hidden browser is started.
 one-use project scope, persistence and file retries. `parity.mjs` checks outside callers get
 the same hidden-tool result on both servers. The `url` dependency is already linked through
 source control; it validates the tool's http(s) URL input without a second parser.
+
+`mcp_call` and `mcp_connect` use the same `conn_features::panels::PanelBroker` as
+`panel_open`, through `panels.requests` / `panels.respond`. They retain T3's 90-second action
+timeout and accept the first successful desktop response. Input decoding trims names and
+checks the contract's UTF-16 limits before a request reaches the desktop.
