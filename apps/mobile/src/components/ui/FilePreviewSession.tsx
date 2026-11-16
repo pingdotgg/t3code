@@ -11,7 +11,12 @@ import {
 } from "../../lib/attachmentDownload";
 import { usePreviewPresentation } from "../../lib/previewPresentation";
 import { refreshAssetUrl } from "../../state/assets";
-import { filePreviewGallery, filePreviewKey, filePreviewName } from "../../lib/filePreviewGallery";
+import {
+  filePreviewGallery,
+  filePreviewKey,
+  filePreviewName,
+  filePreviewSourceIdentifier,
+} from "../../lib/filePreviewGallery";
 import { FilePreviewGallery } from "./FilePreviewGallery";
 import type { MediaActionsSource } from "../../lib/mediaActionsSource";
 import type {
@@ -155,6 +160,7 @@ function ResolvedFilePreview(
       return {
         ...item,
         name: filePreviewName(item),
+        sourceIdentifier: filePreviewSourceIdentifier(item),
         ...(uri ? { uri } : uri === null ? { failed: true } : {}),
       };
     });

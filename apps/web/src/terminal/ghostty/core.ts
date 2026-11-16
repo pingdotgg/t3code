@@ -166,9 +166,24 @@ export interface GhosttyMouseInput {
 // advertises xterm-256color, whose kf15/kf27/... are CSI 1;m R. Terminfo keys only apply in
 // keypad-transmit mode (smkx), so that mode marks a terminfo reader; raw parsers never set it.
 const MODIFIED_F3 = /^\x1b\[13;(\d+)~$/;
+/** Mouse report input: UTF-8 text, or one UTF-16 code unit per byte when `binary`. */
+interface GhosttyMouseReport {
+  readonly data: string;
+  readonly binary: boolean;
+}
 
 const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
+const strictDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const encoder = new TextEncoder();
+
+// Legacy X10 reports can contain bytes above 0x7f that are not valid UTF-8.
+function mouseReport(bytes: Uint8Array): GhosttyMouseReport {
+  try {
+    return { data: strictDecoder.decode(bytes), binary: false };
+  } catch {
+    return { data: String.fromCharCode(...bytes), binary: true };
+  }
+}
 
 // The encoder only takes whole-pixel cells, so cell reports rescale the pointer onto that grid.
 function encoderAxis(
@@ -595,14 +610,16 @@ export class GhosttyTerminalCore {
     this.runtime.call("ghostty_key_event_set_utf8", this.keyEvent, textPointer, textBytes.length);
 
     const written = this.runtime.call("ghostty_wasm_alloc_usize");
-    const encoded = this.encodeOutput(written, (output, outputSize) =>
-      this.runtime.call(
-        "ghostty_key_encoder_encode",
-        this.keyEncoder,
-        this.keyEvent,
-        output,
-        outputSize,
-        written,
+    const encoded = decoder.decode(
+      this.encodeOutput(written, (output, outputSize) =>
+        this.runtime.call(
+          "ghostty_key_encoder_encode",
+          this.keyEncoder,
+          this.keyEvent,
+          output,
+          outputSize,
+          written,
+        ),
       ),
     );
     this.runtime.call("ghostty_wasm_free_usize", written);
@@ -657,14 +674,16 @@ export class GhosttyTerminalCore {
     this.ensureActive();
     if (!this.modeEnabled(1004)) return "";
     const written = this.runtime.call("ghostty_wasm_alloc_usize");
-    const encoded = this.encodeOutput(written, (output, outputSize) =>
-      this.runtime.call("ghostty_focus_encode", focused ? 0 : 1, output, outputSize, written),
+    const encoded = decoder.decode(
+      this.encodeOutput(written, (output, outputSize) =>
+        this.runtime.call("ghostty_focus_encode", focused ? 0 : 1, output, outputSize, written),
+      ),
     );
     this.runtime.call("ghostty_wasm_free_usize", written);
     return encoded;
   }
 
-  encodeMouse(input: GhosttyMouseInput): string {
+  encodeMouse(input: GhosttyMouseInput): GhosttyMouseReport {
     this.ensureActive();
     this.runtime.call(
       "ghostty_mouse_encoder_setopt_from_terminal",
@@ -745,7 +764,7 @@ export class GhosttyTerminalCore {
       ),
     );
     this.runtime.call("ghostty_wasm_free_usize", written);
-    return encoded;
+    return mouseReport(encoded);
   }
 
   setSelection(anchor: GhosttyPointInput, end: GhosttyPointInput): void {
@@ -1065,17 +1084,19 @@ export class GhosttyTerminalCore {
   private encodeOutput(
     written: number,
     encode: (output: number, outputSize: number) => number,
-  ): string {
+  ): Uint8Array {
     const sizeResult = encode(0, 0);
     const outputSize = this.runtime.view(written, 4).getUint32(0, true);
-    if (sizeResult === GHOSTTY_SUCCESS && outputSize === 0) return "";
-    if (sizeResult !== GHOSTTY_OUT_OF_SPACE || outputSize === 0) return "";
+    if (sizeResult === GHOSTTY_SUCCESS && outputSize === 0) return new Uint8Array();
+    if (sizeResult !== GHOSTTY_OUT_OF_SPACE || outputSize === 0) return new Uint8Array();
 
     const output = this.runtime.alloc(outputSize);
     const result = encode(output, outputSize);
     const outputLength = this.runtime.view(written, 4).getUint32(0, true);
     const encoded =
-      result === GHOSTTY_SUCCESS ? decoder.decode(this.runtime.bytes(output, outputLength)) : "";
+      result === GHOSTTY_SUCCESS
+        ? this.runtime.bytes(output, outputLength).slice()
+        : new Uint8Array();
     this.runtime.free(output, outputSize);
     return encoded;
   }
