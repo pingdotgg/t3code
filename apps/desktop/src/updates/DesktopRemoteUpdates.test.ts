@@ -733,16 +733,15 @@ describe("DesktopRemoteUpdates", () => {
   it.effect("waits for a background check before installing a prepared update", () => {
     const backgroundCheckStarted = Deferred.makeUnsafe<void>();
     const releaseBackgroundCheck = Deferred.makeUnsafe<void>();
-    let checks = 0;
+    let blockCheck = false;
     const harness = makeHarness({
-      checkForUpdates: Effect.suspend(() => {
-        checks += 1;
-        return checks === 2
+      checkForUpdates: Effect.suspend(() =>
+        blockCheck
           ? Deferred.succeed(backgroundCheckStarted, undefined).pipe(
               Effect.andThen(Deferred.await(releaseBackgroundCheck)),
             )
-          : Effect.void;
-      }),
+          : Effect.void,
+      ),
     });
 
     return runRemoteUpdatesTest(harness, ({ requests, commits }) =>
@@ -755,6 +754,7 @@ describe("DesktopRemoteUpdates", () => {
         harness.emit("update-downloaded", { version: "1.2.4" });
         yield* settle;
 
+        blockCheck = true;
         const backgroundCheck = yield* updates.check("poll").pipe(Effect.forkChild);
         yield* Deferred.await(backgroundCheckStarted);
         assert.isTrue(yield* updates.isActionActive);
