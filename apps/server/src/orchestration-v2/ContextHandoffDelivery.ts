@@ -25,24 +25,49 @@ const MESSAGE_KINDS: ReadonlySet<string> = new Set([
   "peer_reply",
 ]);
 
+export function freshTailMessages<Message extends { readonly kind?: string }>(
+  messages: ReadonlyArray<Message>,
+): ReadonlyArray<Message> {
+  return messages
+    .filter((message) => message.kind !== undefined && MESSAGE_KINDS.has(message.kind))
+    .slice(-FRESH_TAIL_MESSAGES);
+}
+
 const SUMMARY_TOOLS = "t3_conversation_summary_list and t3_conversation_summary_expand";
+
+const REPLACED_SPANS_PREFIX = "Replaced earlier spans with ";
+const OMITTED_SUMMARY_PREFIX = "Some omitted items have conversation summaries; read one with ";
+const EARLIER_OMITTED_SUMMARY_PREFIX = "Omitted items have conversation summaries; read one with ";
+const RECEIPT_PREFIXES = [
+  REPLACED_SPANS_PREFIX,
+  OMITTED_SUMMARY_PREFIX,
+  EARLIER_OMITTED_SUMMARY_PREFIX,
+] as const;
 
 function handoffReceiptLine(input: {
   readonly summaryIds: ReadonlyArray<string>;
   readonly omittedHaveSummaries: boolean;
 }): string {
   if (input.summaryIds.length > 0) {
-    return `Replaced earlier spans with ${input.summaryIds.join(", ")}; read one with ${SUMMARY_TOOLS}.`;
+    return `${REPLACED_SPANS_PREFIX}${input.summaryIds.join(", ")}; read one with ${SUMMARY_TOOLS}.`;
   }
   if (input.omittedHaveSummaries) {
-    return `Omitted items have conversation summaries; read one with ${SUMMARY_TOOLS}.`;
+    return `${OMITTED_SUMMARY_PREFIX}${SUMMARY_TOOLS}.`;
   }
   return "";
 }
 
+function withoutHandoffReceipt(summaryText: string): string {
+  return summaryText
+    .split("\n")
+    .filter((line) => !RECEIPT_PREFIXES.some((prefix) => line.startsWith(prefix)))
+    .join("\n");
+}
+
 function withHandoffReceipt(summaryText: string, line: string): string {
-  if (line === "" || summaryText.includes(line)) return summaryText;
-  return summaryText === "" ? line : `${summaryText}\n${line}`;
+  const base = withoutHandoffReceipt(summaryText);
+  if (line === "") return base;
+  return base === "" ? line : `${base}\n${line}`;
 }
 
 /** The provider prompt for a turn that carries inline context ahead of the user's text. */
@@ -167,10 +192,9 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       // The newest messages stay verbatim when they fit. Tool results around them may give way
       // to a summary.
       const pinned = new Set<string>(
-        messages
-          .filter((message) => message.kind !== undefined && MESSAGE_KINDS.has(message.kind))
-          .slice(-FRESH_TAIL_MESSAGES)
-          .flatMap((message) => (selected.messages.includes(message) ? [message.itemId] : [])),
+        freshTailMessages(messages).flatMap((message) =>
+          selected.messages.includes(message) ? [message.itemId] : [],
+        ),
       );
       const eligible = new Set(
         [...priorOmitted, ...messages.map((message) => message.itemId)].filter(

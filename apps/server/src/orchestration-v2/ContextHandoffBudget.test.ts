@@ -1214,7 +1214,10 @@ describe("handoff delivery", () => {
       const source: OrchestrationV2ContextHandoff = {
         ...handoff,
         id: ContextHandoffId.make("handoff:summary-receipt"),
-        summaryText: "Coverage.",
+        summaryText: [
+          "Coverage.",
+          `Omitted items have conversation summaries; read one with ${summaryTools}.`,
+        ].join("\n"),
         history: { messages: history, coverage: "Coverage.", omittedItems: 0 },
       };
       let durable = source;
