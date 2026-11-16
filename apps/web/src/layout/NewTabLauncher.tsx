@@ -23,7 +23,10 @@ import {
 } from "../components/SurfaceLauncher";
 import { isElectron } from "../env";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
-import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
+import {
+  COLLAPSED_SIDEBAR_INSET_EASE_CLASS,
+  COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+} from "../workspaceTitlebar";
 import { Button } from "../components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -393,6 +396,7 @@ export function LayoutLauncherPane({
         data-floating-pane-header=""
         className={cn(
           "relative z-10 flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center pr-(--workspace-gutter-end) pl-(--workspace-gutter-start) md:pl-0",
+          COLLAPSED_SIDEBAR_INSET_EASE_CLASS,
           isElectron && "drag-region",
           leadingEdge && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}

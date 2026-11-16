@@ -68,7 +68,10 @@ import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { useDeviceState } from "~/state/device";
 import type { PreviewPanelInlineSize } from "~/hooks/usePreviewPanelInlineSize";
 import { useRevealActiveTab } from "~/hooks/useRevealActiveTab";
-import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
+import {
+  COLLAPSED_SIDEBAR_INSET_EASE_CLASS,
+  COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+} from "~/workspaceTitlebar";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
 import { PanelTabSlotsContext, usePanelTabActionsHost } from "./PanelTabBreadcrumb";
@@ -1042,6 +1045,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           notched
             ? cn(
                 "relative z-10 ps-1.5 pe-2 md:ps-0",
+                COLLAPSED_SIDEBAR_INSET_EASE_CLASS,
                 (focusedSurface && PANE_BODY_SURFACE_CLASS[focusedSurface.kind]) ?? "bg-background",
               )
             : "pl-2",
