@@ -54,6 +54,14 @@ const isModelEvaluationError = Schema.is(ModelEvaluationError);
 // fastMode, serviceTier, contextWindow, and ultracode change latency, billing, or capacity, not output quality.
 const QUALITY_OPTION_IDS = new Set(["effort", "reasoningEffort", "reasoning_effort"]);
 
+const EVALUATOR_FAILURE_DETAIL_LIMIT = 120;
+
+function evaluatorFailureReason(error: { readonly _tag: string; readonly detail: string }) {
+  const detail = error.detail.replace(/\s+/g, " ").trim().slice(0, EVALUATOR_FAILURE_DETAIL_LIMIT);
+  const named = detail.length === 0 ? error._tag : `${error._tag}: ${detail}`;
+  return `The evaluator could not complete this evaluation (${named}). No model score was recorded.`;
+}
+
 function selectionKey(selection: ModelSelection) {
   return JSON.stringify({
     instanceId: selection.instanceId,
@@ -491,17 +499,21 @@ const make = Effect.gen(function* () {
           });
         }).pipe(
           Effect.scoped,
-          Effect.catchTags({ TextGenerationError: () => Effect.succeed(null) }),
+          Effect.map((verdict) => ({ verdict, failure: null })),
+          Effect.catchTags({
+            TextGenerationError: (error) =>
+              Effect.succeed({ verdict: null, failure: evaluatorFailureReason(error) }),
+          }),
         );
-        if (generated === null) {
+        if (generated.failure !== null) {
           status = "failed";
-          reason = "The evaluator could not complete this evaluation. No model score was recorded.";
-        } else if (!validateModelEvaluationVerdict(generated, evidence.packet)) {
+          reason = generated.failure;
+        } else if (!validateModelEvaluationVerdict(generated.verdict, evidence.packet)) {
           status = "failed";
           reason =
             "The evaluator returned unsupported scores or evidence references. No model score was recorded.";
         } else {
-          verdict = generated;
+          verdict = generated.verdict;
           status = verdict.outcome;
           reason = null;
         }
