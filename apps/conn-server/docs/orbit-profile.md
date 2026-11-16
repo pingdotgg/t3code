@@ -1042,39 +1042,39 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `provider.install.start` | no | X | U | M | install a provider CLI; Orbit bundles agents |
 | `provider.install.subscribe` | yes | U | U |  |  |
 | `provider.uploadFeedback` | no | U | U | S |  |
-| `pullRequests.activity` | no | O | N | L | PR panel: list, review, comment, merge |
-| `pullRequests.changeBreakdown` | no | O | N | L | PR panel: list, review, comment, merge |
-| `pullRequests.checks` | no | U | N | L | read-only PR view; in a container the data would come from the Gateway |
+| `pullRequests.activity` | yes | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.changeBreakdown` | yes | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.checks` | yes | U | N | L | read-only PR view; in a container the data would come from the Gateway |
 | `pullRequests.comment` | no | O | N | L | PR panel: list, review, comment, merge |
-| `pullRequests.detail` | no | U | N | L | read-only PR view; in a container the data would come from the Gateway |
-| `pullRequests.diffFileContents` | no | O | N | L | PR panel: list, review, comment, merge |
-| `pullRequests.filesViewed` | no | O | N | L | PR panel: list, review, comment, merge |
-| `pullRequests.filterOptions` | no | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.detail` | yes | U | N | L | read-only PR view; in a container the data would come from the Gateway |
+| `pullRequests.diffFileContents` | yes | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.filesViewed` | yes | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.filterOptions` | yes | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.generateReviewGuide` | no | X | U | M | AI review guide |
-| `pullRequests.invalidate` | no | U | N | L | read-only PR view; in a container the data would come from the Gateway |
+| `pullRequests.invalidate` | yes | U | N | L | read-only PR view; in a container the data would come from the Gateway |
 | `pullRequests.labelCandidates` | no | O | N | L | PR panel: list, review, comment, merge |
-| `pullRequests.linkedThreads` | no | U | N | L | read-only PR view; in a container the data would come from the Gateway |
-| `pullRequests.list` | no | O | N | L | PR panel: list, review, comment, merge |
-| `pullRequests.listStats` | no | O | N | L | PR panel: list, review, comment, merge |
-| `pullRequests.preview` | no | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.linkedThreads` | yes | U | N | L | read-only PR view; in a container the data would come from the Gateway |
+| `pullRequests.list` | yes | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.listStats` | yes | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.preview` | yes | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.replyToThread` | no | O | N | L | PR panel: list, review, comment, merge |
-| `pullRequests.reportState` | no | U | N | L | read-only PR view; in a container the data would come from the Gateway |
+| `pullRequests.reportState` | yes | U | N | L | read-only PR view; in a container the data would come from the Gateway |
 | `pullRequests.requestReviewers` | no | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.reviewGuide` | no | X | U | M | AI review guide |
 | `pullRequests.reviewerCandidates` | no | O | N | L | PR panel: list, review, comment, merge |
-| `pullRequests.routing` | no | O | N | L | PR panel: list, review, comment, merge |
-| `pullRequests.routingIdentity` | no | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.routing` | yes | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.routingIdentity` | yes | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.runAction` | no | O | N | L | PR panel: list, review, comment, merge |
-| `pullRequests.setFilesViewed` | no | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.setFilesViewed` | yes | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.setLabels` | no | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.setReaction` | no | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.setThreadResolution` | no | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.stack` | no | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.submitReview` | no | O | N | L | PR panel: list, review, comment, merge |
-| `pullRequests.subscribeLinkedThreadRefreshes` | no | U | N | L | read-only PR view; in a container the data would come from the Gateway |
-| `pullRequests.subscribeRefreshes` | no | U | N | L | read-only PR view; in a container the data would come from the Gateway |
-| `pullRequests.summary` | no | U | N | L | read-only PR view; in a container the data would come from the Gateway |
-| `pullRequests.threadComments` | no | O | N | L | PR panel: list, review, comment, merge |
+| `pullRequests.subscribeLinkedThreadRefreshes` | yes | U | N | L | read-only PR view; in a container the data would come from the Gateway |
+| `pullRequests.subscribeRefreshes` | yes | U | N | L | read-only PR view; in a container the data would come from the Gateway |
+| `pullRequests.summary` | yes | U | N | L | read-only PR view; in a container the data would come from the Gateway |
+| `pullRequests.threadComments` | yes | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.update` | no | O | N | L | PR panel: list, review, comment, merge |
 | `pullRequests.updateComment` | no | O | N | L | PR panel: list, review, comment, merge |
 | `review.getBranchCommits` | yes | N | N |  | changed files and diffs |
@@ -1304,7 +1304,7 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `GET /api/orchestration/threads/:threadId/transcript` | no | U | N | S | import a thread's context into the composer |
 | `GET /api/projects` | no | U | U | S | `t3 project add` reads it; not needed once projects come from boot files |
 | `POST /api/projects/mutate` | yes | N | U |  | `t3 project add` |
-| `POST /api/pull-requests/diff` | no | X | N | M | PR code tab |
+| `POST /api/pull-requests/diff` | yes | X | N | M | PR code tab |
 | `POST /api/t3-connect/health` | no | X | X | L | T3 Connect relay (Clerk, DPoP) |
 | `POST /api/t3-connect/mint-credential` | no | X | X | L | T3 Connect relay (Clerk, DPoP) |
 | `POST /api/voice/acceleration` | no | X | X | L | server-side speech models; iOS transcribes on the device |

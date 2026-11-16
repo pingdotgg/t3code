@@ -142,6 +142,7 @@ run "gen-keybindings --check" node crates/conn-server/tools/gen-keybindings.mjs 
 run "gen-upstream --check" node tools/gen-upstream.mjs --check
 # GitHub's GraphQL operation texts, printed from T3's generated modules by effect/graphql.
 run "gen-graphql --check" node crates/conn-source-control/tools/gen-graphql.mjs --check
+run "PR characterizations" node crates/conn-source-control/tools/gen-pr-cases.mjs --check
 run "check-copies" node tools/check-copies.mjs
 decoded="$scratch/decoded-tags"
 : >"$decoded"

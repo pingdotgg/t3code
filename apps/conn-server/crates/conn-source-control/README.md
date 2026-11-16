@@ -15,10 +15,10 @@ monorepo.
 | `sourceControl.*` (9) | All 9 served: `signInStart`, `signInWait`, `signInCancel`, `appAccess` (as a T3 server without `T3CODE_GITHUB_APP_CLIENT_ID`), `starred`, `star` (GitHub REST, any other host `false`); `lookupRepository`, `cloneRepository`, `publishRepository` for all 7 hosts (see "Repositories") |
 | The host definition registry | Built (part 4): remotes, change request URLs, canonical keys, the project predicates, thread link keys (see "Registry") |
 | Provider detection | Built (part 4), not yet called by a method (see "Provider detection") |
-| GitHub's GraphQL operations | Generated from the monorepo (part 4); no request sends one yet (see "GitHub GraphQL") |
+| GitHub's GraphQL operations | Generated from the monorepo; panel reads and viewed-file mutations send them. |
 | `git.*` (3) | Not served |
 | `pr` in VCS status | Not served (always `null`) |
-| `pullRequests.*` (35) | Not served |
+| `pullRequests.*` (35) | GitHub: the 20 panel read/refresh methods served; the 15 action/guide methods remain unregistered. [Port and proof](src/pull_requests/PORTING.md). |
 | Engine commands for linked pull requests (7) | `thread.pull-request.link` and `unlink` as T3's decider (part 4); the other 5 refused |
 | `/mcp` pull request tools (9) | 5 served (part 4): `link_pull_request(s)`, `unlink_pull_request(s)`, `list_thread_pull_requests`; `watch`/`unwatch` and the 2 guide tools not served |
 

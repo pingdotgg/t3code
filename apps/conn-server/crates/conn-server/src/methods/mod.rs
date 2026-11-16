@@ -13,6 +13,7 @@ mod files;
 mod orchestration;
 mod projects;
 pub mod provider;
+pub(crate) mod pull_requests;
 mod scheduled;
 pub mod server;
 mod source_control;
@@ -68,5 +69,6 @@ pub fn register_all(table: &mut MethodTable, deps: &Deps) {
     scheduled::register(table, deps);
     annotations::register(table, deps);
     source_control::register(table, deps);
+    pull_requests::register(table, deps);
     text_generation::register(table, deps);
 }
