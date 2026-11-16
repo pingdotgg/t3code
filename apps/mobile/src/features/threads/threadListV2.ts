@@ -1222,9 +1222,7 @@ export function buildThreadListV2Items(input: {
     for (const thread of block.threads) {
       const selected = `${thread.environmentId}:${thread.id}` === selectedThreadKey;
       if (!expanded && !selected) continue;
-      if (parked !== null && !parked.expanded && parkedMembers.includes(thread) && !selected) {
-        continue;
-      }
+      if (parked !== null && !parked.expanded && parkedMembers.includes(thread)) continue;
       items.push({
         thread,
         variant: snoozedThreads.has(thread) || settledThreads.has(thread) ? "slim" : "card",

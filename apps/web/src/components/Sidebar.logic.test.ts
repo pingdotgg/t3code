@@ -1780,9 +1780,9 @@ describe("foldSidebarThreadFolders", () => {
     ]);
     expect(footerOpen.blocks[0]?.parked?.expanded).toBe(true);
 
-    // The open thread stays visible even while the footer is folded.
+    // A folded footer hides its members, even the open thread.
     const routed = foldSidebarThreadFolders({ ...input, routeThreadKey: folderKey(later.id) });
-    expect(routed.blocks[0]?.rows.map((row) => row.thread)).toContain(later);
+    expect(routed.blocks[0]?.rows.map((row) => row.thread)).not.toContain(later);
 
     const collapsed = foldSidebarThreadFolders({
       ...input,

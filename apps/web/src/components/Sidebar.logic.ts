@@ -130,9 +130,7 @@ export function foldSidebarThreadFolders<T extends EnvironmentThreadShell>(input
       // Only an open folder folds its parked members; on a shelf they are the whole folder.
       const parkedFolded =
         placement === "open" && parked.length > 0 && !input.parkedOpenKeys.has(block.key);
-      const rows = parkedFolded
-        ? all.filter((row) => !parked.includes(row) || isRoute(row.thread))
-        : all;
+      const rows = parkedFolded ? all.filter((row) => !parked.includes(row)) : all;
       // Settled folders start collapsed, so a stored key flips each folder from its default.
       const settled = placement === "settled";
       const collapsed =

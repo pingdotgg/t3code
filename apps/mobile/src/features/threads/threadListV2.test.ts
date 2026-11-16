@@ -1948,6 +1948,13 @@ describe("thread folders", () => {
       parked: { snoozedCount: 1, settledCount: 1, expanded: false },
       nextWakeAt: snoozed.snoozedUntil,
     });
+    // A folded footer hides its members, even the open thread.
+    expect(
+      buildThreadListV2Items({
+        ...input,
+        selectedThreadKey: environmentId + ":" + snoozed.id,
+      }).items.some((item) => item.thread.id === snoozed.id),
+    ).toBe(false);
     // Pressing the footer lists the parked members under it, after the live ones.
     const parkedOpen = buildThreadListV2Items({
       ...input,
