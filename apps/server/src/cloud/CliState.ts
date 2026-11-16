@@ -53,11 +53,9 @@ export const setCliDesiredCloudLink = Effect.fn("cloud.cli_state.set_desired")(f
   }
 });
 
-export const dropRevokedCloudLink = Effect.gen(function* () {
+/** Forgets this environment's T3 Connect link and tunnel, keeping the account and preferences. */
+export const dropCloudLink = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
-  if (Option.isNone(yield* secrets.get(CLOUD_LINK_REVOKED))) {
-    return false;
-  }
   yield* Effect.all(
     [
       secrets.remove(CLOUD_LINKED_USER_ID),
@@ -70,6 +68,14 @@ export const dropRevokedCloudLink = Effect.gen(function* () {
   );
   // Last, so a failed removal above leaves the mark for the next attempt.
   yield* secrets.remove(CLOUD_LINK_REVOKED);
+});
+
+export const dropRevokedCloudLink = Effect.gen(function* () {
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
+  if (Option.isNone(yield* secrets.get(CLOUD_LINK_REVOKED))) {
+    return false;
+  }
+  yield* dropCloudLink;
   return true;
 });
 

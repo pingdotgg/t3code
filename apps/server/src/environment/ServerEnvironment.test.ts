@@ -14,6 +14,8 @@ import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
+  CLOUD_ENDPOINT_RUNTIME_CONFIG,
+  CLOUD_LINKED_USER_ID,
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_URL_SECRET,
@@ -259,6 +261,76 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
 
       expect(first).toBe(second);
       expect(persisted.trim()).toBe(first);
+    }),
+  );
+
+  it.effect("gives a T3 home copied to another machine its own environment id", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-copy-test-",
+      });
+      const serverConfig = yield* makeServerConfig(baseDir);
+      yield* fileSystem.makeDirectory(serverConfig.stateDir, { recursive: true });
+      yield* fileSystem.writeFileString(serverConfig.environmentIdPath, "existing-id\n");
+      const onMachine = <A, E, R>(machineId: string, effect: Effect.Effect<A, E, R>) =>
+        effect.pipe(
+          Effect.provideService(ServerConfig.ServerConfig, serverConfig),
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fileSystem,
+            readFileString: (path, encoding) =>
+              path === "/etc/machine-id"
+                ? Effect.succeed(machineId)
+                : fileSystem.readFileString(path, encoding),
+          }),
+        );
+      const readEnvironmentId = (machineId: string) =>
+        onMachine(
+          machineId,
+          Effect.gen(function* () {
+            const identity = yield* ServerEnvironment.ServerEnvironmentIdentity;
+            return yield* identity.getEnvironmentId;
+          }).pipe(Effect.provide(Layer.fresh(ServerEnvironment.layerIdentity))),
+        );
+      const encode = (value: string) => new TextEncoder().encode(value);
+      const withSecrets = <A, E>(
+        use: (secrets: ServerSecretStore.ServerSecretStore["Service"]) => Effect.Effect<A, E>,
+      ) =>
+        onMachine(
+          "machine-a",
+          Effect.service(ServerSecretStore.ServerSecretStore).pipe(
+            Effect.flatMap(use),
+            Effect.provide(ServerSecretStore.layer),
+          ),
+        );
+
+      expect(yield* readEnvironmentId("machine-a")).toBe("existing-id");
+      yield* withSecrets((secrets) =>
+        Effect.all([
+          secrets.set(RELAY_URL_SECRET, encode("https://relay.example")),
+          secrets.set(CLOUD_LINKED_USER_ID, encode("user")),
+          secrets.set(RELAY_ENVIRONMENT_CREDENTIAL_SECRET, encode("credential")),
+          secrets.set(CLOUD_ENDPOINT_RUNTIME_CONFIG, encode("tunnel")),
+        ]),
+      );
+      expect(yield* readEnvironmentId("machine-a")).toBe("existing-id");
+
+      const copied = yield* readEnvironmentId("machine-b");
+      expect(copied).not.toBe("existing-id");
+      expect(yield* readEnvironmentId("machine-b")).toBe(copied);
+      const remaining = yield* withSecrets((secrets) =>
+        Effect.forEach(
+          [
+            RELAY_URL_SECRET,
+            CLOUD_LINKED_USER_ID,
+            RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+            CLOUD_ENDPOINT_RUNTIME_CONFIG,
+          ],
+          (name) => secrets.get(name).pipe(Effect.map((value) => value._tag)),
+        ),
+      );
+      expect(remaining).toEqual(["Some", "None", "None", "None"]);
     }),
   );
 

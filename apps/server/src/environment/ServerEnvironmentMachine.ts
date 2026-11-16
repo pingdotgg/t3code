@@ -155,3 +155,37 @@ export const detectServerEnvironmentMachineKind = Effect.fn("detectServerEnviron
     }
   },
 );
+
+const LINUX_MACHINE_ID_PATHS = ["/etc/machine-id", "/var/lib/dbus/machine-id"];
+
+/** The OS install's own ID, which a T3 home copied to another machine does not carry along. */
+export const readServerMachineId = Effect.fn("readServerMachineId")(function* () {
+  const platform = yield* HostProcess.Platform;
+  switch (platform) {
+    case "darwin": {
+      const ioreg = yield* runProbe({
+        command: "ioreg",
+        args: ["-rd1", "-c", "IOPlatformExpertDevice"],
+      });
+      return ioreg?.match(/"IOPlatformUUID"\s*=\s*"([^"]+)"/)?.[1] ?? null;
+    }
+    case "linux": {
+      for (const path of LINUX_MACHINE_ID_PATHS) {
+        const machineId = yield* readOptionalFile(path);
+        if (machineId !== null) {
+          return machineId;
+        }
+      }
+      return null;
+    }
+    case "win32": {
+      const output = yield* runProbe({
+        command: "reg",
+        args: ["query", "HKLM\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid", "/reg:64"],
+      });
+      return output?.match(/MachineGuid\s+REG_SZ\s+(\S+)/)?.[1] ?? null;
+    }
+    default:
+      return null;
+  }
+});

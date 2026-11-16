@@ -6,8 +6,10 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
+import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -16,6 +18,7 @@ import * as Schema from "effect/Schema";
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { resolveServerInstallation } from "../cli/invocation.ts";
+import { dropCloudLink } from "../cloud/CliState.ts";
 import { readAgentActivityPublishingActive } from "../cloud/config.ts";
 import { resolveServerSelfUpdateCapability } from "../cloud/selfUpdate.ts";
 import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
@@ -24,7 +27,10 @@ import { databaseMigrationHead } from "../persistence/databaseMigrationHead.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { isSpeechPlatformSupported } from "../speech/platform.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
-import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
+import {
+  detectServerEnvironmentMachineKind,
+  readServerMachineId,
+} from "./ServerEnvironmentMachine.ts";
 
 export class ServerEnvironmentIdPersistenceError extends Schema.TaggedError<ServerEnvironmentIdPersistenceError>()(
   "ServerEnvironmentIdPersistenceError",
@@ -85,8 +91,11 @@ function platformArch(
 
 const makeIdentity = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const random = yield* SecureRandom.SecureRandom;
+  // Records which machine owns the environment ID, so a T3 home copied elsewhere is detected.
+  const environmentMachinePath = path.join(serverConfig.stateDir, "environment-machine");
 
   const readPersistedEnvironmentId = Effect.gen(function* () {
     const exists = yield* fileSystem.exists(serverConfig.environmentIdPath).pipe(
@@ -117,13 +126,15 @@ const makeIdentity = Effect.gen(function* () {
 
     return raw.length > 0 ? raw : null;
   });
+  // Unreadable counts as unrecorded: the current machine is then recorded as the owner.
+  const readEnvironmentMachine = fileSystem.readFileString(environmentMachinePath).pipe(
+    Effect.map((value) => value.trim() || null),
+    Effect.orElseSucceed(() => null),
+  );
 
   const persistEnvironmentId = Effect.fn("ServerEnvironmentIdentity.persistEnvironmentId")(
-    function* (value: string, mode: "create" | "recover") {
-      const destinationPath =
-        mode === "recover"
-          ? `${serverConfig.environmentIdPath}.recovery`
-          : serverConfig.environmentIdPath;
+    function* (value: string, stagingPath?: string) {
+      const destinationPath = stagingPath ?? serverConfig.environmentIdPath;
       const tempPath = yield* fileSystem.makeTempFileScoped({
         directory: serverConfig.stateDir,
         prefix: ".environment-id-",
@@ -136,8 +147,8 @@ const makeIdentity = Effect.gen(function* () {
           () => Effect.void,
         ),
       );
-      if (mode === "recover") {
-        // Keep the recovery ID so delayed initializers also publish the same winner.
+      if (stagingPath !== undefined) {
+        // Keep the staged ID so delayed initializers also publish the same winner.
         yield* fileSystem.remove(tempPath);
         yield* fileSystem.copyFile(destinationPath, tempPath);
         yield* fileSystem.rename(tempPath, serverConfig.environmentIdPath);
@@ -154,17 +165,79 @@ const makeIdentity = Effect.gen(function* () {
     ),
   );
 
+  const recordEnvironmentMachine = Effect.fn("ServerEnvironmentIdentity.recordEnvironmentMachine")(
+    function* (machine: string) {
+      const tempPath = yield* fileSystem.makeTempFileScoped({
+        directory: serverConfig.stateDir,
+        prefix: ".environment-machine-",
+      });
+      yield* fileSystem.writeFileString(tempPath, `${machine}\n`);
+      yield* fileSystem.rename(tempPath, environmentMachinePath);
+    },
+    Effect.scoped,
+    Effect.mapError(
+      (cause) =>
+        new ServerEnvironmentIdPersistenceError({
+          operation: "write",
+          environmentIdPath: environmentMachinePath,
+          cause,
+        }),
+    ),
+  );
+
+  const machineId = yield* readServerMachineId();
+  // Hashed: the OS asks that its machine ID not be stored or shared as is.
+  const machine =
+    machineId === null
+      ? null
+      : yield* Effect.gen(function* () {
+          const digest = yield* Digest.Digest;
+          const bytes = yield* digest.digest(
+            Digest.sha256,
+            new TextEncoder().encode(`t3-environment:${machineId}`),
+          );
+          return Hex.encode(bytes);
+        }).pipe(
+          Effect.provide(Digest.layerWebCrypto),
+          Effect.orElseSucceed(() => null),
+        );
+
   const environmentIdRaw = yield* Effect.gen(function* () {
     const persisted = yield* readPersistedEnvironmentId;
     if (persisted) {
-      return persisted;
+      const recorded = yield* readEnvironmentMachine;
+      if (machine === null || recorded === machine) {
+        return persisted;
+      }
+      if (recorded === null) {
+        yield* recordEnvironmentMachine(machine);
+        return persisted;
+      }
+      // This T3 home was copied from another machine. Sharing the original's ID would share
+      // its T3 Connect tunnel, and relinking either copy would revoke the other.
+      const stagingPath = `${serverConfig.environmentIdPath}.${machine}`;
+      yield* persistEnvironmentId(yield* random.uuidV4(), stagingPath);
+      const replacement = yield* readPersistedEnvironmentId;
+      if (replacement === null) {
+        return yield* new ServerEnvironmentIdPersistenceError({
+          operation: "initialize",
+          environmentIdPath: serverConfig.environmentIdPath,
+        });
+      }
+      // The copied T3 Connect link and tunnel belong to the original machine's ID.
+      yield* dropCloudLink.pipe(Effect.provide(ServerSecretStore.layer));
+      yield* recordEnvironmentMachine(machine);
+      yield* Effect.logWarning(
+        "This T3 home was copied from another machine; it now has its own environment ID and needs its own T3 Connect link.",
+      );
+      return replacement;
     }
 
     const generated = yield* random.uuidV4();
-    yield* persistEnvironmentId(generated, "create");
+    yield* persistEnvironmentId(generated);
     let winner = yield* readPersistedEnvironmentId;
     if (winner === null) {
-      yield* persistEnvironmentId(generated, "recover");
+      yield* persistEnvironmentId(generated, `${serverConfig.environmentIdPath}.recovery`);
       winner = yield* readPersistedEnvironmentId;
     }
     if (winner === null) {
@@ -172,6 +245,9 @@ const makeIdentity = Effect.gen(function* () {
         operation: "initialize",
         environmentIdPath: serverConfig.environmentIdPath,
       });
+    }
+    if (machine !== null) {
+      yield* recordEnvironmentMachine(machine);
     }
     return winner;
   });
@@ -312,7 +388,9 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layerIdentity = Layer.effect(ServerEnvironmentIdentity, makeIdentity);
+export const layerIdentity = Layer.effect(ServerEnvironmentIdentity, makeIdentity).pipe(
+  Layer.provide(ProcessRunner.layer),
+);
 
 export const layer = Layer.effect(ServerEnvironment, make).pipe(
   Layer.provideMerge(layerIdentity),
