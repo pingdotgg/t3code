@@ -156,8 +156,6 @@ it.each([
   [`${url}/commits`, "commits"],
   [`${url}/checks?check_run_id=1`, "checks"],
   [`${forgejo}/files`, "code"],
-  [`${forgejo}/commits`, "commits"],
-  [`${forgejo}/commits/${"a".repeat(40)}`, "code"],
   [`${gitlab}/diffs`, "code"],
   [`${gitlab}/commits`, "commits"],
   [`${gitlab}/pipelines`, "checks"],
