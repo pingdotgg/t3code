@@ -763,6 +763,34 @@ it.effect("skips nothing while every summary comes back empty", () => {
   }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
 });
 
+it.effect("counts only a stretch's own failures beside a success after an outage", () => {
+  let down = true;
+  let flaky = rawText(0);
+  const model = scripted((input) =>
+    down || input.messages[0]?.text === flaky
+      ? Effect.fail(failingStretch("empty"))
+      : Effect.succeed({
+          statements: [{ text: "Summarized.", citations: [input.messages[0]!.ref] }],
+        }),
+  );
+  return Effect.gen(function* () {
+    yield* seedThread(5 * 24 + 6);
+    yield* summarize;
+
+    down = false;
+    yield* summarize;
+    assert.notInclude((yield* list).lastPass?.reason ?? "", "Skipped");
+
+    flaky = rawText(48);
+    yield* summarize;
+    assert.notInclude((yield* list).lastPass?.reason ?? "", "Skipped");
+
+    flaky = "";
+    for (let pass = 0; pass < 2; pass++) yield* summarize;
+    assert.equal((yield* list).lastPass?.waitingMessages, 0);
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
 it.effect("moves past three bad leaf stretches at the front and skips them", () => {
   const bad = new Set([rawText(0), rawText(24), rawText(48)]);
   const model = scripted((input) =>
