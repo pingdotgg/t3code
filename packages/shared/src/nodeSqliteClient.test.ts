@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -750,6 +751,141 @@ it.effect("waits for a reader once four retired readers are still running", () =
 
       assert.equal(yield* Fiber.join(next), 1);
       assert.equal(startedWorkers.length, startedBefore + 4);
+    }).pipe(Effect.scoped),
+  ),
+);
+
+// A read-only transaction that keeps its reader until `release` completes.
+const holdReader = (sql: SqlClient.SqlClient) =>
+  Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const fiber = yield* sql
+      .withTransaction(
+        countEntries(sql).pipe(
+          Effect.andThen(Deferred.succeed(entered, undefined)),
+          Effect.andThen(Deferred.await(release)),
+        ),
+      )
+      .pipe(SqliteClient.readOnly, (read) => Effect.forkChild(read, { startImmediately: true }));
+    return { fiber, entered, release };
+  });
+
+const holdEveryReader = (sql: SqlClient.SqlClient) =>
+  Effect.gen(function* () {
+    const holders = yield* Effect.forEach([0, 1, 2, 3], () => holdReader(sql));
+    yield* Effect.forEach(holders, (holder) => Deferred.await(holder.entered));
+    return holders;
+  });
+
+const finishHeld = (held: Effect.Success<ReturnType<typeof holdReader>>) =>
+  Deferred.succeed(held.release, undefined).pipe(Effect.andThen(Fiber.join(held.fiber)));
+
+// A read looks at its clock each time it checks for a free reader, so this counts the checks.
+const withCheckCount = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.map(Clock.clockWith(Effect.succeed), (clock) => {
+    const counted = { checks: 0 };
+    const counting: Clock.Clock = {
+      currentTimeMillisUnsafe: () => {
+        counted.checks++;
+        return clock.currentTimeMillisUnsafe();
+      },
+      currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe(),
+      monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+      currentTimeMillis: clock.currentTimeMillis,
+      currentTimeNanos: clock.currentTimeNanos,
+      monotonicTimeNanos: clock.monotonicTimeNanos,
+      sleep: (duration) => clock.sleep(duration),
+    };
+    return { counted, read: Effect.provideService(effect, Clock.Clock, counting) };
+  });
+
+it.effect("wakes one waiting read per reader that frees up, in arrival order", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const holders = yield* holdEveryReader(sql);
+      const waiting = yield* Effect.forEach([0, 1, 2], () => holdReader(sql));
+      const last = yield* withCheckCount(countEntries(sql).pipe(SqliteClient.readOnly));
+      const lastRead = yield* Effect.forkChild(last.read, { startImmediately: true });
+      const checksWhileQueued = last.counted.checks;
+      yield* Effect.forEach(holders.slice(0, 2), finishHeld);
+
+      yield* Deferred.await(waiting[0]!.entered);
+      yield* Deferred.await(waiting[1]!.entered);
+      assert.isFalse(yield* Deferred.isDone(waiting[2]!.entered));
+      assert.equal(last.counted.checks, checksWhileQueued);
+      yield* finishHeld(waiting[0]!);
+      yield* Deferred.await(waiting[2]!.entered);
+      yield* Effect.forEach([...holders.slice(2), ...waiting.slice(1)], finishHeld);
+      assert.equal(yield* Fiber.join(lastRead), 1);
+    }),
+  ),
+);
+
+it.effect("serves the reads behind a waiting read that is interrupted", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const holders = yield* holdEveryReader(sql);
+      const waiting = yield* Effect.forEach([0, 1, 2, 3], () => holdReader(sql));
+      // The first waiting read is the one a freed reader would go to.
+      yield* Fiber.interrupt(waiting[0]!.fiber);
+      yield* Fiber.interrupt(waiting[2]!.fiber);
+
+      yield* finishHeld(holders[0]!);
+      yield* Deferred.await(waiting[1]!.entered);
+      yield* finishHeld(holders[1]!);
+      yield* Deferred.await(waiting[3]!.entered);
+      yield* Effect.forEach([holders[2]!, holders[3]!, waiting[1]!, waiting[3]!], finishHeld);
+    }),
+  ),
+);
+
+it.effect("replaces an abandoned reader for the next waiting read after the first leaves", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      yield* holdStatements;
+      yield* holdReaderExits;
+      const holders = yield* Effect.forEach([0, 1, 2], () => holdReader(sql));
+      yield* Effect.forEach(holders, (holder) => Deferred.await(holder.entered));
+      yield* abandonHeldRead(sql);
+      const [first, second] = yield* Effect.forEach([0, 1], () =>
+        Effect.forkChild(countEntries(sql).pipe(SqliteClient.readOnly), {
+          startImmediately: true,
+        }),
+      );
+      yield* Fiber.interrupt(first!);
+      yield* TestClock.adjust("1 second");
+
+      assert.equal(yield* Fiber.join(second!), 1);
+      yield* Effect.forEach(holders, finishHeld);
+    }).pipe(Effect.scoped),
+  ),
+);
+
+it.effect("replaces two readers abandoned at once for the two reads waiting on them", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      yield* holdStatements;
+      yield* holdReaderExits;
+      const holders = yield* Effect.forEach([0, 1], () => holdReader(sql));
+      yield* Effect.forEach(holders, (holder) => Deferred.await(holder.entered));
+      // Distinct text, so each read waits for its own post rather than the one before it.
+      const stuck = yield* Effect.forEach(["1 = 1", "2 = 2"], (where) => {
+        const statement = `${held} WHERE ${where}`;
+        return startRead(sql.unsafe(statement).pipe(SqliteClient.readOnly), statement);
+      });
+      const waiting = yield* Effect.forEach([0, 1], () =>
+        Effect.forkChild(countEntries(sql).pipe(SqliteClient.readOnly), {
+          startImmediately: true,
+        }),
+      );
+      const startedBefore = startedWorkers.length;
+      yield* Effect.forEach(stuck, ({ fiber }) => Fiber.interrupt(fiber));
+      yield* TestClock.adjust("1 second");
+
+      assert.deepEqual(yield* Effect.forEach(waiting, Fiber.join), [1, 1]);
+      assert.equal(startedWorkers.length, startedBefore + 2);
+      yield* Effect.forEach(holders, finishHeld);
     }).pipe(Effect.scoped),
   ),
 );
