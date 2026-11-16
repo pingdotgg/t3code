@@ -52,15 +52,22 @@ A project can cover more than one folder: a plain folder that holds several repo
 repository next to others it depends on, or the folders a `.code-workspace` file lists. Agents
 can then read and change every tracked folder from one thread.
 
-When you add a folder with the command palette or on mobile, T3 Code looks one level down for
-repositories and reads a `.code-workspace` file if there is one, then asks which to track. To
+When you add a folder with the command palette or on mobile, T3 Code looks for repositories one
+level down, and one level further inside folders that are not repositories themselves, such as
+`src` or `packages`. It also reads a `.code-workspace` file if there is one, then asks which to
+track. Worktrees of another repository are not offered. To
 change the list later, open **Settings → Projects**, choose the project, and use **Rescan**,
 **Add folder**, or **Remove** under **Repositories**. **Add folder** takes any folder on that
 machine, including one outside the project folder. Removing a folder from the list never deletes
 files.
 
+To have the list follow the disk, check **Keep following this folder** in that dialog on web or
+desktop, or add a rule with **Add folder**: a path with a `*` segment, such as `/work/shop/src/*`,
+tracks every repository at a matching place. Repositories cloned there later are picked up and
+removed ones are dropped, without a rescan. Linked worktrees and submodules never match a rule.
+
 From a script, `t3 project add <path> --track-repos` tracks every repository it finds, and
-`--track <folder>` adds one by path.
+`--track <folder>` adds one by path or a rule such as `--track 'src/*'`.
 
 Each turn's changes are listed per repository; see
 [Review turn changes](source-control.md#review-turn-changes).
@@ -73,6 +80,29 @@ included when the project tracks eight or fewer, and none until you choose when 
 To bring another repository into a running thread, open the thread details panel and pick it under
 **Other repositories**. In a plain folder, the files outside your repositories are shared links to
 the originals, not copies, so editing one changes it for every thread.
+
+Each repository starts from the thread's base branch where it has a branch of that name, and from
+its own default branch otherwise. A plain folder has no branch picker, so on web and desktop you
+name that branch at the bottom of the repositories control.
+
+If shared links do not suit your project, for example because build output or workspace metadata
+must be per thread, the project can lay the folder out itself. Add this to the `t3.json` in the
+project folder:
+
+```json
+{
+  "worktreeLayout": {
+    "create": "./scripts/new-workspace.sh",
+    "remove": "./scripts/remove-workspace.sh"
+  }
+}
+```
+
+`create` runs in the project folder with `T3_WORKTREE_ROOT` (the folder to fill),
+`T3_WORKTREE_PROJECT_PATH` (where the project folder goes inside it), `T3_WORKTREE_BRANCH`,
+`T3_WORKTREE_BASE`, and `T3_PROJECT_ROOT` set. Every tracked repository it checks out at the same
+relative place becomes the thread's checkout of it. `remove` is optional and runs before T3 Code
+removes whatever is left. The repositories control is ignored for such a project.
 
 ## Pin and archive projects
 

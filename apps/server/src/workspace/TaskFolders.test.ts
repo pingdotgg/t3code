@@ -297,6 +297,53 @@ it.live("treats a project folder inside a larger repository as plain", () =>
   ),
 );
 
+it.live("adopts the checkouts a project's own layout command makes, and runs its teardown", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { fileSystem, path, tmp, run, repository, worktreeCount } = yield* fixture;
+      const shop = path.join(tmp, "shop");
+      const api = yield* repository("shop/api");
+      const web = yield* repository("shop/web");
+      // The project checks `api` out itself, copies its build cache and leaves `web` out.
+      yield* fileSystem.writeFileString(
+        path.join(shop, "t3.json"),
+        JSON.stringify({
+          worktreeLayout: {
+            create:
+              'mkdir -p "$T3_WORKTREE_PROJECT_PATH/cache" && git -C "$T3_PROJECT_ROOT/api" worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH/api" "$T3_WORKTREE_BASE"',
+            remove: 'touch "$T3_PROJECT_ROOT/torn-down"',
+          },
+        }),
+      );
+      state.workspaceRoot = shop;
+      state.trackedFolders = tracked(api, web);
+
+      const { taskFolder } = yield* create("feature", undefined, "main");
+
+      assert.isFalse(taskFolder.projectIsWorktree);
+      assert.deepEqual(taskFolder.repositories, [
+        { repositoryPath: api, worktreePath: path.join(taskFolder.root, "api"), name: "api" },
+      ]);
+      assert.isTrue(yield* fileSystem.exists(path.join(taskFolder.root, "cache")));
+      assert.equal(
+        yield* run(path.join(taskFolder.root, "api"), "symbolic-ref", "--short", "HEAD"),
+        "feature",
+      );
+      assert.equal(yield* worktreeCount(web), 1);
+
+      yield* (yield* TaskFolders.TaskFolders).remove({
+        root: taskFolder.root,
+        force: true,
+        forget: true,
+      });
+      assert.isTrue(yield* fileSystem.exists(path.join(shop, "torn-down")));
+      // What the teardown left is removed as usual.
+      assert.equal(yield* worktreeCount(api), 1);
+      assert.isFalse(yield* fileSystem.exists(taskFolder.root));
+    }),
+  ),
+);
+
 it.live("starts each repository from the base branch where it has one", () =>
   withState((state) =>
     Effect.gen(function* () {

@@ -3,6 +3,7 @@ import {
   ProjectId,
   type ProjectTrackedFolder,
 } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -13,6 +14,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as TaskFolders from "./TaskFolders.ts";
 import * as TaskFolderStore from "./TaskFolderStore.ts";
 
@@ -96,6 +98,7 @@ export const layerTaskFoldersWithGit = (state: TaskFoldersTestState) => {
         }),
         ServerSettings.layerTest(),
         SqlitePersistence.layerMemory,
+        VcsProcess.layer.pipe(Layer.provide(NodeServices.layer)),
       ),
     ),
   );

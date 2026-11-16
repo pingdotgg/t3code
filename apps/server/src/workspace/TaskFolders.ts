@@ -8,10 +8,12 @@ import {
   type ThreadId,
   type VcsCreateWorktreeInput,
   type VcsCreateWorktreeResult,
+  T3_PROJECT_FILE_NAME,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { flattenTemporaryWorktreeBranchName, isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
@@ -30,6 +32,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import {
   removeEmptyDirectory,
   type RemoveEmptyDirectoryError,
@@ -43,6 +46,7 @@ import { withWorkspaceLease } from "./workspaceLease.ts";
 // Each worktree is a checkout: enough at once to finish four repositories together, few enough
 // to leave Git's server-wide process slots to running threads.
 const REPOSITORY_CONCURRENCY = 4;
+const LAYOUT_COMMAND_TIMEOUT_MS = 600_000;
 const BRANCH_NAME_ATTEMPTS = 50;
 
 /** What a new task folder will hold, decided before anything is created. */
@@ -187,6 +191,9 @@ const make = Effect.gen(function* () {
   const git = yield* GitWorkflowService.GitWorkflowService;
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const store = yield* TaskFolderStore.TaskFolderStore;
+  const processes = yield* VcsProcess.VcsProcess;
+  const hostEnvironment = yield* HostProcess.Environment;
+  const onWindows = yield* HostProcess.isWindows;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
 
   const exists = (target: string) =>
@@ -221,6 +228,37 @@ const make = Effect.gen(function* () {
     (operation: TaskFolderError["operation"], prefix: string) =>
     (cause: unknown): TaskFolderError =>
       new TaskFolderError({ operation, detail: `${prefix}: ${failureDetail(cause)}`, cause });
+
+  // A project that lays its own thread folder out says so in its `t3.json`.
+  const worktreeLayout = (projectRoot: string) =>
+    fileSystem.readFileString(path.join(projectRoot, T3_PROJECT_FILE_NAME)).pipe(
+      Effect.map((contents) => parseT3ProjectFile(contents)?.worktreeLayout ?? null),
+      Effect.orElseSucceed(() => null),
+    );
+  const runLayoutCommand = (
+    operation: TaskFolderError["operation"],
+    command: string,
+    taskFolder: Pick<TaskFolder, "root" | "projectRoot" | "projectPath">,
+    branch: string,
+    baseBranch: string | undefined,
+  ) =>
+    processes
+      .run({
+        operation: "TaskFolders.worktreeLayout",
+        command: onWindows ? "cmd.exe" : "sh",
+        args: onWindows ? ["/d", "/s", "/c", command] : ["-c", command],
+        cwd: taskFolder.projectRoot,
+        env: {
+          ...hostEnvironment,
+          T3_PROJECT_ROOT: taskFolder.projectRoot,
+          T3_WORKTREE_ROOT: taskFolder.root,
+          T3_WORKTREE_PROJECT_PATH: taskFolder.projectPath,
+          T3_WORKTREE_BRANCH: branch,
+          T3_WORKTREE_BASE: baseBranch ?? "",
+        },
+        timeoutMs: LAYOUT_COMMAND_TIMEOUT_MS,
+      })
+      .pipe(Effect.mapError(fail(operation, "The project's worktree layout command failed")));
 
   const commonAncestor = (folders: ReadonlyArray<string>) => {
     let ancestor = folders[0]!;
@@ -504,6 +542,19 @@ const make = Effect.gen(function* () {
     const removed: string[] = [];
     const kept: Array<{ path: string; reason: string }> = [];
     let remaining = taskFolder.repositories;
+    // The project's own teardown goes first; what it leaves is removed below as usual. Only when
+    // nothing is being asked to stay: the command cannot be told which checkouts to keep.
+    const layout =
+      input.inspect === undefined ? yield* worktreeLayout(taskFolder.projectRoot) : null;
+    if (layout?.remove !== undefined) {
+      yield* runLayoutCommand(
+        "remove",
+        layout.remove,
+        taskFolder,
+        input.deleteBranch ?? "",
+        undefined,
+      ).pipe(Effect.ignoreCause({ log: true }));
+    }
     const verdict = (checkout: TaskFolderCheckout) =>
       input.inspect === undefined
         ? Effect.succeed({ keep: null, force: input.force })
@@ -660,6 +711,29 @@ const make = Effect.gen(function* () {
         // Recorded before any checkout, so an interrupted creation is still found and removed.
         yield* store.put(empty);
         if (input.onClaimed !== undefined) yield* input.onClaimed(empty, branch);
+        const layout = yield* worktreeLayout(taskPlan.projectRoot);
+        if (layout !== null) {
+          yield* runLayoutCommand("create", layout.create, empty, branch, input.baseBranch);
+          if (!(yield* exists(empty.projectPath))) {
+            return yield* new TaskFolderError({
+              operation: "create",
+              detail: `The project's worktree layout command left no folder at ${empty.projectPath}.`,
+            });
+          }
+          // Whatever the command checked out where a tracked repository belongs is the thread's.
+          for (const repositoryPath of taskPlan.trackedRepositories) {
+            const worktreePath = mapped(empty, repositoryPath);
+            if (yield* isRepository(worktreePath)) {
+              created.push({ repositoryPath, worktreePath, name: path.basename(repositoryPath) });
+            }
+          }
+          const taskFolder: TaskFolder = {
+            ...current(),
+            projectIsWorktree: yield* isRepository(empty.projectPath),
+          };
+          yield* store.put(taskFolder);
+          return { taskFolder, branch };
+        }
         if (taskPlan.projectIsRepository) {
           yield* fileSystem.makeDirectory(path.dirname(empty.projectPath), { recursive: true });
           yield* git.createWorktree(

@@ -595,7 +595,14 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
 );
 
 const layerTaskFolders = TaskFolders.layer.pipe(
-  Layer.provide(Layer.mergeAll(TaskFolderStore.layer, ProjectStore.layer, ProjectionStoreV2.layer)),
+  Layer.provide(
+    Layer.mergeAll(
+      TaskFolderStore.layer,
+      ProjectStore.layer,
+      ProjectionStoreV2.layer,
+      VcsProcess.layer,
+    ),
+  ),
   Layer.provide(layerGitWorkflow),
 );
 

@@ -10,6 +10,7 @@ export const T3_PROJECT_FILE_NAME = "t3.json";
 export const T3_PROJECT_FILE_SCHEMA_URL = "https://t3.codes/schema/t3.json";
 
 const T3_PROJECT_FILE_PATH_MAX_LENGTH = 512;
+const T3_PROJECT_FILE_COMMAND_MAX_LENGTH = 4096;
 const T3_PROJECT_FILE_MAX_SCRIPTS = 50;
 
 // Encoded-side annotations survive into JSON Schema; decoding still trims and rejects empty strings.
@@ -100,6 +101,29 @@ export const T3ProjectFile = Schema.Struct({
     WorktreeSubmodules.annotate({
       description:
         'How new worktrees populate git submodules: "recursive" (the default) initializes nested submodules too, "top-level" initializes only those declared by this repository, and "none" leaves every submodule empty for a setup script to handle. A project or environment setting in T3 Code overrides this.',
+    }),
+  ),
+  worktreeLayout: Schema.optionalKey(
+    Schema.Struct({
+      create: trimmedNonEmpty(
+        {
+          description:
+            "Shell command that lays out a thread's folder for a project tracking several repositories, in place of T3 Code's own worktrees and links. It runs in the project folder with T3_WORKTREE_ROOT (the folder to fill), T3_WORKTREE_PROJECT_PATH (where the project folder goes inside it), T3_WORKTREE_BRANCH, T3_WORKTREE_BASE and T3_PROJECT_ROOT set. Each tracked repository it checks out at the same relative place is adopted as the thread's checkout of it.",
+        },
+        T3_PROJECT_FILE_COMMAND_MAX_LENGTH,
+      ),
+      remove: Schema.optionalKey(
+        trimmedNonEmpty(
+          {
+            description:
+              "Shell command that takes the thread's folder down again, with the same variables. T3 Code removes whatever it leaves behind.",
+          },
+          T3_PROJECT_FILE_COMMAND_MAX_LENGTH,
+        ),
+      ),
+    }).annotate({
+      description:
+        "Lets the project create and remove a worktree thread's folder itself, for layouts with shared build output or workspace metadata.",
     }),
   ),
   scripts: Schema.optionalKey(
