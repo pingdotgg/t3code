@@ -561,10 +561,13 @@ export function mergePullRequestLists(
       );
     }
     for (const entry of answer.entries) {
-      const key = JSON.stringify([environmentId, entry.url]);
-      const held = entries.get(key);
-      if (held === undefined || entry.updatedAt > held.updatedAt) {
-        entries.set(key, { ...entry, environmentId });
+      const held = entries.get(entry.url);
+      // The first environment to answer keeps a pull request that several of them read.
+      if (
+        held === undefined ||
+        (held.environmentId === environmentId && entry.updatedAt > held.updatedAt)
+      ) {
+        entries.set(entry.url, { ...entry, environmentId });
       }
     }
     errors.push(...answer.errors.map((error) => ({ ...error, environmentId })));
