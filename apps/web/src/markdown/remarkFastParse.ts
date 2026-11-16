@@ -27,7 +27,7 @@ function attachFastParse(this: Processor) {
         singleTilde: !disablesSingleTilde(this),
       }) as Root;
     } catch (error) {
-      // Thousands of nested labels overflow this recursive parser; micromark's is iterative.
+      // Deeply nested labels, which this recursive parser refuses; micromark's is iterative.
       if (error instanceof RangeError && micromark) return micromark(document, file);
       throw error;
     }

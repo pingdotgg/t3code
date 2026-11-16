@@ -195,7 +195,7 @@ export function normalizeLocalEditorHref(href: string): string {
   }
 }
 
-function rehypeNormalizeLocalEditorLinks() {
+export function rehypeNormalizeLocalEditorLinks() {
   return (tree: MarkdownImageHastNode) => {
     const visit = (node: MarkdownImageHastNode) => {
       const href = node.properties?.href;

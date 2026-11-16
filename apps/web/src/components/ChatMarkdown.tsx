@@ -499,8 +499,9 @@ function blockFileLinkSources(
 }
 
 // Links and code spans never cross blocks: a streamed reply rescans only its open last block.
-const MAX_CACHED_BLOCKS = 2_000;
-const blockFileLinkSourcesByConfig = new Map<string, Map<string, BlockFileLinkSources>>();
+const MAX_CACHED_BLOCK_CHARS = 2_000_000;
+const finishedBlockFileLinkSources = new Map<string, BlockFileLinkSources>();
+let cachedBlockChars = 0;
 
 function fileLinkSourcesKey(
   text: string,
@@ -512,17 +513,24 @@ function fileLinkSourcesKey(
     const { hrefs, spans } = blockFileLinkSources(text, cwd, imageBaseDir);
     return JSON.stringify([[...new Set(hrefs)], [...new Set(spans)]]);
   }
-  const config = `${cwd ?? ""}\u0000${imageBaseDir ?? ""}`;
-  let cache = blockFileLinkSourcesByConfig.get(config);
-  if (!cache) blockFileLinkSourcesByConfig.set(config, (cache = new Map()));
+  const config = `${cwd ?? ""}\u0000${imageBaseDir ?? ""}\u0000`;
   const hrefs = new Set<string>();
   const spans = new Set<string>();
-  for (const block of streamingBlocks) {
-    let sources = cache.get(block);
+  const last = streamingBlocks.length - 1;
+  for (const [index, block] of streamingBlocks.entries()) {
+    // The last block still grows; caching each of its prefixes would only fill the cache.
+    const key = config + block;
+    let sources = index === last ? undefined : finishedBlockFileLinkSources.get(key);
     if (!sources) {
-      if (cache.size >= MAX_CACHED_BLOCKS) cache.clear();
       sources = blockFileLinkSources(block, cwd, imageBaseDir);
-      cache.set(block, sources);
+      if (index !== last) {
+        if (cachedBlockChars + key.length > MAX_CACHED_BLOCK_CHARS) {
+          finishedBlockFileLinkSources.clear();
+          cachedBlockChars = 0;
+        }
+        finishedBlockFileLinkSources.set(key, sources);
+        cachedBlockChars += key.length;
+      }
     }
     for (const href of sources.hrefs) hrefs.add(href);
     for (const span of sources.spans) spans.add(span);

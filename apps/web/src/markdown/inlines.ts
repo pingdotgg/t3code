@@ -144,6 +144,8 @@ interface Bracket {
   bracketAfter: boolean;
 }
 
+const MAX_LABEL_DEPTH = 32;
+
 export class InlineParser {
   readonly content: Content;
   readonly s: string;
@@ -151,6 +153,7 @@ export class InlineParser {
   readonly options: InlineOptions;
   readonly points: PointFactory;
   readonly source: string;
+  readonly labelDepth: number;
   pos = 0;
   head: InlineNode | null = null;
   tail: InlineNode | null = null;
@@ -164,7 +167,9 @@ export class InlineParser {
     definitions: Definitions,
     options: InlineOptions,
     points: PointFactory,
+    labelDepth = 0,
   ) {
+    this.labelDepth = labelDepth;
     this.source = source;
     this.content = content;
     this.s = content.text;
@@ -359,8 +364,19 @@ export class InlineParser {
     let spaces = 0;
     if (tail && tail.kind === "text" && tail.end === this.src(at)) {
       const value = tail.value!;
+      // Only whitespace written as such: `&#32;` decodes to a space but makes no break.
+      let literal = at;
+      while (
+        literal > 0 &&
+        (s.charCodeAt(literal - 1) === SPACE || s.charCodeAt(literal - 1) === TAB)
+      )
+        literal--;
       let i = value.length;
-      while (i > 0 && (value.charCodeAt(i - 1) === SPACE || value.charCodeAt(i - 1) === TAB)) i--;
+      while (
+        i > value.length - (at - literal) &&
+        (value.charCodeAt(i - 1) === SPACE || value.charCodeAt(i - 1) === TAB)
+      )
+        i--;
       spaces = value.length - i;
       if (spaces > 0) {
         const hasTab = value.slice(i).includes("\t");
@@ -1098,12 +1114,16 @@ export class InlineParser {
     }
     let children: PhrasingContent[] = [];
     if (labelStart >= 0) {
+      // Each label recurses; remarkFastParse hands deeper nesting to micromark's parser.
+      if (this.labelDepth >= MAX_LABEL_DEPTH)
+        throw new RangeError("Directive labels nest too deeply");
       const sub = new InlineParser(
         this.source,
         this.subContent(labelStart, labelEnd),
         this.definitions,
         this.options,
         this.points,
+        this.labelDepth + 1,
       );
       children = sub.parse();
     }
