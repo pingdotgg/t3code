@@ -5,13 +5,11 @@ import {
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
 } from "@t3tools/contracts";
 import * as Result from "effect/Result";
-import * as SubscriptionRef from "effect/SubscriptionRef";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import { FetchHttpClient, type HttpMethod } from "effect/http";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection, PreparedHttpAuthorization } from "../connection/model.ts";
-import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import {
   executeEnvironmentHttpRequest,
@@ -109,33 +107,6 @@ export const executeAuthenticatedEnvironmentHttpRequest = <
         withRelayClientTracing,
       )
     : executeEnvironmentRequest(input).pipe(Effect.withSpan(ENVIRONMENT_REQUEST_SPAN));
-
-/** Sends the request with this client's own credentials on the supervised environment. */
-export const executeConnectedEnvironmentHttpRequest = Effect.fn(
-  "clientRuntime.state.executeConnectedEnvironmentHttpRequest",
-)(function* <Group extends Parameters<typeof makeEnvironmentHttpApiGroupClient>[1], A, E, R>(
-  input: Omit<
-    Parameters<typeof executeEnvironmentRequest<Group, A, E, R>>[0],
-    "prepared" | "signer" | "remoteAuthorization"
-  >,
-) {
-  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
-  const prepared = yield* SubscriptionRef.get(supervisor.prepared);
-  if (Option.isNone(prepared)) {
-    return yield* new RemoteEnvironmentAuthFetchError({
-      message: "The environment is not connected.",
-      cause: supervisor.target._tag,
-    });
-  }
-  return yield* executeAuthenticatedEnvironmentHttpRequest({
-    ...input,
-    prepared: prepared.value,
-    signer: yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner),
-    remoteAuthorization: yield* Effect.serviceOption(
-      RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
-    ),
-  });
-});
 
 const ENVIRONMENT_REQUEST_SPAN = "clientRuntime.state.executeAuthenticatedEnvironmentHttpRequest";
 

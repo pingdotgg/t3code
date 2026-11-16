@@ -550,6 +550,8 @@ export const fakeDriver = {
     }),
   preflight: () => Effect.succeed(true),
   checkHost: () => Effect.succeed<RouteCheck>("unchecked"),
+  sessionGrant: () => Effect.succeedNone,
+  routeGrant: () => Effect.succeedNone,
 };
 export type FakeDriver = typeof fakeDriver;
 
