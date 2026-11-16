@@ -6,7 +6,7 @@ import { LegendList } from "@legendapp/list/react-native";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { AppBar } from "../../components/ui/AppBar";
 import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
-import type { ReviewSectionItem } from "./reviewModel";
+import { LATEST_TURN_SECTION_ID, type ReviewSectionItem } from "./reviewModel";
 import { useReviewHeaderPresentation } from "./useReviewHeaderPresentation";
 import { type Ref, type ReactElement, useImperativeHandle, useRef, useState } from "react";
 import { Pressable, ScrollView, type NativeSyntheticEvent, StyleSheet, View } from "react-native";
@@ -60,6 +60,7 @@ import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspace
 function ReviewHeader(
   props: Parameters<typeof useReviewHeaderPresentation>[0] & {
     readonly sectionMenu: ReturnType<typeof buildReviewSectionMenu>;
+    readonly followsLatestTurn: boolean;
     readonly showSectionToolbar: boolean;
     readonly showChangedFilesToggle: boolean;
     readonly onSelectSection: (sectionId: string) => void;
@@ -113,7 +114,11 @@ function ReviewHeader(
                     items: [
                       sectionAction(props.sectionMenu.branchChanges, "Changes"),
                       sectionAction(props.sectionMenu.workingTree, "Uncommitted"),
-                      sectionAction(props.sectionMenu.latestTurn, "Latest turn"),
+                      {
+                        ...sectionAction(props.sectionMenu.latestTurn, "Latest turn"),
+                        selected: props.followsLatestTurn && props.sectionMenu.latestTurn !== null,
+                        onPress: () => props.onSelectSection(LATEST_TURN_SECTION_ID),
+                      },
                     ],
                   },
                   ...(props.sectionMenu.turns.length > 0
@@ -125,7 +130,8 @@ function ReviewHeader(
                             id: `section:${section.id}`,
                             title: section.title,
                             subtitle: section.subtitle ?? undefined,
-                            selected: section.id === props.selectedSection?.id,
+                            selected:
+                              !props.followsLatestTurn && section.id === props.selectedSection?.id,
                             onPress: () => props.onSelectSection(section.id),
                           })),
                         },
@@ -595,6 +601,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
         androidSubtitle={androidHeaderSubtitle}
         selectedThreadCwd={selectedThreadCwd}
         sectionMenu={sectionMenu}
+        followsLatestTurn={reviewCache.selectedSectionId === LATEST_TURN_SECTION_ID}
         selectedSection={selectedSection}
         showSectionToolbar={showSectionToolbar}
         showChangedFilesToggle={showChangedFilesToggle}

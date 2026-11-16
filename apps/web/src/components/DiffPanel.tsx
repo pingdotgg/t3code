@@ -40,6 +40,7 @@ import { useCheckpointDiff, useTurnItemDetail } from "~/state/queries";
 import { revisionedQuery } from "~/state/revisionedQuery";
 import { cn } from "~/lib/utils";
 import {
+  resolveSelectedTurn,
   resolveToolCallDiffTarget,
   selectThreadBranchBaseRef,
   selectThreadDiffPanelSelection,
@@ -330,13 +331,8 @@ export default function DiffPanel({
     diffSelection.kind === "turn" ? diffSelection.filePath?.trimEnd() || null : null;
   const selectedFileRevealRequestId =
     diffSelection.kind === "turn" ? diffSelection.revealRequestId : 0;
-  const selectedTurn =
-    selectedRunId === null
-      ? undefined
-      : (orderedTurnDiffSummaries.find((summary) => summary.runId === selectedRunId) ??
-        orderedTurnDiffSummaries[0]);
+  const selectedTurn = resolveSelectedTurn(diffSelection, orderedTurnDiffSummaries);
   const selectedCheckpointTurnCount = selectedTurn?.checkpointTurnCount;
-  const latestTurn = orderedTurnDiffSummaries[0];
   const reviewSectionId = toolCallSelection
     ? `tool-call:${toolCallSelection.threadId}:${toolCallSelection.itemId}`
     : selectedTurn
@@ -438,12 +434,12 @@ export default function DiffPanel({
         : "Changes";
   const selectedScopeLabel = toolCallSelection
     ? "Tool call"
-    : selectedRunId === null
-      ? selectedCommitSha !== null
-        ? (selectedCommitSubject ?? "Commit")
-        : selectedGitScopeLabel
-      : selectedTurn?.runId === latestTurn?.runId
-        ? "Latest turn"
+    : diffSelection.kind === "latest-turn"
+      ? "Latest turn"
+      : selectedRunId === null
+        ? selectedCommitSha !== null
+          ? (selectedCommitSubject ?? "Commit")
+          : selectedGitScopeLabel
         : `Turn ${selectedCheckpointTurnCount ?? "?"}`;
   const reviewSectionTitle = toolCallSelection
     ? "Tool call"
@@ -807,15 +803,9 @@ export default function DiffPanel({
     if (!routeThreadRef) return;
     useDiffPanelStore.getState().selectBranchBaseRef(routeThreadRef, baseRef);
   };
-  const selectedTurnValue = selectedTurn ? `turn:${selectedTurn.runId}` : "";
+  const selectedTurnValue =
+    selectedTurn && diffSelection.kind === "turn" ? `turn:${selectedTurn.runId}` : "";
   const selectedCommitValue = selectedCommitSha !== null ? `commit:${selectedCommitSha}` : "";
-  const selectedScopeValue = toolCallSelection
-    ? ""
-    : selectedRunId === null
-      ? selectedCommitValue || selectedGitScope
-      : selectedTurn?.runId === latestTurn?.runId
-        ? "latest"
-        : selectedTurnValue;
   const selectScopeValue = (value: string) => {
     if (value === "unstaged" || value === "branch") {
       selectGitScope(value);
@@ -825,8 +815,8 @@ export default function DiffPanel({
       if (routeThreadRef) {
         useDiffPanelStore.getState().selectCommit(routeThreadRef, value.slice("commit:".length));
       }
-    } else if (value === "latest") {
-      if (latestTurn) selectTurn(latestTurn.runId);
+    } else if (value === "latest-turn") {
+      if (routeThreadRef) useDiffPanelStore.getState().selectLatestTurn(routeThreadRef);
     } else {
       const turn = orderedTurnDiffSummaries.find((summary) => `turn:${summary.runId}` === value);
       if (turn) selectTurn(turn.runId);
@@ -871,14 +861,14 @@ export default function DiffPanel({
             )
           ) : null}
           <DropdownMenuContent align="start">
-            <DropdownMenuRadioGroup value={selectedScopeValue} onValueChange={selectScopeValue}>
+            <DropdownMenuRadioGroup value={diffSelection.kind} onValueChange={selectScopeValue}>
               <DropdownMenuRadioItem value="branch" closeOnClick>
                 <span>Changes</span>
               </DropdownMenuRadioItem>
               <DropdownMenuRadioItem value="unstaged" closeOnClick>
                 <span>Uncommitted</span>
               </DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="latest" closeOnClick>
+              <DropdownMenuRadioItem value="latest-turn" closeOnClick>
                 <span>Latest turn</span>
               </DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
@@ -1306,7 +1296,8 @@ export default function DiffPanel({
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Turn diffs are unavailable because this project is not a git repository.
         </div>
-      ) : selectedRunId !== null && orderedTurnDiffSummaries.length === 0 ? (
+      ) : (diffSelection.kind === "turn" || diffSelection.kind === "latest-turn") &&
+        orderedTurnDiffSummaries.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           No completed turns yet.
         </div>

@@ -18,6 +18,7 @@ export type DiffPanelSelection =
   | { kind: "branch"; baseRef: string | null }
   | { kind: "unstaged" }
   | { kind: "commit"; sha: string; baseRef: string | null }
+  | { kind: "latest-turn" }
   | { kind: "turn"; turnId: RunId; filePath: string | null; revealRequestId: number };
 
 const DEFAULT_SELECTION: DiffPanelSelection = { kind: "branch", baseRef: null };
@@ -28,6 +29,7 @@ interface DiffPanelStoreState {
   selectGitScope: (ref: ScopedThreadRef, scope: "branch" | "unstaged") => void;
   selectBranchBaseRef: (ref: ScopedThreadRef, baseRef: string | null) => void;
   selectToolCall: (ref: ScopedThreadRef, target: ToolCallDiffTarget) => void;
+  selectLatestTurn: (ref: ScopedThreadRef) => void;
   selectTurn: (ref: ScopedThreadRef, turnId: RunId, filePath?: string) => void;
   selectCommit: (ref: ScopedThreadRef, sha: string) => void;
   reconcileTurnSelection: (ref: ScopedThreadRef, availableTurnIds: ReadonlyArray<RunId>) => void;
@@ -93,6 +95,13 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
           byThreadKey: {
             ...state.byThreadKey,
             [scopedThreadKey(ref)]: { kind: "tool-call", ...target },
+          },
+        })),
+      selectLatestTurn: (ref) =>
+        set((state) => ({
+          byThreadKey: {
+            ...state.byThreadKey,
+            [scopedThreadKey(ref)]: { kind: "latest-turn" },
           },
         })),
       selectTurn: (ref, turnId, filePath) =>
@@ -210,6 +219,15 @@ export function selectThreadBranchBaseRef(
   ref: ScopedThreadRef | null | undefined,
 ): string | null {
   return ref ? branchBaseRef(state, scopedThreadKey(ref)) : null;
+}
+
+export function resolveSelectedTurn<Turn extends { readonly runId: RunId }>(
+  selection: DiffPanelSelection,
+  newestFirst: ReadonlyArray<Turn>,
+): Turn | undefined {
+  if (selection.kind === "latest-turn") return newestFirst[0];
+  if (selection.kind !== "turn") return undefined;
+  return newestFirst.find((turn) => turn.runId === selection.turnId) ?? newestFirst[0];
 }
 
 export function resolveToolCallDiffTarget(

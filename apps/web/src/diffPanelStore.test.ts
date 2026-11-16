@@ -1,10 +1,12 @@
-import { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
+import { EnvironmentId, RunId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
+  resolveSelectedTurn,
   resolveToolCallDiffTarget,
+  selectThreadDiffPanelSelection,
   useDiffPanelSessionStore,
   useDiffPanelStore,
 } from "./diffPanelStore";
@@ -83,6 +85,22 @@ describe("diffPanelStore", () => {
       resolveToolCallDiffTarget(target, [{ ...completed, sourceThreadId: ThreadId.make("other") }]),
     ).toBe(target);
     expect(resolveToolCallDiffTarget(target, [])).toBe(target);
+  });
+
+  it("keeps Latest turn on the newest turn while a picked turn stays put", () => {
+    const ref = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
+    const turn4 = { runId: RunId.make("run-4") };
+    const turn5 = { runId: RunId.make("run-5") };
+    const selection = () =>
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, ref);
+    const store = useDiffPanelStore.getState();
+
+    store.selectLatestTurn(ref);
+    expect(resolveSelectedTurn(selection(), [turn4])).toBe(turn4);
+    expect(resolveSelectedTurn(selection(), [turn5, turn4])).toBe(turn5);
+
+    store.selectTurn(ref, turn4.runId);
+    expect(resolveSelectedTurn(selection(), [turn5, turn4])).toBe(turn4);
   });
 
   it("retains fold choices when a panel consumer returns with fresh defaults", () => {
