@@ -4417,7 +4417,27 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("fails a compact that never started", () =>
+  // Pi 1.5 emits compaction_start/end for every failed manual compact; older Pi fails before starting.
+  it.effect.each([
+    {
+      name: "fails a compact after starting=false",
+      compactionEnd: null,
+      error: "Nothing to compact (session too small)",
+      failure: "Nothing to compact (session too small)",
+    },
+    {
+      name: "fails a compact after starting=true",
+      compactionEnd: { aborted: false, errorMessage: "Compaction failed: model request failed" },
+      error: "model request failed",
+      failure: "model request failed",
+    },
+    {
+      name: "completes a compact an extension cancelled",
+      compactionEnd: { aborted: true },
+      error: "Compaction cancelled",
+      failure: null,
+    },
+  ])("$name", ({ compactionEnd, error, failure }) =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
       const { runtime, takeEvent } = yield* openRuntime(fake);
@@ -4428,17 +4448,22 @@ describe("PiAdapterV2", () => {
       });
       yield* startTurn(runtime, providerThread, "default", [], "/compact");
       yield* fake.takeRequest("compact");
-      yield* fake.emit({
-        type: "response",
-        command: "compact",
-        success: false,
-        error: "Nothing to compact (session too small)",
-      });
+      if (compactionEnd !== null) {
+        yield* fake.emit({ type: "compaction_start", reason: "manual" });
+        yield* fake.emit({
+          type: "compaction_end",
+          reason: "manual",
+          result: null,
+          ...compactionEnd,
+        });
+      }
+      yield* fake.emit({ type: "response", command: "compact", success: false, error });
       const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
-      assert.isTrue(
-        terminal.type === "turn.terminal" &&
-          terminal.status === "failed" &&
-          terminal.failure.message === "Nothing to compact (session too small)",
+      assert.deepEqual(
+        terminal.type === "turn.terminal"
+          ? { status: terminal.status, failure: terminal.failure?.message ?? null }
+          : null,
+        { status: failure === null ? "completed" : "failed", failure },
       );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
