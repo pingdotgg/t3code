@@ -394,7 +394,9 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
           (item.changes !== undefined && item.changes.length > 1
             ? `Changed ${item.changes.length} files`
             : `Changed ${item.fileName}`),
-        changedFiles: item.changes?.map((change) => change.path) ?? [item.fileName],
+        changedFiles: item.changes?.length
+          ? item.changes.map((change) => change.path)
+          : [item.fileName],
         toolTitle: title ?? "File change",
         toolData: item,
       };
@@ -426,7 +428,7 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
       return {
         ...common,
         label: item.message,
-        sourceActivityKind: "runtime.warning",
+        ...(item.level === "info" ? {} : { sourceActivityKind: "runtime.warning" }),
       };
     case "error": {
       const presentation = providerErrorPresentation(item);

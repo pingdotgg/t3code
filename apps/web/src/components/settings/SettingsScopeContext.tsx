@@ -7,7 +7,12 @@ import { createContext, type ReactNode, useContext } from "react";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { getProjectFileQueryAtom, optimisticFileAtom } from "../files/projectFilesQueryState";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
-import { resolveScopedSettingsTargets, selectScopedSettingsEnvironments } from "./scopedSettings";
+import {
+  applyPendingScopedWrites,
+  pendingScopedWritesAtom,
+  resolveScopedSettingsTargets,
+  selectScopedSettingsEnvironments,
+} from "./scopedSettings";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 import { selectSingleEnvironmentScope } from "./settingsScopeAxis";
 
@@ -69,12 +74,17 @@ function useResolvedSettingsScope(rawSearch: SettingsScopeSearch, singleEnvironm
     : rawSearch;
   const scope = resolveSettingsScope(search, groups, availableEnvironments);
   const projectFiles = useMemberProjectFiles(scope);
+  const pendingWrites = useAtomValue(pendingScopedWritesAtom);
   const selected = selectScopedSettingsEnvironments(
     scope,
     availableEnvironments,
     primaryEnvironmentId,
   );
-  const targets = resolveScopedSettingsTargets(scope, selected.connectedEnvironments, projectFiles);
+  const targets = resolveScopedSettingsTargets(
+    scope,
+    applyPendingScopedWrites(selected.connectedEnvironments, pendingWrites),
+    projectFiles,
+  );
   const target =
     targets.find((candidate) => candidate.environmentId === selected.environment?.environmentId) ??
     targets[0] ??
