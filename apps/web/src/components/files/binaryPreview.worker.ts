@@ -14,7 +14,8 @@ import {
 
 let database: Database | null = null;
 let tables: string[] = [];
-let files = new Map<string, Uint8Array<ArrayBuffer>>();
+// Entries over the preview limit keep only their size, so their payload is never copied.
+let files = new Map<string, Uint8Array<ArrayBuffer> | number>();
 const reply = (result: BinaryWorkerResult) => self.postMessage(result, { transfer: [] });
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 
@@ -52,6 +53,7 @@ function tarEntries(bytes: Uint8Array<ArrayBuffer>) {
     return Number.parseInt(value || "0", 8);
   };
   let longPath: string | null = null;
+  let longLink: string | null = null;
   const globalPax: Record<string, string> = {};
   let localPax: Record<string, string> = {};
   let offset = 0;
@@ -64,7 +66,7 @@ function tarEntries(bytes: Uint8Array<ArrayBuffer>) {
       checksum += index >= 148 && index < 156 ? 32 : bytes[offset + index]!;
     if (checksum !== number(offset + 148, 8)) throw new Error("The TAR header is damaged.");
     const type = text(offset + 156, 1);
-    const metadata = type === "L" || type === "x" || type === "g";
+    const metadata = type === "L" || type === "K" || type === "x" || type === "g";
     const attributes: Record<string, string> = metadata ? {} : { ...globalPax, ...localPax };
     const size = attributes.size ? Number(attributes.size) : number(offset + 124, 12);
     if (attributes.size && !/^\d+$/.test(attributes.size))
@@ -75,7 +77,9 @@ function tarEntries(bytes: Uint8Array<ArrayBuffer>) {
         : "";
     const path =
       attributes.path || longPath || [prefix, text(offset, 100)].filter(Boolean).join("/");
+    const linkpath = attributes.linkpath ?? longLink ?? text(offset + 157, 100);
     if (!metadata) {
+      longLink = null;
       longPath = null;
       localPax = {};
     }
@@ -89,6 +93,7 @@ function tarEntries(bytes: Uint8Array<ArrayBuffer>) {
       throw new Error("An archive entry is too large or damaged.");
     const content = bytes.subarray(offset + 512, offset + 512 + size);
     if (type === "L") longPath = new TextDecoder().decode(content).replace(/\0.*$/s, "");
+    else if (type === "K") longLink = new TextDecoder().decode(content).replace(/\0.*$/s, "");
     else if (type === "x" || type === "g") {
       if (size > 65536) throw new Error("Archive metadata is too large.");
       for (let cursor = 0; cursor < content.length;) {
@@ -111,26 +116,38 @@ function tarEntries(bytes: Uint8Array<ArrayBuffer>) {
         if (equals < 1) throw new Error("The TAR metadata is damaged.");
         const key = record.slice(0, equals);
         const value = record.slice(equals + 1);
-        if (["path", "size", "mtime"].includes(key)) {
+        if (["path", "linkpath", "size", "mtime"].includes(key)) {
           if (type === "x") localPax[key] = value;
-          else if (value) globalPax[key] = value;
+          else if (value || key === "linkpath") globalPax[key] = value;
           else delete globalPax[key];
         }
         cursor = end;
       }
-    } else if (type === "" || type === "0" || type === "5") {
+    } else if (
+      type === "" ||
+      type === "0" ||
+      type === "5" ||
+      // A hard link shares an earlier member's bytes; one without that member is skipped.
+      (type === "1" && linkpath && files.has(linkpath))
+    ) {
       if (attributes.mtime && !/^[+-]?\d+(?:\.\d+)?$/.test(attributes.mtime))
         throw new Error("The TAR metadata is damaged.");
       const modified =
         (attributes.mtime ? Number(attributes.mtime) : number(offset + 136, 12)) * 1000;
       const date = new Date(modified);
+      const linked = type === "1" ? files.get(linkpath) : undefined;
       entries.push({
         path,
-        size,
+        size: typeof linked === "number" ? linked : (linked?.length ?? size),
         directory: type === "5",
         modified: Number.isNaN(date.getTime()) ? null : date.toISOString(),
       });
-      if (type !== "5") files.set(path, content.slice());
+      if (type === "5") {
+        files.delete(path);
+        files.delete(path.replace(/\/+$/, ""));
+      } else files.set(path, linked ?? (size > ARCHIVE_ENTRY_MAX_BYTES ? size : content.slice()));
+    } else {
+      files.delete(path);
     }
     offset += 512 + Math.ceil(size / 512) * 512;
   }
@@ -141,8 +158,8 @@ function tarEntries(bytes: Uint8Array<ArrayBuffer>) {
 async function handle(input: BinaryWorkerRequest) {
   if (input.type === "entry") {
     const bytes = files.get(input.path);
-    if (!bytes) throw new Error("This archive entry is unavailable.");
-    if (bytes.length > ARCHIVE_ENTRY_MAX_BYTES)
+    if (bytes === undefined) throw new Error("This archive entry is unavailable.");
+    if (typeof bytes === "number" || bytes.length > ARCHIVE_ENTRY_MAX_BYTES)
       throw new Error("Entry previews are limited to 10 MB.");
     reply({ type: "entry", path: input.path, bytes });
     return;

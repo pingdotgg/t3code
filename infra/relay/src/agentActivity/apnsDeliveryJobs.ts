@@ -1,14 +1,15 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no createHmac or timingSafeEqual.
-import * as NodeCrypto from "node:crypto";
-
 import {
   RelayAgentActivityAggregateState,
   RelayAgentAwarenessPhase,
 } from "@t3tools/contracts/relay";
 import { stableStringify } from "@t3tools/shared/relaySigning";
+import * as Mac from "effect/crypto/Mac";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 const MAX_JOB_AGE_MS = 10 * 60 * 1_000;
@@ -224,8 +225,6 @@ export const ApnsDeliveryJobVerificationError = Schema.Union([
 ]);
 export type ApnsDeliveryJobVerificationError = typeof ApnsDeliveryJobVerificationError.Type;
 
-export const isApnsDeliveryJobVerificationError = Schema.is(ApnsDeliveryJobVerificationError);
-
 export function makeApnsDeliveryJobPayload(input: {
   readonly kind: ApnsDeliveryJobPayload["kind"];
   readonly userId: string;
@@ -313,41 +312,63 @@ function validatePayloadShape(payload: ApnsDeliveryJobPayload): ApnsDeliveryJobI
   }
 }
 
-function signatureForPayload(input: {
+const signingKey = (secret: Redacted.Redacted<string>) =>
+  Mac.key(Mac.hmacSha256, new TextEncoder().encode(Redacted.value(secret)));
+
+const payloadBytes = (payload: ApnsDeliveryJobPayload) =>
+  new TextEncoder().encode(stableStringify(payload));
+
+export const signApnsDeliveryJob = Effect.fn("relay.apns_delivery_jobs.sign")(function* (input: {
   readonly secret: Redacted.Redacted<string>;
   readonly payload: ApnsDeliveryJobPayload;
-}): string {
-  return NodeCrypto.createHmac("sha256", Redacted.value(input.secret))
-    .update(stableStringify(input.payload))
-    .digest("base64url");
-}
-
-function timingSafeEqualBase64Url(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left, "base64url");
-  const rightBuffer = Buffer.from(right, "base64url");
-  if (leftBuffer.length !== rightBuffer.length) {
-    return false;
-  }
-  return NodeCrypto.timingSafeEqual(leftBuffer, rightBuffer);
-}
-
-export function signApnsDeliveryJob(input: {
-  readonly secret: Redacted.Redacted<string>;
-  readonly payload: ApnsDeliveryJobPayload;
-}): SignedApnsDeliveryJob {
+}) {
+  const mac = yield* Mac.Mac;
+  const signature = yield* signingKey(input.secret).pipe(
+    Effect.flatMap((key) => mac.sign(key, payloadBytes(input.payload))),
+    Effect.orDie,
+  );
   return {
     algorithm: APNS_DELIVERY_JOB_SIGNING_ALGORITHM,
     payload: input.payload,
-    signature: signatureForPayload(input),
-  };
-}
+    signature: Base64Url.encode(signature),
+  } satisfies SignedApnsDeliveryJob;
+});
 
-export function verifySignedApnsDeliveryJob(input: {
-  readonly secret: Redacted.Redacted<string>;
-  readonly job: SignedApnsDeliveryJob;
-  readonly nowMs: number;
-}): ApnsDeliveryJobPayload | ApnsDeliveryJobVerificationError {
-  const payload = input.job.payload;
+export const verifySignedApnsDeliveryJob = Effect.fn("relay.apns_delivery_jobs.verify")(
+  function* (input: {
+    readonly secret: Redacted.Redacted<string>;
+    readonly job: SignedApnsDeliveryJob;
+    readonly nowMs: number;
+  }) {
+    const payload = input.job.payload;
+    const invalid = validateSignedJobWindow(payload, input.nowMs);
+    if (invalid !== null) {
+      return yield* invalid;
+    }
+    const tag = Base64Url.decode(input.job.signature);
+    const mac = yield* Mac.Mac;
+    const verified =
+      Result.isSuccess(tag) &&
+      (yield* signingKey(input.secret).pipe(
+        Effect.flatMap((key) => mac.verify(key, tag.success, payloadBytes(payload))),
+        Effect.orDie,
+      ));
+    if (!verified) {
+      return yield* new ApnsDeliveryJobSignatureInvalid({
+        jobId: payload.jobId,
+        kind: payload.kind,
+        userId: payload.target.userId,
+        deviceId: payload.target.deviceId,
+      });
+    }
+    return payload;
+  },
+);
+
+function validateSignedJobWindow(
+  payload: ApnsDeliveryJobPayload,
+  nowMs: number,
+): ApnsDeliveryJobVerificationError | null {
   const invalidPayload = validatePayloadShape(payload);
   if (invalidPayload !== null) {
     return invalidPayload;
@@ -394,7 +415,7 @@ export function verifySignedApnsDeliveryJob(input: {
       expiresAt: payload.expiresAt,
     });
   }
-  if (expiresAtMs <= input.nowMs) {
+  if (expiresAtMs <= nowMs) {
     return new ApnsDeliveryJobExpired({
       jobId: payload.jobId,
       kind: payload.kind,
@@ -403,17 +424,5 @@ export function verifySignedApnsDeliveryJob(input: {
       expiresAt: payload.expiresAt,
     });
   }
-  const expected = signatureForPayload({
-    secret: input.secret,
-    payload,
-  });
-  if (!timingSafeEqualBase64Url(input.job.signature, expected)) {
-    return new ApnsDeliveryJobSignatureInvalid({
-      jobId: payload.jobId,
-      kind: payload.kind,
-      userId: payload.target.userId,
-      deviceId: payload.target.deviceId,
-    });
-  }
-  return payload;
+  return null;
 }

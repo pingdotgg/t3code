@@ -1,0 +1,27 @@
+import type * as SVC from "@distilled.cloud/aws/emr";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `elasticmapreduce:ListReleaseLabels` — lists the EMR release labels available in the region, newest first.
+ * ### Release Catalog
+ * **Example:** Find the Latest Release
+ * ```typescript
+ * const listReleaseLabels = yield* AWS.EMR.ListReleaseLabels();
+ *
+ * const { ReleaseLabels } = yield* listReleaseLabels();
+ * const latest = ReleaseLabels?.[0];
+ * ```
+ *
+ * @binding
+ */
+export interface ListReleaseLabels extends Binding.Service<
+  ListReleaseLabels,
+  "AWS.EMR.ListReleaseLabels",
+  () => Effect.Effect<
+    (
+      request?: SVC.ListReleaseLabelsInput,
+    ) => Effect.Effect<SVC.ListReleaseLabelsOutput, SVC.ListReleaseLabelsError>
+  >
+> {}
+export const ListReleaseLabels = Binding.Service<ListReleaseLabels>("AWS.EMR.ListReleaseLabels");

@@ -1,5 +1,7 @@
 import { CommandId, EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import { afterEach, beforeEach, vi } from "vite-plus/test";
 
 type UploadOptions = {
   signal: AbortSignal;
@@ -102,7 +104,12 @@ vi.mock("./entities", () => ({
   useVisibleThreadShells: () => [],
 }));
 vi.mock("./projects", () => ({ environmentProjects: {} }));
-vi.mock("./workspace", () => ({ workspaceConnections: {} }));
+vi.mock("./workspace", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    workspaceConnections: { environmentsAtom: Atom.make([{ environmentId: "environment-1" }]) },
+  };
+});
 vi.mock("./server", async () => {
   const { Atom } = await import("effect/reactivity");
   return { serverEnvironment: { configValueAtom: Atom.family(() => Atom.make(null)) } };
@@ -136,7 +143,9 @@ vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
   ) =>
     native.server.get(query.input.resource.attachmentId)
       ? { _tag: "Success", value: {} }
-      : { _tag: "Failure", error: { _tag: "AssetAttachmentNotFoundError" } },
+      : (await import("effect/reactivity")).AsyncResult.failure(
+          (await import("effect/Cause")).fail({ _tag: "AssetAttachmentNotFoundError" }),
+        ),
   runAtomCommand: async (
     _registry: unknown,
     command: unknown,
@@ -162,9 +171,10 @@ vi.mock("./use-thread-outbox", async () => {
   const { Atom } = await import("effect/reactivity");
   return {
     editingQueuedMessageIdsAtom: Atom.make<Record<string, boolean>>({}).pipe(Atom.keepAlive),
-    dispatchingQueuedMessageIdAtom: Atom.make<Record<string, string>>({}).pipe(Atom.keepAlive),
+    dispatchingQueuedMessageIdsAtom: Atom.make<Record<string, true>>({}).pipe(Atom.keepAlive),
     useThreadOutboxMessages: () =>
       appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
+    retryingQueuedMessageIdsAtom: Atom.make({}).pipe(Atom.keepAlive),
     threadOutboxShellStatusesAtom: Atom.make(new Map()),
   };
 });
@@ -184,6 +194,7 @@ import {
 } from "./composer-attachment-uploads";
 import {
   enqueueThreadOutboxMessage,
+  flattenQueuedThreadMessages,
   flushThreadOutbox,
   threadOutboxManager,
 } from "./thread-outbox";
@@ -210,6 +221,8 @@ const requestsAtom = Atom.make((get) =>
   composerAttachmentUploadRequests({
     drafts: get(drafts.composerDraftUploadSourcesAtom),
     queuedMessagesByThreadKey: get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
+    editingQueuedMessageIds: {},
+    knownEnvironmentIds: [environmentId],
     connectedEnvironmentIds: new Set([environmentId]),
     operableEnvironmentIds: new Set([environmentId]),
     serverConfigs: new Map([[environmentId, config]]),
@@ -287,30 +300,74 @@ function uploadState() {
   ];
 }
 
-it.each(["decode", "write"] as const)(
+it.effect.each(["decode", "write"] as const)(
   "keeps an accepted upload ready when the draft %s fails",
-  async (fault) => {
-    native.fault = fault;
-    if (fault === "decode")
-      native.files.set(draftsUri, Buffer.from('{"schemaVersion":1,"drafts":'));
-    drafts.resetComposerDraftsLoadState();
+  (fault) =>
+    Effect.gen(function* () {
+      native.fault = fault;
+      if (fault === "decode")
+        native.files.set(draftsUri, Buffer.from('{"schemaVersion":1,"drafts":'));
+      drafts.resetComposerDraftsLoadState();
+      const queue = worker();
+      yield* Effect.promise(() => queue.settled());
+      expect(uploadState()).toEqual({ status: "ready" });
+      expect(native.deleted).toEqual([]);
+      expect(composerAttachmentUploadBlockReason(sendInput())).toBeNull();
+      expect(composerAttachmentsStillUploading(sendInput())).toBe(false);
+
+      const message = queuedMessage();
+      expect(message.attachments[0]?.uploadedAttachmentId).toBe("pending-1");
+      yield* Effect.promise(() => enqueueThreadOutboxMessage(message));
+      const prepared = yield* prepareQueuedMessageAttachments(message);
+      expect(prepared.status).toBe("ready");
+      if (prepared.status !== "ready") throw new Error("Outbox preparation abandoned");
+      expect(prepared.prepared.pendingAttachmentIds).toEqual(["pending-1"]);
+      expect(native.transfer).toHaveBeenCalledTimes(1);
+    }),
+);
+
+it.effect("uploads again at send time when the server swept a finished upload", () =>
+  Effect.gen(function* () {
     const queue = worker();
-    await queue.settled();
+    yield* Effect.promise(() => queue.settled());
     expect(uploadState()).toEqual({ status: "ready" });
-    expect(native.deleted).toEqual([]);
-    expect(composerAttachmentUploadBlockReason(sendInput())).toBeNull();
-    expect(composerAttachmentsStillUploading(sendInput())).toBe(false);
+    // The server sweeps pending uploads nothing claimed, here while the draft sat unsent.
+    native.server.delete("pending-1");
 
     const message = queuedMessage();
-    expect(message.attachments[0]?.uploadedAttachmentId).toBe("pending-1");
-    await enqueueThreadOutboxMessage(message);
-    const prepared = await prepareQueuedMessageAttachments(message);
+    yield* Effect.promise(() => enqueueThreadOutboxMessage(message));
+    const prepared = yield* prepareQueuedMessageAttachments(message);
     expect(prepared.status).toBe("ready");
     if (prepared.status !== "ready") throw new Error("Outbox preparation abandoned");
-    expect(prepared.prepared.pendingAttachmentIds).toEqual(["pending-1"]);
-    expect(native.transfer).toHaveBeenCalledTimes(1);
-  },
+    expect(prepared.prepared.pendingAttachmentIds).toEqual(["pending-2"]);
+    expect(native.transfer).toHaveBeenCalledTimes(2);
+  }),
 );
+
+it("keeps an upload running when its message is sent mid-upload and records it on the message", async () => {
+  const transferStarted = Promise.withResolvers<void>();
+  const finishTransfer = Promise.withResolvers<{ status: number }>();
+  native.transfer.mockImplementationOnce(async (uri, url) => {
+    native.server.set(url.split("/").at(-1)!, native.files.get(uri)!);
+    transferStarted.resolve();
+    return finishTransfer.promise;
+  });
+  const queue = worker();
+  await transferStarted.promise;
+
+  // Send enqueues the message, then clears the draft that owned the upload.
+  await enqueueThreadOutboxMessage(queuedMessage());
+  drafts.clearComposerDraftContent(draftKey, { deferAttachmentCleanup: true });
+  finishTransfer.resolve({ status: 204 });
+  await queue.settled();
+
+  expect(native.transfer).toHaveBeenCalledOnce();
+  expect(native.deleted).toEqual([]);
+  const [queued] = flattenQueuedThreadMessages(
+    appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
+  );
+  expect(queued?.attachments[0]?.uploadedAttachmentId).toBe("pending-1");
+});
 
 it.each(["http", "permission"] as const)(
   "keeps a real %s upload failure blocking Send",
@@ -335,5 +392,42 @@ it("keeps an unexpected draft flush error blocking Send", async () => {
   expect(composerAttachmentUploadBlockReason(sendInput())).toBe(
     "Retry or remove the failed attachment",
   );
-  expect(native.deleted).toEqual(["pending-1"]);
+  // The server sweeps pending uploads nothing claims; a retry uploads again.
+  expect(native.deleted).toEqual([]);
+});
+
+it("uploads draft attachments for threads whose ids contain colons", () => {
+  const keys = [
+    "environment-1:thread-1",
+    "environment-1:thread:mcp:namespace:key:0",
+    "environment-1:command-1:fork",
+    "environment-1:thread-1~queued-edit~run:1",
+  ];
+  const requests = composerAttachmentUploadRequests({
+    drafts: Object.fromEntries(keys.map((key) => [key, { attachments: [{ ...image, id: key }] }])),
+    queuedMessagesByThreadKey: {},
+    editingQueuedMessageIds: {},
+    knownEnvironmentIds: [environmentId],
+    connectedEnvironmentIds: new Set([environmentId]),
+    operableEnvironmentIds: new Set([environmentId]),
+    serverConfigs: new Map([[environmentId, config]]),
+  });
+  expect(requests.map((request) => [request.attachment.id, request.environmentId])).toEqual(
+    keys.map((key) => [key, environmentId]),
+  );
+});
+
+it("does not upload a disconnected colon environment's draft to its connected prefix", () => {
+  const connected = EnvironmentId.make("a");
+  const disconnected = EnvironmentId.make("a:vcs-status:b");
+  const requests = composerAttachmentUploadRequests({
+    drafts: { [`${disconnected}:thread-1`]: { attachments: [image] } },
+    queuedMessagesByThreadKey: {},
+    editingQueuedMessageIds: {},
+    knownEnvironmentIds: [connected, disconnected],
+    connectedEnvironmentIds: new Set([connected]),
+    operableEnvironmentIds: new Set([connected]),
+    serverConfigs: new Map([[connected, config]]),
+  });
+  expect(requests).toEqual([]);
 });
