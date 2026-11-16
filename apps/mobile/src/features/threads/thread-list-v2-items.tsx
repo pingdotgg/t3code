@@ -84,6 +84,7 @@ import {
   threadHasUnseenCompletion,
   resolveThreadListV2RowStatus,
   resolveThreadListV2Status,
+  resolveThreadListV2ReadAction,
   resolveThreadListV2ProviderDrivers,
   resolveThreadListV2SwipeActions,
   layoutThreadListV2RowMenuActions,
@@ -912,6 +913,31 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const markThreadUnread = useAtomCommand(threadEnvironment.markUnread, { reportFailure: false });
+  const markUnread = useAtomCommand(threadEnvironment.markUnread);
+  const readAction = resolveThreadListV2ReadAction(thread);
+  const handleToggleRead = useCallback(() => {
+    if (readAction === null) return;
+    if (readAction === "read") {
+      void visitThread({
+        environmentId: thread.environmentId,
+        input: { threadId: thread.id, visitedAt: thread.updatedAt },
+      });
+    } else {
+      void markUnread({ environmentId: thread.environmentId, input: { threadId: thread.id } });
+    }
+  }, [markUnread, readAction, thread.environmentId, thread.id, thread.updatedAt, visitThread]);
+  const swipeRightAction = useMemo(
+    () =>
+      readAction === null
+        ? undefined
+        : {
+            accessibilityLabel: `Mark ${thread.title} ${readAction}`,
+            icon: readAction === "read" ? ("eye" as const) : ("eye.slash" as const),
+            label: readAction === "read" ? "Read" : "Unread",
+            onPress: handleToggleRead,
+          },
+    [handleToggleRead, readAction, thread.title],
+  );
   const handleAcknowledgeWoke = useCallback(() => {
     if (props.wokeAt === null) return;
     void visitThread({
@@ -1357,11 +1383,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         : null,
     [gt, handleMenuAction, snoozePresetActions, swipeActions.secondary, thread.title],
   );
-  const swipeAccessibilityHint = !canOperateThread
+  const leftSwipeAccessibilityHint = !canOperateThread
     ? gt("Opens the thread")
     : secondaryAction === null
       ? primaryAction.swipeHint
       : primaryAction.swipeSnoozeHint;
+
+  const swipeAccessibilityHint =
+    canOperateThread && readAction !== null
+      ? `${leftSwipeAccessibilityHint} Swipe right to mark ${readAction}.`
+      : leftSwipeAccessibilityHint;
 
   const titleTextInset = props.project ? projectIconSize + 8 : 0;
   const cardContent = (
@@ -1775,6 +1806,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         onSwipeableClose={props.onSwipeableClose}
         onSwipeableWillOpen={props.onSwipeableWillOpen}
         primaryAction={primaryAction}
+        swipeRightAction={swipeRightAction}
         secondaryAction={secondaryAction}
         resetKey={`${thread.environmentId}:${thread.id}:${variant}:${snoozedRow}:${thread.settledAt}:${thread.unsettledAt}:${thread.snoozedUntil}:${thread.pinnedAt}`}
         simultaneousWith={props.simultaneousSwipeGesture}
