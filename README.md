@@ -87,7 +87,6 @@ We wanted something performant, remote-ready, and truly open. If we ever go the 
 
 - [Install and first run](./docs/user/install.md)
 - [Remote access from a phone or another machine](./docs/user/remote-access.md)
-- [Messages and attachments](./docs/user/composer.md#attach-files)
 - [Permission modes](./docs/user/permission-modes.md)
 - [Source control](./docs/user/source-control.md)
 - [Connect outside agents over MCP](./docs/user/outside-agents.md)
