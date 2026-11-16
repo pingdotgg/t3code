@@ -23,15 +23,15 @@ it.effect("keeps refreshing after the event stream fails", () =>
   Effect.gen(function* () {
     const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
     const started = yield* Deferred.make<void>();
-    const refreshed: Array<RunId | undefined> = [];
+    const refreshed = yield* Deferred.make<RunId | undefined>();
     let subscriptions = 0;
     const fiber = yield* Effect.forkChild(
       followSettledSubagentRefreshes({
         evaluations: {
           enqueueSettledSubagentRefreshes: (input) =>
-            Effect.sync(() => {
-              refreshed.push(input?.runId);
-            }),
+            input?.runId === undefined
+              ? Effect.void
+              : Deferred.succeed(refreshed, input.runId).pipe(Effect.asVoid),
         },
         orchestrator: {
           getLatestEventSequence: () => Deferred.succeed(started, undefined).pipe(Effect.as(0)),
@@ -51,8 +51,7 @@ it.effect("keeps refreshing after the event stream fails", () =>
     yield* Deferred.await(started);
     yield* TestClock.adjust("1 second");
     yield* Queue.offer(events, settledChild);
-    yield* Effect.yieldNow;
-    assert.include(refreshed, runId);
+    assert.equal(yield* Deferred.await(refreshed), runId);
     yield* Fiber.interrupt(fiber);
   }),
 );
