@@ -747,7 +747,8 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const lastWorkspace = yield* makeTempDir("t3code-workspace-last-");
         const newestMs = Date.parse("2026-03-01T00:00:00.000Z");
         // Both homes outgrow their first share; together they fit the source's budget, but only
-        // when what the medium home leaves over on its rescan reaches the large one.
+        // when what the medium home leaves over on its rescan reaches the large one, which is
+        // listed first and so needs a second pass.
         yield* Effect.sync(() => {
           const writeSessions = (directory: string, count: number, cwd: string, ageMs: number) => {
             NodeFS.mkdirSync(directory, { recursive: true });
@@ -781,13 +782,13 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           claudeHomePath,
           codexHomePath,
           providerInstances: {
-            [ProviderInstanceId.make("claude-medium")]: {
-              driver: ProviderDriverKind.make("claudeAgent"),
-              config: { homePath: mediumHomePath },
-            },
             [ProviderInstanceId.make("claude-large")]: {
               driver: ProviderDriverKind.make("claudeAgent"),
               config: { homePath: largeHomePath },
+            },
+            [ProviderInstanceId.make("claude-medium")]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              config: { homePath: mediumHomePath },
             },
           },
         });
