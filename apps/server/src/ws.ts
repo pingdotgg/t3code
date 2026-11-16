@@ -2148,7 +2148,7 @@ export const layerWsRpc = (
                                     : { context: input.initialMessage.context }),
                                 },
                               }),
-                          createdBy: "user",
+                          createdBy: input.createdBy ?? "user",
                           creationSource: input.creationSource ?? "web",
                         }),
                       ),
