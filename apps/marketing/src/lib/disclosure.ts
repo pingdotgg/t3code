@@ -17,7 +17,7 @@ export function animateDetails(details: HTMLDetailsElement) {
 
     // Read the live height and opacity before cancelling, so an interrupted slide continues from where it is.
     const from = details.open ? panel.offsetHeight : 0;
-    const fromOpacity = details.open ? getComputedStyle(panel).opacity : "0";
+    const fromOpacity = details.open ? Number(getComputedStyle(panel).opacity) : 0;
     animation?.cancel();
     expanded = !expanded;
     details.open = true;
