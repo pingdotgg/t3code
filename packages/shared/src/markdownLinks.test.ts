@@ -57,6 +57,12 @@ describe("inlineCodeFilePathCandidate", () => {
     ],
     ["cd /tmp && ls", null],
     ["/usr/bin/python3 -m venv .venv", null],
+    ["/usr/local/bin/node server.js", null],
+    ["/usr/bin/env python3 foo.py", null],
+    ["/opt/homebrew/bin/python3 manage.py", null],
+    ["/bin/echo hello world.txt", null],
+    ["~/bin/run tests.sh", null],
+    ["/Users/me/notes with spaces.md", "/Users/me/notes with spaces.md"],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
   });
