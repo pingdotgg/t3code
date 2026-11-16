@@ -359,8 +359,19 @@ export class InlineParser {
     let spaces = 0;
     if (tail && tail.kind === "text" && tail.end === this.src(at)) {
       const value = tail.value!;
+      // Only whitespace written as such: `&#32;` decodes to a space but makes no break.
+      let literal = at;
+      while (
+        literal > 0 &&
+        (s.charCodeAt(literal - 1) === SPACE || s.charCodeAt(literal - 1) === TAB)
+      )
+        literal--;
       let i = value.length;
-      while (i > 0 && (value.charCodeAt(i - 1) === SPACE || value.charCodeAt(i - 1) === TAB)) i--;
+      while (
+        i > value.length - (at - literal) &&
+        (value.charCodeAt(i - 1) === SPACE || value.charCodeAt(i - 1) === TAB)
+      )
+        i--;
       spaces = value.length - i;
       if (spaces > 0) {
         const hasTab = value.slice(i).includes("\t");

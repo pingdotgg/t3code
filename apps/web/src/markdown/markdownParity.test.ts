@@ -11,6 +11,7 @@ import { unified } from "unified";
 import { VFile } from "vfile";
 import { describe, expect, it } from "vite-plus/test";
 
+import { rehypeChipPunctuation } from "../components/chat/markdownChipPunctuation";
 import { rehypeHeadingIds } from "../components/chat/markdownFragments";
 import remarkMath from "remark-math";
 
@@ -57,6 +58,7 @@ const CHAT_MARKDOWN_CASES = [
   '```ts title="a.ts"\nconst a = 1;\n```\n\n~~~\nunclosed',
   "Hard  \nbreak\\\nand `` code ` span ``",
   '[ref] and [Ref][] and [x][REF]\n\n[ref]: /url "title"',
+  "Open [a.ts](./a.ts). Run `src/b.ts`, then a&#32;&#32;\nb.",
   "[a](CURSOR://file/Users/me/a.md:3) [b](vscode://file/C:/a.ts) [c](cursor://anysphere.x/p)",
   "| a |\n| - |\n| b |\n> quote\n\n| a |\n| - |\n| b |\n2. list\n\n| a |\n| - |\n| b |\n# head",
   "- \\[x] escaped\n- &#91;x] entity\n- [x]\n  done\n- [x]  \n  hard break\n- [x]\\\n  backslash",
@@ -73,6 +75,7 @@ const FALLBACK_CASES = [
 
 // Raw HTML the direct hast path nests itself instead of running parse5.
 const RAW_HTML_CASES = [
+  '<a href="CURSOR://file/x/y.md">x</a> and <picture><source media="(prefers-color-scheme: dark)" srcset="javascript:alert(1)">![a](l.png)</picture>',
   '<picture><source media="(prefers-color-scheme: dark)" srcset="d.png"><source media="(prefers-color-scheme: light)" srcset="l.png"><img src="l.png" alt="x"></picture>',
   "<details>\n<summary>⚠️ Outside diff (3)</summary><blockquote>\n\n**a**\n\n</blockquote></details>",
   '<div align="center"><img width="837" src="https://x.dev/a.png" title="t" /></div>\n\nafter',
@@ -145,7 +148,13 @@ const fastRemark = unified()
   .freeze();
 const rehype = unified()
   .use(remarkRehype, { allowDangerousHtml: true })
-  .use([...CHAT_MARKDOWN_REHYPE_PLUGINS, rehypeHeadingIds, rehypeTextDirection])
+  // ChatMarkdown's render list, which chatRenderHast reproduces.
+  .use([
+    ...CHAT_MARKDOWN_REHYPE_PLUGINS,
+    rehypeHeadingIds,
+    rehypeTextDirection,
+    rehypeChipPunctuation,
+  ])
   .freeze();
 
 // parse5 locates text after raw HTML by its tokenizer's resets; nothing reads text positions.

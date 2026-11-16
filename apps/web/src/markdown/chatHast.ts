@@ -5,11 +5,13 @@ import { isWindowsDrivePathHref } from "@t3tools/shared/markdownLinks";
 import {
   normalizeLocalEditorHref,
   rehypePreserveBareAnchorPlaceholders,
+  rehypeNormalizeLocalEditorLinks,
   rehypePreserveImageSourceMeta,
   sanitizeChatHast,
 } from "@t3tools/shared/markdownPipeline";
 import { THREAD_LINK_PROTOCOL } from "@t3tools/shared/threadLinks";
 
+import { rehypeChipPunctuation } from "../components/chat/markdownChipPunctuation";
 import { rehypeHeadingIds } from "../components/chat/markdownFragments";
 import { blockTextDirections, rehypeTextDirection } from "../components/chat/markdownTextDirection";
 import { assembleRawHtml } from "./rawHtml";
@@ -33,6 +35,8 @@ const addHeadingIds = rehypeHeadingIds();
 const addTextDirection = rehypeTextDirection();
 const preserveBareAnchors = rehypePreserveBareAnchorPlaceholders();
 const preserveImageSourceMeta = rehypePreserveImageSourceMeta();
+const normalizeLocalEditorLinks = rehypeNormalizeLocalEditorLinks();
+const groupChipPunctuation = rehypeChipPunctuation();
 
 function hasRawNode(node: HastRoot | Element): boolean {
   return (node.children as Array<{ type: string }>).some(
@@ -41,12 +45,15 @@ function hasRawNode(node: HastRoot | Element): boolean {
 }
 
 const RAW_HOOKS = {
-  beforeSanitize: (tree: HastRoot) => preserveImageSourceMeta(tree as never),
+  beforeSanitize: (tree: HastRoot) => {
+    preserveImageSourceMeta(tree as never);
+    normalizeLocalEditorLinks(tree as never);
+  },
   sanitize: (tree: HastRoot) => sanitizeChatHast(tree as never) as unknown as HastRoot,
 };
 
 /**
- * What CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS make of `tree`, built directly; null when the tree
+ * What ChatMarkdown's render rehype plugins make of `tree`, built directly; null when the tree
  * needs the HTML parser, and so the rehype plugins.
  */
 export function chatRenderHast(tree: Root): HastRoot | null {
@@ -59,6 +66,7 @@ export function chatRenderHast(tree: Root): HastRoot | null {
     // Inline code is already isolated left to right; heading ids need headings.
     if (result.hasHeading) addHeadingIds(result.hast);
     blockTextDirections(result.hast);
+    groupChipPunctuation(result.hast as never);
     return result.hast;
   }
   const assembled = assembleRawHtml(result.hast, RAW_HOOKS);
@@ -68,5 +76,6 @@ export function chatRenderHast(tree: Root): HastRoot | null {
   // Markdown code is isolated as it is built; only code from raw HTML still needs it.
   if (seen.code) addTextDirection(hast);
   else blockTextDirections(hast);
+  groupChipPunctuation(hast as never);
   return hast;
 }

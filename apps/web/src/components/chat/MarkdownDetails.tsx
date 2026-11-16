@@ -44,12 +44,12 @@ export function MarkdownDetails({
   // Most details stay closed: mount Base UI on hover or focus, before the first click.
   if (!armed && !expanded && !searching) {
     return (
-      <div className="my-2 border-y border-border/60">
+      <div className="my-2 border-y border-border/60" dir={dir}>
         <div data-slot="collapsible" data-markdown-details="" data-markdown-details-open="false">
           <button
             type="button"
             aria-expanded="false"
-            className="flex w-full cursor-pointer items-center gap-2 py-2 text-left text-sm font-medium text-foreground"
+            className="flex w-full cursor-pointer items-center gap-2 py-2 text-start text-sm font-medium text-foreground [&:dir(rtl)_svg]:rotate-180"
             data-slot="collapsible-trigger"
             data-markdown-details-summary=""
             // Synchronously, so the pointer's next events reach Base UI's trigger.
