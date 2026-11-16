@@ -43,17 +43,28 @@ fn fixture_with(
     let dir = std::env::temp_dir().join(format!("conn-mcp-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
+    let files = Arc::new(conn_files::Files::open(&dir).unwrap());
     let mut config = EngineConfig::new(dir.join("engine.sqlite"));
     config.projects = vec![ProjectConfig {
         title: "Project".into(),
         workspace_root: ROOT.into(),
     }];
     config.providers = vec![Arc::new(provider)];
-    config.host = host;
+    config.host = host.or_else(|| Some(Arc::new(threads_handoff::FilesHost(files.clone()))));
     let engine = Arc::new(SqliteEngine::open(config).unwrap());
     let service = McpService::new(McpConfig {
         preview: Some(conn_preview::tabs::Preview::new(dir.clone())),
-        html_preview: Some(Arc::new(conn_preview::html::HtmlPreview::new(dir.clone()))),
+        refresh_provider: None,
+        files: Some(files),
+        worktrees: Some(crate::WorktreeConfig {
+            directory: Arc::new({
+                let dir = dir.clone();
+                move || dir.join("worktrees")
+            }),
+            settings: Arc::new(|| json!({})),
+            terminals: None,
+            hub: conn_vcs::VcsHub::default(),
+        }),
         panels: Some(conn_features::panels::PanelBroker::default()),
         secrets: Some(conn_features::secrets::SecretRequests::new(
             &dir,
@@ -75,7 +86,6 @@ fn fixture_with(
         hosted_app_url: crate::DEFAULT_HOSTED_APP_URL.into(),
         scheduled_tasks: None,
         annotations: None,
-        files: Some(Arc::new(conn_files::Files::open(&dir).unwrap())),
     });
     service.set_listen_address("0.0.0.0:4711".parse().unwrap());
     Fixture { service, dir }
@@ -196,7 +206,10 @@ impl<'a> Client<'a> {
         assert_eq!(reply["result"]["isError"], true, "{tool}: {reply}");
         let failure: Value =
             serde_json::from_str(reply["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(failure["_tag"], "OrchestratorMcpFailure");
+        assert!(matches!(
+            failure["_tag"].as_str(),
+            Some("OrchestratorMcpFailure" | "WorktreeMcpFailure")
+        ));
         (
             failure["code"].as_str().unwrap().to_owned(),
             failure["message"].as_str().unwrap().to_owned(),
@@ -1052,7 +1065,6 @@ async fn launch_prepares_a_worktree() {
     assert_eq!(host.requests.lock().unwrap().len(), 1);
 }
 
-/// The JSON-RPC error of a call the arguments check refused.
 /// A tool that acts as the calling thread is not offered to an outside client: as in
 /// `apps/server` (`hiddenFromOutsideClients`), a call to it is "not found".
 async fn not_offered(c: &mut Client<'_>, tool: &str, args: Value) {
@@ -1063,6 +1075,7 @@ async fn not_offered(c: &mut Client<'_>, tool: &str, args: Value) {
     );
 }
 
+/// The JSON-RPC error of a call the arguments check refused.
 async fn rpc_error(c: &mut Client<'_>, tool: &str, args: Value) -> (i64, String) {
     let reply = c
         .request("tools/call", json!({"name": tool, "arguments": args}))
@@ -1685,8 +1698,7 @@ async fn search_puts_titles_first_and_keeps_slots_for_messages() {
 /// Tools that a text we send to an agent names and that this server does not serve. An agent
 /// told to call one finds no such tool. Serve one, and this test makes you strike it here.
 /// `preview_*` in the orchestration text also names all 13 preview tools.
-const NAMED_NOT_SERVED: [&str; 10] = [
-    "create_threads",
+const NAMED_NOT_SERVED: [&str; 9] = [
     "device_list",
     "device_open",
     "device_screenshot",
@@ -1760,7 +1772,8 @@ async fn fixture_with_tasks(name: &str) -> Fixture {
     let config = &base.service.config;
     let service = McpService::new(McpConfig {
         preview: None,
-        html_preview: None,
+        refresh_provider: None,
+        worktrees: None,
         panels: Some(conn_features::panels::PanelBroker::default()),
         secrets: config.secrets.clone(),
         engine,
@@ -2248,6 +2261,8 @@ async fn annotation_tools_report_a_conflict_and_refuse_callers_outside_a_thread(
     // Reading needs no live run.
     idle_agent.ok("annotations_list", json!({})).await;
 }
+
+mod threads_handoff;
 
 #[tokio::test(flavor = "current_thread")]
 async fn secret_request_requires_an_active_owned_run_and_stays_hidden() {
@@ -2835,6 +2850,21 @@ async fn html_preview_validates_before_launch_and_reads_without_a_live_turn() {
             .unwrap()
             .contains("viewport height unit (100vh)")
     );
+    let preview = f.service.config.preview.as_ref().unwrap().html_preview();
+    let _first = preview.reserve().unwrap();
+    let _second = preview.reserve().unwrap();
+    let reply = agent
+        .request(
+            "tools/call",
+            json!({"name":"html_preview","arguments":{"html":"<div style='height:100vh'>"}}),
+        )
+        .await;
+    assert!(
+        reply["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("preview queue is full")
+    );
 }
 
 #[tokio::test]
@@ -2898,4 +2928,163 @@ async fn browser_tools_share_t3_empty_results_and_failures_without_launching_chr
         !f.dir.join("tools").exists(),
         "unavailable status must never download Chrome"
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn mcp_panel_tools_relay_to_the_mac_and_keep_caller_guards() {
+    let f = fixture("mcp-panel-tools");
+    let mut outside = Client::open(&f.service, client(true)).await;
+    not_offered(&mut outside, "mcp_call", json!({"tool":"weather"})).await;
+    not_offered(
+        &mut outside,
+        "mcp_connect",
+        json!({"name":"stub","url":"http://127.0.0.1/mcp"}),
+    )
+    .await;
+    let thread = launch_as_swamp(&mut outside, "MCP", "hang", "full-access", "default").await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &thread)).await;
+    let error = agent
+        .request(
+            "tools/call",
+            json!({"name":"mcp_connect","arguments":{"name":"stub"}}),
+        )
+        .await;
+    assert!(
+        error.to_string().contains("Pass url or command, not both."),
+        "{error}"
+    );
+    let error = agent
+        .request(
+            "tools/call",
+            json!({"name":"mcp_call","arguments":{"tool":"weather"}}),
+        )
+        .await;
+    assert!(
+        error
+            .to_string()
+            .contains("No Conn desktop app is connected"),
+        "{error}"
+    );
+    for (name, args) in [
+        ("mcp_call", json!({"tool":" "})),
+        ("mcp_call", json!({"tool":"x".repeat(201)})),
+        ("mcp_call", json!({"tool":"weather","server":" "})),
+        ("mcp_connect", json!({"url":" "})),
+        ("mcp_connect", json!({"command":"x".repeat(8193)})),
+        (
+            "mcp_connect",
+            json!({"name":"x".repeat(201),"url":"http://localhost"}),
+        ),
+        (
+            "mcp_connect",
+            json!({"url":"http://localhost","headers":{"key":"x".repeat(8193)}}),
+        ),
+        ("mcp_connect", json!({"command":"node","env":{"key":7}})),
+    ] {
+        let response = agent
+            .request("tools/call", json!({"name":name,"arguments":args}))
+            .await;
+        assert_eq!(response["error"]["code"], -32602, "{name}: {response}");
+    }
+    let broker = f.service.config.panels.as_ref().unwrap();
+    let mut desktop = broker.subscribe().unwrap();
+    let mut obsolete = broker.subscribe().unwrap();
+    let connect = agent.ok("mcp_connect",json!({"name":"stub","url":"http://127.0.0.1/mcp","headers":{"X-Test":"stub"},"focusWindow":false}));
+    let stub = async {
+        let request = conn_contract::to_json(&desktop.recv().await.unwrap());
+        let old_request = obsolete.recv().await.unwrap();
+        assert_eq!(
+            old_request.request_id,
+            request["requestId"].as_str().unwrap()
+        );
+        broker.respond(conn_contract::from_json(json!({"requestId":old_request.request_id,"ok":false,"error":"MCP is unavailable here"})).unwrap());
+        assert_eq!(request["threadId"], thread);
+        assert_eq!(request["focusWindow"], false);
+        assert_eq!(
+            request["mcpServer"],
+            json!({"name":"stub","url":"http://127.0.0.1/mcp","headers":{"X-Test":"stub"}})
+        );
+        broker.respond(conn_contract::from_json(json!({"requestId":request["requestId"],"ok":true,"deviceName":"Test Mac","mcp":{"server":"stub","tools":[{"name":"weather"}]}})).unwrap());
+    };
+    assert_eq!(
+        tokio::join!(connect, stub).0,
+        json!({"server":"stub","tools":[{"name":"weather"}],"shownOn":"Test Mac"})
+    );
+    drop(obsolete);
+    let call = agent.ok(
+        "mcp_call",
+        json!({"server":"  stub  ","tool":" weather ","arguments":{"city":"Amsterdam","options":{"raw":"  keep  ","nested":[null,7,true,{"value":"x"}]}}}),
+    );
+    let stub = async {
+        let request = conn_contract::to_json(&desktop.recv().await.unwrap());
+        assert_eq!(
+            request["mcpCall"],
+            json!({"server":"stub","tool":"weather","arguments":{"city":"Amsterdam","options":{"raw":"  keep  ","nested":[null,7,true,{"value":"x"}]}}})
+        );
+        broker.respond(conn_contract::from_json(json!({"requestId":request["requestId"],"ok":true,"mcpCall":{"server":"stub","tool":"weather","content":[{"type":"text","text":"sunny"}],"isError":false,"truncated":false,"durationMs":1}})).unwrap());
+    };
+    assert_eq!(tokio::join!(call, stub).0["shownOn"], "Conn desktop");
+    dispatch(
+        &f,
+        json!({"type":"thread.archive","commandId":"close-mcp","threadId":thread}),
+    )
+    .await;
+    assert_eq!(
+        agent.failure("mcp_call", json!({"tool":"weather"})).await.0,
+        "parent_not_active"
+    );
+    f.service.config.engine.shutdown().await;
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn mcp_panel_actions_use_the_ninety_second_action_timeout() {
+    let f = fixture("mcp-action-timeout");
+    let mut outside = Client::open(&f.service, client(true)).await;
+    let thread = launch_as_swamp(
+        &mut outside,
+        "MCP timeout",
+        "hang",
+        "full-access",
+        "default",
+    )
+    .await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &thread)).await;
+    let broker = f.service.config.panels.as_ref().unwrap();
+    let mut desktop = broker.subscribe().unwrap();
+    for (name, args, key, result) in [
+        (
+            "mcp_connect",
+            json!({"url":"http://localhost/mcp"}),
+            "mcp",
+            json!({"server":"stub","tools":[]}),
+        ),
+        (
+            "mcp_call",
+            json!({"tool":"weather"}),
+            "mcpCall",
+            json!({"server":"stub","tool":"weather","content":[],"isError":false,"truncated":false,"durationMs":0}),
+        ),
+    ] {
+        let pending = agent.ok(name, args.clone());
+        let reply = async {
+            let request = desktop.recv().await.unwrap();
+            tokio::time::advance(Duration::from_secs(89)).await;
+            let mut response =
+                json!({"requestId":request.request_id,"ok":true,"deviceName":"Slow Mac"});
+            response[key] = result;
+            broker.respond(conn_contract::from_json(response).unwrap());
+        };
+        assert_eq!(tokio::join!(pending, reply).0["shownOn"], "Slow Mac");
+        let pending = agent.request("tools/call", json!({"name":name,"arguments":args}));
+        let expire = async {
+            desktop.recv().await.unwrap();
+            tokio::time::advance(Duration::from_secs(90)).await;
+        };
+        let response = tokio::join!(pending, expire).0;
+        assert!(
+            response.to_string().contains("within 90 s."),
+            "{name}: {response}"
+        );
+    }
+    f.service.config.engine.shutdown().await;
 }

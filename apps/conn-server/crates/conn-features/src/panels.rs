@@ -152,8 +152,7 @@ struct Pending {
 }
 #[derive(Debug, Default)]
 struct State {
-    next_id: u64,
-    subscribers: HashMap<u64, mpsc::Sender<AgentPanelRequest>>,
+    subscribers: Vec<mpsc::Sender<AgentPanelRequest>>,
     pending: HashMap<String, Pending>,
 }
 
@@ -179,33 +178,20 @@ impl PanelBroker {
 
     pub fn subscribe(&self) -> Result<mpsc::Receiver<AgentPanelRequest>, PanelError> {
         let mut state = self.state();
-        state.subscribers.retain(|_, tx| !tx.is_closed());
+        state.subscribers.retain(|tx| !tx.is_closed());
         if state.subscribers.len() >= MAX_DESKTOPS {
             return Err(PanelError {
                 reason: "rejected",
                 message: "Too many Conn desktops are connected.".into(),
             });
         }
-        let id = state.next_id;
-        state.next_id = state.next_id.wrapping_add(1);
         let (tx, rx) = mpsc::channel(QUEUE_CAPACITY);
-        state.subscribers.insert(id, tx.clone());
-        let weak = Arc::downgrade(&self.inner);
-        tokio::spawn(async move {
-            tx.closed().await;
-            if let Some(inner) = weak.upgrade() {
-                inner
-                    .lock()
-                    .expect("panel broker lock poisoned")
-                    .subscribers
-                    .remove(&id);
-            }
-        });
+        state.subscribers.push(tx);
         Ok(rx)
     }
 
     pub fn has_desktop(&self) -> bool {
-        self.state().subscribers.values().any(|tx| !tx.is_closed())
+        self.state().subscribers.iter().any(|tx| !tx.is_closed())
     }
 
     pub fn respond(&self, response: AgentPanelResponse) {
@@ -228,7 +214,7 @@ impl PanelBroker {
     ) -> Result<AgentPanelResponse, PanelError> {
         let (answer, guard) = {
             let mut state = self.state();
-            state.subscribers.retain(|_, tx| !tx.is_closed());
+            state.subscribers.retain(|tx| !tx.is_closed());
             if state.subscribers.is_empty() {
                 return Err(PanelError { reason:"no_desktop", message:"No Conn desktop app is connected to this server, so nothing can show the panel. Ask the user to open Conn on their Mac.".into() });
             }
@@ -241,7 +227,7 @@ impl PanelBroker {
             request.request_id = conn_support::uuid_v4();
             let (tx, rx) = oneshot::channel();
             let mut remaining = 0;
-            for subscriber in state.subscribers.values() {
+            for subscriber in &state.subscribers {
                 if subscriber.try_send(request.clone()).is_ok() {
                     remaining += 1;
                 }

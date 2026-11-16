@@ -230,7 +230,6 @@ pub async fn serve_with_instances(
     let preview = conn_preview::tabs::Preview::new(state_dir.clone());
     let mut deps = Deps {
         preview: Some(preview.clone()),
-        html_preview: Some(Arc::new(preview.html_preview())),
         panels: Some(conn_features::panels::PanelBroker::default()),
         secrets: Some(secrets),
         engine: Some(engine.clone()),

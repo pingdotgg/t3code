@@ -61,6 +61,7 @@ struct Bootstrap {
     markup: String,
     min_height: i64,
     max_height: i64,
+    max_title_length: usize,
 }
 
 fn bootstrap() -> Result<&'static Bootstrap, HtmlError> {
@@ -161,6 +162,7 @@ pub fn publish(
     height: i64,
 ) -> Result<Reference, HtmlError> {
     let html = prepare(source)?;
+    let limits = bootstrap()?;
     let segment = attachments::thread_segment(thread_id).ok_or_else(store_error)?;
     let attachment_id = format!("{segment}-{}-html", conn_support::uuid_v4());
     let path = files
@@ -180,15 +182,40 @@ pub fn publish(
         return Err(store_error());
     }
     let title = title.trim_matches(js_whitespace);
+    let title = String::from_utf16_lossy(
+        &title
+            .encode_utf16()
+            .take(limits.max_title_length)
+            .collect::<Vec<_>>(),
+    );
     Ok(Reference {
         attachment_id,
         title: if title.is_empty() {
             "HTML".into()
         } else {
-            title.to_owned()
+            title
         },
-        height: height.clamp(bootstrap()?.min_height, bootstrap()?.max_height),
+        height: height.clamp(limits.min_height, limits.max_height),
     })
+}
+
+/// Deletes a released HTML page only when the id belongs to its recorded owner.
+pub fn cleanup(files: &Files, thread_id: &str, attachment_id: &str) -> std::io::Result<()> {
+    let Some(id) = attachments::parse_id(attachment_id) else {
+        return Ok(());
+    };
+    if id.extension.as_deref() != Some("html")
+        || attachments::thread_segment(thread_id).as_deref() != Some(id.segment.as_str())
+    {
+        return Ok(());
+    }
+    let Some(path) = files.attachments.path_for(&format!("{attachment_id}.html")) else {
+        return Ok(());
+    };
+    match fs::remove_file(path) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+        _ => Ok(()),
+    }
 }
 
 fn store_error() -> HtmlError {
@@ -407,6 +434,18 @@ fn image_mime(path: &str) -> Option<&'static str> {
 }
 
 fn inline_images(html: &str) -> Result<(String, Vec<String>), HtmlError> {
+    inline_images_with_metadata(html, |path| {
+        fs::metadata(path)
+            .ok()
+            .filter(|m| m.is_file())
+            .map(|m| m.len() as usize)
+    })
+}
+
+fn inline_images_with_metadata(
+    html: &str,
+    mut metadata: impl FnMut(&str) -> Option<usize>,
+) -> Result<(String, Vec<String>), HtmlError> {
     let refs = image_references(html)?;
     let mut files = Vec::new();
     let mut known = HashMap::new();
@@ -419,10 +458,10 @@ fn inline_images(html: &str) -> Result<(String, Vec<String>), HtmlError> {
         } else {
             reference.path.to_owned()
         };
-        let size = fs::metadata(&path)
-            .ok()
-            .filter(|m| m.is_file())
-            .map(|m| m.len() as usize);
+        let size = Path::new(&path)
+            .is_absolute()
+            .then(|| metadata(&path))
+            .flatten();
         if let Some(size) = size
             && size > MAX_IMAGE_BYTES
         {
@@ -583,4 +622,19 @@ fn doctype_end(text: &str) -> Option<usize> {
 
 fn js_whitespace(c: char) -> bool {
     (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}'
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn windows_images_are_missing_without_a_filesystem_probe() {
+        let mut probes = 0;
+        let result = super::inline_images_with_metadata("<img src='c:/foo.png'>", |_| {
+            probes += 1;
+            None
+        });
+        assert_eq!(probes, 0);
+        assert_eq!(result.unwrap().1, vec!["c:/foo.png"]);
+    }
 }

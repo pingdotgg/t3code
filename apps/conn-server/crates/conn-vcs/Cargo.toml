@@ -21,6 +21,7 @@ sha2.workspace = true
 rustix = { workspace = true, features = ["process"] }
 
 [dev-dependencies]
+conn-support = { workspace = true, features = ["test-util"] }
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
 
 [lints]

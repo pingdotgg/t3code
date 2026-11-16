@@ -12,7 +12,9 @@ use sha2::{Digest, Sha256};
 use crate::{Caller, McpConfig, McpService};
 
 mod annotations;
+pub(crate) mod attachments;
 mod background;
+mod create_threads;
 mod html;
 mod manage;
 mod message;
@@ -24,6 +26,7 @@ mod scheduled;
 mod secrets;
 mod tasks;
 mod threads;
+mod worktree;
 
 pub(crate) type Args = Map<String, Value>;
 
@@ -32,6 +35,8 @@ pub(crate) enum ToolError {
     /// `OrchestratorMcpFailure`: a tool result with `isError: true`.
     #[error("{code}: {message}")]
     Failure { code: &'static str, message: String },
+    #[error("{code}: {message}")]
+    Worktree { code: &'static str, message: String },
     /// Arguments the schema allows but the call cannot use: JSON-RPC -32602, as TS decoding.
     #[error("invalid params: {0}")]
     InvalidParams(String),
@@ -45,6 +50,20 @@ pub(crate) enum ToolError {
 
 pub(crate) type ToolResult = Result<Value, ToolError>;
 
+fn trim_non_blank(args: &mut Args, keys: &[&str]) -> Result<(), ToolError> {
+    for &key in keys {
+        if let Some(Value::String(value)) = args.get_mut(key) {
+            *value = value.trim().to_owned();
+            if value.is_empty() {
+                return Err(ToolError::InvalidParams(format!(
+                    "Expected a non-blank string\n  at [\"{key}\"]"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError {
     ToolError::Failure {
         code,
@@ -54,7 +73,7 @@ pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError 
 
 /// Every name in `tools.implemented` has an arm here; a test checks both ways.
 #[cfg(test)]
-pub(crate) const HANDLED: [&str; 53] = [
+pub(crate) const HANDLED: [&str; 62] = [
     "html_render",
     "html_preview",
     "preview_snapshot",
@@ -72,6 +91,15 @@ pub(crate) const HANDLED: [&str; 53] = [
     "preview_cdp_endpoint",
     "t3_preview_close",
     "t3_preview_list",
+    "mcp_call",
+    "mcp_connect",
+    "create_threads",
+    "t3_attachment_prepare_upload",
+    "t3_attachment_discard",
+    "t3_thread_send_attachments",
+    "t3_worktree_handoff",
+    "t3_worktree_list",
+    "t3_worktree_status",
     "panel_open",
     "request_secret",
     "t3_background_wait",
@@ -115,6 +143,7 @@ pub(crate) async fn call(
     caller: &Caller,
     name: &str,
     mut args: Args,
+    origin: Option<&str>,
 ) -> ToolResult {
     // Linked environments are not served: only this environment's own id is accepted.
     if let Some(environment) = args.remove("environmentId")
@@ -125,7 +154,11 @@ pub(crate) async fn call(
             "Linked environments is off on this machine, so no tool can act on another machine. Leave out environmentId to work here; the user can turn it on in Settings → Labs.",
         ));
     }
-    let cx = Cx { service, caller };
+    let cx = Cx {
+        service,
+        caller,
+        origin,
+    };
     match name {
         "html_render" => html::render(&cx, &args).await,
         "html_preview" => html::preview(&cx, &args).await,
@@ -144,6 +177,13 @@ pub(crate) async fn call(
         | "preview_wait_for"
         | "preview_recording_start"
         | "preview_recording_stop" => preview::call(&cx, name, &args).await,
+        "create_threads" => create_threads::create(&cx, &args).await,
+        "t3_attachment_prepare_upload" => attachments::prepare(&cx, &args).await,
+        "t3_attachment_discard" => attachments::discard(&cx, &args).await,
+        "t3_thread_send_attachments" => attachments::send(&cx, &args).await,
+        "t3_worktree_handoff" => worktree::handoff(&cx, &args).await,
+        "t3_worktree_list" => worktree::list(&cx, &args).await,
+        "t3_worktree_status" => worktree::status(&cx).await,
         "orchestrator_capabilities" => projects::capabilities(&cx, &args).await,
         "t3_project_list" => projects::list(&cx, &args).await,
         "t3_project_read" => projects::read(&cx, &args).await,
@@ -160,6 +200,7 @@ pub(crate) async fn call(
         "t3_queue" => manage::queue(&cx, &args).await,
         "t3_thread_configure" => manage::configure(&cx, &args).await,
         "t3_thread_organize" => manage::organize(&cx, &args).await,
+        "mcp_call" | "mcp_connect" => panels::invoke(&cx, name, &args).await,
         "panel_open" => panels::open(&cx, &args).await,
         "request_secret" => secrets::request(&cx, &args).await,
         "send_to_user" => message::send_to_user(&cx, &args).await,
@@ -191,6 +232,7 @@ pub(crate) async fn call(
 pub(crate) struct Cx<'a> {
     service: &'a Arc<McpService>,
     caller: &'a Caller,
+    origin: Option<&'a str>,
 }
 
 pub(crate) const RUNTIME_MODES: [&str; 4] = [

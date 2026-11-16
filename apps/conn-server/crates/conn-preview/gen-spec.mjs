@@ -13,6 +13,15 @@ const browser = read("apps/server/src/preview/PreviewBrowser.ts");
 const version = /const VERSION = "([^"]+)"/.exec(browser)?.[1];
 const archives = Function(`return ${/const ARCHIVES = ([\s\S]*?) as const;/.exec(browser)?.[1]}`)();
 if (!version || !archives.linux64) throw Error("Browser release shape changed");
+const chromePlatform = Function(`return ${stripTypeScriptTypes(/const chromePlatform = ([\s\S]*?);\n\nexport interface/.exec(browser)?.[1])}`)();
+const platforms = Object.fromEntries(
+  [["linux", "linux"], ["macos", "darwin"], ["windows", "win32"]].flatMap(([os, nodeOS]) =>
+    [["x86_64", "x64"], ["aarch64", "arm64"], ["x86", "ia32"]].flatMap(([arch, nodeArch]) => {
+      const platform = chromePlatform(nodeOS, nodeArch);
+      return platform ? [[`${os}-${arch}`, platform]] : [];
+    }),
+  ),
+);
 const bundlePath = Path.join(Path.dirname(require.resolve("playwright-core")), "lib/coreBundle.js");
 const bundle = new Module.Module(bundlePath);
 bundle.filename = bundlePath;
@@ -171,6 +180,9 @@ const spec = {
   presets: viewport.PREVIEW_VIEWPORT_PRESETS,
   version,
   archives,
+  platforms,
+  stagingStaleAfterMs: Function(`return ${/const STAGING_STALE_AFTER_MS = ([^;]+);/.exec(browser)?.[1]}`)(),
+  screencastAckPaceMs: Number(/const SCREENCAST_ACK_PACE_MS = (\d+);/.exec(serverSource)?.[1]),
   tabArgs,
   persistentArgs,
   html: {

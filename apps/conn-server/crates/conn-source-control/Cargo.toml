@@ -1,6 +1,6 @@
 [package]
 name = "conn-source-control"
-description = "Source control hosts (GitHub, GitLab, ...): discovery, repositories, pull requests."
+description = "GitHub source control: discovery, repositories, pull requests."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -30,6 +30,7 @@ webpki-roots = "1"
 url = { version = "2.5", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+conn-support = { workspace = true, features = ["test-util"] }
 tokio = { workspace = true, features = ["rt", "macros", "test-util", "net"] }
 
 [lints]

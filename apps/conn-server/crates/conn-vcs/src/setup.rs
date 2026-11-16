@@ -29,6 +29,7 @@ use tokio::{
 
 use crate::{
     error::{VcsError, VcsResult},
+    process::ProcessError,
     repo::{self, git},
     worktree::{self, CreateWorktree, Removal},
 };
@@ -399,44 +400,17 @@ async fn provision_stages(
     let branch = request.branch.clone().unwrap_or_else(temporary_branch_name);
 
     let mut start = request.base_ref.clone();
-    let remote = if request.start_from_origin {
-        cancellable(cancel, base_remote(root, &request.base_ref)).await?
-    } else {
-        None
-    };
-    match remote {
-        Some((remote, remote_branch)) => {
-            setups.stage_status(thread, StageId::Fetch, StageStatus::Running, None);
-            cancellable(cancel, async {
-                git(
-                    "GitVcsDriver.fetchWorktreeBaseCommit",
-                    root,
-                    ["fetch", "--quiet", "--", remote.as_str()],
-                )
-                .timeout(Duration::from_secs(300))
-                .env("GCM_INTERACTIVE", "never")
-                .env("GIT_ASKPASS", "")
-                .env("SSH_ASKPASS", "")
-                .env("SSH_ASKPASS_REQUIRE", "never")
-                .run()
-                .await?;
-                Ok(())
-            })
-            .await?;
-            let full = format!("refs/remotes/{remote}/{remote_branch}^{{commit}}");
-            if let Ok(Some(sha)) = repo::optional_text(git(
-                "GitVcsDriver.fetchWorktreeBaseCommit",
-                root,
-                ["rev-parse", "--verify", "--quiet", full.as_str()],
-            ))
-            .await
-                && !sha.is_empty()
-            {
+    if request.start_from_origin {
+        setups.stage_status(thread, StageId::Fetch, StageStatus::Running, None);
+        match cancellable(cancel, fetch_base(root, &request.base_ref)).await? {
+            Some((sha, _)) => {
                 start = sha;
+                setups.stage_status(thread, StageId::Fetch, StageStatus::Done, None);
             }
-            setups.stage_status(thread, StageId::Fetch, StageStatus::Done, None);
+            None => setups.stage_status(thread, StageId::Fetch, StageStatus::Skipped, None),
         }
-        None => setups.stage_status(thread, StageId::Fetch, StageStatus::Skipped, None),
+    } else {
+        setups.stage_status(thread, StageId::Fetch, StageStatus::Skipped, None);
     }
 
     setups.stage_status(thread, StageId::Checkout, StageStatus::Running, None);
@@ -551,14 +525,22 @@ async fn base_remote(root: &Path, base_ref: &str) -> VcsResult<Option<(String, S
         root,
         [
             "for-each-ref",
-            "--format=%(upstream:remotename)\t%(upstream:remoteref)",
+            "--format=%(refname)\t%(upstream:remotename)\t%(upstream:remoteref)",
             full.as_str(),
         ],
     ))
     .await?
     .unwrap_or_default();
-    let target = if !upstream.is_empty() {
-        let (remote, merge) = upstream.split_once('\t').unwrap_or((&upstream, ""));
+    let local = upstream.lines().find_map(|line| {
+        let mut fields = line.split('\t');
+        (fields.next() == Some(full.as_str())).then(|| {
+            (
+                fields.next().unwrap_or_default(),
+                fields.next().unwrap_or_default(),
+            )
+        })
+    });
+    let target = if let Some((remote, merge)) = local {
         match merge.strip_prefix("refs/heads/") {
             Some(branch) if remotes.iter().any(|r| r == remote) => {
                 Some((remote.to_owned(), branch.to_owned()))
@@ -566,16 +548,87 @@ async fn base_remote(root: &Path, base_ref: &str) -> VcsResult<Option<(String, S
             _ => None,
         }
     } else {
-        remotes
-            .iter()
-            .find_map(|r| {
-                base_ref
-                    .strip_prefix(&format!("{r}/"))
-                    .map(|b| (r.clone(), b.to_owned()))
-            })
-            .or_else(|| Some(("origin".into(), base_ref.to_owned())))
+        remotes.iter().find_map(|r| {
+            base_ref
+                .strip_prefix(&format!("{r}/"))
+                .map(|b| (r.clone(), b.to_owned()))
+        })
     };
-    Ok(target.filter(|(remote, _)| remotes.iter().any(|r| r == remote)))
+    Ok(target
+        .or_else(|| Some(("origin".into(), base_ref.to_owned())))
+        .filter(|(remote, _)| remotes.iter().any(|r| r == remote)))
+}
+
+/// Fetches a worktree base as `(commit, remote ref)`, or `None` without a matching remote.
+pub async fn fetch_base(root: &Path, base_ref: &str) -> VcsResult<Option<(String, String)>> {
+    let Some((remote, branch)) = base_remote(root, base_ref).await? else {
+        return Ok(None);
+    };
+    if branch == "HEAD"
+        || branch.starts_with('-')
+        || branch.contains("..")
+        || branch.contains("@{")
+        || branch
+            .bytes()
+            .any(|b| b <= b' ' || b == 0x7f || b"~^:?*[\\".contains(&b))
+    {
+        return Ok(None);
+    }
+    let refspec = format!("+refs/heads/{branch}:refs/remotes/{remote}/{branch}");
+    let fetch = || {
+        git(
+            "GitVcsDriver.fetchRemote",
+            root,
+            [
+                "fetch",
+                "--quiet",
+                "--no-tags",
+                "--",
+                remote.as_str(),
+                refspec.as_str(),
+            ],
+        )
+        .timeout(Duration::from_secs(300))
+        .env("GCM_INTERACTIVE", "never")
+        .env("GIT_ASKPASS", "")
+        .env("SSH_ASKPASS", "")
+        .env("SSH_ASKPASS_REQUIRE", "never")
+        .env("LC_ALL", "C")
+    };
+    let fetched = match fetch().run().await {
+        Err(ProcessError::Exit { ref stderr, .. }) if stderr.contains("cannot lock ref") => {
+            fetch().run().await
+        }
+        result => result,
+    };
+    match fetched {
+        Err(ProcessError::Exit { stderr, .. })
+            if stderr.lines().any(|line| {
+                line == format!("fatal: couldn't find remote ref refs/heads/{branch}")
+            }) =>
+        {
+            return Ok(None);
+        }
+        result => {
+            result?;
+        }
+    }
+    let remote_ref = format!("{remote}/{branch}");
+    let full = format!("refs/remotes/{remote_ref}^{{commit}}");
+    Ok(repo::optional_text(git(
+        "GitVcsDriver.fetchWorktreeBaseCommit",
+        root,
+        [
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "--end-of-options",
+            full.as_str(),
+        ],
+    ))
+    .await?
+    .filter(|sha| !sha.is_empty())
+    .map(|sha| (sha, remote_ref)))
 }
 
 /// Runs the script with `sh -c` in the worktree (the TypeScript server types it into a

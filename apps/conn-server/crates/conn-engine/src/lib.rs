@@ -25,6 +25,7 @@ mod checkpoint;
 mod clock;
 mod commands;
 mod engine;
+mod mcp_apps;
 
 /// Locks a std mutex. A poisoned lock means a thread panicked while it held the lock: a bug.
 /// With `panic = "abort"` a release build stops at the panic itself.
@@ -39,6 +40,7 @@ pub mod fake;
 mod families;
 mod fork;
 mod fresh;
+mod html_cleanup;
 mod output;
 mod projects;
 mod pull_requests;
@@ -53,6 +55,7 @@ mod streaming;
 mod streams;
 mod time;
 mod titles;
+pub use conn_provider::tool_output;
 mod visibility;
 
 pub use background_wait::{BackgroundWait, BackgroundWaitError};
@@ -168,6 +171,16 @@ pub trait EngineHost: Send + Sync {
         Box::pin(std::future::ready(()))
     }
 
+    /// Stores a bounded, sandboxed MCP App document as a thread attachment.
+    fn snapshot_mcp_app(
+        &self,
+        _thread: String,
+        _source: conn_provider::mcp_apps::Source,
+        _contents: Value,
+    ) -> BoxFuture<'_, Result<Option<Value>, String>> {
+        Box::pin(async { Ok(None) })
+    }
+
     /// Creates a git worktree for `launchThread` with a `worktree` strategy.
     fn provision_worktree(
         &self,
@@ -183,6 +196,11 @@ pub trait EngineHost: Send + Sync {
     /// names no branch records it. The default knows none.
     fn current_branch(&self, _cwd: &str) -> BoxFuture<'_, Option<String>> {
         Box::pin(std::future::ready(None))
+    }
+
+    /// Removes HTML pages whose owning thread and visible forks no longer use them.
+    fn cleanup_html_attachments(&self, _ids: Vec<(String, String)>) -> BoxFuture<'_, ()> {
+        Box::pin(std::future::ready(()))
     }
 
     /// A thread was archived, deleted or settled; end what it holds open (terminals).
@@ -261,6 +279,23 @@ pub enum EngineError<E> {
 }
 
 pub trait Engine: Send + Sync {
+    /// The project's provider policy, before selecting an instance by driver.
+    fn provider_instance_enabled(&self, _project_id: &str, _instance_id: &str) -> bool {
+        true
+    }
+    /// Whether a command already committed; retries must use its recorded target.
+    fn has_receipt<'a>(&'a self, _command_id: &'a str) -> BoxFuture<'a, Result<bool, String>> {
+        Box::pin(std::future::ready(Ok(false)))
+    }
+
+    /// The status in a command's original run.created event, including a replayed receipt.
+    fn created_run_status<'a>(
+        &'a self,
+        _command_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, String>> {
+        Box::pin(std::future::ready(Ok(None)))
+    }
+
     /// Decides, persists and applies one command. Resolves once its events are committed,
     /// with the sequence of the last event, so a client can wait for it on its streams.
     fn dispatch(

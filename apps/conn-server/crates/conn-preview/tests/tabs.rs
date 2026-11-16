@@ -242,7 +242,7 @@ async fn viewers_take_and_release_control_resize_fill_and_enforce_a_per_tab_boun
         matches!(viewer.next().await.unwrap(),conn_preview::tabs::ViewerOutput::Message(v) if v["type"]=="viewport")
     );
     assert!(
-        matches!(viewer.next().await.unwrap(),conn_preview::tabs::ViewerOutput::Frame(v) if v==b"fixture")
+        matches!(viewer.next().await.unwrap(),conn_preview::tabs::ViewerOutput::Frame(v) if v.data.as_ref()==b"fixture")
     );
     viewer.input(json!({"type":"takeControl"})).await.unwrap();
     assert_eq!(viewer.control()["controller"], "you");
@@ -303,6 +303,33 @@ async fn viewers_take_and_release_control_resize_fill_and_enforce_a_per_tab_boun
         2
     );
     drop(observers);
+    preview.shutdown().await;
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn locator_and_chooser_uploads_reject_relative_paths_before_touching_the_dom() {
+    let root =
+        std::env::temp_dir().join(format!("conn-preview-upload-{}", conn_support::uuid_v4()));
+    let preview = Preview::with_fixture(
+        root.clone(),
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fake-chrome.py"),
+    );
+    preview.invoke("t", "a", "open", json!({})).await.unwrap();
+    for locator in [None, Some("#file")] {
+        let mut args = json!({"paths":["relative.txt"]});
+        if let Some(locator) = locator {
+            args["locator"] = json!(locator);
+        }
+        assert_eq!(
+            preview
+                .invoke("t", "a", "upload", args)
+                .await
+                .unwrap_err()
+                .0,
+            "Upload paths must be absolute: relative.txt"
+        );
+    }
     preview.shutdown().await;
     std::fs::remove_dir_all(root).unwrap();
 }

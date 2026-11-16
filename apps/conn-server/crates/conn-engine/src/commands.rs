@@ -51,12 +51,20 @@ pub(crate) enum Effect {
     CloseSession {
         thread_id: String,
     },
+    /// A workspace move ends the process while keeping the caller's MCP credential usable.
+    DetachWorkspace {
+        thread_id: String,
+    },
     /// Sends a model selection to the thread's running provider turn
     /// (`provider-session.apply-model-selection`). The provider applies what it can live; the
     /// rest waits for the next turn.
     ApplyModelSelection {
         thread_id: String,
         selection: Value,
+    },
+    CleanupHtmlAttachments {
+        thread_id: String,
+        ids: Vec<(String, String)>,
     },
     /// Tells the host a thread was archived, deleted or settled (its terminals close).
     ThreadClosed {
@@ -84,7 +92,9 @@ impl Effect {
             | Self::StopBackgroundWork { thread_id, .. }
             | Self::Respond { thread_id, .. }
             | Self::CloseSession { thread_id }
+            | Self::DetachWorkspace { thread_id }
             | Self::ApplyModelSelection { thread_id, .. }
+            | Self::CleanupHtmlAttachments { thread_id, .. }
             | Self::ThreadClosed { thread_id, .. } => Some(thread_id),
             Self::GenerateTitle { .. } | Self::AbandonStart { .. } => None,
         }
@@ -114,6 +124,7 @@ pub(crate) type Handler = fn(&mut Tx<'_>, Value) -> Outcome;
 pub(crate) fn handler(command_type: &str) -> Option<Handler> {
     Some(match command_type {
         "thread.create" => thread_create,
+        "thread.created.record" => thread_created_record,
         "message.dispatch" => message_dispatch,
         "run.interrupt" => run_interrupt,
         "thread.stop" => thread_stop,
@@ -179,7 +190,7 @@ pub(crate) fn refusal(command_type: &str) -> &'static str {
         "subagent.stop" => {
             "Conn Server cannot stop a single subagent yet; stop the thread instead."
         }
-        "thread.created.record" => "Conn Server does not record threads from linked environments.",
+
         _ => "Conn Server does not support this command.",
     }
 }
@@ -251,6 +262,8 @@ struct ThreadCreate {
 }
 
 fn thread_create(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let initial_message = command.get("initialMessage").cloned();
+    let link_origin = command.get("linkOrigin").cloned();
     let c: ThreadCreate = decode(command)?;
     if tx.thread(&c.thread_id)?.is_some() {
         return reject(format!("Thread {} already exists.", c.thread_id));
@@ -259,7 +272,7 @@ fn thread_create(tx: &mut Tx<'_>, command: Value) -> Outcome {
     // this server does not know (its replay fixtures do). `launchThread` checks it.
     let model = normalize_model_selection(&c.model_selection);
     let now = tx.now().to_owned();
-    let thread = json!({
+    let mut thread = json!({
         "createdBy": c.created_by,
         "creationSource": c.creation_source,
         "id": c.thread_id,
@@ -285,7 +298,19 @@ fn thread_create(tx: &mut Tx<'_>, command: Value) -> Outcome {
         "lastVisitedAt": null,
         "deletedAt": null,
     });
+    if let Some(origin) = link_origin {
+        thread["linkOrigin"] = origin;
+    }
     tx.append(Draft::new(&c.thread_id, "thread.created", thread).command(Some(&c.command_id)))?;
+    if let Some(mut message) = initial_message {
+        message["type"] = json!("message.dispatch");
+        message["threadId"] = json!(c.thread_id);
+        message["commandId"] = json!(c.command_id);
+        message["createdBy"] = json!(c.created_by);
+        message["creationSource"] = json!(c.creation_source);
+        message["dispatchMode"] = json!({"type":"start_immediately"});
+        return message_dispatch(tx, message);
+    }
     Ok(vec![])
 }
 
@@ -305,6 +330,7 @@ struct MessageDispatch {
     message_id: String,
     text: String,
     attachments: Vec<Value>,
+    sender_thread_id: Option<String>,
     context: Option<Value>,
     model_selection: Option<Value>,
     created_by: String,
@@ -560,6 +586,9 @@ fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if let Some(task) = &c.scheduled_task_id {
         message["scheduledTaskId"] = json!(task);
     }
+    if let Some(sender) = &c.sender_thread_id {
+        message["senderThreadId"] = json!(sender);
+    }
     tx.append(draft("message.updated", message))?;
     let item_id = format!("turn-item:{}", c.message_id);
     let existing_item = tx.entity(&c.thread_id, "turnItems", &item_id)?;
@@ -765,6 +794,9 @@ fn steer_into(tx: &mut Tx<'_>, c: &MessageDispatch, target: &Value) -> Outcome {
     });
     if let Some(context) = &c.context {
         message["context"] = context.clone();
+    }
+    if let Some(sender) = &c.sender_thread_id {
+        message["senderThreadId"] = json!(sender);
     }
     tx.append(draft("message.updated", message))?;
     let ordinal = target["ordinal"].as_u64().unwrap_or(1);
@@ -1078,6 +1110,7 @@ fn queued_message_promote_to_steer(tx: &mut Tx<'_>, command: Value) -> Outcome {
         delivery_intent: None,
         steer_follow_up_of_run_id: None,
         restart_continuation_of_run_id: None,
+        sender_thread_id: None,
         title_seed: None,
         notification: message
             .get("notification")
@@ -1598,6 +1631,10 @@ fn thread_delete(tx: &mut Tx<'_>, command: Value) -> Outcome {
     patch_thread(tx, &c.thread_id, "thread.deleted", true, |t, now| {
         t["deletedAt"] = json!(now);
     })?;
+    effects.push(Effect::CleanupHtmlAttachments {
+        thread_id: c.thread_id.clone(),
+        ids: crate::html_cleanup::plan(tx, &c.thread_id)?,
+    });
     effects.push(Effect::ThreadClosed {
         thread_id: c.thread_id,
         reason: crate::ThreadClose::Deleted,
@@ -1620,6 +1657,51 @@ fn thread_visit(tx: &mut Tx<'_>, command: Value) -> Outcome {
     Ok(vec![])
 }
 
+fn thread_created_record(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let c: conn_contract::OrchestrationV2CommandThreadCreatedRecord = decode(command)?;
+    let parent = live_thread(tx, &c.parent_thread_id)?;
+    let target = live_thread(tx, &c.target_thread_id)?;
+    let run = tx.entity(&c.parent_thread_id, "runs", &c.parent_run_id)?;
+    let node = tx.entity(&c.parent_thread_id, "nodes", &c.parent_node_id)?;
+    let Some(run) = run.filter(|r| {
+        r["rootNodeId"] == c.parent_node_id
+            && node.as_ref().is_some_and(|n| n["runId"] == c.parent_run_id)
+    }) else {
+        return reject(format!(
+            "Parent node {} is not the root of run {}.",
+            c.parent_node_id, c.parent_run_id
+        ));
+    };
+    if parent["projectId"] != target["projectId"] {
+        return reject(format!(
+            "Target thread {} belongs to another project.",
+            c.target_thread_id
+        ));
+    }
+    if let Some(id) = &c.target_run_id
+        && tx.entity(&c.target_thread_id, "runs", id)?.is_none()
+    {
+        return reject(format!(
+            "Target run {id} does not belong to thread {}.",
+            c.target_thread_id
+        ));
+    }
+    let provider_turn = tx
+        .entities(&c.parent_thread_id, "providerTurns")?
+        .into_iter()
+        .rfind(|t| t["attemptId"] == run["activeAttemptId"] && !run["activeAttemptId"].is_null());
+    let now = tx.now().to_owned();
+    tx.append(Draft::new(&c.parent_thread_id,"turn-item.updated",json!({
+        "id":format!("turn-item:created-thread:{}",c.command_id),"threadId":c.parent_thread_id,
+        "runId":c.parent_run_id,"nodeId":c.parent_node_id,"providerThreadId":run["providerThreadId"],
+        "providerTurnId":provider_turn.map(|p|p["id"].clone()),"nativeItemRef":null,"parentItemId":null,
+        "ordinal":0,"status":"completed","title":target["title"],"startedAt":now,"completedAt":now,"updatedAt":now,
+        "type":"thread_created","targetThreadId":c.target_thread_id,"targetRunId":c.target_run_id,
+        "targetProviderInstanceId":target["modelSelection"]["instanceId"],"targetModel":target["modelSelection"]["model"],
+    })).run(Some(&c.parent_run_id)).node(Some(&c.parent_node_id)).command(Some(&c.command_id)))?;
+    Ok(vec![])
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ThreadMetadataUpdate {
@@ -1639,7 +1721,38 @@ struct MetadataContinuation {
 }
 
 fn thread_metadata_update(tx: &mut Tx<'_>, command: Value) -> Outcome {
-    let c: ThreadMetadataUpdate = decode(command)?;
+    let c: ThreadMetadataUpdate = decode(command.clone())?;
+    let old = live_thread(tx, &c.thread_id)?;
+    for (expected, actual, label) in [
+        ("expectedWorktreePath", "worktreePath", "worktree"),
+        ("expectedBranch", "branch", "branch"),
+    ] {
+        if let Some(expected) = command.get(expected)
+            && *expected != old[actual]
+        {
+            return reject(format!(
+                "Thread {} {label} changed before the metadata update could be applied.",
+                c.thread_id
+            ));
+        }
+    }
+    let workspace_changed = command
+        .get("worktreePath")
+        .is_some_and(|p| *p != old["worktreePath"]);
+    if workspace_changed
+        && tx
+            .entities(&c.thread_id, "providerThreads")?
+            .iter()
+            .any(|p| {
+                p["pendingBackgroundTasks"]
+                    .as_array()
+                    .is_some_and(|tasks| !tasks.is_empty())
+            })
+    {
+        return reject(
+            "The current session is still running background agents or commands, and detaching it would end them. Wait for them to finish, or press Stop, then retry.",
+        );
+    }
     let regenerate = c.regenerate_title == Some(true);
     if regenerate && !tx.generates_titles {
         return reject("Conn Server has no title generator configured.");
@@ -1653,6 +1766,11 @@ fn thread_metadata_update(tx: &mut Tx<'_>, command: Value) -> Outcome {
         "thread.metadata-updated",
         true,
         |t, now| {
+            for field in ["branch", "worktreePath"] {
+                if let Some(value) = command.get(field) {
+                    t[field] = value.clone();
+                }
+            }
             if let Some(title) = c.title.filter(|title| !title.trim().is_empty()) {
                 t["title"] = json!(title.trim());
             }
@@ -1672,6 +1790,11 @@ fn thread_metadata_update(tx: &mut Tx<'_>, command: Value) -> Outcome {
     } else {
         vec![]
     };
+    let previous_run = if workspace_changed {
+        active_run(tx, &thread_id)?
+    } else {
+        None
+    };
     // T3 queues the follow-up in the same commit, as the agent through /mcp, so a workspace
     // change cannot settle the thread before it exists. A refused message refuses the update.
     if let Some(continuation) = c.continuation {
@@ -1685,6 +1808,21 @@ fn thread_metadata_update(tx: &mut Tx<'_>, command: Value) -> Outcome {
             }),
         )?);
     }
+    if workspace_changed {
+        if let Some(run) = previous_run {
+            let run_id = run["id"].as_str().unwrap_or_default();
+            finish_run(tx, &thread_id, run_id, "completed", None)?;
+            effects.extend(crate::families::on_run_end(tx, &thread_id, run_id)?);
+        }
+        effects.insert(
+            0,
+            Effect::DetachWorkspace {
+                thread_id: thread_id.clone(),
+            },
+        );
+        effects.extend(start_next_queued(tx, &thread_id, None)?);
+    }
+
     Ok(effects)
 }
 
@@ -2365,4 +2503,42 @@ fn thread_title_regeneration_complete(tx: &mut Tx<'_>, command: Value) -> Outcom
         t["updatedAt"] = json!(now);
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod html_deletion_tests {
+    use super::*;
+    use crate::store::Store;
+
+    #[test]
+    fn deleting_a_thread_plans_html_cleanup_after_commit() {
+        let dir =
+            std::env::temp_dir().join(format!("conn-html-cleanup-{}", conn_support::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut store = Store::open(&dir.join("engine.sqlite")).unwrap();
+        let mut tx = store.tx().unwrap();
+        tx.append(Draft::new("owner", "thread.created", json!({"id":"owner", "projectId":"p", "createdAt":"2026-01-01T00:00:00.000Z", "updatedAt":"2026-01-01T00:00:00.000Z"}))).unwrap();
+        tx.append(Draft::new("owner", "turn-item.updated", json!({"id":"html", "type":"dynamic_tool", "toolName":"html_render", "output":{"htmlRender":{"attachmentId":"owner-00000000-0000-4000-8000-000000000001-html", "title":"Page", "height":100}}}))).unwrap();
+        let effects = thread_delete(&mut tx, json!({"threadId":"owner"}))
+            .ok()
+            .unwrap();
+        let ids: Vec<_> = effects
+            .into_iter()
+            .filter_map(|effect| match effect {
+                Effect::CleanupHtmlAttachments { ids, .. } => Some(ids),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(
+            ids,
+            [(
+                "owner".into(),
+                "owner-00000000-0000-4000-8000-000000000001-html".into()
+            )]
+        );
+        drop(tx);
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

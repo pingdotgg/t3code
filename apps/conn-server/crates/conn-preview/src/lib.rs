@@ -1,17 +1,12 @@
 //! Bounded Chrome DevTools pipe transport. See README.md for the T3 boundary.
-use std::{
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-    process::Stdio,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, path::PathBuf, process::Stdio, sync::Arc, time::Duration};
 
 pub mod html;
 pub mod install;
 mod page;
 mod proxy;
 mod recording;
+mod screencast;
 pub mod tabs;
 
 use command_fds::{CommandFdExt, FdMapping};
@@ -25,7 +20,6 @@ use tokio::{
 const MAX_MESSAGE_BYTES: usize = 36 * 1024 * 1024;
 /// Bound callers waiting on Chrome as well as responses Chrome has not sent yet.
 const MAX_PENDING: usize = 16;
-static NATIVE_PAGES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// A browser or transport failure, without page data or process environment.
@@ -54,7 +48,7 @@ struct Request {
 pub struct Browser {
     tx: mpsc::Sender<Request>,
     events: broadcast::Sender<Value>,
-    frames: broadcast::Sender<Value>,
+    frames: Arc<std::sync::Mutex<HashMap<String, mpsc::Sender<Value>>>>,
     stderr: Arc<std::sync::Mutex<String>>,
     shutdown: Arc<tokio::sync::Notify>,
     stopped: tokio::sync::watch::Receiver<bool>,
@@ -63,6 +57,13 @@ pub struct Browser {
 impl Browser {
     /// Starts the executable with CDP on fd 3 and 4, as T3 launches Chrome.
     pub async fn launch(input: Launch) -> Result<Self, Error> {
+        Self::launch_with_timeout(input, COMMAND_TIMEOUT).await
+    }
+    pub(crate) async fn launch_with_timeout(
+        input: Launch,
+        timeout: Duration,
+    ) -> Result<Self, Error> {
+        let deadline = tokio::time::Instant::now() + timeout;
         let (parent, child) = tokio::task::spawn_blocking(std::os::unix::net::UnixStream::pair)
             .await
             .map_err(err)?
@@ -124,7 +125,7 @@ impl Browser {
         let (tx, rx) = mpsc::channel(MAX_PENDING);
         let (events, _) = broadcast::channel(64);
         let notify = events.clone();
-        let (frames, _) = broadcast::channel(4);
+        let frames = Arc::new(std::sync::Mutex::new(HashMap::new()));
         let frame_output = frames.clone();
         let shutdown = Arc::new(tokio::sync::Notify::new());
         let ending = shutdown.clone();
@@ -158,13 +159,19 @@ impl Browser {
             shutdown,
             stopped,
         };
-        if let Err(error) = browser.send("Browser.getVersion", json!({}), None).await {
+        let ready = tokio::time::timeout_at(
+            deadline,
+            browser.send("Browser.getVersion", json!({}), None),
+        )
+        .await
+        .unwrap_or_else(|_| Err(Error("The browser command timed out.".into())));
+        if let Err(error) = ready {
             browser.close().await;
             let stderr = browser.stderr();
             if stderr.contains("Running as root without --no-sandbox")
                 || (stderr.contains("No usable sandbox") && rustix::process::getuid().is_root())
             {
-                return Err(Error(install::spec()?.root_error));
+                return Err(Error(install::spec()?.root_error.clone()));
             }
             if stderr.contains("No usable sandbox") {
                 return Err(Error("This host blocks the sandbox T3's browser runs in (AppArmor on Ubuntu 23.10+). Run `t3 browser setup` on the host once to allow it, then try again.".into()));
@@ -183,6 +190,17 @@ impl Browser {
         Ok(browser)
     }
 
+    pub(crate) async fn deny_downloads(&self, context: Option<&str>) -> Result<(), Error> {
+        // T3 saves tab downloads; until that path is served, deny them to prevent unbounded files.
+        let mut params = json!({"behavior":"deny"});
+        if let Some(context) = context {
+            params["browserContextId"] = json!(context);
+        }
+        self.send("Browser.setDownloadBehavior", params, None)
+            .await?;
+        Ok(())
+    }
+
     /// Sends one bounded command. The response deadline includes queue time.
     pub async fn send(
         &self,
@@ -198,9 +216,17 @@ impl Browser {
             reply,
         };
         tokio::time::timeout(COMMAND_TIMEOUT, async {
-            self.tx
-                .try_send(request)
-                .map_err(|_| Error("The browser command queue is full or closed.".into()))?;
+            if method == "Page.screencastFrameAck" {
+                // Chrome permits only three outstanding frames per capture, bounding ack waiters.
+                self.tx
+                    .send(request)
+                    .await
+                    .map_err(|_| Error("The browser disconnected.".into()))?;
+            } else {
+                self.tx
+                    .try_send(request)
+                    .map_err(|_| Error("The browser command queue is full or closed.".into()))?;
+            }
             received
                 .await
                 .map_err(|_| Error("The browser disconnected.".into()))?
@@ -214,8 +240,8 @@ impl Browser {
         self.events.subscribe()
     }
 
-    pub fn frames(&self) -> broadcast::Receiver<Value> {
-        self.frames.subscribe()
+    pub(crate) fn frames(&self, session: &str) -> Result<screencast::Frames, Error> {
+        screencast::Frames::new(self.frames.clone(), session)
     }
     pub fn is_closed(&self) -> bool {
         self.tx.is_closed()
@@ -245,14 +271,11 @@ impl Browser {
         .await;
         if graceful.is_err() {
             self.shutdown.notify_one();
-            let _ = tokio::time::timeout(Duration::from_secs(2), async {
-                while !*stopped.borrow() {
-                    if stopped.changed().await.is_err() {
-                        break;
-                    }
+            while !*stopped.borrow() {
+                if stopped.changed().await.is_err() {
+                    break;
                 }
-            })
-            .await;
+            }
         }
     }
 }
@@ -265,12 +288,13 @@ async fn run(
     stream: tokio::net::UnixStream,
     mut rx: mpsc::Receiver<Request>,
     events: broadcast::Sender<Value>,
-    frames: broadcast::Sender<Value>,
+    frames: Arc<std::sync::Mutex<HashMap<String, mpsc::Sender<Value>>>>,
 ) {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut pending = HashMap::<u64, oneshot::Sender<Result<Value, Error>>>::new();
-    let mut pages = HashSet::<String>::new();
+    let budget = Arc::new(tokio::sync::Semaphore::new(40));
+    let mut pages = HashMap::<String, tokio::sync::OwnedSemaphorePermit>::new();
     let mut id = 0u64;
     let mut buffer = Vec::new();
     loop {
@@ -281,7 +305,8 @@ async fn run(
                     break;
                 };
                 pending.retain(|_, reply| !reply.is_closed());
-                if pending.len() >= MAX_PENDING {
+                let ack = request.method == "Page.screencastFrameAck";
+                if !ack && pending.len() >= MAX_PENDING {
                     let _ = request.reply.send(Err(Error("Too many browser commands are pending.".into())));
                     continue;
                 }
@@ -293,8 +318,9 @@ async fn run(
                     _ => { let _ = request.reply.send(Err(Error("The browser command is too large.".into()))); continue; }
                 };
                 bytes.push(0);
-                pending.insert(id, request.reply);
+                let acknowledged = if ack { Some(request.reply) } else { pending.insert(id, request.reply); None };
                 if !matches!(tokio::time::timeout(Duration::from_secs(20),writer.write_all(&bytes)).await,Ok(Ok(()))) { break; }
+                if let Some(reply) = acknowledged { let _ = reply.send(Ok(Value::Null)); }
             }
             chunk = reader.fill_buf() => {
                 let Ok(chunk) = chunk else { break; };
@@ -319,19 +345,27 @@ async fn run(
                 } else if message.get("method").and_then(Value::as_str)==Some("Target.targetCreated") {
                     if message.pointer("/params/targetInfo/type").and_then(Value::as_str)==Some("page")
                         && let Some(target)=message.pointer("/params/targetInfo/targetId").and_then(Value::as_str).filter(|t|t.len()<=256)
-                            && !pages.contains(target) {
-                                if reserve_page(){pages.insert(target.into());}
+                            && !pages.contains_key(target) {
+                                if let Ok(permit) = budget.clone().try_acquire_owned(){pages.insert(target.into(), permit);}
                                 else{id=id.wrapping_add(1);let close=json!({"id":id,"method":"Target.closeTarget","params":{"targetId":target}});if let Ok(mut bytes)=serde_json::to_vec(&close){bytes.push(0);let _=writer.write_all(&bytes).await;}continue;}
                             }
                     if size<=64*1024{let _=events.send(message);}
                 } else if message.get("method").and_then(Value::as_str)==Some("Target.targetDestroyed") {
-                    if message.pointer("/params/targetId").and_then(Value::as_str).is_some_and(|id|pages.remove(id)){NATIVE_PAGES.fetch_sub(1,std::sync::atomic::Ordering::Relaxed);}
+                    if let Some(target) = message.pointer("/params/targetId").and_then(Value::as_str) { pages.remove(target); }
                     let _=events.send(message);
                 } else if message.get("method").and_then(Value::as_str)==Some("Page.screencastFrame") {
-                    id=id.wrapping_add(1);
-                    let ack=json!({"id":id,"method":"Page.screencastFrameAck","sessionId":message.get("sessionId"),"params":{"sessionId":message.pointer("/params/sessionId")}});
-                    if let Ok(mut bytes)=serde_json::to_vec(&ack){bytes.push(0);if writer.write_all(&bytes).await.is_err(){break;}}
-                    if message.pointer("/params/data").and_then(Value::as_str).is_some_and(|d|d.len()<=8*1024*1024){let _=frames.send(message);}
+                    let route = message.get("sessionId").and_then(Value::as_str).and_then(|session| {
+                        frames.lock().ok()?.get(session).cloned()
+                    });
+                    let valid = message.pointer("/params/data").and_then(Value::as_str).is_some_and(|d| d.len() <= 8*1024*1024);
+                    let unqueued = if let Some(tx) = route.filter(|_| valid) {
+                        tx.try_send(message).err().map(tokio::sync::mpsc::error::TrySendError::into_inner)
+                    } else { Some(message) };
+                    if let Some(message) = unqueued {
+                        id=id.wrapping_add(1);
+                        let ack=json!({"id":id,"method":"Page.screencastFrameAck","sessionId":message.get("sessionId"),"params":{"sessionId":message.pointer("/params/sessionId")}});
+                        if let Ok(mut bytes)=serde_json::to_vec(&ack){bytes.push(0);if writer.write_all(&bytes).await.is_err(){break;}}
+                    }
                 } else if message.get("method").is_some() {
                     // Event consumers must not retain oversized page payloads in a ring buffer.
                     if size<=64*1024 { let _ = events.send(message); }
@@ -339,7 +373,6 @@ async fn run(
             }
         }
     }
-    NATIVE_PAGES.fetch_sub(pages.len(), std::sync::atomic::Ordering::Relaxed);
     for (_, reply) in pending {
         let _ = reply.send(Err(Error("The browser disconnected.".into())));
     }
@@ -355,23 +388,6 @@ pub(crate) fn percent(text: &str) -> String {
         }
     }
     out
-}
-
-fn reserve_page() -> bool {
-    use std::sync::atomic::Ordering;
-    let mut current = NATIVE_PAGES.load(Ordering::Relaxed);
-    while current < 40 {
-        match NATIVE_PAGES.compare_exchange_weak(
-            current,
-            current + 1,
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-        ) {
-            Ok(_) => return true,
-            Err(actual) => current = actual,
-        }
-    }
-    false
 }
 
 /// Uses the contract's generated error text without echoing a selector's contents.

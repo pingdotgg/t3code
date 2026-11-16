@@ -75,7 +75,9 @@ async fn common_dir(cwd: &Path) -> VcsResult<PathBuf> {
         .text()
         .await?;
     let path = cwd.join(raw.trim());
-    Ok(std::fs::canonicalize(&path).unwrap_or(path))
+    tokio::task::spawn_blocking(move || std::fs::canonicalize(&path).unwrap_or(path))
+        .await
+        .map_err(|e| invalid(cwd, e.to_string()))
 }
 
 /// The managed path for a new worktree of `branch`, `-2`, `-3`, ... when taken.
@@ -90,20 +92,28 @@ pub async fn managed_path(cwd: &Path, branch: &str, worktrees_dir: &Path) -> Vcs
         ));
     }
     let common = common_dir(cwd).await?;
-    let repo_name = std::path::absolute(cwd)
-        .ok()
-        .and_then(|p| p.file_name().map(|n| n.to_owned()))
-        .unwrap_or_else(|| "repo".into());
-    let base = worktrees_dir
-        .join(repo_name)
-        .join(worktree_folder_name(&common.to_string_lossy(), branch));
-    let mut path = base.clone();
-    let mut n = 2;
-    while path.exists() {
-        path = PathBuf::from(format!("{}-{n}", base.display()));
-        n += 1;
-    }
-    Ok(path)
+    let cwd_for_error = cwd;
+    let cwd = cwd.to_owned();
+    let worktrees_dir = worktrees_dir.to_owned();
+    let branch = branch.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let repo_name = std::path::absolute(&cwd)
+            .ok()
+            .and_then(|p| p.file_name().map(|n| n.to_owned()))
+            .unwrap_or_else(|| "repo".into());
+        let base = worktrees_dir
+            .join(repo_name)
+            .join(worktree_folder_name(&common.to_string_lossy(), &branch));
+        let mut path = base.clone();
+        let mut n = 2_u64;
+        while path.exists() {
+            path = PathBuf::from(format!("{}-{n}", base.display()));
+            n += 1;
+        }
+        Ok(path)
+    })
+    .await
+    .map_err(|e| invalid(cwd_for_error, e.to_string()))?
 }
 
 /// Creates a worktree at the managed path and returns it. With `new_ref_name`, creates that
@@ -294,7 +304,7 @@ pub async fn remove_worktree(cwd: &Path, path: &Path, removal: Removal) -> VcsRe
     {
         Ok(_) => Ok(()),
         Err(ProcessError::Exit { stderr, .. })
-            if !target.exists() && {
+            if !path_exists(&target).await? && {
                 let s = stderr.to_ascii_lowercase();
                 s.contains("is not a working tree") || s.contains("cannot remove working tree")
             } =>
@@ -307,6 +317,13 @@ pub async fn remove_worktree(cwd: &Path, path: &Path, removal: Removal) -> VcsRe
         }
         Err(e) => Err(e.into()),
     }
+}
+
+async fn path_exists(path: &Path) -> VcsResult<bool> {
+    let target = path.to_owned();
+    tokio::task::spawn_blocking(move || target.exists())
+        .await
+        .map_err(|e| invalid(path, e.to_string()))
 }
 
 /// Deletes a local branch (`git branch -d`, or `-D` with `force`).

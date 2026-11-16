@@ -10,6 +10,7 @@ use crate::table::MethodTable;
 
 mod annotations;
 mod files;
+mod mcp_apps;
 mod orchestration;
 mod panels;
 mod preview;
@@ -27,7 +28,6 @@ pub mod vcs;
 #[derive(Clone, Default)]
 pub struct Deps {
     pub preview: Option<conn_preview::tabs::Preview>,
-    pub html_preview: Option<Arc<conn_preview::html::HtmlPreview>>,
     pub engine: Option<Arc<dyn Engine>>,
     /// The provider instances; `instances` changes them as the settings change.
     pub providers: conn_provider::ProviderSet,
@@ -74,6 +74,7 @@ pub fn register_all(table: &mut MethodTable, deps: &Deps) {
     provider::register(table, deps);
     vcs::register(table, deps);
     files::register(table, deps);
+    mcp_apps::register(table, deps);
     terminal::register(table, deps);
     scheduled::register(table, deps);
     secrets::register(table, deps);

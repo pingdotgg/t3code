@@ -73,26 +73,35 @@ pub(super) async fn preview(cx: &Cx<'_>, args: &Args) -> ToolResult {
         .files
         .clone()
         .ok_or_else(|| fail("orchestration_error", "The HTML render could not be saved."))?;
+    let preview = cx
+        .config()
+        .preview
+        .as_ref()
+        .ok_or_else(|| {
+            fail(
+                "orchestration_error",
+                "The HTML preview browser is unavailable.",
+            )
+        })?
+        .html_preview();
+    let slot = preview
+        .reserve()
+        .map_err(|e| fail("orchestration_error", e.to_string()))?;
     let (html, path) = (html.map(str::to_owned), path.map(str::to_owned));
-    let (source, missing) = tokio::task::spawn_blocking(move || {
+    let ((source, missing), slot) = tokio::task::spawn_blocking(move || {
         let source = match (html, path) {
             (Some(html), _) => html,
             (_, Some(path)) => conn_files::html::read_source(&files, &path)?,
             _ => String::new(),
         };
-        conn_files::html::prepare_preview(&source)
+        conn_files::html::prepare_preview(&source).map(|prepared| (prepared, slot))
     })
     .await
     .map_err(|_| fail("orchestration_error", "The HTML render could not be saved."))?
     .map_err(|e| fail("invalid_request", e.to_string()))?;
-    let preview = cx.config().html_preview.as_ref().ok_or_else(|| {
-        fail(
-            "orchestration_error",
-            "The HTML preview browser is unavailable.",
-        )
-    })?;
     let mut result = preview
         .capture(
+            slot,
             source,
             args.get("width")
                 .and_then(serde_json::Value::as_f64)

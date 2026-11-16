@@ -127,7 +127,7 @@ fn rebuild(state: &mut State) -> Result<(), Error> {
     Ok(())
 }
 fn set_catalog(state: &mut State, profiles: Vec<Value>, default: &str) {
-    let mut all = spec().map(|s| s.profiles).unwrap_or_default();
+    let mut all = spec().map(|s| s.profiles.clone()).unwrap_or_default();
     for mut profile in profiles {
         if all.iter().any(|p| p.get("id") == profile.get("id")) {
             continue;

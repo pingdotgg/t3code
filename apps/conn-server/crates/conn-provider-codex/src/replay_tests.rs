@@ -875,3 +875,45 @@ fn a_subagent_wakes_its_parent_only_after_a_completed_root_turn() {
         }
     }
 }
+
+#[test]
+fn deferred_mcp_app_uses_t3s_failed_cli_result() {
+    let recording: Value = serde_json::from_str(include_str!("../testdata/mcp-app.json")).unwrap();
+    let saved: Value = serde_json::from_str(include_str!("../testdata/ts/simple.json")).unwrap();
+    let input = turn_input(&saved["startTurn"][0]);
+    let entries = recording["transcript"]["entries"].as_array().unwrap();
+    let native = entries
+        .iter()
+        .find(|entry| entry["frame"]["method"] == "turn/start")
+        .unwrap()["frame"]["params"]["threadId"]
+        .as_str()
+        .unwrap();
+    let mut mapper = Mapper::new(FixedEnv::default());
+    mapper.begin_turn(native, &input);
+    let mut captures = Vec::new();
+    for entry in entries
+        .iter()
+        .filter(|entry| entry["type"] == "emit_inbound" && entry["frame"]["method"].is_string())
+    {
+        for output in mapper.handle(Inbound::from_value(entry["frame"].clone())) {
+            if let Out::Event(conn_provider::ProviderEvent::McpAppCapture { turn_item, source }) =
+                output
+            {
+                captures.push((turn_item, source));
+            }
+        }
+    }
+    assert_eq!(
+        captures.len(),
+        1,
+        "the recorded failed result still requests App capture"
+    );
+    let (item, source) = &captures[0];
+    let item = conn_contract::to_json(item);
+    assert_eq!(item["status"], "failed");
+    assert_eq!(source.resource_uri, "ui://weather/dashboard");
+    assert_eq!(
+        item["output"]["structuredContent"],
+        recording["result"]["structuredContent"]
+    );
+}

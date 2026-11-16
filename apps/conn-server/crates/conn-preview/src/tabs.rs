@@ -14,6 +14,7 @@ use tokio::time::Instant;
 
 mod profiles;
 mod viewer;
+pub use crate::screencast::Frame as ViewerFrame;
 pub use viewer::{Output as ViewerOutput, Viewer};
 
 const AGENT_TABS: usize = 8;
@@ -41,6 +42,7 @@ struct Tab {
     loading: bool,
     dialog: Value,
     viewers: Vec<String>,
+    cast: Option<crate::screencast::Screencast>,
     controller: Option<String>,
     generation: u64,
     control: watch::Sender<Value>,
@@ -77,6 +79,7 @@ struct Inner {
     profiles_loaded: tokio::sync::OnceCell<()>,
     profiles_save: AsyncMutex<()>,
     installer: Arc<Installer>,
+    html_preview: crate::html::HtmlPreview,
     directory: PathBuf,
     epoch: String,
     events: broadcast::Sender<Value>,
@@ -99,6 +102,13 @@ impl Preview {
         Self::build(directory, Some(executable))
     }
     fn build(directory: PathBuf, fixture: Option<PathBuf>) -> Self {
+        let installer = Arc::new(Installer::new(
+            if directory.file_name().is_some_and(|n| n == "userdata") {
+                directory.parent().unwrap_or(&directory).to_path_buf()
+            } else {
+                directory.clone()
+            },
+        ));
         let (events, _) = broadcast::channel(128);
         let result = Self(Arc::new(Inner {
             state: Mutex::new(State {
@@ -106,7 +116,7 @@ impl Preview {
                 hosts: vec![],
                 revision: 0,
                 sequence: 0,
-                profiles: spec().map(|s| s.profiles).unwrap_or_default(),
+                profiles: spec().map(|s| s.profiles.clone()).unwrap_or_default(),
                 default_profile: None,
                 recording_rate: 30,
                 profile_reports: vec![],
@@ -115,13 +125,8 @@ impl Preview {
             open: AsyncMutex::new(()),
             profiles_loaded: tokio::sync::OnceCell::new(),
             profiles_save: AsyncMutex::new(()),
-            installer: Arc::new(Installer::new(
-                if directory.file_name().is_some_and(|n| n == "userdata") {
-                    directory.parent().unwrap_or(&directory).to_path_buf()
-                } else {
-                    directory.clone()
-                },
-            )),
+            html_preview: crate::html::HtmlPreview::with_installer(installer.clone()),
+            installer,
             directory,
             epoch: conn_support::uuid_v4(),
             events,
@@ -140,8 +145,8 @@ impl Preview {
         });
         result
     }
-    pub fn html_preview(&self) -> crate::html::HtmlPreview {
-        crate::html::HtmlPreview::with_installer(self.0.installer.clone())
+    pub fn html_preview(&self) -> &crate::html::HtmlPreview {
+        &self.0.html_preview
     }
     pub fn subscribe(&self) -> broadcast::Receiver<Value> {
         self.0.events.subscribe()
@@ -196,6 +201,7 @@ impl Preview {
         Ok(())
     }
     pub async fn shutdown(&self) {
+        let _open = self.0.open.lock().await;
         let hosts = {
             let mut state = lock(&self.0.state);
             state.tabs.clear();
@@ -495,21 +501,15 @@ impl Preview {
                 "waitFor" => crate::page::wait_for(&browser, &session, &input).await,
                 "click" | "hover" | "type" | "select" | "press" | "scroll" | "drag" | "upload" => {
                     let mut input = input.clone();
+                    if operation == "upload" {
+                        crate::page::upload_paths(&input)?;
+                    }
                     if operation == "upload"
                         && input.get("locator").is_none()
                         && input.get("selector").is_none()
                     {
                         let node=chooser.ok_or_else(||Error("No file chooser is open. Click an upload control first, or pass a locator.".into()))?;
-                        let paths = input
-                            .get("paths")
-                            .and_then(Value::as_array)
-                            .ok_or_else(|| Error("Upload paths are missing.".into()))?;
-                        if paths.iter().any(|p| {
-                            p.as_str()
-                                .is_none_or(|p| !std::path::Path::new(p).is_absolute())
-                        }) {
-                            return Err(Error("Upload paths must be absolute.".into()));
-                        }
+                        let paths = crate::page::upload_paths(&input)?;
                         browser
                             .send(
                                 "DOM.setFileInputFiles",
@@ -858,6 +858,7 @@ impl Preview {
         } else {
             None
         };
+        browser.deny_downloads(context.as_deref()).await?;
         let mut params = json!({"url":"about:blank"});
         if let Some(context) = &context {
             params["browserContextId"] = json!(context);
@@ -912,7 +913,7 @@ impl Preview {
                 title: None,
                 loading: false,
                 dialog: Value::Null,
-                viewers:vec![],
+                viewers:vec![],cast:None,
                 controller:None,
                 generation:0,
                 control:watch::channel(json!({"type":"control","canOperate":true,"controller":"agent","generation":0,"dialog":null})).0,
@@ -976,11 +977,11 @@ impl Preview {
             .map_err(crate::err)?;
         let spec = spec()?;
         let mut args = if key == "__shared" {
-            spec.tab_args
+            &spec.tab_args
         } else {
-            spec.persistent_args
+            &spec.persistent_args
         }
-        .into_iter()
+        .iter()
         .map(|arg| arg.replace("__PROFILE__", &directory.to_string_lossy()))
         .collect::<Vec<_>>();
         if std::env::var("T3CODE_SERVER_BROWSER_SANDBOX").as_deref() == Ok("0") {
@@ -1173,7 +1174,7 @@ fn viewport_dimensions(setting: &Value, fill: Option<&Value>) -> Result<(u64, u6
                 .unwrap_or(800),
         ));
     }
-    let limits = spec()?.viewport_limits;
+    let limits = &spec()?.viewport_limits;
     if !matches!(tag, "freeform" | "preset") {
         return Err(invalid());
     }
@@ -1669,6 +1670,7 @@ impl Preview {
         Ok(snapshot)
     }
     pub async fn clear_profile(&self, profile: &str) -> Result<(), Error> {
+        let _open = self.0.open.lock().await;
         if profile == "incognito" {
             return Ok(());
         }
@@ -1835,7 +1837,7 @@ impl Preview {
                 title:page.get("title").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned),
                 loading:page.get("loading").and_then(Value::as_bool).unwrap_or(false),
                 dialog:Value::Null,
-                viewers:vec![],
+                viewers:vec![],cast:None,
                 controller:None,
                 generation:0,
                 control:watch::channel(json!({"type":"control","canOperate":true,"controller":"agent","generation":0,"dialog":null})).0,
@@ -2030,6 +2032,45 @@ async fn initialize_page(browser: &Browser, session: &str) -> Result<(), Error> 
 mod tests {
     use super::*;
     #[tokio::test]
+    async fn unserved_downloads_cannot_accumulate_in_default_or_private_contexts() {
+        let root =
+            std::env::temp_dir().join(format!("conn-preview-download-{}", conn_support::uuid_v4()));
+        let preview = Preview::with_fixture(
+            root.clone(),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fake-chrome.py"),
+        );
+        for profile in ["default", "incognito"] {
+            let opened = preview
+                .invoke(
+                    "t",
+                    "a",
+                    "open",
+                    json!({"profileId":profile,"reuseExistingTab":false}),
+                )
+                .await
+                .unwrap();
+            let (browser, context) = {
+                let state = lock(&preview.0.state);
+                let tab = state.tabs.iter().find(|t| t.id == opened["tabId"]).unwrap();
+                (tab.browser.clone(), tab.context.clone())
+            };
+            let counts = browser
+                .send("Fixture.counts", json!({}), None)
+                .await
+                .unwrap();
+            assert!(
+                counts["downloads"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|v| v["behavior"] == "deny"
+                        && v.get("browserContextId").and_then(Value::as_str) == context.as_deref())
+            );
+        }
+        preview.shutdown().await;
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+    #[tokio::test]
     async fn expires_tabs_then_stops_empty_browsers_without_starting_a_replacement() {
         let root =
             std::env::temp_dir().join(format!("conn-preview-idle-{}", conn_support::uuid_v4()));
@@ -2058,6 +2099,39 @@ mod tests {
         assert!(browser.is_closed());
         assert!(lock(&preview.0.state).hosts.is_empty());
         std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn shutdown_and_profile_clear_wait_for_the_open_gate() {
+        for clear in [false, true] {
+            let root =
+                std::env::temp_dir().join(format!("conn-preview-gate-{}", conn_support::uuid_v4()));
+            let preview = Preview::with_fixture(
+                root.clone(),
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fake-chrome.py"),
+            );
+            preview
+                .invoke("t", "a", "open", json!({"profileId":"default"}))
+                .await
+                .unwrap();
+            let gate = preview.0.open.lock().await;
+            let mut pending = std::pin::pin!(async {
+                if clear {
+                    preview.clear_profile("default").await.unwrap();
+                } else {
+                    preview.shutdown().await;
+                }
+            });
+            std::future::poll_fn(|cx| {
+                assert!(std::future::Future::poll(pending.as_mut(), cx).is_pending());
+                assert_eq!(lock(&preview.0.state).tabs.len(), 1);
+                std::task::Poll::Ready(())
+            })
+            .await;
+            drop(gate);
+            pending.await;
+            preview.shutdown().await;
+            let _ = tokio::fs::remove_dir_all(root).await;
+        }
     }
     #[test]
     fn normalizes_schemeless_loopback_ipv6_and_public_hosts_and_rejects_non_web_urls() {

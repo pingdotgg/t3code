@@ -563,6 +563,9 @@ async fn provision_creates_a_worktree_and_runs_the_setup_script() {
     use conn_vcs::setup::{self, ProvisionError, ProvisionRequest, SetupScript, WorktreeSetups};
 
     let fx = Fixture::new("provision");
+    git(&fx.work, &["tag", "launch-tag"]);
+    git(&fx.work, &["push", "-q", "origin", "launch-tag"]);
+    git(&fx.work, &["tag", "-d", "launch-tag"]);
     let setups = WorktreeSetups::new();
     let request = |thread: &str, command: &str| ProvisionRequest {
         thread_id: thread.into(),
@@ -590,6 +593,12 @@ async fn provision_creates_a_worktree_and_runs_the_setup_script() {
         done.branch.starts_with("t3/") && done.branch.len() == 11,
         "{}",
         done.branch
+    );
+    assert!(
+        git(&fx.work, &["tag", "--list", "launch-tag"])
+            .trim()
+            .is_empty(),
+        "launch must not fetch tags"
     );
     assert!(done.path.join("README.md").exists());
     assert_eq!(
@@ -621,6 +630,17 @@ async fn provision_creates_a_worktree_and_runs_the_setup_script() {
     assert_eq!(
         setups.get("t1").unwrap().stages.last().unwrap().id,
         Id::Agent
+    );
+
+    write(&fx.work, "local-only.txt", "local base\n");
+    commit_all(&fx.work, "local base");
+    git(&fx.origin, &["update-ref", "-d", "refs/heads/main"]);
+    let local = setup::provision(&setups, request("deleted", "exit 0"))
+        .await
+        .unwrap();
+    assert_eq!(
+        git(&local.path, &["rev-parse", "HEAD"]),
+        git(&fx.work, &["rev-parse", "main"])
     );
 
     // A failing script fails the setup and removes the worktree and its branch.
@@ -769,4 +789,34 @@ async fn setup_scripts_leave_no_processes_behind() {
         Vec::<u32>::new(),
         "background jobs outlived the script"
     );
+}
+
+#[tokio::test]
+async fn worktree_base_fetch_skips_tags_and_deleted_tracking_refs() {
+    let fx = Fixture::new("handoff-base");
+    git(&fx.work, &["tag", "handoff-tag"]);
+    git(&fx.work, &["push", "-q", "origin", "handoff-tag"]);
+    git(&fx.work, &["tag", "-d", "handoff-tag"]);
+    let base = conn_vcs::setup::fetch_base(&fx.work, "main")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(base.1, "origin/main");
+    assert_eq!(git(&fx.work, &["tag", "--list", "handoff-tag"]).trim(), "");
+    git(&fx.origin, &["update-ref", "-d", "refs/heads/main"]);
+    assert!(
+        conn_vcs::setup::fetch_base(&fx.work, "main")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    for name in ["origin/HEAD", "HEAD~1", "main^", "@{-1}", "-", ":/fix"] {
+        assert!(
+            conn_vcs::setup::fetch_base(&fx.work, name)
+                .await
+                .unwrap()
+                .is_none(),
+            "{name}"
+        );
+    }
 }

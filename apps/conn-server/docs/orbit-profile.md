@@ -324,8 +324,8 @@ in section 11 agree: an item the list hides or removes is X or U.
 | Kiro, fx, Antigravity, ACP registry (offline part) | no | U | U | Section 8 |
 | Cursor, OpenCode, Muse (SDK) | no | X | U | Not used by Orbit |
 | GitHub | partly (sign-in, lookup, clone, publish, discovery, PR links) | O (Swamp pushes and opens the PR) | N | `workflow-operation-task-publish.yaml:764-946` |
-| GitLab | partly (same) | X | U | Nothing in Orbit uses it [code, a search of `O/`] |
-| Bitbucket, Azure DevOps, Forgejo, GitCafe, Cursor origin | partly (same) | X | X | Nick: "other Git providers could be left out" |
+| GitLab | removed; unknown git remote | X | X | GitHub only (Nick, 2026-11-16; `FORK.md`) |
+| Bitbucket, Azure DevOps, Forgejo, GitCafe, Cursor origin | removed; unknown git remote | X | X | GitHub only (Nick, 2026-11-16; `FORK.md`) |
 
 ### Totals for the three targets
 
@@ -372,7 +372,7 @@ is **17,397,232 bytes** [measured, `ls -l`, read only].
 | Scheduled tasks (`conn-features::scheduled`, `jiff`) | 64 K + 39 K | One timer and a JSON file of at most 500 tasks (`R/crates/conn-features/src/scheduled/mod.rs:12,73`). Not measured apart. | Starts agent turns on a timer. No route: webhooks are not served. | 35 commits / 3.2 k lines in `ScheduledTaskService.ts`; 153 / 11.5 k for all of `conn-features` | The engine for recurring work inside one Instance, such as a nightly dependency check or a test run that reports to the thread. Orbit's Swamp has its own schedules (`project-schedule-definition-*`), so this is per-Instance only. | Keep on |
 | Annotations (`conn-features::annotations`) | 39 K | None at idle; files under `userdata/annotations` | RPC only | 1 commit in `annotations.ts` | Review of a preview: a person marks the app in the client, and the agent works through the notes with `annotations_*`. It fits Orbit's preview through the app Route only if the client's overlay runs on that Route. | Keep on |
 | Text generators and titles (`conn-server::text_generation`) | 29 K + 3 K | None | Outbound HTTP to the user's endpoint with the saved key | in `settings.rs`'s churn | Thread titles and commit messages through the AI router, with no key in the container: point the generator at the bridge forwarder. | Keep on, routed to the AI router |
-| Hosts beyond GitHub and GitLab (Forgejo, GitCafe, Bitbucket, Azure DevOps, Cursor origin) | about 68 K (GitHub 27 K, GitLab 4 K) | None at idle | Outbound HTTPS; Forgejo's CLI as a child process | 181 commits / 9.5 k lines in their packages | None in Orbit. A host user with a Forgejo remote, maybe. | Keep, off in the container profile |
+| Hosts beyond GitHub | Removed | None | No host-specific API or CLI | No longer followed | None in Orbit | Removed (Nick, 2026-11-16; `FORK.md`) |
 | Repository lookup, clone, publish | about 52 K (`repository`, `repositories`) | None | `git` child processes; outbound calls | in source control's 238 commits | Orbit clones and publishes. On the mini: "new project from a GitHub repository" from a phone. | Keep, off in the container profile |
 | TLS stack (rustls, ring, webpki) | about 330 K, plus about 0.2 MB of roots [estimate] | None | Every outbound HTTPS call | n/a | Needed only for GitHub's API and a text generator over HTTPS. In a container the router is plain HTTP on the bridge. `ring` also verifies Ed25519, which section 4b needs. | Keep |
 | Grok and the ACP runtime (`conn-provider-acp`) | 157 K (Grok's own part 31 K) | 310 KiB per idle Grok session, 11 KiB after close (`R/docs/status.md`, ACP part 3) | A child process when enabled; CLI probes every 5 minutes when enabled; off by default | 187 commits / 20.8 k lines | ACP agents in containers once the router serves them (section 8) | Keep on, off by setting as T3 has it |
@@ -399,8 +399,7 @@ What dominates the binary [measured, same method]:
 | `conn-provider-codex` | 0.13 MB |
 | Total code (`__text`) | 9.63 MB |
 
-**What a container build could drop:** the hosts beyond GitHub and GitLab, repository
-lookup, clone and publish, Kiro, fx and registry code once it exists, and maybe TLS. That is
+**What a container build could drop:** repository lookup, clone and publish, Kiro, fx and registry code once it exists, and maybe TLS. That is
 about 0.5 to 0.7 MB, **3 to 4% of the binary** [estimate]. Idle memory barely changes:
 unused code is mapped but never paged in. The server idles at 2.8 MiB `Pss_Anon` in an Orbit
 Instance container [measured, Beast, 2026-11-15].
@@ -968,10 +967,10 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `git.resolvePullRequest` | no | O | N | M | pull request checkout into a thread |
 | `git.runStackedAction` | no | U | N | M | commit/push/PR action; in a container only the commit step is ours, push and PR are Orbit's |
 | `guestShare.create` | no | X | X | L | guest link through T3 Connect |
-| `mcpApps.callTool` | no | U | U | M | MCP App UIs inside a thread |
-| `mcpApps.readResource` | no | U | U | M | MCP App UIs inside a thread |
-| `mcpApps.toolInfo` | no | U | U | M | MCP App UIs inside a thread |
-| `mcpApps.updateModelContext` | no | U | U | M | MCP App UIs inside a thread |
+| `mcpApps.callTool` | yes | U | U | M | MCP App UIs inside a thread |
+| `mcpApps.readResource` | yes | U | U | M | MCP App UIs inside a thread |
+| `mcpApps.toolInfo` | yes | U | U | M | MCP App UIs inside a thread |
+| `mcpApps.updateModelContext` | yes | U | U | M | MCP App UIs inside a thread |
 | `orchestration.dispatchCommand` | yes | N | N |  | thread view, composer, diffs |
 | `orchestration.forceStopThread` | yes | N | N |  | thread view, composer, diffs |
 | `orchestration.getArchivedShellSnapshot` | yes | N | N |  | thread view, composer, diffs |
@@ -1184,7 +1183,7 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `annotations_complete` | yes | U | U |  | agents work through review notes |
 | `annotations_list` | yes | U | U |  | agents work through review notes |
 | `annotations_release` | yes | U | U |  | agents work through review notes |
-| `create_threads` | no | U | N | S | new top-level threads |
+| `create_threads` | yes | U | N | S | new top-level threads |
 | `database_query` | no | U | U | M | Conn database panel |
 | `delegate_task` | yes | N | N |  | core orchestration |
 | `delete_scheduled_task` | yes | U | N |  | scheduled tasks |
@@ -1199,8 +1198,8 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `link_pull_requests` | yes | U | N |  | PR links on a thread; Swamp could link the PR it opens |
 | `list_scheduled_tasks` | yes | U | N |  | scheduled tasks |
 | `list_thread_pull_requests` | yes | U | N |  | PR links on a thread; Swamp could link the PR it opens |
-| `mcp_call` | no | U | U | M | MCP Apps |
-| `mcp_connect` | no | U | U | M | MCP Apps |
+| `mcp_call` | yes | U | U | M | MCP Apps |
+| `mcp_connect` | yes | U | U | M | MCP Apps |
 | `orchestrator_capabilities` | yes | N | N |  | core orchestration |
 | `panel_open` | yes | U | U | S |  |
 | `preview_act` | yes | U | N | L | agent browser; needs headless Chromium on the server |
@@ -1223,8 +1222,8 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `save_test_login` | no | X | U | M | test logins |
 | `schedule_task` | yes | U | N |  | scheduled tasks |
 | `send_to_user` | yes | N | N |  | core orchestration |
-| `t3_attachment_discard` | no | U | N | M | attachments between threads |
-| `t3_attachment_prepare_upload` | no | U | N | M | attachments between threads |
+| `t3_attachment_discard` | yes | U | N | M | attachments between threads |
+| `t3_attachment_prepare_upload` | yes | U | N | M | attachments between threads |
 | `t3_background_wait` | yes (2026-11-14) | N | N | M | agents wait on background commands; named in T3's instructions |
 | `t3_environment_link` | no | X | N | L | linked machines |
 | `t3_environment_links` | no | X | N | L | linked machines |
@@ -1251,14 +1250,14 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `t3_thread_read` | yes | N | N |  | core orchestration; Swamp's service calls |
 | `t3_thread_search` | yes | N | N |  | core orchestration; Swamp's service calls |
 | `t3_thread_send` | yes | N | N |  | core orchestration; Swamp's service calls |
-| `t3_thread_send_attachments` | no | U | N | M | attachments between threads |
+| `t3_thread_send_attachments` | yes | U | N | M | attachments between threads |
 | `t3_thread_transfer` | no | X | U | L | move a thread between machines |
 | `t3_thread_update` | yes | N | N |  | core orchestration; Swamp's service calls |
 | `t3_thread_wait` | yes | N | N |  | core orchestration; Swamp's service calls |
 | `t3_workflow_stop` | no | U | U | S |  |
-| `t3_worktree_handoff` | no | U | N | M | worktree hand-off |
-| `t3_worktree_list` | no | U | N | M | worktree hand-off |
-| `t3_worktree_status` | no | U | N | M | worktree hand-off |
+| `t3_worktree_handoff` | yes | U | N | M | worktree hand-off |
+| `t3_worktree_list` | yes | U | N | M | worktree hand-off |
+| `t3_worktree_status` | yes | U | N | M | worktree hand-off |
 | `task_cancel` | yes | N | N |  | core orchestration |
 | `task_status` | yes | N | N |  | core orchestration |
 | `tool_search` | no | U | U | S |  |

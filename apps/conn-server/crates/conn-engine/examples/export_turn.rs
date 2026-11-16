@@ -478,7 +478,7 @@ async fn main() {
     .await;
     let _ = std::fs::remove_dir_all(&added);
 
-    // Pull request links on thread-1, as T3 keys them: a GitCafe link, a stack member, then
+    // Pull request links on thread-1, as T3 keys them: a GitHub link, a stack member, then
     // the member unlinked (a tombstone) and linked again by hand.
     let mut links_items = vec![];
     let mut links = engine
@@ -492,8 +492,8 @@ async fn main() {
     })
     .await;
     for (index, command) in [
-        json!({"type": "thread.pull-request.link", "host": "Git.Cafe", "repository": "O/R",
-               "number": 4, "url": "https://git.cafe/O/R/pull/4", "source": "manual"}),
+        json!({"type": "thread.pull-request.link", "host": "GitHub.com", "repository": "O/R",
+               "number": 4, "url": "https://github.com/O/R/pull/4", "source": "manual"}),
         json!({"type": "thread.pull-request.link", "host": "github.com", "repository": "o/r",
                "number": 9, "url": "https://github.com/o/r/pull/9", "source": "stack"}),
         json!({"type": "thread.pull-request.unlink", "host": "GitHub.com", "repository": "O/R",
@@ -568,7 +568,47 @@ async fn main() {
 
     let (checkpoint_items, fork_items, checkpoint_shell) = checkpoint_scenario(&dir).await;
 
+    let parent = engine
+        .get_thread_projection("thread-1".into())
+        .await
+        .unwrap();
+    let parent_run = parent["runs"].as_array().unwrap().first().unwrap();
+    let mut created_stream = engine
+        .subscribe_thread(
+            from_json(json!({"threadId":"thread-1","requestCompletionMarker":true})).unwrap(),
+        )
+        .await
+        .unwrap();
+    let mut created_items = Vec::new();
+    read(&mut created_stream, &mut created_items, |item| {
+        item["kind"] == "synchronized"
+    })
+    .await;
+    engine.dispatch(from_json(json!({
+        "type":"thread.create","commandId":"batch-child","threadId":"thread-created",
+        "projectId":parent["thread"]["projectId"],"title":"Created by an agent",
+        "modelSelection":parent["thread"]["modelSelection"],"runtimeMode":"full-access","interactionMode":"default",
+        "branch":null,"worktreePath":null,"createdBy":"agent","creationSource":"mcp",
+        "initialMessage":{"messageId":"batch-message","senderThreadId":"thread-1","text":"hello","attachments":[]},
+    })).unwrap()).await.unwrap();
+    engine.dispatch(from_json(json!({
+        "type":"thread.created.record","commandId":"record-batch-child",
+        "parentThreadId":"thread-1","parentRunId":parent_run["id"],"parentNodeId":parent_run["rootNodeId"],
+        "targetThreadId":"thread-created","targetRunId":"run:thread-created:1",
+    })).unwrap()).await.unwrap();
+    read(&mut created_stream, &mut created_items, |item| {
+        item["event"]["payload"]["type"] == "thread_created"
+    })
+    .await;
+    let created_child = engine
+        .thread_snapshot("thread-created".into())
+        .await
+        .unwrap()
+        .unwrap();
+
     let export = json!({
+        "createdThreadItems":created_items,
+        "createdThreadSnapshot":created_child,
         "checkpointItems": checkpoint_items,
         "forkItems": fork_items,
         "checkpointShellThreads": checkpoint_shell,

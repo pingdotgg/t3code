@@ -69,9 +69,9 @@ async fn run(state: PathBuf, cases: Vec<Value>) -> Result<Vec<Value>, Error> {
     );
     let service = McpService::new(McpConfig {
         preview: Some(preview.clone()),
-        html_preview: Some(Arc::new(conn_preview::html::HtmlPreview::new(
-            state.clone(),
-        ))),
+
+        refresh_provider: None,
+        worktrees: None,
         engine,
         environment_id: "html-parity".into(),
         label: "HTML".into(),

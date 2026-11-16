@@ -54,3 +54,13 @@ preview_act
 preview_wait_for
 preview_recording_start
 preview_recording_stop
+mcp_call
+mcp_connect
+
+create_threads
+t3_attachment_prepare_upload
+t3_attachment_discard
+t3_thread_send_attachments
+t3_worktree_handoff
+t3_worktree_list
+t3_worktree_status

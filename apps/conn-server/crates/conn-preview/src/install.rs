@@ -25,8 +25,13 @@ pub(crate) struct Spec {
     pub non_web_schemes: Vec<String>,
     pub keys: std::collections::HashMap<String, serde_json::Value>,
     pub version: String,
+    #[serde(rename = "stagingStaleAfterMs")]
+    pub staging_stale_after_ms: u64,
+    #[serde(rename = "screencastAckPaceMs")]
+    pub screencast_ack_pace_ms: u64,
     pub profiles: Vec<serde_json::Value>,
     pub presets: Vec<serde_json::Value>,
+    pub platforms: std::collections::HashMap<String, String>,
     pub archives: std::collections::HashMap<String, Archive>,
     #[serde(rename = "tabArgs")]
     pub tab_args: Vec<String>,
@@ -60,8 +65,58 @@ pub(crate) struct Archive {
     sha256: String,
 }
 
-pub(crate) fn spec() -> Result<Spec, Error> {
-    serde_json::from_str(include_str!("spec.json")).map_err(super::err)
+pub(crate) fn spec() -> Result<&'static Spec, Error> {
+    static SPEC: std::sync::OnceLock<Result<Spec, Error>> = std::sync::OnceLock::new();
+    SPEC.get_or_init(|| serde_json::from_str(include_str!("spec.json")).map_err(super::err))
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
+fn chrome_platform(os: &str, arch: &str) -> Result<&'static str, Error> {
+    spec()?.platforms.get(&format!("{os}-{arch}")).map(String::as_str).ok_or_else(|| Error(format!(
+        "T3's headless browser is not available on {os}-{arch}: Chrome for Testing has no headless shell for it."
+    )))
+}
+
+fn prune(root: &Path, version: &str) {
+    let Ok(spec) = spec() else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    let previous = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name != version && !name.starts_with('.'))
+        .max_by_key(|name| {
+            name.split('.')
+                .filter_map(|n| n.parse::<u64>().ok())
+                .collect::<Vec<_>>()
+        });
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name == version || Some(name.as_ref()) == previous.as_deref() {
+            continue;
+        }
+        if name.starts_with(".install-")
+            && entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .is_none_or(|modified| {
+                    modified.elapsed().unwrap_or_default()
+                        < Duration::from_millis(spec.staging_stale_after_ms)
+                })
+        {
+            continue;
+        }
+        let _ = std::fs::remove_dir_all(entry.path());
+    }
 }
 
 type Completed = Option<Result<PathBuf, Error>>;
@@ -85,15 +140,7 @@ impl Installer {
     /// The same base/tools/platform/version path as T3; never discovers system Chrome.
     pub async fn executable(&self) -> Result<PathBuf, Error> {
         let spec = spec()?;
-        let platform = match std::env::consts::ARCH {
-            "x86_64" => "linux64",
-            "aarch64" => "linux-arm64",
-            arch => {
-                return Err(Error(format!(
-                    "T3's headless browser is not available on linux-{arch}: Chrome for Testing has no headless shell for it."
-                )));
-            }
-        };
+        let platform = chrome_platform(std::env::consts::OS, std::env::consts::ARCH)?;
         let folder = self
             .base
             .join("tools/chrome-headless-shell")
@@ -117,12 +164,15 @@ impl Installer {
             .ok_or_else(|| Error("The pinned Chrome archive is missing.".into()))?
             .bytes;
         let mut guard = self.pending.lock().await;
-        let mut pending = if let Some(pending) = guard.as_ref() {
-            let finished = pending.borrow().clone();
-            if let Some(result) = finished {
-                *guard = None;
+        let completed = guard.as_ref().and_then(|pending| pending.borrow().clone());
+        if let Some(result) = completed {
+            *guard = None;
+            if result.is_ok() {
                 return result;
             }
+            // A new caller retries; T3 replays the previous failure once before retrying.
+        }
+        let mut pending = if let Some(pending) = guard.as_ref() {
             pending.clone()
         } else {
             let (tx, rx) = watch::channel(None);
@@ -177,7 +227,7 @@ fn failure(detail: &str) -> Error {
 async fn install(
     folder: PathBuf,
     platform: &str,
-    spec: Spec,
+    spec: &'static Spec,
     progress: Arc<AtomicU64>,
     unpacking: Arc<AtomicBool>,
 ) -> Result<PathBuf, Error> {
@@ -202,6 +252,8 @@ async fn install(
             if destination.exists() { std::fs::remove_dir_all(&destination).map_err(super::err)?; }
             std::fs::rename(output, destination).map_err(super::err)
         }).await.map_err(super::err)??;
+        let root = parent.to_path_buf();
+        tokio::task::spawn_blocking(move || prune(&root, &spec.version)).await.map_err(super::err)?;
         Ok(folder.join("chrome-headless-shell"))
     }.await;
     let _ = tokio::fs::remove_dir_all(staging).await;
@@ -223,7 +275,7 @@ async fn download(
             "The download from storage.googleapis.com failed. Check this machine's network access.",
         )
     };
-    if std::env::var_os("CONN_NETWORK_LOG").is_some() {
+    if cfg!(test) || std::env::var_os("CONN_NETWORK_LOG").is_some() {
         return Err(failed());
     }
     let tcp = tokio::net::TcpStream::connect(("storage.googleapis.com", 443))
@@ -400,14 +452,60 @@ mod tests {
         }
         std::fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn platform_matches_t3_for_both_operating_systems_and_architectures() {
+        for (os, arch, wanted) in [
+            ("linux", "x86_64", "linux64"),
+            ("linux", "aarch64", "linux-arm64"),
+            ("macos", "x86_64", "mac-x64"),
+            ("macos", "aarch64", "mac-arm64"),
+        ] {
+            assert_eq!(chrome_platform(os, arch).unwrap(), wanted);
+        }
+        assert!(chrome_platform("freebsd", "x86_64").is_err());
+        assert!(chrome_platform("linux", "riscv64").is_err());
+    }
+    #[tokio::test]
+    async fn failed_installs_allow_the_next_caller_to_retry() {
+        let root =
+            std::env::temp_dir().join(format!("conn-preview-retry-{}", conn_support::uuid_v4()));
+        let installer = Installer::new(root.clone());
+        let (_tx, rx) = watch::channel(Some(Err(Error("previous failure".into()))));
+        *installer.pending.lock().await = Some(rx);
+        assert_ne!(
+            installer.executable().await.unwrap_err().0,
+            "previous failure"
+        );
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+    #[test]
+    fn pruning_keeps_current_newest_previous_and_recent_staging() {
+        let root =
+            std::env::temp_dir().join(format!("conn-preview-prune-{}", conn_support::uuid_v4()));
+        for name in ["10", "9", "8", ".install-recent", ".install-stale"] {
+            std::fs::create_dir_all(root.join(name)).unwrap();
+        }
+        let file = std::fs::File::open(root.join(".install-stale")).unwrap();
+        file.set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::UNIX_EPOCH))
+            .unwrap();
+        prune(&root, "10");
+        for name in ["10", "9", ".install-recent"] {
+            assert!(root.join(name).exists());
+        }
+        for name in ["8", ".install-stale"] {
+            assert!(!root.join(name).exists(), "{name}");
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[tokio::test]
     async fn finds_only_the_pinned_install_without_download_or_host_discovery() {
         use std::os::unix::fs::PermissionsExt;
         let root =
             std::env::temp_dir().join(format!("conn-preview-install-{}", conn_support::uuid_v4()));
         let path = root
-            .join("tools/chrome-headless-shell/linux64")
-            .join(spec().unwrap().version)
+            .join("tools/chrome-headless-shell")
+            .join(chrome_platform(std::env::consts::OS, std::env::consts::ARCH).unwrap())
+            .join(&spec().unwrap().version)
             .join("chrome-headless-shell");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "fixture browser").unwrap();

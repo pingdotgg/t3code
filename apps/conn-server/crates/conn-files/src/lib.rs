@@ -14,6 +14,8 @@ pub mod attachments;
 pub mod entries;
 mod git;
 pub mod html;
+mod mcp_app_bootstrap;
+pub mod mcp_apps;
 pub mod mime;
 pub mod paths;
 pub mod search;

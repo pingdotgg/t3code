@@ -1,6 +1,6 @@
 {
- "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/plan_questions/grok_transcript.ndjson through the orchestrator fixture runner at c0e0f16781; driver dropped.",
- "capturedOn": "2026-11-15",
+ "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/plan_questions/grok_transcript.ndjson through the orchestrator fixture runner at 18e031346e; driver dropped.",
+ "capturedOn": "2026-11-16",
  "outcome": "passed",
  "gates": [],
  "transcripts": [
@@ -210,7 +210,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "plan",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-plan_questions-7fdorX",
+     "cwd": "<workspace>",
      "approvalPolicy": "never",
      "sandboxPolicy": {
       "type": "readOnly",
@@ -239,7 +239,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "plan",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-plan_questions-7fdorX",
+     "cwd": "<workspace>",
      "approvalPolicy": "never",
      "sandboxPolicy": {
       "type": "readOnly",
@@ -389,7 +389,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "plan",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-plan_questions-7fdorX",
+     "cwd": "<workspace>",
      "approvalPolicy": "never",
      "sandboxPolicy": {
       "type": "readOnly",

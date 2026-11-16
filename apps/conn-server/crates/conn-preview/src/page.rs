@@ -58,7 +58,7 @@ async fn evaluate_world(
 }
 
 pub(crate) async fn secrets(browser: &Browser, session: &str) -> Result<Vec<String>, Error> {
-    let script = spec()?.scripts.sensitive;
+    let script = &spec()?.scripts.sensitive;
     let values = utility(browser, session, &format!("return {script};")).await?;
     let values = values
         .as_array()
@@ -148,7 +148,7 @@ pub(crate) async fn snapshot(
     {
         return Err(Error("A frame on the page didn't answer within 1000ms, so its content couldn't be checked for hidden values. Try the snapshot again.".into()));
     }
-    let dotted_script = spec()?.scripts.dotted;
+    let dotted_script = &spec()?.scripts.dotted;
     let read_dotted = format!("return {dotted_script};");
     let before = utility(browser, session, &read_dotted).await?;
     let mut page=utility(browser,session,&format!("globalThis.__connRefGeneration={};const result={};const tree=injected.ariaSnapshot(document.body,{{mode:'ai',boxes:true}});const MASKED_VALUE='••••••••';const ServerBrowserOperationError=Error;{}const dotted=dottedPattern({});result.url=withoutDataPayload(result.url);const safeTree=withoutTreeDataPayloads(tree);result.visibleText=dotted?result.visibleText.replace(dotted,MASKED_VALUE):result.visibleText;result.accessibilityTree=(dotted?maskTree(safeTree,dotted):safeTree).replace(/\\[ref=((?:f\\d+)?e\\d+)\\]/g,(_,ref)=>'[ref=t3-'+globalThis.__connRefGeneration+'-'+ref+']');return result;",json!(generation),spec()?.scripts.snapshot,spec()?.scripts.mask,before)).await?;
@@ -208,6 +208,22 @@ pub(crate) async fn snapshot(
 
 const LOCATOR_JS: &str = r#"const raw=input.locator??input.selector;let selector=raw;if(selector?.startsWith('aria-ref=')){const match=/^aria-ref=t3-(\S+?)-((?:f\d+)?e\d+)$/.exec(selector);if(!match||match[1]!==globalThis.__connRefGeneration)throw Error('__conn_stale_ref');selector='aria-ref='+match[2];}const parsed=selector===undefined?null:injected.parseSelector(selector);const element=parsed===null?document.activeElement:injected.querySelector(parsed,document,true);"#;
 
+pub(crate) fn upload_paths(input: &Value) -> Result<&Vec<Value>, Error> {
+    let paths = input
+        .get("paths")
+        .and_then(Value::as_array)
+        .ok_or_else(|| Error("Upload paths are missing.".into()))?;
+    for path in paths {
+        let path = path
+            .as_str()
+            .ok_or_else(|| Error("Upload paths are missing.".into()))?;
+        if !std::path::Path::new(path).is_absolute() {
+            return Err(Error(format!("Upload paths must be absolute: {path}")));
+        }
+    }
+    Ok(paths)
+}
+
 pub(crate) async fn action(
     browser: &Browser,
     session: &str,
@@ -240,31 +256,39 @@ pub(crate) async fn action(
         return utility(browser,session,&format!("const input={input_json};{LOCATOR_JS}if(!element||element.tagName!=='SELECT')throw Error('__conn_not_editable');const values=input.values.map(v=>{{const option=[...element.options].find(o=>o.value===v)??[...element.options].find(o=>o.label.trim()===v.trim());return {{value:option?.value??v}};}});const selected=injected.selectOptions(element,values);return {{selected}};")).await;
     }
     if action == "upload" {
+        let paths = upload_paths(input)?;
         let node=utility(browser,session,&format!("const input={input_json};{LOCATOR_JS}if(!element||element.tagName!=='INPUT'||element.type!=='file')throw Error('__conn_not_editable');element.setAttribute('data-conn-upload', 'active');return true;")).await?;
         if node != true {
             return Err(Error("The upload target is not available.".into()));
         }
-        let doc = browser
-            .send("DOM.getDocument", json!({}), Some(session))
-            .await?;
-        let root = doc
-            .pointer("/root/nodeId")
-            .and_then(Value::as_u64)
-            .ok_or_else(|| Error("The upload document is not available.".into()))?;
-        let node = browser
-            .send(
-                "DOM.querySelector",
-                json!({"nodeId":root,"selector":"[data-conn-upload=active]"}),
-                Some(session),
-            )
-            .await?;
-        browser
-            .send(
-                "DOM.setFileInputFiles",
-                json!({"nodeId":node.get("nodeId"),"files":input.get("paths")}),
-                Some(session),
-            )
-            .await?;
+        let result = async {
+            let doc = browser
+                .send("DOM.getDocument", json!({}), Some(session))
+                .await?;
+            let root = doc
+                .pointer("/root/nodeId")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| Error("The upload document is not available.".into()))?;
+            let node = browser
+                .send(
+                    "DOM.querySelector",
+                    json!({"nodeId":root,"selector":"[data-conn-upload=active]"}),
+                    Some(session),
+                )
+                .await?;
+            browser
+                .send(
+                    "DOM.setFileInputFiles",
+                    json!({"nodeId":node.get("nodeId"),"files":paths}),
+                    Some(session),
+                )
+                .await?;
+            Ok::<_, Error>(())
+        }
+        .await;
+        let cleared = utility(browser, session, "for (const node of document.querySelectorAll('[data-conn-upload=active]')) node.removeAttribute('data-conn-upload');return null;").await;
+        result?;
+        cleared?;
         return Ok(json!({}));
     }
     if action == "drag" {
@@ -343,7 +367,7 @@ async fn press(browser: &Browser, session: &str, input: &Value) -> Result<Value,
         }
     }
     chord.push(building);
-    let keys = spec()?.keys;
+    let keys = &spec()?.keys;
     let descriptions = chord
         .iter()
         .map(|name| {

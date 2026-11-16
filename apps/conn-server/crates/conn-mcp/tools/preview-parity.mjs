@@ -99,7 +99,7 @@ export async function previewParity(binary, browser) {
     fixture = Http.createServer((req, res) => {
       res.setHeader("content-type", "text/html");
       res.end(
-        `<!doctype html><html><head><title>Preview fixture</title></head><body><input id="name" aria-label="Name"><input type="password" value="fixture-hidden"><select id="choice"><option value="one">One</option><option value="two">Two</option></select><button onclick="document.querySelector('#result').textContent='Clicked'">Press me</button><button id="dialog" onclick="alert('Fixture dialog')">Dialog</button><p id="result">Ready</p><script>console.log('local fixture')</script></body></html>`,
+        `<!doctype html><html><head><title>Preview fixture</title></head><body><input type="file" id="file-a"><input type="file" id="file-b"><input id="name" aria-label="Name"><input type="password" value="fixture-hidden"><select id="choice"><option value="one">One</option><option value="two">Two</option></select><button onclick="document.querySelector('#result').textContent='Clicked'">Press me</button><button id="dialog" onclick="alert('Fixture dialog')">Dialog</button><p id="result">Ready</p><script>console.log('local fixture')</script></body></html>`,
       );
     });
     await new Promise((resolve) => fixture.listen(0, "127.0.0.1", resolve));
@@ -144,7 +144,9 @@ export async function previewParity(binary, browser) {
     { tool: "html_preview", args: { html: "<style>body{height:100vh}</style>" } },
     { tool: "html_preview", args: { path: "/missing.html" }, supervised: true },
   ];
-  if (browser)
+  if (browser) {
+    FS.writeFileSync(Path.join(root, "upload-a.txt"), "first");
+    FS.writeFileSync(Path.join(root, "upload-b.txt"), "second");
     cases.push(
       {
         tool: "html_preview",
@@ -154,6 +156,10 @@ export async function previewParity(binary, browser) {
         },
       },
       { tool: "preview_open", args: { url: origin, open: false } },
+      { tool: "preview_act", args: { action: "upload", locator: "#file-a", paths: ["relative.txt"] } },
+      { tool: "preview_act", args: { action: "upload", locator: "#file-a", paths: [Path.join(root, "upload-a.txt")] } },
+      { tool: "preview_act", args: { action: "upload", locator: "#file-b", paths: [Path.join(root, "upload-b.txt")] } },
+      { tool: "preview_evaluate", args: { expression: `({a:document.querySelector('#file-a').files[0]?.name,b:document.querySelector('#file-b').files[0]?.name,markers:document.querySelectorAll('[data-conn-upload=active]').length})` } },
       { tool: "preview_snapshot", args: {} },
       { tool: "preview_snapshot", args: { includeImage: true } },
       {
@@ -194,6 +200,7 @@ export async function previewParity(binary, browser) {
       { tool: "t3_preview_close", args: { tabId: "$first" } },
       { tool: "preview_status", args: {} },
     );
+  }
   try {
     const ready = await Effect.runPromise(Deferred.make());
     const wrappedBroker = Layer.effect(
@@ -310,7 +317,11 @@ export async function previewParity(binary, browser) {
       const spec = JSON.parse(
         FS.readFileSync(new URL("../../conn-preview/src/spec.json", import.meta.url), "utf8"),
       );
-      const dir = Path.join(state, "tools/chrome-headless-shell/linux64", spec.version);
+      const os = process.platform === "darwin" ? "macos" : process.platform;
+      const arch = { x64: "x86_64", arm64: "aarch64", ia32: "x86" }[process.arch];
+      const platform = spec.platforms[`${os}-${arch}`];
+      if (!platform) throw Error(`Unsupported fixture platform: ${os}-${arch}`);
+      const dir = Path.join(state, "tools/chrome-headless-shell", platform, spec.version);
       FS.mkdirSync(Path.dirname(dir), { recursive: true });
       FS.symlinkSync(Path.dirname(browser), dir);
     }

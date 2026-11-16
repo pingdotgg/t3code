@@ -14,17 +14,7 @@ fn cut(text: &str, max: usize) -> String {
     if length(text) <= max {
         return text.into();
     }
-    let mut count = 0;
-    let mut result = String::new();
-    for c in text.chars() {
-        if count + c.len_utf16() > max {
-            break;
-        }
-        result.push(c);
-        count += c.len_utf16();
-    }
-    result.push('…');
-    result
+    format!("{}…", conn_support::text::utf16_prefix(text, max))
 }
 fn halve(chars: usize) -> usize {
     if chars > 2000 {

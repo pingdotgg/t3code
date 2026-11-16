@@ -241,7 +241,9 @@ for (const file of NodeFS.readdirSync(out).toSorted()) {
         return rest;
       }),
   };
-  NodeFS.writeFileSync(NodePath.join(target, `${name}.json`), `${JSON.stringify(golden, null, 1)}\n`);
+  const workspace = golden.calls.find((call) => call.method === "openSession")?.input.runtimePolicy.cwd;
+  const normalize = (_key, value) => typeof value === "string" && workspace ? value.replaceAll(workspace, "<workspace>") : value;
+  NodeFS.writeFileSync(NodePath.join(target, `${name}.json`), `${JSON.stringify(golden, normalize, 1)}\n`);
   console.log(`${name}: ${golden.outcome === "passed" ? "passed" : "T3 FAILED"}, ${golden.calls.length} calls, ${golden.events.length} events`);
 }
 NodeFS.rmSync(out, { recursive: true, force: true });

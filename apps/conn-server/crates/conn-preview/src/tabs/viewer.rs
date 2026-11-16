@@ -14,11 +14,11 @@ use tokio::{
 /// A decoded viewer frame or state message. The socket sends frames as binary JPEG.
 #[derive(Debug)]
 pub enum Output {
-    Frame(Vec<u8>),
+    Frame(crate::screencast::Frame),
     Message(Value),
     Closed,
 }
-/// One attached viewer. It owns its CDP capture session and releases control on drop.
+/// One attached viewer. It shares the tab capture and releases control on drop.
 #[derive(Debug)]
 pub struct Viewer {
     inner: std::sync::Weak<Inner>,
@@ -27,7 +27,7 @@ pub struct Viewer {
     id: String,
     browser: Browser,
     session: String,
-    frames: broadcast::Receiver<Value>,
+    frames: broadcast::Receiver<crate::screencast::Frame>,
     control: watch::Receiver<Value>,
     can_operate: bool,
     first: Option<Value>,
@@ -54,15 +54,34 @@ impl Drop for Viewer {
         let pressed = std::mem::take(&mut *lock(&self.pressed));
         let browser = self.browser.clone();
         let session = self.session.clone();
+        let inner = self.inner.clone();
+        let thread = self.thread.clone();
+        let id = self.tab.clone();
         tokio::spawn(async move {
             release_input(&browser, &session, pressed).await;
-            let _ = browser
-                .send(
-                    "Target.detachFromTarget",
-                    json!({"sessionId":session}),
-                    None,
-                )
-                .await;
+            if let Some(inner) = inner.upgrade() {
+                let gate = lock(&inner.state)
+                    .tabs
+                    .iter()
+                    .find(|t| t.thread == thread && t.id == id)
+                    .map(|t| t.action.clone());
+                if let Some(gate) = gate {
+                    let _gate = gate.lock().await;
+                    let stop = {
+                        let mut state = lock(&inner.state);
+                        state
+                            .tabs
+                            .iter_mut()
+                            .find(|t| t.thread == thread && t.id == id && t.viewers.is_empty())
+                            .is_some_and(|t| t.cast.take().is_some())
+                    };
+                    if stop {
+                        let _ = browser
+                            .send("Page.stopScreencast", json!({}), Some(&session))
+                            .await;
+                    }
+                }
+            }
         });
     }
 }
@@ -79,8 +98,15 @@ impl Preview {
         height: u64,
         quality: u64,
     ) -> Result<Viewer, Error> {
+        let gate = lock(&self.0.state)
+            .tabs
+            .iter()
+            .find(|t| t.thread == thread && t.id == id)
+            .map(|t| t.action.clone())
+            .ok_or_else(|| Error("The server preview tab does not exist.".into()))?;
+        let _gate = gate.lock().await;
         let viewer = conn_support::uuid_v4();
-        let (browser, target, control, viewport) = {
+        let (browser, session, control, viewport, frames, start) = {
             let mut state = lock(&self.0.state);
             let tab = state
                 .tabs
@@ -92,12 +118,27 @@ impl Preview {
                     "Too many viewers are attached to this tab (8).".into(),
                 ));
             }
+            let start = tab.cast.is_none();
+            // T3 captures once per viewer; sharing keeps Chromium's encoders bounded per tab.
+            if start {
+                tab.cast = Some(crate::screencast::Screencast::start(
+                    tab.browser.clone(),
+                    tab.session.clone(),
+                )?);
+            }
+            let frames = tab
+                .cast
+                .as_ref()
+                .ok_or_else(|| Error("The tab capture is missing.".into()))?
+                .subscribe();
             tab.viewers.push(viewer.clone());
             (
                 tab.browser.clone(),
-                tab.target.clone(),
+                tab.session.clone(),
                 tab.control.subscribe(),
                 tab.viewport.clone(),
+                frames,
+                start,
             )
         };
         let mut result = Viewer {
@@ -105,9 +146,9 @@ impl Preview {
             thread: thread.into(),
             tab: id.into(),
             id: viewer,
-            frames: browser.frames(),
+            frames,
             browser,
-            session: String::new(),
+            session,
             control,
             can_operate,
             first: Some(
@@ -116,20 +157,9 @@ impl Preview {
             still: None,
             pressed: Mutex::new(vec![]),
         };
-        let attached = result
-            .browser
-            .send(
-                "Target.attachToTarget",
-                json!({"targetId":target,"flatten":true}),
-                None,
-            )
-            .await?;
-        result.session = attached
-            .get("sessionId")
-            .and_then(Value::as_str)
-            .ok_or_else(|| Error("The viewer capture session is missing.".into()))?
-            .to_owned();
-        result.browser.send("Page.startScreencast",json!({"format":"jpeg","quality":quality.clamp(1,100),"maxWidth":width.clamp(1,7680),"maxHeight":height.clamp(1,4320)}),Some(&result.session)).await?;
+        if start {
+            result.browser.send("Page.startScreencast",json!({"format":"jpeg","quality":quality.clamp(1,100),"maxWidth":width.clamp(1,7680),"maxHeight":height.clamp(1,4320)}),Some(&result.session)).await?;
+        }
         if let Ok(Ok(frame)) = tokio::time::timeout(
             Duration::from_secs(1),
             result.browser.send(
@@ -187,18 +217,15 @@ impl Viewer {
                 .await
                 .map_err(crate::err)?
                 .ok_or_else(|| Error("The viewer frame is invalid.".into()))?;
-            return Ok(Output::Frame(bytes));
+            return Ok(Output::Frame(crate::screencast::Frame::still(bytes)));
         }
         loop {
             tokio::select! {
                             changed=self.control.changed()=>{if changed.is_err(){return Ok(Output::Closed);}
             if let Some(inner)=self.inner.upgrade()&& let Some(tab)=lock(&inner.state).tabs.iter().find(|t|t.thread==self.thread&&t.id==self.tab){self.first=Some(json!({"type":"viewport","width":tab.viewport.get("width"),"height":tab.viewport.get("height")}));}return Ok(Output::Message(self.control()));},
                             frame=self.frames.recv()=>{
-                                let mut frame=match frame{Ok(frame)=>frame,Err(broadcast::error::RecvError::Lagged(_))=>continue,Err(_)=>return Ok(Output::Closed)};
-                                while let Ok(next)=self.frames.try_recv(){if next.get("sessionId").and_then(Value::as_str)==Some(&self.session){frame=next;}}
-                                if frame.get("sessionId").and_then(Value::as_str)!=Some(&self.session){continue;}
-                                let text=frame.pointer("/params/data").and_then(Value::as_str).ok_or_else(||Error("The viewer frame is missing.".into()))?.to_owned();
-                                let bytes=tokio::task::spawn_blocking(move||conn_support::base64::decode(&text)).await.map_err(crate::err)?.ok_or_else(||Error("The viewer frame is invalid.".into()))?;return Ok(Output::Frame(bytes));
+                                let frame=match frame{Ok(frame)=>frame,Err(broadcast::error::RecvError::Lagged(_))=>continue,Err(_)=>return Ok(Output::Closed)};
+                                return Ok(Output::Frame(frame));
                             }
                         }
         }
@@ -429,5 +456,72 @@ async fn release_input(browser: &Browser, session: &str, pressed: Vec<Value>) {
                 Some(session),
             )
             .await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn viewers_share_one_capture_and_chrome_waits_for_client_ack() {
+        let root =
+            std::env::temp_dir().join(format!("conn-preview-cast-{}", conn_support::uuid_v4()));
+        let preview = Preview::with_fixture(
+            root.clone(),
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fake-chrome.py"),
+        );
+        let opened = preview.invoke("t", "a", "open", json!({})).await.unwrap();
+        let tab = opened["tabId"].as_str().unwrap();
+        let mut first = preview
+            .attach_viewer("t", tab, false, 1280, 800, 70)
+            .await
+            .unwrap();
+        let second = preview
+            .attach_viewer("t", tab, false, 1280, 800, 70)
+            .await
+            .unwrap();
+        assert_eq!(
+            first
+                .browser
+                .send("Fixture.counts", json!({}), None)
+                .await
+                .unwrap()["casts"],
+            1
+        );
+        first.still = None;
+        first.first = None;
+        first
+            .browser
+            .send("Fixture.frame", json!({}), Some(&first.session))
+            .await
+            .unwrap();
+        let frame = loop {
+            if let Output::Frame(frame) = first.next().await.unwrap() {
+                break frame;
+            }
+        };
+        assert_eq!(
+            first
+                .browser
+                .send("Fixture.counts", json!({}), None)
+                .await
+                .unwrap()["acks"],
+            0
+        );
+        frame.ack().await;
+        frame.ack().await;
+        assert_eq!(
+            first
+                .browser
+                .send("Fixture.counts", json!({}), None)
+                .await
+                .unwrap()["acks"],
+            1
+        );
+        drop(frame);
+        drop(first);
+        drop(second);
+        preview.shutdown().await;
+        let _ = tokio::fs::remove_dir_all(root).await;
     }
 }

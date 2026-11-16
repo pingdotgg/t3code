@@ -85,7 +85,7 @@ hidden while linked environments are off; `watch_pull_request`/`unwatch_pull_req
 from delegated children. Preview, device and panel tools are listed to everyone and fail without
 the capability.
 
-**Served: 37 of 87.** Definitions come byte for byte from `apps/server`. Each served tool has
+**Served: 46 of 87.** Definitions come byte for byte from `apps/server`. Each served tool has
 a unit test and `parity.mjs` steps.
 
 Where they differ, because the engine does not do it yet:
@@ -100,7 +100,7 @@ Where they differ, because the engine does not do it yet:
   turn, else starts; `queue`, `steer`, `restart`). `freshContext` starts a new provider session and never steers.
 - `t3_thread_launch`: `root`, `existing_worktree` and `worktree` (the engine makes the worktree
   through the server's host before the thread exists; `parity.mjs` compares the result). No
-  `scratch`, no attachments (`t3_attachment_prepare_upload` is not served). The thread
+  `scratch`, no attachments on launch (the three attachment tools are served). The thread
   is recorded as `createdBy: user` (the engine's `launch` sets it). Without `modelSelection`
   a client gets the first ready provider's first model.
 - `t3_thread_wait` ends on `waiting` too, as Orbit's driver expects; no restart chains, since the
@@ -160,19 +160,19 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `t3_project_list` | served | reads | | |
 | `t3_project_read` | served | reads | | |
 | `t3_environment_read` | served | reads | | |
-| `create_threads` | not served | actsAsCaller | nothing new: the engine's `launchThread` per entry, `thread.delete` to roll back | O |
+| `create_threads` | served | actsAsCaller | top-level creation and parent timeline, with receipt replay | O |
 | `t3_project_create` | not served | writesEnvironment | nothing new: the engine's `projects.createNew` / `projects.mutate` | |
 | `t3_project_update` | not served | writesEnvironment | nothing new: `projects.mutate` | |
 | `t3_project_delete` | not served | writesEnvironment | nothing new: `projects.mutate` | |
-| `t3_worktree_status` | not served | readsAsCaller | nothing new: `conn-vcs` and the settings default; `/mcp` has no VCS handle yet | |
-| `t3_worktree_list` | not served | reads (needs the `worktree` capability) | nothing new: `conn-vcs::refs::list_refs`; `/mcp` has no VCS handle yet | |
-| `t3_attachment_prepare_upload` | not served | writes | nothing new: the server's upload route (`attachments.createUploadUrl`); `/mcp` has no handle to it yet | |
-| `t3_attachment_discard` | not served | writes | nothing new: as above | |
-| `t3_thread_send_attachments` | not served | writesThreads | nothing new: as above, then `message.dispatch` with attachments | |
+| `t3_worktree_status` | served | readsAsCaller | thread binding and project defaults | |
+| `t3_worktree_list` | served | reads (needs the `worktree` capability) | shared git refs, with project-root fallback for removed worktrees | |
+| `t3_attachment_prepare_upload` | served | writes | shared client upload store; caller owns pending uploads | |
+| `t3_attachment_discard` | served | writes | only the preparing caller may discard a pending upload | |
+| `t3_thread_send_attachments` | served | writesThreads | canonical references and the engine attachment claims | |
 | `t3_environment_preferences_update` | not served | writesEnvironment | nothing new: the server's settings store (`settings.rs`); `/mcp` reads defaults today | |
 | `tool_search` | not served | readsAsCaller | nothing new: a search of the catalog; listed only to `t3-tool-exposure: deferred` clients | |
 | `t3_thread_transfer` | not served | either(reads, writesThreads) | engine: `thread.fork`, `thread.merge_back`, context transfers | |
-| `t3_worktree_handoff` | not served | actsAsCaller | engine: bind a new worktree to a live thread and end its session; server: setup scripts the T3 way | |
+| `t3_worktree_handoff` | served | actsAsCaller | guarded binding, continuation, session detach and setup terminal | |
 | `t3_workflow_stop` | not served | writesThreads | engine and provider: `stopWorkflow` (a provider's workflow stop) | |
 | `t3_background_wait` | served (new) | actsAsCaller | | C |
 | `link_pull_request` | served (part 4) | writesWithCapability | | P |
@@ -219,13 +219,9 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `t3_theme_set` | not served | writesEnvironment | server: themes | |
 | `t3_project_clone` | not served | writesEnvironment | server: project clone tracking (`ProjectCloneTracker`, source control repositories) | |
 
-Totals: served 37 (the five pull request link tools since source control part 4,
-`t3_background_wait` since 2026-11-14); needs nothing new 11; needs an engine or provider
-feature 3; needs a part of the server or a client we do not have 52. (`schedule_task` and
-three more scheduled task tools, and the four annotation tools, are served too but still
-counted in the rows above; the table's State column is behind for them.)
+The generated catalog serves 46 tools. `tools.implemented` is the source of the served set.
 
-**Named but not served (12):** `create_threads`, `device_list`, `device_open`,
+**Named but not served (12):** `device_list`, `device_open`,
 `device_screenshot`, `html_preview`, `preview_open`, `preview_status` (and the
 other 11 through `preview_*`), `request_secret`, `t3_environment_link`,
 `t3_environment_links`, `unwatch_pull_request`, `watch_pull_request`. Earlier batches took
@@ -322,8 +318,7 @@ is the cost that grows. It also always answers over SSE. Ours is about 300 lines
   `--check`, read the diff, and fix the handler if a schema changed.
 - `node crates/conn-mcp/tools/parity.mjs [--model] target/debug/examples/replay_server`:
   both servers on throwaway state (the T3 server gets a temp `T3CODE_HOME` and a free port),
-  same inputs, outcomes and result shapes compared. By default it calls no model: it skips the thread launch
-  and every step on that thread. `--model` runs them too, with one Haiku turn on the T3 server.
+  same inputs, outcomes and result shapes compared. By default it calls no model. Calling-thread proofs use the existing Claude CLI stand-in on T3 and the fake provider here; both use temporary homes. `--model` runs them too, with one Haiku turn on the T3 server.
 - The tools read the Conn monorepo two levels above `apps/conn-server`
   (`tools/monorepo.mjs`). Run them from `apps/conn-server`.
 
@@ -352,22 +347,12 @@ clients and checks that the caller still owns a live run. Plan mode may pass inl
 only full-access threads may pass a file path. The files service prepares the page and saves
 its attachment. The result is the normal client render reference and T3's success message.
 No preview capability is advertised. `html_preview` and the browser tools remain unserved.
-The implementation omits optional browser-measured heights and provider-result recovery;
-see [HTML publication parity](../conn-files/HTML-PORTING.md).
-## Secret requests
 
-`request_secret` acts as the calling thread and stays hidden from outside clients. It records
-a secret card through `Engine::record_secret_request`, waits on committed thread changes and
-returns a one-use ref, an owner-only file path or T3's unsaved note. Values stay in
-`conn_features::secrets::SecretRequests`, beside settings secrets. This server does not
-advertise secret-provider reference answers. `schedule_task` consumes refs for webhook signing
-in the task's project, once only; an idempotent retry keeps the stored signing secret.
-`panel_open` shows all five panel kinds through
-the connected desktop and stays hidden from outside clients. Browser URLs and tab ids fail
-with `capability_denied`: they need the unimplemented desktop preview relay and current-tab
-pinning. No browser capability is advertised and no hidden browser is started.
+## Secret requests and panels
 
-`secret_*` Rust tests prove active-run ownership, save, decline, timeout, Stop, aborted calls,
-one-use project scope, persistence and file retries. `parity.mjs` checks outside callers get
-the same hidden-tool result on both servers. The `url` dependency is already linked through
-source control; it validates the tool's http(s) URL input without a second parser.
+Secret-provider reference answers are not advertised. Browser URLs and tab ids fail with
+`capability_denied`: they need the desktop preview relay and current-tab pinning, which are
+not served. [conn-features](../conn-features/README.md#secret-requests-and-panels) lists the
+secret and panel bounds that differ from T3.
+`mcp_call` and `mcp_connect` go through the same panel broker, with T3's 90-second action
+timeout.

@@ -6,7 +6,8 @@ it with every merged step.
 
 Since 2026-11-15 the Conn Server lives in the Conn monorepo, in `apps/conn-server`. Nothing in
 Conn depends on it. Since 2026-11-16 one Orbit Project runs it in its new containers (see
-"Released and running in Orbit"); no desktop or mobile client uses it.
+"Released and running in Orbit"); the web and iOS clients were tested against it in a VM
+(see "Client parity, wave 1").
 
 ## Released and running in Orbit (2026-11-16)
 
@@ -23,6 +24,42 @@ Conn depends on it. Since 2026-11-16 one Orbit Project runs it in its new contai
 - **Live proof** (Nick chose Project 20, `nckrtl`): its clone `conn-trial` (Instance 3418 on
   Beast) runs `conn-server` 0.1.0 as `t3.service`. One Haiku turn through Orbit's
   `thread start --wait` completed, with the SDK host on the container's Node 24.22.1.
+
+## Client parity, wave 1 (2026-11-16)
+
+Codex builds each slice; an independent Gemini review checks it; findings go back to the
+builder with a test that fails without the fix.
+
+- **Thread handoff** (PR #103): `t3_attachment_prepare_upload`, `t3_attachment_discard`,
+  `t3_thread_send_attachments`, `create_threads`, `t3_worktree_list`, `t3_worktree_handoff`.
+  `tools/check.sh` 44/44; the live comparison calls all seven tools on both servers with no
+  difference. Known differences: pending upload owners cap at 4,096 and concurrent handoffs
+  at 256; a sent upload frees its owner slot, so a later discard of it is refused (T3 keeps
+  the owner until discard or expiry).
+- **Secrets and panels** (PR #100): `secrets.answerRequest`, `panels.requests`,
+  `panels.respond`, `request_secret`, `panel_open`. Secret values stay out of events and
+  projections; a saved `secretRef` signs scheduled webhooks (project scope, one use).
+  `tools/check.sh` 44/44. Known differences: browser URL/tab automation answers
+  `capability_denied` (no desktop preview manager); secret-provider answers are not
+  advertised; the panel RPCs are mounted here, while T3 leaves them unmounted.
+- **GitHub only** (PR #104): source control serves GitHub alone, as Nick scoped it on
+  2026-11-16. GitLab, Forgejo, Bitbucket, Azure DevOps and the others are gone (8,225 lines);
+  their remotes take T3's unknown-host path, and saved settings keep only `github` in
+  `sourceControlHosts` and `offeredSourceControlProviders`. `registry-diff` (8,901 cases)
+  compares against T3's registry with GitHub alone. `tools/check.sh` 44/44. The canary still
+  trips on the other hosts' CLIs and tokens, since the diff checks start the full T3 server.
+- **MCP Apps** (PR #102): `mcpApps.*` and the desktop tools `mcp_call` / `mcp_connect`
+  through #100's panel broker. Claude reads its App capabilities from `system/init`; forged
+  `t3McpApp` results are stripped on every `mcp__*` result; failed Codex captures keep
+  `isError`. Known differences: bounds on App context (256 entries per conversation, 16,384
+  fork ancestors), SDK host replies (1,024) and native App calls (32 per query); capture waits
+  at most 20 s per session.
+- **Cleanup** (PR #110): one root fix for the stub ETXTBSY race; thread launch uses
+  `fetch_base`; pull requests run the Conn Server checks on the same paths as pushes; trims
+  from a retrospective review of #96-#103.
+- **Clients** (VMPal macOS VM, Conn `c969c3ebd1`): the web client (through a host T3 as a
+  remote environment) and the iOS dev client in a simulator (paired straight to the Conn
+  Server) each ran a Haiku turn against the Conn Server on macOS.
 
 ## Followed to Conn `a7755b30bd` (the 2026-11-16 sync)
 

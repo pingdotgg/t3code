@@ -6,14 +6,13 @@ it fails a check. No step calls a model.
 
 ## When the checks run
 
-- `.github/workflows/conn-server-ci.yml` (format, clippy, tests, cargo-deny, the musl build)
-  runs on pull requests and pushes to `main` that change `apps/conn-server`.
-- `.github/workflows/conn-server-checks.yml` (`tools/check.sh`, every check against the
-  monorepo) runs on pull requests and pushes to `main` that change `apps/conn-server` or
-  `packages/contracts`.
-- `conn-server-ci.yml` also runs on pushes to `sync/*` branches, and `conn-server-checks.yml`
-  runs there when the sync changes `apps/conn-server`, `packages/contracts` or
-  `apps/server`. The nightly sync waits for both before it merges.
+Both workflows use the same paths for pull requests and pushes to `main` or `sync/**`:
+
+- `conn-server-ci.yml` (Rust checks and musl build): `apps/conn-server/**` and its workflow.
+- `conn-server-checks.yml` (`tools/check.sh`, including monorepo comparisons):
+  `apps/conn-server/**`, `apps/server/**`, `apps/web/**`, `packages/**` and its workflow.
+
+The nightly sync waits for the workflows triggered by its changes before it merges.
 
 ## In the nightly sync
 
@@ -31,6 +30,11 @@ On the `sync/*` branch, after the upstream merge:
 4. An in-scope change that cannot be ported that night becomes a known difference with its
    reason, in the check's known list and in `docs/status.md`.
 5. Commit on the sync branch, and let both workflows pass before the merge.
+
+Source-control parity follows only GitHub and the core registry's unknown-host fallback
+(`FORK.md`, "Upstream scope"). `registry-diff` constructs T3's registry with its GitHub
+definition alone; it does not import or harvest other hosts. The followed files include
+source-control core and GitHub, but no other host packages.
 
 ## The tools
 

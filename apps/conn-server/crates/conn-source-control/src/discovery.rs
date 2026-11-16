@@ -346,31 +346,6 @@ pub fn first_safe_auth_line(text: &str) -> Option<String> {
     sanitized_auth_lines(text).next().map(str::to_owned)
 }
 
-/// `parseCliHost`: the first sanitized line that, without leading symbols, is a host name.
-pub fn parse_cli_host(text: &str) -> Option<String> {
-    sanitized_auth_lines(text)
-        .map(|l| l.trim_start_matches(|c: char| !c.is_ascii_alphanumeric()))
-        .find(|l| is_host_text(l))
-        .map(str::to_owned)
-}
-
-/// `/^[a-z0-9][a-z0-9.-]*(?::\d+)?$/iu`.
-fn is_host_text(line: &str) -> bool {
-    let (name, port) = match line.split_once(':') {
-        Some((name, port)) => (name, Some(port)),
-        None => (line, None),
-    };
-    let name_ok = name
-        .chars()
-        .next()
-        .is_some_and(|c| c.is_ascii_alphanumeric())
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
-    let port_ok = port.is_none_or(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
-    name_ok && port_ok
-}
-
 /// A `cli` discovery spec.
 #[derive(Clone, Debug)]
 pub struct CliSpec {
@@ -379,7 +354,6 @@ pub struct CliSpec {
     pub executable: &'static str,
     pub version_args: &'static [&'static str],
     pub auth_args: Vec<String>,
-    pub auth_retry_args: Option<Vec<String>>,
     pub probe_timeout: Duration,
     pub install_hint: &'static str,
 }
@@ -447,20 +421,7 @@ pub async fn probe_cli(
             }
         }
     };
-    let auth = async {
-        let first = run_auth(spec.auth_args.clone()).await;
-        match &spec.auth_retry_args {
-            Some(retry) if first.status == ServerProviderAuthStatus::Unauthenticated => {
-                let again = run_auth(retry.clone()).await;
-                if again.status == ServerProviderAuthStatus::Authenticated {
-                    again
-                } else {
-                    first
-                }
-            }
-            _ => first,
-        }
-    };
+    let auth = run_auth(spec.auth_args.clone());
     let (version, auth) = tokio::join!(version, auth);
     match version {
         Ok(output) => SourceControlProviderDiscoveryItem {
@@ -542,7 +503,7 @@ pub(crate) mod stub {
     //! A stub executable that records its argv and chosen environment variables, and answers
     //! from a script keyed on its arguments.
 
-    use std::{os::unix::fs::PermissionsExt, path::PathBuf};
+    use std::path::PathBuf;
 
     #[derive(Debug)]
     pub(crate) struct StubDir {
@@ -581,9 +542,7 @@ pub(crate) mod stub {
                 "#!/bin/sh\nrec='argv'\nfor a in \"$@\"; do\n  case \"$a\" in\n    ''|*' '*|*'\t'*|*\"'\"*|*'\"'*|*'\\'*|*'\n'*) {quote_arg} ;;\n    *) rec=\"$rec $a\" ;;\n  esac\ndone\nrec=\"$rec\n{env_lines}\"\nprintf '%s' \"$rec\" >> {log}\n{body}\n",
                 log = Self::sh_quote(&log.to_string_lossy())
             );
-            std::fs::write(&path, script).expect("write stub");
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-                .expect("chmod stub");
+            conn_support::test_util::executable(&path, &script).expect("write stub");
             path.to_string_lossy().into_owned()
         }
 
@@ -631,10 +590,7 @@ mod tests {
     fn stub_logs_quote_ambiguous_arguments() {
         let stubs = stub::StubDir::new("it's");
         let path = stubs.executable("tool", &[], "exit 0");
-        // Through `sh`, not exec: on Linux, exec of a file another test thread's fork still
-        // holds open for writing fails with ETXTBSY ("Text file busy").
-        let status = std::process::Command::new("/bin/sh")
-            .arg(&path)
+        let status = std::process::Command::new(&path)
             .args([
                 "plain",
                 "--x=1",
@@ -663,11 +619,6 @@ mod tests {
             "token lines are never shown"
         );
         assert_eq!(
-            parse_cli_host("✓ Logged in\n  ✓ gitlab.example.com:8443\n").as_deref(),
-            Some("gitlab.example.com:8443"),
-            "a host line after symbols"
-        );
-        assert_eq!(
             first_non_empty_line("\n\u{1b}[1mgh version 2.81.0\u{1b}[0m (2025)\n").as_deref(),
             Some("gh version 2.81.0 (2025)"),
             "escapes stripped"
@@ -687,7 +638,6 @@ mod tests {
             executable,
             version_args: &["--version"],
             auth_args: vec!["auth".into(), "status".into()],
-            auth_retry_args: None,
             probe_timeout: DEFAULT_PROBE_TIMEOUT,
             install_hint: "Install alpha.",
         }

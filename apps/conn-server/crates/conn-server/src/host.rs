@@ -100,6 +100,31 @@ impl EngineHost for Host {
         }
     }
 
+    fn snapshot_mcp_app(
+        &self,
+        thread: String,
+        source: conn_provider::mcp_apps::Source,
+        contents: Value,
+    ) -> BoxFuture<'_, Result<Option<Value>, String>> {
+        let files = self.files.clone();
+        Box::pin(async move {
+            let Some(files) = files else {
+                return Ok(None);
+            };
+            tokio::task::spawn_blocking(move || {
+                files.attachments.snapshot_mcp_app(
+                    &thread,
+                    &source.server,
+                    &source.tool,
+                    &source.resource_uri,
+                    &contents,
+                )
+            })
+            .await
+            .map_err(|e| e.to_string())?
+        })
+    }
+
     fn claim_attachments(
         &self,
         thread_id: String,
@@ -112,17 +137,10 @@ impl EngineHost for Host {
             };
             let list: Vec<ChatAttachment> = from_json(attachments).map_err(|e| e.to_string())?;
             tokio::task::spawn_blocking(move || {
-                let mut claimed = Vec::with_capacity(list.len());
-                for attachment in &list {
-                    match files.attachments.claim(&thread_id, attachment) {
-                        Ok(kept) => claimed.push(kept),
-                        Err(reason) => {
-                            files.attachments.release(&claimed);
-                            return Err(reason);
-                        }
-                    }
-                }
-                Ok(to_json(&claimed))
+                files
+                    .attachments
+                    .claim_all(&thread_id, &list)
+                    .map(|claimed| to_json(&claimed))
             })
             .await
             .map_err(|e| e.to_string())?
@@ -168,6 +186,26 @@ impl EngineHost for Host {
                 path: made.path.to_string_lossy().into_owned(),
                 branch: made.branch,
             })
+        })
+    }
+
+    fn cleanup_html_attachments(&self, ids: Vec<(String, String)>) -> BoxFuture<'_, ()> {
+        let files = self.files.clone();
+        Box::pin(async move {
+            let Some(files) = files else {
+                return;
+            };
+            let result = tokio::task::spawn_blocking(move || {
+                for (owner, id) in ids {
+                    if let Err(error) = conn_files::html::cleanup(&files, &owner, &id) {
+                        eprintln!("HTML attachment cleanup: {error}");
+                    }
+                }
+            })
+            .await;
+            if let Err(error) = result {
+                eprintln!("HTML attachment cleanup: {error}");
+            }
         })
     }
 

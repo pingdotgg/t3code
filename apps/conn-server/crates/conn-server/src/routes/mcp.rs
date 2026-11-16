@@ -13,7 +13,7 @@ use std::sync::Arc;
 use axum::{
     Router,
     body::{Body, Bytes},
-    extract::State,
+    extract::{DefaultBodyLimit, State},
     http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     response::{IntoResponse, Response},
     routing::any,
@@ -24,7 +24,10 @@ use serde_json::json;
 use crate::{AppState, methods::Deps};
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/mcp", any(mcp))
+    Router::new().route(
+        "/mcp",
+        any(mcp).layer(DefaultBodyLimit::max(conn_mcp::MAX_MCP_BODY_BYTES)),
+    )
 }
 
 /// The service for these deps, or `None` without an engine and environment.
@@ -33,9 +36,24 @@ pub fn service(deps: &Deps) -> Option<Arc<McpService>> {
     let environment = deps.environment.clone()?;
     let descriptor = &environment.descriptor;
     let providers = deps.providers.clone();
+    let defaults = environment.clone();
+    let directory = environment.clone();
+    let refresh_deps = deps.clone();
     Some(McpService::new(McpConfig {
         preview: deps.preview.clone(),
-        html_preview: deps.html_preview.clone(),
+        refresh_provider: Some(Arc::new(move |id| {
+            let deps = refresh_deps.clone();
+            Box::pin(async move {
+                crate::methods::provider::refresh(&deps, Some(&id)).await;
+            })
+        })),
+        files: deps.files.clone(),
+        worktrees: Some(conn_mcp::WorktreeConfig {
+            directory: Arc::new(move || crate::host::worktrees_dir(&directory)),
+            settings: Arc::new(move || serde_json::Value::Object(defaults.settings.raw())),
+            terminals: deps.terminals.clone(),
+            hub: deps.vcs.hub.clone(),
+        }),
         engine,
         environment_id: environment.environment_id().to_owned(),
         label: descriptor["label"].as_str().unwrap_or_default().to_owned(),
@@ -57,7 +75,6 @@ pub fn service(deps: &Deps) -> Option<Arc<McpService>> {
         hosted_app_url: conn_mcp::DEFAULT_HOSTED_APP_URL.to_owned(),
         scheduled_tasks: deps.scheduled_tasks.clone(),
         annotations: deps.annotations.clone(),
-        files: deps.files.clone(),
         secrets: deps.secrets.clone(),
         panels: deps.panels.clone(),
     }))

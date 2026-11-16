@@ -2,6 +2,7 @@
 use crate::AppState;
 use axum::{
     Router,
+    body::Bytes,
     extract::{
         Query, State, WebSocketUpgrade,
         ws::{CloseFrame, Message, WebSocket},
@@ -107,8 +108,8 @@ async fn drive(mut socket: WebSocket, mut viewer: Viewer) {
     {
         return;
     }
-    let mut in_flight = false;
-    let mut pending = None;
+    let mut in_flight: Option<conn_preview::tabs::ViewerFrame> = None;
+    let mut pending: Option<conn_preview::tabs::ViewerFrame> = None;
     loop {
         tokio::select! {
            message=socket.recv()=>{
@@ -116,14 +117,21 @@ async fn drive(mut socket: WebSocket, mut viewer: Viewer) {
                let text=match message{Message::Text(text)=>text.as_bytes().to_vec(),Message::Binary(bytes)=>bytes.to_vec(),Message::Close(_)=>break,_=>continue};
                let Ok(message)=serde_json::from_slice::<Value>(&text)else{continue;};
                if message.get("type").and_then(Value::as_str)==Some("ack"){
-                   in_flight=false;if let Some(frame)=pending.take(){if !send(&mut socket,Message::Binary(frame)).await{break;}in_flight=true;}
+                   if let Some(frame)=in_flight.take(){frame.release();}
+                   if let Some(frame)=pending.take(){if !send(&mut socket,Message::Binary(Bytes::from_owner(frame.data.clone()))).await{break;}in_flight=Some(frame);}
                }else{let _=viewer.input(message).await;}
            },
            output=viewer.next()=>match output{
-               Ok(ViewerOutput::Frame(frame))=>{if in_flight{pending=Some(frame.into());}else{if !send(&mut socket,Message::Binary(frame.into())).await{break;}in_flight=true;}},
+               Ok(ViewerOutput::Frame(frame))=>{if in_flight.is_some(){if let Some(old)=pending.replace(frame){old.release();}}else{if !send(&mut socket,Message::Binary(Bytes::from_owner(frame.data.clone()))).await{break;}in_flight=Some(frame);}},
                Ok(ViewerOutput::Message(message))=>if !send(&mut socket,Message::Text(message.to_string().into())).await{break;},
                _=>{let _=send(&mut socket,Message::Close(Some(CloseFrame{code:4404,reason:"tab closed".into()}))).await;break;}
            }
         }
+    }
+    if let Some(frame) = in_flight {
+        frame.release();
+    }
+    if let Some(frame) = pending {
+        frame.release();
     }
 }

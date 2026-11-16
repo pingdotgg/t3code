@@ -316,7 +316,7 @@ async fn start_in(
     )
     .await?;
     let (mut frames, cdp, encoding, source) = (
-        browser.frames(),
+        browser.frames(&session)?,
         browser.clone(),
         encoder.clone(),
         session.clone(),
@@ -337,9 +337,8 @@ async fn start_in(
                 _=&mut stopped=>break,
                 ()=&mut deadline=>{let _=cdp.send("Page.stopScreencast",json!({}),Some(&source)).await;let _=eval(&cdp,&encoding,"globalThis.__t3Recorder.stop()").await;break;},
                 frame=frames.recv()=>{
-                    let mut frame=match frame{Ok(frame)=>frame,Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>continue,Err(_)=>break};
-                    while let Ok(newer)=frames.try_recv(){if newer.get("sessionId").and_then(Value::as_str)==Some(&source){frame=newer;}}
-                    if frame.get("sessionId").and_then(Value::as_str)!=Some(&source){continue;}
+                    let Some(frame)=frame else {break;};
+                    let _=cdp.send("Page.screencastFrameAck", json!({"sessionId":frame.pointer("/params/sessionId")}), Some(&source)).await;
                     if let Some(data)=frame.pointer("/params/data").and_then(Value::as_str){let accepted=eval(&cdp,&encoding,&format!("globalThis.__t3Recorder.frame({},{width})",json!(data))).await;if accepted.as_ref().ok().and_then(Value::as_bool)==Some(false){let _=cdp.send("Page.stopScreencast",json!({}),Some(&source)).await;break;}}
                 }
             }

@@ -13,42 +13,53 @@ use std::{
 use tokio::sync::{Semaphore, watch};
 
 /// At most two captures, as in T3. No browser stays alive after a capture.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct HtmlPreview {
     installer: Arc<Installer>,
-    slots: Semaphore,
+    slots: Arc<Semaphore>,
 }
 impl HtmlPreview {
     pub fn new(base: PathBuf) -> Self {
         Self {
             installer: Arc::new(Installer::new(base)),
-            slots: Semaphore::new(2),
+            slots: Arc::new(Semaphore::new(2)),
         }
     }
     pub fn with_installer(installer: Arc<Installer>) -> Self {
         Self {
             installer,
-            slots: Semaphore::new(2),
+            slots: Arc::new(Semaphore::new(2)),
         }
+    }
+    pub fn reserve(&self) -> Result<tokio::sync::OwnedSemaphorePermit, Error> {
+        self.slots.clone().try_acquire_owned().map_err(|_| {
+            Error("Headless Chrome could not render the page: the preview queue is full.".into())
+        })
     }
     pub async fn capture(
         &self,
+        slot: tokio::sync::OwnedSemaphorePermit,
         html: String,
         width: Option<u64>,
         appearance: &str,
     ) -> Result<Value, Error> {
-        let _slot = self.slots.try_acquire().map_err(|_| {
-            Error("Headless Chrome could not render the page: the preview queue is full.".into())
-        })?;
-        let executable = self.installer.executable().await?;
-        self.capture_with(
-            executable,
-            html,
-            width,
-            appearance,
-            std::env::var("T3CODE_SERVER_BROWSER_SANDBOX").as_deref() == Ok("0"),
-        )
+        let preview = self.clone();
+        let appearance = appearance.to_owned();
+        tokio::spawn(async move {
+            let _slot = slot;
+            let executable = preview.installer.executable().await?;
+            preview
+                .capture_with(
+                    executable,
+                    html,
+                    width,
+                    &appearance,
+                    std::env::var("T3CODE_SERVER_BROWSER_SANDBOX").as_deref() == Ok("0"),
+                )
+                .await
+        })
         .await
+        .map_err(crate::err)?
     }
     /// Runs a capture on an explicitly supplied fixture browser, without installation or host discovery.
     pub async fn capture_with(
@@ -59,28 +70,38 @@ impl HtmlPreview {
         appearance: &str,
         no_sandbox: bool,
     ) -> Result<Value, Error> {
+        self.capture_with_timeout(
+            executable,
+            html,
+            width,
+            appearance,
+            no_sandbox,
+            Duration::from_secs(20),
+        )
+        .await
+    }
+    async fn capture_with_timeout(
+        &self,
+        executable: PathBuf,
+        html: String,
+        width: Option<u64>,
+        appearance: &str,
+        no_sandbox: bool,
+        timeout: Duration,
+    ) -> Result<Value, Error> {
         let spec = spec()?;
         let width = width.unwrap_or(spec.html.default_width).clamp(240, 1600);
-        let fragment = spec
-            .html
-            .fragments
-            .get(appearance)
-            .ok_or_else(|| Error("Unknown HTML appearance.".into()))?
-            .clone();
         let directory =
             std::env::temp_dir().join(format!("t3-html-preview-{}", conn_support::uuid_v4()));
         tokio::fs::create_dir(&directory)
             .await
             .map_err(crate::err)?;
-        let result = tokio::time::timeout(
-            Duration::from_secs(20),
-            capture(
-                executable, html, width, appearance, &fragment, &directory, no_sandbox,
-            ),
+        let result = capture(
+            executable, html, width, appearance, &directory, no_sandbox, timeout,
         )
         .await;
         let _ = tokio::fs::remove_dir_all(directory).await;
-        result.unwrap_or_else(|_|Err(Error("Headless Chrome could not render the page: the page did not finish loading within 20 seconds.".into())))
+        result
     }
 }
 
@@ -89,10 +110,16 @@ async fn capture(
     html: String,
     width: u64,
     appearance: &str,
-    fragment: &str,
     directory: &std::path::Path,
     no_sandbox: bool,
+    timeout: Duration,
 ) -> Result<Value, Error> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    let fragment = spec()?
+        .html
+        .fragments
+        .get(appearance)
+        .ok_or_else(|| Error("Unknown HTML appearance.".into()))?;
     let proxy = Proxy::start().await?;
     let mut args = vec![
         "--headless=new".into(),
@@ -115,13 +142,28 @@ async fn capture(
         directory.join("profile").display()
     ));
     args.push("about:blank".into());
-    let browser = Browser::launch(Launch {
-        executable,
-        args,
-        directory: directory.to_path_buf(),
-    })
-    .await?;
-    let mut result = render(&browser, html, width, appearance, fragment).await;
+    let browser = Browser::launch_with_timeout(
+        Launch {
+            executable,
+            args,
+            directory: directory.to_path_buf(),
+        },
+        deadline.saturating_duration_since(tokio::time::Instant::now()),
+    )
+    .await
+    .map_err(|error| {
+        if error.0 == "The browser command timed out." {
+            capture_timeout()
+        } else {
+            error
+        }
+    })?;
+    let mut result = tokio::time::timeout_at(
+        deadline,
+        render(&browser, html, width, appearance, fragment),
+    )
+    .await
+    .unwrap_or_else(|_| Err(capture_timeout()));
     if let Ok(result) = &mut result
         && let Some(messages) = result
             .get_mut("consoleMessages")
@@ -133,11 +175,15 @@ async fn capture(
     browser.close().await;
     if result.is_err() && stderr.contains("No usable sandbox") {
         if rustix::process::getuid().is_root() {
-            return Err(Error(spec()?.root_error));
+            return Err(Error(spec()?.root_error.clone()));
         }
         return Err(Error("This host blocks the sandbox T3's browser runs in (AppArmor on Ubuntu 23.10+). Run `t3 browser setup` on the host once to allow it, then try again.".into()));
     }
     result
+}
+
+fn capture_timeout() -> Error {
+    Error("Headless Chrome could not render the page: the page did not finish loading within 20 seconds.".into())
 }
 
 #[derive(Default, Debug)]
@@ -160,6 +206,7 @@ async fn render(
         .get("browserContextId")
         .and_then(Value::as_str)
         .ok_or_else(|| Error("Chrome returned no context.".into()))?;
+    browser.deny_downloads(Some(context)).await?;
     let target = browser
         .send(
             "Target.createTarget",
@@ -366,15 +413,50 @@ pub(crate) fn console_message(method: &str, params: &Value) -> Option<Value> {
         _ => return None,
     };
     let text = text.replace("http://t3-page.localhost/page.html", "page.html");
-    let mut length = 0;
-    let mut clipped = String::new();
-    for c in text.chars() {
-        length += c.len_utf16();
-        if length > 500 {
-            clipped.push('…');
-            break;
-        }
-        clipped.push(c);
-    }
+    let prefix = conn_support::text::utf16_prefix(&text, 500);
+    let clipped = if prefix.len() < text.len() {
+        format!("{prefix}…")
+    } else {
+        text
+    };
     Some(json!({"level":level,"text":clipped}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_capture_timeout_waits_for_chrome_to_die_before_returning() {
+        use std::os::unix::fs::PermissionsExt;
+        let root =
+            std::env::temp_dir().join(format!("conn-html-timeout-{}", conn_support::uuid_v4()));
+        tokio::fs::create_dir(&root).await.unwrap();
+        let pid_file = root.join("pid");
+        let script = format!(
+            "#!/usr/bin/python3\nimport os,json,signal\nopen({},'w').write(str(os.getpid()))\nr=os.fdopen(3,'rb',buffering=0);w=os.fdopen(4,'wb',buffering=0)\nwhile True:\n data=bytearray()\n while True:\n  c=r.read(1)\n  if not c: signal.pause()\n  if c==b'\\0': break\n  data.extend(c)\n q=json.loads(data)\n if q['method']=='Browser.getVersion': w.write(json.dumps({{'id':q['id'],'result':{{}}}}).encode()+b'\\0')\n",
+            serde_json::to_string(&pid_file).unwrap()
+        );
+        let executable = root.join("chrome");
+        tokio::fs::write(&executable, script).await.unwrap();
+        tokio::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
+            .await
+            .unwrap();
+        let preview = HtmlPreview::new(root.clone());
+        let error = preview
+            .capture_with_timeout(
+                executable,
+                "<p>Fixture</p>".into(),
+                None,
+                "dark",
+                false,
+                Duration::from_secs(1),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.0.contains("did not finish loading"));
+        let pid = tokio::fs::read_to_string(pid_file).await.unwrap();
+        assert!(!tokio::fs::try_exists(format!("/proc/{pid}")).await.unwrap());
+        tokio::fs::remove_dir_all(root).await.unwrap();
+    }
 }

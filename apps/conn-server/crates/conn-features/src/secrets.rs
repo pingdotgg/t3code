@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, OnceLock},
+    sync::Arc,
     time::Duration,
 };
 use tokio::sync::{Mutex, Semaphore};
@@ -64,7 +64,6 @@ struct Inner {
     clock: Arc<dyn Clock>,
     lock: Mutex<()>,
     waits: Arc<Semaphore>,
-    cleanup: OnceLock<tokio::task::AbortHandle>,
 }
 
 #[derive(Clone)]
@@ -86,11 +85,10 @@ impl SecretRequests {
             clock,
             lock: Mutex::new(()),
             waits: Arc::new(Semaphore::new(MAX_REQUESTS)),
-            cleanup: OnceLock::new(),
         }));
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             let weak = Arc::downgrade(&service.0);
-            let task = runtime.spawn(async move {
+            runtime.spawn(async move {
                 loop {
                     let Some(inner) = weak.upgrade() else {
                         return;
@@ -101,7 +99,6 @@ impl SecretRequests {
                     tokio::time::sleep(Duration::from_secs(60 * 60)).await;
                 }
             });
-            let _ = service.0.cleanup.set(task.abort_handle());
         }
         service
     }
@@ -135,12 +132,7 @@ impl SecretRequests {
 
     pub async fn answer(&self, input: SecretRequestAnswerInput) -> Result<(), SecretError> {
         let records = self.projection(&input.thread_id).await?;
-        let item = records
-            .get("turnItems")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .find(|i| i.get("id").and_then(Value::as_str) == Some(&input.turn_item_id));
+        let item = turn_item(&records, &input.turn_item_id);
         let Some(item) = item.filter(|i| {
             i.get("type").and_then(Value::as_str) == Some("secret_request")
                 && i.get("runId").is_some_and(Value::is_string)
@@ -151,12 +143,10 @@ impl SecretRequests {
         if item.get("secretStatus").and_then(Value::as_str) != Some("pending") {
             return Err(SecretError("already_answered"));
         }
-        let run = records
-            .get("runs")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .find(|r| r.get("id") == item.get("runId"));
+        let run = item
+            .get("runId")
+            .and_then(Value::as_str)
+            .and_then(|id| run(&records, id));
         if run.is_none_or(|r| terminal(r.get("status").and_then(Value::as_str))) {
             return Err(SecretError("agent_stopped"));
         }
@@ -220,12 +210,7 @@ impl SecretRequests {
         }
         if saved {
             let current = self.projection(&input.thread_id).await?;
-            let recorded = current
-                .get("turnItems")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .find(|i| i.get("id").and_then(Value::as_str) == Some(&input.turn_item_id));
+            let recorded = turn_item(&current, &input.turn_item_id);
             if recorded
                 .is_some_and(|i| i.get("secretStatus").and_then(Value::as_str) != Some("saved"))
             {
@@ -276,12 +261,7 @@ impl SecretRequests {
 
     pub async fn save_to_file(&self, thread: &str, item: &str) -> Result<String, SecretError> {
         let records = self.projection(thread).await?;
-        let card = records
-            .get("turnItems")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .find(|i| i.get("id").and_then(Value::as_str) == Some(item));
+        let card = turn_item(&records, item);
         if !card.is_some_and(|i| {
             i.get("type").and_then(Value::as_str) == Some("secret_request")
                 && i.get("secretStatus").and_then(Value::as_str) == Some("saved")
@@ -332,6 +312,22 @@ impl SecretRequests {
         })
         .await
     }
+}
+
+pub fn turn_item<'a>(projection: &'a Value, id: &str) -> Option<&'a Value> {
+    projection
+        .get("turnItems")?
+        .as_array()?
+        .iter()
+        .find(|item| item.get("id").and_then(Value::as_str) == Some(id))
+}
+
+pub fn run<'a>(projection: &'a Value, id: &str) -> Option<&'a Value> {
+    projection
+        .get("runs")?
+        .as_array()?
+        .iter()
+        .find(|run| run.get("id").and_then(Value::as_str) == Some(id))
 }
 
 pub fn terminal(status: Option<&str>) -> bool {
@@ -387,14 +383,17 @@ fn ref_for(dir: &Path, thread: &str, item: &str) -> Result<String, SecretError> 
     ))
 }
 
+fn is_ref_id(id: &str) -> bool {
+    id.len() == 32
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 fn suffix(reference: &str) -> Result<&str, SecretError> {
     reference
         .strip_prefix("secret-ref:")
-        .filter(|s| {
-            s.len() == 32
-                && s.bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        })
+        .filter(|s| is_ref_id(s))
         .ok_or(SecretError("invalid_ref"))
 }
 fn store_name(reference: &str) -> String {
@@ -424,22 +423,11 @@ fn read_ref(dir: &Path, reference: &str, project: &str, now: i64) -> Result<Stri
     Ok(stored.value)
 }
 fn write_file(dir: &Path, file: &Path, value: &str) -> Result<(), SecretError> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
     let files = dir.join("files");
     secret_store::ensure_dir(&files).map_err(|_| SecretError("store_failed"))?;
     let partial = file.with_extension("partial");
     let _ = std::fs::remove_file(&partial);
-    let result = (|| {
-        let mut output = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&partial)?;
-        output.write_all(value.as_bytes())?;
-        output.sync_all()?;
-        std::fs::rename(&partial, file)
-    })();
+    let result = conn_support::fs::write_atomic_to(&partial, file, value.as_bytes(), 0o600);
     if result.is_err() {
         let _ = std::fs::remove_file(&partial);
     }
@@ -477,7 +465,7 @@ fn sweep(dir: &Path, now: i64) -> Result<(), SecretError> {
         if let Some(id) = name
             .strip_prefix("secret-request-")
             .and_then(|s| s.strip_suffix(".bin"))
-            .filter(|s| s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+            .filter(|s| is_ref_id(s))
         {
             let reference = format!("secret-ref:{id}");
             if let Some(bytes) = secret_store::read(dir, &store_name(&reference))
@@ -496,11 +484,7 @@ fn sweep(dir: &Path, now: i64) -> Result<(), SecretError> {
     for entry in entries(&dir.join("files"))? {
         let name = entry.file_name().to_string_lossy().into_owned();
         let suffix = name.strip_suffix(".partial").unwrap_or(&name);
-        if suffix.len() != 32
-            || !suffix
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        {
+        if !is_ref_id(suffix) {
             continue;
         }
         let expired = entry
@@ -517,14 +501,6 @@ fn sweep(dir: &Path, now: i64) -> Result<(), SecretError> {
         }
     }
     Ok(())
-}
-
-impl Drop for Inner {
-    fn drop(&mut self) {
-        if let Some(cleanup) = self.cleanup.get() {
-            cleanup.abort();
-        }
-    }
 }
 
 #[cfg(test)]
@@ -785,6 +761,8 @@ mod tests {
             b"broken record",
         )
         .unwrap();
+        let uppercase = format!("secret-request-{}", "A".repeat(32));
+        secret_store::write(&dir, &uppercase, b"keep").unwrap();
         secret_store::ensure_dir(&dir.join("files")).unwrap();
         fs::write(dir.join("files/unrelated"), b"keep").unwrap();
         sweep(&dir, i64::MAX).unwrap();
@@ -793,6 +771,11 @@ mod tests {
             Some(b"keep".to_vec())
         );
         assert_eq!(fs::read(dir.join("files/unrelated")).unwrap(), b"keep");
+        assert_eq!(
+            secret_store::read(&dir, &uppercase).unwrap(),
+            Some(b"keep".to_vec()),
+            "T3 sweeps lowercase ref ids only"
+        );
         for n in 0..MAX_STORED {
             fs::write(dir.join("files").join(format!("{n:032x}")), b"value").unwrap();
         }
