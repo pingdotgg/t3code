@@ -586,24 +586,41 @@ function isSidebarHiddenThread(thread: Pick<SidebarThreadSummary, "lineage">): b
   return !isListedThreadLineage(thread.lineage);
 }
 
-// Subagent and side-chat threads have no sidebar row, so an open one is represented by
-// its nearest listed ancestor. A broken chain (missing parent, cycle,
-// other environment) resolves to the thread itself, which then matches no row.
-export function resolveSidebarRowThreadId(
-  threadId: ThreadId,
-  environmentId: EnvironmentId,
-  threads: readonly Pick<SidebarThreadSummary, "id" | "environmentId" | "lineage">[],
-): ThreadId {
-  const findThread = (id: ThreadId) =>
-    threads.find((thread) => thread.id === id && thread.environmentId === environmentId);
-  const visited = new Set<ThreadId>();
-  let thread = findThread(threadId);
-  while (thread !== undefined && isSidebarHiddenThread(thread)) {
-    if (thread.lineage.parentThreadId === null || visited.has(thread.id)) return threadId;
-    visited.add(thread.id);
-    thread = findThread(thread.lineage.parentThreadId);
+// Subagents, side chats and tasks delegated from a listed parent have no sidebar row,
+// so an open one is represented by its nearest listed ancestor. A broken chain
+// (missing or archived parent, cycle) resolves to the thread itself, which then matches no row.
+export function resolveSidebarRowThreadRef(
+  ref: ScopedThreadRef,
+  threads: readonly Pick<
+    SidebarThreadSummary,
+    "id" | "environmentId" | "lineage" | "delegatedFrom" | "archivedAt"
+  >[],
+): ScopedThreadRef {
+  const findThread = (target: ScopedThreadRef) =>
+    threads.find(
+      (thread) => thread.id === target.threadId && thread.environmentId === target.environmentId,
+    );
+  const visited = new Set<string>();
+  let current = ref;
+  let thread = findThread(current);
+  while (thread !== undefined) {
+    let parent: ScopedThreadRef;
+    if (isSidebarHiddenThread(thread)) {
+      if (thread.lineage.parentThreadId === null) return ref;
+      parent = scopeThreadRef(thread.environmentId, thread.lineage.parentThreadId);
+    } else if (thread.delegatedFrom != null) {
+      parent = scopeThreadRef(thread.delegatedFrom.environmentId, thread.delegatedFrom.threadId);
+      // Mirrors delegatedUnderParent: a task whose parent is not listed keeps its own row.
+      if (findThread(parent)?.archivedAt !== null) return current;
+    } else {
+      return current;
+    }
+    if (visited.has(scopedThreadKey(current))) return ref;
+    visited.add(scopedThreadKey(current));
+    current = parent;
+    thread = findThread(current);
   }
-  return thread?.id ?? threadId;
+  return ref;
 }
 
 /**

@@ -11,7 +11,7 @@ import {
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
-  resolveSidebarRowThreadId,
+  resolveSidebarRowThreadRef,
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
   resolveSidebarSweepKeys,
@@ -139,6 +139,13 @@ describe("deleteSelectedThreadEntries", () => {
 });
 
 describe("sidebar thread lineage helpers", () => {
+  const ref = (environmentId: EnvironmentId, threadId: ThreadId) => ({ environmentId, threadId });
+  const rowOf = (
+    threadId: ThreadId,
+    environmentId: EnvironmentId,
+    threads: Parameters<typeof resolveSidebarRowThreadRef>[1],
+  ) => resolveSidebarRowThreadRef(ref(environmentId, threadId), threads);
+
   it("maps an open subagent to its nearest visible ancestor's sidebar row", () => {
     const environmentId = EnvironmentId.make("environment-row");
     const otherEnvironmentId = EnvironmentId.make("environment-other");
@@ -169,14 +176,16 @@ describe("sidebar thread lineage helpers", () => {
     const elsewhere = subagentOf("thread-elsewhere", root.id, otherEnvironmentId);
     const threads = [root, fork, child, grandchild, forkChild, orphan, elsewhere];
 
-    expect(resolveSidebarRowThreadId(child.id, environmentId, threads)).toBe(root.id);
-    expect(resolveSidebarRowThreadId(grandchild.id, environmentId, threads)).toBe(root.id);
-    expect(resolveSidebarRowThreadId(forkChild.id, environmentId, threads)).toBe(fork.id);
-    expect(resolveSidebarRowThreadId(elsewhere.id, otherEnvironmentId, threads)).toBe(elsewhere.id);
-    expect(resolveSidebarRowThreadId(orphan.id, environmentId, threads)).toBe(orphan.id);
+    expect(rowOf(child.id, environmentId, threads)).toEqual(ref(environmentId, root.id));
+    expect(rowOf(grandchild.id, environmentId, threads)).toEqual(ref(environmentId, root.id));
+    expect(rowOf(forkChild.id, environmentId, threads)).toEqual(ref(environmentId, fork.id));
+    expect(rowOf(elsewhere.id, otherEnvironmentId, threads)).toEqual(
+      ref(otherEnvironmentId, elsewhere.id),
+    );
+    expect(rowOf(orphan.id, environmentId, threads)).toEqual(ref(environmentId, orphan.id));
     const loopA = subagentOf("thread-loop-a", ThreadId.make("thread-loop-b"));
     const loopB = subagentOf("thread-loop-b", loopA.id);
-    expect(resolveSidebarRowThreadId(loopA.id, environmentId, [loopA, loopB])).toBe(loopA.id);
+    expect(rowOf(loopA.id, environmentId, [loopA, loopB])).toEqual(ref(environmentId, loopA.id));
   });
 
   it("maps an open task a linked environment delegated to its listed parent's row", () => {
@@ -196,7 +205,9 @@ describe("sidebar thread lineage helpers", () => {
       },
     });
 
-    expect(resolveSidebarRowThreadId(task.id, taskEnvironmentId, [parent, task])).toBe(parent.id);
+    expect(rowOf(task.id, taskEnvironmentId, [parent, task])).toEqual(
+      ref(parentEnvironmentId, parent.id),
+    );
   });
 });
 
