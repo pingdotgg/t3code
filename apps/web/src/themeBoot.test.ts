@@ -285,7 +285,7 @@ describe("index.html boot script", () => {
     expect(boot.metaContent).toBe(colors.chrome);
   });
 
-  it("paints a published theme from its stored copy before the server connects", () => {
+  it("paints a published theme from its stored copy, over a saved theme with its id", () => {
     const [published] = publishedThemeDefinitions([
       {
         id: "nightfall",
@@ -300,6 +300,9 @@ describe("index.html boot script", () => {
       storage: {
         [THEME_STORAGE_KEY]: "nightfall",
         [ENVIRONMENT_THEMES_STORAGE_KEY]: JSON.stringify([published]),
+        [CUSTOM_THEMES_STORAGE_KEY]: JSON.stringify([
+          { ...published, colors: { ...published.colors, canvas: "#ff0000" } },
+        ]),
       },
       prefersDark: true,
     });

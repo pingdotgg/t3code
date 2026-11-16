@@ -209,12 +209,12 @@
             return null;
           }
         };
-        // Same precedence as getThemeDefinition: saved custom themes, then published ones.
+        // Same precedence as getThemeDefinition: published themes, then saved custom ones.
         const findCustomTheme = (themeId) => {
           if (RESERVED_THEME_IDS.includes(themeId)) return null;
           return (
-            findStoredTheme(CUSTOM_THEMES_STORAGE_KEY, themeId) ??
-            findStoredTheme(ENVIRONMENT_THEMES_STORAGE_KEY, themeId)
+            findStoredTheme(ENVIRONMENT_THEMES_STORAGE_KEY, themeId) ??
+            findStoredTheme(CUSTOM_THEMES_STORAGE_KEY, themeId)
           );
         };
 

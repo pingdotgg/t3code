@@ -65,15 +65,20 @@ describe("ThemeImportDialog", () => {
   });
 });
 
-const theme = (name: string, accent = "#3b82f6") => ({
+const theme = (name: string, accent = "#3b82f6", css?: string) => ({
   version: THEME_FILE_VERSION,
   name,
   appearance: "dark",
   colors: { accent },
+  ...(css ? { css } : {}),
 });
 
-const themeFile = (name: string, accent?: string) =>
-  new File([JSON.stringify(theme(name, accent))], `${name}.json`, { type: "application/json" });
+const themeFile = (name: string, accent?: string, css?: string) =>
+  new File([JSON.stringify(theme(name, accent, css))], `${name}.json`, {
+    type: "application/json",
+  });
+
+const DUSK_CSS = ".chat-header { height: 3rem; }";
 
 it.each(["Update existing", "Keep both"])(
   "keeps batch failures visible after %s",
@@ -97,7 +102,7 @@ it.each(["Update existing", "Keep both"])(
     const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
     await userEvent.upload(input, [
       themeFile("Dawn"),
-      themeFile("Dusk", "#f97316"),
+      themeFile("Dusk", "#f97316", DUSK_CSS),
       new File(["{"], "broken.json", { type: "application/json" }),
     ]);
 
@@ -107,9 +112,10 @@ it.each(["Update existing", "Keep both"])(
     await page.getByRole("button", { name: choice }).click();
     invalidateCustomThemes();
     const label = choice === "Update existing" ? "Dusk" : "Dusk (1)";
-    expect(getCustomThemes().find((theme) => theme.label === label)?.colors).toEqual(
-      parseThemeFile(theme("Dusk", "#f97316")).colors,
-    );
+    expect(getCustomThemes().find((theme) => theme.label === label)).toMatchObject({
+      colors: parseThemeFile(theme("Dusk", "#f97316")).colors,
+      css: DUSK_CSS,
+    });
     await expect.element(page.getByText(/^broken\.json:/)).toBeVisible();
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
   },

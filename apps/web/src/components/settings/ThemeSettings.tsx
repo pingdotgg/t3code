@@ -704,6 +704,8 @@ export function ThemeLibrary({
 
   const customThemeCollections = [
     ...customThemes
+      // A published theme wins id resolution, so only its card may show for that id.
+      .filter((customTheme) => !environmentThemes.some((theme) => theme.id === customTheme.id))
       .reduce((groups, customTheme) => {
         const groupId = customTheme.collection
           ? `collection:${customTheme.collection.id}`
@@ -761,33 +763,28 @@ export function ThemeLibrary({
             />
           );
         })}
-        {environmentThemes
-          .filter(
-            // Saved themes win id resolution; show only their card to avoid duplicate keys.
-            (environmentTheme) => !customThemes.some((theme) => theme.id === environmentTheme.id),
-          )
-          .map((environmentTheme) => (
-            <ThemeLibraryCard
-              activeModes={pickedModesFor(environmentTheme.id)}
-              isActive={false}
-              key={environmentTheme.id}
-              onDuplicate={() =>
-                openThemeEditor({
-                  editingThemeId: null,
-                  seedThemeId: environmentTheme.id,
-                  seedName: `${environmentTheme.label} copy`,
-                  initialAppearance,
-                })
-              }
-              onUse={() => {
-                const half = singleAppearanceOf(environmentTheme);
-                if (half === null) persistTheme(environmentTheme.id);
-                else assignHalf(half, environmentTheme.id);
-              }}
-              onUseMode={handlePairPick(environmentTheme.id)}
-              theme={getThemeCardDefinition(environmentTheme)}
-            />
-          ))}
+        {environmentThemes.map((environmentTheme) => (
+          <ThemeLibraryCard
+            activeModes={pickedModesFor(environmentTheme.id)}
+            isActive={false}
+            key={environmentTheme.id}
+            onDuplicate={() =>
+              openThemeEditor({
+                editingThemeId: null,
+                seedThemeId: environmentTheme.id,
+                seedName: `${environmentTheme.label} copy`,
+                initialAppearance,
+              })
+            }
+            onUse={() => {
+              const half = singleAppearanceOf(environmentTheme);
+              if (half === null) persistTheme(environmentTheme.id);
+              else assignHalf(half, environmentTheme.id);
+            }}
+            onUseMode={handlePairPick(environmentTheme.id)}
+            theme={getThemeCardDefinition(environmentTheme)}
+          />
+        ))}
         {customThemeCollections.map(([collectionId, themes]) => (
           <CustomThemeCollectionCard
             activeModesFor={pickedModesFor}

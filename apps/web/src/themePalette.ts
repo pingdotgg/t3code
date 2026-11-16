@@ -366,6 +366,11 @@ function getEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
   return appAtomRegistry.get(environmentThemeDefinitionsAtom);
 }
 
+/** A published theme owns its id: it wins resolution over a saved theme with the same id. */
+export function isPublishedThemeId(themeId: string): boolean {
+  return getEnvironmentThemes().some((definition) => definition.id === themeId);
+}
+
 export function isReservedThemeId(themeId: string): boolean {
   return RESERVED_THEME_IDS.has(themeId);
 }
@@ -1225,8 +1230,8 @@ export function getThemeDefinition(theme: ThemePreference): ThemeDefinition | nu
   const themeId = themeIdFromPreference(theme);
   return (
     BUILT_IN_THEME_DEFINITIONS.find((definition) => definition.id === themeId) ??
-    getCustomThemes().find((definition) => definition.id === themeId) ??
     getEnvironmentThemes().find((definition) => definition.id === themeId) ??
+    getCustomThemes().find((definition) => definition.id === themeId) ??
     null
   );
 }
@@ -1360,6 +1365,7 @@ export function installCustomTheme(theme: ThemeDefinition): ThemeDefinition {
   const library = getWritableCustomThemeLibrary();
   if (
     BUILT_IN_THEME_DEFINITIONS.some((existing) => existing.id === theme.id) ||
+    isPublishedThemeId(theme.id) ||
     library.storedThemes.some((storedTheme) => storedThemeHasId(storedTheme, theme.id))
   ) {
     throw new Error(`A theme named "${theme.label}" is already installed.`);
@@ -1424,7 +1430,9 @@ export function replaceCustomThemeCollection(
   ) {
     throw new Error("Your installed themes changed while this package was downloading. Try again.");
   }
-  const occupiedIds = new Set(BUILT_IN_THEME_DEFINITIONS.map((theme) => theme.id));
+  const occupiedIds = new Set(
+    [...BUILT_IN_THEME_DEFINITIONS, ...getEnvironmentThemes()].map((theme) => theme.id),
+  );
   for (const storedTheme of library.storedThemes) {
     if (
       !storedThemeHasCollectionId(storedTheme, collectionId) &&
