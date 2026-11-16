@@ -83,8 +83,8 @@ export const getAppBranding = DesktopIpc.makeSyncIpcMethod({
 
 /**
  * Relay traces leave the machine, so a policy with `telemetry: false`, or one that cannot be read,
- * stops them. Read once here: a sync IPC handler cannot wait on the filesystem. The renderer asks
- * once at startup, so until the login shell's environment (which may opt out) is known, say no.
+ * stops them. Read once here: a sync IPC handler cannot wait on the filesystem. Until the login
+ * shell's environment (which may opt out) is known, answer null so the renderer asks again.
  */
 export const installRelayTelemetryEnabled = Effect.fn("desktop.ipc.window.installRelayTelemetry")(
   function* () {
@@ -98,10 +98,12 @@ export const installRelayTelemetryEnabled = Effect.fn("desktop.ipc.window.instal
     yield* ipc.handleSync(
       DesktopIpc.makeSyncIpcMethod({
         channel: IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL,
-        result: Schema.Boolean,
+        result: Schema.NullOr(Schema.Boolean),
         handler: () =>
           shellEnvironment.discoveryFinished.pipe(
-            Effect.map((known) => known && policyAllows && isRelayTracingEnabled(env)),
+            Effect.map((known) =>
+              !policyAllows || !isRelayTracingEnabled(env) ? false : known ? true : null,
+            ),
           ),
       }),
     );
