@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import { ProviderInstanceId, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 
 import {
   canForkProjectedAssistantItem,
@@ -64,6 +64,20 @@ describe("thread workflows", () => {
       }),
     ).toBe(true);
     expect(threadSupportsProviderHandoff({ ...projection, providerThreads: [] })).toBe(false);
+    // Failover moved the selection to Grok, whose first turn failed on its limit.
+    expect(
+      threadSupportsProviderHandoff({
+        ...projection,
+        thread: {
+          ...projection.thread,
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("grok"),
+            model: "grok-4.7",
+          },
+        },
+        runs: [{ ...projection.runs[0]!, status: "failed" }],
+      }),
+    ).toBe(true);
   });
 
   it("sorts queued messages and gates promotion from capabilities", () => {
