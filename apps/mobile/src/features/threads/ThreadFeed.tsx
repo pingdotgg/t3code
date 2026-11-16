@@ -325,7 +325,7 @@ const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   includeOrderedLists: Platform.OS === "android",
 } as const;
 
-const TURN_FOLD_HEIGHT = 42;
+const TURN_FOLD_HEIGHT = 32;
 const FEED_PADDING_TOP = 12;
 const VIEWED_IMAGE_GAP = 8;
 const USER_BUBBLE_HORIZONTAL_PADDING = 3.5 * 3.5;
@@ -1605,7 +1605,7 @@ function ThreadAutomationMessageRow(props: {
   const summary = taskTitle ?? props.text.trim().split(/\r?\n/, 1)[0] ?? "";
 
   return (
-    <View className="mb-5 items-end">
+    <View className="mb-2 items-end">
       <View
         className="min-w-0 rounded-[20px]"
         style={{
@@ -1709,7 +1709,7 @@ function RunFoldWorking(props: {
   const seconds = Math.floor((nowMs - Date.parse(props.startedAt)) / 1_000);
   return (
     <View
-      className="min-h-11 min-w-0 flex-1 flex-row items-center"
+      className="min-w-0 flex-1 flex-row items-center"
       style={{ minHeight: Math.max(TURN_FOLD_HEIGHT - 3.5, props.rowSizing.estimatedRowHeight) }}
     >
       <Text
@@ -1772,8 +1772,9 @@ function RunFoldButton({
         accessibilityRole="button"
         accessibilityState={{ expanded: entry.expanded, busy: loading }}
         onPress={toggle}
-        hitSlop={4}
-        className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2"
+        // The row is as tall as a work row; the slop keeps a full-size tap target.
+        hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+        className="min-w-0 flex-1 flex-row items-center gap-2"
         style={{ minHeight: Math.max(TURN_FOLD_HEIGHT - 3.5, rowSizing.estimatedRowHeight) }}
       >
         <Text
@@ -1857,7 +1858,6 @@ function renderFeedEntry(
     readonly threadTitle: string;
     readonly workflowOpening: WorkflowOpening | null;
     readonly userMessageGrouping: GroupedThreadFeedRow["userMessageGrouping"];
-    readonly followedByFold: boolean;
   },
 ) {
   const entry = info.item;
@@ -1886,7 +1886,7 @@ function renderFeedEntry(
     return (
       <View className="mb-1 flex-row items-center border-b border-border-subtle px-2">
         <View
-          className="min-h-11 min-w-0 flex-1 flex-row items-center"
+          className="min-w-0 flex-1 flex-row items-center"
           style={{
             minHeight: Math.max(TURN_FOLD_HEIGHT - 3.5, props.workRowSizing.estimatedRowHeight),
           }}
@@ -2220,14 +2220,8 @@ function renderFeedEntry(
           visibleAttachments.length + pendingBubbleAttachments.length > 0);
       return (
         <Animated.View
-          className={cn(
-            "items-end",
-            props.userMessageGrouping.groupedWithNext
-              ? "mb-1"
-              : props.followedByFold
-                ? "mb-0"
-                : "mb-5",
-          )}
+          // A prompt sits close to its own response; the answer's margin separates turns.
+          className={cn("items-end", props.userMessageGrouping.groupedWithNext ? "mb-1" : "mb-2")}
           {...(enterAnimated ? { entering: FadeInDown.duration(220) } : {})}
         >
           {presentation.attribution === "t3code" ? (
@@ -4010,7 +4004,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           ) : null}
           {renderFeedEntry(info, {
             userMessageGrouping: info.item.userMessageGrouping,
-            followedByFold: info.item.followedByFold,
             formatMessageTime,
             environmentId: props.environmentId,
             dispatchingMessageId: props.dispatchingMessageId,

@@ -67,8 +67,6 @@ export type ThreadFeedRow = PendingThreadFeedEntry | GuestPendingFeedEntry | Pen
 
 export type GroupedThreadFeedRow = ThreadFeedRow & {
   readonly userMessageGrouping: ReturnType<typeof resolveUserMessageGrouping>;
-  /** A prompt whose own fold row follows it; the fold's padding already separates them. */
-  readonly followedByFold: boolean;
 };
 
 export function createThreadFeedGrouping() {
@@ -89,9 +87,6 @@ export function createThreadFeedGrouping() {
     };
     return feed.map((entry, index) => {
       const message = groupingMessage(index);
-      const nextType = feed[index + 1]?.type;
-      const followedByFold =
-        message !== undefined && (nextType === "run-fold" || nextType === "pending-fold");
       const grouping =
         message === undefined
           ? ungrouped
@@ -102,13 +97,12 @@ export function createThreadFeedGrouping() {
             );
       const previous = rows.get(entry);
       if (
-        previous?.followedByFold === followedByFold &&
-        previous.userMessageGrouping.groupedWithPrevious === grouping.groupedWithPrevious &&
+        previous?.userMessageGrouping.groupedWithPrevious === grouping.groupedWithPrevious &&
         previous.userMessageGrouping.groupedWithNext === grouping.groupedWithNext &&
         previous.userMessageGrouping.continuesSteer === grouping.continuesSteer
       )
         return previous;
-      const row = { ...entry, userMessageGrouping: grouping, followedByFold };
+      const row = { ...entry, userMessageGrouping: grouping };
       rows.set(entry, row);
       return row;
     });
