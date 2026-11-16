@@ -146,6 +146,13 @@ function keyed<Route extends RouteLike>(route: Route): Route & { readonly key: s
   return { ...route, key: `${route.name}-workspace-${routeKeys}` };
 }
 
+// A hidden tab renders the page it would open under this key, so opening it reuses that screen.
+function keyedPage<Route extends RouteLike>(route: Route): Route & { readonly key: string } {
+  return route.key === undefined
+    ? { ...route, key: `${route.name}-workspace-page` }
+    : (route as Route & { readonly key: string });
+}
+
 function detailRoute(
   state: { readonly routes: readonly RouteLike[] },
   tab: "threads" | "pullRequests",
@@ -222,7 +229,12 @@ export function workspaceTabNavigationState<
       undefined,
       page === selections.settings ? selections.settingsKey : undefined,
     );
-    const routes = [...settings.routes.map(keyed), ...overlays];
+    const [home, list, current] = settings.routes;
+    const routes = [
+      ...[home!, list!].map(keyed),
+      ...(current ? [keyedPage(current)] : []),
+      ...overlays,
+    ];
     return { ...settings, index: routes.length - 1, routes };
   }
   const home = state.routes.find((route) => route.name === "Home") ?? { name: "Home" };
@@ -230,6 +242,23 @@ export function workspaceTabNavigationState<
     options.columns && tab !== "usage"
       ? detailRoute(state, tab, selections, options.check, options.seedPullRequest)
       : undefined;
-  const routes = [...[home, ...(detail ? [detail] : [])].map(keyed), ...overlays];
+  const routes = [keyed(home), ...(detail ? [keyedPage(detail)] : []), ...overlays];
   return { ...state, index: routes.length - 1, routes };
+}
+
+/** The page opening `tab` would show beside its list, which the hidden tab renders ahead. */
+export function workspaceTabPage(
+  state: { readonly routes: readonly RouteLike[] },
+  tab: WorkspaceTab | "settings",
+  selections: WorkspaceSelections,
+  options: {
+    readonly columns: boolean;
+    readonly check: WorkspaceSelectionCheck;
+    readonly seedPullRequest?: (identity: Omit<PullRequestSelection, "key">) => object;
+  },
+) {
+  const page = workspaceTabNavigationState(state, tab, selections, options).routes.find(
+    (route) => route.name !== "Home" && route.name !== "Settings",
+  );
+  return page?.key === undefined ? undefined : { ...page, key: page.key };
 }

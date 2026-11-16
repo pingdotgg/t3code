@@ -13,6 +13,7 @@ import { capturePreviewAnnotationScreenshot } from "~/lib/previewAnnotation";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { readThreadPreviewState } from "~/previewStateStore";
 import { readEnvironmentScope } from "~/state/session";
+import { readComposerImageBytes } from "../chat/composerAttachmentFiles";
 
 const PoppedOutAnnotation = Schema.Struct({
   threadRef: ScopedThreadRef,
@@ -27,7 +28,7 @@ const isPoppedOutAnnotation = Schema.is(PoppedOutAnnotation);
 // The pop-out window has its own composer store, so its picks are handed to the chat window.
 const CHANNEL_NAME = "t3code:preview-annotations";
 
-export function addPreviewAnnotationToDraft(
+export async function addPreviewAnnotationToDraft(
   threadRef: ScopedThreadRef,
   picked: PreviewAnnotationPayload,
   screenshotFailed: boolean,
@@ -35,6 +36,7 @@ export function addPreviewAnnotationToDraft(
   // Keep the annotation even if the crop fails; drop the screenshot so prompts cannot claim an attachment.
   const capture = capturePreviewAnnotationScreenshot(picked);
   const annotation = capture.status === "failed" ? { ...picked, screenshot: null } : picked;
+  if (capture.status === "captured") await readComposerImageBytes(capture.file);
   const store = useComposerDraftStore.getState();
   store.addPreviewAnnotation(threadRef, annotation);
   if (screenshotFailed || capture.status === "failed") {
@@ -84,7 +86,7 @@ export function PoppedOutAnnotationReceiver() {
         runtimeTabId !== previewRuntimeTabId(threadRef, state.serverEpoch, tabId)
       )
         return;
-      addPreviewAnnotationToDraft(threadRef, picked, screenshotFailed);
+      void addPreviewAnnotationToDraft(threadRef, picked, screenshotFailed);
     };
     return () => channel.close();
   }, []);
