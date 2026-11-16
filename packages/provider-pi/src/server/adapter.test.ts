@@ -4423,21 +4423,21 @@ describe("PiAdapterV2", () => {
       name: "fails a compact after starting=false",
       compactionEnd: null,
       error: "Nothing to compact (session too small)",
-      failure: "Nothing to compact (session too small)",
+      status: "failed",
     },
     {
       name: "fails a compact after starting=true",
       compactionEnd: { aborted: false, errorMessage: "Compaction failed: model request failed" },
       error: "model request failed",
-      failure: "model request failed",
+      status: "failed",
     },
     {
       name: "completes a compact an extension cancelled",
       compactionEnd: { aborted: true },
       error: "Compaction cancelled",
-      failure: null,
+      status: "completed",
     },
-  ])("$name", ({ compactionEnd, error, failure }) =>
+  ])("$name", ({ compactionEnd, error, status }) =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
       const { runtime, takeEvent } = yield* openRuntime(fake);
@@ -4461,9 +4461,9 @@ describe("PiAdapterV2", () => {
       const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
       assert.deepEqual(
         terminal.type === "turn.terminal"
-          ? { status: terminal.status, failure: terminal.failure?.message ?? null }
+          ? { status: terminal.status, failure: terminal.failure?.message }
           : null,
-        { status: failure === null ? "completed" : "failed", failure },
+        { status, failure: status === "failed" ? error : undefined },
       );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
