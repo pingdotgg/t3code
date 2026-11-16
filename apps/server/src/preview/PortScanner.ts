@@ -72,8 +72,8 @@ export class PortDiscovery extends Context.Service<
 >()("t3/preview/PortScanner/PortDiscovery") {}
 
 /**
- * Agents launch with this set to their thread, and every job they start inherits it, so a
- * server stays attributed after its launching shell exits or the agent settles.
+ * Agents and thread terminals launch with this set to their thread, and every job they start
+ * inherits it, so a server stays attributed after its launching shell exits or the agent settles.
  */
 export const AGENT_THREAD_ENV = "T3CODE_THREAD_ID";
 

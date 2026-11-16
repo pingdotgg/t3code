@@ -1598,6 +1598,11 @@ function createTerminalSpawnEnv(
   runtimeEnv: Record<string, string> | null | undefined,
   platform: NodeJS.Platform,
   home: string,
+  threadContext: {
+    readonly threadId: string;
+    readonly baseDir?: string;
+    readonly devUrl?: URL;
+  },
 ): NodeJS.ProcessEnv {
   const spawnEnv: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(baseEnv)) {
@@ -1629,6 +1634,15 @@ function createTerminalSpawnEnv(
   if (!spawnEnv.COLORTERM && runtimeEnv?.COLORTERM === undefined) {
     spawnEnv.COLORTERM = "truecolor";
   }
+  // Project scripts share the thread's terminal, so `t3 thread send` can target it.
+  spawnEnv[PortScanner.AGENT_THREAD_ENV] = threadContext.threadId;
+  if (threadContext.baseDir !== undefined) {
+    spawnEnv.T3CODE_HOME = threadContext.baseDir;
+  }
+  if (threadContext.devUrl !== undefined) {
+    // The CLI uses this to resolve a dev server's state directory.
+    spawnEnv.VITE_DEV_SERVER_URL = threadContext.devUrl.toString();
+  }
   // fish 4.1+ can wait 10s at startup for a DA1 reply before a renderer can answer.
   // Skip the query unless the user or provider already chose `query-term` or `no-query-term`.
   const fishFeaturesKey =
@@ -1654,6 +1668,8 @@ function normalizedRuntimeEnv(
 
 interface TerminalManagerOptions {
   logsDir: string;
+  baseDir?: string;
+  devUrl?: URL;
   historyLineLimit?: number;
   historyByteLimit?: number;
   ptyAdapter: PtyAdapter.PtyAdapter["Service"];
@@ -1734,7 +1750,8 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
 export const make = Effect.fn("TerminalManager.make")(function* (
   deriveConfigMap: typeof deriveProviderInstanceConfigMap,
 ) {
-  const { terminalLogsDir, providerStatusCacheDir, baseDir } = yield* ServerConfig.ServerConfig;
+  const { terminalLogsDir, providerStatusCacheDir, baseDir, devUrl } =
+    yield* ServerConfig.ServerConfig;
   const ptyAdapter = yield* PtyAdapter.PtyAdapter;
   const portDiscovery = yield* PortScanner.PortDiscovery;
   const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
@@ -1753,6 +1770,8 @@ export const make = Effect.fn("TerminalManager.make")(function* (
   );
   return yield* makeWithOptions({
     logsDir: terminalLogsDir,
+    baseDir,
+    ...(devUrl === undefined ? {} : { devUrl }),
     ptyAdapter,
     processTable: nativeTelemetry.processTable.pipe(
       Effect.mapError(
@@ -1776,6 +1795,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const runFork = Effect.runForkWith(context);
 
   const logsDir = options.logsDir;
+  const baseDir = options.baseDir;
+  const devUrl = options.devUrl;
   const historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;
   const historyByteLimit = options.historyByteLimit ?? DEFAULT_HISTORY_BYTE_LIMIT;
   const platform = yield* HostProcess.Platform;
@@ -2807,11 +2828,19 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               platform,
               baseEnv,
             ).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
+            const home = yield* HostProcess.HomeDirectory;
             const terminalEnv = createTerminalSpawnEnv(
               baseEnv,
               session.runtimeEnv,
               platform,
-              yield* HostProcess.HomeDirectory,
+              home,
+              {
+                threadId: session.threadId,
+                // The CLI already defaults to `~/.t3`; naming it as explicit would
+                // make it read the live state directory under a dev server.
+                ...(baseDir === undefined || baseDir === path.join(home, ".t3") ? {} : { baseDir }),
+                ...(devUrl === undefined ? {} : { devUrl }),
+              },
             );
             // Append managed install directories so agent commands resolve without shadowing user/system tools.
             if (
