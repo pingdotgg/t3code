@@ -631,7 +631,10 @@ mod tests {
     fn stub_logs_quote_ambiguous_arguments() {
         let stubs = stub::StubDir::new("it's");
         let path = stubs.executable("tool", &[], "exit 0");
-        let status = std::process::Command::new(&path)
+        // Through `sh`, not exec: on Linux, exec of a file another test thread's fork still
+        // holds open for writing fails with ETXTBSY ("Text file busy").
+        let status = std::process::Command::new("/bin/sh")
+            .arg(&path)
             .args([
                 "plain",
                 "--x=1",
