@@ -3,17 +3,17 @@ import type { FileDiffMetadata } from "@pierre/diffs/types";
 // A ~1M-character line wraps into tens of thousands of inline text boxes; with accessibility on,
 // Blink serializes each one and the renderer hangs for close to a minute.
 export const MAX_RENDERED_DIFF_LINE_LENGTH = 10_000;
+const MARKER_ROOM = 64;
 
 function clampLine(line: string): string {
   const ending = line.endsWith("\r\n") ? "\r\n" : line.endsWith("\n") ? "\n" : "";
   const body = line.slice(0, line.length - ending.length);
   if (body.length <= MAX_RENDERED_DIFF_LINE_LENGTH) return line;
+  // Room for the marker keeps a clamped line within the limit, so reparsing it is a no-op.
+  const keep = MAX_RENDERED_DIFF_LINE_LENGTH - MARKER_ROOM;
   // Never split a surrogate pair, which would render as a replacement character.
-  const lastKept = body.charCodeAt(MAX_RENDERED_DIFF_LINE_LENGTH - 1);
-  const cut =
-    lastKept >= 0xd800 && lastKept <= 0xdbff
-      ? MAX_RENDERED_DIFF_LINE_LENGTH - 1
-      : MAX_RENDERED_DIFF_LINE_LENGTH;
+  const lastKept = body.charCodeAt(keep - 1);
+  const cut = lastKept >= 0xd800 && lastKept <= 0xdbff ? keep - 1 : keep;
   const hidden = (body.length - cut).toLocaleString("en-US");
   return `${body.slice(0, cut)} … ${hidden} more characters not shown${ending}`;
 }

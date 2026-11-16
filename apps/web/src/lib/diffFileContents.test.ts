@@ -109,7 +109,7 @@ describe("createGitDiffFileContentsLoader", () => {
     )(parsePartialFileDiff(patch));
 
     expect(loaded.newFile.contents.split("\n")[29]).toBe(
-      `${"x".repeat(MAX_RENDERED_DIFF_LINE_LENGTH)} … 10,001 more characters not shown`,
+      `${"x".repeat(MAX_RENDERED_DIFF_LINE_LENGTH - 64)} … 10,065 more characters not shown`,
     );
   });
 

@@ -263,12 +263,18 @@ describe("getRenderablePatch", () => {
     expect(parsed?.kind).toBe("files");
     if (parsed?.kind !== "files") return;
     const [file] = parsed.files;
-    expect(file?.additionLines).toEqual([
-      "head\n",
-      `${"x".repeat(MAX_RENDERED_DIFF_LINE_LENGTH)} … 10,001 more characters not shown\n`,
-    ]);
+    const clampedLine = `${"x".repeat(MAX_RENDERED_DIFF_LINE_LENGTH - 64)} … 10,065 more characters not shown\n`;
+    expect(file?.additionLines).toEqual(["head\n", clampedLine]);
     expect(file?.hunks).toEqual(parsed.sourceFiles[0]?.hunks);
     expect(parsed.sourceFiles[0]?.additionLines[1]).toBe(`${long}b\n`);
+
+    const reparsed = getRenderablePatch(patch.replace(`+${long}b`, `+${clampedLine.trimEnd()}`));
+    if (reparsed?.kind !== "files") throw new Error("Expected a parsed patch.");
+    expect(reparsed.files[0]?.additionLines[1]).toBe(clampedLine);
+
+    const ignoringWhitespace = getRenderablePatch(patch, "review", { ignoreWhitespace: true });
+    if (ignoringWhitespace?.kind !== "files") throw new Error("Expected a parsed patch.");
+    expect(getDiffLineStat(ignoringWhitespace.files)).toEqual({ additions: 1, deletions: 1 });
   });
 
   it("caches patches that differ only in trailing whitespace separately", () => {

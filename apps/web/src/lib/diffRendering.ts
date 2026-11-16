@@ -168,9 +168,9 @@ export function getRenderablePatch(
     });
     const sourceFiles = parsedPatches.flatMap((parsedPatch) => parsedPatch.files);
     const files = sourceFiles.map((file) => {
-      const clamped = clampFileDiffLongLines(file);
-      const filtered = options.ignoreWhitespace ? hideWhitespaceChanges(clamped) : clamped;
-      return options.compactPartialHunkOffsets ? compactPartialHunkOffsets(filtered) : filtered;
+      const filtered = options.ignoreWhitespace ? hideWhitespaceChanges(file) : file;
+      const clamped = clampFileDiffLongLines(filtered);
+      return options.compactPartialHunkOffsets ? compactPartialHunkOffsets(clamped) : clamped;
     });
     if (files.length > 0) {
       return { kind: "files", files, sourceFiles };
