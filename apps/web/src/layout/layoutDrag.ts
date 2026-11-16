@@ -28,7 +28,11 @@ import {
 } from "./layoutModel";
 import { isScrollingWorkspacesEnabled } from "./layoutBehavior";
 import { notePaneDrop } from "../motion/paneDrop";
-import { useRightPanelStore, type RightPanelSurface } from "../rightPanelStore";
+import {
+  selectThreadRightPanelState,
+  useRightPanelStore,
+  type RightPanelSurface,
+} from "../rightPanelStore";
 import { saveLayoutNow, useLayoutStore } from "./layoutStore";
 import { requestLayoutSurfacePlacement } from "./surfaceSync";
 
@@ -235,15 +239,16 @@ export function isLayoutDropUseful(
     );
   }
   if (target.kind === "side") return !(alone && target.paneId === location.pane.id);
-  const workspace = selectFocusedWorkspace(layout);
-  const paneCount = workspace.columns.reduce((sum, column) => sum + column.panes.length, 0);
   if (target.edge === "bottom") {
-    const tabCount = workspace.columns.reduce(
+    const tabCount = location.workspace.columns.reduce(
       (sum, column) => sum + column.panes.reduce((inner, pane) => inner + pane.tabs.length, 0),
       0,
     );
     return tabCount > 1;
   }
+  const workspace = selectFocusedWorkspace(layout);
+  if (location.workspace.id !== workspace.id) return true;
+  const paneCount = workspace.columns.reduce((sum, column) => sum + column.panes.length, 0);
   if (!alone || paneCount > 1) {
     const columns = workspace.columns;
     const edgeColumn = target.edge === "left" ? columns[0] : columns.at(-1);
@@ -414,10 +419,17 @@ export function commitLayoutDrop(source: LayoutDragSource, target: LayoutDropTar
   if (source.kind === "tab") {
     store.moveTab(source.tabId, destination);
   } else if (source.kind === "surface" && !layoutDragSourceTab(store.layout, source)) {
-    requestLayoutSurfacePlacement(source.threadRef, destination);
     const panels = useRightPanelStore.getState();
+    const panel = selectThreadRightPanelState(panels.byThreadKey, source.threadRef);
+    const reopensOthers =
+      !panel.isOpen && panel.surfaces.some((surface) => surface.id !== source.surface.id);
+    if (!reopensOthers) requestLayoutSurfacePlacement(source.threadRef, destination);
     if (source.surface.kind === "pull-requests") panels.open(source.threadRef, "pull-requests");
     else panels.openPullRequest(source.threadRef, source.surface);
+    const layout = useLayoutStore.getState().layout;
+    const placed = reopensOthers ? layoutDragSourceTab(layout, source) : null;
+    const landing = placed ? layoutDropDestination(layout, target) : null;
+    if (placed && landing) useLayoutStore.getState().moveTab(placed.tab.id, landing);
   } else {
     store.placeContent(layoutDragContent(source), destination);
   }

@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -281,4 +281,39 @@ it("opens a thread's pull request beside a chat of another thread, and it surviv
   expect(
     findLayoutSurfaceTabs(useLayoutStore.getState().layout, pullRequestThreadRef),
   ).toHaveLength(1);
+});
+
+it("drops only the dragged pull request where it lands when the thread's panel hides other surfaces", async () => {
+  using fixture = setupPullRequestDrop();
+  const { chatPaneId } = fixture;
+  useRightPanelStore.setState({
+    byThreadKey: {
+      [scopedThreadKey(pullRequestThreadRef)]: {
+        isOpen: false,
+        activeSurfaceId: "files",
+        surfaces: [{ id: "files", kind: "files" }],
+      },
+    },
+  });
+  const surface = pullRequestSurface({
+    projectId: "project",
+    repository: "owner/repo",
+    number: 7,
+    url: "https://github.com/owner/repo/pull/7",
+  });
+  const source: LayoutDragSource = { kind: "surface", threadRef: pullRequestThreadRef, surface };
+  const tabFor = (surfaceId: string) =>
+    findLayoutSurfaceTabs(useLayoutStore.getState().layout, pullRequestThreadRef).find(
+      ({ tab }) => tab.content.kind === "surface" && tab.content.surfaceId === surfaceId,
+    );
+  await using _screen = await render(<SurfaceSync />);
+
+  await act(() => {
+    expect(commitLayoutDrop(source, { kind: "side", paneId: chatPaneId, side: "down" })).toBe(true);
+  });
+  const dropped = tabFor(surface.id)!;
+  const chatColumn = findLayoutChatForThread(useLayoutStore.getState().layout, threadRef)!.column;
+  expect(chatColumn.panes.map((pane) => pane.id)).toEqual([chatPaneId, dropped.pane.id]);
+  expect(dropped.pane.tabs.map((tab) => tab.id)).toEqual([dropped.tab.id]);
+  expect(tabFor("files")?.pane.id).toBe(chatPaneId);
 });
