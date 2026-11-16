@@ -4656,41 +4656,58 @@ effectIt.effect("declares no replayed runs to the summary lookup on a provider s
     expect(lookups).toEqual([undefined]);
   }),
 );
-effectIt.effect("manual resume recalls with the original unsent message metadata", () =>
-  Effect.gen(function* () {
-    const recall = vi.fn<ProjectKnowledge.ProjectKnowledge["Service"]["recall"]>(() =>
-      Effect.succeed({ _tag: "Skipped", reason: "no_match" }),
-    );
-    const harness = makeLocalCommandHarness({
-      text: "",
-      manualContinuation: true,
-      sideChat: { contextRun: "delivered", unsentResume: true },
-      recallKnowledge: recall,
-    });
-    const projection = harness.projection();
-    harness.setProjection({
-      ...projection,
-      messages: projection.messages.map((m) =>
-        m.id === "message-native-account-command"
-          ? {
-              ...m,
-              notification: {
-                source: { kind: "system" as const },
-                outcome: "updated" as const,
-                summary: "Resumed thread",
+effectIt.effect.each([false, true])(
+  "manual resume recalls with the original unsent message metadata (%s)",
+  (notified) =>
+    Effect.gen(function* () {
+      const recall = vi.fn<ProjectKnowledge.ProjectKnowledge["Service"]["recall"]>(() =>
+        Effect.succeed({ _tag: "Skipped", reason: "no_match" }),
+      );
+      const harness = makeLocalCommandHarness({
+        text: "",
+        manualContinuation: true,
+        sideChat: { contextRun: "delivered", unsentResume: true },
+        recallKnowledge: recall,
+      });
+      const projection = harness.projection();
+      harness.setProjection({
+        ...projection,
+        messages: projection.messages.map((m) =>
+          m.id === "message-native-account-command"
+            ? {
+                ...m,
+                notification: {
+                  source: { kind: "system" as const },
+                  outcome: "updated" as const,
+                  summary: "Resumed thread",
+                },
+              }
+            : {
+                ...m,
+                ...(notified
+                  ? {
+                      notification: {
+                        source: { kind: "monitor" as const },
+                        outcome: "updated" as const,
+                        summary: "Checks changed",
+                      },
+                    }
+                  : {}),
               },
-            }
-          : m,
-      ),
-    });
-    yield* harness.start;
-    expect(recall).toHaveBeenCalledOnce();
-    const input = recall.mock.calls[0]![0];
-    const original = projection.messages.find(
-      (m) => m.id !== "message-native-account-command" && m.text === input.query,
-    );
-    expect(original).toBeDefined();
-    expect(input.notification).toEqual(original!.notification);
-    expect(input.turn?.messageId).toEqual(original!.id);
-  }),
+        ),
+      });
+      yield* harness.start;
+      expect(recall).toHaveBeenCalledOnce();
+      const input = recall.mock.calls[0]![0];
+      const original = projection.messages.find(
+        (m) => m.id !== "message-native-account-command" && m.text === input.query,
+      );
+      expect(original).toBeDefined();
+      expect(input.notification).toEqual(
+        notified
+          ? { source: { kind: "monitor" }, outcome: "updated", summary: "Checks changed" }
+          : undefined,
+      );
+      expect(input.turn?.messageId).toEqual(original!.id);
+    }),
 );
