@@ -269,6 +269,10 @@ export const sendPageCommand = async (
   if (method === "Page.captureScreenshot" && capturesViewport(params)) {
     return captureViewport(webContents, params);
   }
+  if (method === "Page.stopLoading") {
+    webContents.stop();
+    return {};
+  }
   if (!FOCUS_ROUTED_INPUT.has(method) || webContents.focusedFrame) {
     return debuggee.sendCommand(method, params);
   }
