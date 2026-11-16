@@ -29,6 +29,7 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { BoatIcon } from "../../components/BoatIcon";
+import { BoxdIcon } from "../../components/BoxdIcon";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import { useEnvironmentScope } from "../../state/session";
@@ -139,23 +140,29 @@ function EnvironmentPickerRow(props: {
 }
 
 function BoatCloudPickerRow(props: {
+  readonly cloud: "boat" | "boxd";
   readonly selected: boolean;
   readonly disabled: boolean;
   readonly onPress: () => void;
 }) {
+  const label = props.cloud === "boxd" ? "boxd cloud" : "Boat cloud";
   return (
     <Pressable
       accessibilityRole="radio"
-      accessibilityLabel="Boat cloud"
+      accessibilityLabel={label}
       accessibilityState={{ checked: props.selected, disabled: props.disabled }}
       disabled={props.disabled}
       onPress={props.onPress}
       className="min-h-16 flex-row items-center gap-3 bg-grouped-card px-4 py-3 active:bg-subtle"
     >
-      <BoatIcon size={20} colorClassName="accent-icon-muted" />
+      {props.cloud === "boxd" ? (
+        <BoxdIcon size={20} colorClassName="accent-icon-muted" />
+      ) : (
+        <BoatIcon size={20} colorClassName="accent-icon-muted" />
+      )}
       <View className="min-w-0 flex-1 gap-1">
         <Text className="text-base font-t3-medium text-foreground" numberOfLines={1}>
-          Boat cloud
+          {label}
         </Text>
       </View>
       {props.selected ? (
@@ -241,13 +248,29 @@ export function NewTaskEnvironmentPickerRouteScreen() {
                 title={environment.environmentLabel}
               />
             ))}
-            {flow.boatCloud ? (
+            {flow.boatCloud &&
+            (flow.boatCloud.boatAvailable ||
+              (flow.boatCloud.selected && flow.boatCloud.provider === "boat")) ? (
               <BoatCloudPickerRow
-                selected={flow.boatCloud.selected}
+                cloud="boat"
+                selected={flow.boatCloud.selected && flow.boatCloud.provider === "boat"}
                 disabled={flow.switchingToEnvironmentId !== null}
                 onPress={() => {
                   void Haptics.selectionAsync();
                   if (flow.chooseBoatCloud()) navigation.goBack();
+                }}
+              />
+            ) : null}
+            {flow.boatCloud &&
+            (flow.boatCloud.boxdAvailable ||
+              (flow.boatCloud.selected && flow.boatCloud.provider === "boxd")) ? (
+              <BoatCloudPickerRow
+                cloud="boxd"
+                selected={flow.boatCloud.selected && flow.boatCloud.provider === "boxd"}
+                disabled={flow.switchingToEnvironmentId !== null}
+                onPress={() => {
+                  void Haptics.selectionAsync();
+                  if (flow.chooseBoxdCloud()) navigation.goBack();
                 }}
               />
             ) : null}

@@ -410,9 +410,16 @@ type LegacyPersistedComposerDraftStoreState = PersistedComposerDraftStoreState &
   LegacyStickyModelFields &
   LegacyV2StoreFields;
 
-/** "cloud" runs the draft on a Boat cloud VM, picked when it sends. */
-const DRAFT_ENVIRONMENT_SELECTIONS = ["auto", "manual", "cloud"] as const;
+/** "cloud" runs the draft on a Boat cloud VM and "boxd" on a boxd one, picked when it sends. */
+const DRAFT_ENVIRONMENT_SELECTIONS = ["auto", "manual", "cloud", "boxd"] as const;
 export type DraftEnvironmentSelection = (typeof DRAFT_ENVIRONMENT_SELECTIONS)[number];
+export type CloudEnvironmentSelection = Extract<DraftEnvironmentSelection, "cloud" | "boxd">;
+
+export function isCloudEnvironmentSelection(
+  selection: DraftEnvironmentSelection | null | undefined,
+): selection is CloudEnvironmentSelection {
+  return selection === "cloud" || selection === "boxd";
+}
 const isDraftEnvironmentSelection = Schema.is(Schema.Literals(DRAFT_ENVIRONMENT_SELECTIONS));
 
 const PersistedDraftThreadState = Schema.Struct({
@@ -2993,7 +3000,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               options.environmentSelection ??
               // Boat cloud carries the branch over to the VM, so picking one keeps it.
               ((options.branch != null || options.worktreePath != null) &&
-              existing.environmentSelection !== "cloud"
+              !isCloudEnvironmentSelection(existing.environmentSelection)
                 ? "manual"
                 : existing.environmentSelection);
             const checkoutPullRequest = resolveCheckoutPullRequest(

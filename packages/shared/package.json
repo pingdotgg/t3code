@@ -590,6 +590,14 @@
     "./boatCloudVm": {
       "types": "./src/boatCloudVm.ts",
       "import": "./src/boatCloudVm.ts"
+    },
+    "./boxdCloudApi": {
+      "types": "./src/boxdCloudApi.ts",
+      "import": "./src/boxdCloudApi.ts"
+    },
+    "./boxdCloudStart": {
+      "types": "./src/boxdCloudStart.ts",
+      "import": "./src/boxdCloudStart.ts"
     }
   },
   "scripts": {

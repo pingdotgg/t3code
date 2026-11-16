@@ -62,6 +62,7 @@ function routesList(routes: ReadonlyArray<ConnectionRoute>) {
     displayUrl: null,
     relayManaged: false,
     boatCloud: false,
+    boxdCloud: false,
     entry,
     connection: { phase: "available", error: null, traceId: null },
     serverConfig: null,

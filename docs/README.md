@@ -24,6 +24,7 @@
 - [Remote access](./user/remote-access.md)
 - [Guest links](./user/guest-links.md)
 - [Boat cloud](./user/boat-cloud.md)
+- [boxd cloud](./user/boxd-cloud.md)
 - [T3 Connect troubleshooting](./user/t3-connect-troubleshooting.md)
 - [Outside agents (MCP)](./user/outside-agents.md)
 - [Running in the background](./user/background-service.md)

@@ -35,6 +35,8 @@ export interface NewTaskFlowState {
    * `send`: the draft just moved onto the VM, and that send continues there.
    */
   readonly boatCloud: "off" | "chosen" | "send";
+  /** Which cloud `boatCloud` starts on. */
+  readonly cloud: "boat" | "boxd";
 }
 
 export const INITIAL_NEW_TASK_FLOW_STATE: NewTaskFlowState = {
@@ -44,6 +46,7 @@ export const INITIAL_NEW_TASK_FLOW_STATE: NewTaskFlowState = {
   submitting: false,
   expandedProvider: null,
   boatCloud: "off",
+  cloud: "boat",
 };
 
 // Every draft route on the stack keeps its flow, not just the one the provider

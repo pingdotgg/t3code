@@ -88,6 +88,7 @@ interface ThreadDetailsPanelProps extends Pick<
   autoEnvironmentLabel?: string | undefined;
   onAutoEnvironment?: (() => void) | undefined;
   cloudEnvironment?: CloudEnvironmentOption | undefined;
+  boxdEnvironment?: CloudEnvironmentOption | undefined;
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
   onEnvModeChange: (mode: EnvMode) => void;
   envMode: EnvMode;
@@ -270,6 +271,7 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
                             autoEnvironmentLabel={props.autoEnvironmentLabel}
                             onAutoEnvironment={props.onAutoEnvironment}
                             cloudEnvironment={props.cloudEnvironment}
+                            boxdEnvironment={props.boxdEnvironment}
                             panelEnvironmentActions={
                               show.openIn ? (
                                 <OpenInPicker

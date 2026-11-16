@@ -19,6 +19,7 @@ export function useAccessEnvironment(requested: EnvironmentId | null) {
       environment.environmentId === requested ||
       (environment.entry.enabled &&
         !environment.boatCloud &&
+        !environment.boxdCloud &&
         !isDesktopLocalConnectionTarget(environment.entry.target)),
   );
   const environmentId = resolveAccessEnvironmentId({

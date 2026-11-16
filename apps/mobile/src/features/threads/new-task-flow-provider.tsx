@@ -111,10 +111,16 @@ import { useConnectionsReady, useWorkspaceEnvironments } from "../../state/works
 import { readEnvironmentScope } from "../../state/session";
 import {
   boatCloudMachinesAtom,
+  type BoatCloudTarget,
   prepareBoatCloudProject,
   useBoatCloudProviderDrivers,
   useBoatCloudStarter,
 } from "../boatCloud/boatCloud";
+import {
+  boxdCloudMachinesAtom,
+  prepareBoxdCloudProject,
+  useBoxdCloudStarter,
+} from "../boxdCloud/boxdCloud";
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -196,6 +202,10 @@ type NewTaskFlowContextValue = {
   /** Null when Boat cloud is not set up and the draft is not on a Boat VM. */
   readonly boatCloud: {
     readonly selected: boolean;
+    /** The cloud the draft runs on while `selected`. */
+    readonly provider: "boat" | "boxd";
+    readonly boatAvailable: boolean;
+    readonly boxdAvailable: boolean;
     /** Chosen while the draft is still here: the first send starts the VM. */
     readonly startsOnSend: boolean;
     /** The draft moved onto its VM and its first send should go out there now. */
@@ -205,6 +215,7 @@ type NewTaskFlowContextValue = {
   } | null;
   /** Picks Boat cloud; nothing starts until the first send. */
   readonly chooseBoatCloud: () => boolean;
+  readonly chooseBoxdCloud: () => boolean;
   /** Starts a VM and moves the draft onto its checkout of the same repository. */
   readonly startBoatCloud: () => Promise<void>;
   readonly finishBoatCloudSend: () => void;
@@ -334,10 +345,22 @@ export function NewTaskFlowProvider(
       ? selectedEnvironmentIdOverride
       : (projects[0]?.environmentId ?? null);
   const boatCloudMachines = useAtomValue(boatCloudMachinesAtom);
+  const boxdCloudMachines = useAtomValue(boxdCloudMachinesAtom);
   const boatCloudDrivers = useBoatCloudProviderDrivers(selectedEnvironmentId);
+  const onBoxdCloudVm =
+    selectedEnvironmentId !== null && boxdCloudMachines.has(selectedEnvironmentId);
+  // A boxd machine is a cloud VM too: its threads start in their own worktree from the remote.
   const onBoatCloudVm =
-    selectedEnvironmentId !== null && boatCloudMachines.has(selectedEnvironmentId);
+    onBoxdCloudVm ||
+    (selectedEnvironmentId !== null && boatCloudMachines.has(selectedEnvironmentId));
   const boatCloudSelected = onBoatCloudVm || flowState.boatCloud === "chosen";
+  const boxdCloudSelected =
+    onBoxdCloudVm || (flowState.boatCloud === "chosen" && flowState.cloud === "boxd");
+  // The worktree the VM made for the send that started it, until that send goes out.
+  const [boatCloudWorktree, setBoatCloudWorktree] = useState<{
+    readonly projectKey: string;
+    readonly worktree: NonNullable<BoatCloudTarget["worktree"]>;
+  } | null>(null);
   const projectsForEnvironment = pipe(
     projects,
     Arr.filter((project) => project.environmentId === selectedEnvironmentId),
@@ -433,11 +456,24 @@ export function NewTaskFlowProvider(
       branches: allBranchRefs,
       projectCwd: selectedProject?.workspaceRoot ?? null,
     });
+    if (!boatCloudSelected) return resolved;
+    // The send that started the VM goes onto the worktree it made, unless its base moved since.
+    const ready =
+      boatCloudWorktree?.projectKey === selectedProjectKey &&
+      boatCloudWorktree.worktree.baseBranch === resolved.branch
+        ? boatCloudWorktree.worktree
+        : null;
+    if (ready) {
+      return {
+        ...resolved,
+        mode: "local" as const,
+        branch: ready.branch,
+        worktreePath: ready.path,
+      };
+    }
     // Threads on a Boat VM share its checkout, so each one gets its own worktree,
     // started from the remote branch: the VM's clone has none of this machine's local branches.
-    return boatCloudSelected
-      ? { ...resolved, mode: "worktree" as const, worktreePath: null, startFromOrigin: true }
-      : resolved;
+    return { ...resolved, mode: "worktree" as const, worktreePath: null, startFromOrigin: true };
   };
   const workspaceSelection = resolveWorkspaceSelection(selectedProjectDraft.workspaceSelection);
   const workspaceMode = workspaceSelection.mode;
@@ -451,7 +487,10 @@ export function NewTaskFlowProvider(
   const environmentServerConfig = serverConfigForCwd(projectDefaults.serverConfig, workspaceCwd);
   // A Boat VM can only sign in the providers its credentials cover.
   const selectedEnvironmentServerConfig =
-    flowState.boatCloud === "chosen" && environmentServerConfig && boatCloudDrivers
+    flowState.boatCloud === "chosen" &&
+    flowState.cloud === "boat" &&
+    environmentServerConfig &&
+    boatCloudDrivers
       ? {
           ...environmentServerConfig,
           providers: environmentServerConfig.providers.filter((provider) =>
@@ -713,7 +752,8 @@ export function NewTaskFlowProvider(
     return null;
   };
   const chooseBoatCloud = (): boolean => {
-    if (boatCloudSelected) return true;
+    if (boatCloudSelected && !boxdCloudSelected) return true;
+    if (onBoxdCloudVm) return false;
     if (boatCloudStarter === null) {
       Dialog.alert("Boat cloud is not set up", "Finish setup in Settings, Cloud.");
       return false;
@@ -731,27 +771,63 @@ export function NewTaskFlowProvider(
     }
     if (boatCloudRepositoryUrl() === null) return false;
     setBoatCloudSteps(null);
-    updateFlow({ boatCloud: "chosen" });
+    updateFlow({ boatCloud: "chosen", cloud: "boat" });
+    return true;
+  };
+  const boxdCloudStarter = useBoxdCloudStarter(selectedProject?.environmentId ?? null);
+  const chooseBoxdCloud = (): boolean => {
+    if (boxdCloudSelected) return true;
+    // A draft already on a cloud VM stays there.
+    if (onBoatCloudVm) return false;
+    if (boxdCloudStarter === null) {
+      Dialog.alert("boxd cloud is not set up", "Finish setup in Settings, Cloud.");
+      return false;
+    }
+    if (boatCloudRepositoryUrl() === null) return false;
+    setBoatCloudSteps(null);
+    updateFlow({ boatCloud: "chosen", cloud: "boxd" });
     return true;
   };
   const startBoatCloud = async (): Promise<void> => {
     const repositoryUrl = boatCloudRepositoryUrl();
-    if (boatCloudStarter === null || repositoryUrl === null) return;
-    const { projectKey } = readFlow();
+    const { projectKey, cloud } = readFlow();
+    const starter = cloud === "boxd" ? boxdCloudStarter : boatCloudStarter;
+    if (starter === null || repositoryUrl === null) return;
     updateFlow({ submitting: true });
-    const project = await prepareBoatCloudProject({
-      starter: boatCloudStarter,
-      repositoryUrl,
-      baseBranch: selectedBranchName,
-      onProgress: setBoatCloudSteps,
-    });
+    const target =
+      cloud === "boxd" && boxdCloudStarter !== null
+        ? await prepareBoxdCloudProject({
+            holderEnvironmentId: boxdCloudStarter,
+            repositoryUrl,
+            baseBranch: selectedBranchName,
+            onProgress: setBoatCloudSteps,
+          })
+        : boatCloudStarter !== null
+          ? await prepareBoatCloudProject({
+              starter: boatCloudStarter,
+              repositoryUrl,
+              baseBranch: selectedBranchName,
+              onProgress: setBoatCloudSteps,
+            })
+          : null;
     const flow = readFlow();
     // A machine or project picked while the VM started stands; the VM stays up for the next send.
-    if (project === null || flow.projectKey !== projectKey || flow.boatCloud !== "chosen") {
-      if (project !== null) setBoatCloudSteps(null);
+    if (
+      target === null ||
+      flow.projectKey !== projectKey ||
+      flow.boatCloud !== "chosen" ||
+      flow.cloud !== cloud
+    ) {
+      if (target !== null) setBoatCloudSteps(null);
       updateFlow({ submitting: false });
       return;
     }
+    const { project, worktree } = target;
+    setBoatCloudWorktree(
+      worktree
+        ? { projectKey: scopedProjectKey(project.environmentId, project.id), worktree }
+        : null,
+    );
     updateFlow({
       draftKey: carryDraftContentTo(project, { keepBranch: true }),
       environmentId: project.environmentId,
@@ -763,6 +839,7 @@ export function NewTaskFlowProvider(
   const finishBoatCloudSend = () => {
     updateFlow({ boatCloud: "off" });
     setBoatCloudSteps(null);
+    setBoatCloudWorktree(null);
   };
 
   const setWorkspaceMode = (mode: WorkspaceMode) => {
@@ -953,8 +1030,12 @@ export function NewTaskFlowProvider(
       if (!hostsSelectedRepository(project)) {
         continue;
       }
-      // The Boat cloud row stands for every Boat VM.
-      if (seen.has(project.environmentId) || boatCloudMachines.has(project.environmentId)) {
+      // The Boat and boxd cloud rows stand for every VM on them.
+      if (
+        seen.has(project.environmentId) ||
+        boatCloudMachines.has(project.environmentId) ||
+        boxdCloudMachines.has(project.environmentId)
+      ) {
         continue;
       }
       const environment = savedConnectionsById[project.environmentId];
@@ -1015,15 +1096,20 @@ export function NewTaskFlowProvider(
     switchEnvironment,
     switchingToEnvironmentId,
     boatCloud:
-      !isScratchDraft && (boatCloudSelected || boatCloudStarter !== null)
+      !isScratchDraft &&
+      (boatCloudSelected || boatCloudStarter !== null || boxdCloudStarter !== null)
         ? {
             selected: boatCloudSelected,
+            provider: boxdCloudSelected ? "boxd" : "boat",
+            boatAvailable: boatCloudStarter !== null,
+            boxdAvailable: boxdCloudStarter !== null,
             startsOnSend: !onBoatCloudVm && flowState.boatCloud === "chosen",
             sendPending: onBoatCloudVm && flowState.boatCloud === "send",
             steps: boatCloudSteps,
           }
         : null,
     chooseBoatCloud,
+    chooseBoxdCloud,
     startBoatCloud,
     finishBoatCloudSend,
     setSelectedModelKey,

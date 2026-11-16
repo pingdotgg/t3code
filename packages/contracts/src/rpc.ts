@@ -405,11 +405,13 @@ import {
   BoatCloudConnectInput,
   BoatCloudEmptyInput,
   BoatCloudError,
+  BoatCloudRunSetupInput,
   BoatCloudSession,
   BoatCloudStatus,
   BoatCloudSubscribeInput,
   BoatCloudWakeInput,
 } from "./boatCloud.ts";
+import { BoxdCloudConnectInput, BoxdCloudError, BoxdCloudStatus } from "./boxdCloud.ts";
 import {
   ProjectCloneActionInput,
   ProjectCloneActionResult,
@@ -600,6 +602,11 @@ export const WS_METHODS = {
   boatCloudConfigureEnvironment: "boatCloud.configureEnvironment",
   boatCloudAcquire: "boatCloud.acquire",
   boatCloudWake: "boatCloud.wake",
+  boxdCloudSubscribe: "boxdCloud.subscribe",
+  boxdCloudConnect: "boxdCloud.connect",
+  boxdCloudDisconnect: "boxdCloud.disconnect",
+  boxdCloudRunSetup: "boxdCloud.runSetup",
+  boxdCloudAcquire: "boxdCloud.acquire",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -2157,7 +2164,7 @@ const WsBoatCloudDisconnectRpc = Rpc.make(WS_METHODS.boatCloudDisconnect, {
 });
 
 const WsBoatCloudRunSetupRpc = Rpc.make(WS_METHODS.boatCloudRunSetup, {
-  payload: BoatCloudEmptyInput,
+  payload: BoatCloudRunSetupInput,
   success: BoatCloudStatus,
   error: BoatCloudErrors,
 });
@@ -2178,6 +2185,39 @@ const WsBoatCloudWakeRpc = Rpc.make(WS_METHODS.boatCloudWake, {
   payload: BoatCloudWakeInput,
   success: BoatCloudSession,
   error: BoatCloudErrors,
+});
+
+const BoxdCloudErrors = Schema.Union([BoxdCloudError, EnvironmentAuthorizationError]);
+
+const WsBoxdCloudSubscribeRpc = Rpc.make(WS_METHODS.boxdCloudSubscribe, {
+  payload: BoatCloudSubscribeInput,
+  success: BoxdCloudStatus,
+  error: BoxdCloudErrors,
+  stream: true,
+});
+
+const WsBoxdCloudConnectRpc = Rpc.make(WS_METHODS.boxdCloudConnect, {
+  payload: BoxdCloudConnectInput,
+  success: BoxdCloudStatus,
+  error: BoxdCloudErrors,
+});
+
+const WsBoxdCloudDisconnectRpc = Rpc.make(WS_METHODS.boxdCloudDisconnect, {
+  payload: BoatCloudEmptyInput,
+  success: BoxdCloudStatus,
+  error: BoxdCloudErrors,
+});
+
+const WsBoxdCloudRunSetupRpc = Rpc.make(WS_METHODS.boxdCloudRunSetup, {
+  payload: BoatCloudRunSetupInput,
+  success: BoxdCloudStatus,
+  error: BoxdCloudErrors,
+});
+
+const WsBoxdCloudAcquireRpc = Rpc.make(WS_METHODS.boxdCloudAcquire, {
+  payload: BoatCloudAcquireInput,
+  success: BoatCloudSession,
+  error: BoxdCloudErrors,
 });
 
 const WsGuestShareCreateRpc = Rpc.make(WS_METHODS.guestShareCreate, {
@@ -2310,6 +2350,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsBoatCloudConfigureEnvironmentRpc,
   WsBoatCloudAcquireRpc,
   WsBoatCloudWakeRpc,
+  WsBoxdCloudSubscribeRpc,
+  WsBoxdCloudConnectRpc,
+  WsBoxdCloudDisconnectRpc,
+  WsBoxdCloudRunSetupRpc,
+  WsBoxdCloudAcquireRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,

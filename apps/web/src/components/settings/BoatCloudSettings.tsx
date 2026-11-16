@@ -11,11 +11,16 @@ import {
 import { CheckIcon, CircleDotIcon, CircleIcon, XIcon } from "lucide-react";
 import { type FormEvent, useState } from "react";
 
-import { useBoatCloudKeyHolderStates, usePrimaryBoatCloudStatus } from "../../boatCloud";
+import {
+  boatCloudSnapshotRepositories,
+  useBoatCloudKeyHolderStates,
+  usePrimaryBoatCloudStatus,
+} from "../../boatCloud";
 import { type EnvironmentPresentation, useEnvironments } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { BoatIcon } from "../Icons";
+import { BoxdCloudSettingsSections } from "./BoxdCloudSettings";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -33,7 +38,7 @@ import { searchableSetting } from "./settingsSearch";
 
 const STEP_LABELS: Record<BoatCloudSetupStep, string> = {
   "create-vm": "Create a VM",
-  "install-server": "Install T3 Code server",
+  "install-server": "Install T3 Code and clone repositories",
   "copy-skills": "Copy this machine's skills",
   "save-snapshot": "Save the T3 Code snapshot",
 };
@@ -83,6 +88,7 @@ function useKeyHolders(vmEnvironmentIds: ReadonlySet<EnvironmentId>) {
     (environment) =>
       environment.connection.phase === "connected" &&
       !environment.boatCloud &&
+      !environment.boxdCloud &&
       !vmEnvironmentIds.has(environment.environmentId),
   );
 }
@@ -138,7 +144,10 @@ function ApiKeyForm({
     // Only this machine builds the snapshot, so connected machines never race to save it.
     const own = results.find(({ environmentId }) => environmentId === setupEnvironmentId);
     if (own?.result._tag === "Success" && own.result.value.setup.status === "idle") {
-      void runSetup({ environmentId: own.environmentId, input: {} });
+      void runSetup({
+        environmentId: own.environmentId,
+        input: { repositories: boatCloudSnapshotRepositories() },
+      });
     }
   };
   return (
@@ -343,7 +352,10 @@ export function BoatCloudSettingsPanel() {
               disabled={setup.status === "running"}
               onClick={() => {
                 if (holderEnvironmentId === null) return;
-                void runSetup({ environmentId: holderEnvironmentId, input: {} });
+                void runSetup({
+                  environmentId: holderEnvironmentId,
+                  input: { repositories: boatCloudSnapshotRepositories() },
+                });
               }}
             >
               {setup.status === "running"
@@ -409,6 +421,8 @@ export function BoatCloudSettingsPanel() {
           })}
         </SettingsSection>
       ) : null}
+
+      <BoxdCloudSettingsSections />
     </SettingsPageContainer>
   );
 }

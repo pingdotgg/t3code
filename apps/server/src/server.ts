@@ -102,6 +102,7 @@ import * as ServerBrowserStream from "./preview/ServerBrowserStream.ts";
 import * as PreviewBrowser from "./preview/PreviewBrowser.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import * as BoatCloud from "./boatCloud/BoatCloudService.ts";
+import * as BoxdCloud from "./boxdCloud/BoxdCloudService.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -797,6 +798,7 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
 
 const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(BoatCloud.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+  Layer.provideMerge(BoxdCloud.layer.pipe(Layer.provide(ServerSecretStore.layer))),
   Layer.provideMerge(layerUsage),
   Layer.provideMerge(layerBackground),
   Layer.provideMerge(layerResourceDiagnostics),

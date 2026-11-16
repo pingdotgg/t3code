@@ -25,6 +25,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironments } from "../../state/environments";
 import { boatCloudHoldersAtom, boatCloudOutdatedMachinesAtom } from "../boatCloud/boatCloud";
 import { StepGlyph, type StepState } from "../boatCloud/BoatCloudSteps";
+import { BoxdCloudSettingsSections } from "../boxdCloud/BoxdCloudSettingsSections";
 import {
   configurePhoneBoatCloudEnvironment,
   connectPhoneBoatCloud,
@@ -32,6 +33,7 @@ import {
   phoneBoatCloudAtom,
   readPhoneBoatCloudKey,
   refreshPhoneBoatCloud,
+  boatCloudSnapshotRepositories,
   runPhoneBoatCloudSetup,
 } from "../boatCloud/phoneBoatCloud";
 import { SettingsSection } from "./components/SettingsSection";
@@ -40,7 +42,7 @@ import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 
 const STEP_LABELS: Record<BoatCloudSetupStep, string> = {
   "create-vm": "Create a VM",
-  "install-server": "Install T3 Code server",
+  "install-server": "Install T3 Code and clone repositories",
   "copy-skills": "Copy this machine's skills",
   "save-snapshot": "Save the T3 Code snapshot",
 };
@@ -149,7 +151,10 @@ export function SettingsCloudRouteScreen() {
         builder.result._tag === "Success" &&
         builder.result.value.setup.status === "idle"
       ) {
-        void runSetup({ environmentId: builder.environmentId, input: {} });
+        void runSetup({
+          environmentId: builder.environmentId,
+          input: { repositories: boatCloudSnapshotRepositories() },
+        });
       }
     } else {
       setKeyError(phoneError);
@@ -200,7 +205,10 @@ export function SettingsCloudRouteScreen() {
 
   const startSetup = () => {
     if (machineHolder) {
-      void runSetup({ environmentId: machineHolder.environmentId, input: {} });
+      void runSetup({
+        environmentId: machineHolder.environmentId,
+        input: { repositories: boatCloudSnapshotRepositories() },
+      });
     } else {
       void runPhoneBoatCloudSetup();
     }
@@ -390,6 +398,8 @@ export function SettingsCloudRouteScreen() {
             ))}
           </SettingsSection>
         ) : null}
+
+        <BoxdCloudSettingsSections />
       </ScrollView>
     </SettingsScreen>
   );

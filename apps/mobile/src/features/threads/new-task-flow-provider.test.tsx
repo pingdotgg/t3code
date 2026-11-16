@@ -118,6 +118,11 @@ vi.mock("../boatCloud/boatCloud", () => ({
   useBoatCloudProviderDrivers: () => null,
   prepareBoatCloudProject: mocks.prepareBoatCloud,
 }));
+vi.mock("../boxdCloud/boxdCloud", () => ({
+  boxdCloudMachinesAtom: Atom.make(new Map()),
+  useBoxdCloudStarter: () => null,
+  prepareBoxdCloudProject: vi.fn(),
+}));
 
 import { NewTaskFlowProvider, useNewTaskFlow } from "./new-task-flow-provider";
 
@@ -377,7 +382,7 @@ it("uses cached repository capability and branch defaults while offline", async 
   expect(screen.current.selectedBranchName).toBe("main");
 });
 
-it("starts a Boat VM only when the first send asks, always in a new worktree", async () => {
+it("starts a Boat VM only when the first send asks, and sends onto the worktree it made", async () => {
   using screen = setup();
   const repositoryIdentity = {
     canonicalKey: "github.com/pingdotgg/t3code",
@@ -411,7 +416,8 @@ it("starts a Boat VM only when the first send asks, always in a new worktree", a
   expect(screen.current.workspaceMode).toBe("worktree");
   expect(screen.current.startFromOrigin).toBe(true);
 
-  mocks.prepareBoatCloud.mockResolvedValue(vm);
+  const worktree = { path: "/vm/worktrees/t3-0a1b2c3d", branch: "t3/0a1b2c3d", baseBranch: "main" };
+  mocks.prepareBoatCloud.mockResolvedValue({ project: vm, worktree });
   await act(async () => screen.current.startBoatCloud());
   expect(mocks.prepareBoatCloud).toHaveBeenCalledWith(
     expect.objectContaining({ repositoryUrl: "https://github.com/fork/t3code.git" }),
@@ -419,11 +425,16 @@ it("starts a Boat VM only when the first send asks, always in a new worktree", a
   expect(screen.current.draftKey).toBe(draftKey);
   expect(screen.current.selectedProject).toEqual(vm);
   expect(screen.current.boatCloud).toMatchObject({ startsOnSend: false, sendPending: true });
-  expect(screen.current.workspaceMode).toBe("worktree");
+  expect(screen.current).toMatchObject({
+    workspaceMode: "local",
+    selectedBranchName: worktree.branch,
+    selectedWorktreePath: worktree.path,
+  });
 
+  // Later sends on the VM each get a new worktree.
   act(() => screen.current.finishBoatCloudSend());
   expect(screen.current.boatCloud).toMatchObject({ selected: true, sendPending: false });
-  expect(screen.current.workspaceMode).toBe("worktree");
+  expect(screen.current).toMatchObject({ workspaceMode: "worktree", selectedWorktreePath: null });
 });
 
 it("drops a Boat cloud choice when a machine is picked before sending", async () => {

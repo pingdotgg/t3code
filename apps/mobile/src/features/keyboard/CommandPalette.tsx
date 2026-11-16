@@ -276,8 +276,11 @@ export function CommandPalette(props: {
     : null;
   // Offered on an open draft; its first send starts the VM.
   const canStartBoatCloud =
-    draftOpen && newTaskFlow.boatCloud !== null && !newTaskFlow.boatCloud.selected;
+    draftOpen && newTaskFlow.boatCloud?.boatAvailable === true && !newTaskFlow.boatCloud.selected;
+  const canStartBoxdCloud =
+    draftOpen && newTaskFlow.boatCloud?.boxdAvailable === true && !newTaskFlow.boatCloud.selected;
   const chooseBoatCloud = newTaskFlow.chooseBoatCloud;
+  const chooseBoxdCloud = newTaskFlow.chooseBoxdCloud;
   const triageEnvironmentId = pickTriageEnvironment({
     // The route names the machine even before the thread shell loads.
     onScreen: activeThreadRef?.environmentId ?? draftEnvironmentId,
@@ -361,6 +364,17 @@ export function CommandPalette(props: {
         searchTerms: ["boat", "cloud", "vm", "remote", "new thread"],
         run: () => {
           chooseBoatCloud();
+        },
+      });
+    }
+    if (canStartBoxdCloud) {
+      actions.unshift({
+        key: "boxdCloud",
+        kind: "action",
+        title: "Run on boxd cloud",
+        searchTerms: ["boxd", "cloud", "vm", "remote", "new thread"],
+        run: () => {
+          chooseBoxdCloud();
         },
       });
     }
@@ -483,6 +497,7 @@ export function CommandPalette(props: {
     activeThreadRef,
     environments.length,
     canStartBoatCloud,
+    canStartBoxdCloud,
     canTriage,
     navigation,
     projects,
@@ -491,6 +506,7 @@ export function CommandPalette(props: {
     selectDetail,
     startTriage,
     chooseBoatCloud,
+    chooseBoxdCloud,
     threads,
     triageEnvironmentId,
   ]);

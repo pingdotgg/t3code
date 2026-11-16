@@ -32,6 +32,7 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { connectedEnvironmentIdsAtom, environmentPresentations } from "../../state/presentation";
 import { environmentProjects } from "../../state/projects";
 import { serverEnvironment } from "../../state/server";
+import { boxdCloudMachinesAtom } from "../boxdCloud/boxdCloud";
 import {
   ensurePhoneBoatCloudLoaded,
   phoneBoatCloudAtom,
@@ -68,21 +69,26 @@ export const boatCloudMachinesAtom = Atom.make((get) => {
   return machines;
 }).pipe(Atom.withLabel("mobile-boat-cloud:machines"));
 
+/** Boat VMs and boxd machines, which answer for Boat cloud too but must never get the key. */
+const cloudMachineIdsAtom = Atom.make(
+  (get) => new Set([...get(boatCloudMachinesAtom).keys(), ...get(boxdCloudMachinesAtom).keys()]),
+).pipe(Atom.withLabel("mobile-boat-cloud:cloud-machine-ids"));
+
 /** Connected machines whose T3 Code predates Boat cloud, so they cannot take the key yet. */
 export const boatCloudOutdatedMachinesAtom = Atom.make((get): ReadonlyArray<EnvironmentId> => {
-  const machines = get(boatCloudMachinesAtom);
+  const cloudMachines = get(cloudMachineIdsAtom);
   return get(connectedEnvironmentIdsAtom).filter((environmentId) => {
-    if (machines.has(environmentId)) return false;
+    if (cloudMachines.has(environmentId)) return false;
     const config = get(serverEnvironment.configValueAtom(environmentId));
     return config !== null && config.environment.capabilities.boatCloud !== true;
   });
 }).pipe(Atom.withLabel("mobile-boat-cloud:outdated-machines"));
 
-/** Connected machines that answer for Boat cloud, without the VMs, which answer too. */
+/** Connected machines that answer for Boat cloud, without the cloud machines, which answer too. */
 export const boatCloudHoldersAtom = Atom.make((get): ReadonlyArray<BoatCloudHolder> => {
-  const machines = get(boatCloudMachinesAtom);
+  const cloudMachines = get(cloudMachineIdsAtom);
   return get(connectedEnvironmentIdsAtom).flatMap((environmentId) => {
-    if (machines.has(environmentId)) return [];
+    if (cloudMachines.has(environmentId)) return [];
     const status = AsyncResult.getOrElse(
       get(serverEnvironment.boatCloudStatus({ environmentId, input: {} })),
       () => null,
@@ -268,6 +274,12 @@ function startOnMachine(input: {
   return { session, stopWatching };
 }
 
+/** The VM's project for a draft, and the worktree the VM made for its thread, when it made one. */
+export interface BoatCloudTarget {
+  readonly project: EnvironmentProject;
+  readonly worktree: BoatCloudSession["worktree"] | null;
+}
+
 /**
  * Gets a VM with the repository checked out and returns its project there, so
  * a draft can move onto it, reporting every step on the way. The caller marks
@@ -278,7 +290,7 @@ export async function prepareBoatCloudProject(input: {
   readonly repositoryUrl: string;
   readonly baseBranch: string | null;
   readonly onProgress: (steps: ReadonlyArray<BoatCloudStepProgress>) => void;
-}): Promise<EnvironmentProject | null> {
+}): Promise<BoatCloudTarget | null> {
   let steps = pendingBoatCloudSteps();
   const set = (step: BoatCloudStartStep, patch: Partial<BoatCloudStepProgress>) => {
     steps = steps.map((entry) => (entry.step === step ? { ...entry, ...patch } : entry));
@@ -286,9 +298,11 @@ export async function prepareBoatCloudProject(input: {
   };
   // The checkout keeps running after the acquire returns, and only its step says how it ended.
   let checkoutFailed: (error: Error) => void = () => undefined;
-  const checkoutFailure = new Promise<never>((_, reject) => {
-    checkoutFailed = reject;
-  });
+  const watchCheckout = () =>
+    new Promise<never>((_, reject) => {
+      checkoutFailed = reject;
+    });
+  let checkoutFailure = watchCheckout();
   const setHolderStep = (step: BoatCloudStartStep, patch: Partial<BoatCloudStepProgress>) => {
     set(step, patch);
     if (step === "repository" && patch.state === "failed") {
@@ -299,13 +313,20 @@ export async function prepareBoatCloudProject(input: {
     for (const entry of holderSteps) setHolderStep(entry.step, entry);
   };
   const stops: Array<() => void> = [];
+  // A start that was retried keeps reporting, so only the latest one's steps count.
+  let attempt = 0;
   const start = (paired: BoatCloudAcquireInput["paired"]) => {
+    attempt += 1;
+    const mine = attempt;
     if (input.starter.kind === "phone") {
       return startOnPhone({
         repositoryUrl: input.repositoryUrl,
         baseBranch: input.baseBranch,
         paired,
-        report: (step, state, detail) => Effect.sync(() => setHolderStep(step, { state, detail })),
+        report: (step, state, detail) =>
+          Effect.sync(() => {
+            if (mine === attempt) setHolderStep(step, { state, detail });
+          }),
       });
     }
     const started = startOnMachine({
@@ -313,7 +334,9 @@ export async function prepareBoatCloudProject(input: {
       repositoryUrl: input.repositoryUrl,
       baseBranch: input.baseBranch,
       paired,
-      onHolderSteps: setHolderSteps,
+      onHolderSteps: (holderSteps) => {
+        if (mine === attempt) setHolderSteps(holderSteps);
+      },
     });
     stops.push(started.stopWatching);
     return started.session;
@@ -331,9 +354,10 @@ export async function prepareBoatCloudProject(input: {
     set("connect", { state: "active" });
     try {
       await attach(session);
-    } catch (error) {
-      if (error !== reconnectFailed) throw error;
-      // The saved credential no longer works, so pair as a new app.
+    } catch {
+      // The saved credential no longer works, or the VM did not answer, so start once more
+      // and pair as a new app. A VM that does not answer gets no new thread.
+      checkoutFailure = watchCheckout();
       session = await start([]);
       await attach(session);
     }
@@ -350,11 +374,11 @@ export async function prepareBoatCloudProject(input: {
       checkoutFailure,
     ]);
     if (!project) throw new Error("The Boat cloud machine did not open the project.");
-    // The project is added after the checkout, so it appearing means the checkout is done.
+    // The project is added after the checkout and its worktree, so it appearing means both are done.
     set("repository", { state: "done" });
     set("project", { state: "done" });
     set("thread", { state: "active" });
-    return project;
+    return { project, worktree: session.worktree ?? null };
   } catch (error) {
     if (!steps.some((entry) => entry.state === "failed")) {
       set(current, { state: "failed" });
@@ -423,6 +447,20 @@ function wakeBoatCloudMachine(environmentId: EnvironmentId, httpBaseUrl: string)
   });
   wakesInFlight.set(environmentId, wake);
   return wake;
+}
+
+const WAKE_CONNECT_TIMEOUT_MS = 90_000;
+
+/**
+ * Wakes a Boat VM that is not connected before an action runs on it. False when it
+ * could not be woken; true when it is connected or is not a Boat VM at all.
+ */
+export async function wakeBoatCloudIfAsleep(environmentId: EnvironmentId): Promise<boolean> {
+  if (appAtomRegistry.get(connectedEnvironmentIdsAtom).includes(environmentId)) return true;
+  const httpBaseUrl = appAtomRegistry.get(boatCloudMachinesAtom).get(environmentId);
+  if (httpBaseUrl === undefined) return true;
+  await wakeBoatCloudMachine(environmentId, httpBaseUrl);
+  return waitForConnected(environmentId, WAKE_CONNECT_TIMEOUT_MS);
 }
 
 export interface BoatCloudSleep {

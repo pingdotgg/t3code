@@ -5,7 +5,11 @@ import {
   type EnvironmentPresentation as BaseEnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
 import { Discovery } from "@t3tools/client-runtime/relay";
-import { type EnvironmentId, isBoatCloudHttpBaseUrl } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  isBoatCloudHttpBaseUrl,
+  isBoxdCloudHttpBaseUrl,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import { environmentCatalog } from "../connection/catalog";
@@ -29,9 +33,12 @@ export interface EnvironmentPresentation extends BaseEnvironmentPresentation {
    * cloud entry stands for all of them, and they all go by that name.
    */
   readonly boatCloud: boolean;
+  /** A boxd cloud machine, listed the same way as a Boat cloud VM. */
+  readonly boxdCloud: boolean;
 }
 
 export const BOAT_CLOUD_LABEL = "Boat cloud";
+export const BOXD_CLOUD_LABEL = "boxd cloud";
 
 function projectEnvironmentPresentation(
   environmentId: EnvironmentId,
@@ -39,13 +46,19 @@ function projectEnvironmentPresentation(
 ): EnvironmentPresentation {
   const displayUrl = connectionCatalogDisplayUrl(presentation.entry);
   const boatCloud = isBoatCloudHttpBaseUrl(displayUrl);
+  const boxdCloud = isBoxdCloudHttpBaseUrl(displayUrl);
   return {
     ...presentation,
     environmentId,
-    label: boatCloud ? BOAT_CLOUD_LABEL : presentation.entry.target.label,
+    label: boatCloud
+      ? BOAT_CLOUD_LABEL
+      : boxdCloud
+        ? BOXD_CLOUD_LABEL
+        : presentation.entry.target.label,
     displayUrl,
     relayManaged: hasRelayRoute(presentation.entry),
     boatCloud,
+    boxdCloud,
   };
 }
 

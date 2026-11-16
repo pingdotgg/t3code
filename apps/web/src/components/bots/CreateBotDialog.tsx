@@ -144,7 +144,8 @@ function CreateBotForm(props: FormProps) {
   const { environments } = useEnvironments();
   // A Boat cloud VM stops when its threads go idle, so it cannot host a bot.
   const machines = environments.filter(
-    (environment) => !environment.boatCloud && isConnectedWithConfig(environment),
+    (environment) =>
+      !environment.boatCloud && !environment.boxdCloud && isConnectedWithConfig(environment),
   );
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const [name, setName] = useState("");

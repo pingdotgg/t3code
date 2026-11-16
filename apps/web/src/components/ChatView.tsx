@@ -246,6 +246,7 @@ import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
+  isCloudEnvironmentSelection,
   useComposerDraftStore,
   DraftId,
 } from "../composerDraftStore";
@@ -409,7 +410,7 @@ import {
 } from "./chat/useSystemComposerBanners";
 import { useDraftHeroLayoutTransition } from "./chat/useDraftHeroLayoutTransition";
 import { useLocalDispatchState } from "./chat/useLocalDispatchState";
-import { useBoatCloudProviderDrivers, useBoatCloudSleep } from "../boatCloud";
+import { useBoatCloudProviderDrivers, useBoatCloudSleep, useBoatCloudWakeRows } from "../boatCloud";
 import { draftFanoutSelectionsAtom, draftSendState } from "./chat/chatViewSend";
 import {
   isCompactCommandMessage,
@@ -1038,9 +1039,11 @@ export default function ChatView(props: ChatViewProps) {
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   // Threads on a Boat VM share its checkout, so a draft there always gets a new worktree,
   // started from the remote branch: the VM's clone has none of this machine's local branches.
+  const draftEnvironment = useEnvironment(
+    isLocalDraftThread ? (activeThread?.environmentId ?? null) : null,
+  );
   const draftOnBoatCloudVm =
-    useEnvironment(isLocalDraftThread ? (activeThread?.environmentId ?? null) : null)?.boatCloud ===
-    true;
+    draftEnvironment?.boatCloud === true || draftEnvironment?.boxdCloud === true;
   const canCheckoutPullRequestIntoThread = canWriteSourceControl && isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
   // Turn items can lag projection hydration; keep the environment locked through that gap.
@@ -1201,7 +1204,11 @@ export default function ChatView(props: ChatViewProps) {
   const activeProjectScripts = activeProject ? resolveProjectScripts(settings, activeProject) : [];
   const { projectCloneBannerItem, projectCloneSendBlockReason } =
     useProjectCloneBanner(activeProjectRef);
-  const boatCloudStartBannerItem = useBoatCloudStartBanner(draftId, draftThread);
+  const {
+    bannerItem: boatCloudStartBannerItem,
+    threadRows: boatCloudStartRows,
+    sentAt: boatCloudStartSentAt,
+  } = useBoatCloudStartBanner(draftId, draftThread);
   const activeProjectDefaultModelSelection =
     !isServerThread && draftFallback
       ? draftFallback.selection
@@ -1246,6 +1253,9 @@ export default function ChatView(props: ChatViewProps) {
     activeEnvironment?.environmentId ?? null,
     activeEnvironment?.connection.phase ?? null,
   );
+  // A wake shows its steps the way a start does, until the send that waited on it goes out.
+  const boatCloudWake = useBoatCloudWakeRows(activeEnvironment?.environmentId ?? null);
+  const boatCloudStepRows = boatCloudStartRows ?? boatCloudWake.rows;
   // A sleeping Boat VM has no session to read grants from. The send wakes it, and its server checks.
   const environmentAllowsOperate = useEnvironmentScope(
     environmentId,
@@ -1385,7 +1395,7 @@ export default function ChatView(props: ChatViewProps) {
     canAutoBalanceEnvironments &&
     loadBalancingSettings.loadBalancingEnabled &&
     draftThread?.environmentSelection !== "manual" &&
-    draftThread?.environmentSelection !== "cloud" &&
+    !isCloudEnvironmentSelection(draftThread?.environmentSelection) &&
     (!composerHasAttachments || Boolean(draftThread?.loadBalancedEnvironmentId)) &&
     (!draftThread?.branch || draftThread.environmentSelection === "auto") &&
     !draftThread?.worktreePath,
@@ -1896,6 +1906,7 @@ export default function ChatView(props: ChatViewProps) {
     onAutoEnvironmentStable,
     autoEnvironmentLabel,
     cloudEnvironment,
+    boxdEnvironment,
     isEnvironmentChanging,
     readPendingEnvironmentChange,
     onEnvironmentChangeStable,
@@ -3130,13 +3141,7 @@ export default function ChatView(props: ChatViewProps) {
       : (timelineMessages.findLast(
           (message) => message.role === "user" && message.runId === failedRunId,
         ) ?? null);
-  const {
-    sendWaitsOnBoatCloud,
-    onSend,
-    withdrawQueuedSend,
-    onRetryFailedRun,
-    retryingFailedRunId,
-  } = useComposerSend({
+  const { onSend, withdrawQueuedSend, onRetryFailedRun, retryingFailedRunId } = useComposerSend({
     environmentId,
     routeThreadKey,
     currentRouteThreadKeyRef,
@@ -3170,7 +3175,8 @@ export default function ChatView(props: ChatViewProps) {
     queuedRunEdit,
     isRevertingCheckpoint,
     threadDetailLoading,
-    activeEnvironmentUnavailable,
+    // A sleeping Boat VM is woken by the send's own commands.
+    activeEnvironmentUnavailable: activeEnvironmentUnavailable && boatCloudSleep === null,
     isSendBusy,
     sendQueuesBehindSetup,
     isDraftHeroState,
@@ -3662,7 +3668,7 @@ export default function ChatView(props: ChatViewProps) {
                   {...(activeProject
                     ? { onRunShellCommand: parentPanel?.runShellCommand ?? runShellCommandStable }
                     : {})}
-                  isWorking={isWorking}
+                  isWorking={isWorking || boatCloudStepRows !== null}
                   runlessWorkActive={runlessWorkStartedAt !== null}
                   awaitingBackgroundWork={activeRuntime?.awaitingBackgroundWork === true}
                   isCompacting={isCompacting}
@@ -3682,9 +3688,12 @@ export default function ChatView(props: ChatViewProps) {
                   awaitingRequestId={
                     activePendingApproval?.requestId ?? activePendingUserInput?.requestId ?? null
                   }
-                  activeTurnStartedAt={activeWorkStartedAt}
+                  activeTurnStartedAt={
+                    activeWorkStartedAt ?? boatCloudStartSentAt ?? boatCloudWake.startedAt
+                  }
                   providerStartingLabel={activeActivityRun?.providerStartingLabel ?? null}
                   worktreeSetup={worktreeSetup}
+                  boatCloudStart={boatCloudStepRows}
                   onCancelWorktreeSetup={onCancelWorktreeSetupStable}
                   retryableWorkspacePreparationRunIds={retryableWorkspacePreparationRunIds}
                   onRetryWorkspacePreparation={onRetryWorkspacePreparationStable}
@@ -3944,7 +3953,6 @@ export default function ChatView(props: ChatViewProps) {
                               }
                               isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
                               bannerItems={trayBannerItems}
-                              editorHidden={sendWaitsOnBoatCloud}
                               resumeCompactionTokens={resumeCompactionTokens}
                               keepFullHistory={keepFullHistory}
                               onToggleKeepFullHistory={toggleKeepFullHistoryStable}
@@ -4086,6 +4094,7 @@ export default function ChatView(props: ChatViewProps) {
                                   : {})}
                                 autoEnvironmentLabel={autoEnvironmentLabel}
                                 cloudEnvironment={cloudEnvironment}
+                                boxdEnvironment={boxdEnvironment}
                                 onAutoEnvironment={
                                   draftId &&
                                   !envLocked &&
@@ -4174,6 +4183,7 @@ export default function ChatView(props: ChatViewProps) {
                   availableEnvironments={logicalProjectEnvironments}
                   autoEnvironmentLabel={autoEnvironmentLabel}
                   cloudEnvironment={cloudEnvironment}
+                  boxdEnvironment={boxdEnvironment}
                   onAutoEnvironment={
                     draftId &&
                     !envLocked &&

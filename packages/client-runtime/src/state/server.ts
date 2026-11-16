@@ -1503,6 +1503,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:boat-cloud:status",
       tag: WS_METHODS.boatCloudSubscribe,
     }),
+    boxdCloudStatus: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:boxd-cloud:status",
+      tag: WS_METHODS.boxdCloudSubscribe,
+    }),
     // A cold transcript scan is measured in seconds, so keep the result around
     // long enough that switching windows or re-rendering does not rescan. With
     // nothing to show yet, the server's last scan answers first, then a plain
@@ -1782,6 +1786,23 @@ export function createServerEnvironmentAtoms<R, E>(
     acquireBoatCloud: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:boat-cloud:acquire",
       tag: WS_METHODS.boatCloudAcquire,
+    }),
+    connectBoxdCloud: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:boxd-cloud:connect",
+      tag: WS_METHODS.boxdCloudConnect,
+    }),
+    disconnectBoxdCloud: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:boxd-cloud:disconnect",
+      tag: WS_METHODS.boxdCloudDisconnect,
+    }),
+    runBoxdCloudSetup: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:boxd-cloud:run-setup",
+      tag: WS_METHODS.boxdCloudRunSetup,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
+    acquireBoxdCloud: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:boxd-cloud:acquire",
+      tag: WS_METHODS.boxdCloudAcquire,
     }),
     // Opening a thread and reconnecting can both ask to wake the same VM.
     wakeBoatCloud: createEnvironmentRpcCommand(runtime, {

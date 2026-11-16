@@ -1102,6 +1102,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["cloud agents remote vm sandbox boat.dev api key snapshot"],
   },
   {
+    id: "boxd-cloud",
+    title: "boxd cloud",
+    to: "/settings/cloud",
+    searchTerms: ["cloud agents remote vm sandbox boxd.sh api key snapshot"],
+  },
+  {
     id: "agent-browser-access",
     title: "Agent browser access",
     to: "/settings/browser",

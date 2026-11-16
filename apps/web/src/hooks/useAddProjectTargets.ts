@@ -29,6 +29,7 @@ export function useAddProjectTargets(
       (environment) =>
         !hasProject.has(environment.environmentId) &&
         !environment.boatCloud &&
+        !environment.boxdCloud &&
         canClone.has(environment.environmentId) &&
         canCreateProjectInEnvironment(environment.connection.phase) &&
         environment.serverConfig !== null,

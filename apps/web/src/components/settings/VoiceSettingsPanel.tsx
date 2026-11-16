@@ -1249,7 +1249,9 @@ export function VoiceSettingsPanel() {
   const order = microphoneOrder(settings);
   const selectedMicrophone = preferredMicrophoneId(order, microphones);
   // Boat VMs are per-thread and stop themselves when idle, so dictation sent to one would fail.
-  const choosableEnvironments = environments.filter((environment) => !environment.boatCloud);
+  const choosableEnvironments = environments.filter(
+    (environment) => !environment.boatCloud && !environment.boxdCloud,
+  );
   const environmentChoices = choosableEnvironments.map((environment) => ({
     environment,
     value: JSON.stringify(["environment", environment.environmentId]),
