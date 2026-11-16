@@ -227,6 +227,34 @@ function markStripOverflow(strip: HTMLElement): void {
   strip.style.setProperty("--strip-overflow-start", `${Math.max(0, strip.scrollLeft)}px`);
   strip.style.setProperty("--strip-overflow-end", `${Math.max(0, end)}px`);
   strip.style.setProperty("--strip-overflowing-end", end > 0.5 ? "1" : "0");
+  const entry = stripEntries.get(strip);
+  if (entry) markJoinAtStart(entry);
+}
+
+/**
+ * The joined tab is the first, at the pane's edge (no collapsed sidebar's
+ * controls before it): its side runs on down the pane's edge, and the
+ * pane's corner there gives way (index.css, data-pane-join-start).
+ */
+function markJoinAtStart(entry: PaneStrip): void {
+  const { strip, shown } = entry;
+  const row = strip.closest<HTMLElement>("[data-pane-header]");
+  if (!row) return;
+  const atStart =
+    shown !== null &&
+    shown.x <= PANE_JOIN_EAR_PX + 1 &&
+    strip.scrollLeft < 1 &&
+    stripAtPaneEdge(strip, row);
+  if (row.hasAttribute("data-pane-join-start") !== atStart) {
+    row.toggleAttribute("data-pane-join-start", atStart);
+  }
+}
+
+/** The strip starts at its pane's edge, which clips its ear room (index.css, --pane-join-lead). */
+function stripAtPaneEdge(strip: HTMLElement, row: HTMLElement | null): boolean {
+  const notch = strip.closest<HTMLElement>('[data-pane-notch=""]');
+  if (!notch || !row) return false;
+  return Math.abs(notch.getBoundingClientRect().left - row.getBoundingClientRect().left) < 1;
 }
 
 function paneStripFor(key: string): PaneStrip {
@@ -327,6 +355,7 @@ function moveJoin(
   join.style.setProperty("--jx", `${to.x}px`);
   join.style.setProperty("--jw", `${to.w}px`);
   join.style.setProperty("--jm", String(middle(to.w)));
+  markJoinAtStart(entry);
   const land = () => {
     entry.slide = null;
     entry.joinedId = to.tabId;
@@ -391,6 +420,7 @@ function placePaneJoin(entry: PaneStrip, tabId: string | null, motionMs: number)
     entry.shown = null;
     entry.joinedId = null;
     markJoinedLabel(entry);
+    markJoinAtStart(entry);
     return;
   }
   const box = stripBoxOf(strip, active);
@@ -432,8 +462,12 @@ function revealPaneTab(strip: HTMLElement, tabId: string | null): void {
   const bounds = strip.getBoundingClientRect();
   const rect = tab.getBoundingClientRect();
   // Room for the joined tab's ears inside the strip's clip, and at the end for
-  // its rim's tail, which the next control on the bar overlaps.
-  const start = bounds.left + PANE_JOIN_EAR_PX + PANE_STRIP_FADE_PX;
+  // its rim's tail, which the next control on the bar overlaps. At the pane's
+  // edge the pane clips the strip's ear room and the fade starts past it.
+  const clipped = stripAtPaneEdge(strip, strip.closest("[data-pane-header]"))
+    ? PANE_JOIN_EAR_PX
+    : 0;
+  const start = bounds.left + clipped + PANE_JOIN_EAR_PX + PANE_STRIP_FADE_PX;
   const end = bounds.right - PANE_JOIN_EAR_PX - PANE_JOIN_TAIL_PX;
   // A file tab's trailing breadcrumb names the file; reveal it before its thread label.
   if (rect.width > end - start && tab.dataset.layoutTabReveal === "end")
@@ -490,9 +524,16 @@ export function LayoutPaneTabStrip({
     const wheel = (event: WheelEvent) => scrollTabStripFromRow(event, strip);
     row?.addEventListener("wheel", wheel, { passive: false });
     markStripOverflow(strip);
+    // The collapsed sidebar's inset moves the strip off the pane's edge
+    // without resizing it; the row's content box tracks that inset.
+    // oxlint-disable-next-line t3code/no-raw-resize-observer -- Marks a DOM attribute only, as the strip's own observer does.
+    const inset = new ResizeObserver(() => markJoinAtStart(entry));
+    if (row) inset.observe(row);
     return () => {
+      inset.disconnect();
       row?.removeEventListener("wheel", wheel);
       row?.removeAttribute("data-tab-row-overflow");
+      row?.removeAttribute("data-pane-join-start");
     };
   }, [entry, holds, layer, motionMs, tabId]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Take this header's tabs out of the pane's strip, and drop the strip once its last header lets go of it.

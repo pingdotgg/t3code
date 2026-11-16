@@ -4004,6 +4004,57 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  it.effect("keeps a background child's question open past its parent's turn end", () =>
+    Effect.gen(function* () {
+      const form = { ...colorForm, sessionID: CHILD };
+      const { runtime, thread } = yield* resumed([
+        ...launchedAndRunning,
+        event("form.created", { form }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const requested = yield* requestOf(runtime).pipe(Effect.forkScoped);
+      const ended = yield* runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "turn.terminal" ||
+            (event.type === "provider_turn.updated" && event.providerTurn.status === "completed"),
+        ),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      const request = yield* Fiber.join(requested);
+      assert.equal(request?.nativeRequestRef?.nativeId, form.id);
+      for (const terminal of yield* Fiber.join(ended)) {
+        assert.deepEqual(
+          "retainedRuntimeRequestIds" in terminal ? terminal.retainedRuntimeRequestIds : undefined,
+          [request!.id],
+        );
+      }
+    }),
+  );
+
+  // A cancel without a message aborts the asking session's step, so the child would never report.
+  it.effect.each(["cancel", "decline"] as const)(
+    "lets a background child carry on when its question is dismissed with %s",
+    (decision) =>
+      Effect.gen(function* () {
+        const form = { ...colorForm, sessionID: CHILD };
+        const { runtime, thread } = yield* resumed([
+          ...launchedAndRunning,
+          event("form.created", { form }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          out("session.form.cancel", { sessionID: CHILD, formID: form.id, message: "<string>" }),
+          reply("session.form.cancel", null),
+        ]);
+        const requested = yield* requestOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn(withLineage(thread));
+        const request = yield* Fiber.join(requested);
+        yield* runtime.respondToRuntimeRequest({ requestId: request!.id, decision });
+      }),
+  );
+
   it.effect("keeps a background child's requests when its parent stops during reconciliation", () =>
     Effect.gen(function* () {
       const reading = yield* Deferred.make<void>();
