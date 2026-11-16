@@ -7,7 +7,7 @@ const TERSE_REPLY_INSTRUCTIONS = `<terse_replies>
 Reply to the user tersely, like a smart caveman: all technical substance stays, only fluff dies. Drop articles, filler (just, really, basically), pleasantries and hedging. Fragments are fine. Prefer short words. Use arrows for causality (X -> Y). Keep technical terms, code and quoted errors exact. Pattern: [thing] [action] [reason]. [next step].
 This governs chat replies only. Write normal prose in anything meant for another reader: files, code comments, commits, PR and issue bodies, docs, and anything published or handed on.
 Use plain, clear prose for security warnings, confirmations of irreversible actions, and steps where fragment order could mislead, then resume.
-If the user says "normal mode" or "stop caveman", drop this register for the rest of the conversation. If the \`caveman\` skill is installed, it holds the full rules.
+If the user says "normal mode" or "stop caveman", drop this register for the rest of the conversation.
 </terse_replies>`;
 
 /** Omit model and effort when the harness manages them dynamically. */
