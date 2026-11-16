@@ -15,6 +15,7 @@ mod orchestration;
 mod panels;
 mod projects;
 pub mod provider;
+pub(crate) mod pull_requests;
 mod scheduled;
 mod secrets;
 pub mod server;
@@ -36,6 +37,8 @@ pub struct Deps {
     /// `/mcp`; `serve.rs` builds it with `routes::mcp::service`.
     pub mcp: Option<Arc<conn_mcp::McpService>>,
     pub vcs: vcs::VcsShared,
+    /// One PR service for RPC reads, refreshes and HTTP diffs.
+    pub pull_requests: pull_requests::Shared,
     /// Shared with the engine host, so a thread's terminals close with it.
     pub terminals: Option<conn_terminal::TerminalManager>,
     /// Files, assets and attachments; without it those methods and routes are not served.
@@ -78,5 +81,6 @@ pub fn register_all(table: &mut MethodTable, deps: &Deps) {
     panels::register(table, deps);
     annotations::register(table, deps);
     source_control::register(table, deps);
+    pull_requests::register(table, deps);
     text_generation::register(table, deps);
 }

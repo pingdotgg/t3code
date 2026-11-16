@@ -435,7 +435,8 @@ const steps = [
         "https://GitHub.com/O/R/pull/5",
         "https://github.com/o/r/pull/3",
         "not a url",
-        "https://github.com/g/s/pull/2",
+        // Match input and key order: the servers can assign different millisecond ties.
+        "https://github.com/z/s/pull/2",
       ],
     }),
     undefined,
