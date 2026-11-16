@@ -55,8 +55,10 @@ jobs:
             target: AppImage
             rust_target: x86_64-unknown-linux-gnu
             files: release/*.AppImage
+          # Built on Linux like upstream. A native Windows runner also runs the
+          # afterPack compile-cache step, whose files break the payload limit.
           - label: Windows x64
-            runner: windows-2025
+            runner: ubuntu-24.04
             platform: win
             target: nsis
             rust_target: x86_64-pc-windows-msvc
@@ -87,16 +89,20 @@ jobs:
         run: node scripts/update-release-package-versions.ts "${{ needs.version.outputs.version }}"
 
       # Same split as upstream release-desktop.yml: build the JS bundle and the
-      # resource monitor first, then package with --skip-build. Letting the
-      # packager build everything leaves extra files that break the Windows
-      # payload file limit.
+      # resource monitor first, then package with --skip-build.
       - name: Build JS bundle
         shell: bash
         run: vp run build:desktop:bundle
 
+      - name: Install cargo-xwin
+        if: matrix.platform == 'win'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-xwin@0.23.1
+
       - name: Build resource monitor
         shell: bash
-        run: cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target "${{ matrix.rust_target }}"
+        run: cargo ${{ matrix.platform == 'win' && 'xwin build' || 'build' }} --locked --release --manifest-path native/resource-monitor/Cargo.toml --target "${{ matrix.rust_target }}"
 
       - name: Build desktop app
         shell: bash
@@ -117,7 +123,7 @@ jobs:
         if: failure() && matrix.platform == 'win'
         shell: bash
         run: |
-          dir="$(find "$RUNNER_TEMP" "${TEMP:-/tmp}" -type d -name win-unpacked 2>/dev/null | head -1)"
+          dir="$(find "$RUNNER_TEMP" /tmp -type d -name win-unpacked 2>/dev/null | head -1)"
           echo "$dir"
           (cd "$dir" && find . -type f -printf '%s\t%p\n' | sort -k2)
 
