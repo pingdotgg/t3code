@@ -148,7 +148,9 @@ const decodeRetryAfter = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
       data: Schema.Struct({
-        error: Schema.Struct({ retryAfterMs: Schema.optional(Schema.Int) }),
+        error: Schema.Struct({
+          retryAfterMs: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+        }),
       }),
     }),
   ),

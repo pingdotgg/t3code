@@ -611,21 +611,13 @@ const isUsageLimit = (error: {
   error.type === "provider.free-limit" ||
   claudeUsageLimit(error.message) !== undefined;
 
-const retryAfterResetAt = (retryAfterMs: unknown, eventCreated: unknown): string | null => {
-  if (
-    typeof retryAfterMs !== "number" ||
-    !Number.isFinite(retryAfterMs) ||
-    retryAfterMs < 0 ||
-    typeof eventCreated !== "number" ||
-    !Number.isFinite(eventCreated)
-  ) {
-    return null;
-  }
-  return Option.match(DateTime.make(eventCreated + retryAfterMs), {
-    onNone: () => null,
-    onSome: DateTime.formatIso,
-  });
-};
+const retryAfterResetAt = (created: number, retryAfterMs: unknown) =>
+  typeof retryAfterMs === "number"
+    ? Option.match(DateTime.make(created + retryAfterMs), {
+        onNone: () => null,
+        onSome: DateTime.formatIso,
+      })
+    : null;
 
 const INTERRUPT_TIMEOUT = 10_000;
 const INSTRUCTIONS_KEY = "t3-code";
@@ -2914,8 +2906,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const retryAfterMs =
             "retryAfterMs" in event.data.error ? event.data.error.retryAfterMs : undefined;
           const usageLimit = isUsageLimit(event.data.error);
-          const retryAt = retryAfterResetAt(retryAfterMs, event.created);
-          const resetAt = usageLimit ? (claudeUsageLimit(message)?.resetAt ?? retryAt) : null;
+          const resetAt = usageLimit
+            ? (claudeUsageLimit(message)?.resetAt ?? retryAfterResetAt(event.created, retryAfterMs))
+            : null;
           return yield* endExecution(state, turn, {
             status: "failed",
             failure: makeProviderFailure({

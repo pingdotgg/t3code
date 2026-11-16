@@ -88,8 +88,7 @@ describe("OpenCode2Client event subscription", () => {
 });
 
 describe("OpenCode2Client execution failures", () => {
-  // The bundled 2.0.28 schema strips retryAfterMs, which carries a free-tier limit's reset.
-  it.effect("keeps retryAfterMs on a failed execution event", () =>
+  const firstFailure = (retryAfterMs: unknown) =>
     Effect.gen(function* () {
       const frame = {
         id: "evt_failed0000",
@@ -100,8 +99,7 @@ describe("OpenCode2Client execution failures", () => {
           error: {
             type: "provider.free-limit",
             message: "Free usage limit reached.",
-            status: 429,
-            retryAfterMs: 21_486_000,
+            retryAfterMs,
           },
         },
         durable: { aggregateID: "ses_repro", seq: 1, version: 1 },
@@ -126,75 +124,31 @@ describe("OpenCode2Client execution failures", () => {
         baseUrl: "http://127.0.0.1:4096",
         password: "test-password",
       });
-      const first = yield* events.pipe(Effect.flatMap(Stream.runHead));
-      const event = Option.getOrThrow(first);
+      const event = Option.getOrThrow(yield* events.pipe(Effect.flatMap(Stream.runHead)));
       assert.strictEqual(event.type, "session.execution.failed");
-      assert.deepEqual(
-        event.type === "session.execution.failed" ? event.data.error : undefined,
-        frame.data.error,
-      );
-    }).pipe(Effect.scoped),
+      return event.type === "session.execution.failed" ? event.data.error : undefined;
+    }).pipe(Effect.scoped);
+
+  // The bundled 2.0.28 schema strips retryAfterMs, which carries a free-tier limit's reset.
+  it.effect("keeps retryAfterMs on a failed execution event", () =>
+    Effect.gen(function* () {
+      const expected = {
+        type: "provider.free-limit",
+        message: "Free usage limit reached.",
+        retryAfterMs: 21_486_000,
+      };
+      assert.deepEqual(yield* firstFailure(expected.retryAfterMs), expected);
+    }),
   );
 
-  it.effect.each([
-    {
-      name: "is absent",
-      error: {
-        type: "provider.free-limit",
-        message: "Free usage limit reached.",
-        status: 429,
-      },
-    },
-    {
-      name: "is malformed",
-      error: {
-        type: "provider.free-limit",
-        message: "Free usage limit reached.",
-        status: 429,
-        retryAfterMs: "invalid-delay",
-      },
-    },
-  ] as const)("preserves the failure when retryAfterMs $name", ({ error }) =>
+  it.effect.each(["invalid-delay", -1000])("drops a retryAfterMs of %s", (retryAfterMs) =>
     Effect.gen(function* () {
-      const frame = {
-        id: "evt_failed0001",
-        created: 2,
-        type: "session.execution.failed",
-        data: {
-          sessionID: "ses_repro2",
-          error,
-        },
-        durable: { aggregateID: "ses_repro2", seq: 2, version: 1 },
-      };
-      const transport = Layer.succeed(
-        HttpClient.HttpClient,
-        HttpClient.make((request) =>
-          Effect.succeed(
-            HttpClientResponse.fromWeb(
-              request,
-              new Response(`data: ${JSON.stringify(frame)}\n\n`, {
-                headers: { "content-type": "text/event-stream" },
-              }),
-            ),
-          ),
-        ),
-      );
-      const opencode = yield* OpenCode2Client.OpenCode2Client.pipe(
-        Effect.provide(OpenCode2Client.layer.pipe(Layer.provide(transport))),
-      );
-      const { events } = yield* opencode.connect({
-        baseUrl: "http://127.0.0.1:4096",
-        password: "test-password",
-      });
-      const first = yield* events.pipe(Effect.flatMap(Stream.runHead));
-      const event = Option.getOrThrow(first);
-      assert.strictEqual(event.type, "session.execution.failed");
-      assert.deepEqual(event.type === "session.execution.failed" ? event.data.error : undefined, {
+      const error = yield* firstFailure(retryAfterMs);
+      assert.deepEqual(error, {
         type: "provider.free-limit",
         message: "Free usage limit reached.",
-        status: 429,
       });
-    }).pipe(Effect.scoped),
+    }),
   );
 });
 
