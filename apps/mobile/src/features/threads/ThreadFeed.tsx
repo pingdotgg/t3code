@@ -38,7 +38,6 @@ import { SecretRequestCard } from "./SecretRequestCard";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import {
   WorktreePreparingHeader,
-  WorktreeWorkingHeader,
   WorktreeSetupCard,
   type WorktreeSetupCardProps,
 } from "./worktree-setup-card";
@@ -165,7 +164,7 @@ import { MARKDOWN_IMAGE_MAX_WIDTH, resolveMarkdownImageDisplaySize } from "./mar
 import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { inlineFilePreviewKind, isPdfFile } from "../../lib/filePreview";
 import { ThreadInlineFilePreview } from "./ThreadInlineFilePreview";
-import { flattenThemeColor } from "../../lib/mobileTheme";
+import { flattenThemeColor, themeColorWithContrast } from "../../lib/mobileTheme";
 import { PresentationSource } from "../../components/ui/NativePresentation";
 import { NativeScrollViewMarker } from "../../native/NativeScrollViewMarker";
 import Animated, { FadeIn, FadeInDown, type SharedValue } from "react-native-reanimated";
@@ -349,7 +348,6 @@ export interface ThreadFeedHistoryControls {
 export interface ThreadFeedProps {
   readonly toolCallVisibility?: ToolCallVisibility;
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
-  readonly setupWorkingStartedAt?: string | null;
   readonly preparingWorktree?: boolean;
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
   readonly dispatchingMessageId: MessageId | null;
@@ -1455,7 +1453,7 @@ function useMarkdownStyles(): MarkdownStyleSets {
         color: markdownUserBodyColor,
         strongColor: markdownUserBodyColor,
         mutedColor: markdownUserBodyColor,
-        linkColor: markdownUserBodyColor,
+        linkColor: themeColorWithContrast(markdownLinkColor, theme["--color-user-bubble"]),
         inlineCodeColor: markdownUserInlineCodeText,
         codeColor: markdownUserCodeText,
         codeBackgroundColor: markdownUserCodeBg,
@@ -3555,7 +3553,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     reduceMotion,
     formatMessageTime,
     worktreeSetup: props.worktreeSetup,
-    setupWorkingStartedAt: props.setupWorkingStartedAt,
     preparingWorktree: props.preparingWorktree,
     dispatchingMessageId: props.dispatchingMessageId,
     unsettledTurnId,
@@ -3670,10 +3667,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const [groupFeed] = useState(createThreadFeedGrouping);
   const groupedFeed = groupFeed(presentedFeed, {
     workflowOpeningMessageId: workflowOpening?.messageId,
-    setupAnchorIndex:
-      props.worktreeSetup || props.setupWorkingStartedAt || props.preparingWorktree
-        ? setupAnchorIndex
-        : undefined,
+    setupAnchorIndex: props.worktreeSetup || props.preparingWorktree ? setupAnchorIndex : undefined,
   });
   const { contentInsetEndAdjustment } = props;
   const attachList = (list: LegendListRef | null) => {
@@ -4048,8 +4042,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           })}
           {props.worktreeSetup && info.index === setupAnchorIndex ? (
             <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
-          ) : props.setupWorkingStartedAt && info.index === setupAnchorIndex ? (
-            <WorktreeWorkingHeader startedAt={props.setupWorkingStartedAt} />
           ) : props.preparingWorktree && info.index === setupAnchorIndex ? (
             <WorktreePreparingHeader />
           ) : null}
