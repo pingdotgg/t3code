@@ -29,6 +29,8 @@ http = "1"
 # Already in the tree (conn-server): agent tokens from the OS random source, hashed at rest.
 getrandom.workspace = true
 sha2.workspace = true
+# Already in the binary through source control: the same URL parser as browser inputs.
+url = "2"
 [dev-dependencies]
 # The scheduled task tests pick UTC (workspace dependency).
 jiff.workspace = true

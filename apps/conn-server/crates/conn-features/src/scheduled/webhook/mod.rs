@@ -391,12 +391,13 @@ pub(super) struct WebhookSave {
 /// `upsert` for a webhook schedule: lowercases the signature header, keeps stored dedupe and
 /// filters a client left out, keeps the token, and takes a new secret or keeps the stored
 /// one. `existing` is the stored task and its credentials.
-pub(super) fn prepare_save(
-    input: &Value,
+pub(super) async fn prepare_save(
+    request: &super::UpsertInput,
     task_id: &str,
     existing: Option<(&ScheduledTask, Option<&Credentials>)>,
+    secrets: Option<&crate::secrets::SecretRequests>,
 ) -> Result<WebhookSave, super::Failure> {
-    let input: ScheduledTaskUpsertScheduleWebhook = from_json(input.clone())
+    let input: ScheduledTaskUpsertScheduleWebhook = from_json(request.schedule.clone())
         .map_err(|e| super::Failure::Invalid(format!("Invalid schedule: {e}")))?;
     check_schedule(&input)?;
     let stored_schedule = existing.and_then(|(task, _)| match &task.schedule {
@@ -412,14 +413,6 @@ pub(super) fn prepare_save(
     {
         return Err(TaskError::new(
             "This server does not coalesce webhook deliveries yet. Remove the coalesce key.",
-            Some(task_id),
-        )
-        .into());
-    }
-    if signature.as_ref().is_some_and(|s| s.secret_ref.is_some()) {
-        // `request_secret` is not served here, so no ref can name a stored secret.
-        return Err(TaskError::new(
-            "This server cannot read a secretRef. Send the signing secret itself.",
             Some(task_id),
         )
         .into());
@@ -449,10 +442,30 @@ pub(super) fn prepare_save(
     };
     let secret = match &signature {
         None => None,
-        Some(signature) => signature
-            .secret
-            .clone()
-            .or_else(|| stored.and_then(|s| s.secret.clone())),
+        Some(signature) => {
+            let provided = match &signature.secret_ref {
+                None => signature.secret.clone(),
+                Some(reference) => {
+                    let consumed = match secrets {
+                        Some(secrets) => secrets.consume(reference, &request.project_id).await,
+                        None => Err(crate::secrets::SecretError("ref_unavailable")),
+                    };
+                    match consumed {
+                        Ok(value) => Some(value),
+                        Err(_)
+                            if request.command_id.is_some()
+                                && stored.is_some_and(|s| s.secret.is_some()) =>
+                        {
+                            None
+                        }
+                        Err(error) => {
+                            return Err(TaskError::new(error.message(), Some(task_id)).into());
+                        }
+                    }
+                }
+            };
+            provided.or_else(|| stored.and_then(|s| s.secret.clone()))
+        }
     };
     if signature.is_some() && secret.is_none() {
         return Err(TaskError::new(

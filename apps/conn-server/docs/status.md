@@ -36,6 +36,12 @@ builder with a test that fails without the fix.
   difference. Known differences: pending upload owners cap at 4,096 and concurrent handoffs
   at 256; a sent upload frees its owner slot, so a later discard of it is refused (T3 keeps
   the owner until discard or expiry).
+- **Secrets and panels** (PR #100): `secrets.answerRequest`, `panels.requests`,
+  `panels.respond`, `request_secret`, `panel_open`. Secret values stay out of events and
+  projections; a saved `secretRef` signs scheduled webhooks (project scope, one use).
+  `tools/check.sh` 44/44. Known differences: browser URL/tab automation answers
+  `capability_denied` (no desktop preview manager); secret-provider answers are not
+  advertised; the panel RPCs are mounted here, while T3 leaves them unmounted.
 - **Clients** (VMPal macOS VM, Conn `c969c3ebd1`): the web client (through a host T3 as a
   remote environment) and the iOS dev client in a simulator (paired straight to the Conn
   Server) each ran a Haiku turn against the Conn Server on macOS.
@@ -88,7 +94,7 @@ read the monorepo two levels up, and `tools/follow-conn.sh` regenerates and repo
   thread list and read (#36961), and scheduled tasks that return `webhookUrl` only on
   creation and take a `scheduledTaskId` filter (#27716). See
   `crates/conn-provider-claude/README.md`, "Known differences".
-- The nightly sync does not run the Conn Server's checks (Nick, 2026-11-15; `docs/upkeep.md`).
+- The nightly sync follows the Conn Server (Nick, 2026-11-16; `docs/upkeep.md`, "In the nightly sync").
 - **CI on Linux** (PR #95): `methods.json` names a digest of the contract inputs
   (`contractDigest`, sha256 over the tracked files) instead of a commit id, which a shallow
   checkout cannot give and a squash merge rewrites. `parity.mjs` seals the T3 server's `PATH`.

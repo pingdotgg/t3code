@@ -55,6 +55,10 @@ pub struct McpConfig {
     pub scheduled_tasks: Option<conn_features::scheduled::ScheduledTasks>,
     /// Annotations; without it the annotation tools answer that they are not served.
     pub annotations: Option<conn_features::annotations::Annotations>,
+    /// The store also used by secrets.answerRequest.
+    pub secrets: Option<conn_features::secrets::SecretRequests>,
+    /// The broker also used by panels.requests and panels.respond.
+    pub panels: Option<conn_features::panels::PanelBroker>,
 }
 
 pub type ProviderRefresh = Arc<dyn Fn(String) -> conn_engine::BoxFuture<'static, ()> + Send + Sync>;

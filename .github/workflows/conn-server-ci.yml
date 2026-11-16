@@ -10,9 +10,8 @@ name: Conn Server CI
 # - musl: the x86_64-unknown-linux-musl release binary that Orbit runs; prints its size.
 # The checks against the rest of the monorepo run in conn-server-checks.yml.
 #
-# The nightly upstream sync never runs these jobs (FORK.md, "Conn Server"): ForkBot's sync/*
-# branches are not watched, and each job skips a push to main or a pull request that carries a
-# ForkBot commit or comes from a sync/* branch.
+# The nightly upstream sync runs these jobs on its sync/* branch and waits for them before it
+# merges (FORK.md, "Upstream scope" and "Conn Server").
 
 on:
   pull_request:
@@ -22,6 +21,7 @@ on:
   push:
     branches:
       - main
+      - "sync/**"
     paths:
       - apps/conn-server/**
       - .github/workflows/conn-server-ci.yml
@@ -46,10 +46,6 @@ defaults:
 jobs:
   rust:
     name: Format, Clippy, Tests
-    if: >-
-      !startsWith(github.head_ref, 'sync/') &&
-      github.event.head_commit.author.email != 'forkbot@nckrtl.local' &&
-      !contains(github.event.commits.*.author.email, 'forkbot@nckrtl.local')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -128,10 +124,6 @@ jobs:
 
   deny:
     name: cargo-deny
-    if: >-
-      !startsWith(github.head_ref, 'sync/') &&
-      github.event.head_commit.author.email != 'forkbot@nckrtl.local' &&
-      !contains(github.event.commits.*.author.email, 'forkbot@nckrtl.local')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -152,10 +144,6 @@ jobs:
 
   musl:
     name: Linux musl release build
-    if: >-
-      !startsWith(github.head_ref, 'sync/') &&
-      github.event.head_commit.author.email != 'forkbot@nckrtl.local' &&
-      !contains(github.event.commits.*.author.email, 'forkbot@nckrtl.local')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:

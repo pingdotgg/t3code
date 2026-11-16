@@ -11,12 +11,26 @@ it fails a check. No step calls a model.
 - `.github/workflows/conn-server-checks.yml` (`tools/check.sh`, every check against the
   monorepo) runs on pull requests and pushes to `main` that change `apps/conn-server` or
   `packages/contracts`.
-- **The nightly upstream sync skips both, for now** (Nick, 2026-11-15). ForkBot's `sync/*`
-  branches are not watched, and each job skips a push or pull request that carries a ForkBot
-  commit (`forkbot@nckrtl.local`) or comes from a `sync/*` branch. So the sync can move the
-  contract or `apps/server` without a red Conn Server check, and the drift shows at the next
-  Conn Server change or contract change. Run `tools/follow-conn.sh` after a sync to see it
-  early.
+- `conn-server-ci.yml` also runs on pushes to `sync/*` branches, and `conn-server-checks.yml`
+  runs there when the sync changes `apps/conn-server`, `packages/contracts` or
+  `apps/server`. The nightly sync waits for both before it merges.
+
+## In the nightly sync
+
+The sync follows the Conn Server every night (Nick, 2026-11-16; `FORK.md`, "Upstream scope").
+On the `sync/*` branch, after the upstream merge:
+
+1. Run `tools/follow-conn.sh --capture`. It regenerates what is generated, runs
+   `tools/check.sh` and reports the upstream commits each part follows.
+2. Port each upstream change in scope that the report or a red check names, as the T3 server
+   makes it. Scope is the container profile: the areas `docs/orbit-profile.md` rates needed
+   or useful. Each port gets the test or the check that failed without it.
+3. Skip what is out of scope: Windows, the providers this server does not build, the hosts
+   and features the profile rates not needed. A check that goes red only for such a change
+   gets its scope fixed, with the reason; it is not weakened.
+4. An in-scope change that cannot be ported that night becomes a known difference with its
+   reason, in the check's known list and in `docs/status.md`.
+5. Commit on the sync branch, and let both workflows pass before the merge.
 
 ## The tools
 

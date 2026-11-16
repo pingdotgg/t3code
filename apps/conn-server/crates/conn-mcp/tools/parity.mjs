@@ -554,6 +554,10 @@ const steps = [
   ["task_status", () => ({ taskId: "task:none" })],
   ["task_cancel", () => ({ taskId: "task:none" })],
   // send_to_user acts as the calling thread; its argument check runs first.
+  ["panel_open", () => ({ panel: "files" })],
+  ["panel_open", () => ({ panel: "browser", url: "https://example.com" })],
+  ["request_secret", () => ({ label: "Fixture key", reason: "Parity check" })],
+  ["request_secret", () => ({ label: "Fixture key", reason: "Parity check", delivery: "file", value: "test-only" })],
   ["send_to_user", () => ({ message: "hi" })],
   ["send_to_user", () => ({ message: "" })],
   ["send_to_user", () => ({ message: "x".repeat(4001) })],

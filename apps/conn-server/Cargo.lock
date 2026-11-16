@@ -220,6 +220,7 @@ dependencies = [
  "sha2",
  "thiserror",
  "tokio",
+ "url",
 ]
 
 [[package]]

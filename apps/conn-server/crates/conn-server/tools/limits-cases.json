@@ -1052,6 +1052,73 @@
     }
    },
    "ok": false
+  },
+  {
+   "name": "secret answer blank threadId",
+   "tag": "secrets.answerRequest",
+   "payload": {
+    "threadId": "  ",
+    "turnItemId": "item",
+    "answer": {
+     "type": "decline"
+    }
+   },
+   "ok": false
+  },
+  {
+   "name": "secret answer blank turnItemId",
+   "tag": "secrets.answerRequest",
+   "payload": {
+    "threadId": "thread",
+    "turnItemId": "  ",
+    "answer": {
+     "type": "decline"
+    }
+   },
+   "ok": false
+  },
+  {
+   "name": "secret answer ids are trimmed",
+   "tag": "secrets.answerRequest",
+   "payload": {
+    "threadId": " thread ",
+    "turnItemId": " item ",
+    "answer": {
+     "type": "decline"
+    }
+   },
+   "ok": true,
+   "after": {
+    "threadId": "thread",
+    "turnItemId": "item"
+   }
+  },
+  {
+   "name": "panel response blank request id",
+   "tag": "panels.respond",
+   "payload": {
+    "requestId": "  ",
+    "ok": true
+   },
+   "ok": false
+  },
+  {
+   "name": "panel response request id at UTF16 bound",
+   "tag": "panels.respond",
+   "payload": {
+    "requestId": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+    "ok": true
+   },
+   "ok": true
+  },
+  {
+   "name": "panel response request id over UTF16 bound",
+   "tag": "panels.respond",
+   "payload": {
+    "requestId": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+    "ok": true
+   },
+   "ok": false
   }
  ]
 }
