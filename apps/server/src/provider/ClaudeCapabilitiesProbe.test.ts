@@ -74,7 +74,7 @@ it.effect("reports a deleted worktree's scan as finished, not pending", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("names a project skill once when its frontmatter name differs from its folder", () =>
+it.effect("ties a project skill to the command Claude names it by its frontmatter", () =>
   Effect.gen(function* () {
     // Claude Code 2.1.325 reports the frontmatter name and keeps the folder as an alias.
     const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
@@ -112,12 +112,14 @@ it.effect("names a project skill once when its frontmatter name differs from its
       workspace,
       { PATH: (yield* HostProcess.Environment).PATH, HOME: home, CLAUDE_CONFIG_DIR: home },
     );
-    const names = new Set(
-      [...snapshot.skills, ...snapshot.slashCommands]
-        .map((entry) => entry.name)
-        .filter((name) => name.includes("brainstorming")),
+    assert.deepEqual(
+      snapshot.skills.map((skill) => skill.name),
+      ["brainstorming"],
     );
-    assert.equal(names.size, 1, [...names].join(", "));
+    assert.deepEqual(
+      snapshot.slashCommands.find((command) => command.name === "acme:brainstorming")?.aliases,
+      ["brainstorming"],
+    );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

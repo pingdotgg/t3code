@@ -7,7 +7,6 @@ import {
   type ModelCapabilities,
   type ServerProvider,
   type ServerProviderModel,
-  type ServerProviderSkill,
   type ServerProviderSlashCommand,
   type ServerProviderResetCredits,
 } from "@t3tools/contracts";
@@ -320,8 +319,6 @@ export type ClaudeCapabilitiesProbe = {
   /** OAuth applies only to firstParty; Bedrock uses external AWS credentials and omits subscription/token fields. */
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
-  /** Lowercased alias to its command's name; Claude keeps a native skill's folder as an alias. */
-  readonly slashCommandAliases?: ReadonlyMap<string, string>;
   readonly models?: ReadonlyArray<ClaudeModelInfo>;
   /** Undefined means get_usage failed; absent windows on success mean no subscription windows, as with API keys. */
   readonly usage?: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
@@ -405,45 +402,18 @@ function parseClaudeInitializationCommands(
 
       const description = nonEmptyProbeString(command.description);
       const argumentHint = nonEmptyProbeString(command.argumentHint);
+      const aliases = (command.aliases ?? []).flatMap((alias) => nonEmptyProbeString(alias) ?? []);
 
       return [
         {
           name,
           ...(description ? { description } : {}),
           ...(argumentHint ? { input: { hint: argumentHint } } : {}),
+          ...(aliases.length > 0 ? { aliases } : {}),
         } satisfies ServerProviderSlashCommand,
       ];
     }),
   );
-}
-
-function parseClaudeInitializationCommandAliases(
-  commands: ReadonlyArray<ClaudeSlashCommand> | undefined,
-): ReadonlyMap<string, string> {
-  return new Map(
-    (commands ?? []).flatMap((command) =>
-      (command.aliases ?? []).map((alias) => [alias.trim().toLowerCase(), command.name] as const),
-    ),
-  );
-}
-
-/** A skill T3 lists under its folder name hides the command Claude lists it as. */
-function claudeSlashCommandsBesideSkills(
-  capabilities: ClaudeCapabilitiesProbe | undefined,
-  skills: ReadonlyArray<ServerProviderSkill>,
-): ReadonlyArray<ServerProviderSlashCommand> {
-  const shadowed = new Set(
-    skills
-      .filter((skill) => skill.enabled && skill.userInvocable !== false)
-      .flatMap((skill) => capabilities?.slashCommandAliases?.get(skill.name.toLowerCase()) ?? [])
-      .map((name) => name.toLowerCase()),
-  );
-  return dedupeSlashCommands([
-    COMPACT_SLASH_COMMAND,
-    ...(capabilities?.slashCommands ?? []).filter(
-      (command) => !shadowed.has(command.name.toLowerCase()),
-    ),
-  ]);
 }
 
 function dedupeSlashCommands(
@@ -630,7 +600,6 @@ const probeClaudeCapabilities = (
           apiKeySource: account?.apiKeySource,
           apiProvider: account?.apiProvider,
           slashCommands: parseClaudeInitializationCommands(init.commands),
-          slashCommandAliases: parseClaudeInitializationCommandAliases(init.commands),
           ...(init.models?.length ? { models: init.models } : {}),
           ...(usage ? { usage, usageCheckedAt } : {}),
           ...(effortCapSources ? { effortCapSources } : {}),
@@ -689,7 +658,10 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
   return {
     ...machineSnapshot,
     skills,
-    slashCommands: claudeSlashCommandsBesideSkills(capabilities, skills),
+    slashCommands: dedupeSlashCommands([
+      COMPACT_SLASH_COMMAND,
+      ...(capabilities?.slashCommands ?? []),
+    ]),
     slashCommandsPending: cwdExists && !capabilities,
   };
 });
@@ -829,7 +801,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     capabilities?.effortCapSources ?? [],
   );
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
-  const dedupedSlashCommands = claudeSlashCommandsBesideSkills(capabilities, skills);
+  const slashCommands = [COMPACT_SLASH_COMMAND, ...(capabilities?.slashCommands ?? [])];
+  const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
   if (!capabilities) {
     return buildServerProvider({

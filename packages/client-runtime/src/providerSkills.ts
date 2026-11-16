@@ -57,7 +57,13 @@ export function getProviderSlashCommandsForSlashMenu(
   visibleSkills: ReadonlyArray<ServerProviderSkill>,
 ): ServerProviderSlashCommand[] {
   const skillNames = new Set(visibleSkills.map((skill) => skill.name.trim().toLowerCase()));
-  return slashCommands.filter((command) => !skillNames.has(command.name.trim().toLowerCase()));
+  // Claude lists a native skill under its frontmatter name, with the folder T3 names it after as an alias.
+  return slashCommands.filter(
+    (command) =>
+      ![command.name, ...(command.aliases ?? [])].some((name) =>
+        skillNames.has(name.trim().toLowerCase()),
+      ),
+  );
 }
 
 export function resolveProviderSkillSourceKind(

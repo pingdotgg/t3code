@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   createProviderWorkspaceSnapshotRefreshAtomFamily,
   getProviderSkillsForSlashMenu,
+  getProviderSlashCommandsForSlashMenu,
   hasCompleteProviderWorkspaceSnapshot,
   isProviderWorkspaceSnapshotScanning,
   resolveProviderSkillsForCwd,
@@ -82,6 +83,22 @@ describe("getProviderSkillsForSlashMenu", () => {
     ];
 
     expect(getProviderSkillsForSlashMenu(skills, true)).toEqual([enabledSkill]);
+  });
+});
+
+describe("getProviderSlashCommandsForSlashMenu", () => {
+  it("hides a command whose alias is a visible skill, and only while the skill is shown", () => {
+    const skills = [
+      { name: "brainstorming", path: "/p/.claude/skills/brainstorming/SKILL.md", enabled: true },
+    ];
+    const commands = [{ name: "acme:brainstorming", aliases: ["brainstorming"] }];
+
+    expect(
+      getProviderSlashCommandsForSlashMenu(commands, getProviderSkillsForSlashMenu(skills, true)),
+    ).toEqual([]);
+    expect(
+      getProviderSlashCommandsForSlashMenu(commands, getProviderSkillsForSlashMenu(skills, false)),
+    ).toEqual(commands);
   });
 });
 
