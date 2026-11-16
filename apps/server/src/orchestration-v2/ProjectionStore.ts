@@ -1150,11 +1150,23 @@ export function applyToProjection(
       };
     case "checkpoint.rollback-requested":
       return base;
-    case "context-handoff.updated":
-      return {
+    case "context-handoff.updated": {
+      const handoff = event.payload;
+      const contextHandoffs = upsertById(base.contextHandoffs, handoff);
+      const stale = (item: OrchestrationV2TurnItem) =>
+        item.type === "handoff" &&
+        item.runId === handoff.targetRunId &&
+        item.contextHandoffId === handoff.id &&
+        item.summary !== handoff.summaryText;
+      if (!base.turnItems.some(stale)) return { ...base, contextHandoffs };
+      return withLocalVisibleTurnItems({
         ...base,
-        contextHandoffs: upsertById(base.contextHandoffs, event.payload),
-      };
+        contextHandoffs,
+        turnItems: base.turnItems.map((item) =>
+          stale(item) ? { ...item, summary: handoff.summaryText } : item,
+        ),
+      });
+    }
     case "context-transfer.created":
     case "context-transfer.updated":
       return {
@@ -3214,6 +3226,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 status = excluded.status,
                 updated_at = excluded.updated_at,
                 payload_json = excluded.payload_json
+            `;
+              // The activity item shows the receipt, and a redelivery rewrites it from a later run.
+              yield* sql`
+              UPDATE orchestration_v2_projection_turn_items
+              SET payload_json = json_set(payload_json, '$.summary', ${event.payload.summaryText})
+              WHERE run_id = ${event.payload.targetRunId}
+                AND type = 'handoff'
+                AND json_extract(payload_json, '$.contextHandoffId') = ${event.payload.id}
+                AND json_extract(payload_json, '$.summary') IS NOT ${event.payload.summaryText}
             `;
               break;
             }

@@ -3632,6 +3632,90 @@ it.effect("SQL snapshot windows leave handoff bodies in SQLite without changing 
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("a redelivered handoff rewrites the receipt on its earlier run's activity item", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:handoff-receipt");
+    const runId = RunId.make("run:handoff-receipt");
+    const providerThreadId = ProviderThreadId.make("provider-thread:handoff-receipt");
+    const handoff = {
+      id: ContextHandoffId.make("handoff:handoff-receipt"),
+      transferId: null,
+      threadId,
+      targetRunId: runId,
+      fromProviderThreadIds: [providerThreadId],
+      toProviderThreadId: providerThreadId,
+      coveredRunOrdinals: { from: 1, to: 1 },
+      strategy: "full_thread_summary" as const,
+      status: "ready" as const,
+      summaryMessageId: null,
+      summaryText: "Coverage.",
+      createdByProviderInstanceId: providerInstanceId,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const item = (id: string, contextHandoffId: ContextHandoffId) => ({
+      id: TurnItemId.make(id),
+      threadId,
+      runId,
+      nodeId: null,
+      providerThreadId,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "completed" as const,
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      type: "handoff" as const,
+      contextHandoffId,
+      fromProviderThreadIds: [providerThreadId],
+      toProviderThreadId: providerThreadId,
+      fromProviderInstanceIds: [providerInstanceId],
+      toProviderInstanceId: providerInstanceId,
+      strategy: "full_thread_summary" as const,
+      summary: "Coverage.",
+    });
+    for (const payload of [
+      item("item:handoff-receipt:shown", handoff.id),
+      item("item:handoff-receipt:other", ContextHandoffId.make("handoff:other")),
+    ]) {
+      yield* store.apply({
+        id: EventId.make(`event:${payload.id}`),
+        type: "turn-item.updated",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload,
+      });
+    }
+    yield* store.apply({
+      id: EventId.make("event:handoff-receipt:redelivered"),
+      type: "context-handoff.updated",
+      threadId,
+      runId: RunId.make("run:handoff-receipt:later"),
+      occurredAt: now,
+      payload: { ...handoff, summaryText: "Coverage.\nReplaced earlier spans with summary:a." },
+    });
+    const rows = yield* sql<{ id: string; summary: string }>`
+      SELECT turn_item_id AS id, json_extract(payload_json, '$.summary') AS summary
+      FROM orchestration_v2_projection_turn_items WHERE thread_id = ${threadId}
+      ORDER BY turn_item_id
+    `;
+    assert.deepEqual(rows, [
+      { id: "item:handoff-receipt:other", summary: "Coverage." },
+      {
+        id: "item:handoff-receipt:shown",
+        summary: "Coverage.\nReplaced earlier spans with summary:a.",
+      },
+    ]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("lists only active subagent IDs without loading shell data", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
