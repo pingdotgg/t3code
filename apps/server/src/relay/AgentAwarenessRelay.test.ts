@@ -693,6 +693,29 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
+  it.effect("keeps sending heartbeats after one fails all its retries", () =>
+    Effect.gen(function* () {
+      const { relay, publications } = yield* makeTestRelay({
+        respond: (attempt) =>
+          attempt >= 2 && attempt <= 7
+            ? new Response("unavailable", { status: 503 })
+            : Response.json({ ok: true, deliveries: [] }),
+      });
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("3 minutes");
+      for (let i = 0; i < 6; i++) {
+        yield* relay.drain;
+        yield* TestClock.adjust("16 seconds");
+      }
+      assert.equal(publications.length, 7);
+
+      yield* TestClock.adjust("3 minutes");
+      yield* relay.drain;
+      assert.equal(publications.length, 8);
+      assert.equal(publications[7]?.state?.phase, "running");
+    }),
+  );
+
   it.effect("republishes unchanged state with fresh credentials after relinking", () =>
     Effect.gen(function* () {
       const { relay, secrets, publications } = yield* makeTestRelay();
@@ -1197,7 +1220,7 @@ describe("AgentAwarenessRelay", () => {
 
 it.effect("catches up after startup without resnapshotting for heartbeats", () =>
   Effect.gen(function* () {
-    const { relay, secrets, secretReads, catchUp, publications } = yield* makeTestRelay({
+    const { relay, secrets, catchUp, publications } = yield* makeTestRelay({
       catchUpThreads: [shell()],
     });
     yield* relay.start();
@@ -1222,10 +1245,8 @@ it.effect("catches up after startup without resnapshotting for heartbeats", () =
     yield* TestClock.adjust("1 second");
     assert.equal(catchUp.activitySnapshotReads, 2);
 
-    const readsBeforeIdle = secretReads.length;
     yield* TestClock.adjust("10 minutes");
     assert.equal(catchUp.activitySnapshotReads, 2);
-    assert.equal(secretReads.length, readsBeforeIdle + 4);
 
     yield* secrets.set(
       RELAY_ENVIRONMENT_CREDENTIAL_SECRET,

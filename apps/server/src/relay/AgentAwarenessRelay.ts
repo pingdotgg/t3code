@@ -979,9 +979,11 @@ export const make = Effect.gen(function* () {
   scheduleHeartbeat = Effect.fn("AgentAwarenessRelay.scheduleHeartbeat")(
     function* (threadId, dueAtMs) {
       yield* cancelHeartbeat(threadId);
+      // Repeats until a publish replaces it, so a heartbeat that failed its retries tries again.
       const timer = yield* Effect.forkIn(
         Effect.sleep(RELAY_AGENT_ACTIVITY_HEARTBEAT_MS).pipe(
           Effect.andThen(worker.enqueue(threadId)),
+          Effect.forever,
           Effect.catchCause((cause) =>
             Effect.logWarning("agent activity heartbeat failed", {
               threadId,
