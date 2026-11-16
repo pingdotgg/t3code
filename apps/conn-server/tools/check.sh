@@ -114,7 +114,7 @@ run() {
 client_check() {
   local binary
   binary="$(node tools/check-binaries.mjs conn-engine export_turn)" &&
-    "$canary/runner" "$binary" "$scratch/export.json" &&
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 "$canary/runner" "$binary" "$scratch/export.json" &&
     node crates/conn-engine/tools/client-check.mjs "$scratch/export.json"
 }
 
