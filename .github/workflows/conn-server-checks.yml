@@ -50,7 +50,9 @@ jobs:
       - name: Restore Rust source timestamps
         run: |
           git ls-files -z apps/conn-server | while IFS= read -r -d '' file; do
-            touch -d "$(git log -1 --format=%cI -- "$file")" "$file"
+            if git diff --quiet origin/main HEAD -- "$file"; then
+              touch -d "$(git log -1 --format=%cI -- "$file")" "$file"
+            fi
           done
 
       - name: Setup Vite+
@@ -146,7 +148,9 @@ jobs:
       - name: Restore Rust source timestamps
         run: |
           git ls-files -z apps/conn-server | while IFS= read -r -d '' file; do
-            touch -d "$(git log -1 --format=%cI -- "$file")" "$file"
+            if git diff --quiet origin/main HEAD -- "$file"; then
+              touch -d "$(git log -1 --format=%cI -- "$file")" "$file"
+            fi
           done
 
       - name: Setup Vite+
