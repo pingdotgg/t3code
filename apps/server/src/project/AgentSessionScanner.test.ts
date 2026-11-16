@@ -736,6 +736,68 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("passes budget a home frees while rescanning to the homes still short", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-empty-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const mediumHomePath = yield* makeTempDir("t3code-claude-medium-home-");
+        const largeHomePath = yield* makeTempDir("t3code-claude-large-home-");
+        const olderWorkspace = yield* makeTempDir("t3code-workspace-older-");
+        const lastWorkspace = yield* makeTempDir("t3code-workspace-last-");
+        const newestMs = Date.parse("2026-03-01T00:00:00.000Z");
+        // Both homes outgrow their first share; together they fit the source's budget, but only
+        // when what the medium home leaves over on its rescan reaches the large one.
+        yield* Effect.sync(() => {
+          const writeSessions = (directory: string, count: number, cwd: string, ageMs: number) => {
+            NodeFS.mkdirSync(directory, { recursive: true });
+            const seconds = (newestMs - ageMs) / 1000;
+            for (let index = 0; index < count; index++) {
+              const filePath = path.join(directory, `session-${index}.jsonl`);
+              NodeFS.writeFileSync(filePath, claudeSessionLine(cwd));
+              NodeFS.utimesSync(filePath, seconds, seconds);
+            }
+          };
+          writeSessions(
+            path.join(mediumHomePath, "projects", "-medium"),
+            8_000,
+            olderWorkspace,
+            60_000,
+          );
+          writeSessions(
+            path.join(largeHomePath, "projects", "-bulk"),
+            11_000,
+            olderWorkspace,
+            60_000,
+          );
+          // Read last because its folder is oldest, yet it holds the newest session.
+          const lastDirectory = path.join(largeHomePath, "projects", "-last");
+          writeSessions(lastDirectory, 1, lastWorkspace, 0);
+          const oldSeconds = (newestMs - 3_600_000) / 1000;
+          NodeFS.utimesSync(lastDirectory, oldSeconds, oldSeconds);
+        });
+
+        const result = yield* runScan({
+          claudeHomePath,
+          codexHomePath,
+          providerInstances: {
+            [ProviderInstanceId.make("claude-medium")]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              config: { homePath: mediumHomePath },
+            },
+            [ProviderInstanceId.make("claude-large")]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              config: { homePath: largeHomePath },
+            },
+          },
+        });
+
+        expect(
+          result.candidates.find((candidate) => candidate.path === lastWorkspace)?.threadCount,
+        ).toBe(1);
+      }),
+    );
+
     it.effect("honors provider instance home directory environment variables", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;

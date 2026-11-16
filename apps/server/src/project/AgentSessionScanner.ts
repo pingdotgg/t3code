@@ -1830,20 +1830,23 @@ export const make = Effect.gen(function* () {
         );
       }
       // Budget that small homes left unused goes to the homes that ran out, which rescan with it.
-      const unused =
+      // Each takes an even split of what is still unused; a pass in which no home finishes spends
+      // it all, so every repeat has fewer starved homes.
+      let unused =
         MAX_DISCOVERY_OPERATIONS_PER_SOURCE -
         discovered.reduce((total, result) => total + result.operationsUsed, 0);
-      const starved = discovered.flatMap((result, index) => (result.truncated ? [index] : []));
-      if (unused > 0) {
-        for (const [position, extra] of splitOperationBudget(unused, starved.length).entries()) {
-          const index = starved[position]!;
+      let starved = discovered.flatMap((result, index) => (result.truncated ? [index] : []));
+      while (unused > 0 && starved.length > 0) {
+        for (const [position, index] of starved.entries()) {
+          if (unused <= 0) break;
           const home = homes[index]!;
-          discovered[index] = yield* discover(
-            home.homePath,
-            home.providerInstanceId,
-            discovered[index]!.operationsUsed + extra,
-          );
+          const before = discovered[index]!.operationsUsed;
+          const extra = Math.ceil(unused / (starved.length - position));
+          const result = yield* discover(home.homePath, home.providerInstanceId, before + extra);
+          discovered[index] = result;
+          unused -= result.operationsUsed - before;
         }
+        starved = starved.filter((index) => discovered[index]!.truncated);
       }
       for (const result of discovered) {
         truncated ||= result.truncated;
