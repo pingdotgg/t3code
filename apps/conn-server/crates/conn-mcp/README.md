@@ -343,3 +343,21 @@ subagent })` returns an `McpServerEntry { url, authorization, .. }` for one prov
 `crates/conn-server/examples/mcp_agent.rs` proves it: it serves one thread and writes that
 thread's `--mcp-config`, and `claude -p --model claude-haiku-5-5 --strict-mcp-config
 --mcp-config <file>` listed threads, launched one and waited for it.
+
+## Secret requests
+
+`request_secret` acts as the calling thread and stays hidden from outside clients. It records
+a secret card through `Engine::record_secret_request`, waits on committed thread changes and
+returns a one-use ref, an owner-only file path or T3's unsaved note. Values stay in
+`conn_features::secrets::SecretRequests`, beside settings secrets. This server does not
+advertise secret-provider reference answers. `schedule_task` consumes refs for webhook signing
+in the task's project, once only; an idempotent retry keeps the stored signing secret.
+`panel_open` shows all five panel kinds through
+the connected desktop and stays hidden from outside clients. Browser URLs and tab ids fail
+with `capability_denied`: they need the unimplemented desktop preview relay and current-tab
+pinning. No browser capability is advertised and no hidden browser is started.
+
+`secret_*` Rust tests prove active-run ownership, save, decline, timeout, Stop, aborted calls,
+one-use project scope, persistence and file retries. `parity.mjs` checks outside callers get
+the same hidden-tool result on both servers. The `url` dependency is already linked through
+source control; it validates the tool's http(s) URL input without a second parser.

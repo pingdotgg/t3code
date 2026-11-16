@@ -22,6 +22,11 @@ workspace README describes the trait's first methods and the wire.
 | `Engine::await_background_tasks`, `BackgroundWait`, `BackgroundWaitError` | `awaitBackgroundTasks` (`src/background_wait.rs`): the live session of the thread's active provider thread marks or clears background task ids (15 s limit); `/mcp`'s `t3_background_wait` |
 | `EngineHost::response_streaming_mode`, `ResponseStreamingMode` | The project's `responseStreamingMode` (`paragraph` by default, or `turn`), read at each turn start |
 
+`Engine::record_secret_request` is an internal entry point for secret card status changes.
+It commits `turn-item.updated` events without storing the value. Pending cards appear as
+user-only input in the shell and close when their run ends. A restart closes the card and
+does not resume a run waiting on it. Client dispatch cannot send this internal command.
+
 `calls.rs` lists the tags `call` and `open_stream` serve. The server registers them with their
 contract types (`methods/orchestration.rs`, `methods/projects.rs`), so a result that does not
 decode is a defect, not a broken client.

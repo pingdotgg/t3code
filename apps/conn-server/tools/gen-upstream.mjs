@@ -406,6 +406,8 @@ const modelManifestRs = rustfmt(
 
 const LIMITED_METHODS = [
   "assets.createUrl",
+  "secrets.answerRequest",
+  "panels.respond",
   "server.listTextGeneratorModels",
   "terminal.attach",
   "terminal.open",
@@ -437,6 +439,7 @@ function limitNode(ast) {
     return members.length === 1 ? limitNode(members[0]) : null;
   }
   const node = {};
+  if ((ast.checks ?? []).some((c) => c.annotations?.expected === "a non-blank string")) node.nonBlank = true;
   for (const r of representations(ast)) {
     const p = r.payload;
     if (r.id === "effect/schema/isMaxLength") node.maxLength = p.maxLength;
@@ -468,13 +471,18 @@ function limitNode(ast) {
   return Object.keys(node).length ? node : null;
 }
 const limits = Object.fromEntries(LIMITED_METHODS.map((tag) => [tag, limitNode(payloadOf(tag).ast) ?? {}]));
+// Review-requested caps reuse PanelName/PanelText; upstream leaves response text unbounded.
+const panelInputs = await importSource("packages/contracts/src/agentPanels.ts");
+const panelLimits = limitNode(panelInputs.AgentPanelMcpServer.ast);
+limits["panels.respond"].fields.deviceName = { maxLength: panelLimits.fields.name.maxLength };
+limits["panels.respond"].fields.error = { maxLength: panelLimits.fields.headers.values.maxLength };
 const limitsRs = rustfmt(
   [
     ...HEADER,
     "// Source: the payload schemas of packages/contracts/src/rpc.ts, by reflection.",
     "",
     "/// The payload limits of each listed method, as JSON: `fields`, `keys`, `values`,",
-    "/// `variants` (by `_tag`), `maxLength`, `pattern`, `maxProperties`, `int`, `minimum`,",
+    "/// `variants` (by `_tag`), `nonBlank` (trimmed), `maxLength`, `pattern`, `maxProperties`, `int`, `minimum`,",
     "/// `maximum`.",
     `pub(super) const LIMITS: &str = r#"${JSON.stringify(limits)}"#;`,
     "",

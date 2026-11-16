@@ -5,3 +5,6 @@
 pub mod annotations;
 pub mod clock;
 pub mod scheduled;
+
+pub mod panels;
+pub mod secrets;

@@ -8,9 +8,10 @@ with its state and what it needs from outside the server.
 
 | Area | RPC methods | `/mcp` tools | Not served, and why |
 | --- | --- | --- | --- |
-| Scheduled tasks | `scheduledTasks.subscribe`, `upsert`, `setEnabled`, `delete`, `runNow`, `rotateWebhookToken`, `listWebhookDeliveries`, `getWebhookDelivery`; the route `/api/hooks/<task id>/<token>` | `schedule_task`, `list_scheduled_tasks`, `delete_scheduled_task`, `run_scheduled_task_now` | Webhook coalescing windows (a save with `coalesceKey` is refused), the T3 Connect relay, `secretRef` signatures, managed policy. `fresh_session` tasks are served: each bound run is sent with `freshContext` |
+| Scheduled tasks | `scheduledTasks.subscribe`, `upsert`, `setEnabled`, `delete`, `runNow`, `rotateWebhookToken`, `listWebhookDeliveries`, `getWebhookDelivery`; the route `/api/hooks/<task id>/<token>` | `schedule_task`, `list_scheduled_tasks`, `delete_scheduled_task`, `run_scheduled_task_now` | Webhook coalescing windows (a save with `coalesceKey` is refused), the T3 Connect relay, managed policy. `fresh_session` tasks are served: each bound run is sent with `freshContext` |
 | Annotations | `annotations.subscribe`, `create`, `remove` | `annotations_list`, `annotations_claim`, `annotations_complete`, `annotations_release` | |
-| Panels | none | none | `panels.requests` and `panels.respond` stay unregistered, as the T3 server leaves them unmounted (`wsFork.ts`); this server used to answer `panels.requests` with an empty open stream |
+| Secret requests | `secrets.answerRequest` | `request_secret` | Secret-provider references are not advertised; reference answers fail as unreadable. |
+| Panels | `panels.requests`, `panels.respond` | `panel_open` | Browser URL/tab automation needs the unimplemented desktop preview manager and relay. Showing the browser panel without a URL or tab id works. T3 leaves these RPCs unmounted; this server mounts them. |
 
 ## Annotations (`src/annotations`)
 
@@ -140,8 +141,8 @@ with its state and what it needs from outside the server.
 - **Not built:** coalescing windows (`coalesceKey`, the pending table and its timer): a save
   with one is refused. The T3 Connect relay (signed delivery proofs, held requests, relay
   claims): relay headers are ignored, as T3 ignores them on an environment not linked to T3
-  Connect, so `maxDeliveryAgeMinutes` never expires a direct request. `secretRef` signatures
-  (they need `request_secret`): refused on save. Managed policy (`limits.webhookTasks`).
+  Connect, so `maxDeliveryAgeMinutes` never expires a direct request. Managed policy
+  (`limits.webhookTasks`).
 
 ### Proofs
 
@@ -168,3 +169,34 @@ with its state and what it needs from outside the server.
   calendar for fixed-time tasks. The release binary on macOS arm64 grew by 615,040 bytes
   (12,855,648 to 13,470,688) for this crate with `jiff`; `jiff`'s share alone is not measured.
 - `conn-vcs`: the base ref of a new-thread task's worktree (`base_ref`).
+
+## Secret requests and panels
+
+Secret cards follow `SecretRequests.ts` and `OrchestratorMcpService.requestSecret`: the calling
+provider must own an active run; values never enter events or projections. The client sees
+pending, saved, declined or cancelled. A timeout, Stop, server restart or cancelled MCP call
+closes a pending card. Saved refs and shell files use the settings secret store's directory,
+T3's salted HMAC names and JSON format, 0700 directories and 0600 files. Refs are scoped to a
+project and consumed once; webhook signing consumes a ref in the scheduled task's project.
+An idempotent schedule retry keeps its stored signing secret after the ref was consumed.
+File delivery removes the stored copy. A pasted value keeps its
+exact bytes and needs no card. Retry keys keep the first result. Cleanup runs at startup,
+hourly and before writes; entries expire after 24 hours.
+
+Bounds differ from T3: 64 simultaneous secret waits, 1,024 retained answers and files,
+16 desktop subscribers, 16 queued panel requests per desktop and 64 pending panel requests.
+A full store or wait limit refuses the request; a full desktop queue refuses delivery.
+Panel responses cap device names at 200 and errors at 8,192 UTF-16 units, as requested in
+review; T3's current response schema leaves both unbounded.
+The services keep locks, counters and pending senders, never saved answers in memory.
+Only Linux server file permissions are implemented; no Windows or Android path is added.
+A sealed Linux debug-process measurement added 32 KiB `Pss_Anon` for the idle services,
+and 108 KiB above baseline with 16 panel subscriptions and 64 reserved secret wait slots.
+This measures the services on an idle SQLite engine, not a whole server with a running agent.
+
+Tests map T3's secret save, one-use consume, project scope, lost-card, file delivery and
+pasted-value cases to `conn-mcp`'s `secret_*` tests and this crate's `secrets::tests`.
+`panels::tests` covers all four `AgentPanelBroker.test.ts` cases plus bounds and cancellation;
+`conn-server` tests its RPC wiring, and `effect-client.mjs` decodes a real broker delivery in
+the fixture server. `panel_open` is hidden from outside clients and refuses browser URL/tab
+automation with `capability_denied`; it never starts a hidden browser.
