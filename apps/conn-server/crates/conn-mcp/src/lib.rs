@@ -21,6 +21,7 @@ use serde_json::Value;
 mod catalog;
 mod credentials;
 mod links;
+pub mod mcp_inputs;
 mod sessions;
 mod time;
 mod tools;

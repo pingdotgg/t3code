@@ -75,6 +75,7 @@ pub(super) async fn open(cx: &Cx<'_>, args: &Args) -> ToolResult {
 const PANEL_ACTION_TIMEOUT: Duration = Duration::from_secs(90);
 
 pub(super) async fn invoke(cx: &Cx<'_>, name: &str, args: &Args) -> ToolResult {
+    let args = crate::mcp_inputs::decode(name, args).map_err(ToolError::InvalidParams)?;
     let caller = cx.require_thread(name)?;
     cx.writing_caller().await?;
     let mut request = json!({"requestId":"pending","threadId":caller.thread_id,"panel":"mcp","focusWindow":args.get("focusWindow").cloned().unwrap_or(Value::Bool(true))});

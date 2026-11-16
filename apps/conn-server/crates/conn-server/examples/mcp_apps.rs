@@ -19,6 +19,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut results = Vec::new();
     for case in cases {
         let result = match case.get("kind").and_then(Value::as_str) {
+            Some("panelInput") => {
+                let name = case
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .ok_or("no panel tool name")?;
+                let args = case
+                    .get("args")
+                    .and_then(Value::as_object)
+                    .ok_or("no panel arguments")?;
+                match conn_mcp::mcp_inputs::decode(name, args) {
+                    Ok(value) => json!({"value":value}),
+                    Err(error) => json!({"error":error}),
+                }
+            }
             Some("reference") => mcp_apps::app_reference(case.get("item").unwrap_or(&Value::Null))
                 .unwrap_or(Value::Null),
             Some("tool") => mcp_apps::claude_tool(

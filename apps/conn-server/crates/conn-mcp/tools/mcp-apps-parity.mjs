@@ -8,9 +8,11 @@ import { stripTypeScriptTypes } from "node:module";
 import { isDeepStrictEqual } from "node:util";
 import { importSource, inMonorepo, packageImporter } from "../../../tools/monorepo.mjs";
 import { generateBootstrap } from "../../conn-files/tools/gen-mcp-apps.mjs";
+import { captureMcpApps } from "../../../tools/capture-mcp-apps.mjs";
 import { sealedEnv } from "../../../tools/sealed-env.mjs";
 
 export async function checkMcpApps(binary) {
+  captureMcpApps(true);
   const shared = await importSource("packages/shared/src/mcpApp.ts");
   generateBootstrap(shared, true);
   const { mcpAppFromToolItem } = await importSource("packages/shared/src/toolOutput.ts");
@@ -63,6 +65,37 @@ export async function checkMcpApps(binary) {
       const item = {type:"dynamic_tool",toolName:name,output};
       add({kind:"reference",item},mcpAppFromToolItem(item));
     }
+  for (const output of [
+    {structuredContent:{t3McpApp:reference}},
+    {content:[{type:"text",text:JSON.stringify({t3McpApp:reference})}]},
+    {isError:true,structuredContent:{t3McpApp:reference}},
+    {structuredContent:{},content:[{text:JSON.stringify({t3McpApp:reference})}]},
+    {content:[{text:"x".repeat(16385)},{text:JSON.stringify({t3McpApp:reference})}]},
+    {content:Array.from({length:33},()=>({text:JSON.stringify({t3McpApp:reference})}))},
+    JSON.stringify(JSON.stringify(JSON.stringify(JSON.stringify(JSON.stringify({t3McpApp:reference}))))),
+  ]) {
+    const item={type:"dynamic_tool",toolName:"mcp__weather__get_weather",status:"failed",output};
+    add({kind:"reference",item},mcpAppFromToolItem(item));
+  }
+  const panelContracts = await importSource("packages/contracts/src/agentPanels.ts");
+  const schemaLoad = packageImporter("apps/server");
+  const Schema = await schemaLoad("effect/Schema");
+  for (const [name,args] of [
+    ["mcp_call",{tool:" "}], ["mcp_call",{tool:"x".repeat(201)}],
+    ["mcp_call",{tool:" weather ",server:" stub "}], ["mcp_call",{tool:"\uFEFFweather\n",server:null}],
+    ["mcp_call",{tool:"x".repeat(200)}], ["mcp_call",{tool:"🌦".repeat(101)}],
+    ["mcp_call",{tool:"weather",server:" "}], ["mcp_connect",{url:" "}],
+    ["mcp_connect",{command:"x".repeat(8193)}], ["mcp_connect",{url:"x".repeat(8192)}],
+    ["mcp_connect",{name:"x".repeat(201),url:"http://localhost"}],
+    ["mcp_connect",{url:"http://localhost",headers:{key:"x".repeat(8193)}}],
+    ["mcp_connect",{command:"node",env:{key:7}}],
+    ["mcp_connect",{command:" node ",env:{key:"  raw  "}}],
+  ]) {
+    let result;
+    try {result={value:Schema.decodeUnknownSync(Schema.toCodecJson(name === "mcp_call" ? panelContracts.McpCallToolInput : panelContracts.McpConnectToolInput))(args)};}
+    catch (error) {result={error:error.message};}
+    add({kind:"panelInput",name,args},JSON.parse(JSON.stringify(result)));
+  }
   for (const rules of [null,[],[{behavior:"ask",rule:"mcp__other__tool"}],[{behavior:"deny",rule:"*"}],[{behavior:"deny",rule:"mcp__alias(*)",notInEffect:true}]]) {
     const tool = {name:"refresh",description:"Refresh",_meta:{ui:{visibility:["app"]}},annotations:{readOnly:true,destructive:false,openWorld:true}};
     add({kind:"tool",tool,rules},upstream.claudeMcpToolForApps(tool,rules));

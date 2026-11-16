@@ -2742,6 +2742,27 @@ async fn mcp_panel_tools_relay_to_the_mac_and_keep_caller_guards() {
             .contains("No Conn desktop app is connected"),
         "{error}"
     );
+    for (name, args) in [
+        ("mcp_call", json!({"tool":" "})),
+        ("mcp_call", json!({"tool":"x".repeat(201)})),
+        ("mcp_call", json!({"tool":"weather","server":" "})),
+        ("mcp_connect", json!({"url":" "})),
+        ("mcp_connect", json!({"command":"x".repeat(8193)})),
+        (
+            "mcp_connect",
+            json!({"name":"x".repeat(201),"url":"http://localhost"}),
+        ),
+        (
+            "mcp_connect",
+            json!({"url":"http://localhost","headers":{"key":"x".repeat(8193)}}),
+        ),
+        ("mcp_connect", json!({"command":"node","env":{"key":7}})),
+    ] {
+        let response = agent
+            .request("tools/call", json!({"name":name,"arguments":args}))
+            .await;
+        assert_eq!(response["error"]["code"], -32602, "{name}: {response}");
+    }
     let broker = f.service.config.panels.as_ref().unwrap();
     let mut desktop = broker.subscribe().unwrap();
     let connect = agent.ok("mcp_connect",json!({"name":"stub","url":"http://127.0.0.1/mcp","headers":{"X-Test":"stub"},"focusWindow":false}));
@@ -2761,7 +2782,7 @@ async fn mcp_panel_tools_relay_to_the_mac_and_keep_caller_guards() {
     );
     let call = agent.ok(
         "mcp_call",
-        json!({"server":"stub","tool":"weather","arguments":{"city":"Amsterdam"}}),
+        json!({"server":"  stub  ","tool":" weather ","arguments":{"city":"Amsterdam"}}),
     );
     let stub = async {
         let request = conn_contract::to_json(&desktop.recv().await.unwrap());
