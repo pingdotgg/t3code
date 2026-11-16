@@ -3252,6 +3252,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
                 id: EventId.make(`event:followup-command-awaited-${ending}`),
                 type: "provider-thread.updated",
                 threadId: child.childThreadId,
+                runId: followupRun.id,
                 driver,
                 providerInstanceId: modelSelection.instanceId,
                 occurredAt: now,
@@ -3477,6 +3478,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
               id: EventId.make("event:followup-earlier-work-build"),
               type: "provider-thread.updated",
               threadId: child.childThreadId,
+              runId: child.childRunId,
               driver,
               providerInstanceId: modelSelection.instanceId,
               occurredAt: now,
@@ -3512,6 +3514,22 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         yield* eventSink.write({
           commandId: reconcileCommandId("followup-earlier-work-answered"),
           events: [
+            // The provider resends its whole roster during the follow-up's run.
+            {
+              id: EventId.make("event:followup-earlier-work-roster"),
+              type: "provider-thread.updated",
+              threadId: child.childThreadId,
+              runId: followupRun.id,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: now,
+              payload: {
+                ...childProviderThread,
+                pendingBackgroundTasks: [
+                  { taskId: "build", kind: "command" as const, awaited: true as const },
+                ],
+              },
+            },
             {
               id: EventId.make("event:followup-earlier-work-answer"),
               type: "message.updated",

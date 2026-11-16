@@ -848,6 +848,26 @@ function upsertById<T extends { readonly id: string }>(items: ReadonlyArray<T>, 
   return updated;
 }
 
+/** Adapters resend whole rosters without runs, so a task keeps the run it first appeared under. */
+function attributePendingBackgroundTasks(
+  next: OrchestrationV2ProviderThread,
+  previous: Pick<OrchestrationV2ProviderThread, "pendingBackgroundTasks"> | undefined,
+  runId: OrchestrationV2DomainEvent["runId"],
+): OrchestrationV2ProviderThread {
+  const tasks = next.pendingBackgroundTasks ?? [];
+  if (tasks.every((task) => task.runId !== undefined)) return next;
+  const known = new Map(
+    (previous?.pendingBackgroundTasks ?? []).map((task) => [task.taskId, task.runId]),
+  );
+  return {
+    ...next,
+    pendingBackgroundTasks: tasks.map((task) => {
+      const owner = task.runId ?? (known.has(task.taskId) ? known.get(task.taskId) : runId);
+      return owner === undefined ? task : { ...task, runId: owner };
+    }),
+  };
+}
+
 function upsertProviderTurn(
   turns: ReadonlyArray<OrchestrationV2ProviderTurn>,
   next: OrchestrationV2ProviderTurn,
@@ -1044,7 +1064,14 @@ export function applyToProjection(
                 activeProviderThreadId: event.payload.id,
               }
             : base.thread,
-        providerThreads: upsertById(base.providerThreads, event.payload),
+        providerThreads: upsertById(
+          base.providerThreads,
+          attributePendingBackgroundTasks(
+            event.payload,
+            base.providerThreads.find((thread) => thread.id === event.payload.id),
+            event.runId,
+          ),
+        ),
       };
     case "provider-turn.updated":
       return {
@@ -2691,7 +2718,26 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               break;
             }
             case "provider-thread.updated": {
-              const payloadJson = yield* encodeProviderThreadPayload(event.payload);
+              const existingRows = (event.payload.pendingBackgroundTasks ?? []).some(
+                (task) => task.runId === undefined,
+              )
+                ? yield* sql<PayloadRow>`
+                    SELECT payload_json
+                    FROM orchestration_v2_projection_provider_threads
+                    WHERE provider_thread_id = ${event.payload.id}
+                    LIMIT 1
+                  `
+                : [];
+              const existing = existingRows[0];
+              const payloadJson = yield* encodeProviderThreadPayload(
+                attributePendingBackgroundTasks(
+                  event.payload,
+                  existing === undefined
+                    ? undefined
+                    : yield* decodeProviderThreadPayload(existing.payload_json),
+                  event.runId,
+                ),
+              );
               const payload = parseEncodedPayload(payloadJson);
               yield* sql`
               INSERT INTO orchestration_v2_projection_provider_threads (
