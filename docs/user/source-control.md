@@ -10,12 +10,12 @@ rebases, the files Git brought in are left out. A file stays in the list when th
 committed it, or fixed a conflict in it. Use the branch comparison to review everything that changed
 against your base branch. Restore still returns the complete saved workspace.
 
-In a [project with several repositories](project-settings.md#projects-with-several-repositories),
+In a [project with several repositories](multi-repo-projects.md),
 a turn's changed files are grouped by repository, and the Diff pane shows every repository the
 turn changed. Use the repository picker next to the source picker to narrow the diff to one of
 them. Paths in the diff start at the thread's folder, so the same file name in two repositories
 stays apart. This works when the project folder itself is not a Git repository; the branch
-comparison still covers only the project folder.
+comparison and uncommitted changes read one repository at a time, chosen from the same picker.
 
 The thread details panel lists each repository the thread has changed, most recent first, with its
 branch and uncommitted changes. Expand one to commit, push, or open a pull request in that
