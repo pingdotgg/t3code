@@ -445,11 +445,7 @@ function FloatingStatusLabel(props: {
         onLayout={props.onLayout}
         onPress={props.status.onPress}
       >
-        {props.status.tone === "reconnecting" ? (
-          <AppActivityIndicator size="small" colorClassName="accent-icon-muted" />
-        ) : (
-          <View className="h-2 w-2 rounded-full bg-red-500" />
-        )}
+        <View className="h-2 w-2 rounded-full bg-red-500" />
         <Text
           className="max-w-[260px] shrink font-t3-medium text-xs text-foreground"
           numberOfLines={1}
