@@ -13,6 +13,7 @@ import {
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -24,11 +25,11 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { formatContextWindowCompactionMessage } from "./compaction.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
-const PACE_LABEL: Record<LimitPace, string> = {
-  ahead: "Ahead of pace",
-  on: "On pace",
-  under: "Under pace",
-};
+const PACE_KEY = {
+  ahead: "usage.paceAhead",
+  on: "usage.paceOn",
+  under: "usage.paceUnder",
+} as const satisfies Record<LimitPace, string>;
 
 export interface ThreadDetailsUsageInput {
   readonly providerInstanceId: ProviderInstanceId | null;
@@ -84,6 +85,7 @@ export function ThreadDetailsUsage({
 
 /** The thread's context window. The bar fills as context is used; the tick marks auto-compaction. */
 export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowSnapshot }) {
+  const { t } = useTranslation("chat");
   const maxTokens = usage.maxTokens != null && usage.maxTokens > 0 ? usage.maxTokens : null;
   const used =
     maxTokens !== null && usage.usedPercentage !== null
@@ -121,8 +123,10 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
               </span>
               {maxTokens !== null ? (
                 <span className="text-muted-foreground">
-                  {usage.usedTokens.toLocaleString("en-US")} of {maxTokens.toLocaleString("en-US")}{" "}
-                  tokens
+                  {t("usage.ofTokens", {
+                    used: usage.usedTokens.toLocaleString("en-US"),
+                    max: maxTokens.toLocaleString("en-US"),
+                  })}
                 </span>
               ) : null}
               {threshold !== null && threshold > 0 ? (
@@ -146,6 +150,7 @@ function LimitRow({
   readonly now: number;
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
+  const { t } = useTranslation("chat");
   const left = remainingPercent(window);
   const pace = paceOf(window, now);
   const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
@@ -155,19 +160,19 @@ function LimitRow({
       fill={left}
       tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
       value={`${left}%`}
-      ariaValue={`${left}% left`}
+      ariaValue={t("usage.percentLeft", { percent: left })}
       tooltip={
         <>
           <span className="text-foreground">
-            {window.label}: {left}% left
+            {window.label}: {t("usage.percentLeft", { percent: left })}
           </span>
           {window.resetsAt && resetsAt > now ? (
             <span className="text-muted-foreground">
-              Resets in {formatDuration(resetsAt - now)} ·{" "}
+              {t("usage.resetsIn", { duration: formatDuration(resetsAt - now) })} ·{" "}
               {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
             </span>
           ) : null}
-          {pace ? <span className="text-muted-foreground">{PACE_LABEL[pace]}</span> : null}
+          {pace ? <span className="text-muted-foreground">{t(PACE_KEY[pace])}</span> : null}
         </>
       }
     />

@@ -251,7 +251,7 @@ export function ThreadAutomationsPanel(props: {
       {/* Kept last: the details card treats a section whose last child is empty as empty. */}
       {tasksQuery.error !== null ? (
         <p className="px-2.5 py-1.5 text-2xs text-destructive">
-          Could not load automations: {tasksQuery.error}
+          {td("automations.loadFailed", { error: tasksQuery.error })}
         </p>
       ) : null}
     </ThreadDetailsSection>

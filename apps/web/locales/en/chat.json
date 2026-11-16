@@ -17,6 +17,9 @@
     "workingFor": "Working for"
   },
   "approval": {
+    "childAria": "Approval from {{title}}",
+    "childNeededFrom": "Approval needed from {{title}}",
+    "childProcessGone": "Provider process is gone. Interrupt or restart the child thread to respond.",
     "command": "Command approval",
     "commandDetail": "Command",
     "fileChange": "File change approval",
@@ -56,6 +59,7 @@
   },
   "automations": {
     "edit": "Edit automation",
+    "loadFailed": "Could not load automations: {{error}}",
     "manageScheduledTasks": "Manage scheduled tasks",
     "runFailed": "Could not run automation",
     "runNow": "Run now",
@@ -66,16 +70,25 @@
     "agentNotRespondingToStop": "Agent not responding to Stop",
     "branchChangedFrom": "Branch changed from",
     "branchMismatchDetail": "This thread last ran on {{threadBranch}}. Sending will continue on {{currentBranch}}.",
+    "cancel": "Cancel",
     "clear": "Clear",
+    "disconnectServer": "Disconnect server",
     "dismissBranchNotice": "Dismiss branch change notice",
     "failedToClearGoal": "Failed to clear goal.",
     "failedToResumeGoal": "Failed to resume goal.",
     "forceStop": "Force stop",
     "forceStopDetail": "It may be short on memory. Force stop kills its processes.",
+    "hideServerHint": "Hide this server's threads. Switch it on again in Environments.",
+    "manualUpdateRequired": "Manual update required",
     "forceStopping": "Force stopping...",
     "open": "Open",
     "openApproval": "Open approval",
     "openQuestion": "Open question",
+    "projectCloneCancelled": "Cancelled cloning {{name}}",
+    "projectCloneFailed": "Failed to clone {{name}}",
+    "projectCloneRetryHint": "Retry to bring in the repository.",
+    "removeProject": "Remove project",
+    "retry": "Retry",
     "restoreBranch": "Restore branch",
     "restoring": "Restoring...",
     "resume": "Resume",
@@ -91,8 +104,21 @@
     "subagentWork": "Subagent work",
     "subagentWorkDetail": "Read only. These subagents cannot take messages."
   },
+  "childWork": {
+    "earlierStepsHidden": "Earlier steps are not shown.",
+    "noTranscriptYet": "No transcript yet."
+  },
   "citation": {
     "addCommentAria": "Add comment to citation",
+    "comment": {
+      "ariaLabel": "Comment on selected text",
+      "cancel": "Cancel",
+      "charLimit": "Comments can contain up to {{limit}} characters.",
+      "editorAria": "Enter to save the citation comment; Command/Ctrl+Enter to save and send; Shift+Enter for a new line.",
+      "placeholder": "Add an optional comment...",
+      "save": "Save",
+      "shorten": "Shorten comment"
+    },
     "editCommentAria": "Edit citation comment",
     "goToSource": "Go to source"
   },
@@ -181,9 +207,12 @@
     "branch": "Branch",
     "cannotReadLocalDiffs": "This connection cannot read local diffs.",
     "changeComparisonTargetA11y": "Change comparison target. Currently {{base}}",
+    "changedFilesCount_one": "{{count}} changed file",
+    "changedFilesCount_other": "{{count}} changed files",
     "changes": "Changes",
     "checkingFileAccess": "Checking file access...",
     "collapseAllFiles": "Collapse all files",
+    "collapseAllFolders": "Collapse all folders",
     "collapseDiff": "Collapse diff",
     "collapseFileA11y": "Collapse {{filePath}}",
     "commits": "Commits",
@@ -194,6 +223,7 @@
     "emptyContent": "Empty content.",
     "enableWrapping": "Enable line wrapping",
     "expandAllFiles": "Expand all files",
+    "expandAllFolders": "Expand all folders",
     "expandDiff": "Expand diff",
     "expandFileA11y": "Expand {{filePath}}",
     "filesA11y": "{{title}} files",
@@ -208,6 +238,10 @@
     "loadingCommits": "Loading commits...",
     "loadingToolCallDiff": "Loading tool call diff...",
     "loadingUncommitted": "Loading uncommitted changes...",
+    "moreFilesInFullDiff_one": "{{count}} more file in the full diff",
+    "moreFilesInFullDiff_other": "{{count}} more files in the full diff",
+    "openDiff": "Open diff",
+    "openFullDiffAria": "Open the full diff",
     "noCommitsOnBranch": "No commits on this branch.",
     "noMatchingRefs": "No matching refs.",
     "noNetChanges": "No net changes in this selection.",
@@ -250,6 +284,12 @@
     "noProject": "No project",
     "searchProjects": "Search projects",
     "searchProjectsPlaceholder": "Search projects...",
+    "buildInLead": "What should we build in",
+    "buildInSuffix": " in",
+    "buildInTail": "?",
+    "buildLead": "What should we build",
+    "buildLeadTail": "?",
+    "whatWentWrong": "What went wrong?",
     "whatNext": "What should we work on?"
   },
   "errors": {
@@ -267,6 +307,7 @@
     "failed": "Search failed",
     "next": "Next match",
     "previous": "Previous match",
+    "retry": "Retry",
     "searching": "Searching…",
     "title": "Find in thread"
   },
@@ -287,6 +328,7 @@
     "linkActive": "Guest link active",
     "linkAria": "Guest link",
     "linkExpired": "Guest link expired",
+    "nameSuffix": " (guest)",
     "replacesLink": "A new link ends the current one.",
     "send": "Send",
     "sendAria": "Send message from {{name}}",
@@ -313,12 +355,16 @@
   "htmlDialog": {
     "close": "Close",
     "expandedPreview": "Expanded {{title}} preview",
+    "openFullScreen": "Open full screen",
     "resetZoom": "Reset zoom",
+    "unableToLoad": "Unable to load {{title}}",
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out"
   },
   "inspector": {
     "couldNotLoadOutput": "Couldn't load output: {{error}}",
+    "earlierOutputNotShown": "Earlier output not shown",
+    "exitCode": "exit {{code}}",
     "loadingOutput": "Loading output…",
     "noOutput": "No output.",
     "openDiff": "Open diff",
@@ -380,6 +426,33 @@
     "wakeNow": "Wake now",
     "waking": "Waking..."
   },
+  "link": {
+    "address": "Address",
+    "addressHint": "This app has no address for {{target}} that another machine can reach. Enter its https or Tailscale address.",
+    "alreadyLinked": "This environment is already linked to {{target}}. The agent can use that link as it is; change its access in Settings → Connections.",
+    "anotherAddress": "Another address…",
+    "back": "Back",
+    "cancel": "Cancel",
+    "cardTitle": "Link {{target}} to this environment",
+    "cardTitleNoMachine": "Link a machine to this environment",
+    "chooseMachine": "Choose machine…",
+    "continue": "Continue",
+    "decline": "Decline",
+    "dialogDescription": "Agents here can then launch, message and wait on threads there. Revoke it in that machine's Connections.",
+    "dialogTitle": "Link {{target}}",
+    "dialogTitleNoMachine": "Link a machine",
+    "link": "Link",
+    "linking": "Linking…",
+    "machine": "Machine",
+    "needsManagingSession": "Only a session that manages access here can answer this.",
+    "pairingCode": "Pairing code",
+    "pairingCodeHint": "Create a link on {{target}}: Settings → Connections → Create link, then paste its code here.",
+    "pairingCodePlaceholder": "Paste the code",
+    "reviewLink": "Review link…",
+    "stepAccess": "Access",
+    "stepMachine": "Machine",
+    "useThisLink": "Use this link"
+  },
   "limitRecovery": {
     "autoResumeFailed": "Could not change auto-resume",
     "cancelAutoResume": "Cancel auto-resume",
@@ -406,6 +479,7 @@
     "environmentNotConnected": "Environment is not connected.",
     "fileNotFoundOn": "The file was not found on {{target}} at {{path}}.",
     "linkFailed": "Unable to link pull request",
+    "loadingImage": "Loading image",
     "mediaLoadFailed": "The file could not be loaded. It may have been moved or deleted.",
     "mediaUnavailable": "Media unavailable",
     "openApp": "Open app",
@@ -416,12 +490,23 @@
     "toggleTask": "Toggle task",
     "unlinkFailed": "Unable to unlink pull request"
   },
+  "media": {
+    "nextMedia": "Next media",
+    "previousMedia": "Previous media",
+    "zoomHint": "Click to zoom in or return to fit. Pinch or Ctrl+scroll to zoom, scroll or drag to pan. Use Enter to toggle zoom, plus or minus to zoom, and 0 to fit.",
+    "zoomPercent": "{{percent}}% zoom",
+    "zoomableImageAria": "{{name}}, zoomable image"
+  },
   "mcp": {
+    "appLeftPage": "The {{server}} app left its page and was stopped",
+    "appWasClosed": "The {{server}} app was closed",
     "cannotCallTool": "This app cannot call that tool.",
     "declinedByUser": "Declined by the user.",
     "exitFullScreen": "Exit full screen",
     "messagesUnavailable": "Messages are not available here.",
-    "requestFailed": "Request failed."
+    "requestFailed": "Request failed.",
+    "showApp": "Show app",
+    "unableToLoad": "Unable to load the {{server}} app"
   },
   "mermaid": {
     "expand": "Expand diagram",
@@ -430,7 +515,18 @@
     "retry": "Retry",
     "unablePrefix": "Unable to render diagram: {{message}}"
   },
+  "overlays": {
+    "branchRestoreDetail": "You have uncommitted changes. They'll carry over to the other branch, or block the switch if they conflict.",
+    "branchRestoreSwitch": "Switch branch",
+    "branchRestoreTitle": "Switch to <code>{{branch}}</code>?",
+    "cancel": "Cancel",
+    "revertDetail": "Rewind chat to before this message. Your prompt and attachments return to the composer. “Revert files too” also undoes your own edits.",
+    "revertFilesToo": "Revert files too",
+    "revertKeepChanges": "Revert and keep changes",
+    "revertTitle": "Edit from here?"
+  },
   "panelControls": {
+    "chooseToShow": "Choose what to show",
     "maximize": "Maximize panel",
     "restore": "Restore panel size",
     "rightPanelUnavailable": "Right panel is unavailable",
@@ -447,6 +543,7 @@
   },
   "plan": {
     "actions": "Plan actions",
+    "cancel": "Cancel",
     "badge": "Plan",
     "collapse": "Collapse plan",
     "copied": "Copied!",
@@ -486,6 +583,14 @@
     "stopWatchingAria": "Stop watching #{{number}}",
     "watching": "Watching: the agent wakes when checks finish, someone comments, or the branch conflicts. Click to stop."
   },
+  "providerSubagent": {
+    "openParent": "Open parent",
+    "runsOnItsOwn": "Runs on its own"
+  },
+  "queuedRuns": {
+    "count": "{{count}} queued",
+    "sentBy": "Sent by T3 Code"
+  },
   "relations": {
     "contextTransfer": "Context transfer",
     "disconnectFailed": "Could not disconnect agent session",
@@ -499,6 +604,7 @@
     "mergeIntoSource": "Merge this conversation back into its source",
     "mergeNeedsRun": "Complete a run in this fork before merging it back",
     "moreThreadActions": "More thread actions",
+    "noAgentsYet": "No agents yet",
     "parentAgent": "Parent agent",
     "parentThread": "Parent thread",
     "previousAgents": "Previous agents",
@@ -509,16 +615,29 @@
     "stopSubagentAria": "Stop subagent {{title}}",
     "stopSubagentFailed": "Could not stop subagent",
     "stopWorkflowFailed": "Could not stop workflow",
-    "subagent": "Subagent"
+    "subagent": "Subagent",
+    "showMore": "Show {{count}} more",
+    "runsOn": "on {{label}}"
+  },
+  "secretRequest": {
+    "decline": "Decline",
+    "open": "Open {{host}}",
+    "saveSecurely": "Save securely"
+  },
+  "skills": {
+    "noDescription": "No description is available for this skill.",
+    "viewInstructions": "View instructions"
   },
   "sideChat": {
     "addToMainDetail": "Adds this side chat to the main thread's next message.",
     "afterReply": "Available after a finished reply.",
+    "bringBack": "Bring back",
     "bringBackFailed": "Could not bring back the side chat",
     "broughtBack": "Brought back",
     "broughtBackDetail": "The main thread gets this side chat with your next message there.",
     "clearDetail": "This permanently clears its conversation history.",
     "clearFailed": "Could not delete the side chat",
+    "deleted": "This side chat was deleted.",
     "closeAria": "Close side chat",
     "connectionCannotChange": "This connection cannot change threads.",
     "deleteAria": "Delete side chat",
@@ -554,20 +673,34 @@
     "contextFrom": "Context from",
     "cutOffBySteer": "Cut off by a steer",
     "dividerDetail": "{{title}} on {{environment}}",
+    "dropFilesToAttach": "Drop files to attach",
     "emptyState": "Send a message to start the conversation.",
     "forkAria": "Fork from this response",
     "loadEarlierTurns": "Load earlier turns",
     "loadingEarlierTurns": "Loading earlier turns…",
     "loadingWorkHistoryA11y": "Loading work history",
     "openParentThread": "Open parent thread",
+    "retry": "Retry",
+    "scrollToEnd": "Scroll to end",
     "subagentOf": "Subagent of",
     "systemDividerA11y": "{{label}}: {{detail}}",
     "viewCited": "View cited assistant text: {{label}}",
+    "workflowStarted": "Workflow started",
     "workLoadFailed": "Couldn't load work. Click to retry."
+  },
+  "usage": {
+    "ofTokens": "{{used}} of {{max}} tokens",
+    "paceAhead": "Ahead of pace",
+    "paceOn": "On pace",
+    "paceUnder": "Under pace",
+    "percentLeft": "{{percent}}% left",
+    "resetsIn": "Resets in {{duration}}"
   },
   "userMessage": {
     "agent": "Agent",
+    "annotatedPreviewAlt": "Annotated preview crop",
     "automation": "Automation",
+    "capturedTerminalAria": "Captured terminal output",
     "copyPromptLink": "Copy prompt link",
     "downloadAttachment": "Download {{label}}",
     "editFromHere": "Edit from here",
@@ -576,6 +709,7 @@
     "openThread": "Open thread",
     "previewAttachment": "Preview {{label}}",
     "queuedThenSteered": "Originally queued, then promoted to steer the active turn",
+    "screenshotUnavailable": "Screenshot unavailable",
     "sending": "Sending…",
     "sendingAttachmentA11y": "Sending attachment",
     "sentByT3Code": "Sent by T3 Code",
@@ -599,9 +733,13 @@
     "downloading": "Downloading…",
     "downloadModel": "Download model",
     "downloadProgressAria": "Speech model download progress",
+    "loadingModels": "Loading transcription models…",
     "micAria": "Microphone",
     "micListFailed": "Could not list microphones. You can still use the system default.",
     "microphone": "Microphone",
+    "microphoneUnavailable": "The selected microphone is unavailable. Choose another or use the system default.",
+    "multilingualHint": "Speak and transcribe in multiple languages or translate into English, and get names and technical terms right with the dictionary in Voice settings.",
+    "retryLoadingModels": "Retry loading models",
     "recommendedFor": "Recommended for {{language}}",
     "refreshMics": "Refresh microphones",
     "selectedUnavailable": "Selected microphone (Unavailable)",
@@ -616,5 +754,16 @@
     "transcriptionEnv": "your transcription environment",
     "tryAgain": "Try again",
     "verifying": "Verifying download…"
+  },
+  "worktreeSetup": {
+    "ariaLabel": "Worktree setup",
+    "base": "Base",
+    "branch": "Branch",
+    "cancel": "Cancel",
+    "details": "Details",
+    "openTerminal": "Open terminal",
+    "path": "Path",
+    "setup": "Setup",
+    "workLocally": "Work locally"
   }
 }

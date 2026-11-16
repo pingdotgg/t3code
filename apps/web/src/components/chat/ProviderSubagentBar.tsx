@@ -5,6 +5,7 @@ import {
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 import { ArrowUpLeftIcon } from "lucide-react";
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 import { tickTextContent } from "~/lib/tickTextContent";
 import type { ProviderInstanceEntry } from "../../providerInstances";
@@ -21,6 +22,7 @@ export function ProviderSubagentBar(props: {
   readonly actions?: ReactNode;
 }) {
   const { status } = props;
+  const { t } = useTranslation("chat");
   const live = status !== null && isOrchestrationV2WorkActive(status.status);
   const modelDescription =
     props.effortLabel === null ? props.modelLabel : `${props.modelLabel}, ${props.effortLabel}`;
@@ -64,13 +66,15 @@ export function ProviderSubagentBar(props: {
         {`${modelDescription} subagent: ${announcement}`}
       </span>
       <span className="shrink-0 text-muted-foreground @max-[640px]/composer-surface:sr-only">
-        Runs on its own
+        {t("providerSubagent.runsOnItsOwn")}
       </span>
       {props.actions}
       {props.onOpenParent ? (
         <Button size="sm" variant="ghost" onClick={props.onOpenParent}>
           <ArrowUpLeftIcon />
-          <span className="@max-[320px]/composer-surface:sr-only">Open parent</span>
+          <span className="@max-[320px]/composer-surface:sr-only">
+            {t("providerSubagent.openParent")}
+          </span>
         </Button>
       ) : null}
     </div>

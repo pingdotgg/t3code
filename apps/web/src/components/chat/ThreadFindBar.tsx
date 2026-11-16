@@ -103,7 +103,7 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
           </span>
           {props.status === "error" ? (
             <Button size="xs" variant="ghost" onClick={props.onRetry}>
-              Retry
+              {td("find.retry")}
             </Button>
           ) : null}
           <Button

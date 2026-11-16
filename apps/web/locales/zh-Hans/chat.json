@@ -17,6 +17,9 @@
     "workingFor": "已运行"
   },
   "approval": {
+    "childAria": "来自 {{title}} 的审批",
+    "childNeededFrom": "需要 {{title}} 审批",
+    "childProcessGone": "Provider 进程已退出。中断或重启子线程才能响应。",
     "command": "命令审批",
     "commandDetail": "命令",
     "fileChange": "文件修改审批",
@@ -56,6 +59,7 @@
   },
   "automations": {
     "edit": "编辑自动化",
+    "loadFailed": "无法加载自动化任务：{{error}}",
     "manageScheduledTasks": "管理定时任务",
     "runFailed": "无法运行自动化",
     "runNow": "立即运行",
@@ -66,15 +70,25 @@
     "agentNotRespondingToStop": "Agent 未响应停止指令",
     "branchChangedFrom": "分支已从",
     "branchMismatchDetail": "该线程上次运行在 {{threadBranch}} 分支上。发送后将在 {{currentBranch}} 分支继续。",
+    "cancel": "取消",
     "clear": "清除",
+    "disconnectServer": "断开服务器",
     "dismissBranchNotice": "关闭分支变更提示",
     "failedToClearGoal": "清除目标失败。",
     "failedToResumeGoal": "恢复目标失败。",
     "forceStop": "强制停止",
     "forceStopDetail": "可能内存不足。强制停止会终止其进程。",
     "forceStopping": "正在强制停止...",
+    "hideServerHint": "隐藏此服务器的线程。可在环境中重新开启。",
+    "manualUpdateRequired": "需要手动更新",
     "open": "打开",
     "openApproval": "打开审批",
+    "openQuestion": "打开提问",
+    "projectCloneCancelled": "已取消克隆 {{name}}",
+    "projectCloneFailed": "克隆 {{name}} 失败",
+    "projectCloneRetryHint": "重试以导入该仓库。",
+    "removeProject": "移除项目",
+    "retry": "重试",
     "openQuestion": "打开提问",
     "restoreBranch": "恢复分支",
     "restoring": "正在恢复...",
@@ -91,8 +105,21 @@
     "subagentWork": "子代理工作",
     "subagentWorkDetail": "只读。这些子代理无法接收消息。"
   },
+  "childWork": {
+    "earlierStepsHidden": "未显示更早的步骤。",
+    "noTranscriptYet": "还没有对话记录。"
+  },
   "citation": {
     "addCommentAria": "为引用添加备注",
+    "comment": {
+      "ariaLabel": "给选中文本添加备注",
+      "cancel": "取消",
+      "charLimit": "备注最多可包含 {{limit}} 个字符。",
+      "editorAria": "按 Enter 保存引用备注；Command/Ctrl+Enter 保存并发送；Shift+Enter 换行。",
+      "placeholder": "添加可选备注…",
+      "save": "保存",
+      "shorten": "缩短备注"
+    },
     "editCommentAria": "编辑引用备注",
     "goToSource": "转到来源"
   },
@@ -177,10 +204,13 @@
     "automatic": "自动",
     "branch": "分支",
     "cannotReadLocalDiffs": "当前连接无法读取本地差异。",
+    "changedFilesCount_one": "{{count}} 个已更改的文件",
+    "changedFilesCount_other": "{{count}} 个已更改的文件",
     "changeComparisonTargetA11y": "更改比较目标。当前为 {{base}}",
     "changes": "变更",
     "checkingFileAccess": "正在检查文件访问权限...",
     "collapseAllFiles": "折叠全部文件",
+    "collapseAllFolders": "折叠全部文件夹",
     "collapseDiff": "折叠差异",
     "collapseFileA11y": "折叠 {{filePath}}",
     "commits": "提交",
@@ -191,6 +221,7 @@
     "emptyContent": "内容为空。",
     "enableWrapping": "开启换行",
     "expandAllFiles": "展开全部文件",
+    "expandAllFolders": "展开全部文件夹",
     "expandDiff": "展开差异",
     "expandFileA11y": "展开 {{filePath}}",
     "filesA11y": "{{title}} 的文件",
@@ -205,6 +236,10 @@
     "loadingCommits": "正在加载提交...",
     "loadingToolCallDiff": "正在加载工具调用差异...",
     "loadingUncommitted": "正在加载未提交变更...",
+    "moreFilesInFullDiff_one": "完整差异中还有 {{count}} 个文件",
+    "moreFilesInFullDiff_other": "完整差异中还有 {{count}} 个文件",
+    "openDiff": "打开差异",
+    "openFullDiffAria": "打开完整差异",
     "noCommitsOnBranch": "该分支上没有提交。",
     "noMatchingRefs": "没有匹配的引用。",
     "noNetChanges": "所选范围没有净变更。",
@@ -244,6 +279,12 @@
     "noProject": "无项目",
     "searchProjects": "搜索项目",
     "searchProjectsPlaceholder": "搜索项目...",
+    "buildInLead": "我们想在",
+    "buildInSuffix": "，关于",
+    "buildInTail": "里做点什么？",
+    "buildLead": "我们想做点什么",
+    "buildLeadTail": "？",
+    "whatWentWrong": "哪里出了问题？",
     "whatNext": "接下来做什么？"
   },
   "errors": {
@@ -261,6 +302,7 @@
     "failed": "搜索失败",
     "next": "下一个匹配",
     "previous": "上一个匹配",
+    "retry": "重试",
     "searching": "搜索中…",
     "title": "在线程中查找"
   },
@@ -281,6 +323,7 @@
     "linkActive": "访客链接生效中",
     "linkAria": "访客链接",
     "linkExpired": "访客链接已过期",
+    "nameSuffix": "（访客）",
     "replacesLink": "创建新链接会使当前链接失效。",
     "send": "发送",
     "sendAria": "发送来自 {{name}} 的消息",
@@ -306,12 +349,16 @@
   "htmlDialog": {
     "close": "关闭",
     "expandedPreview": "{{title}} 放大预览",
+    "openFullScreen": "打开全屏",
     "resetZoom": "重置缩放",
+    "unableToLoad": "无法加载 {{title}}",
     "zoomIn": "放大",
     "zoomOut": "缩小"
   },
   "inspector": {
     "couldNotLoadOutput": "无法加载输出：{{error}}",
+    "earlierOutputNotShown": "更早的输出未显示",
+    "exitCode": "退出码 {{code}}",
     "loadingOutput": "正在加载输出…",
     "noOutput": "无输出。",
     "openDiff": "打开差异",
@@ -373,6 +420,33 @@
     "wakeNow": "立即唤醒",
     "waking": "唤醒中…"
   },
+  "link": {
+    "address": "地址",
+    "addressHint": "此应用没有 {{target}} 的、可供其他机器访问的地址。请输入其 https 或 Tailscale 地址。",
+    "alreadyLinked": "此环境已链接到 {{target}}。代理可以直接使用该链接；可在设置 → 连接中更改其访问权限。",
+    "anotherAddress": "其他地址…",
+    "back": "返回",
+    "cancel": "取消",
+    "cardTitle": "将 {{target}} 链接到此环境",
+    "cardTitleNoMachine": "将一台机器链接到此环境",
+    "chooseMachine": "选择机器…",
+    "continue": "继续",
+    "decline": "拒绝",
+    "dialogDescription": "这里的代理随后可以在该机器上启动、发送消息和等待线程。可在该机器的连接设置中撤销。",
+    "dialogTitle": "链接 {{target}}",
+    "dialogTitleNoMachine": "链接机器",
+    "link": "链接",
+    "linking": "链接中…",
+    "machine": "机器",
+    "needsManagingSession": "只有在此管理访问权限的会话才能回答。",
+    "pairingCode": "配对码",
+    "pairingCodeHint": "在 {{target}} 上创建链接：设置 → 连接 → 创建链接，然后将其配对码粘贴到这里。",
+    "pairingCodePlaceholder": "粘贴配对码",
+    "reviewLink": "查看链接…",
+    "stepAccess": "访问",
+    "stepMachine": "机器",
+    "useThisLink": "使用此链接"
+  },
   "limitRecovery": {
     "autoResumeFailed": "无法更改自动恢复",
     "cancelAutoResume": "取消自动恢复",
@@ -399,6 +473,7 @@
     "environmentNotConnected": "环境未连接。",
     "fileNotFoundOn": "在 {{target}} 的 {{path}} 未找到该文件。",
     "linkFailed": "关联拉取请求失败",
+    "loadingImage": "正在加载图片",
     "mediaLoadFailed": "无法加载该文件。它可能已被移动或删除。",
     "mediaUnavailable": "媒体不可用",
     "openApp": "打开应用",
@@ -409,12 +484,23 @@
     "toggleTask": "切换任务",
     "unlinkFailed": "取消关联拉取请求失败"
   },
+  "media": {
+    "nextMedia": "下一媒体",
+    "previousMedia": "上一媒体",
+    "zoomHint": "点击放大或恢复适合大小。捏合或 Ctrl+滚轮缩放，滚动或拖拽平移。按 Enter 切换缩放，按加号或减号缩放，按 0 恢复适合大小。",
+    "zoomPercent": "{{percent}}% 缩放",
+    "zoomableImageAria": "{{name}}，可缩放图片"
+  },
   "mcp": {
+    "appLeftPage": "{{server}} 应用离开了其页面，已被停止",
+    "appWasClosed": "{{server}} 应用已关闭",
     "cannotCallTool": "此应用无法调用该工具。",
     "declinedByUser": "已被用户拒绝。",
     "exitFullScreen": "退出全屏",
     "messagesUnavailable": "此处不能使用消息。",
-    "requestFailed": "请求失败。"
+    "requestFailed": "请求失败。",
+    "showApp": "显示应用",
+    "unableToLoad": "无法加载 {{server}} 应用"
   },
   "mermaid": {
     "expand": "展开图",
@@ -423,7 +509,18 @@
     "retry": "重试",
     "unablePrefix": "无法渲染图：{{message}}"
   },
+  "overlays": {
+    "branchRestoreDetail": "你有未提交的更改。它们会带到另一个分支；如果有冲突，则会阻止切换。",
+    "branchRestoreSwitch": "切换分支",
+    "branchRestoreTitle": "切换到 <code>{{branch}}</code>？",
+    "cancel": "取消",
+    "revertDetail": "把对话回退到这条消息之前。你的提示词和附件会回到输入框。“同时还原文件”还会撤销你自己做的修改。",
+    "revertFilesToo": "同时还原文件",
+    "revertKeepChanges": "还原并保留更改",
+    "revertTitle": "从这里修改？"
+  },
   "panelControls": {
+    "chooseToShow": "选择显示内容",
     "maximize": "最大化面板",
     "restore": "恢复面板大小",
     "rightPanelUnavailable": "右侧面板不可用",
@@ -440,6 +537,7 @@
   },
   "plan": {
     "actions": "计划操作",
+    "cancel": "取消",
     "badge": "计划",
     "collapse": "折叠计划",
     "copied": "已复制！",
@@ -479,6 +577,14 @@
     "stopWatchingAria": "停止监视 #{{number}}",
     "watching": "监视中：检查完成、有人评论或分支出现冲突时，代理会被唤醒。点击以停止。"
   },
+  "providerSubagent": {
+    "openParent": "打开父级",
+    "runsOnItsOwn": "独立运行"
+  },
+  "queuedRuns": {
+    "count": "{{count}} 条排队中",
+    "sentBy": "由 T3 Code 发送"
+  },
   "relations": {
     "contextTransfer": "上下文转移",
     "disconnectFailed": "无法断开代理会话",
@@ -492,6 +598,7 @@
     "mergeIntoSource": "将此对话合并回其源对话",
     "mergeNeedsRun": "先在此分叉中完成一轮运行，才能合并回去",
     "moreThreadActions": "更多线程操作",
+    "noAgentsYet": "还没有代理",
     "parentAgent": "父代理",
     "parentThread": "父线程",
     "previousAgents": "先前的代理",
@@ -502,16 +609,29 @@
     "stopSubagentAria": "停止子代理 {{title}}",
     "stopSubagentFailed": "无法停止子代理",
     "stopWorkflowFailed": "无法停止工作流",
-    "subagent": "子代理"
+    "subagent": "子代理",
+    "showMore": "显示更多 {{count}} 条",
+    "runsOn": "在 {{label}} 上"
+  },
+  "secretRequest": {
+    "decline": "拒绝",
+    "open": "打开 {{host}}",
+    "saveSecurely": "安全保存"
+  },
+  "skills": {
+    "noDescription": "此技能没有可用的描述。",
+    "viewInstructions": "查看说明"
   },
   "sideChat": {
     "addToMainDetail": "把这条旁路对话加进主线程的下一条消息。",
     "afterReply": "收到一条完整回复后可用。",
+    "bringBack": "带回",
     "bringBackFailed": "无法带回旁路对话",
     "broughtBack": "已带回",
     "broughtBackDetail": "主线程会在你下次发送消息时收到这条旁路对话。",
     "clearDetail": "这会永久清除它的对话历史。",
     "clearFailed": "无法删除旁路对话",
+    "deleted": "这条旁路对话已被删除。",
     "closeAria": "关闭旁路对话",
     "connectionCannotChange": "此连接无法更改线程。",
     "deleteAria": "删除旁路对话",
@@ -547,20 +667,34 @@
     "contextFrom": "上下文来自",
     "cutOffBySteer": "已被转向截断",
     "dividerDetail": "{{title}}（{{environment}}）",
+    "dropFilesToAttach": "拖放文件以添加附件",
     "emptyState": "发送一条消息即可开始对话。",
     "forkAria": "从此回复分叉",
     "loadEarlierTurns": "加载更早的对话轮",
     "loadingEarlierTurns": "正在加载更早的对话轮…",
     "loadingWorkHistoryA11y": "正在加载工作记录",
     "openParentThread": "打开父线程",
+    "retry": "重试",
+    "scrollToEnd": "滚动到末尾",
     "subagentOf": "子代理所属",
     "systemDividerA11y": "{{label}}: {{detail}}",
     "viewCited": "查看被引用的助手文本：{{label}}",
+    "workflowStarted": "工作流已开始",
     "workLoadFailed": "无法加载工作记录，点击重试。"
+  },
+  "usage": {
+    "ofTokens": "{{used}} / {{max}} 个 token",
+    "paceAhead": "快于正常节奏",
+    "paceOn": "符合节奏",
+    "paceUnder": "慢于正常节奏",
+    "percentLeft": "剩余 {{percent}}%",
+    "resetsIn": "{{duration}} 后重置"
   },
   "userMessage": {
     "agent": "Agent",
+    "annotatedPreviewAlt": "标注预览裁剪",
     "automation": "自动任务",
+    "capturedTerminalAria": "捕获的终端输出",
     "copyPromptLink": "复制提示链接",
     "downloadAttachment": "下载 {{label}}",
     "editFromHere": "从这里编辑",
@@ -569,6 +703,7 @@
     "openThread": "打开线程",
     "previewAttachment": "预览 {{label}}",
     "queuedThenSteered": "最初排队，之后提升为改变当前对话轮方向",
+    "screenshotUnavailable": "截图不可用",
     "sending": "正在发送…",
     "sendingAttachmentA11y": "正在发送附件",
     "sentByT3Code": "由 T3 Code 发送",
@@ -592,9 +727,13 @@
     "downloading": "下载中…",
     "downloadModel": "下载模型",
     "downloadProgressAria": "语音模型下载进度",
+    "loadingModels": "正在加载转录模型…",
     "micAria": "麦克风",
     "micListFailed": "无法列出麦克风。你仍可以使用系统默认设备。",
     "microphone": "麦克风",
+    "microphoneUnavailable": "所选麦克风不可用。请选择其他设备或使用系统默认设备。",
+    "multilingualHint": "可以说多种语言并进行转录，或翻译成英语；在语音设置的词典里录入人名和术语，识别会更准确。",
+    "retryLoadingModels": "重新加载模型",
     "recommendedFor": "推荐用于 {{language}}",
     "refreshMics": "刷新麦克风列表",
     "selectedUnavailable": "所选麦克风（不可用）",
@@ -609,5 +748,16 @@
     "transcriptionEnv": "你的转录环境",
     "tryAgain": "重试",
     "verifying": "正在校验下载…"
+  },
+  "worktreeSetup": {
+    "ariaLabel": "工作树设置",
+    "base": "基线",
+    "branch": "分支",
+    "cancel": "取消",
+    "details": "详情",
+    "openTerminal": "打开终端",
+    "path": "路径",
+    "setup": "设置脚本",
+    "workLocally": "本地工作"
   }
 }

@@ -9,6 +9,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { WifiOffIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { environmentCatalog } from "../../connection/catalog";
 import { ConnectionDiagnosisHeadline } from "../settings/ConnectionDiagnosisDetails";
@@ -66,6 +67,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
     automaticEnvironment,
     autoUpdateEnvironments,
   } = input;
+  const { t } = useTranslation("chat");
   const navigate = useNavigate();
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
   const setEnvironmentEnabled = useAtomCommand(environmentCatalog.setEnabled, {
@@ -163,14 +165,14 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
           size="xs"
           variant="ghost"
           disabled={disconnectingEnvironment}
-          title="Hide this server's threads. Switch it on again in Environments."
+          title={t("banners.hideServerHint")}
           onClick={() =>
             void handleDisconnectActiveEnvironmentStable(
               activeEnvironmentUnavailableState.environmentId,
             )
           }
         >
-          Disconnect server
+          {t("banners.disconnectServer")}
         </Button>
       ) : undefined;
     const environmentReconnecting =

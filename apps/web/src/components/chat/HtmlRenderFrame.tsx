@@ -7,6 +7,7 @@ import {
 } from "@t3tools/shared/htmlRender";
 import { Maximize2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useAssetUrlRefresh } from "~/assets/assetUrls";
 import { useLongLivedAssetUrl } from "~/assets/longLivedAssetUrls";
@@ -27,6 +28,7 @@ export function HtmlRenderFrame(props: {
   readonly onFullscreenChange?: (fullscreen: boolean) => void;
 }) {
   const { attachmentId, title } = props.htmlRender;
+  const { t } = useTranslation("chat");
   const [width, setWidth] = useState(HTML_RENDER_COLUMN_WIDTH);
   const observeBox = (box: HTMLDivElement) => {
     setWidth(box.clientWidth);
@@ -83,7 +85,7 @@ export function HtmlRenderFrame(props: {
               <TooltipTrigger
                 render={
                   <Button
-                    aria-label="Open full screen"
+                    aria-label={t("htmlDialog.openFullScreen")}
                     size="icon-xs"
                     variant="glass"
                     onClick={async () => {
@@ -118,7 +120,7 @@ export function HtmlRenderFrame(props: {
         </>
       ) : failed ? (
         <p className="flex size-full items-center justify-center text-muted-foreground text-xs">
-          Unable to load {title}
+          {t("htmlDialog.unableToLoad", { title })}
         </p>
       ) : null}
     </div>

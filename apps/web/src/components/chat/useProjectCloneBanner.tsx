@@ -5,6 +5,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { DownloadIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { useRemoveClonedProject } from "../../hooks/useRemoveClonedProject";
 import { sourceControlEnvironment } from "../../state/sourceControl";
@@ -23,6 +24,7 @@ import { Button } from "../ui/button";
  * retry, and remove actions, and the reason sending waits until it is done.
  */
 export function useProjectCloneBanner(activeProjectRef: ScopedProjectRef | null) {
+  const { t } = useTranslation("chat");
   const activeProjectClone = useProjectClone(activeProjectRef);
   const cancelProjectClone = useAtomCommand(sourceControlEnvironment.cancelProjectClone, {
     reportFailure: false,
@@ -90,7 +92,7 @@ export function useProjectCloneBanner(activeProjectRef: ScopedProjectRef | null)
               )
             }
           >
-            Cancel
+            {t("banners.cancel")}
           </Button>
         ),
       };
@@ -100,8 +102,10 @@ export function useProjectCloneBanner(activeProjectRef: ScopedProjectRef | null)
       id: `project-clone:${projectId}`,
       variant: cancelled ? "warning" : "error",
       icon: <DownloadIcon />,
-      title: cancelled ? `Cancelled cloning ${name}` : `Failed to clone ${name}`,
-      description: cancelled ? "Retry to bring in the repository." : activeProjectClone.error,
+      title: cancelled
+        ? t("banners.projectCloneCancelled", { name })
+        : t("banners.projectCloneFailed", { name }),
+      description: cancelled ? t("banners.projectCloneRetryHint") : activeProjectClone.error,
       actions: (
         <>
           <Button
@@ -109,7 +113,7 @@ export function useProjectCloneBanner(activeProjectRef: ScopedProjectRef | null)
             variant="ghost"
             onClick={() => void removeClonedProject({ environmentId, projectId })}
           >
-            Remove project
+            {t("banners.removeProject")}
           </Button>
           <Button
             size="xs"
@@ -120,7 +124,7 @@ export function useProjectCloneBanner(activeProjectRef: ScopedProjectRef | null)
               )
             }
           >
-            Retry
+            {t("banners.retry")}
           </Button>
         </>
       ),

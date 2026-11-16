@@ -89,6 +89,7 @@ function NativeChildWorkContent(props: {
 
 function NativeChild(props: { readonly child: OrchestrationV2NativeChildWork }) {
   const { child } = props;
+  const { t } = useTranslation("chat");
   return (
     <section aria-label={child.role || "Subagent"} className="flex min-w-0 flex-col gap-2">
       <h3 className="text-sm font-medium text-foreground">{child.role || "Subagent"}</h3>
@@ -96,10 +97,10 @@ function NativeChild(props: { readonly child: OrchestrationV2NativeChildWork }) 
         {child.prompt}
       </p>
       {child.truncated ? (
-        <p className="text-xs text-muted-foreground">Earlier steps are not shown.</p>
+        <p className="text-xs text-muted-foreground">{t("childWork.earlierStepsHidden")}</p>
       ) : null}
       {child.steps === null ? (
-        <p className="text-xs text-muted-foreground">No transcript yet.</p>
+        <p className="text-xs text-muted-foreground">{t("childWork.noTranscriptYet")}</p>
       ) : (
         <ol className="m-0 flex list-none flex-col gap-2 border-s ps-3">
           {child.steps.map((step) => (

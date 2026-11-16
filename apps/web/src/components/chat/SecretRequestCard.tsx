@@ -24,6 +24,7 @@ import type {
 import { useAtomValue } from "@effect/atom-react";
 import { CheckIcon, ExternalLinkIcon, LockIcon, MinusIcon, ShieldCheckIcon } from "lucide-react";
 import { useId, useRef, useState, type FormEvent } from "react";
+import { useTranslation } from "react-i18next";
 
 import { isSecretsFeatureEnabled } from "../../env";
 import { serverEnvironment } from "../../state/server";
@@ -76,6 +77,7 @@ function PendingSecretRequestForm(props: {
   readonly item: SecretRequestItem;
 }) {
   const { item } = props;
+  const { t } = useTranslation("chat");
   const inputId = useId();
   const errorId = useId();
   const privacyId = useId();
@@ -160,7 +162,7 @@ function PendingSecretRequestForm(props: {
             size="sm"
             render={<a href={link.href} target="_blank" rel="noopener noreferrer" />}
           >
-            Open {link.host}
+            {t("secretRequest.open", { host: link.host })}
             <ExternalLinkIcon aria-hidden />
           </Button>
           {/* A link found in the reason is already shown there. */}
@@ -223,7 +225,7 @@ function PendingSecretRequestForm(props: {
           )}
         </div>
         <Button type="submit" disabled={submitting || draft.trim().length === 0}>
-          Save securely
+          {t("secretRequest.saveSecurely")}
         </Button>
       </div>
       {error !== null ? (
@@ -246,7 +248,7 @@ function PendingSecretRequestForm(props: {
           disabled={submitting}
           onClick={() => void send({ type: "decline" })}
         >
-          Decline
+          {t("secretRequest.decline")}
         </Button>
       </div>
     </form>

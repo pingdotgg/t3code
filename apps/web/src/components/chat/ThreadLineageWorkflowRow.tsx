@@ -6,6 +6,7 @@ import {
 import type { ProviderDriverKind, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
 import { ChevronDownIcon, SquareIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 import { AgentElapsed } from "./AgentElapsed";
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
@@ -144,6 +145,7 @@ export function ThreadLineageWorkflowRow({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [phaseOpen, setPhaseOpen] = useState<ReadonlyMap<number, boolean>>(() => new Map());
+  const { t } = useTranslation("chat");
   const label = group.workflow.workflowName ?? group.workflow.title;
   const phases = group.phases.filter((phase) => phase.members.length > 0);
   return (
@@ -256,7 +258,9 @@ export function ThreadLineageWorkflowRow({
             />
           ))}
           {phases.length === 0 && group.unphasedMembers.length === 0 ? (
-            <li className="px-2.5 py-1.5 text-2xs text-muted-foreground/70">No agents yet</li>
+            <li className="px-2.5 py-1.5 text-2xs text-muted-foreground/70">
+              {t("relations.noAgentsYet")}
+            </li>
           ) : null}
         </ul>
       ) : null}
