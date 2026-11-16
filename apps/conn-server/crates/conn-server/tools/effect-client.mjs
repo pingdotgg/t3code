@@ -169,6 +169,16 @@ const program = Effect.gen(function* () {
   } else {
     yield* decodeCall(client, "secrets.answerRequest", { threadId: "missing", turnItemId: "missing", answer: { type: "decline" } });
     yield* decodeCall(client, "panels.respond", { requestId: "unknown", ok: true });
+    const login = yield* client["testLogins.save"]({ url: " http://localhost/login ", username: "tester", password: "fixture-only", otpSecret: " TEST " });
+    decodedTags.add("testLogins.save");
+    check("test login summary excludes secrets", login.createdBy === "user" && login.hasOtp && !("password" in login) && !("otpSecret" in login));
+    yield* decodeCall(client, "testLogins.list", {});
+    yield* decodeCall(client, "testLogins.update", { id: login.id, label: "Updated", otpSecret: null });
+    const revealed = yield* client["testLogins.reveal"]({ id: login.id });
+    decodedTags.add("testLogins.reveal");
+    check("test login reveal preserves password and clears OTP", revealed.password === "fixture-only" && revealed.otpSecret === null);
+    yield* decodeCall(client, "testLogins.remove", { id: login.id });
+    yield* decodeCall(client, "testLogins.reveal", { id: login.id });
 
     const [config] = yield* take(client.subscribeServerConfig({}), 1);
     check(

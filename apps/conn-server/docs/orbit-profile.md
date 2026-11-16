@@ -1159,11 +1159,11 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `terminal.open` | yes | N | N |  | terminals |
 | `terminal.resize` | yes | N | N |  | terminals |
 | `terminal.write` | yes | N | N |  | terminals |
-| `testLogins.list` | no | X | U | M | test logins (Conn only) |
-| `testLogins.remove` | no | X | U | M | test logins (Conn only) |
-| `testLogins.reveal` | no | X | U | M | test logins (Conn only) |
-| `testLogins.save` | no | X | U | M | test logins (Conn only) |
-| `testLogins.update` | no | X | U | M | test logins (Conn only) |
+| `testLogins.list` | yes | X | U | M | test logins (Conn only) |
+| `testLogins.remove` | yes | X | U | M | test logins (Conn only) |
+| `testLogins.reveal` | yes | X | U | M | test logins (Conn only) |
+| `testLogins.save` | yes | X | U | M | test logins (Conn only) |
+| `testLogins.update` | yes | X | U | M | test logins (Conn only) |
 | `vcs.createRef` | yes | N | N |  | branches, worktrees, status |
 | `vcs.createWorktree` | yes | N | N |  | branches, worktrees, status |
 | `vcs.init` | yes | N | N |  | branches, worktrees, status |
@@ -1184,7 +1184,7 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `annotations_list` | yes | U | U |  | agents work through review notes |
 | `annotations_release` | yes | U | U |  | agents work through review notes |
 | `create_threads` | yes | U | N | S | new top-level threads |
-| `database_query` | no | U | U | M | Conn database panel |
+| `database_query` | yes | U | U | M | Conn database panel |
 | `delegate_task` | yes | N | N |  | core orchestration |
 | `delete_scheduled_task` | yes | U | N |  | scheduled tasks |
 | `device_close` | no | X | N | L | simulators |
@@ -1216,10 +1216,10 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `preview_status` | no | U | N | L | agent browser; needs headless Chromium on the server |
 | `preview_wait_for` | no | U | N | L | agent browser; needs headless Chromium on the server |
 | `read_pull_request_guide` | no | O | N | M | PR babysitting; Orbit's review-and-merge does it in a container |
-| `request_credentials` | no | X | U | M | test logins |
+| `request_credentials` | yes | X | U | M | test logins |
 | `request_secret` | yes | U | N | S | agent asks for a secret |
 | `run_scheduled_task_now` | yes | U | N |  | scheduled tasks |
-| `save_test_login` | no | X | U | M | test logins |
+| `save_test_login` | yes | X | U | M | test logins |
 | `schedule_task` | yes | U | N |  | scheduled tasks |
 | `send_to_user` | yes | N | N |  | core orchestration |
 | `t3_attachment_discard` | yes | U | N | M | attachments between threads |

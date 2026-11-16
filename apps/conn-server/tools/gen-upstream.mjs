@@ -290,6 +290,8 @@ const secretsRs = rustfmt(
     `// Source: ${SECRETS_FILE} (secretSettingsFields per group), packages/source-control-github/src/shared/definition.ts,`,
     "// secrets/secretProviderDefinitions.ts.",
     "",
+    `pub(super) const DEFAULT_AGENT_BROWSER_ACCESS: bool = ${settings.DEFAULT_SERVER_SETTINGS.enableAgentBrowserAccess};`,
+    "",
     "/// Secret fields of `providerInstances.*.config`, by the instance's `driver`.",
     "pub(super) const PROVIDER_CONFIG: &[(&str, &[&str])] = &[",
     ...providerFields.map(([driver, fields]) => `(${str(driver)}, ${strs(fields)}),`),
@@ -407,6 +409,10 @@ const modelManifestRs = rustfmt(
 const LIMITED_METHODS = [
   "assets.createUrl",
   "secrets.answerRequest",
+  "testLogins.save",
+  "testLogins.update",
+  "testLogins.remove",
+  "testLogins.reveal",
   "panels.respond",
   ...["comment","replyToThread","updateComment","setReaction","setThreadResolution","submitReview","requestReviewers","reviewerCandidates","labelCandidates","setLabels","update","stack","reviewGuide","runAction","generateReviewGuide"].map(method=>`pullRequests.${method}`),
   "server.listTextGeneratorModels",
@@ -443,19 +449,9 @@ function limitNode(ast) {
     return members.length === 1 ? limitNode(members[0]) : null;
   }
   const node = {};
-  if ((ast.checks ?? []).some((c) => c.annotations?.expected === "a non-blank string")) {
-    node.trim = true;
-    node.minLength = 1;
-  }
-  if(ast._tag==="String" && ast.encoding?.some(link=>link.transformation===trimTransformation)) {
-    node.trim=true;
-    for(const check of ast.checks ?? []) {
-      if(check.annotations?.representation===undefined && check.annotations?.toJsonSchema) {
-        const json=check.annotations.toJsonSchema()[0];
-        if(typeof json?.minLength==="number") node.minLength=json.minLength;
-      }
-    }
-  }
+  const nonBlank = (ast.checks ?? []).some((c) => c.annotations?.expected === "a non-blank string");
+  if (nonBlank) node.nonBlank = true;
+  if (ast._tag === "String" && (nonBlank || ast.encoding?.some(link => link.transformation === trimTransformation))) node.trim = true;
   for (const r of representations(ast)) {
     const p = r.payload;
     if (r.id === "effect/schema/isMaxLength") node.maxLength = p.maxLength;
@@ -504,7 +500,7 @@ const limitsRs = rustfmt(
     "// Source: the payload schemas of packages/contracts/src/rpc.ts, by reflection.",
     "",
     "/// The payload limits of each listed method, as JSON: `fields`, `keys`, `values`,",
-    "/// `variants` (by `discriminator`, default `_tag`), `trim`, `minLength`, `maxLength`,",
+    "/// `variants` (by `discriminator`, default `_tag`), `trim`, `nonBlank`, `minLength`, `maxLength`,",
     "/// `pattern`, `maxProperties`, `int`, `minimum`, `maximum`.",
     `pub(super) const LIMITS: &str = r#"${JSON.stringify(limits)}"#;`,
     "",

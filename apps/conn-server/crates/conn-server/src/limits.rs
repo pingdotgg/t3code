@@ -11,7 +11,7 @@
 //! contract's own decode and a test here through [`check`].
 //!
 //! A string length counts UTF-16 code units, as JavaScript's `length` does. Fields with the
-//! contract's `TrimmedString` transform are trimmed before their limits are checked.
+//! contract's `TrimmedString` and `TrimmedNonEmptyString` transform are trimmed before checks.
 
 use std::{collections::HashMap, sync::OnceLock};
 
@@ -36,6 +36,8 @@ struct RawLimit {
     discriminator: Option<String>,
     #[serde(default)]
     trim: bool,
+    #[serde(default)]
+    non_blank: bool,
     min_length: Option<usize>,
     max_length: Option<usize>,
     pattern: Option<String>,
@@ -53,6 +55,7 @@ struct Limit {
     variants: Vec<(String, Limit)>,
     discriminator: Option<String>,
     trim: bool,
+    non_blank: bool,
     min_length: Option<usize>,
     max_length: Option<usize>,
     pattern: Option<(String, Regex)>,
@@ -88,6 +91,7 @@ impl Limit {
         Self {
             discriminator: raw.discriminator,
             trim: raw.trim,
+            non_blank: raw.non_blank,
             min_length: raw.min_length,
             fields,
             keys: raw.keys.map(|k| Box::new(Self::build(*k))),
@@ -201,6 +205,9 @@ impl Limit {
     }
 
     fn text_problem(&self, text: &str, path: &[String]) -> Option<String> {
+        if self.non_blank && text.is_empty() {
+            return Some(at("a non-blank string".to_owned(), path));
+        }
         if let Some(min) = self.min_length {
             let length = text.encode_utf16().count();
             if length < min {
@@ -365,6 +372,9 @@ mod tests {
             check("assets.createUrl", &mut over),
             Err(Failure::Die(_))
         ));
+        let blank = problem("pullRequests.update", json!({"title":"\u{feff} \u{feff}"}))
+            .expect("blank after trimming");
+        assert_eq!(blank, r#"expected a non-blank string at ["title"]"#);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Thread-scoped panel display on connected desktops; browser tab automation needs preview.
 
 use super::{Args, Cx, ToolError, ToolResult, bool_arg, fail, str_arg};
-use conn_contract::from_json;
+use conn_contract::{AgentPanelKind, AgentPanelRequest, from_json};
 use serde_json::{Value, json};
 use std::time::Duration;
 
@@ -45,20 +45,66 @@ pub(super) async fn open(cx: &Cx<'_>, args: &Args) -> ToolResult {
             "This server does not support desktop browser tabs yet. Open the browser panel without url or tabId; browser automation needs the desktop preview relay.",
         ));
     }
-    let mut request = json!({"requestId":"pending", "threadId":caller.thread_id, "panel":panel, "focusWindow":bool_arg(args,"focusWindow").unwrap_or(true)});
-    if let Some(sql) = args.get("sql")
-        && let Some(fields) = request.as_object_mut()
-    {
-        fields.insert("sql".into(), sql.clone());
-    }
+    let panel_kind = match panel {
+        "browser" => AgentPanelKind::Browser,
+        "database" => AgentPanelKind::Database,
+        "mcp" => AgentPanelKind::Mcp,
+        "diff" => AgentPanelKind::Diff,
+        "files" => AgentPanelKind::Files,
+        _ => return Err(super::internal("Unknown panel kind")),
+    };
+    let request = AgentPanelRequest {
+        request_id: "pending".into(),
+        thread_id: caller.thread_id.clone(),
+        panel: panel_kind,
+        tab_id: None,
+        sql: str_arg(args, "sql").map(str::to_owned),
+        connection: None,
+        run: None,
+        mcp_server: None,
+        mcp_call: None,
+        focus_window: bool_arg(args, "focusWindow").unwrap_or(true),
+    };
     let shown = broker
-        .show(
-            from_json(request).map_err(super::internal)?,
-            Duration::from_secs(15),
-        )
+        .show(request, Duration::from_secs(15))
         .await
         .map_err(|e| ToolError::Message(e.message))?;
     Ok(json!({"panel":panel,"shownOn":shown.device_name.unwrap_or_else(|| "Conn desktop".into())}))
+}
+
+pub(super) async fn database_query(cx: &Cx<'_>, args: &Args) -> ToolResult {
+    let caller = cx.require_thread("This tool")?;
+    cx.writing_caller().await?;
+    let broker = cx
+        .config()
+        .panels
+        .as_ref()
+        .ok_or_else(|| fail("capability_denied", "Panel requests are not supported."))?;
+    let request = AgentPanelRequest {
+        request_id: "pending".into(),
+        thread_id: caller.thread_id.clone(),
+        panel: AgentPanelKind::Database,
+        tab_id: None,
+        sql: str_arg(args, "sql").map(str::to_owned),
+        connection: str_arg(args, "connection").map(str::to_owned),
+        run: Some(true),
+        mcp_server: None,
+        mcp_call: None,
+        focus_window: bool_arg(args, "focusWindow").unwrap_or(true),
+    };
+    let shown = broker
+        .show(request, PANEL_ACTION_TIMEOUT)
+        .await
+        .map_err(|e| ToolError::Message(e.message))?;
+    let database = shown.database.ok_or_else(||ToolError::Message("The Conn desktop showed the database panel but sent no result. It may run an older Conn.".into()))?;
+    let mut result = conn_contract::to_json(&database);
+    if let Some(fields) = result.as_object_mut() {
+        fields.insert(
+            "shownOn".into(),
+            json!(shown.device_name.unwrap_or_else(|| "Conn desktop".into())),
+        );
+    }
+    Ok(result)
 }
 
 const PANEL_ACTION_TIMEOUT: Duration = Duration::from_secs(90);

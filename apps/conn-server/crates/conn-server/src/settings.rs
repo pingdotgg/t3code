@@ -730,6 +730,20 @@ fn apply_provider_instance_mutation(
     }
 }
 
+/// Browser access is captured in the MCP credential when a provider session starts.
+pub fn agent_browser_access(settings: &Map<String, Value>, project_id: Option<&str>) -> bool {
+    project_id
+        .and_then(|id| {
+            settings
+                .get("projectSettingsOverrides")?
+                .get(id)?
+                .get("enableAgentBrowserAccess")?
+                .as_bool()
+        })
+        .or_else(|| settings.get("enableAgentBrowserAccess")?.as_bool())
+        .unwrap_or(generated::DEFAULT_AGENT_BROWSER_ACCESS)
+}
+
 /// `resolveProjectSettings(settings, projectId).settings.responseStreamingMode`: the
 /// project's override when set, else the machine-wide value, else T3's default `paragraph`.
 pub fn response_streaming_mode(

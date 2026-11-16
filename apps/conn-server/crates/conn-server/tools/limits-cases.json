@@ -77,6 +77,16 @@
   {"name":"range start is positive","tag":"pullRequests.submitReview","payload":{"projectId":"p1","host":"github.com","repository":"a/b","number":7,"verdict":"comment","body":"review","comments":[{"path":"file.rs","body":"line","position":{"kind":"added","newLine":1},"startPosition":{"kind":"deleted","oldLine":0}}]},"ok":false},
   {"name":"blank reaction subject","tag":"pullRequests.setReaction","payload":{"projectId":"p1","host":"github.com","repository":"a/b","number":7,"subjectId":" ","content":"heart","reacted":true},"ok":false},
   {"name":"zero stack number","tag":"pullRequests.stack","payload":{"projectId":"p1","host":"github.com","repository":"a/b","number":0},"ok":false},
-  {"name":"blank guide project","tag":"pullRequests.reviewGuide","payload":{"projectId":" ","host":"github.com","repository":"a/b","number":7},"ok":false}
+  {"name":"blank guide project","tag":"pullRequests.reviewGuide","payload":{"projectId":" ","host":"github.com","repository":"a/b","number":7},"ok":false},
+  {"name":"test login 49","tag":"testLogins.save","payload":{"url":" ","username":" ","password":""},"ok":true},
+  {"name":"test login 50","tag":"testLogins.save","payload":{"url":"","username":"u","password":"p"},"ok":false},
+  {"name":"test login 51","tag":"testLogins.update","payload":{"id":"00000000-0000-4000-8000-000000000001","username":""},"ok":false},
+  {"name":"test login 52","tag":"testLogins.update","payload":{"id":"00000000-0000-4000-8000-000000000001","otpSecret":null},"ok":true},
+  {"name":"test login 53","tag":"testLogins.save","payload":{"url":"x","username":"u","password":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"},"ok":false},
+  {"name":"test login 54","tag":"testLogins.reveal","payload":{"id":"invalid"},"ok":false},
+  {"name":"test login 55","tag":"testLogins.remove","payload":{"id":"00000000-0000-4000-8000-000000000001"},"ok":true},
+  {"name":"BOM-only title is non-blank checked after trimming","tag":"pullRequests.update","payload":{"projectId":"p1","host":"github.com","repository":"a/b","number":7,"title":"﻿ ﻿"},"ok":false},
+  {"name":"NEXT LINE padding remains on a trimmed non-blank title","tag":"pullRequests.update","payload":{"projectId":"p1","host":"github.com","repository":"a/b","number":7,"title":"title"},"ok":true,"after":{"title":"title"}},
+  {"name":"test login raw strings retain Unicode whitespace","tag":"testLogins.save","payload":{"url":"﻿","username":"﻿","password":""},"ok":true,"after":{"url":"﻿","username":"﻿"}}
  ]
 }
