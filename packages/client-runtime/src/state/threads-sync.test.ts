@@ -6,6 +6,7 @@ import {
   NodeId,
   ORCHESTRATION_V2_WS_METHODS,
   RuntimeRequestId,
+  RunId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2ThreadDetailSnapshot,
@@ -117,11 +118,9 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     readonly hasMoreHistory: boolean;
     readonly latestLocalTurnOrdinal?: number | null;
   };
-  readonly httpSnapshot?:
-    | ThreadSnapshotLoadResult
-    | ((call: number) => ThreadSnapshotLoadResult | Effect.Effect<ThreadSnapshotLoadResult>);
-  /** Keeps queued items in one chunk, so a buffered item survives a session switch. */
-  readonly preserveInputChunks?: boolean;
+  readonly httpSnapshot?: ThreadSnapshotLoadResult;
+  /** Answers per load call; the last one repeats. Overrides `httpSnapshot`. */
+  readonly httpSnapshots?: readonly ThreadSnapshotLoadResult[];
   /** The test sends the completion marker itself instead of the fake server sending it first. */
   readonly completionMarker?: boolean;
   readonly resumeCache?: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]>;
@@ -151,18 +150,16 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const supervisorState = yield* SubscriptionRef.make<SupervisorConnectionState>(
     AVAILABLE_CONNECTION_STATE,
   );
-  const decodeInput = (input: TestThreadInput) =>
-    input === TEST_DEFECT
-      ? Effect.die(input)
-      : input instanceof Error
-        ? Effect.fail(input)
-        : Effect.succeed(input);
-  const streamFrom = (queue: Queue.Queue<TestThreadInput>) => {
-    const stream = Stream.fromQueue(queue);
-    return options?.preserveInputChunks === true
-      ? stream.pipe(Stream.mapArrayEffect((chunk) => Effect.forEach(chunk, decodeInput)))
-      : stream.pipe(Stream.mapEffect(decodeInput));
-  };
+  const streamFrom = (queue: Queue.Queue<TestThreadInput>) =>
+    Stream.fromQueue(queue).pipe(
+      Stream.mapEffect((input) =>
+        input === TEST_DEFECT
+          ? Effect.die(input)
+          : input instanceof Error
+            ? Effect.fail(input)
+            : Effect.succeed(input),
+      ),
+    );
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input: {
       readonly afterSequence?: number;
@@ -200,14 +197,13 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const snapshotLoader = ThreadSnapshotLoader.ThreadSnapshotLoader.of({
     load: (_prepared, threadId) =>
       Ref.updateAndGet(loaderCalls, (count) => count + 1).pipe(
-        Effect.flatMap((call) => {
-          const httpSnapshot = threadId === THREAD_ID ? options?.httpSnapshot : undefined;
-          if (httpSnapshot === undefined) {
-            return Effect.succeed<ThreadSnapshotLoadResult>({ _tag: "unavailable" });
-          }
-          const result = typeof httpSnapshot === "function" ? httpSnapshot(call) : httpSnapshot;
-          return Effect.isEffect(result) ? result : Effect.succeed(result);
-        }),
+        Effect.map((count) =>
+          threadId === THREAD_ID
+            ? (options?.httpSnapshots?.[Math.min(count, options.httpSnapshots.length) - 1] ??
+              options?.httpSnapshot ??
+              ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult))
+            : ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult),
+        ),
       ),
   });
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
@@ -806,6 +802,27 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("keeps asking a mounted thread over HTTP after a miss until it exists", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        httpSnapshots: [
+          { _tag: "missing" },
+          { _tag: "missing" },
+          {
+            _tag: "present",
+            snapshot: { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, projection: BASE_PROJECTION },
+          },
+        ],
+      });
+      yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
+      yield* TestClock.adjust("250 millis");
+      yield* TestClock.adjust("500 millis");
+      const state = yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+      expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(3);
+    }),
+  );
+
   it.effect.each([
     // The HTTP retry decides, so a missing thread never flashes an error.
     {
@@ -877,7 +894,7 @@ describe("EnvironmentThreads", () => {
       let configReads = 0;
       const harness = yield* makeHarness({
         httpSnapshot: { _tag: "missing" },
-        // The retry's config read dies too, so a stale flag would resubscribe forever.
+        // The retry's config read dies too, so a stale flag would resubscribe without backing off.
         initialConfig: Effect.suspend(() =>
           ++configReads === 1
             ? Effect.succeed({ threadSnapshotPagination: true })
@@ -1057,6 +1074,66 @@ describe("EnvironmentThreads", () => {
           message: "History did not advance.",
         });
         expect((yield* SubscriptionRef.get(harness.threadState)).history.loading).toBe(false);
+      }),
+    );
+    const boundary = (fields: object, id = "boundary", ordinal = 2) => ({
+      ...command(id, "completed", 0, ordinal),
+      ...fields,
+    });
+    const message = (
+      inputIntent: "turn_start" | "steer",
+      createdBy: "agent" | "user",
+      id = "boundary",
+      ordinal = 2,
+    ) =>
+      boundary(
+        {
+          type: "user_message",
+          messageId: MessageId.make(id),
+          inputIntent,
+          createdBy,
+          creationSource: "mcp",
+          text: "Run every check",
+          attachments: [],
+        },
+        id,
+        ordinal,
+      );
+    it.effect.each([
+      ["an agent-started turn", message("turn_start", "agent"), ["3"]],
+      [
+        "a notification",
+        boundary({
+          type: "notification",
+          source: { kind: "delegated_task", taskIds: [] },
+          outcome: "completed",
+          summary: "Checks finished",
+        }),
+        ["3"],
+      ],
+      ["a steer, paging on to its turn", message("steer", "user"), ["3", "2", "1"]],
+    ] as const)("stops paging earlier history at %s", ([, item, expected]) =>
+      Effect.gen(function* () {
+        const pages: Record<string, ReadonlyArray<unknown>> = {
+          "3": [item],
+          "2": [command("work-1", "completed", 0, 1)],
+          "1": [message("turn_start", "user", "opener", 0)],
+        };
+        const requests: string[] = [];
+        const harness = yield* makeHarness({
+          cached: cachedItem(command("tail", "completed", 0, 3)),
+          cachedHistory: { historyCursor: "3", hasMoreHistory: true },
+          historyHttpClient: HttpClient.make((request, url) => {
+            const cursor = url.searchParams.get("cursor")!;
+            requests.push(cursor);
+            const items = (pages[cursor] ?? []) as ReadonlyArray<OrchestrationV2TurnItem>;
+            return Effect.succeed(
+              historyPage(request, items.map(localRow), String(Number(cursor) - 1)),
+            );
+          }),
+        });
+        expect(yield* harness.loadEarlier()).toEqual({ _tag: "loaded" });
+        expect(requests).toEqual(expected);
       }),
     );
     it.effect("loads deferred work on demand and resumes a failed page", () =>
@@ -2291,197 +2368,48 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
-  it.effect("keeps looking for a thread that does not exist yet, then syncs it", () =>
+  it.effect("caches a running thread once when its view closes, not on each update", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness({
-        completionMarker: true,
-        httpSnapshot: (call) =>
-          call === 1
-            ? { _tag: "missing" }
-            : { _tag: "present", snapshot: { snapshotSequence: 7, projection: BASE_PROJECTION } },
-      });
-      yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
-      expect(yield* Ref.get(harness.loaderCalls)).toBe(1);
-
-      yield* TestClock.adjust("5 seconds");
-      const recovered = yield* awaitThreadState(harness.observed, (value) =>
-        Option.isSome(value.data),
-      );
-      expect(recovered.status).toBe("synchronizing");
-      expect(Option.getOrThrow(recovered.data)).toEqual(BASE_PROJECTION);
-
-      yield* Queue.offer(harness.inputs, synchronized());
-      yield* awaitThreadState(harness.observed, (value) => value.status === "live");
-    }),
-  );
-
-  it.effect("keeps looking after a reconnect while the thread is still missing", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({
-        httpSnapshot: (call) =>
-          call <= 2
-            ? { _tag: "missing" }
-            : { _tag: "present", snapshot: { snapshotSequence: 7, projection: BASE_PROJECTION } },
-      });
-      yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
-
-      yield* harness.replaceSession;
-      yield* TestClock.adjust("5 seconds");
-      const state = yield* awaitThreadState(harness.observed, (value) => value.status === "live");
-
-      expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
-    }),
-  );
-
-  it.effect("does not look again for a thread a delete event cleared, even after a remount", () =>
-    Effect.gen(function* () {
-      const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
-        snapshot: undefined,
-        owner: undefined,
+      const scope = yield* Scope.make();
+      const harness = yield* makeHarness().pipe(Effect.provideService(Scope.Scope, scope));
+      const running: OrchestrationV2ThreadProjection = {
+        ...BASE_PROJECTION,
+        runs: [
+          {
+            id: RunId.make("run-running"),
+            threadId: THREAD_ID,
+            ordinal: 1,
+            providerInstanceId: BASE_PROJECTION.thread.providerInstanceId,
+            modelSelection: BASE_PROJECTION.thread.modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make("message-running"),
+            rootNodeId: null,
+            activeAttemptId: null,
+            status: "running",
+            requestedAt: v2Now,
+            startedAt: v2Now,
+            completedAt: null,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        ],
       };
-      const scope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
-        Scope.close(scope, Exit.void),
+      yield* Queue.offer(harness.inputs, snapshot(running, 4));
+      yield* Queue.offer(harness.inputs, titleUpdated("Streaming update", 5));
+      yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          Option.isSome(value.data) && value.data.value.thread.title === "Streaming update",
       );
-      const first = yield* makeHarness({
-        httpSnapshot: {
-          _tag: "present",
-          snapshot: { snapshotSequence: 7, projection: BASE_PROJECTION },
-        },
-        resumeCache,
-      }).pipe(Effect.provideService(Scope.Scope, scope));
-      yield* awaitThreadState(first.observed, (value) => value.status === "live");
-      yield* Queue.offer(first.inputs, deleted(8));
-      yield* awaitThreadState(first.observed, (value) => value.status === "deleted");
+      yield* TestClock.adjust("10 seconds");
+      expect(yield* Ref.get(harness.savedThreads)).toHaveLength(0);
+
       yield* Scope.close(scope, Exit.void);
-
-      const remounted = yield* makeHarness({ httpSnapshot: { _tag: "missing" }, resumeCache });
-      yield* awaitThreadState(remounted.observed, (value) => value.status === "deleted");
-      yield* TestClock.adjust("30 seconds");
-
-      expect(yield* Ref.get(remounted.loaderCalls)).toBe(0);
-    }),
-  );
-
-  it.effect("drops an old stream error once a missing thread is found", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({
-        completionMarker: true,
-        httpSnapshot: (call) =>
-          call === 1
-            ? { _tag: "missing" }
-            : call === 2
-              ? { _tag: "unavailable" }
-              : { _tag: "present", snapshot: { snapshotSequence: 7, projection: BASE_PROJECTION } },
-      });
-      yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
-
-      yield* TestClock.adjust("500 millis");
-      yield* Queue.offer(harness.inputs, new Error("stream failed"));
-      yield* awaitThreadState(harness.observed, (value) => Option.isSome(value.error));
-
-      yield* TestClock.adjust("1 second");
-      yield* Queue.offer(harness.inputs, synchronized());
-      const state = yield* awaitThreadState(harness.observed, (value) => value.status === "live");
-
-      expect(Option.isNone(state.error)).toBe(true);
-      expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
-    }),
-  );
-
-  it.effect("does not resurrect a thread deleted during missing-thread recovery", () =>
-    Effect.gen(function* () {
-      const dispatcher = new Scheduler.MixedScheduler("sync").makeDispatcher();
-      const scheduler: Scheduler.Scheduler = {
-        executionMode: "sync",
-        shouldYield: () => false,
-        makeDispatcher: () => dispatcher,
-      };
-      const markerEntered = yield* Deferred.make<void>();
-      const releaseMarker = yield* Deferred.make<void>();
-      const deletionStarted = yield* Deferred.make<void>();
-      const recoveryStarted = yield* Deferred.make<void>();
-      const recoveryResponse = yield* Deferred.make<ThreadSnapshotLoadResult>();
-
-      const harness = yield* makeHarness({
-        completionMarker: true,
-        preserveInputChunks: true,
-        httpSnapshot: (call) =>
-          call === 1
-            ? { _tag: "unavailable" }
-            : call === 2
-              ? { _tag: "missing" }
-              : Deferred.succeed(recoveryStarted, undefined).pipe(
-                  Effect.andThen(Deferred.await(recoveryResponse)),
-                ),
-      }).pipe(Effect.provideService(Scheduler.Scheduler, scheduler));
-
-      yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
-        Stream.filter((count) => count === 1),
-        Stream.runHead,
-      );
-      dispatcher.flush();
-
-      const semaphore = harness.threadState.semaphore;
-      const withPermit = semaphore.withPermit.bind(semaphore);
-      let gateMarker = true;
-      semaphore.withPermit = (effect) =>
-        Effect.suspend(() => {
-          if (!gateMarker) return withPermit(effect);
-          gateMarker = false;
-          return Deferred.succeed(markerEntered, undefined).pipe(
-            Effect.andThen(Deferred.await(releaseMarker)),
-            Effect.andThen(withPermit(effect)),
-          );
-        });
-
-      const deletion = deleted(8);
-      let sequenceReads = 0;
-      Object.defineProperty(deletion, "sequence", {
-        get: () => {
-          if (++sequenceReads === 2) Deferred.doneUnsafe(deletionStarted, Exit.void);
-          return 8;
-        },
-      });
-
-      yield* Queue.offerAll(harness.inputs, [synchronized(), deletion]);
-      yield* Deferred.await(markerEntered);
-      yield* harness.replaceSession;
-      yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
-      yield* TestClock.adjust("500 millis");
-      yield* Deferred.await(recoveryStarted);
-
-      yield* semaphore.take(1);
-      yield* Deferred.succeed(releaseMarker, undefined);
-      dispatcher.flush();
-
-      yield* Deferred.succeed(recoveryResponse, {
-        _tag: "present",
-        snapshot: { snapshotSequence: 7, projection: BASE_PROJECTION },
-      });
-      dispatcher.flush();
-
-      yield* semaphore
-        .release(1)
-        .pipe(
-          Effect.forkChild({ startImmediately: true }),
-          Effect.provideService(Scheduler.Scheduler, scheduler),
-          Effect.flatMap(Fiber.join),
-        );
-      dispatcher.flush();
-
-      expect(yield* Deferred.isDone(deletionStarted)).toBe(true);
-      const state = yield* SubscriptionRef.get(harness.threadState);
-      expect({
-        status: state.status,
-        hasData: Option.isSome(state.data),
-        sequence: state.sequence,
-        subscriptions: yield* SubscriptionRef.get(harness.subscriptionCount),
-      }).toEqual({
-        status: "deleted",
-        hasData: false,
-        sequence: 8,
-        subscriptions: 1,
-      });
+      const saved = yield* Ref.get(harness.savedThreads);
+      expect(saved).toHaveLength(1);
+      expect(saved[0]?.snapshotSequence).toBe(5);
+      expect(saved[0]?.projection.thread.title).toBe("Streaming update");
+      expect(saved[0]?.projection.runs[0]?.status).toBe("running");
     }),
   );
 
@@ -2522,6 +2450,43 @@ describe("EnvironmentThreads", () => {
       expect(Option.isNone(recovered.error)).toBe(true);
       expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(2);
     }),
+  );
+
+  it.effect(
+    "resubscribes after a snapshot decode defect ends the thread subscription (#23041)",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({ httpSnapshot: { _tag: "unavailable" } });
+        yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+          Stream.filter((count) => count >= 1),
+          Stream.runHead,
+        );
+        yield* Queue.offer(harness.inputs, TEST_DEFECT);
+        const failed = yield* awaitThreadState(harness.observed, (value) =>
+          Option.isSome(value.error),
+        );
+        expect(failed.status).toBe("empty");
+        expect(Option.getOrThrow(failed.error)).toBe("Could not synchronize the thread.");
+
+        yield* TestClock.adjust("60 seconds");
+        expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(2);
+
+        yield* Queue.offer(
+          harness.inputs,
+          snapshot({
+            ...BASE_PROJECTION,
+            thread: { ...BASE_PROJECTION.thread, title: "Recovered thread" },
+          }),
+        );
+        const recovered = yield* awaitThreadState(
+          harness.observed,
+          (value) =>
+            value.status === "live" &&
+            Option.isSome(value.data) &&
+            value.data.value.thread.title === "Recovered thread",
+        );
+        expect(Option.isNone(recovered.error)).toBe(true);
+      }),
   );
 
   it.effect("keeps replayed updates synchronizing until the completion marker arrives", () =>
@@ -2581,6 +2546,7 @@ describe("EnvironmentThreads", () => {
         environmentId: TARGET.environmentId,
         threadId: THREAD_ID,
         pendingRequestIds: [],
+        unansweredRequestIds: [],
       });
       expect(yield* Queue.size(announced)).toBe(0);
     }),

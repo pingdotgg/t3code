@@ -121,9 +121,54 @@ async function resolveLatestNightlyCommit({ github, context, core }) {
   return { tag, sha: commit.sha, version };
 }
 
+// The two places a nightly install looks for an update: the `update-feed` pointer, and
+// releases.atom, which holds the 10 newest git tags of any kind. Older installs take the first
+// nightly in the feed. Reports what each names beside the newest published nightly.
+async function readNightlyUpdateFeed({ github, context, fetch = globalThis.fetch }) {
+  const latest = await findLatestNightly({ github, context });
+  if (!latest) return {};
+
+  const base = `https://github.com/${context.repo.owner}/${context.repo.repo}`;
+  // Only a missing or malformed pointer is stale. Rewriting deletes the old file first, so a
+  // GitHub outage must not look like one.
+  // Node waits five minutes for a stalled response, which is this job's whole time limit.
+  const signal = () => AbortSignal.timeout(30_000);
+  const pointer = await fetch(`${base}/releases/download/update-feed/nightly.json`, {
+    signal: signal(),
+  });
+  if (!pointer.ok && pointer.status !== 404) {
+    throw new Error(`The update-feed pointer answered HTTP ${pointer.status}.`);
+  }
+  let pointerTag;
+  if (pointer.ok) {
+    // A body that fails to arrive throws here; only one that is not JSON counts as malformed.
+    const body = await pointer.text();
+    try {
+      pointerTag = JSON.parse(body)?.tag_name;
+    } catch {}
+  }
+
+  // An unreadable feed leaves `feedTags` unset, so the pointer is still repaired. An error page
+  // can answer HTTP 200, so only an Atom document counts as read.
+  let feedTags;
+  try {
+    const feed = await fetch(`${base}/releases.atom`, { signal: signal() });
+    const body = feed.ok ? await feed.text() : "";
+    if (/<feed[\s>]/.test(body)) {
+      feedTags = Array.from(body.matchAll(/href="[^"]*\/releases\/tag\/([^"]+)"/g), (match) =>
+        decodeURIComponent(match[1]),
+      );
+    }
+  } catch {}
+  const feedNightly = feedTags?.find((tag) => /^v?\d+\.\d+\.\d+-nightly\./.test(tag));
+
+  return { tag: latest.tagName, pointerTag, feedNightly, feedTags };
+}
+
 module.exports = {
   assertCommitOnDefaultBranch,
   assertReleaseSource,
   shouldReleaseNightly,
   resolveLatestNightlyCommit,
+  readNightlyUpdateFeed,
 };
