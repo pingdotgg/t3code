@@ -388,6 +388,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           clientCapabilities: {
             fs: { readTextFile: false, writeTextFile: false },
             terminal: false,
+            elicitation: { form: {} },
           },
           clientInfo: {
             name: "effect-acp-test",
@@ -486,6 +487,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
             clientCapabilities: {
               fs: { readTextFile: false, writeTextFile: false },
               terminal: false,
+              elicitation: { form: {} },
             },
             clientInfo: {
               name: "effect-acp-test",
@@ -541,7 +543,10 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           Ref.update(updates, (current) => [...current, notification]),
         );
 
-        yield* acp.agent.initialize({ protocolVersion: 2 });
+        yield* acp.agent.initialize({
+          protocolVersion: 2,
+          clientCapabilities: { elicitation: { form: {} } },
+        });
         yield* acp.agent.authenticate({ methodId: "cursor_login" });
         const session = yield* acp.agent.createSession({ cwd: process.cwd(), mcpServers: [] });
         yield* acp.agent.prompt({
@@ -664,6 +669,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           clientCapabilities: {
             fs: { readTextFile: false, writeTextFile: false },
             terminal: false,
+            elicitation: { form: {} },
           },
           clientInfo: {
             name: "effect-acp-test",
@@ -1533,7 +1539,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         );
         yield* acp.agent.initialize({
           protocolVersion: 2,
-          clientCapabilities: {},
+          clientCapabilities: { elicitation: { form: {} } },
           clientInfo: { name: "effect-acp-test", version: "0.0.0" },
         });
         const session = yield* acp.agent.createSession({ cwd: process.cwd(), mcpServers: [] });
@@ -1580,7 +1586,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         );
         yield* acp.agent.initialize({
           protocolVersion: 2,
-          clientCapabilities: {},
+          clientCapabilities: { elicitation: { form: {} } },
           clientInfo: { name: "effect-acp-test", version: "0.0.0" },
         });
         const session = yield* acp.agent.createSession({ cwd: process.cwd(), mcpServers: [] });
@@ -1714,6 +1720,54 @@ it.effect.each(["accept", "decline", "cancel"] as const)(
         });
       }
     }),
+);
+
+it.effect.each([1, 2] as const)(
+  "rejects a URL elicitation the client did not advertise on wire v%s",
+  (wireVersion) =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const acp = yield* AcpClient.make(stdio);
+      const init = yield* acp.agent
+        .initialize({ protocolVersion: 2, clientCapabilities: { elicitation: { form: {} } } })
+        .pipe(Effect.forkChild);
+      const initialize = yield* decodeWireResponse(yield* Queue.take(output));
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(jsonRpcResponse(Schema.Unknown), {
+          jsonrpc: "2.0",
+          id: (initialize as { id: number }).id,
+          result:
+            wireVersion === 2
+              ? { protocolVersion: 2, info: { name: "fixture", version: "1" }, capabilities: {} }
+              : { protocolVersion: 1, agentCapabilities: {} },
+        }),
+      );
+      yield* Fiber.join(init);
+      const calls = yield* Ref.make(0);
+      yield* acp.handleElicitation(() =>
+        Ref.update(calls, (n) => n + 1).pipe(Effect.as({ action: "accept" as const })),
+      );
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(jsonRpcRequest("elicitation/create", Schema.Unknown), {
+          jsonrpc: "2.0",
+          id: 81,
+          headers: [],
+          method: "elicitation/create",
+          params: {
+            sessionId: "session-1",
+            mode: "url",
+            message: "Sign in",
+            url: "https://example.test/auth",
+            elicitationId: "auth-1",
+          },
+        }),
+      );
+      const response = yield* decodeWireError(yield* Queue.take(output));
+      assert.equal(response.error.code, -32602);
+      assert.equal(yield* Ref.get(calls), 0);
+    }).pipe(Effect.scoped),
 );
 
 it.effect.each(["elicitation/complete", "session/elicitation/complete"])(
