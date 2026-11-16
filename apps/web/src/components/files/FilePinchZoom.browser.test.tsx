@@ -98,12 +98,18 @@ it("zooms video from a fitted 100 percent to 500 percent and resets", async () =
 });
 
 it("keeps virtual tables filling their viewport when zoomed out", async () => {
-  const rows = Array.from({ length: 50 }, (_, row) =>
+  const rows = Array.from({ length: 250 }, (_, row) =>
     Array.from({ length: 8 }, (_, col) => `${row}:${col}`),
   );
   await using screen = await render(
     <div className="flex h-[400px] w-[600px]">
-      <VirtualTablePreview name="Grid" count={rows.length} columns={8} getRows={() => rows} />
+      <VirtualTablePreview
+        name="Grid"
+        count={rows.length}
+        columns={8}
+        header={rows[0]}
+        getRows={() => rows}
+      />
     </div>,
   );
   const viewport = screen.getByRole("region", { name: "Table preview" }).element();

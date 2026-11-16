@@ -93,6 +93,7 @@ export function ZoomableMediaViewport({
       >
         {layout === "table" ? (
           <div
+            data-file-zoom={zoom}
             className="absolute top-0 left-0 flex"
             style={{
               width: size.width / zoom,
