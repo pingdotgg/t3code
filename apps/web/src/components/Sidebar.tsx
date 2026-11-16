@@ -59,7 +59,10 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
+import {
+  resolveListedAncestorThreadRef,
+  type OlderSettledScope,
+} from "@t3tools/client-runtime/state/threads";
 
 import {
   CheckIcon,
@@ -208,7 +211,6 @@ import {
   useThreadJumpHintsVisible,
   type SidebarListItem,
   type SidebarSection,
-  resolveSidebarRowThreadRef,
 } from "./Sidebar.logic";
 import {
   createSidebarCollisionDetection,
@@ -1108,7 +1110,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const routeRowThreadKey =
     routeThreadRef === null
       ? null
-      : scopedThreadKey(resolveSidebarRowThreadRef(routeThreadRef, threads));
+      : scopedThreadKey(resolveListedAncestorThreadRef(routeThreadRef, threads));
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
 
   // History, the palette and links can open a thread the scope hides or the list

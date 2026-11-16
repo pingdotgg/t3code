@@ -11,7 +11,6 @@ import {
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
-  resolveSidebarRowThreadRef,
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
   resolveSidebarSweepKeys,
@@ -135,79 +134,6 @@ describe("deleteSelectedThreadEntries", () => {
       deletedThreadKeys: testCase.deletedThreadKeys,
       firstFailure: testCase.firstFailure,
     });
-  });
-});
-
-describe("sidebar thread lineage helpers", () => {
-  const ref = (environmentId: EnvironmentId, threadId: ThreadId) => ({ environmentId, threadId });
-  const rowOf = (
-    threadId: ThreadId,
-    environmentId: EnvironmentId,
-    threads: Parameters<typeof resolveSidebarRowThreadRef>[1],
-  ) => resolveSidebarRowThreadRef(ref(environmentId, threadId), threads);
-
-  it("maps an open subagent to its nearest visible ancestor's sidebar row", () => {
-    const environmentId = EnvironmentId.make("environment-row");
-    const otherEnvironmentId = EnvironmentId.make("environment-other");
-    const subagentOf = (id: string, parentId: ThreadId, environment = environmentId) =>
-      makeThreadFixture({
-        id: ThreadId.make(id),
-        environmentId: environment,
-        lineage: {
-          rootThreadId: parentId,
-          parentThreadId: parentId,
-          relationshipToParent: "subagent",
-        },
-      });
-    const root = makeThreadFixture({ id: ThreadId.make("thread-root"), environmentId });
-    const fork = makeThreadFixture({
-      id: ThreadId.make("thread-fork"),
-      environmentId,
-      lineage: {
-        rootThreadId: root.id,
-        parentThreadId: root.id,
-        relationshipToParent: "fork",
-      },
-    });
-    const child = subagentOf("thread-child", root.id);
-    const grandchild = subagentOf("thread-grandchild", child.id);
-    const forkChild = subagentOf("thread-fork-child", fork.id);
-    const orphan = subagentOf("thread-orphan", ThreadId.make("thread-missing"));
-    const elsewhere = subagentOf("thread-elsewhere", root.id, otherEnvironmentId);
-    const threads = [root, fork, child, grandchild, forkChild, orphan, elsewhere];
-
-    expect(rowOf(child.id, environmentId, threads)).toEqual(ref(environmentId, root.id));
-    expect(rowOf(grandchild.id, environmentId, threads)).toEqual(ref(environmentId, root.id));
-    expect(rowOf(forkChild.id, environmentId, threads)).toEqual(ref(environmentId, fork.id));
-    expect(rowOf(elsewhere.id, otherEnvironmentId, threads)).toEqual(
-      ref(otherEnvironmentId, elsewhere.id),
-    );
-    expect(rowOf(orphan.id, environmentId, threads)).toEqual(ref(environmentId, orphan.id));
-    const loopA = subagentOf("thread-loop-a", ThreadId.make("thread-loop-b"));
-    const loopB = subagentOf("thread-loop-b", loopA.id);
-    expect(rowOf(loopA.id, environmentId, [loopA, loopB])).toEqual(ref(environmentId, loopA.id));
-  });
-
-  it("maps an open task a linked environment delegated to its listed parent's row", () => {
-    const parentEnvironmentId = EnvironmentId.make("environment-parent");
-    const taskEnvironmentId = EnvironmentId.make("environment-task");
-    const parent = makeThreadFixture({
-      id: ThreadId.make("thread-parent"),
-      environmentId: parentEnvironmentId,
-    });
-    const task = makeThreadFixture({
-      id: ThreadId.make("thread-task"),
-      environmentId: taskEnvironmentId,
-      delegatedFrom: {
-        environmentId: parentEnvironmentId,
-        threadId: parent.id,
-        title: parent.title,
-      },
-    });
-
-    expect(rowOf(task.id, taskEnvironmentId, [parent, task])).toEqual(
-      ref(parentEnvironmentId, parent.id),
-    );
   });
 });
 

@@ -1,7 +1,9 @@
 import { useActiveNewTask } from "../../state/active-new-task";
 import { ThreadUndoNotice } from "../home/ThreadUndoNotice";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
+import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
+import { resolveListedAncestorThreadRef } from "@t3tools/client-runtime/state/threads";
 import {
   useAppearancePreferences,
   useAndroidFloatingTabs,
@@ -25,7 +27,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useProjects } from "../../state/entities";
-import { steadyNavigationThreadShellsAtom } from "../../state/threads";
+import { environmentThreadShells, steadyNavigationThreadShellsAtom } from "../../state/threads";
 import { useThreadSearch } from "../../state/queries";
 import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-preferences";
 import { useThreadListNow } from "./use-thread-list-now";
@@ -127,6 +129,16 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const { fabClearance, fabSize } = useAndroidControlSizing();
   const projects = useProjects();
   const threads = useAtomValue(steadyNavigationThreadShellsAtom);
+  // An open subagent, side chat or delegated task has no row; its listed ancestor's row is selected.
+  const shownThreads = useAtomValue(environmentThreadShells.quietThreadShellsAtom);
+  const openThreadRef =
+    props.selectedThreadKey === null ? null : parseScopedThreadKey(props.selectedThreadKey);
+  const rowRef =
+    openThreadRef === null ? null : resolveListedAncestorThreadRef(openThreadRef, shownThreads);
+  const selectedThreadKey =
+    rowRef === null
+      ? props.selectedThreadKey
+      : scopedThreadKey(rowRef.environmentId, rowRef.threadId);
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
@@ -288,7 +300,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     workingShelfExpanded,
     snoozedShelfExpanded,
     settledShelfExpanded,
-    selectedThreadKey: props.selectedThreadKey ?? null,
+    selectedThreadKey,
   });
   const listItems: readonly SidebarListItem[] =
     settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0
@@ -351,7 +363,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   // Recycle equality needs project/search data for titles and favicons; keep the minute clock on items to limit updates.
   const listExtraData = {
     activeNewTask,
-    selectedThreadKey: props.selectedThreadKey ?? "",
+    selectedThreadKey: selectedThreadKey ?? "",
     projectByKey,
     projectTitleByProjectKey,
     savedConnectionsById,
@@ -385,7 +397,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 scopedThreadKey(
                   item.pendingTask.environmentId,
                   item.pendingTask.message.threadId,
-                ) === props.selectedThreadKey)
+                ) === selectedThreadKey)
             }
             project={projectByKey.get(pendingScopeKey) ?? null}
             environmentLabel={
@@ -446,7 +458,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             pane="sidebar"
             selected={
               !activeNewTask &&
-              scopedThreadKey(thread.environmentId, thread.id) === props.selectedThreadKey
+              scopedThreadKey(thread.environmentId, thread.id) === selectedThreadKey
             }
             fullSwipeWidth={props.width - 20}
             onSelectThread={handleSelectThread}
