@@ -1219,12 +1219,17 @@ const make = Effect.gen(function* () {
           ? null
           : { kind: "leaf" as const, chunk, key: leafChunkKey(chunk) };
       };
+      const isSuspect = (raw: string) => failureOf(raw)?.suspect === true;
       // Until a summary succeeds, suspects go last, so work that failed together cannot hold the
-      // front of every pass.
-      const selectWork = (blocked: ReadonlySet<string>) =>
-        (generated === 0
-          ? selectFrom((raw) => blocked.has(raw) || failureOf(raw)?.suspect === true)
-          : null) ?? selectFrom((raw) => blocked.has(raw));
+      // front of every pass, and one suspect is enough to test a model that may be down.
+      let suspectTried = false;
+      const selectWork = (blocked: ReadonlySet<string>) => {
+        if (generated > 0) return selectFrom((raw) => blocked.has(raw));
+        return (
+          selectFrom((raw) => blocked.has(raw) || isSuspect(raw)) ??
+          (suspectTried ? null : selectFrom((raw) => blocked.has(raw)))
+        );
+      };
       const blocked = new Set<string>();
       const failed: Array<{ readonly raw: string; readonly reason: string }> = [];
       let attempts = 0;
@@ -1232,6 +1237,7 @@ const make = Effect.gen(function* () {
         const work = selectWork(blocked);
         if (work === null) break;
         attempts += 1;
+        if (isSuspect(work.key)) suspectTried = true;
         const published =
           work.kind === "leaf" ? yield* summarizeLeaf(work.chunk) : yield* condense(work.group);
         if (!published.ok) {
