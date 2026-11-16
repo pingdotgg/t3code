@@ -819,8 +819,14 @@ impl Session for CodexSession {
             if self.inner.lock().closed {
                 return Err(ProviderError::SessionStopped);
             }
-            let native =
-                native_thread_id(&input.provider_thread).ok_or(ProviderError::SessionStopped)?;
+            let native = native_thread_id(&input.provider_thread).ok_or_else(|| {
+                ProviderError::Protocol {
+                    detail: format!(
+                        "Provider thread {} is missing a native Codex thread id.",
+                        input.provider_thread.id
+                    ),
+                }
+            })?;
             let (method, params) = match &input.operation {
                 Operation::ListTools => (
                     "mcpServerStatus/list",
@@ -1562,6 +1568,20 @@ done
             .await
             .unwrap();
         assert_eq!(resumed, json!({"contents":[]}));
+        let mut missing_native = conn_contract::to_json(&thread);
+        missing_native["nativeThreadRef"] = Value::Null;
+        let error = session
+            .mcp_app_request(Request {
+                provider_thread: from_json(missing_native).unwrap(),
+                server: "apps-stub".into(),
+                operation: Operation::ListTools,
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error,ProviderError::Protocol {ref detail} if detail == &format!("Provider thread {} is missing a native Codex thread id.",thread.id)),
+            "{error}"
+        );
         let transcript =
             std::fs::read_to_string(provider.config.binary.with_extension("stdin")).unwrap();
         let calls: Vec<Value> = transcript

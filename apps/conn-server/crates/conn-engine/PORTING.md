@@ -15,8 +15,10 @@ forwarded. There is no additional MCP client dependency.
 
 `mcp-apps-parity.mjs` runs as part of the existing MCP parity check. It executes T3's current
 helpers and snapshot writer on the same inputs as the Rust runner. It also checks generated
-cookie/theme scripts and malformed Claude permission rules. These checks need no real model
-or MCP service. The helpers' initial characterization tests failed before implementation.
+cookie/theme scripts and malformed Claude permission rules. `tools/capture-mcp-apps.mjs`
+executes T3’s own Claude App and forged-output tests and its failed Codex App test; parity
+checks those recordings for drift. These checks need no real model or MCP service. The
+helpers' initial characterization tests failed before implementation.
 
 Preserved behavior: App calls never start a session or a model turn; a missing tool and a
 model-only tool are both not callable; resource reads stay on the producing server; App

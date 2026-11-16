@@ -121,11 +121,12 @@ async fn serve_mcp_app_html(
 ) -> Option<Response> {
     let file = tokio::fs::File::open(path).await.ok()?;
     let mut bytes = Vec::new();
-    file.take(5 * 1024 * 1024 + 1)
+    const PREVIEW_LIMIT: usize = 5 * 1024 * 1024 + 128 * 1024;
+    file.take((PREVIEW_LIMIT + 1) as u64)
         .read_to_end(&mut bytes)
         .await
         .ok()?;
-    if bytes.len() > 5 * 1024 * 1024 {
+    if bytes.len() > PREVIEW_LIMIT {
         return Some(text(
             StatusCode::PAYLOAD_TOO_LARGE,
             "MCP app is too large to preview.",
@@ -384,8 +385,37 @@ mod mcp_app_asset_tests {
                 .unwrap()
                 .is_empty()
         );
+        let source = "a".repeat(5 * 1024 * 1024);
+        let store = conn_files::AttachmentStore::new(dir.clone());
+        let reference = tokio::task::spawn_blocking(move || {
+            store.snapshot_mcp_app(
+                "thread",
+                "server",
+                "tool",
+                "ui://app",
+                &serde_json::json!([{"mimeType":"text/html;profile=mcp-app","text":source}]),
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+        let snapshot = dir.join(format!(
+            "{}.html",
+            reference["attachmentId"].as_str().unwrap()
+        ));
+        assert_eq!(
+            serve_mcp_app_html(&snapshot, None, Some("text/html"), true)
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK,
+            "a max-sized snapshot includes CSP overhead"
+        );
         let file = tokio::fs::File::create(&path).await.unwrap();
-        file.set_len(5 * 1024 * 1024 + 1).await.unwrap();
+        file.set_len(5 * 1024 * 1024 + 128 * 1024 + 1)
+            .await
+            .unwrap();
         assert_eq!(
             serve_mcp_app_html(&path, None, Some("text/html"), false)
                 .await

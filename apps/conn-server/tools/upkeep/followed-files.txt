@@ -12,6 +12,7 @@
 
 [crates/conn-provider-claude]
 apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts
+apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts
 apps/server/src/orchestration-v2/Adapters/ClaudeTaskOutputTail.ts
 apps/server/src/orchestration-v2/Adapters/claudeWorkflowProgress.ts
 apps/server/src/provider/ClaudeProvider.ts
@@ -21,6 +22,7 @@ apps/server/src/provider/Drivers/ClaudeHome.ts
 
 [crates/conn-provider-codex]
 apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts
+apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.test.ts
 apps/server/src/provider/CodexProvider.ts
 apps/server/src/provider/codexLaunchArgs.ts
 apps/server/src/provider/CodexInstallation.ts

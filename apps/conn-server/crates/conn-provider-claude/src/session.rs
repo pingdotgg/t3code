@@ -129,6 +129,7 @@ struct Live {
     /// The mode the CLI reported in its first `init` (T3's `openedPermissionMode`).
     opened_permission_mode: String,
     received_init: bool,
+    mcp_apps_capable: bool,
     model: String,
     effort: Option<String>,
     selection_settings: Map<String, Value>,
@@ -313,6 +314,11 @@ impl Inner {
                     Some(live.native_thread_id.as_str()) == native && live.query.is_open()
                 })
                 .ok_or(ProviderError::SessionStopped)?;
+            if !live.mcp_apps_capable {
+                return Err(ProviderError::Protocol {
+                    detail: "This Claude process does not support MCP Apps.".into(),
+                });
+            }
             live.query.clone()
         };
         Ok(query)
@@ -510,6 +516,17 @@ fn note_init(state: &mut State, generation: u64, init: &Value) {
         .filter(|l| l.generation == generation && !l.received_init)
     {
         live.received_init = true;
+        live.mcp_apps_capable = [
+            "mcp_tool_ui_meta_v1",
+            "mcp_read_resource_v1",
+            "mcp_call_result_not_for_model_v1",
+        ]
+        .iter()
+        .all(|required| {
+            init.get("capabilities")
+                .and_then(Value::as_array)
+                .is_some_and(|capabilities| capabilities.iter().any(|value| value == required))
+        });
         if let Some(mode) = init["permissionMode"].as_str() {
             live.opened_permission_mode = mode.to_string();
         }
@@ -1359,6 +1376,7 @@ impl ClaudeSession {
                 permission_mode: input.policy.permission_mode.clone(),
                 opened_permission_mode: input.policy.permission_mode.clone(),
                 received_init: false,
+                mcp_apps_capable: false,
                 policy: input.policy.clone(),
                 model: input.model.clone(),
                 effort: input.effort.clone(),
@@ -1518,14 +1536,12 @@ impl Session for ClaudeSession {
         Box::pin(async move {
             use conn_provider::mcp_apps::{self, Operation};
             let query = self.inner.mcp_app_query(&input.provider_thread)?;
-            if !mcp_app_capable(&query).await? {
-                return Err(ProviderError::Protocol {
-                    detail: "This Claude process does not support MCP Apps.".into(),
-                });
-            }
             let statuses = query
                 .call_without_timeout("mcpServerStatus", json!([]))
-                .await?;
+                .await
+                .map_err(|_| ProviderError::Protocol {
+                    detail: "Failed to list Claude MCP tools.".into(),
+                })?;
             require_unambiguous_server(&statuses, &input.server)?;
             match input.operation {
                 Operation::ListTools => {
@@ -1589,14 +1605,18 @@ impl Session for ClaudeSession {
                             "callMcpTool",
                             json!([{"tool":name,"arguments":arguments}]),
                         )
-                        .await?;
+                        .await
+                        .map_err(|_| ProviderError::Protocol {
+                            detail: "Claude MCP tool call failed.".into(),
+                        })?;
                     Ok(mcp_apps::call_result(&result))
                 }
-                Operation::ReadResource { uri } => {
-                    query
-                        .call_without_timeout("readMcpResource", json!([input.server, uri]))
-                        .await
-                }
+                Operation::ReadResource { uri } => query
+                    .call_without_timeout("readMcpResource", json!([input.server, uri]))
+                    .await
+                    .map_err(|_| ProviderError::Protocol {
+                        detail: "Claude MCP resource read failed.".into(),
+                    }),
             }
         })
     }
@@ -1635,10 +1655,22 @@ impl Session for ClaudeSession {
             else {
                 return Ok(None);
             };
-            let query = self.inner.live_query()?;
-            if !mcp_app_capable(&query).await? {
+            if item.get("runId").is_none_or(Value::is_null)
+                || item.get("status").and_then(Value::as_str) != Some("completed")
+            {
                 return Ok(None);
             }
+            let query = {
+                let state = self.inner.lock();
+                let Some(live) = state
+                    .live
+                    .as_ref()
+                    .filter(|live| live.query.is_open() && live.mcp_apps_capable)
+                else {
+                    return Ok(None);
+                };
+                live.query.clone()
+            };
             let statuses = query
                 .call("mcpServerStatus", json!([]), CONTROL_TIMEOUT)
                 .await?;
@@ -2192,16 +2224,6 @@ impl Session for ClaudeSession {
             state.tails.clear();
         })
     }
-}
-
-async fn mcp_app_capable(query: &QueryHandle) -> ProviderResult<bool> {
-    let init = query
-        .call_without_timeout("initializationResult", json!([]))
-        .await?;
-    let capabilities = init.get("capabilities").and_then(Value::as_array);
-    Ok(["mcp_tool_ui_meta_v1", "mcp_call_result_not_for_model_v1"]
-        .iter()
-        .all(|c| capabilities.is_some_and(|caps| caps.iter().any(|v| v == c))))
 }
 
 fn require_unambiguous_server(statuses: &Value, server: &str) -> ProviderResult<()> {

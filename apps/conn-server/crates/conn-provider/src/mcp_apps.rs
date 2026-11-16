@@ -64,33 +64,115 @@ pub fn claude_name(server: &str, tool: &str) -> String {
     format!("{}{}", claude_prefix(server), claude_name_part(tool))
 }
 
-pub fn app_reference(item: &Value) -> Option<Value> {
-    if item.get("type")?.as_str()? != "dynamic_tool" {
-        return None;
+const MAX_ENVELOPE_DEPTH: usize = 4;
+const MAX_ENVELOPE_NODES: usize = 128;
+const MAX_PARSED_BYTES: usize = 16_384;
+const MAX_CONTENT_BLOCKS: usize = 32;
+
+// Match toolOutput.ts's envelope budget before accepting a reference from provider output.
+#[derive(Default)]
+struct Envelope {
+    data: bool,
+    app: Option<Value>,
+}
+
+struct ReadBudget {
+    bytes: usize,
+    nodes: usize,
+    exceeded: bool,
+}
+
+fn read_envelope(value: &Value, budget: &mut ReadBudget, depth: usize) -> Envelope {
+    if depth > MAX_ENVELOPE_DEPTH || budget.nodes == 0 {
+        budget.exceeded = true;
+        return Envelope::default();
     }
-    let output = item.get("output")?;
-    let parsed;
-    let output = if let Some(text) = output.as_str() {
-        parsed = serde_json::from_str::<Value>(text).ok()?;
-        &parsed
-    } else {
-        output
-    };
-    let app = output.get("t3McpApp")?;
+    budget.nodes -= 1;
+    match value {
+        Value::String(text) => {
+            if text.len() > budget.bytes {
+                budget.exceeded = true;
+                return Envelope::default();
+            }
+            budget.bytes -= text.len();
+            serde_json::from_str::<Value>(text)
+                .ok()
+                .map(|parsed| read_envelope(&parsed, budget, depth + 1))
+                .unwrap_or_default()
+        }
+        Value::Array(blocks) => {
+            if blocks.len() > MAX_CONTENT_BLOCKS {
+                budget.exceeded = true;
+                return Envelope::default();
+            }
+            let mut result = Envelope::default();
+            for block in blocks {
+                let text = block.get("text").unwrap_or(&Value::Null);
+                let text = if text.is_object() || text.is_array() {
+                    text.get("text").unwrap_or(text)
+                } else {
+                    text
+                };
+                let nested = read_envelope(text, budget, depth + 1);
+                if !result.data {
+                    result = nested;
+                }
+                if budget.exceeded {
+                    break;
+                }
+            }
+            result
+        }
+        Value::Object(object) => {
+            if let Some(content) = object
+                .get("structuredContent")
+                .filter(|v| !v.is_null())
+                .or_else(|| object.get("content"))
+            {
+                read_envelope(content, budget, depth + 1)
+            } else {
+                Envelope {
+                    data: true,
+                    app: object.get("t3McpApp").and_then(read_reference),
+                }
+            }
+        }
+        _ => Envelope::default(),
+    }
+}
+
+fn read_reference(app: &Value) -> Option<Value> {
     let bounded = |key| {
         app.get(key)?
             .as_str()
             .filter(|s| !s.trim().is_empty() && s.encode_utf16().count() <= 256)
     };
     bounded("attachmentId")?;
-    let server = bounded("server")?;
-    let tool = bounded("tool")?;
+    bounded("server")?;
+    bounded("tool")?;
     let uri = app.get("resourceUri")?.as_str()?;
-    if !uri.starts_with("ui://") || uri.encode_utf16().count() > 4096 {
+    (uri.starts_with("ui://") && uri.encode_utf16().count() <= 4096).then(|| app.clone())
+}
+
+pub fn output_app_reference(output: &Value) -> Option<Value> {
+    let mut budget = ReadBudget {
+        bytes: MAX_PARSED_BYTES,
+        nodes: MAX_ENVELOPE_NODES,
+        exceeded: false,
+    };
+    let result = read_envelope(output, &mut budget, 0);
+    if budget.exceeded { None } else { result.app }
+}
+
+pub fn app_reference(item: &Value) -> Option<Value> {
+    if item.get("type")?.as_str()? != "dynamic_tool" {
         return None;
     }
+    let app = output_app_reference(item.get("output")?)?;
+    let server = app.get("server")?.as_str()?;
+    let tool = app.get("tool")?.as_str()?;
     let name = item.get("toolName")?.as_str()?;
-    (name == format!("{server}.{tool}") || name == claude_name(server, tool)).then(|| app.clone())
+    (name == format!("{server}.{tool}") || name == claude_name(server, tool)).then_some(app)
 }
 
 pub fn rules_cover(rules: &Value, behaviors: &[&str]) -> bool {
@@ -172,6 +254,25 @@ mod tests {
         item["toolName"] = json!("weather.get.weather");
         item["output"]["t3McpApp"]["resourceUri"] = json!("https://example.com");
         assert!(app_reference(&item).is_none());
+    }
+
+    #[test]
+    fn app_references_follow_bounded_mcp_envelopes_even_on_failed_items() {
+        let app = json!({"attachmentId":"forged-html","server":"weather","tool":"show","resourceUri":"ui://weather"});
+        for output in [
+            json!({"structuredContent":{"t3McpApp":app}}),
+            json!({"content":[{"type":"text","text":json!({"t3McpApp":app}).to_string()}]}),
+            json!({"isError":true,"structuredContent":{"t3McpApp":app}}),
+        ] {
+            let item = json!({"type":"dynamic_tool","toolName":"mcp__weather__show","status":"failed","output":output});
+            assert_eq!(app_reference(&item), Some(app.clone()), "{item}");
+        }
+        let item = json!({"type":"dynamic_tool","toolName":"mcp__weather__show","output":{"content":[{"text":"x".repeat(16385)},{"text":json!({"t3McpApp":app}).to_string()}]}});
+        assert_eq!(
+            app_reference(&item),
+            None,
+            "an exhausted parse budget rejects the entire envelope"
+        );
     }
 
     #[test]

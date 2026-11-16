@@ -69,19 +69,26 @@ impl Inner {
             ProviderEvent::TurnItemUpdated { turn_item } => (turn_item, None),
             other => return other,
         };
-        if !matches!(&turn_item, conn_contract::TurnItem::DynamicTool(tool) if tool.status == conn_contract::OrchestrationV2TurnItemStatus::Completed)
-        {
-            return ProviderEvent::TurnItemUpdated { turn_item };
-        }
         let mut item = conn_contract::to_json(&turn_item);
-        if item.get("type").and_then(Value::as_str) != Some("dynamic_tool")
-            || item.get("status").and_then(Value::as_str) != Some("completed")
-        {
+        if item.get("type").and_then(Value::as_str) != Some("dynamic_tool") {
             return ProviderEvent::TurnItemUpdated { turn_item };
         }
         let original_output = item.get("output").cloned().unwrap_or(Value::Null);
-        if mcp_apps::app_reference(&item).is_some() {
+        if item
+            .get("toolName")
+            .and_then(Value::as_str)
+            .is_some_and(|name| name.starts_with("mcp__"))
+            && mcp_apps::output_app_reference(&original_output).is_some()
+        {
             item["output"] = json!({"result":original_output});
+        }
+        let failed = item.get("status").and_then(Value::as_str) == Some("failed");
+        if item.get("status").and_then(Value::as_str) != Some("completed")
+            && !(failed && source.is_some())
+        {
+            return ProviderEvent::TurnItemUpdated {
+                turn_item: from_json(item).unwrap_or(turn_item),
+            };
         }
         if let Some(host) = &self.host {
             let capture = async {
@@ -119,8 +126,11 @@ impl Inner {
                 tokio::time::timeout(std::time::Duration::from_secs(20), capture).await
                 && let Ok(Some(reference)) = host.snapshot_mcp_app(thread, source, contents).await
             {
-                item["output"] =
-                    json!({"t3McpApp":reference,"result":mcp_apps::call_result(&original_output)});
+                let mut result = mcp_apps::call_result(&original_output);
+                if failed {
+                    result["isError"] = json!(true);
+                }
+                item["output"] = json!({"t3McpApp":reference,"result":result});
             }
         }
         ProviderEvent::TurnItemUpdated {

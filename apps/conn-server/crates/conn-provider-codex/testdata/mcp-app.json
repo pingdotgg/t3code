@@ -1,0 +1,316 @@
+{
+  "transcript": {
+    "provider": "codex",
+    "protocol": "codex.app-server",
+    "version": "0.144.0",
+    "scenario": "codex-mcp-app-capture",
+    "entries": [
+      {
+        "type": "expect_outbound",
+        "label": "initialize",
+        "frame": {
+          "id": 1,
+          "method": "initialize",
+          "params": {
+            "clientInfo": {
+              "name": "T3 Code",
+              "title": "T3 Code",
+              "version": "0.1.9"
+            },
+            "capabilities": {
+              "experimentalApi": true,
+              "optOutNotificationMethods": [
+                "turn/diff/updated"
+              ],
+              "extensions": {
+                "io.modelcontextprotocol/ui": {
+                  "mimeTypes": [
+                    "text/html;profile=mcp-app"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "type": "emit_inbound",
+        "label": "initialize",
+        "frame": {
+          "id": 1,
+          "result": {
+            "userAgent": "T3 Code/0.156.1",
+            "codexHome": "/tmp/codex-home",
+            "platformFamily": "unix",
+            "platformOs": "macos"
+          }
+        }
+      },
+      {
+        "type": "expect_outbound",
+        "label": "initialized",
+        "frame": {
+          "method": "initialized"
+        }
+      },
+      {
+        "type": "expect_outbound",
+        "label": "thread/start",
+        "frame": {
+          "id": 2,
+          "method": "thread/start",
+          "params": {
+            "config": {
+              "tools.update_plan.enabled": true,
+              "mcp_optional_startup_grace_ms": 10000,
+              "features.concurrent_reasoning_summaries": true
+            }
+          }
+        }
+      },
+      {
+        "type": "emit_inbound",
+        "label": "thread/start",
+        "frame": {
+          "id": 2,
+          "result": {
+            "thread": {
+              "id": "native-codex-mcp-app-thread",
+              "sessionId": "native-codex-mcp-app-thread",
+              "projectId": null,
+              "forkedFromId": null,
+              "preview": "",
+              "ephemeral": false,
+              "modelProvider": "openai",
+              "createdAt": 1782622440,
+              "updatedAt": 1782622440,
+              "status": {
+                "type": "idle"
+              },
+              "path": "/tmp/native-codex-mcp-app-thread.jsonl",
+              "cwd": "/workspace",
+              "cliVersion": "0.144.0",
+              "source": "vscode",
+              "threadSource": null,
+              "agentNickname": null,
+              "agentRole": null,
+              "gitInfo": null,
+              "name": null,
+              "turns": []
+            },
+            "model": "gpt-5.4",
+            "modelProvider": "openai",
+            "serviceTier": null,
+            "cwd": "/workspace",
+            "instructionSources": [],
+            "approvalPolicy": "on-request",
+            "approvalsReviewer": "user",
+            "sandbox": {
+              "type": "workspaceWrite",
+              "writableRoots": [],
+              "networkAccess": false
+            },
+            "reasoningEffort": "medium"
+          }
+        }
+      },
+      {
+        "type": "expect_outbound",
+        "label": "turn/start",
+        "frame": {
+          "id": 3,
+          "method": "turn/start",
+          "params": {
+            "threadId": "native-codex-mcp-app-thread",
+            "input": [
+              {
+                "type": "text",
+                "text": "Show the weather in Oslo."
+              }
+            ],
+            "cwd": "/workspace",
+            "model": "gpt-5.4",
+            "approvalPolicy": "never",
+            "approvalsReviewer": "user",
+            "sandboxPolicy": {
+              "type": "dangerFullAccess"
+            },
+            "summary": "auto",
+            "collaborationMode": {
+              "mode": "default",
+              "settings": {
+                "model": "gpt-5.4"
+              }
+            }
+          }
+        }
+      },
+      {
+        "type": "emit_inbound",
+        "label": "turn/start",
+        "frame": {
+          "id": 3,
+          "result": {
+            "turn": {
+              "id": "native-codex-mcp-app-turn",
+              "items": [],
+              "itemsView": "notLoaded",
+              "status": "inProgress",
+              "error": null,
+              "startedAt": 1782622440,
+              "completedAt": null,
+              "durationMs": null
+            }
+          }
+        }
+      },
+      {
+        "type": "emit_inbound",
+        "label": "turn/started",
+        "frame": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "native-codex-mcp-app-thread",
+            "turn": {
+              "id": "native-codex-mcp-app-turn",
+              "items": [],
+              "itemsView": "notLoaded",
+              "status": "inProgress",
+              "error": null,
+              "startedAt": 1782622440,
+              "completedAt": null,
+              "durationMs": null
+            }
+          }
+        }
+      },
+      {
+        "type": "emit_inbound",
+        "label": "item/started/app-tool",
+        "frame": {
+          "method": "item/started",
+          "params": {
+            "item": {
+              "type": "mcpToolCall",
+              "id": "mcp-weather-call",
+              "server": "weather",
+              "tool": "get_weather",
+              "status": "inProgress",
+              "arguments": {
+                "city": "Oslo"
+              },
+              "mcpAppResourceUri": "ui://weather/dashboard"
+            },
+            "threadId": "native-codex-mcp-app-thread",
+            "turnId": "native-codex-mcp-app-turn",
+            "startedAtMs": 1782622440500
+          }
+        }
+      },
+      {
+        "type": "emit_inbound",
+        "label": "item/completed/app-tool",
+        "frame": {
+          "method": "item/completed",
+          "params": {
+            "item": {
+              "type": "mcpToolCall",
+              "id": "mcp-weather-call",
+              "server": "weather",
+              "tool": "get_weather",
+              "status": "failed",
+              "arguments": {
+                "city": "Oslo"
+              },
+              "mcpAppResourceUri": "ui://weather/dashboard",
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "An interactive form is being shown to the user."
+                  }
+                ],
+                "structuredContent": {
+                  "status": "awaiting_user_submission"
+                }
+              }
+            },
+            "threadId": "native-codex-mcp-app-thread",
+            "turnId": "native-codex-mcp-app-turn",
+            "completedAtMs": 1782622441500
+          }
+        }
+      },
+      {
+        "type": "emit_inbound",
+        "label": "turn/completed",
+        "frame": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "native-codex-mcp-app-thread",
+            "turn": {
+              "id": "native-codex-mcp-app-turn",
+              "items": [],
+              "itemsView": "notLoaded",
+              "status": "completed",
+              "error": null,
+              "startedAt": 1782622440,
+              "completedAt": 1782622450,
+              "durationMs": null
+            }
+          }
+        }
+      },
+      {
+        "type": "expect_outbound",
+        "label": "mcpServer/resource/read",
+        "frame": {
+          "id": 4,
+          "method": "mcpServer/resource/read",
+          "params": {
+            "threadId": "native-codex-mcp-app-thread",
+            "server": "weather",
+            "uri": "ui://weather/dashboard"
+          }
+        }
+      },
+      {
+        "type": "emit_inbound",
+        "label": "mcpServer/resource/read",
+        "frame": {
+          "id": 4,
+          "result": {
+            "contents": [
+              {
+                "uri": "ui://weather/dashboard",
+                "mimeType": "text/html;profile=mcp-app",
+                "text": "<!doctype html><html><body><p>Weather</p><script>1</script></body></html>",
+                "_meta": {
+                  "ui": {
+                    "csp": {
+                      "connectDomains": [
+                        "https://api.weather.test"
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "An interactive form is being shown to the user."
+      }
+    ],
+    "structuredContent": {
+      "status": "awaiting_user_submission"
+    },
+    "isError": true
+  }
+}
