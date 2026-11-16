@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { formatMessageTimestamp } from "./messageTimestamp";
+import { createMessageTimeFormatter, formatMessageTimestamp } from "./messageTimestamp";
 
 describe("formatMessageTimestamp", () => {
   const now = new Date(2026, 10, 8, 20, 0).getTime();
@@ -18,5 +18,17 @@ describe("formatMessageTimestamp", () => {
     expect(formatMessageTimestamp(lastYear.toISOString(), now)).toBe(
       `${lastYear.toLocaleDateString(undefined, { month: "numeric", day: "numeric", year: "numeric" })} ${time(lastYear)}`,
     );
+  });
+});
+
+describe("createMessageTimeFormatter", () => {
+  const now = new Date(2026, 0, 1, 20, 0).getTime();
+
+  it("follows the system clock preference over the locale's hour cycle", () => {
+    const format24 = createMessageTimeFormatter(true, "en-US");
+    expect(format24(new Date(2026, 0, 1, 15, 7).toISOString(), now)).toBe("15:07");
+    expect(format24(new Date(2026, 0, 1, 0, 7).toISOString(), now)).toBe("00:07");
+    const format12 = createMessageTimeFormatter(false, "en-GB");
+    expect(format12(new Date(2026, 0, 1, 15, 7).toISOString(), now)).toMatch(/^3:07\spm$/i);
   });
 });

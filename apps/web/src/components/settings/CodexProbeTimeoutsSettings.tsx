@@ -54,11 +54,6 @@ const TIMEOUT_FIELDS = [
     description: "Read the service tier from the app-server configuration.",
   },
   {
-    key: "rateLimits",
-    title: "Rate-limit read",
-    description: "Read the account's current usage windows.",
-  },
-  {
     key: "resetCredit",
     title: "Reset-credit redemption",
     description: "Redeem a usage reset credit on the selected account.",

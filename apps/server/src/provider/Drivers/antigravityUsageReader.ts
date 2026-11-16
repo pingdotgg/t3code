@@ -129,18 +129,19 @@ const MODEL_IDS: Record<number, string> = {
 };
 
 // Effort and routing variants share the base model's price.
-function withRateModel(record: UsageRecord): UsageRecord {
-  const base = record.model.replace(
-    /-(?:extra-low|low|medium|high|tiered|control|thinking|agent)$/,
-    "",
-  );
-  const rateModel = /^gemini-3-flash-(?:agent(?:-[ab])?|[ab])$/.test(record.model)
+export const antigravityRateModel = (model: string) => {
+  const base = model.replace(/-(?:extra-low|low|medium|high|tiered|control|thinking|agent)$/, "");
+  return /^gemini-3-flash-(?:agent(?:-[ab])?|[ab])$/.test(model)
     ? "gemini-3.5-flash"
-    : record.model === "gemini-3.7-flash-safety-le"
+    : model === "gemini-3.7-flash-safety-le"
       ? "gemini-3.7-flash"
       : base === "gemini-3-flash"
         ? "gemini-3-flash-preview"
         : base;
+};
+
+function withRateModel(record: UsageRecord): UsageRecord {
+  const rateModel = antigravityRateModel(record.model);
   return rateModel === record.model ? record : { ...record, rateModel };
 }
 
