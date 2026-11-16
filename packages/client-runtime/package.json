@@ -175,6 +175,10 @@
       "types": "./src/state/attachments.ts",
       "default": "./src/state/attachments.ts"
     },
+    "./state/attachment-uploads": {
+      "types": "./src/state/attachmentUploads.ts",
+      "default": "./src/state/attachmentUploads.ts"
+    },
     "./text-paste": {
       "types": "./src/textPaste.ts",
       "default": "./src/textPaste.ts"
