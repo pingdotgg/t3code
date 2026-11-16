@@ -57,12 +57,23 @@ const isModelEvaluationError = Schema.is(ModelEvaluationError);
 // fastMode, serviceTier, contextWindow, and ultracode change latency, billing, or capacity, not output quality.
 const QUALITY_OPTION_IDS = new Set<string>(REASONING_EFFORT_OPTION_IDS);
 
-const EVALUATOR_FAILURE_DETAIL_LIMIT = 120;
+function evaluatorFailureCause(detail: string): string {
+  const text = detail.toLowerCase();
+  if (text.includes("timed out")) return "timed out";
+  if (text.includes("command failed")) return "provider command failed";
+  if (
+    text.includes("invalid structured output") ||
+    text.includes("invalid evaluation events") ||
+    text.includes("unexpected output")
+  )
+    return "invalid output";
+  if (text.includes("tool activity") || text.includes("tool work")) return "tool activity";
+  if (text.includes("not available") || text.includes("enoent")) return "provider unavailable";
+  return "provider request failed";
+}
 
 function evaluatorFailureReason(error: { readonly _tag: string; readonly detail: string }) {
-  const detail = error.detail.replace(/\s+/g, " ").trim().slice(0, EVALUATOR_FAILURE_DETAIL_LIMIT);
-  const named = detail.length === 0 ? error._tag : `${error._tag}: ${detail}`;
-  return `The evaluator could not complete this evaluation (${named}). No model score was recorded.`;
+  return `The evaluator could not complete this evaluation (${error._tag}: ${evaluatorFailureCause(error.detail)}). No model score was recorded.`;
 }
 
 function refreshRunOutcome(status: string): ModelEvaluationRunOutcome | undefined {
