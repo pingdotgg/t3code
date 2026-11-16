@@ -65,7 +65,8 @@ export function bitbucketProviderFailure(
 ): PullRequestProviderFailure {
   if (
     (error._tag === "BitbucketResponseError" && error.status === 401) ||
-    error._tag === "SettingsSecretUnresolvedError"
+    error._tag === "SettingsSecretUnresolvedError" ||
+    error._tag === "BitbucketCredentialMissingError"
   ) {
     return { reason: "unauthenticated" };
   }

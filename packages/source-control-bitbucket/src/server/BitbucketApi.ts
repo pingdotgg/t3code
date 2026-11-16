@@ -249,6 +249,23 @@ export class BitbucketCheckoutError extends Schema.TaggedError<BitbucketCheckout
   }
 }
 
+const MISSING_CREDENTIAL_DETAIL =
+  "Add a Bitbucket token in Settings → Source Control, or set the T3CODE_BITBUCKET_* environment variables on the server.";
+
+/** Bitbucket rate-limits anonymous requests; without a credential a 429 will not clear. */
+export class BitbucketCredentialMissingError extends Schema.TaggedError<BitbucketCredentialMissingError>()(
+  "BitbucketCredentialMissingError",
+  {},
+) {
+  get detail(): string {
+    return MISSING_CREDENTIAL_DETAIL;
+  }
+
+  override get message(): string {
+    return `Bitbucket rejected an anonymous request: ${this.detail}`;
+  }
+}
+
 /** Reject response-supplied URLs that could leak credentials. */
 export class BitbucketUntrustedUrlError extends Schema.TaggedError<BitbucketUntrustedUrlError>()(
   "BitbucketUntrustedUrlError",
@@ -278,6 +295,7 @@ export const BitbucketApiError = Schema.Union([
   BitbucketRepositoryRemoteNotFoundError,
   BitbucketPullRequestBodyReadError,
   BitbucketCheckoutError,
+  BitbucketCredentialMissingError,
   SourceControlRateLimit.SourceControlRateLimitPausedError,
   SettingsSecretUnresolvedError,
 ]);
@@ -608,9 +626,7 @@ function authFromCredential(credential: BitbucketCredential | null): SourceContr
     status: "unauthenticated",
     account: Option.none(),
     host: Option.some("bitbucket.org"),
-    detail: Option.some(
-      "Add a Bitbucket token in Settings → Source Control, or set the T3CODE_BITBUCKET_* environment variables on the server.",
-    ),
+    detail: Option.some(MISSING_CREDENTIAL_DETAIL),
   };
 }
 
@@ -722,12 +738,23 @@ export const make = Effect.gen(function* () {
       );
       return yield* effect.pipe(
         Effect.tap(() => limits.recordSuccess({ ...rateLimitKey, lease })),
-        Effect.tapError((error) =>
-          (error._tag === "BitbucketResponseError" ||
-            error._tag === "BitbucketResponseBodyReadError") &&
-          error.status === 429
-            ? limits.recordRateLimit({ ...rateLimitKey, lease, retryAt: error.retryAt })
-            : Effect.void,
+        Effect.catchIf(
+          (error): error is BitbucketResponseError | BitbucketResponseBodyReadError =>
+            (error._tag === "BitbucketResponseError" ||
+              error._tag === "BitbucketResponseBodyReadError") &&
+            error.status === 429,
+          (error) =>
+            currentCredential.pipe(
+              Effect.flatMap((credential): Effect.Effect<never, BitbucketApiError> =>
+                // An anonymous 429 is a missing token, not a quota that resets; pausing the host
+                // would make every later read look rate-limited again.
+                credential === null
+                  ? Effect.fail(new BitbucketCredentialMissingError())
+                  : limits
+                      .recordRateLimit({ ...rateLimitKey, lease, retryAt: error.retryAt })
+                      .pipe(Effect.andThen(Effect.fail(error))),
+              ),
+            ),
         ),
       );
     },
