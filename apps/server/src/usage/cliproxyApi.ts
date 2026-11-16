@@ -344,6 +344,7 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
             // The tier only weights pools, so a failed read keeps the usage.
             call("https://api.anthropic.com/api/oauth/profile").pipe(
               Effect.flatMap(decodeClaudeProfile),
+              Effect.timeout("3 seconds"),
               Effect.orElseSucceed(() => undefined),
             ),
           ],
