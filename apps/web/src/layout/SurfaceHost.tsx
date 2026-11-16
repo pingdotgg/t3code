@@ -74,8 +74,10 @@ import {
   selectFocusedWorkspace,
   selectLayoutPaneSlots,
   selectLayoutStripSize,
+  sameLayoutSpan,
   selectWindowStartPaneId,
   type LayoutColumn,
+  type LayoutSpan,
   type LayoutSurfaceContent,
   type LayoutLauncherContent,
   type LayoutPaneSlot,
@@ -699,6 +701,8 @@ export function LayoutSurfaceHost({
   const focusedSlot = slots.find((slot) => slot.paneId === focusedPaneId) ?? null;
   const focusedLeft = focusedSlot ? Math.round(focusedSlot.rect.left * stripPx) : null;
   const focusedWidth = focusedSlot ? Math.round(focusedSlot.rect.width * stripPx) : null;
+  const focusedStart = focusedSlot?.rect.left ?? null;
+  const focusedShare = focusedSlot?.rect.width ?? null;
   const dragging = preview !== null;
 
   // Where the strip's camera is, in half windows: it changes a couple of
@@ -853,22 +857,23 @@ export function LayoutSurfaceHost({
   // still at 0 that it would spring sideways.
   useOverviewStage(overviewPhase, stage, scrollerRef, stageRef);
 
-  const revealedSpan = useRef<string | null>(null);
+  const revealedSpan = useRef<LayoutSpan | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Reveal the committed focused pane with an imperative camera move after measuring its DOM.
   useLayoutEffect(() => {
     const scroller = scrollerRef.current;
     const element = stageRef.current;
-    const span = `${focusedPaneId}:${focusedLeft}:${focusedWidth}`;
     if (!scroller || !element || staged || stacked || dragging || focusedPaneId === null) {
       revealedSpan.current = null;
       return;
     }
     if (focusedLeft === null || focusedWidth === null) return;
+    if (focusedStart === null || focusedShare === null) return;
+    const span = { paneId: focusedPaneId, left: focusedStart, width: focusedShare };
     // The first render sizes the strip for the window's width, before the
     // scroller is measured, and a scroll then clamps short of the pane. The
     // render with the measured width reveals it.
     if (scroller.clientWidth !== viewportWidth) return;
-    if (revealedSpan.current === span) return;
+    if (revealedSpan.current && sameLayoutSpan(revealedSpan.current, span)) return;
     const left = focusedLeft;
     const right = left + focusedWidth;
     return afterPressRelease(() => {
@@ -883,7 +888,17 @@ export function LayoutSurfaceHost({
       // so the composer's caret scroll, right after, finds the pane in place.
       moveStripCamera(scroller, element, target);
     });
-  }, [dragging, focusedLeft, focusedPaneId, focusedWidth, stacked, staged, viewportWidth]);
+  }, [
+    dragging,
+    focusedLeft,
+    focusedPaneId,
+    focusedShare,
+    focusedStart,
+    focusedWidth,
+    stacked,
+    staged,
+    viewportWidth,
+  ]);
 
   useStripResizeScroll(
     scrollerRef,

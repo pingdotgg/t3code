@@ -21,7 +21,7 @@ import { LayoutSurfaceHost } from "./SurfaceHost";
 
 const TOUR_KEY = "t3code:layout-tour:v1";
 
-function setup() {
+function setup(columnWidth = 2 / 3) {
   const settings = getClientSettings();
   const behavior = useLayoutBehaviorStore.getState().behavior;
   __setClientSettingsForTests({ ...settings, scrollingWorkspacesEnabled: true });
@@ -35,7 +35,7 @@ function setup() {
   store.openTab(createLayoutLauncherContent(null), { placement: "active-pane" });
   const layout = useLayoutStore.getState().layout;
   const workspace = layout.workspaces[0]!;
-  const columns = workspace.columns.map((column) => ({ ...column, width: 2 / 3 }));
+  const columns = workspace.columns.map((column) => ({ ...column, width: columnWidth }));
   const [second] = columns[1]!.panes[0]!.tabs;
   useLayoutStore.setState({
     layout: {
@@ -60,8 +60,8 @@ function Host() {
   return <LayoutSurfaceHost layout={layout} />;
 }
 
-async function renderHost({ insetSidebar = false, edges = [0, 0] } = {}) {
-  await page.viewport(900, 600);
+async function renderHost({ insetSidebar = false, edges = [0, 0], viewport = 900 } = {}) {
+  await page.viewport(viewport, 600);
   const container = document.createElement("div");
   container.style.cssText = `position:fixed;inset:0;display:flex;padding:0 ${edges[1]}px 0 ${edges[0]}px;`;
   // The pane chrome (index.css) styles an inset that follows the app's inset sidebar.
@@ -107,11 +107,16 @@ it("shows a tab in an unfocused pane that runs off screen with one click on it",
   await vi.waitFor(() => expect(focusedTabId()).toBe(tabs.second.id));
 });
 
-async function renderStrip(edges = [0, 0]) {
-  setLayoutStripViewportWidth(900);
+async function renderStrip({
+  edges = [0, 0],
+  viewport = 900,
+  camera = 900,
+  columnWidth = 2 / 3,
+} = {}) {
+  setLayoutStripViewportWidth(camera);
   await using stack = new AsyncDisposableStack();
-  stack.use(setup());
-  const screen = stack.use(await renderHost({ edges }));
+  stack.use(setup(columnWidth));
+  const screen = stack.use(await renderHost({ edges, viewport }));
   const strip = screen.container.querySelector<HTMLElement>("[data-layout-strip]")!;
   const gap = screen.container.querySelector<HTMLElement>("[data-sidebar-gap]")!;
   const settled = async (width: number) => {
@@ -119,9 +124,7 @@ async function renderStrip(edges = [0, 0]) {
       expect(Math.abs(gap.getBoundingClientRect().width - width)).toBeLessThan(0.02),
     );
     await vi.waitFor(() =>
-      expect(readableLayoutColumnShare()).toBeCloseTo(
-        LAYOUT_READABLE_COLUMN_PX / strip.clientWidth,
-      ),
+      expect(readableLayoutColumnShare()).toBe(LAYOUT_READABLE_COLUMN_PX / strip.clientWidth),
     );
   };
   await settled(0);
@@ -172,7 +175,7 @@ it.each([
 ])(
   "keeps the panes in place on screen while the sidebar opens and closes %s",
   async (_, sidebar, along, edges) => {
-    await using host = await renderStrip(edges);
+    await using host = await renderStrip({ edges });
     const { strip } = host;
     await host.scrollTo(Math.round((strip.scrollWidth - strip.clientWidth) * along));
     const resting = host.paneLeft();
@@ -205,6 +208,30 @@ it("keeps the panes in place when the host renders while the sidebar slides", as
     rerender.disconnect();
   }
   expect(renders).toBeGreaterThan(2);
+  expect(host.paneLeft()).toBeCloseTo(resting, 2);
+  for (const left of host.seen) expect(Math.abs(left - resting)).toBeLessThan(STILL);
+});
+
+it.each([
+  ["a width that rounds the focused span down", 1134, true],
+  ["another width that rounds it down", 1162, true],
+  ["a width that keeps its rounding", 1158, false],
+])("keeps the strip where it is when it settles at %s", async (_, width, flips) => {
+  const viewport = 1440;
+  const camera = 1094;
+  await using host = await renderStrip({ viewport, camera, columnWidth: 0.75 });
+  const focusedSpan = (strip: number) => {
+    const stripPx = Math.max(strip, 1.5 * Math.max(camera, strip / 1.5));
+    return Math.round(((0.75 * camera) / stripPx) * ((stripPx / strip) * strip));
+  };
+  expect(focusedSpan(width) !== focusedSpan(viewport)).toBe(flips);
+  await host.toggle(viewport - 1174);
+  await host.scrollTo(host.strip.scrollWidth - host.strip.clientWidth);
+  const resting = host.paneLeft();
+  const before = host.strip.scrollLeft;
+  await host.toggle(viewport - width);
+  expect(host.strip.clientWidth).toBe(width);
+  expect(host.strip.scrollLeft).toBe(before + 1174 - width);
   expect(host.paneLeft()).toBeCloseTo(resting, 2);
   for (const left of host.seen) expect(Math.abs(left - resting)).toBeLessThan(STILL);
 });
