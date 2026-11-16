@@ -6,6 +6,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { MspError } from "@muse-code/sdk";
 import {
   MUSE_DEFAULT_MODEL,
+  ChatImageAttachment,
   EnvironmentId,
   MessageId,
   NodeId,
@@ -30,6 +31,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -37,6 +39,8 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import type { MuseItem, MuseSubscriptionUsage } from "./protocol.ts";
 import type { MuseSdkHost, MuseSdkHostOptions } from "./sdk.ts";
@@ -1430,6 +1434,60 @@ describe("MuseAdapterV2", () => {
       yield* harness.takeEvent(
         "runtime_request.updated",
         (event) => event.runtimeRequest.status === "resolved",
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect.each([
+    { case: "the images alone exceed the limit", sizes: [4_400_000, 2_900_000, 2_100_000] },
+    { case: "the request body uses the remaining bytes", sizes: [4_400_000, 3_464_314] },
+  ])("rejects an oversized image batch when $case", ({ sizes }) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const fileSystem = yield* FileSystem.FileSystem;
+      const providerHost = yield* ProviderHost.ProviderHost;
+      const attachments: ChatImageAttachment[] = [];
+      for (const [index, sizeBytes] of sizes.entries()) {
+        const attachment = ChatImageAttachment.make({
+          type: "image",
+          id: `image-${index}`,
+          name: `photo-${index}.jpg`,
+          mimeType: "image/jpeg",
+          sizeBytes,
+        });
+        yield* fileSystem.writeFile(
+          providerHost.resolveAttachmentPath(attachment)!,
+          Buffer.alloc(sizeBytes),
+        );
+        attachments.push(attachment);
+      }
+      const first = yield* turnInput(harness.providerThread);
+      const result = yield* harness.runtime
+        .startTurn({
+          ...first,
+          message: { ...first.message, attachments },
+        })
+        .pipe(Effect.result);
+      if (result._tag !== "Failure") {
+        return assert.fail("the oversized batch should fail before sending");
+      }
+      assert.equal(
+        makeProviderFailure({ cause: result.failure }).message,
+        "The provider could not start this turn: the attached images make the request too large. Send fewer or smaller images per message.",
+      );
+      assert.isFalse(fake.calls.some((call) => call.method === "turn/start"));
+      assert.isFalse(harness.allEvents.some((event) => event.type === "provider_turn.updated"));
+
+      const second = yield* turnInput(harness.providerThread, 2);
+      yield* harness.runtime.startTurn({
+        ...second,
+        message: { ...second.message, attachments: attachments.slice(0, 1) },
+      });
+      const sent = yield* fake.takeCall("turn/start");
+      assert.deepStrictEqual(
+        (sent.params.input as Array<{ type: string }>).map((part) => part.type),
+        ["text", "text", "image"],
       );
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );

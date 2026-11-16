@@ -75,9 +75,16 @@ const CODEX_GOAL_VALIDATION_MESSAGE =
 const CODEX_ACCESS_REQUIREMENT_REJECTION =
   /invalid value for `(approval_policy|sandbox_mode)`: `([A-Za-z]{1,32})` is not in the allowed set /u;
 
-const PROVIDER_FAILURE_REASONS: Record<ProviderAdapterFailureReason, string> = {
-  previous_turn_active: "the previous turn is still running",
-  attachment_unreadable: "an attachment could not be read",
+const PROVIDER_FAILURE_REASONS: Record<
+  ProviderAdapterFailureReason,
+  { readonly summary: string; readonly guidance?: string }
+> = {
+  previous_turn_active: { summary: "the previous turn is still running" },
+  attachment_unreadable: { summary: "an attachment could not be read" },
+  image_request_too_large: {
+    summary: "the attached images make the request too large",
+    guidance: "Send fewer or smaller images per message.",
+  },
 };
 
 /**
@@ -91,11 +98,11 @@ function curatedCauseMessages(cause: unknown): {
 } {
   const seen = new Set<unknown>();
   let category: (typeof PROVIDER_FAILURE_CATEGORIES)[string];
-  let reason: string | undefined;
+  let reason: (typeof PROVIDER_FAILURE_REASONS)[ProviderAdapterFailureReason] | undefined;
   const categoryMessage = () => {
     if (category === undefined) return undefined;
     return reason
-      ? `${category.summary}: ${reason}. ${category.guidance}`
+      ? `${category.summary}: ${reason.summary}. ${reason.guidance ?? category.guidance}`
       : `${category.summary}. ${category.guidance}`;
   };
   for (let depth = 0; depth < 16 && cause != null && !seen.has(cause); depth++) {
