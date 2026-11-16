@@ -39,7 +39,7 @@ const implemented = NodeFS.readFileSync(new URL("../tools.implemented", import.m
   .map((line) => line.trim())
   .filter((line) => line !== "" && !line.startsWith("#"));
 
-const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-mcp-parity-"));
+const root = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-mcp-parity-")));
 const children = [];
 process.once("exit", () => {
   for (const child of children) if (child.exitCode === null) child.kill("SIGTERM");
