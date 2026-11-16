@@ -11,6 +11,7 @@ import {
   DATABASE_MIGRATIONS_STARTED_MESSAGE,
 } from "@t3tools/shared/databaseMigrationLog";
 import { assert, describe, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -236,6 +237,43 @@ describe("DesktopBackendManager", () => {
       assert.isTrue(yield* Fiber.join(waiter));
       yield* instance.stop();
       assert.isFalse(yield* instance.waitForReady(Duration.seconds(15)));
+    }),
+  );
+
+  it.effect("notices a WSL backend soon after it listens despite slow refused connects", () =>
+    Effect.gen(function* () {
+      const ready = yield* Deferred.make<void>();
+      const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      const instance = yield* makeTestInstance({
+        config: { ...baseConfig, httpBaseUrl: new URL("http://172.20.84.98:3773") },
+        onReady: Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
+        spawnerLayer: Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.acquireRelease(
+              Effect.succeed(makeProcess({ exitCode: Deferred.await(exit) })),
+              () => Deferred.succeed(exit, ChildProcessSpawner.ExitCode(0)),
+            ),
+          ),
+        ),
+        // Before the server listens at 300 ms, each refused connect takes a second to fail.
+        httpClientLayer: layerHttpClient((request) =>
+          Clock.currentTimeMillis.pipe(
+            Effect.flatMap((now) =>
+              now < 300
+                ? Effect.sleep(Duration.seconds(1)).pipe(
+                    Effect.as(responseForRequest(request, 503)),
+                  )
+                : Effect.succeed(responseForRequest(request, 200)),
+            ),
+          ),
+        ),
+      });
+      yield* instance.start;
+      yield* TestClock.adjust(Duration.millis(600));
+
+      assert.isTrue(yield* Deferred.isDone(ready));
+      yield* instance.stop();
     }),
   );
 

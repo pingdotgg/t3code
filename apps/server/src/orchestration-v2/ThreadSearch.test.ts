@@ -882,6 +882,7 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
       const project = ProjectId.make("project:heron");
       const labeled = ThreadId.make("thread:heron-label");
       const addressOnly = ThreadId.make("thread:heron-address");
+      const mention = ThreadId.make("thread:heron-mention");
       yield* createProject(project);
       yield* Effect.forEach(
         [
@@ -889,6 +890,13 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
           message(labeled, "heron-label", "assistant", "See [the heron plan](https://x.dev/a) now"),
           thread(addressOnly, project),
           message(addressOnly, "heron-address", "user", "Read [this](https://heron.dev/b)"),
+          thread(mention, project),
+          message(
+            mention,
+            "heron-mention",
+            "user",
+            String.raw`Fix [\_\_init\_\_.py](pkg/__init__.py) and [\_café\_.py](pkg/_caf%C3%A9_.py)`,
+          ),
         ],
         projections.apply,
         { discard: true },
@@ -898,6 +906,13 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
         matches.map((match) => [match.threadId, match.snippet]),
         [[labeled, "See the heron plan now"]],
       );
+      for (const query of ["__init__.py", "_café_.py"]) {
+        const mentions = yield* search.search({ query });
+        assert.deepEqual(
+          mentions.matches.map((match) => [match.threadId, match.snippet]),
+          [[mention, "Fix __init__.py and _café_.py"]],
+        );
+      }
     }),
   );
 
@@ -1156,12 +1171,22 @@ it.layer(layerTest)("ThreadSearch.searchOlderSettled", (it) => {
           thread(id("elsewhere"), other, { title: "Kestrel nest", settledAt: old }),
           thread(id("note"), project, { title: "Unrelated", settledAt: old }),
           thread(id("new-note"), project, { title: "Unrelated", settledAt: at(50) }),
+          thread(id("archived"), project, {
+            title: "Kestrel nest",
+            settledAt: old,
+            archivedAt: old,
+          }),
+          thread(id("archived-note"), project, {
+            title: "Unrelated",
+            settledAt: old,
+            archivedAt: old,
+          }),
         ],
         projections.apply,
         { discard: true },
       );
       const before = DateTime.formatIso(at(30));
-      const messageThreadIds = [id("new-note"), id("note"), id("old")];
+      const messageThreadIds = [id("new-note"), id("note"), id("archived-note"), id("old")];
       assert.sameMembers(
         [...(yield* search.searchOlderSettled({ query: "kestrel", before, messageThreadIds }))],
         [id("old"), id("elsewhere"), id("note")],

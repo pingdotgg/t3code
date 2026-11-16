@@ -185,7 +185,8 @@ export const resolveHostCliCommand = Effect.fn("invocation.resolveHostCliCommand
 ) {
   const platform = yield* HostProcess.Platform;
   const withArgs = (prefix: string) =>
-    [prefix, ...args.map((arg) => hostShellWord(platform, arg))].join(" ");
+    // An empty subcommand names the root `t3` command.
+    [prefix.trimEnd(), ...args.map((arg) => hostShellWord(platform, arg))].join(" ");
   const command = yield* resolveCliCommand(subcommand);
   if (command !== `t3 ${subcommand}`) return { command: withArgs(command), launcher: false };
   const onPath = yield* resolveCommandPath("t3");
@@ -214,6 +215,17 @@ export const resolveHostCliCommand = Effect.fn("invocation.resolveHostCliCommand
   const call = platform === "win32" ? `& ${quoted}` : quoted;
   return { command: withArgs(`${call} ${subcommand}`), launcher: true };
 });
+
+/** A hint's command, run against the caller's `--base-dir` when one was given. */
+export const resolveHostCliHint = (
+  subcommand: string,
+  baseDir: Option.Option<string>,
+  args: ReadonlyArray<string> = [],
+) =>
+  resolveHostCliCommand(subcommand, [
+    ...Option.match(baseDir, { onNone: () => [], onSome: (dir) => ["--base-dir", dir] }),
+    ...args,
+  ]).pipe(Effect.map(({ command }) => command));
 
 /**
  * `sudo` resets PATH on most distributions, which drops a user-installed Node

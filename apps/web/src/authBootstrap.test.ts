@@ -8,6 +8,7 @@ import {
 import { createBrowserHistory } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import { HttpClientError, HttpClientRequest } from "effect/http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { installEnvironmentHttpTest } from "../test/environmentHttpTest";
@@ -165,6 +166,54 @@ describe("resolveInitialServerAuthGateState", () => {
     expect(testApi.calls.browserSession).toEqual([{ credential: "desktop-bootstrap-token" }]);
   });
 
+  it("retries the desktop bootstrap while the backend is still unreachable", async () => {
+    const nextSession = sequence(
+      unauthenticatedSession(DESKTOP_AUTH),
+      authenticatedSession(DESKTOP_AUTH),
+    );
+    const testApi = await installAuthApi({
+      session: nextSession,
+      browserSession: () => Effect.succeed(browserSession(["orchestration:read", "access:write"])),
+    });
+    // What FetchHttpClient yields when nothing listens on the backend port.
+    const connectionRefused = new HttpClientError.HttpClientError({
+      reason: new HttpClientError.TransportError({
+        request: HttpClientRequest.get("http://localhost:3773/api/auth/session"),
+        cause: new TypeError("Failed to fetch"),
+      }),
+    });
+    let unreachableAttempts = 1;
+    __setPrimaryHttpRunnerForTests((effect) => {
+      if (unreachableAttempts > 0) {
+        unreachableAttempts -= 1;
+        return Promise.reject(connectionRefused);
+      }
+      return testApi.run(effect);
+    });
+
+    const testWindow = installTestBrowser("http://localhost/");
+    testWindow.desktopBridge = {
+      getLocalEnvironmentBootstraps: () => [
+        {
+          id: "primary",
+          label: "Local",
+          httpBaseUrl: "http://localhost:3773",
+          wsBaseUrl: "ws://localhost:3773",
+          bootstrapToken: "desktop-bootstrap-token",
+        },
+      ],
+    } as unknown as DesktopBridge;
+
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    await Promise.all([
+      expect(resolveInitialServerAuthGateState()).resolves.toEqual({ status: "authenticated" }),
+      vi.advanceTimersByTimeAsync(1_000),
+    ]);
+    expect(testApi.calls.browserSession).toEqual([{ credential: "desktop-bootstrap-token" }]);
+  });
+
   it("takes a pairing token from the location hash and strips it immediately", async () => {
     const testWindow = installTestBrowser("http://localhost/#token=pairing-token");
     const { takePairingTokenFromUrl } = await import("./environments/primary");
@@ -279,7 +328,9 @@ describe("resolveInitialServerAuthGateState", () => {
         await expect(resolveInitialServerAuthGateState()).resolves.toEqual(requiresAuth);
 
         // Token removal synchronously reloads the TanStack auth gate via replaceState.
+        const pairingHistoryState = history.location.state;
         const token = takePairingTokenFromUrl();
+        expect(history.location.state).toEqual(pairingHistoryState);
         expect(gateLoads).toHaveLength(1);
         await expect(gateLoads[0]).resolves.toEqual(requiresAuth);
         const rejected = expect(submitServerAuthCredential(token!)).rejects.toMatchObject({

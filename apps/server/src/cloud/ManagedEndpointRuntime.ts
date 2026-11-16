@@ -168,6 +168,14 @@ export function classifyRelayClientOutput(
   if (/\bRegistered tunnel connection\b/iu.test(line)) {
     return "connected";
   }
+  // cloudflared logs a browser closing its request mid-stream as ERR; the tunnel itself is fine.
+  if (
+    /\bERR\s+(?:Request failed\s+)?error="Incoming request ended abruptly: context canceled"(?:\s|$)/u.test(
+      line,
+    )
+  ) {
+    return "debug";
+  }
   // cloudflared uses zerolog FTL/PNC for fatal/panic; classify them above debug too.
   if (/\b(?:ERR|WRN|FTL|PNC)\b/u.test(line)) {
     return "warning";

@@ -68,8 +68,10 @@ export function foldLatinDiacritics(text: string): string {
   return text
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/đ/g, "d") // d-with-stroke has no Unicode decomposition
-    .replace(/Đ/g, "D");
+    .replace(/đ/g, "d") // d-with-stroke and sharp s have no Unicode decomposition
+    .replace(/Đ/g, "D")
+    .replace(/ß/g, "ss")
+    .replace(/ẞ/g, "SS");
 }
 
 export function newProjectFolderName(name: string): string {

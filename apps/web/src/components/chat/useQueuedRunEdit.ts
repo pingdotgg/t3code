@@ -38,6 +38,7 @@ import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   awaitAttachmentUploads,
   getUploadedAttachments,
+  refreshExpiredAttachmentUploads,
   releaseDraftAttachments,
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
@@ -60,6 +61,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import type { ChatComposerHandle } from "./ChatComposer";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
+import { composerDraftContentChanged } from "./composerSend.logic";
 import {
   discardQueuedEditDraft,
   prepareQueuedEditAttachments,
@@ -105,6 +107,7 @@ async function submitQueuedRunEdit(input: {
   readonly editing: EditingQueuedRun;
   readonly content: QueuedRunEditContent;
   readonly editQueuedRun: ReturnType<typeof useEditQueuedRunCommand>;
+  readonly draftChanged: () => boolean;
 }): Promise<string | null> {
   const { environmentId, draftTarget, editing, content } = input;
   const editText = content.prompt.trim();
@@ -124,6 +127,7 @@ async function submitQueuedRunEdit(input: {
     validateFiles();
     for (const file of files) startAttachmentUpload({ environmentId, image: file, draftTarget });
     await awaitAttachmentUploads(files.map((file) => file.id));
+    await refreshExpiredAttachmentUploads({ environmentId, images: files, draftTarget });
     validateFiles();
     const uploaded = getUploadedAttachments({ environmentId, images: files });
     if (uploaded === null) throw new Error("Retry or remove failed uploads before saving.");
@@ -137,6 +141,8 @@ async function submitQueuedRunEdit(input: {
       readImage: readFileAsDataUrl,
       uploadFiles,
     });
+    if (input.draftChanged())
+      return "Draft changed while preparing this message. Review it and save again.";
     // The edit draft owns thread and machine mentions, so a chip removed while editing is dropped.
     const keptRecords = (editing.context?.records ?? []).filter(
       (record) =>
@@ -363,15 +369,29 @@ export function useQueuedRunEdit(input: {
     // The save's result decides the edit's fate, even if the run starts meanwhile.
     const finishSave = queuedRunEdits.startSave(editKey);
     if (finishSave === null) return;
+    const draftBeforeSave = useComposerDraftStore.getState().getComposerDraft(draftTarget);
+    const draftChanged = () =>
+      appAtomRegistry.get(queuedRunEdits.atom)[editKey] !== editing ||
+      composerDraftContentChanged(
+        draftBeforeSave,
+        useComposerDraftStore.getState().getComposerDraft(draftTarget),
+      );
     const error = await submitQueuedRunEdit({
       environmentId,
       draftTarget,
       editing,
       content,
       editQueuedRun: editQueuedRunCommand,
+      draftChanged,
     });
-    setThreadError(editing.threadId, error);
-    const current = finishSave(error === null);
+    const changedAfterSave = error === null && draftChanged();
+    setThreadError(
+      editing.threadId,
+      changedAfterSave
+        ? "The earlier edit was saved. Review your newer changes and save again."
+        : error,
+    );
+    const current = finishSave(error === null && !changedAfterSave);
     if (!current) {
       // A failed save can recover into the thread draft; a newer edit can also retain resources.
       const drafts = Object.values(useComposerDraftStore.getState().draftsByThreadKey);
@@ -394,6 +414,7 @@ export function useQueuedRunEdit(input: {
       return;
     }
     if (error !== null) return;
+    if (changedAfterSave) return;
     releaseDraftAttachments(newAttachments);
     promptRef.current = "";
     clearEditDraft(editing.runId);

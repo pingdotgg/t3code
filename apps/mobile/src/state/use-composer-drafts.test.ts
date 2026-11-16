@@ -1120,6 +1120,26 @@ describe("mobile composer drafts", () => {
 
     appendComposerDraftAttachments(draftKey, [makeVideo("restored")], { restore: true });
     expect(appAtomRegistry.get(composerDraftsAtom)[draftKey]?.attachments).toHaveLength(2);
+
+    // Every native paste is named pasted-image.png, so only the bytes tell two pastes apart.
+    const makePaste = (id: string, base64: string) => ({
+      id,
+      type: "image" as const,
+      name: "pasted-image.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      dataUrl: `data:image/png;base64,${base64}`,
+      previewUri: `data:image/png;base64,${base64}`,
+    });
+    const pasteKey = "new-task:environment-1:project-pastes";
+    appendComposerDraftAttachments(pasteKey, [makePaste("red", "AQID")]);
+    appendComposerDraftAttachments(pasteKey, [
+      makePaste("blue", "BAUG"),
+      makePaste("red-2", "AQID"),
+    ]);
+    expect(
+      appAtomRegistry.get(composerDraftsAtom)[pasteKey]?.attachments.map(({ id }) => id),
+    ).toEqual(["red", "blue"]);
   });
 
   it("keeps shared attachment files until every draft releases them", async () => {

@@ -67,8 +67,11 @@ See the [fork build instructions](../operations/mobile-screens-fork.md).
 ## Native media presentations
 
 iOS delegates full-screen video to [AVKit](../../apps/mobile/modules/t3-native-controls/ios/T3NativeVideoPresentation.swift)
-and images and documents to [Quick Look](../../apps/mobile/modules/t3-native-controls/ios/T3NativeFilePresentation.swift).
-Each framework owns its controls and transition. A separate UIKit zoom transition
+and documents to [Quick Look](../../apps/mobile/modules/t3-native-controls/ios/T3NativeFilePresentation.swift).
+Each framework owns its controls and transition. Images open in our own
+[viewer](../../apps/mobile/modules/t3-native-controls/ios/T3NativeImageViewer.swift), because Quick Look
+dragged its image when a swipe or a dismiss started. The viewer keeps its controls in a
+navigation controller's bars, so UIKit can move them into an unfolded iPhone Duo's side bar. A separate UIKit zoom transition
 prevents AVKit's native Close action from exiting full screen and interferes with
 Quick Look's interactive return to its thumbnail. The AVKit entry selector is
 guarded, with standard modal presentation as the fallback.

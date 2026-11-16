@@ -463,13 +463,12 @@ impl Collector {
             .external_processes
             .iter()
             .filter_map(|(pid, expected_start_time_ms)| {
-                let (_, _, actual_start_time_ms) = rows
-                    .iter()
-                    .find(|(candidate_pid, _, _)| candidate_pid == pid)?;
-                matches_external_identity(*actual_start_time_ms, *expected_start_time_ms).then_some(
+                let process = self.system.process(Pid::from_u32(*pid))?;
+                let actual_start_time_ms = process.start_time().saturating_mul(1_000);
+                matches_external_identity(actual_start_time_ms, *expected_start_time_ms).then_some(
                     ExternalProcess {
                         pid: *pid,
-                        start_time_ms: Some(*actual_start_time_ms),
+                        start_time_ms: Some(actual_start_time_ms),
                     },
                 )
             })
@@ -1048,10 +1047,19 @@ mod tests {
 
     #[test]
     fn validates_external_process_start_identity() {
-        assert!(matches_external_identity(10_000, None));
-        assert!(matches_external_identity(10_000, Some(10_999)));
-        assert!(!matches_external_identity(10_000, Some(11_000)));
-        assert!(!matches_external_identity(10_000, Some(9_999)));
+        for (actual, expected, matches) in [
+            (10_000, None, true),
+            (10_000, Some(10_000), true),
+            (10_000, Some(10_999), true),
+            (10_000, Some(11_000), false),
+            (10_000, Some(9_999), false),
+            (0, Some(999), true),
+            (0, Some(1_000), false),
+            (u64::MAX, None, true),
+            (u64::MAX, Some(u64::MAX), false),
+        ] {
+            assert_eq!(matches_external_identity(actual, expected), matches);
+        }
     }
 
     #[test]
@@ -1094,7 +1102,13 @@ mod tests {
         assert_eq!(unselected.memory(), 0);
         assert_eq!(unselected.virtual_memory(), 0);
 
-        config.external_processes.insert(pid.as_u32(), None);
+        config.external_processes = [
+            (pid.as_u32(), Some(0)),
+            (u32::MAX, None),
+            (pid.as_u32(), None),
+        ]
+        .into_iter()
+        .collect();
         let snapshot = collector.sample(&config, None);
         let selected = snapshot
             .processes
@@ -1104,6 +1118,27 @@ mod tests {
         assert!(!selected.command.is_empty());
         assert!(selected.resident_bytes > 0);
         assert!(selected.start_time_ms > 0);
+        assert_eq!(
+            snapshot
+                .external_processes
+                .iter()
+                .map(|process| (process.pid, process.start_time_ms))
+                .collect::<Vec<_>>(),
+            vec![(pid.as_u32(), Some(selected.start_time_ms))],
+        );
+
+        config.root_pid = pid.as_u32();
+        config.external_processes.insert(pid.as_u32(), Some(0));
+        let snapshot = collector.sample(&config, None);
+        assert!(snapshot.external_processes.is_empty());
+        assert_eq!(
+            snapshot
+                .processes
+                .iter()
+                .filter(|process| process.pid == pid.as_u32())
+                .count(),
+            1,
+        );
 
         let retained = collector
             .system
