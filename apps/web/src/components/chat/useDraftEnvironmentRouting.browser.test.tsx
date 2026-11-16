@@ -39,7 +39,13 @@ vi.mock("../../hooks/useLoadBalancedEnvironment", () => ({
     refreshSelection: resources.refreshSelection,
   }),
 }));
-vi.mock("../../state/entities", () => ({ useProjects: () => resources.projects }));
+vi.mock("../../state/entities", () => ({
+  useProjects: () => resources.projects,
+  readProject: (ref: { environmentId: EnvironmentId; projectId: ProjectId }) =>
+    resources.projects.find(
+      (project) => project.environmentId === ref.environmentId && project.id === ref.projectId,
+    ) ?? null,
+}));
 vi.mock("../../hooks/useScratchProject", () => ({ useScratchProject: () => ({}) }));
 
 function setup() {
@@ -313,4 +319,36 @@ it("keeps the selected models when automatic routing picks another machine", asy
   );
   await expect.element(screen.getByText(b)).toBeInTheDocument();
   await expect.element(screen.getByText("gpt-6.1-sol, gpt-6.1-luna")).toBeInTheDocument();
+});
+
+it.each([
+  { name: "takes the destination default", explicit: false, remoteDefault: true, model: "luna" },
+  { name: "keeps a model the user picked", explicit: true, remoteDefault: true, model: "sol" },
+  {
+    name: "keeps the last-used model without a default",
+    explicit: false,
+    remoteDefault: false,
+    model: "sol",
+  },
+])("$name when the draft switches machine by hand", async ({ explicit, remoteDefault, model }) => {
+  const { b, draftId, input, store } = fanoutSetup();
+  const codex = ProviderInstanceId.make("codex");
+  resources.projects = resources.projects.map((project) =>
+    project.environmentId === b && remoteDefault
+      ? { ...project, defaultModelSelection: createModelSelection(codex, "luna") }
+      : project,
+  );
+  store.setStickyModelSelection(createModelSelection(codex, "sol"));
+  store.setModelSelection(draftId, createModelSelection(codex, "sol"), { explicit });
+  await using screen = await render(
+    <Harness
+      input={{ ...input, automaticEnvironment: false, draftThread: store.getDraftSession(draftId) }}
+    />,
+  );
+  await screen.getByRole("button", { name: `Switch to ${b}` }).click();
+  await expect.element(screen.getByText(b)).toBeInTheDocument();
+  const draft = store.getComposerDraft(draftId);
+  expect(draft?.activeProvider).toBe(codex);
+  expect(draft?.modelSelectionByProvider[codex]?.model).toBe(model);
+  expect(draft?.modelSelectionExplicit === true).toBe(explicit);
 });
