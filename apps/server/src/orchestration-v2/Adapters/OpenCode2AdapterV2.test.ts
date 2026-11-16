@@ -658,6 +658,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       },
     },
     {
+      name: "a provider.free-limit without retryAfterMs (429)",
+      failureClass: "usage_limit",
+      error: { type: "provider.free-limit", message: "Free usage limit reached.", status: 429 },
+    },
+    {
       name: "a Claude limit without a reset timestamp",
       failureClass: "usage_limit",
       error: {
@@ -746,7 +751,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       resetAt: "1970-01-01T05:58:06.001Z",
     },
     { name: "has no reset past the date range", retryAfterMs: Number.MAX_SAFE_INTEGER },
-    { name: "has no reset without retryAfterMs" },
   ] as const)("classifies a free-tier limit that $name", (row) =>
     Effect.gen(function* () {
       const message = "Free usage limit reached.";
@@ -759,7 +763,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             type: "provider.free-limit",
             message,
             status: 429,
-            ...("retryAfterMs" in row ? { retryAfterMs: row.retryAfterMs } : {}),
+            retryAfterMs: row.retryAfterMs,
           },
         }),
       ]);
