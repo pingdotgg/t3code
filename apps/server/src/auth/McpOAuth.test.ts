@@ -258,6 +258,18 @@ it.effect("registers loopback and https clients and never redirects for an unver
       );
       expect(fiveLongCallbacks.status).toBe(201);
 
+      for (const malformed of [
+        { client_name: 42, redirect_uris: [REDIRECT] },
+        { redirect_uris: REDIRECT },
+      ]) {
+        const response = yield* handler(postJson("/oauth/mcp/register", malformed));
+        expect(response.status).toBe(400);
+        expect(response.headers.get("content-type")).toMatch(/^application\/json/);
+        expect(yield* json<{ error: string }>(response)).toMatchObject({
+          error: expect.stringMatching(/^invalid_(client_metadata|redirect_uri)$/),
+        });
+      }
+
       const registered = yield* register(handler);
       expect(registered.status).toBe(201);
       const { client_id: clientId } = (yield* json<unknown>(registered)) as { client_id: string };
@@ -279,6 +291,17 @@ it.effect("registers loopback and https clients and never redirects for an unver
       );
       expect(unregistered.status).toBe(400);
       expect(unregistered.headers.get("location")).toBeNull();
+
+      for (const resource of [`${ORIGIN}/mcp#section`, `${ORIGIN}/mcp#`]) {
+        const wrongTarget = yield* handler(
+          at(
+            `/oauth/mcp/authorize?${new URLSearchParams({ ...authorizeParams(clientId), resource })}`,
+          ),
+        );
+        expect(wrongTarget.status).toBe(302);
+        const location = new URL(wrongTarget.headers.get("location")!, ORIGIN);
+        expect(location.searchParams.get("error"), resource).toBe("invalid_target");
+      }
 
       const query = new URLSearchParams(authorizeParams(clientId)).toString();
       const handoff = yield* handler(at(`/oauth/mcp/authorize?${query}`));
