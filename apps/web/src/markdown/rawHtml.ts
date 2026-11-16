@@ -393,6 +393,8 @@ function applyToken(token: Token, raw: RawNode, scope: Scope) {
       if (index < 0) {
         // An end tag for an element outside this scope would close Markdown elements.
         if (FORMATTING.has(name) || closesAncestor(scope, name)) throw BAIL;
+        // parse5 ends an open heading for any heading end tag.
+        if (HEADINGS.has(name) && scope.open.some((open) => HEADINGS.has(open.tagName))) throw BAIL;
         return;
       }
       for (const element of scope.open.slice(index + 1)) {

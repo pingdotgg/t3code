@@ -184,8 +184,15 @@ export class InlineParser {
     const contentStarts = [0];
     const sourceStarts = [this.src(start)];
     const { contentStarts: lines, sourceStarts: sources } = this.content;
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i]! <= start || lines[i]! >= end) continue;
+    // Only the label's own lines: one directive per line must not rescan the paragraph.
+    let first = 0;
+    let last = lines.length;
+    while (first < last) {
+      const mid = (first + last) >> 1;
+      if (lines[mid]! <= start) first = mid + 1;
+      else last = mid;
+    }
+    for (let i = first; i < lines.length && lines[i]! < end; i++) {
       contentStarts.push(lines[i]! - start);
       sourceStarts.push(sources[i]!);
     }

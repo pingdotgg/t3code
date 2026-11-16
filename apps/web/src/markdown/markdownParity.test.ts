@@ -72,6 +72,7 @@ const FALLBACK_CASES = [
   "<div><span><div>one</span>two</div></div>",
   "x[^1]\n\n[^1]: [see [^2]](u)\n\n[^2]: n",
   "<div>\n<a.foo>x</a.foo> y",
+  "<h2>one</h1>two",
 ];
 
 // Raw HTML the direct hast path nests itself instead of running parse5.
