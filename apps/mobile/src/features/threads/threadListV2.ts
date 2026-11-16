@@ -210,6 +210,24 @@ export function nextSnoozeWakeAfter(
   return next;
 }
 
+/**
+ * The latest timed mute end at or before `now`. A mute ends without a thread event, so the
+ * Working shelf re-observes when this changes instead of on every clock tick.
+ */
+export function lastMuteEndAtOrBefore(
+  threads: ReadonlyArray<{ readonly mutedUntil?: string | null }>,
+  now: string,
+): number {
+  const nowMs = Date.parse(now);
+  let last = 0;
+  for (const thread of threads) {
+    if (thread.mutedUntil == null) continue;
+    const endMs = Date.parse(thread.mutedUntil);
+    if (endMs <= nowMs && endMs > last) last = endMs;
+  }
+  return last;
+}
+
 // Outside search, the clock only changes list membership/order at snooze deadlines.
 export function threadListV2LayoutTime(input: {
   readonly threads: ReadonlyArray<{ readonly snoozedUntil?: string | null }>;

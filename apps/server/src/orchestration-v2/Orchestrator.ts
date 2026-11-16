@@ -81,7 +81,7 @@ import {
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
-import { isThreadMuted } from "@t3tools/shared/threadMute";
+import { isThreadMuted, latestUnmutedRunAt } from "@t3tools/shared/threadMute";
 import { modelSwitchSince } from "./modelSwitch.ts";
 import { isPlaceholderThreadTitle } from "./placeholderThreadTitle.ts";
 import { combinePullRequestWatchWakes, type PullRequestWatchWake } from "./pullRequestWatch.ts";
@@ -4602,6 +4602,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       restoredUnsettledAt = parsed.value;
     }
     let mutedUntil: DateTime.Utc | null = null;
+    let unmutedRunAt: DateTime.Utc | null = null;
     if (command.type === "thread.mute.set") {
       const nowMs = DateTime.toEpochMillis(now);
       // Unmuting records when the mute ended, so a repeat must not move that past finished work.
@@ -4619,6 +4620,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
         }
         mutedUntil = parsedMutedUntil.value;
+      }
+      if (command.muted) {
+        // Runs during the mute must not move the thread, so remember where it stood.
+        const shell = yield* projectionStore
+          .getThreadShell(command.threadId)
+          .pipe(
+            Effect.mapError(
+              (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+            ),
+          );
+        const unmutedRunMs = latestUnmutedRunAt(thread, [
+          shell?.latestRunRequestedAt,
+          shell?.latestRunCompletedAt,
+        ]);
+        unmutedRunAt = unmutedRunMs === null ? null : DateTime.makeUnsafe(unmutedRunMs);
       }
     }
     let snoozedUntil: DateTime.Utc | null = null;
@@ -4789,7 +4805,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         // Muting changes delivery, not activity, so it keeps updatedAt.
         case "thread.mute.set":
           return command.muted
-            ? { ...thread, mutedAt: now, mutedUntil }
+            ? { ...thread, mutedAt: now, mutedUntil, unmutedRunAt }
             : { ...thread, mutedUntil: now };
         case "thread.pin": {
           const alreadyPinned = thread.pinnedAt != null;

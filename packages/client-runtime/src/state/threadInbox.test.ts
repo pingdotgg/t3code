@@ -92,11 +92,29 @@ describe("createInboxReturnTracker", () => {
         assistantMessageId: null,
       },
     };
-    tracker.observe([thread("a", true)]);
+    // Runs that finished inside a timed mute that ended before observation resumed.
+    const mutedRun = (id: string, mutedAt: string, completedAt: string, mutedUntil: string) => ({
+      ...thread(id, false),
+      mutedAt: `1970-01-01T00:${mutedAt}.000Z`,
+      mutedUntil: `1970-01-01T00:${mutedUntil}.000Z`,
+      latestRun: {
+        ...finished.latestRun,
+        runId: RunId.make(`ended-while-muted-${id}`),
+        completedAt: `1970-01-01T00:${completedAt}.000Z`,
+      },
+    });
+    const mutedLongAgo = mutedRun("b", "00:04", "00:09", "00:14");
+    const mutedRecently = mutedRun("c", "03:05", "03:10", "03:15");
+    tracker.observe([thread("a", true), thread("b", true), thread("c", true)]);
     vi.setSystemTime(200_000);
-    tracker.observe([finished]);
+    tracker.observe([finished, mutedLongAgo, mutedRecently]);
     expect(tracker.isWorking(finished)).toBe(false);
     expect(tracker.returnedAt(finished)).toBe(200_000);
+    expect(tracker.isWorking(mutedLongAgo)).toBe(false);
+    expect(tracker.returnedAt(mutedLongAgo)).toBeUndefined();
+    expect(tracker.isWorking(mutedRecently)).toBe(false);
+    vi.advanceTimersByTime(2_000);
+    expect(tracker.returnedAt(mutedRecently)).toBeUndefined();
   });
 
   it("cancels a transient return on resume and grants a fresh grace after the next finish", () => {
@@ -313,5 +331,15 @@ describe("muted threads", () => {
     expect(
       sortInboxThreadsByReturn([{ ...quiet, mutedAt: null }, other]).map((entry) => entry.id),
     ).toEqual(["quiet", "other"]);
+    // A finished at 00:50 and B at 00:30. Muting A at 01:00 records its 00:50, so a run
+    // finishing while muted replaces its latest run without dropping it below B.
+    const a = {
+      ...thread("a", false),
+      latestRun: run("2026-06-01T02:00:00.000Z"),
+      mutedAt: "2026-06-01T01:00:00.000Z",
+      unmutedRunAt: "2026-06-01T00:50:00.000Z",
+    };
+    const b = { ...thread("b", false), latestRun: run("2026-06-01T00:30:00.000Z") };
+    expect(sortInboxThreadsByReturn([b, a]).map((entry) => entry.id)).toEqual(["a", "b"]);
   });
 });

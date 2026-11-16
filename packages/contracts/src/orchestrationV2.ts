@@ -512,6 +512,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   mutedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   mutedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  /** Latest run activity outside any mute, recorded when a mute starts. */
+  unmutedRunAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Absent on threads written before tags existed; read as empty. */
@@ -2262,6 +2264,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   mutedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   mutedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  /** Latest run activity outside any mute, recorded when a mute starts. */
+  unmutedRunAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Absent on threads written before tags existed; read as empty. */
@@ -2437,6 +2441,7 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   mutedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   mutedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  unmutedRunAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtcFromString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -2894,6 +2899,7 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   mutedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   mutedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  unmutedRunAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   lastVisitedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   titleRegeneration: Schema.optional(
     Schema.NullOr(

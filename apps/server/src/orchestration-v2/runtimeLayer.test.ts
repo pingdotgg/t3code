@@ -6920,6 +6920,43 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const typedProjection = yield* orchestrator.getThreadProjection(typed);
         assert.isNull(typedProjection.thread.settledOverride);
         assert.isNotNull(typedProjection.thread.unsettledAt);
+
+        // Muting records the latest run from outside a mute, so the list keeps the thread's
+        // place through runs that happen while it is muted.
+        const remute = (threadId: ThreadId, name: string) =>
+          orchestrator
+            .dispatch({
+              type: "thread.mute.set",
+              commandId: CommandId.make(`runtime-layer-muted-${name}-remute`),
+              threadId,
+              muted: true,
+            })
+            .pipe(Effect.andThen(orchestrator.getThreadShell(threadId)));
+        assert.isNull((yield* remute(scheduled, "scheduled"))?.unmutedRunAt);
+        const earlier = ThreadId.make("runtime-layer-muted-earlier");
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("runtime-layer-muted-earlier-create"),
+          threadId: earlier,
+          projectId: ProjectId.make("runtime-layer-muted-project"),
+          title: "Muted earlier",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: "/tmp/runtime-layer-muted-earlier",
+        });
+        yield* send(earlier, "earlier", false);
+        yield* TestClock.adjust("1 minute");
+        const earlierShell = yield* remute(earlier, "earlier");
+        assert.isNotNull(earlierShell?.latestRunRequestedAt);
+        assert.deepEqual(earlierShell?.unmutedRunAt, earlierShell?.latestRunRequestedAt);
+        assert.isBelow(
+          DateTime.toEpochMillis(earlierShell!.unmutedRunAt!),
+          DateTime.toEpochMillis(earlierShell!.mutedAt!),
+        );
       }),
   );
 

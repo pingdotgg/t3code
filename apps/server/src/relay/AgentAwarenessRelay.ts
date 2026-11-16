@@ -438,6 +438,22 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
     .map((thread) => thread.id);
 }
 
+/** A timed mute in effect, with when it began so a newer mute's timer wins. */
+interface MuteEnd {
+  readonly endMs: number;
+  readonly mutedAtMs: number;
+}
+
+function timedMuteEnd(thread: AgentAwarenessThread, nowMs: number): MuteEnd | null {
+  if (!isThreadMuted(thread, nowMs) || thread.mutedAt == null || thread.mutedUntil == null) {
+    return null;
+  }
+  return {
+    endMs: DateTime.toEpochMillis(thread.mutedUntil),
+    mutedAtMs: DateTime.toEpochMillis(thread.mutedAt),
+  };
+}
+
 /**
  * Timed mutes in effect at a catch-up. They are left out of publishing, so each needs its end
  * timer set here, or a thread still waiting when its mute ends would never alert.
@@ -445,12 +461,11 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
 export function resolveAgentAwarenessRelayMuteEnds(input: {
   readonly now: number;
   readonly threads: ReadonlyArray<AgentAwarenessThread>;
-}): ReadonlyArray<readonly [ThreadId, number]> {
-  return input.threads.flatMap((thread) =>
-    isThreadMuted(thread, input.now) && thread.mutedUntil != null
-      ? [[thread.id, DateTime.toEpochMillis(thread.mutedUntil)] as const]
-      : [],
-  );
+}): ReadonlyArray<readonly [ThreadId, MuteEnd]> {
+  return input.threads.flatMap((thread) => {
+    const end = timedMuteEnd(thread, input.now);
+    return end === null ? [] : [[thread.id, end] as const];
+  });
 }
 
 /** @public */
@@ -526,11 +541,8 @@ export const make = Effect.gen(function* () {
   let schedulePublishRetry: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
   // A timed mute ends without an event; republish then so a thread still
   // waiting on the user alerts again. One timer per thread, for its latest end.
-  const muteEndTimers = new Map<
-    ThreadId,
-    { readonly endMs: number; readonly fiber: Fiber.Fiber<void> }
-  >();
-  let scheduleMuteEnd: (threadId: ThreadId, endMs: number | null) => Effect.Effect<void> = () =>
+  const muteEndTimers = new Map<ThreadId, MuteEnd & { readonly fiber: Fiber.Fiber<void> }>();
+  let scheduleMuteEnd: (threadId: ThreadId, end: MuteEnd | null) => Effect.Effect<void> = () =>
     Effect.void;
   let enqueueTopLevelPublish: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
   const resetPublishedConnection = Effect.gen(function* () {
@@ -626,9 +638,7 @@ export const make = Effect.gen(function* () {
     const muted = threadShell !== null && isThreadMuted(threadShell, nowMs);
     yield* scheduleMuteEnd(
       threadId,
-      muted && threadShell.mutedUntil != null
-        ? DateTime.toEpochMillis(threadShell.mutedUntil)
-        : null,
+      threadShell === null ? null : timedMuteEnd(threadShell, nowMs),
     );
     yield* trackSubagentRequest(threadId, threadShell, nowMs);
     if (
@@ -939,11 +949,14 @@ export const make = Effect.gen(function* () {
       ...liveChildren.filter((thread) => thread !== null),
     ];
     const now = (yield* DateTime.now).epochMilliseconds;
-    for (const [threadId, endMs] of resolveAgentAwarenessRelayMuteEnds({
+    for (const [threadId, end] of resolveAgentAwarenessRelayMuteEnds({
       now,
       threads: snapshotThreads,
     })) {
-      yield* scheduleMuteEnd(threadId, endMs);
+      // The snapshot was read before the child reads above; a publication since then may have
+      // set the timer for a newer mute, which must win.
+      if ((muteEndTimers.get(threadId)?.mutedAtMs ?? -Infinity) > end.mutedAtMs) continue;
+      yield* scheduleMuteEnd(threadId, end);
     }
     const activeThreadIds = resolveAgentAwarenessRelayActiveThreadIds({
       environmentId,
@@ -996,26 +1009,29 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  scheduleMuteEnd = Effect.fnUntraced(function* (threadId: ThreadId, endMs: number | null) {
+  scheduleMuteEnd = Effect.fnUntraced(function* (threadId: ThreadId, end: MuteEnd | null) {
     const current = muteEndTimers.get(threadId);
-    if (current?.endMs === endMs) return;
+    if (current?.endMs === end?.endMs && current?.mutedAtMs === end?.mutedAtMs) return;
     if (current !== undefined) {
       muteEndTimers.delete(threadId);
       yield* Fiber.interrupt(current.fiber);
     }
-    if (endMs === null) return;
-    const delayMs = Math.max(0, endMs - (yield* DateTime.now).epochMilliseconds) + 1;
+    if (end === null) return;
+    const delayMs = Math.max(0, end.endMs - (yield* DateTime.now).epochMilliseconds) + 1;
     const fiber = yield* Effect.sleep(delayMs).pipe(
       Effect.andThen(
         Effect.suspend(() => {
-          if (muteEndTimers.get(threadId)?.endMs !== endMs) return Effect.void;
+          const latest = muteEndTimers.get(threadId);
+          if (latest?.endMs !== end.endMs || latest.mutedAtMs !== end.mutedAtMs) {
+            return Effect.void;
+          }
           muteEndTimers.delete(threadId);
           return worker.enqueue(threadId);
         }),
       ),
       Effect.forkIn(scope),
     );
-    muteEndTimers.set(threadId, { endMs, fiber });
+    muteEndTimers.set(threadId, { ...end, fiber });
   });
 
   schedulePublishConfirm = (threadId) =>

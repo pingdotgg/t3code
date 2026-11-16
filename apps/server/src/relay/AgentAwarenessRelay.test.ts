@@ -197,7 +197,15 @@ describe("startup agent activity", () => {
     assert.deepStrictEqual(resolve(later), [THREAD_ID]);
     assert.deepStrictEqual(
       AgentAwarenessRelay.resolveAgentAwarenessRelayMuteEnds({ now: startedAt, threads }),
-      [[THREAD_ID, Date.parse("2026-09-04T12:30:00.000Z")]],
+      [
+        [
+          THREAD_ID,
+          {
+            endMs: Date.parse("2026-09-04T12:30:00.000Z"),
+            mutedAtMs: Date.parse("2026-09-04T11:00:00.000Z"),
+          },
+        ],
+      ],
     );
     assert.deepStrictEqual(
       AgentAwarenessRelay.resolveAgentAwarenessRelayMuteEnds({ now: later, threads }),
@@ -214,6 +222,8 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
     readonly catchUpThreads?: ReadonlyArray<OrchestrationV2ThreadShell>;
+    /** Runs after the catch-up reads its snapshot, before it sets mute end timers. */
+    readonly listActiveShellIndex?: Effect.Effect<void>;
   } = {},
 ) {
   const values = new Map<string, Uint8Array>(
@@ -268,7 +278,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     listActiveSubagentThreadIds: unused,
     listAppOwnedChildThreadIds: unused,
     countThreads: unused,
-    listActiveShellIndex: () => Effect.succeed([]),
+    listActiveShellIndex: () => (options.listActiveShellIndex ?? Effect.void).pipe(Effect.as([])),
     listOlderSettledThreads: unused,
     readShellSnapshot: unused,
     getThreadTitles: unused,
@@ -1111,6 +1121,40 @@ describe("AgentAwarenessRelay", () => {
       yield* relay.drain;
       assert.equal(publications.length, 0);
       // Nothing else happens on the thread, so only the end timer can publish it.
+      yield* TestClock.adjust("15 minutes");
+      yield* relay.drain;
+      assert.equal(publications.at(-1)?.state?.phase, "running");
+    }),
+  );
+
+  it.effect("keeps a newer mute's end when a slower catch-up read an older one", () =>
+    Effect.gen(function* () {
+      const startedAt = yield* DateTime.now;
+      const olderMute = shell({
+        mutedAt: startedAt,
+        mutedUntil: DateTime.add(startedAt, { hours: 1 }),
+      });
+      const childReads = yield* Deferred.make<void>();
+      const { relay, currentShell, publications } = yield* makeTestRelay({
+        catchUpThreads: [olderMute],
+        listActiveShellIndex: Deferred.await(childReads),
+      });
+      yield* Ref.set(currentShell, olderMute);
+      yield* relay.start();
+      // While the catch-up waits on its child reads, the user mutes again for less time.
+      yield* TestClock.adjust("1 second");
+      const now = yield* DateTime.now;
+      yield* Ref.set(
+        currentShell,
+        shell({ mutedAt: now, mutedUntil: DateTime.add(now, { minutes: 15 }) }),
+      );
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.at(-1)?.state, null);
+      yield* Deferred.succeed(childReads, undefined);
+      yield* TestClock.adjust("1 second");
+      yield* relay.drain;
       yield* TestClock.adjust("15 minutes");
       yield* relay.drain;
       assert.equal(publications.at(-1)?.state?.phase, "running");

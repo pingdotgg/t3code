@@ -1,7 +1,7 @@
 // @effect-diagnostics globalTimers:off - Shelf placement timers run in web and native clients, outside an Effect runtime.
 import { threadRuntimeIsActive, type EnvironmentThreadShell } from "./models.ts";
 import { toSortableTimestamp } from "./threadSort.ts";
-import { isDuringMute, isThreadMuted } from "@t3tools/shared/threadMute";
+import { isDuringMute, isThreadMuted, latestUnmutedRunAt } from "@t3tools/shared/threadMute";
 import { effectiveSnoozed } from "./threadSettled.ts";
 
 type WorkingThreadInput = Pick<
@@ -65,13 +65,7 @@ type InboxThreadInput = Pick<
   EnvironmentThreadShell,
   "id" | "environmentId" | "createdAt" | "unsettledAt" | "latestRun"
 > &
-  Partial<Pick<EnvironmentThreadShell, "mutedAt" | "mutedUntil">>;
-
-// A run started or finished while muted does not move its thread up the list.
-function unmutedRunTimestamp(thread: InboxThreadInput, at: string | null | undefined): number {
-  if (at == null || isDuringMute(thread, at)) return 0;
-  return toSortableTimestamp(at) ?? 0;
-}
+  Partial<Pick<EnvironmentThreadShell, "mutedAt" | "mutedUntil" | "unmutedRunAt">>;
 
 export function sortInboxThreadsByReturn<T extends InboxThreadInput>(
   threads: readonly T[],
@@ -83,8 +77,11 @@ export function sortInboxThreadsByReturn<T extends InboxThreadInput>(
       Math.max(
         toSortableTimestamp(thread.createdAt) ?? 0,
         toSortableTimestamp(thread.unsettledAt ?? undefined) ?? 0,
-        unmutedRunTimestamp(thread, thread.latestRun?.requestedAt),
-        unmutedRunTimestamp(thread, thread.latestRun?.completedAt),
+        // A run started or finished while muted does not move its thread up the list.
+        latestUnmutedRunAt(thread, [
+          thread.latestRun?.requestedAt,
+          thread.latestRun?.completedAt,
+        ]) ?? 0,
         observedReturnAt?.(thread) ?? 0,
       ),
     ]),
@@ -231,7 +228,9 @@ export function createInboxReturnTracker() {
         present.add(key);
         const previous = states.get(key);
         const actual = isThreadWorking(thread, at);
-        const muted = isThreadMuted(thread, at);
+        // A mute, or a run that finished inside a mute that has since ended, keeps the thread in place.
+        const muted =
+          isThreadMuted(thread, at) || isDuringMute(thread, thread.latestRun?.completedAt);
         const placement =
           actual || previous?.working
             ? JSON.stringify([

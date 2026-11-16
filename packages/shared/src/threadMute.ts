@@ -39,6 +39,24 @@ export function isDuringMute(thread: ThreadMuteFields, at: Instant): boolean {
 }
 
 /**
+ * The latest of these run times that falls outside the latest mute, or the thread's recorded
+ * `unmutedRunAt` if later. The server records this when a mute starts, so a thread keeps its
+ * place in the list through runs that start or finish while it is muted.
+ */
+export function latestUnmutedRunAt(
+  thread: ThreadMuteFields & { readonly unmutedRunAt?: Instant },
+  runTimes: ReadonlyArray<Instant>,
+): number | null {
+  let latest = toMillis(thread.unmutedRunAt);
+  for (const at of runTimes) {
+    const atMs = toMillis(at);
+    if (atMs === null || isDuringMute(thread, at)) continue;
+    if (latest === null || atMs > latest) latest = atMs;
+  }
+  return latest;
+}
+
+/**
  * The run finished before the latest mute ended, inside it or earlier. Push alerts use this,
  * so ending a mute never re-sends an alert the mute cleared.
  */
