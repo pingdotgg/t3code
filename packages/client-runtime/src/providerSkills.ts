@@ -46,10 +46,18 @@ export function isProviderSkillUserInvocable(
 export function getProviderSkillsForSlashMenu(
   skills: ReadonlyArray<ServerProviderSkill>,
   showSkillsInSlashMenu: boolean,
+  slashCommands: ReadonlyArray<ServerProviderSlashCommand>,
 ): ServerProviderSkill[] {
-  return showSkillsInSlashMenu
-    ? dedupeProviderSkillsByName(skills.filter(isProviderSkillUserInvocable))
-    : [];
+  if (!showSkillsInSlashMenu) return [];
+  // Claude lists a native skill under its frontmatter name, with the folder T3 names it after as an alias.
+  const aliases = new Set(
+    slashCommands.flatMap((command) => command.aliases ?? []).map((alias) => alias.toLowerCase()),
+  );
+  return dedupeProviderSkillsByName(
+    skills.filter(
+      (skill) => isProviderSkillUserInvocable(skill) && !aliases.has(skill.name.toLowerCase()),
+    ),
+  );
 }
 
 export function getProviderSlashCommandsForSlashMenu(
@@ -57,13 +65,7 @@ export function getProviderSlashCommandsForSlashMenu(
   visibleSkills: ReadonlyArray<ServerProviderSkill>,
 ): ServerProviderSlashCommand[] {
   const skillNames = new Set(visibleSkills.map((skill) => skill.name.trim().toLowerCase()));
-  // Claude lists a native skill under its frontmatter name, with the folder T3 names it after as an alias.
-  return slashCommands.filter(
-    (command) =>
-      ![command.name, ...(command.aliases ?? [])].some((name) =>
-        skillNames.has(name.trim().toLowerCase()),
-      ),
-  );
+  return slashCommands.filter((command) => !skillNames.has(command.name.trim().toLowerCase()));
 }
 
 export function resolveProviderSkillSourceKind(

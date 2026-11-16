@@ -61,7 +61,7 @@ describe("getProviderSkillsForSlashMenu", () => {
       },
     ];
 
-    expect(getProviderSkillsForSlashMenu(skills, true).map((skill) => skill.name)).toEqual([
+    expect(getProviderSkillsForSlashMenu(skills, true, []).map((skill) => skill.name)).toEqual([
       "babysit-pr",
       "browser",
     ]);
@@ -82,23 +82,22 @@ describe("getProviderSkillsForSlashMenu", () => {
       enabledSkill,
     ];
 
-    expect(getProviderSkillsForSlashMenu(skills, true)).toEqual([enabledSkill]);
+    expect(getProviderSkillsForSlashMenu(skills, true, [])).toEqual([enabledSkill]);
   });
 });
 
 describe("getProviderSlashCommandsForSlashMenu", () => {
-  it("hides a command whose alias is a visible skill, and only while the skill is shown", () => {
+  it("lists a skill Claude names by its frontmatter once, under Claude's name", () => {
     const skills = [
       { name: "brainstorming", path: "/p/.claude/skills/brainstorming/SKILL.md", enabled: true },
     ];
     const commands = [{ name: "acme:brainstorming", aliases: ["brainstorming"] }];
 
-    expect(
-      getProviderSlashCommandsForSlashMenu(commands, getProviderSkillsForSlashMenu(skills, true)),
-    ).toEqual([]);
-    expect(
-      getProviderSlashCommandsForSlashMenu(commands, getProviderSkillsForSlashMenu(skills, false)),
-    ).toEqual(commands);
+    for (const showSkills of [true, false]) {
+      const visibleSkills = getProviderSkillsForSlashMenu(skills, showSkills, commands);
+      expect(visibleSkills).toEqual([]);
+      expect(getProviderSlashCommandsForSlashMenu(commands, visibleSkills)).toEqual(commands);
+    }
   });
 });
 

@@ -280,6 +280,7 @@ export function useComposerMenuItems({
       const slashMenuSkills = getProviderSkillsForSlashMenu(
         selectedProviderSkills,
         showSkillsInSlashMenu,
+        selectedProviderSlashCommands,
       );
       const providerSlashCommandItems = getProviderSlashCommandsForSlashMenu(
         selectedProviderSlashCommands,
