@@ -1313,7 +1313,12 @@ const make = Effect.gen(function* () {
         return null;
       };
       const blocked = new Set<string>();
-      const failed: Array<{ readonly raw: string; readonly reason: string }> = [];
+      const failed: Array<{
+        readonly raw: string;
+        readonly reason: string;
+        readonly unusableReply: boolean;
+        readonly generatedBefore: number;
+      }> = [];
       let stoppedBy: string | undefined;
       let attempts = 0;
       while (generated < MAX_SUMMARIES_PER_PASS && attempts < MAX_SUMMARIES_PER_PASS) {
@@ -1324,7 +1329,12 @@ const make = Effect.gen(function* () {
         const published =
           work.kind === "leaf" ? yield* summarizeLeaf(work.chunk) : yield* condense(work.group);
         if (!published.ok) {
-          failed.push({ raw: work.key, reason: published.reason });
+          failed.push({
+            raw: work.key,
+            reason: published.reason,
+            unusableReply: published.unusableReply,
+            generatedBefore: generated,
+          });
           blocked.add(work.key);
           // Before any success, an outage or a rejected request fails the pass so it retries, but
           // its work goes last.
@@ -1341,9 +1351,12 @@ const make = Effect.gen(function* () {
         generated += 1;
       }
       // With nothing succeeding, the model may be down or unable to answer at all. Blaming the
-      // chunk would skip the thread's whole history, so that failure is not counted.
-      for (const { raw, reason } of failed) {
-        const failure = { key: yield* keyOf(raw), reason, suspect: generated === 0 };
+      // chunk would skip the thread's whole history, so that failure is not counted. A timeout or
+      // rejection counts only when a summary succeeded after it: a provider that answers once and
+      // then stalls is still an outage.
+      for (const { raw, reason, unusableReply, generatedBefore } of failed) {
+        const counted = unusableReply ? generated > 0 : generated > generatedBefore;
+        const failure = { key: yield* keyOf(raw), reason, suspect: !counted };
         charges.push(failure);
         charge(failure);
       }

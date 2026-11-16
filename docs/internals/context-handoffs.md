@@ -48,7 +48,9 @@ gap, and makes a new leaf only after those runs. A gap keeps the roots on its fa
 that run, so the neighbours of a replaced leaf never roll up without the replacement. Rolling
 them up early would summarize more than the broken path, which could then not be rebuilt alone.
 A stretch is skipped after two failed summaries, and a failure counts only when another summary
-succeeds in the same pass, so an outage skips nothing. A skipped stretch gets no leaf, so it is not
+succeeds in the same pass, so an outage skips nothing. A timeout or rejected request counts only
+when a summary succeeds after it, so a provider that answers once and then stalls skips nothing
+either. A skipped stretch gets no leaf, so it is not
 a gap and roll-ups proceed past it; delivery replays its items in full. Skips are keyed by the
 summary model, and turning summaries back on for the project clears them.
 A roll-up offer carries no delivered-knowledge evidence, unlike a leaf offer: the evidence of a few
