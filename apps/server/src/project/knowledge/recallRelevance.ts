@@ -4,6 +4,7 @@ import type { OrchestrationV2NotificationSource } from "@t3tools/contracts";
 export const RECALL_MESSAGE_CHARS = 8_192;
 export const RECALL_MAX_FACTS = 2;
 const RECALL_MIN_MATCHED_TERMS = 3;
+const RECALL_MONITOR_MIN_MATCHED_TERMS = 8;
 const RECALL_MIN_HIT = 10;
 const RECALL_TUNED_CORPUS_SIZE = 718;
 const RECALL_MIN_COVERAGE = 0.3;
@@ -114,7 +115,12 @@ export const rankRecallCandidates = <Fact extends RecallFactText>(
   message: string,
   facts: ReadonlyArray<Fact>,
   stats: TermStats,
+  notification?: RecallMessage["notification"],
 ): ReadonlyArray<RecallMatch<Fact>> => {
+  const minimumMatchedTerms =
+    notification?.source.kind === "monitor"
+      ? RECALL_MONITOR_MIN_MATCHED_TERMS
+      : RECALL_MIN_MATCHED_TERMS;
   const text = message.slice(0, RECALL_MESSAGE_CHARS);
   const queryTerms = recallTerms(text);
   const queryMass = [...queryTerms].reduce(
@@ -139,7 +145,7 @@ export const rankRecallCandidates = <Fact extends RecallFactText>(
     const entity = !rare && fact.entities.some((value) => phraseIn(value, text));
     // A fact contained in the message stays eligible when every saved fact uses the same words and idf collapses.
     const passes =
-      matched.length >= RECALL_MIN_MATCHED_TERMS &&
+      matched.length >= minimumMatchedTerms &&
       relevance >= RECALL_MIN_COVERAGE &&
       queryCoverage >= RECALL_MIN_MESSAGE_COVERAGE &&
       (rare || entity) &&
@@ -152,11 +158,11 @@ export const rankRecallCandidates = <Fact extends RecallFactText>(
 };
 
 const selectRecallMatches = <Fact extends RecallFactText>(
-  message: string,
+  message: RecallMessage,
   facts: ReadonlyArray<Fact>,
   stats: TermStats,
 ): ReadonlyArray<RecallMatch<Fact>> =>
-  rankRecallCandidates(message, facts, stats)
+  rankRecallCandidates(message.text, facts, stats, message.notification)
     .filter((match) => match.passes)
     .slice(0, RECALL_MAX_FACTS);
 
@@ -167,5 +173,5 @@ export const recallForMessage = <Fact extends RecallFactText>(
   stats: TermStats,
 ): ReadonlyArray<Fact> => {
   if (!recallTrigger(message).recall) return [];
-  return selectRecallMatches(message.text, facts, stats).map((match) => match.fact);
+  return selectRecallMatches(message, facts, stats).map((match) => match.fact);
 };

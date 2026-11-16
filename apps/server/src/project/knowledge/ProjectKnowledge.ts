@@ -1294,7 +1294,7 @@ const make = Effect.gen(function* () {
           corpusSize: messageStats.corpusSize,
           docs: (term) => docs.get(term) ?? 0,
         };
-        const ranked = rankRecallCandidates(text, active, stats);
+        const ranked = rankRecallCandidates(text, active, stats, input.notification);
         const top = ranked.slice(0, 5).map((match) => ({ factId: match.fact.id }));
         const selections = ranked
           .flatMap((match) =>
