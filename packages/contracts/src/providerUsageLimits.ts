@@ -88,6 +88,8 @@ export const UsageLimitSourceSnapshot = Schema.Struct({
   label: TrimmedNonEmptyString,
   /** Origin of the hub, which also serves the agents sent through it. */
   origin: Schema.optional(TrimmedNonEmptyString),
+  /** Origin and base path of the hub, which tell apart hubs served from one origin. */
+  endpoint: Schema.optional(TrimmedNonEmptyString),
   checkedAt: IsoDateTime,
   accounts: ForwardCompatibleArray(UsageLimitSourceAccount),
   error: Schema.optional(TrimmedNonEmptyString),
