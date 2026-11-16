@@ -13,15 +13,7 @@
     "allowImportingTsExtensions": true,
     "types": ["bun", "vinext/types", "@cloudflare/workers-types"]
   },
-  "include": [
-    "alchemy.run.ts",
-    "vite.config.ts",
-    "proxy.ts",
-    "app",
-    "worker",
-    "src",
-    "test"
-  ],
+  "include": ["alchemy.run.ts", "vite.config.ts", "proxy.ts", "app", "worker", "src", "test"],
   "references": [
     {
       "path": "../../packages/alchemy"

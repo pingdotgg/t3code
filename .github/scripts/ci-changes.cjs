@@ -14,7 +14,7 @@ const INERT = [
 
 // Shared test setup and vendored mobile dependencies affect every package.
 const RUNS_EVERYTHING = [
-  /^packages\/shared\/src\/(HostProcess|testing\/longTempDir)\.ts$/,
+  /^packages\/shared\/src\/(HostProcess|testing\/(longTempDir|providerEnv))\.ts$/,
   /^apps\/mobile\/deps\//,
 ];
 
@@ -50,6 +50,21 @@ const BUILD_ONLY_DEPS = { t3: ["@t3tools/web"] };
 
 const MOBILE_NATIVE =
   /^apps\/mobile\/.*\.(swift|kt|kts)$|^apps\/mobile\/(\.swiftlint\.yml|detekt\.yml|\.editorconfig|Brewfile)$|^scripts\/mobile-native-static-check\.ts$|^package\.json$|^\.github\/workflows\/ci\.yml$|^\.github\/scripts\/ci-changes\.cjs$|^\.github\/actions\/ci-changes\//;
+
+// Startup, migration, settlement, and sidebar paths that decide whether an upgraded user's
+// threads show after launch. Build runs scripts/smoke-desktop-app.ts for them, so they do not
+// first fail in the release launch check.
+const DESKTOP_LAUNCH = [
+  /^apps\/desktop\/src\/((main|boot|compileCache|serverCompileCache)\.ts$|(app|backend|window)\/)/,
+  /^apps\/desktop\/src\/electron\/(ElectronApp|ElectronProtocol|ElectronWindow)\.ts$/,
+  /^apps\/web\/src\/((main|AppRoot|appInit)\.tsx|(bootstrap|router)\.ts)$/,
+  /^apps\/web\/src\/.*sidebar/i,
+  /^apps\/server\/src\/(bin|binMain|server|serverRuntimeStartup)\.ts$/,
+  /^apps\/server\/src\/persistence\/Migrations/,
+  /^apps\/server\/src\/orchestration-v2\/((ThreadSettlementService|ProjectionStore)\.ts$|legacy\/)/,
+  /^packages\/contracts\/src\/settings\.ts$/,
+  /^scripts\/(smoke-desktop-app\.ts|fixtures\/desktop-launch\/)/,
+];
 
 const OWN_TEST_JOB = new Set(["t3", "@t3tools/web", "@t3tools/monorepo"]);
 
@@ -151,12 +166,18 @@ function decide(files, packages, full) {
     (pkg) => pkg.hasTest && !OWN_TEST_JOB.has(pkg.name) && affected.has(pkg.name),
   );
   const has = (name) => affected.has(name);
+  const desktopLaunch =
+    everything ||
+    files.some(
+      (file) => !/\.test\.tsx?$/.test(file) && DESKTOP_LAUNCH.some((pattern) => pattern.test(file)),
+    );
 
   return {
     affected: [...affected].sort(),
     outputs: {
       typecheck: affected.size > 0,
-      build: has("@t3tools/desktop") || has("t3") || has("@t3tools/web"),
+      build: has("@t3tools/desktop") || has("t3") || has("@t3tools/web") || desktopLaunch,
+      desktop_launch: desktopLaunch,
       test: tested.length > 0,
       // Empty means every package the Test job covers.
       test_packages: everything ? "" : tested.map((pkg) => pkg.name).join(" "),
