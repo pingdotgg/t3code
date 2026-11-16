@@ -47,7 +47,7 @@ again. The pass rolls up a run of four current roots when that run ends before t
 gap, and makes a new leaf only after those runs. A gap keeps the roots on its far side out of
 that run, so the neighbours of a replaced leaf never roll up without the replacement. Rolling
 them up early would summarize more than the broken path, which could then not be rebuilt alone.
-A stretch is skipped after two unusable summaries, and a failure counts only when another summary
+A stretch is skipped after two failed summaries, and a failure counts only when another summary
 succeeds in the same pass, so an outage skips nothing. A skipped stretch gets no leaf, so it is not
 a gap and roll-ups proceed past it; delivery replays its items in full. Skips are keyed by the
 summary model, and turning summaries back on for the project clears them.

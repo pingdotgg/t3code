@@ -929,6 +929,34 @@ const make = Effect.gen(function* () {
       const chunkFailures = new Map<string, ChunkFailure>(
         (prior?.chunkFailures ?? []).map((failure) => [failure.key, failure]),
       );
+      const charges: Array<{
+        readonly key: string;
+        readonly reason: string;
+        readonly suspect: boolean;
+      }> = [];
+      const charge = ({ key, reason, suspect }: (typeof charges)[number]) => {
+        const failures = (chunkFailures.get(key)?.failures ?? 0) + (suspect ? 0 : 1);
+        chunkFailures.delete(key);
+        chunkFailures.set(key, {
+          key,
+          failures,
+          ...(failures >= CHUNK_FAILURES_BEFORE_SKIP ? { skipped: true } : {}),
+          ...(suspect ? { suspect: true } : {}),
+          reason: reason.slice(0, 300),
+        });
+      };
+      // Re-enabling summaries may clear the ledger while this pass runs. The reset wins, so only
+      // this pass's own failures survive it.
+      const keepReset = Effect.fnUntraced(function* () {
+        if (prior?.chunkFailures === undefined) return;
+        const cleared = yield* sql<{ readonly cleared: number }>`
+          SELECT json_extract(payload_json, '$.chunkFailures') IS NULL AS cleared
+          FROM conversation_summary_passes WHERE thread_id = ${threadId}
+        `;
+        if (cleared[0]?.cleared !== 1) return;
+        chunkFailures.clear();
+        for (const failure of charges) charge(failure);
+      });
       const finish = (
         result: ConversationSummaryPass["result"],
         reason: string | null,
@@ -938,6 +966,7 @@ const make = Effect.gen(function* () {
       ) =>
         cleanupSuperseded(superseded()).pipe(
           Effect.andThen(DateTime.now),
+          Effect.tap(keepReset),
           Effect.flatMap((now) => {
             const failures = [...chunkFailures.values()];
             const open = failures.filter((failure) => failure.skipped !== true);
@@ -956,6 +985,7 @@ const make = Effect.gen(function* () {
               ...(stored.length === 0 ? {} : { chunkFailures: stored }),
             });
           }),
+          sql.withTransaction,
           Effect.as({ hasMore }),
         );
       if (records.thread.deletedAt !== null)
@@ -1283,11 +1313,7 @@ const make = Effect.gen(function* () {
         return null;
       };
       const blocked = new Set<string>();
-      const failed: Array<{
-        readonly raw: string;
-        readonly reason: string;
-        readonly countable: boolean;
-      }> = [];
+      const failed: Array<{ readonly raw: string; readonly reason: string }> = [];
       let stoppedBy: string | undefined;
       let attempts = 0;
       while (generated < MAX_SUMMARIES_PER_PASS && attempts < MAX_SUMMARIES_PER_PASS) {
@@ -1298,14 +1324,11 @@ const make = Effect.gen(function* () {
         const published =
           work.kind === "leaf" ? yield* summarizeLeaf(work.chunk) : yield* condense(work.group);
         if (!published.ok) {
-          failed.push({
-            raw: work.key,
-            reason: published.reason,
-            countable: published.unusableReply,
-          });
+          failed.push({ raw: work.key, reason: published.reason });
           blocked.add(work.key);
-          // An outage or a rejected request fails the pass so it retries, but its work goes last.
-          if (!published.unusableReply) {
+          // Before any success, an outage or a rejected request fails the pass so it retries, but
+          // its work goes last.
+          if (!published.unusableReply && generated === 0) {
             stoppedBy = published.reason;
             break;
           }
@@ -1319,19 +1342,11 @@ const make = Effect.gen(function* () {
       }
       // With nothing succeeding, the model may be down or unable to answer at all. Blaming the
       // chunk would skip the thread's whole history, so that failure is not counted.
-      const charge = (key: string, reason: string, suspect: boolean) => {
-        const failures = (chunkFailures.get(key)?.failures ?? 0) + (suspect ? 0 : 1);
-        chunkFailures.delete(key);
-        chunkFailures.set(key, {
-          key,
-          failures,
-          ...(failures >= CHUNK_FAILURES_BEFORE_SKIP ? { skipped: true } : {}),
-          ...(suspect ? { suspect: true } : {}),
-          reason: reason.slice(0, 300),
-        });
-      };
-      for (const { raw, reason, countable } of failed)
-        charge(yield* keyOf(raw), reason, !countable || generated === 0);
+      for (const { raw, reason } of failed) {
+        const failure = { key: yield* keyOf(raw), reason, suspect: generated === 0 };
+        charges.push(failure);
+        charge(failure);
+      }
       if (stoppedBy !== undefined)
         return yield* finish("failed", stoppedBy.slice(0, 300), generated, waiting()).pipe(
           Effect.andThen(
@@ -1344,13 +1359,14 @@ const make = Effect.gen(function* () {
       const skipReason =
         skipped.length === 0
           ? null
-          : `Skipped ${skipped.length === 1 ? "a stretch" : `${skipped.length} stretches`} after ${CHUNK_FAILURES_BEFORE_SKIP} unusable summaries. ${skipped[0]!.reason}`.slice(
+          : `Skipped ${skipped.length === 1 ? "a stretch" : `${skipped.length} stretches`} after ${CHUNK_FAILURES_BEFORE_SKIP} failed summaries. ${skipped[0]!.reason}`.slice(
               0,
               300,
             );
       return yield* finish(
         generated > 0 ? "ran" : "skipped",
         skipReason ??
+          failed[0]?.reason.slice(0, 300) ??
           (generated > 0 ? null : "No settled stretch is long enough to summarize yet."),
         generated,
         waiting(),
