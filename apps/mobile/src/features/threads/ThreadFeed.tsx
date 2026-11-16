@@ -1690,9 +1690,12 @@ function ThreadAutomationMessageRow(props: {
 
 /** Leads with why T3 Code compacted, when it did so without being asked. */
 function compactionLabel(label: string, title: string | undefined) {
-  return title !== undefined && label.startsWith("Context compacted")
-    ? title + label.slice("Context compacted".length)
-    : label;
+  const text =
+    title !== undefined && label.startsWith("Context compacted")
+      ? title + label.slice("Context compacted".length)
+      : label;
+  // Non-breaking spaces keep "549K → 16.8K tokens" on one line when the label wraps.
+  return text.replace(/ (→|tokens)/g, "\u00A0$1").replace(/→ /g, "→\u00A0");
 }
 
 function RunFoldWorking(props: {
