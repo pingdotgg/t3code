@@ -85,7 +85,13 @@ const make = Effect.gen(function* () {
             return Effect.succeed([]);
           }),
         );
-        const plan = yield* store.getLatestTodoList(target.threadId);
+        const plan = yield* store.getLatestTodoList(target.threadId).pipe(
+          Effect.catch((cause) => {
+            if (target.threadId === input.threadId) return Effect.fail(cause);
+            unavailableThreadIds.push(target.threadId);
+            return Effect.undefined;
+          }),
+        );
         const latestRun = snapshot.runs.reduce<(typeof snapshot.runs)[number] | null>(
           (held, run) => (held === null || run.ordinal > held.ordinal ? run : held),
           null,
@@ -94,7 +100,7 @@ const make = Effect.gen(function* () {
           threadId: target.threadId,
           parentThreadId: target.parentThreadId,
           title: snapshot.thread.title,
-          status: target.status ?? latestRun?.status ?? "idle",
+          status: latestRun?.status ?? target.status ?? "idle",
           providerInstanceIds: [
             ...new Set(snapshot.providerThreads.map((thread) => thread.providerInstanceId)),
           ],
@@ -252,7 +258,12 @@ const make = Effect.gen(function* () {
         }
         return { ...row, usage: { ...usage, ...totals } };
       });
-      return { rows: resultRows, remotes, unavailableThreadIds, truncated };
+      return {
+        rows: resultRows,
+        remotes,
+        unavailableThreadIds: [...new Set(unavailableThreadIds)],
+        truncated,
+      };
     },
     (effect, input) =>
       effect.pipe(

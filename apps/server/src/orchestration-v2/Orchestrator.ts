@@ -16246,6 +16246,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             thread.archivedAt !== null ||
             thread.deletedAt !== null ||
             thread.settledOverride === "settled" ||
+            (thread.lastSnoozeWakeAt != null &&
+              latest.completedAt !== null &&
+              DateTime.toEpochMillis(thread.lastSnoozeWakeAt) >=
+                DateTime.toEpochMillis(latest.completedAt)) ||
             (thread.snoozedUntil != null &&
               DateTime.toEpochMillis(thread.snoozedUntil) > DateTime.toEpochMillis(now)) ||
             DateTime.toEpochMillis(input.snoozedUntil) <= DateTime.toEpochMillis(now)

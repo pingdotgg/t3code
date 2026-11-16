@@ -86,7 +86,12 @@ const insertTask = (
 /** Starts a turn from `message`, writes its completion, and lets the reactor see it. */
 const completeTurn = Effect.fn("test.completeTurn")(function* (
   message: { scheduledTaskId?: ScheduledTaskId } = {},
-  options: { queueAnother?: boolean; pendingQuestion?: boolean; sendBeforeHandle?: boolean } = {},
+  options: {
+    queueAnother?: boolean;
+    pendingQuestion?: boolean;
+    sendBeforeHandle?: boolean;
+    snoozeBeforeComplete?: boolean;
+  } = {},
 ) {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -134,6 +139,14 @@ const completeTurn = Effect.fn("test.completeTurn")(function* (
   const { runs } = yield* projections.getThreadRecords(threadId, ["runs"]);
   const run = runs.find((candidate) => candidate.ordinal === 1)!;
   const now = yield* DateTime.now;
+  if (options.snoozeBeforeComplete) {
+    yield* orchestrator.dispatch({
+      type: "thread.snooze",
+      commandId: CommandId.make("manual-scheduled-snooze"),
+      threadId,
+      snoozedUntil: "2031-01-01T00:00:00.000Z",
+    });
+  }
   const events: OrchestrationV2DomainEvent[] = [];
   if (options.pendingQuestion === true) {
     events.push({
@@ -188,39 +201,44 @@ const snoozedUntil = Effect.gen(function* () {
   return thread.snoozedUntil == null ? null : DateTime.formatIso(thread.snoozedUntil);
 });
 
-it.effect("snoozes until the soonest future run of an enabled task bound to the thread", () =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* insertTask(sql, { id: "later", threadId, next: "2030-02-01T00:00:00.000Z" });
-    yield* insertTask(sql, { id: "soonest", threadId, next: NEXT_RUN });
-    yield* insertTask(sql, {
-      id: "paused",
-      threadId,
-      next: "2029-06-01T00:00:00.000Z",
-      enabled: 0,
-    });
-    yield* insertTask(sql, { id: "overdue", threadId, next: "1969-01-01T00:00:00.000Z" });
-    yield* insertTask(sql, { id: "webhook", threadId, next: null });
-    yield* insertTask(sql, {
-      id: "other",
-      threadId: "thread:other",
-      next: "2029-06-01T00:00:00.000Z",
-    });
-    const completed = yield* completeTurn();
-    assert.strictEqual(yield* snoozedUntil, NEXT_RUN);
+it.effect.each([false, true])(
+  "preserves manual wakes after completion with prior snooze %s",
+  (snoozeBeforeComplete) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* insertTask(sql, { id: "later", threadId, next: "2030-02-01T00:00:00.000Z" });
+      yield* insertTask(sql, { id: "soonest", threadId, next: NEXT_RUN });
+      yield* insertTask(sql, {
+        id: "paused",
+        threadId,
+        next: "2029-06-01T00:00:00.000Z",
+        enabled: 0,
+      });
+      yield* insertTask(sql, { id: "overdue", threadId, next: "1969-01-01T00:00:00.000Z" });
+      yield* insertTask(sql, { id: "webhook", threadId, next: null });
+      yield* insertTask(sql, {
+        id: "other",
+        threadId: "thread:other",
+        next: "2029-06-01T00:00:00.000Z",
+      });
+      const completed = yield* completeTurn({}, { snoozeBeforeComplete });
+      assert.strictEqual(
+        yield* snoozedUntil,
+        snoozeBeforeComplete ? "2031-01-01T00:00:00.000Z" : NEXT_RUN,
+      );
 
-    // A re-emitted completion must not undo a manual wake.
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    yield* orchestrator.dispatch({
-      type: "thread.unsnooze",
-      commandId: CommandId.make("wake-scheduled-snooze"),
-      threadId,
-      reason: "user",
-    });
-    const reactor = yield* ScheduledTaskSnoozeReactor.ScheduledTaskSnoozeReactor;
-    yield* reactor.handle(completed);
-    assert.strictEqual(yield* snoozedUntil, null);
-  }).pipe(Effect.provide(layerTest(true))),
+      // A re-emitted completion must not undo a manual wake.
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      yield* orchestrator.dispatch({
+        type: "thread.unsnooze",
+        commandId: CommandId.make("wake-scheduled-snooze"),
+        threadId,
+        reason: "user",
+      });
+      const reactor = yield* ScheduledTaskSnoozeReactor.ScheduledTaskSnoozeReactor;
+      yield* reactor.handle(completed);
+      assert.strictEqual(yield* snoozedUntil, null);
+    }).pipe(Effect.provide(layerTest(true))),
 );
 
 it.effect.each([

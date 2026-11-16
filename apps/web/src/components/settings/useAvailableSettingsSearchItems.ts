@@ -13,7 +13,7 @@ import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
 import { isProviderSettingsEnvironmentAvailable } from "./ProviderSettingsPanel.logic";
 import {
   filterAvailableSettingsSearchItems,
-  getThreadAutoSettlementSearchAvailability,
+  getThreadSettingsSearchAvailability,
 } from "./settingsSearch";
 
 export function useAvailableSettingsSearchItems() {
@@ -42,7 +42,10 @@ export function useAvailableSettingsSearchItems() {
         environment.serverConfig.managedPolicy?.limits?.providers?.allowedDrivers === undefined,
     ) === true;
   const hasThreadAutoSettlement =
-    getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0;
+    getThreadSettingsSearchAvailability(environments).eligibleEnvironmentIds.length > 0;
+  const hasScheduledTaskSnooze =
+    getThreadSettingsSearchAvailability(environments, undefined, "scheduledTaskSnooze")
+      .eligibleEnvironmentIds.length > 0;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const canMaintain = useEnvironmentScope(primaryEnvironmentId, AuthEnvironmentMaintainScope);
   const hasPeerLinkHost = usePeerLinkHosts().length > 0;
@@ -68,6 +71,7 @@ export function useAvailableSettingsSearchItems() {
     canManageLocalBackend,
     isWslSettingsRowVisible: wslSettingsRowVisible,
     hasThreadAutoSettlement,
+    hasScheduledTaskSnooze,
     managedTunnelActive,
     hasPeerLinkHost,
     hasFastWorktreeCheckoutEnvironment,

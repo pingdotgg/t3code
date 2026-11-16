@@ -10,7 +10,7 @@ import * as Schema from "effect/Schema";
 import {
   filterAvailableSettingsSearchItems,
   getSettingsSearchTargetScope,
-  getThreadAutoSettlementSearchAvailability,
+  getThreadSettingsSearchAvailability,
   isSettingsSearchScopeAvailable,
   movedSettingsPath,
   searchSettings,
@@ -130,6 +130,30 @@ describe("searchSettings", () => {
       hasThreadAutoSettlement: false,
     });
 
+    const connectedWithoutSnooze = filterAvailableSettingsSearchItems({
+      hasCloudPublicConfig: false,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: true,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: true,
+    });
+    expect(connectedWithoutSnooze.map((item) => item.id)).not.toContain(
+      "snooze-until-scheduled-task",
+    );
+    const connectedWithSnooze = filterAvailableSettingsSearchItems({
+      hasCloudPublicConfig: false,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: true,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: true,
+      hasScheduledTaskSnooze: true,
+    });
+    expect(connectedWithSnooze.map((item) => item.id)).toContain("snooze-until-scheduled-task");
+    expect(getSettingsSearchTargetScope("snooze-until-scheduled-task")).toMatchObject({
+      requiresScheduledTaskSnooze: true,
+    });
     const gatedIds = new Set<string>([
       "follow-change-request-templates",
       "git-fetch-interval",
@@ -270,11 +294,14 @@ describe("settings search targets", () => {
 });
 
 describe("auto-settlement search availability", () => {
-  function environment(id: string, { connected = true, loaded = true } = {}) {
+  function environment(
+    id: string,
+    { connected = true, loaded = true, scheduledTaskSnooze = true } = {},
+  ) {
     return {
       environmentId: EnvironmentId.make(id),
       connection: { phase: connected ? ("connected" as const) : ("offline" as const) },
-      serverConfig: loaded ? { environment: { capabilities: {} } } : null,
+      serverConfig: loaded ? { environment: { capabilities: { scheduledTaskSnooze } } } : null,
     };
   }
 
@@ -284,8 +311,31 @@ describe("auto-settlement search availability", () => {
   const environments = [capable, offline, loading];
 
   it("keeps results discoverable when one connected environment supports them", () => {
-    const availability = getThreadAutoSettlementSearchAvailability(environments);
+    const availability = getThreadSettingsSearchAvailability(environments);
     expect(availability.eligibleEnvironmentIds).toEqual([capable.environmentId]);
+    const unsupported = environment("unsupported", { scheduledTaskSnooze: false });
+    const mixed = [capable, unsupported, offline, loading];
+    expect(
+      getThreadSettingsSearchAvailability(
+        mixed,
+        { kind: "all", environmentIds: mixed.map((entry) => entry.environmentId) },
+        "scheduledTaskSnooze",
+      ),
+    ).toEqual({ eligibleEnvironmentIds: [capable.environmentId], isTargetAvailable: false });
+    expect(
+      getThreadSettingsSearchAvailability(
+        mixed,
+        { kind: "environment", environmentIds: [capable.environmentId] },
+        "scheduledTaskSnooze",
+      ).isTargetAvailable,
+    ).toBe(true);
+    expect(
+      getThreadSettingsSearchAvailability(
+        mixed,
+        { kind: "environment", environmentIds: [unsupported.environmentId] },
+        "scheduledTaskSnooze",
+      ).isTargetAvailable,
+    ).toBe(false);
     const items = filterAvailableSettingsSearchItems({
       hasCloudPublicConfig: false,
       hasEnvironment: true,
@@ -306,7 +356,7 @@ describe("auto-settlement search availability", () => {
     "does not render the target on $environmentId or silently fall back",
     (selected) => {
       expect(
-        getThreadAutoSettlementSearchAvailability(environments, {
+        getThreadSettingsSearchAvailability(environments, {
           kind: "environment",
           environmentIds: [selected.environmentId],
         }),
@@ -317,7 +367,7 @@ describe("auto-settlement search availability", () => {
   it("ignores offline and unloaded targets when all connected targets support the setting", () => {
     const selected = [capable, offline, loading];
     expect(
-      getThreadAutoSettlementSearchAvailability(selected, {
+      getThreadSettingsSearchAvailability(selected, {
         kind: "all",
         environmentIds: selected.map((entry) => entry.environmentId),
       }).isTargetAvailable,
