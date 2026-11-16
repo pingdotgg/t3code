@@ -4,25 +4,23 @@ import { BackHandler, Keyboard } from "react-native";
 import { AppBar } from "../../../components/ui/AppBar";
 import { appBarMenuItemsFromActions } from "../../../components/ui/menuActionItems";
 import { useHardwareKeyboardCommand } from "../../keyboard/hardwareKeyboardCommands";
-import { WorkspaceBrandTitle } from "./WorkspaceBrandTitle";
+import { WorkspaceConnectionTitle } from "../../home/WorkspaceConnectionTitle";
+import { SharedSlotTitle } from "./SharedSlotTitle";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import type { PullRequestFilterMenu } from "../../pull-requests/PullRequestListFilters";
 import { openSettings } from "../../settings/settings-navigation";
 
-const SECTIONS = {
-  pullRequests: { title: "Pull requests", noun: "pull requests" },
-  issues: { title: "Issues", noun: "issues" },
-} as const;
+const NOUNS = { pullRequests: "pull requests", issues: "issues" } as const;
 
 /** Pull request and issue search share the thread list's Android header. */
 export function ListSearchToolbar(props: {
-  readonly tab: keyof typeof SECTIONS;
+  readonly tab: keyof typeof NOUNS;
   readonly filters?: PullRequestFilterMenu | null;
   readonly onRequestVisibility?: () => void;
 }) {
   const navigation = useNavigation();
   const { filters, tab: section } = props;
-  const { title, noun } = SECTIONS[section];
+  const noun = NOUNS[section];
   const workspace = useWorkspaceTabs()!;
   const { dispatch, getScrollOffset, recordScrollOffset, isTabActive } = workspace;
   const { onRequestVisibility } = props;
@@ -63,9 +61,10 @@ export function ListSearchToolbar(props: {
     <AppBar
       title="T3 Code"
       titleContent={
-        <WorkspaceBrandTitle
-          accessibilityLabel={`T3 Code, ${title}`}
-          onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
+        <WorkspaceConnectionTitle
+          grow
+          onPress={() => openSettings(navigation, "SettingsEnvironments")}
+          brand={<SharedSlotTitle tab={section} />}
         />
       }
       search={{

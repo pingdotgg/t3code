@@ -5,6 +5,7 @@ import {
   moveNavigationTab,
   overflowNavigationTabs,
   enabledNavigationTabs,
+  sharedSlotAbsentee,
   toggleNavigationTabVisibility,
   resolveSelectedNavigationTab,
   resolveNavigationTabOrder,
@@ -26,6 +27,13 @@ describe("navigation tab order", () => {
       resolveNavigationTabOrder(["usage", "home", "inbox", "settings", "usage", null]),
     ).toEqual(["usage", "threads", "pullRequests", "issues"]);
     expect(resolveNavigationTabOrder()).toEqual(NAVIGATION_TAB_ORDER);
+  });
+
+  it("gives the shared slot to the open list, or else the one opened last", () => {
+    expect(sharedSlotAbsentee("issues", "pullRequests")).toBe("pullRequests");
+    expect(sharedSlotAbsentee("pullRequests", "issues")).toBe("issues");
+    expect(sharedSlotAbsentee("threads", "issues")).toBe("pullRequests");
+    expect(sharedSlotAbsentee("usage", undefined)).toBe("issues");
   });
 
   it("moves a section without changing the relative order of the others", () => {
