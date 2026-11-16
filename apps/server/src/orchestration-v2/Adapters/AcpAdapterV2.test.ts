@@ -611,6 +611,7 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
     prompt: AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"],
   ) => AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"];
   readonly cancelled?: Deferred.Deferred<void>;
+  readonly followAgentWorkState?: boolean;
 }) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const natives: Array<AcpSessionRuntime.AcpSessionRuntime["Service"]> = [];
@@ -621,6 +622,7 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
       driver: ACP_TEST_DRIVER,
       capabilities: AcpProviderCapabilitiesV2,
       promptInactivityTimeout: "15 minutes",
+      ...(input.followAgentWorkState === true ? { followAgentWorkState: true } : {}),
       makeRuntime: makeMockRuntime({
         childProcessSpawner,
         mockAgentPath: yield* bundledMockAgentPath,
@@ -639,6 +641,9 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
       }),
     },
     selfInvocation: yield* resolveSelfInvocation(),
+    ...(input.followAgentWorkState === true
+      ? { continuationRequests: { offer: () => Effect.void } }
+      : {}),
   });
   const threadId = ThreadId.make("thread-acp-prompt-inactivity");
   const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -5189,6 +5194,41 @@ describe("AcpAdapterV2", () => {
       assert.equal(next?.status, "completed");
       assert.lengthOf(harness.natives, 3);
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each([false, true])(
+    "ends a running tool call when its agent process exits mid-prompt (followAgentWorkState: %s)",
+    (followAgentWorkState) =>
+      Effect.gen(function* () {
+        const harness = yield* makePromptInactivityHarness({
+          followAgentWorkState,
+          environment: (runtimeOrdinal) =>
+            runtimeOrdinal === 1 ? { T3_ACP_EMIT_TRACKED_TOOL_CALL_KIND_THEN_HANG: "execute" } : {},
+        });
+        yield* harness.startTurn(1);
+        let exited = false;
+        const statuses = yield* harness.runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "tracked-tool-call"
+              ? Stream.make(event.turnItem.status)
+              : Stream.empty,
+          ),
+          // The agent dies while its tool call is open.
+          Stream.tap(() =>
+            exited
+              ? Effect.void
+              : Effect.sync(() => (exited = true)).pipe(
+                  Effect.andThen(harness.natives[0]!.notify("_test/exit", {})),
+                ),
+          ),
+          Stream.runCollect,
+          Effect.map((collected) => Array.from(collected)),
+        );
+        // regression: #37368 the dead agent's tool call stayed open in the failed turn.
+        assert.include(["failed", "interrupted", "cancelled"], statuses.at(-1));
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("does not poll the process ledger while a cgroup lease owns teardown", () =>

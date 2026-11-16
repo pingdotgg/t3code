@@ -75,9 +75,10 @@ describe("V2 preview upgrade", () => {
         [93, "ProviderTurnAttemptIndex"],
         [94, "TurnItemMessageOrdinalIndex"],
         [95, "TurnItemInlineWorkOutput"],
-        [96, "FleetPeerEnvironments"],
-        [97, "OpenShellFleetState"],
-        [98, "FleetDrainImports"],
+        [96, "RepairStaleTitleRegeneration"],
+        [97, "FleetPeerEnvironments"],
+        [98, "OpenShellFleetState"],
+        [99, "FleetDrainImports"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -196,9 +197,10 @@ describe("V2 preview upgrade", () => {
         [93, "ProviderTurnAttemptIndex"],
         [94, "TurnItemMessageOrdinalIndex"],
         [95, "TurnItemInlineWorkOutput"],
-        [96, "FleetPeerEnvironments"],
-        [97, "OpenShellFleetState"],
-        [98, "FleetDrainImports"],
+        [96, "RepairStaleTitleRegeneration"],
+        [97, "FleetPeerEnvironments"],
+        [98, "OpenShellFleetState"],
+        [99, "FleetDrainImports"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
