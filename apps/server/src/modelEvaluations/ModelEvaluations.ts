@@ -128,6 +128,10 @@ function summarize(
             ),
           ),
         ].slice(0, 3);
+      const confidence: ModelEvaluationGuidance["confidence"] =
+        scored.filter((record) => record.verdict?.confidence !== "low").length >= 5
+          ? "observed"
+          : "provisional";
       return {
         scope: first.scope,
         modelSelection: first.modelSelection,
@@ -138,10 +142,7 @@ function summarize(
         insufficientEvidenceCount: group.length - scored.length,
         meanScores,
         scoreCounts,
-        confidence:
-          scored.filter((record) => record.verdict?.confidence !== "low").length >= 5
-            ? "observed"
-            : "provisional",
+        confidence,
         promptChars: {
           min: prompts[0] ?? 0,
           median:

@@ -569,7 +569,7 @@ it.effect(
         yield* seed({
           thread,
           run: id,
-          subagent: entry.subagent,
+          ...(entry.subagent ? { subagent: true } : {}),
           model: { ...modelSelection, options: entry.options },
         });
         yield* service.evaluateRun({ threadId: thread, runId: id, runOutcome: "completed" });
