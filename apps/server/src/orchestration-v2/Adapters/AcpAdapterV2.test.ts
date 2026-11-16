@@ -4689,6 +4689,11 @@ describe("AcpAdapterV2", () => {
         const startupMethods = yield* pollProtocolMethods(protocolEvents);
         assert.include(startupMethods, "session/resume");
         assert.notInclude(startupMethods, "session/new");
+        const loaded = yield* runtime.readThreadSnapshot({ providerThread });
+        assert.deepEqual(
+          loaded.messages.map((message) => `${message.role}:${message.text}`),
+          ["user:replay"],
+        );
 
         yield* runtime.resumeThread({ providerThread, modelSelection, runtimePolicy });
         assert.notInclude(yield* pollProtocolMethods(protocolEvents), "session/resume");
