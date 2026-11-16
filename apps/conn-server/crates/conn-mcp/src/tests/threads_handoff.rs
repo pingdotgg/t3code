@@ -34,7 +34,7 @@ async fn create_threads_inherits_checkout_records_timeline_and_retries() {
         first["threads"][0]["threadId"],
         retry["threads"][0]["threadId"]
     );
-    for child in first["threads"].as_array().unwrap() {
+    for (index, child) in first["threads"].as_array().unwrap().iter().enumerate() {
         let projection = f
             .service
             .config
@@ -48,7 +48,29 @@ async fn create_threads_inherits_checkout_records_timeline_and_retries() {
             Value::Null
         );
         assert_eq!(projection["thread"]["runtimeMode"], "auto");
+        assert_eq!(
+            projection["runs"].as_array().unwrap().len(),
+            usize::from(index == 1),
+            "retry duplicated child {index}"
+        );
     }
+    let upgraded = json!({"threads":[{"prompt":"hang"}],"clientRequestId":"idle-upgrade"});
+    agent
+        .ok(
+            "create_threads",
+            json!({"threads":[{}],"clientRequestId":"idle-upgrade"}),
+        )
+        .await;
+    let started = agent.ok("create_threads", upgraded.clone()).await;
+    agent.ok("create_threads", upgraded).await;
+    let projection = f
+        .service
+        .config
+        .engine
+        .get_thread_projection(started["threads"][0]["threadId"].as_str().unwrap().into())
+        .await
+        .unwrap();
+    assert_eq!(projection["runs"].as_array().unwrap().len(), 1);
     assert_eq!(first["threads"][0]["status"], "idle");
     assert_eq!(first["threads"][2]["title"], "Parent thread 3");
     let parent = f
@@ -65,7 +87,7 @@ async fn create_threads_inherits_checkout_records_timeline_and_retries() {
             .iter()
             .filter(|i| i["type"] == "thread_created")
             .count(),
-        3
+        4
     );
     let (code, _) = agent
         .failure(
@@ -172,6 +194,7 @@ impl conn_engine::EngineHost for FilesHost {
         Box::pin(async move {
             let list: Vec<conn_contract::ChatAttachment> =
                 conn_contract::from_json(attachments).map_err(|e| e.to_string())?;
+            conn_files::attachments::validate_claims(&list)?;
             tokio::task::spawn_blocking(move || {
                 list.iter()
                     .map(|a| files.attachments.claim(&thread, a))
@@ -283,6 +306,23 @@ async fn attachments_claim_bytes_reuse_canonical_metadata_and_refuse_foreign_ids
             )
             .is_some()
     );
+    let duplicate =
+        json!({"type":"file","id":id,"name":"note.txt","mimeType":"text/plain","sizeBytes":3});
+    assert_eq!(
+        agent
+            .failure(
+                "t3_thread_send_attachments",
+                json!({"attachments":[duplicate.clone(),duplicate]})
+            )
+            .await,
+        (
+            "orchestration_error".into(),
+            "Duplicate attachment ids are not allowed.".into()
+        )
+    );
+    let images: Vec<_> = (0..2).map(|n|json!({"type":"file","id":format!("pending-00000000-0000-4000-8000-{n:012}"),"name":"photo.png","mimeType":"image/png","sizeBytes":50*1024*1024})).collect();
+    assert_eq!(agent.failure("t3_thread_send_attachments", json!({"attachments":images})).await,
+        ("orchestration_error".into(), "Images can total up to 80 MiB per message or question response. Use smaller images or send fewer at once.".into()));
     let result = agent.ok("t3_thread_send_attachments",json!({"attachments":[{"type":"file","id":id,"name":"note.txt","mimeType":"text/plain","sizeBytes":3}]})).await;
     let projection = f
         .service
@@ -299,6 +339,11 @@ async fn attachments_claim_bytes_reuse_canonical_metadata_and_refuse_foreign_ids
         .unwrap();
     let attachment = &message["attachments"][0];
     assert_ne!(attachment["id"], id);
+    assert_eq!(
+        crate::lock(&f.service.upload_owners).pending_count(),
+        0,
+        "claimed owners consume pending capacity"
+    );
     assert_eq!(message["senderThreadId"], parent["threadId"]);
     let stored = files
         .attachments
@@ -410,6 +455,18 @@ async fn nested_inputs_validate_before_access_and_trim_as_t3() {
     let mut agent = Client::open(&f.service, caller).await;
     for (tool, input, path, expected) in [
         (
+            "t3_worktree_list",
+            json!({"threadId":" "}),
+            "[\"threadId\"]",
+            "a non-blank string",
+        ),
+        (
+            "t3_worktree_list",
+            json!({"query":"x".repeat(257)}),
+            "[\"query\"]",
+            "a value with a length of at most 256",
+        ),
+        (
             "create_threads",
             json!({"threads":[{"title":" "}]}),
             "[\"threads\"][0][\"title\"]",
@@ -445,6 +502,13 @@ async fn nested_inputs_validate_before_access_and_trim_as_t3() {
     }
     let created = agent.ok("create_threads",json!({"threads":[{"title":"  Trim me  ","target":{"providerInstanceId":" claudeAgent "}}]})).await;
     assert_eq!(created["threads"][0]["title"], "Trim me");
+    let omitted = agent
+        .ok(
+            "create_threads",
+            json!({"threads":[{"title":null,"target":{"providerInstanceId":null}}]}),
+        )
+        .await;
+    assert_eq!(omitted["threads"][0]["title"], "Parent thread 1");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -614,7 +678,7 @@ async fn handoff_fetches_remote_base_and_list_falls_back_after_worktree_cleanup(
         .unwrap();
     let mut outside = Client::open(&f.service, client(false)).await;
     let refs = outside
-        .ok("t3_worktree_list", json!({"threadId":parent["threadId"]}))
+        .ok("t3_worktree_list", json!({"threadId":format!("  {}  ",parent["threadId"].as_str().unwrap()),"query":"  main  "}))
         .await;
     assert_eq!(refs["isRepo"], true);
     assert!(
@@ -631,33 +695,7 @@ async fn concurrent_handoff_is_refused_and_a_raced_binding_rolls_back_git() {
     let f = fixture("handoff-race");
     let root = git_project(&f).await;
     let (parent, caller) = running_parent(&f).await;
-    let ready = f.dir.join("ready");
-    let release = f.dir.join("release");
-    let hook = root.join(".git/hooks/post-checkout");
-    let (a, b, c) = (ready.clone(), release.clone(), hook);
-    tokio::task::spawn_blocking(move || {
-        use std::os::unix::fs::PermissionsExt;
-        assert!(
-            std::process::Command::new("mkfifo")
-                .args([&a, &b])
-                .status()
-                .unwrap()
-                .success()
-        );
-        let quote = |p: &PathBuf| format!("'{}'", p.display().to_string().replace('\'', "'\\''"));
-        std::fs::write(
-            &c,
-            format!(
-                "#!/bin/sh\nprintf ready > {}\nread release < {}\n",
-                quote(&a),
-                quote(&b)
-            ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&c, std::fs::Permissions::from_mode(0o755)).unwrap();
-    })
-    .await
-    .unwrap();
+    let (ready, release) = checkout_gate(&f, &root).await;
     let service = f.service.clone();
     let first_caller = caller.clone();
     let first = tokio::spawn(async move {
@@ -696,5 +734,137 @@ async fn concurrent_handoff_is_refused_and_a_raced_binding_rolls_back_git() {
             .unwrap()
             .len(),
         1
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn create_threads_checks_project_provider_policy_and_prefixes_dispatch_errors() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    struct Policy(Arc<AtomicBool>);
+    impl conn_engine::EngineHost for Policy {
+        fn provider_instance_enabled(&self, _: Option<&str>, _: &str) -> bool {
+            self.0.load(Ordering::SeqCst)
+        }
+    }
+    let enabled = Arc::new(AtomicBool::new(true));
+    let f = fixture_with_host("batch-policy", Some(Arc::new(Policy(enabled.clone()))));
+    let (_, caller) = running_parent(&f).await;
+    let mut agent = Client::open(&f.service, caller).await;
+    let accepted = json!({"threads":[{"prompt":"hang"}],"clientRequestId":"accepted"});
+    agent.ok("create_threads", accepted.clone()).await;
+    agent
+        .ok(
+            "create_threads",
+            json!({"threads":[{}],"clientRequestId":"idle-disabled"}),
+        )
+        .await;
+    enabled.store(false, Ordering::SeqCst);
+    for target in [json!({}), json!({"providerInstanceId":"claudeAgent"})] {
+        assert_eq!(
+            agent
+                .failure("create_threads", json!({"threads":[{"target":target}]}))
+                .await,
+            (
+                "invalid_request".into(),
+                format!(
+                    "Provider instance \"claudeAgent\" is disabled for project {}.",
+                    project_id()
+                )
+            )
+        );
+    }
+    agent.ok("create_threads", accepted).await;
+    assert_eq!(
+        agent
+            .failure(
+                "create_threads",
+                json!({"threads":[{"prompt":"hang"}],"clientRequestId":"idle-disabled"})
+            )
+            .await
+            .0,
+        "invalid_request"
+    );
+    enabled.store(true, Ordering::SeqCst);
+    let conflict = "thread:mcp:handoff-session:conflict:1";
+    f.service.config.engine.dispatch(conn_contract::from_json(json!({"type":"thread.create","commandId":"conflict-existing","threadId":conflict,"projectId":project_id(),"title":"Existing","modelSelection":{"instanceId":"claudeAgent","model":"claude-haiku-5-5"},"runtimeMode":"auto","interactionMode":"default","branch":null,"worktreePath":null,"createdBy":"agent","creationSource":"mcp"})).unwrap()).await.unwrap();
+    assert_eq!(
+        agent
+            .failure(
+                "create_threads",
+                json!({"threads":[{},{}],"clientRequestId":"conflict"})
+            )
+            .await,
+        (
+            "orchestration_error".into(),
+            format!("Unable to create thread 2: Thread {conflict} already exists.")
+        )
+    );
+}
+
+async fn checkout_gate(f: &Fixture, root: &std::path::Path) -> (PathBuf, PathBuf) {
+    let ready = f.dir.join("ready");
+    let release = f.dir.join("release");
+    let hook = root.join(".git/hooks/post-checkout");
+    let (a, b, c) = (ready.clone(), release.clone(), hook);
+    tokio::task::spawn_blocking(move || {
+        use std::os::unix::fs::PermissionsExt;
+        assert!(
+            std::process::Command::new("mkfifo")
+                .args([&a, &b])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let quote = |p: &PathBuf| format!("'{}'", p.display().to_string().replace('\'', "'\\''"));
+        std::fs::write(
+            &c,
+            format!(
+                "#!/bin/sh\nprintf ready > {}\nread release < {}\n",
+                quote(&a),
+                quote(&b)
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&c, std::fs::Permissions::from_mode(0o755)).unwrap();
+    })
+    .await
+    .unwrap();
+    (ready, release)
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn handoff_reports_the_committed_continuation_when_the_caller_ends_during_checkout() {
+    let f = fixture("handoff-delivery-race");
+    let root = git_project(&f).await;
+    let (parent, caller) = running_parent(&f).await;
+    let (ready, release) = checkout_gate(&f, &root).await;
+    let service = f.service.clone();
+    let handoff = tokio::spawn(async move {
+        let mut agent = Client::open(&service, caller).await;
+        agent.ok("t3_worktree_handoff",json!({"branch":"feature/ended-caller","startFromOrigin":false,"continuationPrompt":"hang"})).await
+    });
+    tokio::task::spawn_blocking(move || std::fs::read(ready).unwrap())
+        .await
+        .unwrap();
+    let mut outside = Client::open(&f.service, client(true)).await;
+    outside
+        .ok(
+            "t3_thread_interrupt",
+            json!({"threadId":parent["threadId"],"runId":parent["runId"]}),
+        )
+        .await;
+    outside
+        .ok(
+            "t3_thread_wait",
+            json!({"threadId":parent["threadId"],"runId":parent["runId"],"timeoutMs":10000}),
+        )
+        .await;
+    tokio::task::spawn_blocking(move || std::fs::write(release, b"go\n").unwrap())
+        .await
+        .unwrap();
+    let moved = handoff.await.unwrap();
+    assert_eq!(
+        moved["continuation"],
+        json!({"status":"scheduled","delivery":"started"})
     );
 }

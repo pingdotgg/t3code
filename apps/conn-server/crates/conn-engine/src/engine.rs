@@ -1010,6 +1010,18 @@ impl Engine for SqliteEngine {
         })
     }
 
+    fn created_run_status<'a>(
+        &'a self,
+        command_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, String>> {
+        let command_id = command_id.to_owned();
+        Box::pin(async move {
+            self.inner
+                .db(move |store| store.created_run_status(&command_id))
+                .await
+        })
+    }
+
     fn dispatch(
         &self,
         command: Command,

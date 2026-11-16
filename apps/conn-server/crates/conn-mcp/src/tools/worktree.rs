@@ -13,7 +13,7 @@ use conn_vcs::{
 use serde_json::{Value, json};
 
 use super::{Args, Cx, ToolError, ToolResult, bool_arg, fail, internal, str_arg};
-use crate::{McpService, WorktreeConfig, view};
+use crate::{McpService, WorktreeConfig};
 
 fn failure(code: &'static str, message: impl Into<String>) -> ToolError {
     ToolError::Worktree {
@@ -269,7 +269,6 @@ async fn perform(cx: &Cx<'_>, args: &Args) -> ToolResult {
     .await
     .map_err(|e| operation("Unable to create the worktree", e))?;
     let path = worktree.path.to_string_lossy().into_owned();
-    let active = view::active_run(&projection).is_some();
     let bind = async {
         let recheck = load(cx).await?;
         if let Some(path) = recheck["thread"]["worktreePath"].as_str() {
@@ -284,13 +283,23 @@ async fn perform(cx: &Cx<'_>, args: &Args) -> ToolResult {
         if let Some(prompt) = str_arg(args,"continuationPrompt") {
             command["continuation"] = json!({"messageId":cx.stable_id("message","worktree-continuation",&key),"text":prompt});
         }
-        cx.dispatch(command).await.map_err(|e|operation("Unable to re-point the thread at the worktree",e))
+        let command_id = command["commandId"].as_str().unwrap_or_default().to_owned();
+        cx.dispatch(command).await.map_err(|e|operation("Unable to re-point the thread at the worktree",e))?;
+        Ok(command_id)
     }.await;
-    if let Err(error) = bind {
-        let _ = worktree::remove_worktree(&root, &worktree.path, Removal::Force).await;
-        let _ = worktree::delete_branch(&root, branch, Removal::Force).await;
-        return Err(error);
-    }
+    let command_id = match bind {
+        Ok(status) => status,
+        Err(error) => {
+            let _ = worktree::remove_worktree(&root, &worktree.path, Removal::Force).await;
+            let _ = worktree::delete_branch(&root, branch, Removal::Force).await;
+            return Err(error);
+        }
+    };
+    let created_run = cx
+        .engine()
+        .created_run_status(&command_id)
+        .await
+        .map_err(internal)?;
     let hub = config.hub.clone();
     let refresh_path = path.clone();
     tokio::spawn(async move {
@@ -308,7 +317,7 @@ async fn perform(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let scheduled = str_arg(args, "continuationPrompt").is_some();
     Ok(
         json!({"worktreePath":path,"branch":branch,"baseRef":base,"startedFromOrigin":remote.is_some(),"setupScript":setup,
-        "continuation":if scheduled {json!({"status":"scheduled","delivery":if active{"queued"}else{"started"}})}else{json!({"status":"skipped"})},
+        "continuation":if scheduled {json!({"status":"scheduled","delivery":if created_run.as_deref().is_some_and(|s|s != "queued"){"started"}else{"queued"}})}else{json!({"status":"skipped"})},
         "note":if scheduled {
             "Handoff recorded. Changing the workspace detaches this provider session, so the current turn ends shortly after this call; the queued continuation prompt then starts the next turn inside the worktree with the conversation preserved. The worktree is not removed automatically when the thread is deleted."
         } else {

@@ -109,6 +109,7 @@ pub(super) async fn create(cx: &Cx<'_>, args: &Args) -> ToolResult {
                 .unwrap_or("default"),
             request["interactionMode"].as_str(),
         )?;
+        assert_project_enabled(cx, &parent["thread"], &command_id, &selection).await?;
         let mut command = json!({
             "type":"thread.create", "commandId":command_id, "threadId":thread_id,
             "projectId":parent["thread"]["projectId"],
@@ -123,16 +124,35 @@ pub(super) async fn create(cx: &Cx<'_>, args: &Args) -> ToolResult {
         if let Some(origin) = parent["thread"].get("linkOrigin") {
             command["linkOrigin"] = origin.clone();
         }
-        cx.dispatch(command).await?;
+        cx.dispatch(command).await.map_err(|e| {
+            indexed_dispatch_error(e, &format!("Unable to create thread {}", index + 1))
+        })?;
+        let created_run = cx
+            .engine()
+            .created_run_status(&command_id)
+            .await
+            .map_err(internal)?;
         let mut projection = cx.projection(&thread_id).await?;
-        // A receipt with a prompt replays the send, too, without creating a second run.
-        if accepted && let Some(prompt) = request["prompt"].as_str() {
+        if created_run.is_none()
+            && let Some(prompt) = request["prompt"].as_str()
+        {
+            let dispatch_id = format!(
+                "{}:{index}",
+                cx.stable_id("command", "dispatch-thread", &key)
+            );
+            assert_project_enabled(
+                cx,
+                &parent["thread"],
+                &dispatch_id,
+                &projection["thread"]["modelSelection"],
+            )
+            .await?;
             cx.dispatch(json!({
-                "type":"message.dispatch", "commandId":format!("{}:{index}",cx.stable_id("command","dispatch-thread",&key)),
+                "type":"message.dispatch", "commandId":dispatch_id,
                 "threadId":thread_id,"messageId":message_id,"text":prompt,"attachments":[],
                 "senderThreadId":caller.thread_id,"modelSelection":projection["thread"]["modelSelection"],
                 "dispatchMode":{"type":"start_immediately"},"createdBy":"agent","creationSource":"mcp",
-            })).await?;
+            })).await.map_err(|e| indexed_dispatch_error(e, &format!("Unable to start thread {}", index + 1)))?;
             projection = cx.projection(&thread_id).await?;
         }
         let child_run = projection["runs"].as_array().and_then(|runs| runs.last());
@@ -140,7 +160,7 @@ pub(super) async fn create(cx: &Cx<'_>, args: &Args) -> ToolResult {
             "type":"thread.created.record", "commandId":format!("{}:{index}",cx.stable_id("command","record-created-thread",&key)),
             "parentThreadId":caller.thread_id,"parentRunId":run["id"],"parentNodeId":run["rootNodeId"],
             "targetThreadId":thread_id,"targetRunId":child_run.map(|r| &r["id"]),
-        })).await?;
+        })).await.map_err(|e| indexed_dispatch_error(e, &format!("Unable to record thread {} in the parent timeline", index + 1)))?;
         let thread = &projection["thread"];
         created.push(json!({
             "threadId":thread_id,"link":cx.link(&thread_id,thread["title"].as_str().unwrap_or_default()),
@@ -150,6 +170,38 @@ pub(super) async fn create(cx: &Cx<'_>, args: &Args) -> ToolResult {
         }));
     }
     Ok(json!({"threads":created}))
+}
+
+async fn assert_project_enabled(
+    cx: &Cx<'_>,
+    parent: &Value,
+    command_id: &str,
+    selection: &Value,
+) -> Result<(), super::ToolError> {
+    let instance = selection["instanceId"].as_str().unwrap_or_default();
+    let project = parent["projectId"].as_str().unwrap_or_default();
+    if !cx
+        .engine()
+        .has_receipt(command_id)
+        .await
+        .map_err(internal)?
+        && !cx.engine().provider_instance_enabled(project, instance)
+    {
+        return Err(fail(
+            "invalid_request",
+            format!("Provider instance \"{instance}\" is disabled for project {project}."),
+        ));
+    }
+    Ok(())
+}
+
+fn indexed_dispatch_error(error: super::ToolError, prefix: &str) -> super::ToolError {
+    match error {
+        super::ToolError::Failure { message, .. } => {
+            fail("orchestration_error", format!("{prefix}: {message}"))
+        }
+        other => other,
+    }
 }
 
 fn title(parent: &Value, request: &Value, index: usize) -> String {

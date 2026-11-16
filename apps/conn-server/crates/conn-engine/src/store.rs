@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS events (
   event     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_by_thread ON events(thread_id, seq);
+CREATE INDEX IF NOT EXISTS created_runs_by_command ON events(command_id, seq) WHERE type = 'run.created';
 CREATE TABLE IF NOT EXISTS threads (
   id          TEXT PRIMARY KEY,
   project_id  TEXT NOT NULL,
@@ -293,6 +294,23 @@ impl Store {
             .optional()
             .map(|seq| seq.map(|s| s as u64))
             .map_err(err)
+    }
+
+    pub(crate) fn created_run_status(&self, command_id: &str) -> StoreResult<Option<String>> {
+        let event: Option<String> = self.conn.query_row(
+            "SELECT event FROM events WHERE command_id = ?1 AND type = 'run.created' ORDER BY seq DESC LIMIT 1",
+            [command_id], |row| row.get(0),
+        ).optional().map_err(err)?;
+        event
+            .map(|event| {
+                parse(event).map(|e| {
+                    e["payload"]["status"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned()
+                })
+            })
+            .transpose()
     }
 
     pub(crate) fn thread_exists(&self, thread_id: &str) -> StoreResult<bool> {

@@ -60,3 +60,33 @@ export function rustCredential(file) {
 export function fileText(file) {
   return untilFile(path.dirname(file), () => fs.existsSync(file) ? fs.readFileSync(file,"utf8") : undefined);
 }
+
+export async function projectProviderPolicy(server, projectId, enabled, scripts) {
+  const response = await fetch(`${server.origin}/api/auth/websocket-ticket`, {
+    method: "POST", headers: {authorization:`Bearer ${server.bearer}`},
+  });
+  if (!response.ok) throw new Error(`policy ticket: ${response.status}`);
+  const {ticket} = await response.json();
+  const url = new URL(server.origin);
+  url.protocol = "ws:";
+  url.pathname = "/ws";
+  url.search = new URLSearchParams({orchestrationProtocol:"2",wsTicket:ticket}).toString();
+  const socket = new WebSocket(url);
+  try {
+    await new Promise((resolve,reject) => {
+      const timer = setTimeout(() => reject(new Error("No policy RPC response in 30 s")),30_000);
+      const finish = (error) => { clearTimeout(timer); error ? reject(error) : resolve(); };
+      socket.onerror = () => finish(new Error("Policy RPC socket failed"));
+      socket.onopen = () => socket.send(JSON.stringify({_tag:"Request",id:"1",tag:"server.updateSettings",headers:[],payload:{patch:{projectSettingsOverrides:{[projectId]:{providerInstances:{claudeAgent:{enabled}},defaultProjectScripts:scripts}}}}}));
+      socket.onmessage = ({data}) => {
+        for (const line of String(data).split("\n").filter(Boolean)) {
+          const parsed = JSON.parse(line);
+          for (const message of Array.isArray(parsed) ? parsed : [parsed]) {
+            if (message._tag === "Ping") socket.send(JSON.stringify({_tag:"Pong"}));
+            if (message._tag === "Exit" && message.requestId === "1") finish(message.exit?._tag === "Success" ? undefined : new Error(`Policy RPC: ${JSON.stringify(message.exit)}`));
+          }
+        }
+      };
+    });
+  } finally { socket.close(); }
+}

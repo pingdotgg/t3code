@@ -13,7 +13,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { McpSession, oauthMcpToken, pairBearer } from "./mcp-client.mjs";
-import { claudeStub, tsCredential, rustCredential, fileText } from "./handoff-fixture.mjs";
+import { claudeStub, tsCredential, rustCredential, fileText, projectProviderPolicy } from "./handoff-fixture.mjs";
 import { monorepo } from "../../../tools/monorepo.mjs";
 import { canaryEnv, gitEnv, sealedEnv, sealedPath } from "../../../tools/sealed-env.mjs";
 import { GUARD_ARG } from "../../../tools/no-outside-fetch.mjs";
@@ -621,13 +621,14 @@ for (const [tool, input, after, options] of run) {
   );
 }
 if (noModel) {
+  const setupScript = {
+        id:"parity-setup",name:"Parity setup",icon:"play",runOnWorktreeCreate:true,
+        command: String.raw`printf '%s\n%s\n' "$T3CODE_PROJECT_ROOT" "$T3CODE_WORKTREE_PATH" > handoff-setup.txt`,
+      };
   await Promise.all(servers.map(async (server,i) => {
     const response = await fetch(`${server.origin}/api/projects/mutate`,{
       method:"POST",headers:{authorization:`Bearer ${server.bearer}`,"content-type":"application/json"},
-      body:JSON.stringify({type:"project.update",commandId:"parity-setup-script",projectId:context[i].projectId,scripts:[{
-        id:"parity-setup",name:"Parity setup",icon:"play",runOnWorktreeCreate:true,
-        command: String.raw`printf '%s\n%s\n' "$T3CODE_PROJECT_ROOT" "$T3CODE_WORKTREE_PATH" > handoff-setup.txt`,
-      }]}),
+      body:JSON.stringify({type:"project.update",commandId:"parity-setup-script",projectId:context[i].projectId,scripts:[setupScript]}),
     });
     if (!response.ok) throw new Error(`fixture project scripts ${response.status}: ${await response.text()}`);
   }));
@@ -657,6 +658,15 @@ if (noModel) {
     ["t3_worktree_status", () => ({}), (v) => ({...v,projectWorkspaceRoot:"<project>"})],
     ["create_threads", () => ({threads:[{title:"Batch one"},{}],clientRequestId:"handoff-batch"}), (v) => v.threads.map((t) => ({title:t.title,status:t.status,createdBy:t.createdBy,creationSource:t.creationSource,providerInstanceId:t.providerInstanceId,model:t.model})), (c,v) => {c.targetThreadId=v.threads[0].threadId;}],
     ["create_threads", () => ({threads:[{title:"Batch one"},{}],clientRequestId:"handoff-batch"}), (v) => v.threads.map((t) => ({title:t.title,status:t.status}))],
+    ...[0,1].map(() => ["create_threads", () => ({threads:[{prompt:"hang"}],clientRequestId:"prompt-retry"}), (v) => ({hasRun:v.threads[0].runId !== null}), (c,v) => {
+      const run = v.threads[0].runId;
+      if (c.promptRun !== undefined && c.promptRun !== run) throw new Error("A prompted retry created another run");
+      c.promptRun = run;
+    }]),
+    ["create_threads", () => ({threads:[{title:null}]}), (v) => ({title:v.threads[0].title,model:v.threads[0].model,status:v.threads[0].status})],
+    ["create_threads", () => ({threads:[{target:{providerInstanceId:null}}]}), (v) => ({title:v.threads[0].title,model:v.threads[0].model,status:v.threads[0].status})],
+    ["t3_worktree_list", () => ({threadId:" "})],
+    ["t3_worktree_list", () => ({query:"x".repeat(257)})],
     ["create_threads", () => ({threads:[{runtimeMode:"full-access"}]})],
     ["create_threads", () => ({threads:[]})],
     ["create_threads", () => ({threads:[{title:"   "}]})],
@@ -671,12 +681,25 @@ if (noModel) {
       const response = await fetch(`${server.origin}${v.relativeUrl}`,{method:"POST",body:"abc"});
       if (!response.ok) throw new Error(`agent fixture upload ${response.status}`);
     }],
+    ["t3_thread_send_attachments", (c) => ({threadId:c.targetThreadId,attachments:[c.attachment,c.attachment]})],
+    ["t3_thread_send_attachments", (c) => ({threadId:c.targetThreadId,attachments:[0,1].map((n) => ({type:"file",id:`pending-00000000-0000-4000-8000-${String(n).padStart(12,"0")}-png`,name:"large.png",mimeType:"image/png",sizeBytes:50*1024*1024}))})],
     ["t3_thread_send_attachments", (c) => ({threadId:c.targetThreadId,attachments:[c.attachment],message:"hang"}), (v) => ({status:v.status})],
-    ["t3_attachment_discard", (c) => ({attachmentId:c.attachment.id}), (v) => v],
     ["t3_worktree_handoff", () => ({branch:"parity/handoff",startFromOrigin:true,continuationPrompt:"hang"}), (v) => ({...v,worktreePath:"<worktree>"}), (c,v) => {c.worktreePath=v.worktreePath;}],
     ["t3_worktree_status", () => ({}), (v) => ({...v,worktreePath:v.worktreePath === null ? null : "<worktree>",projectWorkspaceRoot:"<project>"})],
   ];
   for (const [tool,input,normalize = (v) => v,after] of agentSteps) {
+    if (tool === "t3_worktree_handoff" && input({}).branch === "parity/handoff") {
+      await Promise.all(servers.map((server,i) => projectProviderPolicy(server,context[i].projectId,false,[setupScript])));
+      for (const target of [{},{providerInstanceId:"claudeAgent"}]) {
+        const denied = await Promise.all(agents.map((agent) => agent.callTool("create_threads",{threads:[{target}]}).then(outcome)));
+        report("calling thread create_threads: disabled project provider refused",denied.every((r) => r.kind === "failure" && r.code === "invalid_request"));
+      }
+      const retries = await Promise.all(agents.map((agent) => agent.callTool("create_threads",{threads:[{prompt:"hang"}],clientRequestId:"prompt-retry"}).then(outcome)));
+      report("calling thread create_threads: accepted retry survives policy change",retries.every((r,i) => r.kind === "ok" && r.value.threads[0].runId === state[i].promptRun));
+      await Promise.all(servers.map((server,i) => projectProviderPolicy(server,context[i].projectId,true,[setupScript])));
+      const discards = await Promise.all(agents.map((agent,i) => agent.callTool("t3_attachment_discard",{attachmentId:state[i].attachment.id}).then(outcome)));
+      report("accepted difference: successful send reclaims Conn's pending owner slot",discards[0].kind === "ok" && discards[1].kind === "failure" && discards[1].code === "invalid_request");
+    }
     const values = await Promise.all(agents.map(async (agent,i) => {
       const result=outcome(await agent.callTool(tool,input(state[i])));
       if (result.kind === "ok") { await after?.(state[i],result.value,servers[i]); return {kind:"ok",value:normalize(result.value)}; }

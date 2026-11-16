@@ -9,7 +9,7 @@ is Linux; its clients are macOS and iOS. It adds no Windows, Android or non-GitH
 | Attachment toolkit | `tools/attachments.rs`, the client `conn-files::Files`, engine claims |
 | Worktree toolkit and `WorktreeMcpService` | `tools/worktree.rs`, `conn-vcs`, setup terminals |
 | `createThreads` | `tools/create_threads.rs`, `thread.create`, `thread.created.record` |
-| Parameter decoders | `gen-tools.mjs` generates `thread-inputs.json`; `input.rs` applies it |
+| Parameter decoders | `gen-tools.mjs` generates `thread-inputs.json`; `input.rs` applies it, compiling rules and patterns once |
 
 A workspace move queues its continuation in the binding transaction before ending the old
 run. Its session closes before the continuation starts. The old MCP credential stays usable
@@ -20,7 +20,10 @@ disconnects, so session teardown cannot strand a checkout.
 
 T3's upload owner registry expires entries after 24 hours plus the upload URL lifetime.
 This registry also caps live entries at 4,096 and refuses another prepare until space is
-available. It never evicts an unexpired owner. At most 256 handoffs run at once. No new
+available. A successful attachment send releases its pending owner slots; discarding a
+claimed upload then fails with `invalid_request`. T3 retains that ownership until discard
+or expiry. This bounded-registry difference is deliberate. A losing insertion cleans up any
+pending bytes. It never evicts an unexpired owner. At most 256 handoffs run at once. No new
 external crate is added: the MCP crate reuses files, VCS, terminals and the regex engine
 already linked by the server.
 
@@ -43,6 +46,8 @@ regression `worktree_base_fetch_skips_tags_and_deleted_tracking_refs` also prove
 fetch downloads no tags. The engine's `client-check.mjs` also decodes and
 reduces the new parent timeline item with the real client's code.
 
-A release-build stress run on Beast measured `Pss_Anon` at 1,952 KiB before staging uploads
-and 3,252 KiB with 4,096 owners. It stayed at 3,252 KiB after discarding them and after another
-1,000 prepare/discard cycles. The 4,097th prepare was refused; a discarded slot was reusable.
+Before caching input rules, a release stress run on Beast measured `Pss_Anon` at 1,952 KiB
+idle and 3,252 KiB with 4,096 owners. With cached rules and patterns, the repeated run measured
+1,952 KiB idle, 3,504 KiB with 4,096 owners, 3,508 KiB after discard and 3,512 KiB after another
+10,000 prepare/discard cycles. It stayed at 3,512 KiB for the final 5,000 cycles. The 4,097th
+prepare was refused; a discarded slot was reusable.

@@ -1,6 +1,9 @@
 //! Agent uploads share the client store; a staged upload may only be discarded by its owner.
 
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use conn_contract::{AttachmentCreateUploadUrlInput, from_json, to_json};
 use conn_files::attachments::{self, UploadRequest};
@@ -16,6 +19,11 @@ const MAX_PENDING_OWNERS: usize = 4096;
 pub(crate) struct UploadOwners(HashMap<String, (String, u64)>);
 
 impl UploadOwners {
+    #[cfg(test)]
+    pub(crate) fn pending_count(&self) -> usize {
+        self.0.len()
+    }
+
     fn sweep(&mut self, now: u64) {
         self.0
             .retain(|_, (_, at)| now.saturating_sub(*at) <= OWNER_TTL_MS);
@@ -57,17 +65,22 @@ pub(super) async fn prepare(cx: &Cx<'_>, args: &Args) -> ToolResult {
         let mut owners = crate::lock(&cx.service.upload_owners);
         owners.available(now)?;
     }
+    let upload_files = files.clone();
     let result = tokio::task::spawn_blocking(move || {
-        files
+        upload_files
             .attachments
-            .create_upload(&files.signer, &request, now)
+            .create_upload(&upload_files.signer, &request, now)
     })
     .await
     .map_err(internal)?;
-    {
-        let mut owners = crate::lock(&cx.service.upload_owners);
-        owners.insert(result.attachment_id.clone(), owner(cx), now)?;
-    }
+    register_upload(
+        &cx.service.upload_owners,
+        files,
+        result.attachment_id.clone(),
+        owner(cx),
+        now,
+    )
+    .await?;
     let mut result = to_json(&result);
     if let Some(origin) = cx.origin {
         result["uploadUrl"] = json!(format!(
@@ -76,6 +89,23 @@ pub(super) async fn prepare(cx: &Cx<'_>, args: &Args) -> ToolResult {
         ));
     }
     Ok(result)
+}
+
+async fn register_upload(
+    owners: &Mutex<UploadOwners>,
+    files: Arc<conn_files::Files>,
+    id: String,
+    owner: String,
+    now: u64,
+) -> Result<(), super::ToolError> {
+    let inserted = crate::lock(owners).insert(id.clone(), owner, now);
+    if let Err(error) = inserted {
+        tokio::task::spawn_blocking(move || files.attachments.delete_pending(&id))
+            .await
+            .map_err(internal)?;
+        return Err(error);
+    }
+    Ok(())
 }
 
 pub(super) async fn discard(cx: &Cx<'_>, args: &Args) -> ToolResult {
@@ -152,6 +182,14 @@ pub(super) async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
         command["senderThreadId"] = json!(sender);
     }
     cx.dispatch(command).await?;
+    {
+        let mut owners = crate::lock(&cx.service.upload_owners);
+        for attachment in requested {
+            if let Some(id) = attachment["id"].as_str() {
+                owners.0.remove(id);
+            }
+        }
+    }
     let projection = cx.projection(id).await?;
     let run = projection["messages"]
         .as_array()
@@ -169,6 +207,37 @@ pub(super) async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_upload_losing_the_last_owner_slot_cleans_up_pending_bytes() {
+        let dir = std::env::temp_dir().join(format!("conn-owner-race-{}", conn_support::uuid_v4()));
+        let files = Arc::new(conn_files::Files::open(&dir).unwrap());
+        let request = UploadRequest::from(
+            conn_contract::from_json::<AttachmentCreateUploadUrlInput>(
+                json!({"type":"file","name":"a.txt","mimeType":"text/plain","sizeBytes":3}),
+            )
+            .unwrap(),
+        );
+        let upload = files.attachments.create_upload(&files.signer, &request, 0);
+        let path = dir
+            .join("attachments")
+            .join(format!("{}.txt", upload.attachment_id));
+        std::fs::create_dir_all(dir.join("attachments")).unwrap();
+        std::fs::write(&path, b"abc").unwrap();
+        let mut full = UploadOwners::default();
+        for n in 0..MAX_PENDING_OWNERS {
+            full.insert(format!("upload-{n}"), "caller".into(), 0)
+                .unwrap();
+        }
+        let owners = Mutex::new(full);
+        assert!(
+            register_upload(&owners, files, upload.attachment_id, "caller".into(), 0)
+                .await
+                .is_err()
+        );
+        assert!(!path.exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn upload_owners_are_bounded_without_eviction_and_expire_after_the_upload_lifetime() {

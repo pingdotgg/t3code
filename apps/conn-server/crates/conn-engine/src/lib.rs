@@ -269,6 +269,14 @@ pub trait Engine: Send + Sync {
         Box::pin(std::future::ready(Ok(false)))
     }
 
+    /// The status in a command's original run.created event, including a replayed receipt.
+    fn created_run_status<'a>(
+        &'a self,
+        _command_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, String>> {
+        Box::pin(std::future::ready(Ok(None)))
+    }
+
     /// Decides, persists and applies one command. Resolves once its events are committed,
     /// with the sequence of the last event, so a client can wait for it on its streams.
     fn dispatch(
