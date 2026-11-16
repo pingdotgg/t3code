@@ -258,3 +258,47 @@ it("a late cloud key save cannot override a newer destination choice", () => {
     appAtomRegistry.reset();
   }
 });
+
+it("a recording finished across a reconnect still goes to the chosen host", async () => {
+  const { environmentSession } = await import("../../state/session");
+  const Option = await import("effect/Option");
+  const host = EnvironmentId.make("reconnecting-host");
+  const unmount = appAtomRegistry.mount(voiceRouteAtom);
+  try {
+    chooseVoiceDestination(host);
+    const transcriber = appAtomRegistry.get(voiceRouteAtom)!.transcriber!;
+    mocks.fetch
+      .mockResolvedValueOnce(
+        Response.json({
+          supported: true,
+          state: "ready",
+          modelId: "fixture",
+          model: "Fixture",
+          size: 1,
+          supportsStreaming: false,
+          supportsTranslation: false,
+          acceleration: "cpu",
+          modelUnloadTimeout: "never",
+          gpuDevices: [],
+          benchmarkTier: "cpu",
+        }),
+      )
+      .mockResolvedValueOnce(Response.json({ text: "hello" }));
+    const options = { signal: new AbortController().signal };
+    const recording = await transcriber.prepare(options);
+    // The supervisor publishes a fresh PreparedConnection on every reconnect.
+    appAtomRegistry.set(
+      environmentSession.preparedConnectionValueAtom(host),
+      Option.some({
+        environmentId: host,
+        httpBaseUrl: `https://${host}.test`,
+        httpAuthorization: { _tag: "Bearer", token: "fixture" },
+      }),
+    );
+    await expect(recording.transcribe("file:///voice.m4a", options)).resolves.toBe("hello");
+  } finally {
+    unmount();
+    mocks.fetch.mockReset();
+    appAtomRegistry.reset();
+  }
+});
