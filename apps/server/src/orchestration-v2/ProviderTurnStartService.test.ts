@@ -2307,6 +2307,93 @@ effectIt.effect.each([
   }),
 );
 
+effectIt.effect.each(
+  ["/compact", "/goal finish"].flatMap((command) =>
+    [false, true].map((steered) => ({ command, steered })),
+  ),
+)(
+  "keeps the switch note pending after a resumed $command unless steered: $steered",
+  ({ command, steered }) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Next prompt",
+        sideChat: { contextRun: "current" },
+        previousTurn: { runStatus: "completed", turnStatus: "completed" },
+      });
+      const projection = harness.projection();
+      const current = projection.runs.at(-1)!;
+      const previous = projection.runs[0]!;
+      const sourceId = RunId.make("unsent-command");
+      const resumedId = RunId.make("resumed-command");
+      const commandId = MessageId.make("command-message");
+      const earlierId = MessageId.make("earlier-message");
+      const resumedMessageId = MessageId.make("resume-message");
+      const resumedAttemptId = RunAttemptId.make("resumed-command-attempt");
+      const previousAttempt = projection.attempts[0]!;
+      harness.setProjection({
+        ...projection,
+        runs: [
+          {
+            ...previous,
+            providerInstanceId: harness.oldInstanceId,
+            userMessageId: earlierId,
+            ordinal: 1,
+          },
+          {
+            ...current,
+            id: sourceId,
+            providerThreadId: null,
+            userMessageId: commandId,
+            status: "interrupted",
+            ordinal: 2,
+          },
+          {
+            ...current,
+            id: resumedId,
+            userMessageId: resumedMessageId,
+            manualContinuationOfRunId: sourceId,
+            status: "completed",
+            ordinal: 3,
+          },
+          { ...current, ordinal: 4 },
+        ],
+        messages: [
+          { ...projection.messages[0]!, id: earlierId, text: "Earlier prompt" },
+          { ...projection.messages[0]!, id: commandId, text: command },
+          {
+            ...projection.messages[0]!,
+            id: resumedMessageId,
+            text: steered ? "Steered prompt" : "",
+          },
+          ...projection.messages,
+        ],
+        attempts: [
+          { ...previousAttempt, providerInstanceId: harness.oldInstanceId },
+          {
+            ...previousAttempt,
+            id: resumedAttemptId,
+            reason: steered ? "steering_restart" : "initial",
+            runId: resumedId,
+            providerInstanceId: harness.newInstanceId,
+          },
+          ...projection.attempts.slice(1),
+        ],
+        providerTurns: [
+          ...projection.providerTurns,
+          {
+            ...projection.providerTurns[0]!,
+            id: ProviderTurnId.make("resumed-command-turn"),
+            runAttemptId: resumedAttemptId,
+          },
+        ],
+      });
+      yield* harness.start;
+      expect(
+        harness.startTurn.mock.calls[0]?.[0].message.text.includes("switched by the user from"),
+      ).toBe(!steered);
+    }),
+);
+
 effectIt.effect("leaves delegated children to their own runs when the parent starts a turn", () =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({
