@@ -238,6 +238,7 @@ const historyLogPath = (logsDir: string, threadId = "thread-1") =>
 
 interface CreateManagerOptions {
   baseDir?: string;
+  devUrl?: URL;
   shellResolver?: () => string;
   env?: NodeJS.ProcessEnv;
   subprocessInspector?: (terminalPid: number) => Effect.Effect<{
@@ -291,6 +292,7 @@ const createManager = (
       const manager = yield* TerminalManager.makeWithOptions({
         logsDir,
         ...(options.baseDir !== undefined ? { baseDir: options.baseDir } : {}),
+        ...(options.devUrl !== undefined ? { devUrl: options.devUrl } : {}),
         historyLineLimit,
         ptyAdapter,
         ...(options.historyByteLimit !== undefined
@@ -2517,13 +2519,33 @@ it.layer(
   it.effect("gives thread terminals the current thread and T3 home", () =>
     Effect.gen(function* () {
       const baseDir = "/home/user/.t3";
-      const { manager, ptyAdapter } = yield* createManager(5, { baseDir });
+      const devUrl = new URL("http://localhost:5733/");
+      const { manager, ptyAdapter } = yield* createManager(5, { baseDir, devUrl });
 
       yield* manager.open(openInput({ threadId: "thread-1" }));
 
       const spawnEnv = ptyAdapter.spawnInputs[0]?.env;
       expect(spawnEnv?.T3CODE_THREAD_ID).toBe("thread-1");
       expect(spawnEnv?.T3CODE_HOME).toBe(baseDir);
+      expect(spawnEnv?.VITE_DEV_SERVER_URL).toBe(devUrl.href);
+    }),
+  );
+
+  it.effect("leaves the default T3 home implicit for the dev CLI", () =>
+    Effect.gen(function* () {
+      const home = yield* HostProcess.HomeDirectory;
+      const path = yield* Path.Path;
+      const devUrl = new URL("http://localhost:5733/");
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        baseDir: path.join(home, ".t3"),
+        devUrl,
+      });
+
+      yield* manager.open(openInput());
+
+      const spawnEnv = ptyAdapter.spawnInputs[0]?.env;
+      expect(spawnEnv?.T3CODE_HOME).toBeUndefined();
+      expect(spawnEnv?.VITE_DEV_SERVER_URL).toBe(devUrl.href);
     }),
   );
 

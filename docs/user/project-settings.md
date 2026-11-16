@@ -193,6 +193,8 @@ t3 thread send "$T3CODE_THREAD_ID" "Review the test output"
 ```
 
 A busy thread gets the prompt as its next turn; `--wait` prints the reply for a script that needs it.
+`T3CODE_THREAD_ID` is fixed when the terminal starts, so reopen a terminal that was created under
+another thread before using it.
 
 Settings a repository can also declare in `t3.json`, such as the workspace for new threads,
 resolve in one order: a project override, then the environment setting, then `t3.json`, then the
