@@ -9696,23 +9696,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             .pipe(mapDispatchError(command));
     const reportedWork = new Set(command.notification?.backgroundTaskIds);
     // Native subagents report under their task id and never enter the roster.
-    const startedBy = new Set([
+    const startedByTask = new Map<string, RunId>([
       ...(woken?.providerThreads ?? []).flatMap((thread) =>
         (thread.pendingBackgroundTasks ?? []).flatMap((work) =>
-          reportedWork.has(work.taskId) && work.runId !== undefined ? [work.runId] : [],
+          reportedWork.has(work.taskId) && work.runId !== undefined
+            ? [[work.taskId, work.runId] as const]
+            : [],
         ),
       ),
       ...(woken?.subagents ?? []).flatMap((task) =>
         task.runId !== null &&
         task.nativeTaskRef?.nativeId != null &&
         reportedWork.has(task.nativeTaskRef.nativeId)
-          ? [task.runId]
+          ? [[task.nativeTaskRef.nativeId, task.runId] as const]
           : [],
       ),
     ]);
     // A provider may drop ended work from its roster before the wake; the work's timeline item
     // still names it and the run that started it.
-    if (startedBy.size === 0 && reportedWork.size > 0) {
+    if ([...reportedWork].some((taskId) => !startedByTask.has(taskId))) {
       const { turnItems } = yield* projectionStore
         .getThreadRecords(command.threadId, ["turnItems"], {
           turnItemTypes: ["command_execution"],
@@ -9720,10 +9722,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .pipe(mapDispatchError(command));
       for (const item of turnItems) {
         const nativeId = item.nativeItemRef?.nativeId;
-        if (item.runId !== null && nativeId != null && reportedWork.has(nativeId))
-          startedBy.add(item.runId);
+        if (
+          item.runId !== null &&
+          nativeId != null &&
+          reportedWork.has(nativeId) &&
+          !startedByTask.has(nativeId)
+        )
+          startedByTask.set(nativeId, item.runId);
       }
     }
+    const startedBy = new Set(startedByTask.values());
     const followupIds = [
       ...new Set(
         (woken?.runs ?? [])
@@ -15932,23 +15940,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   // A child whose run ends while its background tasks or its own subagents still run has no
   // result yet. When that work settles there is no run update to finalize it, so these events
-  // do it. A roster counts when a task seen holding leaves it: other work may hold another
-  // follow-up, but the follow-up that started this task can settle.
-  const holdingBackgroundWork = new Map<string, ReadonlySet<string>>();
+  // do it. A background roster counts once it stops holding after it was seen holding.
+  const providerThreadsWithBackgroundWork = new Set<string>();
   const settlesChildWork = (stored: OrchestrationV2StoredEvent) => {
     const { event } = stored;
     if (event.type === "subagent.updated")
       return !isOrchestrationV2WorkActive(event.payload.status);
     if (event.type !== "provider-thread.updated") return false;
-    const holding = new Set(
-      (event.payload.pendingBackgroundTasks ?? []).flatMap((work) =>
-        backgroundWorkHoldsCompletion([work]) ? [work.taskId] : [],
-      ),
-    );
-    const previous = holdingBackgroundWork.get(event.payload.id) ?? [];
-    if (holding.size === 0) holdingBackgroundWork.delete(event.payload.id);
-    else holdingBackgroundWork.set(event.payload.id, holding);
-    return [...previous].some((taskId) => !holding.has(taskId));
+    if (backgroundWorkHoldsCompletion(event.payload.pendingBackgroundTasks ?? [])) {
+      providerThreadsWithBackgroundWork.add(event.payload.id);
+      return false;
+    }
+    return providerThreadsWithBackgroundWork.delete(event.payload.id);
   };
   yield* Stream.merge(
     eventSink.stream({

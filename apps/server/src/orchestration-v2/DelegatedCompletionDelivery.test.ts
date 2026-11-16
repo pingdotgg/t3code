@@ -3704,7 +3704,11 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
               ],
             });
           }
-          const wakeRun = yield* wake("build", ["earlier-build"]);
+          // A wake can report work from several runs; each id finds its own starting run.
+          const wakeRun = yield* wake(
+            "build",
+            ending === "dropped" ? ["earlier-build", "later-build"] : ["earlier-build"],
+          );
           assert.equal(wakeRun.delegatedTaskId, earlierTaskId);
           yield* eventSink.write({
             commandId: reconcileCommandId(`followup-earlier-work-${ending}-settled`),
