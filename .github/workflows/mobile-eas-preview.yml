@@ -301,6 +301,7 @@ jobs:
       # One build per fingerprint; a second PR with the same one finds the tag.
       group: mobile-android-preview-build-${{ needs.android.outputs.fingerprint }}
       cancel-in-progress: false
+      queue: max
     permissions:
       contents: write # pushes the build record tag
       pull-requests: write
@@ -484,6 +485,7 @@ jobs:
       # One build per fingerprint; a second PR with the same one finds the tag.
       group: mobile-ios-preview-build-${{ needs.ios.outputs.fingerprint }}
       cancel-in-progress: false
+      queue: max
     permissions:
       contents: write # pushes the build record tag
       pull-requests: write
