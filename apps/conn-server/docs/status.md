@@ -42,6 +42,12 @@ builder with a test that fails without the fix.
   `tools/check.sh` 44/44. Known differences: browser URL/tab automation answers
   `capability_denied` (no desktop preview manager); secret-provider answers are not
   advertised; the panel RPCs are mounted here, while T3 leaves them unmounted.
+- **GitHub only** (PR #104): source control serves GitHub alone, as Nick scoped it on
+  2026-11-16. GitLab, Forgejo, Bitbucket, Azure DevOps and the others are gone (8,225 lines);
+  their remotes take T3's unknown-host path, and saved settings keep only `github` in
+  `sourceControlHosts` and `offeredSourceControlProviders`. `registry-diff` (8,901 cases)
+  compares against T3's registry with GitHub alone. `tools/check.sh` 44/44. The canary still
+  trips on the other hosts' CLIs and tokens, since the diff checks start the full T3 server.
 - **Clients** (VMPal macOS VM, Conn `c969c3ebd1`): the web client (through a host T3 as a
   remote environment) and the iOS dev client in a simulator (paired straight to the Conn
   Server) each ran a Haiku turn against the Conn Server on macOS.

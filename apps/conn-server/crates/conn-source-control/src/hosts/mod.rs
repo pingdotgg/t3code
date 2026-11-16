@@ -1,7 +1,4 @@
-//! One module per host, as the T3 server splits them into `packages/source-control-*`.
-//!
-//! Each module serves its host's discovery probe today. The repository and pull request
-//! operations follow host by host, behind the same module.
+//! GitHub discovery and repository operations.
 
 use std::{collections::BTreeMap, ffi::OsString, fmt, path::Path};
 
@@ -9,16 +6,8 @@ use conn_contract::SourceControlProviderDiscoveryItem;
 
 use crate::settings::Settings;
 
-pub mod azure_devops;
-pub mod bitbucket;
-pub mod cursor_origin;
-pub mod forgejo;
-pub mod forgejo_cli;
-pub mod gitcafe;
-pub mod gitcafe_api;
 pub mod github;
 pub mod github_graphql;
-pub mod gitlab;
 pub mod repositories;
 
 pub use repositories::Hosts;
@@ -82,12 +71,6 @@ impl fmt::Debug for Environment {
 pub struct Endpoints {
     /// Replaces `https://api.github.com` for host `github.com`.
     pub github_rest: Option<String>,
-    /// Replaces `https://api.cursor.com`.
-    pub cursor_origin_api: Option<String>,
-    /// Replaces `https://<host>` for the Forgejo API.
-    pub forgejo_api: Option<String>,
-    /// Replaces `https://<host>` for the GitCafe API.
-    pub gitcafe_api: Option<String>,
 }
 
 /// What every host's discovery reads.
@@ -115,18 +98,7 @@ impl DiscoveryContext<'_> {
     }
 }
 
-/// Every host's discovery item, in `BUILT_IN_SOURCE_CONTROL_DRIVER_LIST` order, all probed at
-/// once (`concurrency: "unbounded"`).
+/// The supported host discovery item.
 pub async fn discover(ctx: DiscoveryContext<'_>) -> Vec<SourceControlProviderDiscoveryItem> {
-    // Each on the heap: together they are tens of kilobytes (clippy's `large_futures`).
-    let (github, origin, gitlab, gitcafe, forgejo, bitbucket, azure) = tokio::join!(
-        Box::pin(github::discover(ctx)),
-        Box::pin(cursor_origin::discover(ctx)),
-        Box::pin(gitlab::discover(ctx)),
-        Box::pin(gitcafe::discover(ctx)),
-        Box::pin(forgejo::discover(ctx)),
-        Box::pin(bitbucket::discover(ctx)),
-        Box::pin(azure_devops::discover(ctx)),
-    );
-    vec![github, origin, gitlab, gitcafe, forgejo, bitbucket, azure]
+    vec![github::discover(ctx).await]
 }

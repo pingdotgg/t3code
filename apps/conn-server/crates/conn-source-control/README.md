@@ -1,18 +1,19 @@
 # conn-source-control
 
-Source control hosts for the Conn Server: GitHub, Cursor Origin, GitLab, GitCafe, Forgejo,
-Bitbucket and Azure DevOps (the T3 server's order). We reach each host exactly as the T3
-server's driver does: the same CLI calls with the same argv and environment, the same API
-requests with the same method, path, headers and body. The T3 sources are
-`packages/source-control-*` and `apps/server/src/{sourceControl,pullRequest,git}` in the Conn
-monorepo.
+GitHub source control for the Conn Server. We use the same CLI calls, credentials and API
+requests as the T3 server's GitHub driver. Conn supports only GitHub (`FORK.md`, "Upstream
+scope", Nick's decision of 2026-11-16). Other hosts read as unknown git remotes: their host,
+base URL and normal git repository key are kept; no host-specific discovery or API runs.
+
+The specification is `packages/source-control-core`, `packages/source-control-github` and
+`apps/server/src/{sourceControl,pullRequest,git}` in the Conn monorepo.
 
 ## What is served now
 
 | Area | State |
 | --- | --- |
-| `server.discoverSourceControl` | Served: `git`, `jj` (from `conn-vcs`) and all 7 hosts (see "Discovery") |
-| `sourceControl.*` (9) | All 9 served: `signInStart`, `signInWait`, `signInCancel`, `appAccess` (as a T3 server without `T3CODE_GITHUB_APP_CLIENT_ID`), `starred`, `star` (GitHub REST, any other host `false`); `lookupRepository`, `cloneRepository`, `publishRepository` for all 7 hosts (see "Repositories") |
+| `server.discoverSourceControl` | Served: `git`, `jj` (from `conn-vcs`) and GitHub (see "Discovery") |
+| `sourceControl.*` (9) | All 9 served: `signInStart`, `signInWait`, `signInCancel`, `appAccess` (as a T3 server without `T3CODE_GITHUB_APP_CLIENT_ID`), `starred`, `star` (GitHub REST, any other host `false`); `lookupRepository`, `cloneRepository`, `publishRepository` for GitHub (see "Repositories") |
 | The host definition registry | Built (part 4): remotes, change request URLs, canonical keys, the project predicates, thread link keys (see "Registry") |
 | Provider detection | Built (part 4), not yet called by a method (see "Provider detection") |
 | GitHub's GraphQL operations | Generated from the monorepo; PR resolution sends the lookup queries (see "GitHub GraphQL") |
@@ -29,15 +30,13 @@ monorepo.
 | `checkout.rs` | GitHub PR resolution, local checkout and worktree reuse |
 | `secret.rs` | `Secret`: a token with a redacted `Debug` and `Display` |
 | `http.rs` | One HTTPS request per connection (hyper + rustls), bounded answer, local fake server for tests |
-| `settings.rs` | A host's saved fields (`hosts`, `tokens`, Bitbucket's and GitCafe's), secret references |
+| `settings.rs` | GitHub's saved fields (`hosts`, `tokens`, `signIns`), secret references |
 | `discovery.rs` | The generic CLI probe (`probeSourceControlProvider`), the auth text helpers, a stub executable for tests |
 | `cli.rs` | A host CLI call outside discovery, as `VcsProcess.run` runs it (30 s, 1,000,000 bytes) |
 | `remote.rs` | Clone URL and remote text: `cloneUrl.ts`, `parseGitRemoteRepository`, `repositoryKeyFromRemote`, the redaction helpers |
 | `repository.rs` | `SourceControlRepositoryService`: lookup, clone (its own `git clone` child), publish (`ensureRemote`, push, upstream) |
-| `hosts/<host>.rs` | One module per host: its discovery |
-| `hosts/forgejo_cli.rs` | `ForgejoCli.resolveTarget` and `api`: the fj or tea login that serves a repository, fj's API with its token, `tea api` |
-| `hosts/gitcafe_api.rs` | GitCafe's hosts and remotes, `GitCafeCredentials.get`, `GitCafeApi.request`, `resolveTarget` |
-| `hosts/repositories.rs` | Each host's `getRepositoryCloneUrls` and `createRepository` (`Hosts`) |
+| `hosts/github.rs` | GitHub discovery, credentials and REST requests |
+| `hosts/repositories.rs` | GitHub's `getRepositoryCloneUrls` and `createRepository` (`Hosts`) |
 | `hosts/github_graphql/` | GitHub's GraphQL operations: `generated.rs` (by `tools/gen-graphql.mjs`) and the batch renderer |
 | `registry/` | The host definition registry (`mod.rs`), its URL routes (`paths.rs`), thread link keys (`thread_keys.rs`) |
 | `detect.rs` | Provider detection: the checkout's remotes, the recognised context, unknown hosts refined |
@@ -62,21 +61,15 @@ fake server. T3 keeps `gh`'s token 5 minutes; this server asks `gh` on each call
 
 ## Discovery
 
-`server.discoverSourceControl` answers `git` and `jj` and the seven hosts in the T3 server's
-order, all probed at once. Each host module ports its driver's probe and its own test cases:
+`server.discoverSourceControl` answers `git`, `jj` and GitHub. The GitHub probe and its tests
+follow the T3 server:
 
 | Host | Probe | T3 cases ported |
 | --- | --- | --- |
 | GitHub | `gh --version`, `gh auth status --json hosts`; `GET /user` with a saved or `GH_TOKEN`/`GITHUB_TOKEN` token | `GitHubSourceControlProvider.test.ts` (parse cases), `gitHubDiscovery.test.ts` (saved token cases) |
-| Cursor Origin | `origin --version`, `origin auth status --json`; `origin auth token`, `GET /v1/origin/namespaces` | none exist upstream; cases from the code |
-| GitLab | `glab --version`, `glab auth status`, then `--all` | `gitLabDiscovery.test.ts` |
-| GitCafe | `cafe --version`, `cafe ... auth status --json` with `CAFE_TOKEN` from Settings | `GitCafeSourceControlProvider.test.ts`, `GitCafeCredentials.test.ts` |
-| Forgejo | `git remote get-url origin`, fj keys file, `fj version`, `fj --host <url> whoami`, `GET /api/v1/user`; else `tea` | `ForgejoSourceControlProvider.test.ts` (discovery cases) |
-| Bitbucket | `GET /user` (3 s) with the Settings or `T3CODE_BITBUCKET_*` credential | `BitbucketApi.test.ts` |
-| Azure DevOps | `az --version`, `az account show --query user.name -o tsv` (20 s) | `AzureDevOpsSourceControlProvider.test.ts` |
 
 How it is proven: every CLI runs as a stub executable that records its argv and the variables
-that matter (`GIT_CONFIG_*`, `CAFE_TOKEN`, `NO_COLOR`), and the tests compare them with the
+that matter (`GIT_CONFIG_*`, `GH_DEBUG`, `GH_PROMPT_DISABLED`), and the tests compare them with the
 T3 driver's argv. Every API request goes to a local fake server that records method, path and
 headers; the tests check the `authorization` shape with a fake token. No test runs a real host
 CLI or calls a real API: the stubs come first on the children's `PATH`, and the environment is
@@ -98,14 +91,14 @@ Deviations from the T3 server:
   server's `SettingsSecretUnresolvedError` (its message names the provider).
 - **No GitHub App sign-in.** The server acts as a T3 server without
   `T3CODE_GITHUB_APP_CLIENT_ID`: no `appSignIn` offer, and a saved sign-in is not used.
-- **No token caches.** The T3 server keeps a host's token (Origin 5 min, `gh auth token` 5 min)
+- **No token caches.** The T3 server keeps a GitHub token (`gh auth token` 5 min)
   and GitHub's quota and pause state between calls. Discovery here reads them on every call; a
   GitHub rate-limit answer reads as "unknown" with T3's message. `cache.rs` now has the bounded
   cache these need; provider detection uses it.
 - **The macOS wrong-CPU hint** (errno -86 in `failedProbeHint`) is not detected; such a CLI
   gets the generic "failed" hint.
 - **No concurrency keys.** T3 runs at most 4 `gh` children and 4 non-`git` children at once;
-  discovery here starts at most two per CLI host at once, 14 in all.
+  GitHub discovery here starts at most two CLI probes at once.
 
 ## Repositories
 
@@ -116,16 +109,9 @@ Deviations from the T3 server:
 | Host | Lookup | Create |
 | --- | --- | --- |
 | GitHub | `GET repos/{owner}/{name}` (a bare name: `GET user` for the owner); the host from `GH_REPO` or the checkout's GitHub remote (`git remote -v`, `git config --get-regexp ^remote\..*\.gh-resolved$`; github.com, its SSH aliases, `*.ghe.com`, or a host with a `github` label such as an Enterprise Server), else `GH_HOST`, else github.com | `POST user/repos` or `orgs/{owner}/repos` with `{"name","private"}` |
-| Cursor Origin | `GET /v1/origin/repos/{owner}/{name}` with the `origin auth token` bearer (one retry after a 401) | private only: `POST /v1/origin/repos/{owner}` `{"name"}`, then `PATCH` `{"visibility":"private"}` (3 tries, 1 s apart); a bare name uses the personal namespace |
-| GitLab | `glab api projects/<encoded path>` | `glab api namespaces/<encoded>` for the id, then `glab api --method POST projects --raw-field path= name= visibility= [namespace_id=]` |
-| Bitbucket | `GET /repositories/{workspace}/{slug}`, redirects followed as fetch follows them | `POST` the same path with `{"scm":"git","is_private":...}` |
-| Azure DevOps | `az repos show --detect true --repository <name> [--project <p>] --only-show-errors --output json` | `az repos create --detect true --name <name> [--project <p>] ...` |
-| GitCafe | `GET /api/repos/{owner}/{name}` on git.cafe or staging.git.cafe (the host from the URL, else the checkout's GitCafe remote: `git remote get-url -- origin`, `git remote`, `git config --get remote.<r>.url`, else git.cafe) | `POST /api/orgs/{owner}/repos` `{"name","requestKey","visibility","defaultBranch":"main"}`, then `GET /api/orgs/{owner}/admissions/{id}` every 500 ms for up to 30 s until `complete` or `blocked` |
-| Forgejo | `resolveTarget` (below), then `GET <base>/api/v1/repos/{owner}/{name}` | `GET user`, then `POST user/repos` or `orgs/{owner}/repos` with `{"name","private","auto_init":false}` |
 
 A host failure reaches the client as T3's fixed "The source control operation could not be
-completed.", except Bitbucket's "Bitbucket repositories must be specified as
-workspace/repository." (the one host error with a `userFacingDetail`). A clone runs its own
+completed." A clone runs its own
 `git clone --progress -- <url> <name>` with `GIT_PROGRESS_DELAY=0`, `GIT_TERMINAL_PROMPT=0` and
 `LANGUAGE=C` (the locale is left alone, unlike other `git` children here), keeps the last four
 non-progress stderr lines with URL credentials removed, stops after 2 minutes, and retries a
@@ -134,39 +120,16 @@ refused SSH clone over HTTPS. Publish adds the remote (`ensureRemote`), pushes
 auto-selected SSH remote to HTTPS after an SSH refusal. Every failed push reads as T3's fixed
 text.
 
-Forgejo's `resolveTarget` picks the login: the remote in the request (a URL or SCP remote; with
-no repository, `git remote get-url origin`), matched against fj's logins from `keys.json`. A
-matching fj login is checked with `fj --host <url> whoami` in the home folder, and a bare name
-takes the fj account's login (`GET user`). Several matching fj logins with `fj` installed fail;
-without a usable fj login, `tea login list --output json` decides. With fj the server sends the
-request (`Authorization: token <t>`, redirects followed five times inside `/api/v1/`); with tea
-it runs `tea api --include --login <l> [--repo <r>] --method <m> [--data @-] <url>` and reads the
-status from tea's stderr. GitCafe's credential is the Settings token (git.cafe only), else
-`CAFE_TOKEN` for the host `CAFE_HOST` names, else `cafe auth http credential --host
-https://<h>/api get` with `protocol=https\nhost=<h>\n\n` on stdin, in the server's folder,
-with `CAFE_NO_UPDATE_CHECK=1`. Its requests carry `Authorization: Bearer`, `accept:
-application/json` and `user-agent: t3code`, and follow at most three redirects inside `/api/`.
-
 Proofs: the cases of `SourceControlRepositoryService.test.ts` on local bare repositories, with
-a stub `git` for the SSH refusals and the slow clone (`repository_tests.rs`); each host's argv,
-paths, headers and bodies against stub CLIs and a loopback fake server
-(`hosts/repositories_tests.rs`); T3's own Forgejo `api` cases and GitCafe host, credential and
-provider cases (`hosts/forgejo_cli_tests.rs`, `hosts/gitcafe_api_tests.rs`); the real client
-decodes all three (`effect-client.mjs`).
+a stub `git` for the SSH refusals and the slow clone (`repository_tests.rs`); GitHub requests
+against a loopback fake server (`hosts/repositories_tests.rs`); the real client decoding the
+server's responses (`effect-client.mjs`). No model or external API is called.
 
 Deviations:
 
-- **The fj login check and GitCafe's `cafe` token last one operation.** T3 skips
-  `fj --host <url> whoami` for 30 s after a check and keeps a token from `cafe` for 5 minutes (a
-  missing one for 10 s). Here each operation checks once and asks `cafe` once, so a warm T3
-  server can run fewer children than this one.
-
-- **No rate-limit slots or quota.** T3 runs at most 8 GitHub and 4 Bitbucket requests at once
-  and keeps GitHub's quota and Bitbucket's 429 pause. A lookup runs as interactive and a create
-  is a write, and T3 refuses neither while paused, so the only effect on these three methods is
-  T3's queueing under load. The pause matters for background reads (pull requests), which are
-  not built.
-- **The Origin token** is read on each call (T3 keeps it 5 minutes).
+- **No rate-limit slots or quota.** T3 runs at most 8 GitHub requests at once and keeps
+  GitHub's quota and pause state. These methods do not yet have that queueing. Background
+  pull request reads are not built.
 - **Publish** reads the branch with `git symbolic-ref` (T3: `statusDetails`) and refreshes the VCS
   status afterwards, but has no repository identity cache to refresh.
 - **The clone child** loses the repository selectors the server inherited (`GIT_DIR`,
@@ -182,42 +145,31 @@ Deviations:
 
 ## Registry
 
-`registry/` is the server half of T3's definition registry
-(`packages/source-control-core/src/shared/definition.ts`, the order in
-`packages/source-control-definitions/src/registry.ts`, each host's `src/shared/definition.ts`):
-`recognize_remote` in recognition order (GitCafe, Cursor Origin, Forgejo, GitHub, GitLab, Azure
-DevOps, Bitbucket), `parse_change_request_url` in claim order (GitCafe, Cursor Origin, Azure
-DevOps first), each host's `change_request_url`, `canonical_repository_key`,
-`repository_key_from_remote`, `repository_selector`, `change_request_host`,
-`find_by_public_host`, the project predicates (`is_change_request_in_repository`,
-`can_read_change_request_on_host`, `checkout_change_request_host`), `change_request_head_ref`,
-`is_same_change_request`, GitCafe's URL spelling, and the thread link keys
-(`normalizeThreadPullRequestKey`, `legacyThreadPullRequestKey`). URLs go through the WHATWG
-parser (`url`), as `new URL` reads them; the regular expressions are written out by hand
-(`paths.rs`). What only clients use (icons, autolinks, media, checkout commands, settings forms)
-is not ported.
+`registry/` follows T3's `makeSourceControlDefinitionRegistry` with only the GitHub
+definition registered. It handles GitHub recognition, pull request URLs, canonical keys,
+selectors, project predicates and thread link keys. URLs use the WHATWG parser (`url`).
+Unclaimed remotes use T3's `unknownRemoteProvider` fallback. Local paths have no host.
+GitHub's `/owner/repo/pull/number` URL parser still accepts any HTTP host, as T3 does.
 
-Proof: `tools/registry-diff.mjs` runs T3's registry (loaded from the monorepo) and ours
-(`examples/registry_cases.rs`) on every string literal of T3's seven `definition.test.ts`
-files and a fixed grid of hosts, paths, schemes, remotes and identities: 24,085 cases, 0
-differences. It runs in `tools/check.sh`, so an upstream change to a definition or a test
-shows at once.
+`tools/registry-diff.mjs` constructs that registry from T3's own GitHub definition and core
+code, then compares it with `examples/registry_cases.rs`. It harvests every GitHub definition
+test literal and exercises a fixed grid, including removed hosts as unknown-host inputs.
+Other host packages are neither imported nor harvested. GitHub and core drift still fail
+`tools/check.sh`; changes confined to removed host definitions do not.
 
 ## Provider detection
 
 `detect.rs` follows `SourceControlProviderRegistry.ts`: `git rev-parse --is-inside-work-tree
 --show-toplevel --git-common-dir`, then `git remote -v` (5 s, 64 KiB); `selectProviderContext`
-(origin, then a known host, then the first remote); a remote on an unknown host is refined one
-integration after another, as `refineUnknownRemoteProvider` runs them: GitHub (a credential for
-the host, `gh auth token --hostname <h>` when nothing is saved; a host turned off in Settings
-claims it too), GitLab (`glab auth status --hostname <h>`, in the remote's own spelling) and
-Forgejo (fj's logins, then `tea login list --output json`). A check that could not answer is not
-kept. Caches as T3's: a checkout's answer 5 s (2,048 checkouts, failures not kept), an unknown
-server's verdict 5 minutes (512 servers), cleared by `Detector::settings_changed`. Callers of
-one key share one lookup.
+(origin, then a known host, then the first remote); GitHub refines an unknown host with a
+credential for the host, `gh auth token --hostname <h>` when nothing is saved. A host turned
+off in Settings claims it too. A check that could not answer is not kept. Caches as T3's:
+a checkout's answer 5 s (2,048 checkouts, failures not kept), an unknown server's verdict
+5 minutes (512 servers), cleared by `Detector::settings_changed`. Callers of one key share
+one lookup.
 
 Proof: T3's `SourceControlProviderRegistry.test.ts` cases on scratch repositories with stub
-`gh`, `glab`, `fj` and `tea`; the children's `PATH` holds only the stub folder and
+`gh`; the children's `PATH` holds only the stub folder and
 `/usr/bin:/bin`, so no real host CLI runs.
 
 Deviations: T3's VCS detection cache (5 minutes, stat-checked) and jj checkouts are not ported;
@@ -240,7 +192,7 @@ sends one yet.
 `conn-engine/src/pull_requests.rs` decides `thread.pull-request.link` and `unlink` as T3's
 `Orchestrator.ts` does, with the registry's keys (see that file). Both emit
 `thread.pull-request-synced` with the thread, also when nothing changed. Proof: unit tests and
-`client-check.mjs` (a GitCafe link, a stack member, its unlink and a relink through the client's
+`client-check.mjs` (a GitHub link, a stack member, its unlink and a relink through the client's
 own reducers).
 
 `conn-mcp/src/tools/pull_requests.rs` serves the five link tools (`pullRequestTarget.ts`
@@ -259,11 +211,9 @@ The registry, detection and the GraphQL texts are built. What every remaining st
    the pause after a rate limit, the credential source header. Then GitHub's GraphQL client
    (`gitHubGraphQlClient.ts`: the byte cap, `isNotFoundOnly`, the batch windows of 50 ms and
    500 ms) on the generated operations.
-3. **Each host's change request reads** (`getChangeRequest`, `listChangeRequests` by head,
-   `checkoutChangeRequest`): GitHub through GraphQL and REST (`GitHubSourceControlProvider.ts`,
-   1,186 lines), GitLab (`glab mr view/list/checkout`), Cursor Origin, GitCafe, Forgejo (fj/tea),
-   Bitbucket, Azure DevOps (`az repos pr`). `git.resolvePullRequest` needs all seven, since a
-   method is registered only when it serves every host.
+3. **GitHub change request reads** (`getChangeRequest`, `listChangeRequests` by head,
+   `checkoutChangeRequest`), through GraphQL and REST (`GitHubSourceControlProvider.ts`).
+   No other host implementation is needed.
 
 `git.runStackedAction` and the review guides also call a text generator, and
 `git.preparePullRequestThread` runs the project's setup script, which this server does not run
@@ -283,10 +233,8 @@ the T3 way yet.
 
 - Nothing runs while idle: no poll, no watch. The only caches are provider detection's
   (at most 2,048 checkouts for 5 s and 512 servers for 5 minutes), and nothing creates one yet.
-- One discovery: at most 14 short CLI children and 3 HTTPS requests (GitHub, Bitbucket,
-  Origin; Forgejo adds one per signed-in fj login it checks), each bounded: 8,000 bytes per
-  CLI stream, 8 MiB per answer, 5 s per CLI (20 s for `az`), 30 s per request (3 s for the
-  whole Bitbucket probe).
+- GitHub discovery starts at most two short CLI children and a saved-token API probe;
+  output and request bounds are unchanged.
 - Each HTTPS request opens its own TCP and TLS connection and closes it after the answer. The
   TLS configuration (Mozilla's roots) is built on first use and kept.
 
@@ -298,13 +246,13 @@ host's driver (`PullRequestProviderApi` or `SourceControlProvider`); how each ho
 is under "How the T3 server reaches each host". PRS = `apps/server/src/pullRequest/PullRequestService.ts`.
 
 Totals: 48 RPC methods (45 unary, 3 streams), 7 engine commands plus one
-`thread.metadata.update` field, 9 `/mcp` tools, 7 hosts.
+`thread.metadata.update` field, 9 `/mcp` tools, one host.
 
 ### `server.discoverSourceControl`, `sourceControl.*`, `git.*`
 
 | Method | T3 source | What it does | Talks to | Scope |
 | --- | --- | --- | --- | --- |
-| `server.discoverSourceControl` | `sourceControl/SourceControlDiscovery.ts` | Lists VCS and host CLIs with version and sign-in state | `git`/`jj --version`; each host's probe (CLI; GitHub and Bitbucket API) | R |
+| `server.discoverSourceControl` | `sourceControl/SourceControlDiscovery.ts` | Lists VCS and host CLIs with version and sign-in state | `git`/`jj --version`; GitHub's probe (CLI and API) | R |
 | `sourceControl.lookupRepository` | `SourceControlRepositoryService.ts:223` | A repository's clone URLs | host `getRepositoryCloneUrls` | R |
 | `sourceControl.cloneRepository` | `SourceControlRepositoryService.ts:400` | Clones a repository to a path | host lookup, `git clone` | SCW |
 | `sourceControl.publishRepository` | `SourceControlRepositoryService.ts:485` | Creates a remote repository and pushes | host `createRepository`; `git` remote, push | SCW |
@@ -410,9 +358,3 @@ marker `\n\n[truncated]`, 5 s.
 | Host | Discovery | Credentials | Repository and PR operations |
 | --- | --- | --- | --- |
 | GitHub | `gh --version`, `gh auth status --json hosts`; then `GET /user` when a token is saved, signed in, or in `GH_TOKEN`/`GITHUB_TOKEN` | Settings `sourceControlHosts.github.tokens[host]`; App sign-in `signIns["github.com"]` (needs `T3CODE_GITHUB_APP_CLIENT_ID`); `GH_TOKEN`, `GITHUB_TOKEN` (`GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN` for `GH_HOST`); `gh auth token --hostname <h> [--user <a>]` (env `GH_DEBUG=`, `GH_PROMPT_DISABLED=1`, 10 s), cached 5 min | REST `https://api.github.com` (`api.<h>` for `*.ghe.com`, `https://<h>/api/v3` for GHES) and GraphQL `/graphql`; headers `accept: application/vnd.github+json`, `x-github-api-version: 2022-11-28`, `user-agent: t3code`, `authorization: Bearer <token>`; 30 s, 8 MiB, 8 at once; quota reserve 10 %; `gh config get http_unix_socket` routes requests over a socket |
-| Cursor Origin | `origin --version`, `origin auth status --json`; `GET /v1/origin/namespaces` for the account | `origin auth token` (env `NO_COLOR=1`), cached 5 min | `https://api.cursor.com/v1/origin/...`, `Authorization: Bearer`, `Accept: application/json`; `origin pr checkout` |
-| GitLab | `glab --version`, `glab auth status`, retry `glab auth status --all` | None in the server; `glab`'s own login | `glab mr list/view/checkout`, `glab api ...` with `GITLAB_HOST=<host>` |
-| GitCafe | `cafe --version`, `cafe --host https://git.cafe/api --no-input --no-update-check auth status --json`, with `CAFE_TOKEN` from settings | Settings `sourceControlHosts.gitcafe.token` (git.cafe only); `CAFE_TOKEN` (when `CAFE_HOST` matches); `cafe auth http credential --host https://<h>/api get` over stdin | `https://<h>/api...`, `Authorization: Bearer`, `accept: application/json`, `user-agent: t3code`; only `git.cafe` and `staging.git.cafe` |
-| Forgejo | `git remote get-url origin`; `fj version`, `fj --host <url> whoami` (cwd `$HOME`), `GET /api/v1/user`; else `tea --version`, `tea login status --output json` | The fj keys file (`keys.json`); `tea`'s own logins | fj: `<base>/api/v1/...`, `Authorization: token <t>`; tea: `tea api --include --login <l> ...`; `tea pulls checkout` |
-| Bitbucket | API probe: `GET /user` (3 s) | Settings `sourceControlHosts.bitbucket.accessToken` or `email` + `apiToken`; `T3CODE_BITBUCKET_ACCESS_TOKEN`, `_EMAIL`, `_API_TOKEN` | `https://api.bitbucket.org/2.0` (or `T3CODE_BITBUCKET_API_BASE_URL`), `Authorization: Bearer` or Basic, `Accept: application/json`; 30 s, 8 MiB, 4 at once |
-| Azure DevOps | `az --version`, `az account show --query user.name -o tsv` (20 s) | None in the server; `az login` | `az repos ...`, `az devops invoke ...` |
