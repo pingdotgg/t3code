@@ -606,12 +606,12 @@ export function toChatHast(
   let children: ElementContent[];
   try {
     children = wrap(converter.all(tree), false);
+    const footer = converter.footer();
+    if (footer) children.push(NEWLINE(), footer);
   } catch (error) {
     if (error === BAIL) return null;
     throw error;
   }
-  const footer = converter.footer();
-  if (footer) children.push(NEWLINE(), footer);
   const root: HastRoot = { type: "root", children };
   const position = copyPosition(tree.position);
   if (position) root.position = position;

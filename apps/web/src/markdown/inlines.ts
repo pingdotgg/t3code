@@ -174,6 +174,19 @@ export class InlineParser {
   }
 
   /** Source offset of a content offset. */
+  /** The text from `start` to `end`, keeping the source map across stripped line prefixes. */
+  subContent(start: number, end: number) {
+    const contentStarts = [0];
+    const sourceStarts = [this.src(start)];
+    const { contentStarts: lines, sourceStarts: sources } = this.content;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i]! <= start || lines[i]! >= end) continue;
+      contentStarts.push(lines[i]! - start);
+      sourceStarts.push(sources[i]!);
+    }
+    return { text: this.s.slice(start, end), contentStarts, sourceStarts };
+  }
+
   src(index: number): number {
     const { contentStarts, sourceStarts } = this.content;
     let lo = 0;
@@ -994,6 +1007,17 @@ export class InlineParser {
     return false;
   }
 
+  private readonly closers = new Map<string, { from: number; at: number }>();
+
+  // An unclosed `<?` or `<!--` would otherwise rescan the rest of the text at every opener.
+  indexOfCloser(closer: string, from: number): number {
+    const known = this.closers.get(closer);
+    if (known && from >= known.from && (known.at < 0 || from <= known.at)) return known.at;
+    const at = this.s.indexOf(closer, from);
+    this.closers.set(closer, { from, at });
+    return at;
+  }
+
   parseInlineHtml(): boolean {
     const { s } = this;
     const start = this.pos;
@@ -1002,17 +1026,17 @@ export class InlineParser {
       if (s.startsWith("<!-->", start)) end = start + 5;
       else if (s.startsWith("<!--->", start)) end = start + 6;
       else {
-        const close = s.indexOf("-->", start + 4);
+        const close = this.indexOfCloser("-->", start + 4);
         end = close < 0 ? -1 : close + 3;
       }
     } else if (s.startsWith("<?", start)) {
-      const close = s.indexOf("?>", start + 2);
+      const close = this.indexOfCloser("?>", start + 2);
       end = close < 0 ? -1 : close + 2;
     } else if (s.startsWith("<![CDATA[", start)) {
-      const close = s.indexOf("]]>", start + 9);
+      const close = this.indexOfCloser("]]>", start + 9);
       end = close < 0 ? -1 : close + 3;
     } else if (s.charCodeAt(start + 1) === BANG && /[A-Za-z]/.test(s[start + 2] ?? "")) {
-      const close = s.indexOf(">", start + 2);
+      const close = this.indexOfCloser(">", start + 2);
       end = close < 0 ? -1 : close + 1;
     } else {
       end = scanHtmlTag(s, start, s.length, false);
@@ -1076,11 +1100,7 @@ export class InlineParser {
     if (labelStart >= 0) {
       const sub = new InlineParser(
         this.source,
-        {
-          text: s.slice(labelStart, labelEnd),
-          contentStarts: [0],
-          sourceStarts: [this.src(labelStart)],
-        },
+        this.subContent(labelStart, labelEnd),
         this.definitions,
         this.options,
         this.points,

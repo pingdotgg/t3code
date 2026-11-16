@@ -457,10 +457,7 @@ export class BlockParser {
 
     let matchedLeaf =
       container.type !== "paragraph" &&
-      (container.type === "code" ||
-        container.type === "html" ||
-        container.type === "math" ||
-        container.type === "table");
+      (container.type === "code" || container.type === "html" || container.type === "math");
 
     while (!matchedLeaf) {
       this.findNextNonspace();

@@ -58,6 +58,17 @@ const CHAT_MARKDOWN_CASES = [
   "Hard  \nbreak\\\nand `` code ` span ``",
   '[ref] and [Ref][] and [x][REF]\n\n[ref]: /url "title"',
   "[a](CURSOR://file/Users/me/a.md:3) [b](vscode://file/C:/a.ts) [c](cursor://anysphere.x/p)",
+  "| a |\n| - |\n| b |\n> quote\n\n| a |\n| - |\n| b |\n2. list\n\n| a |\n| - |\n| b |\n# head",
+  "- \\[x] escaped\n- &#91;x] entity\n- [x]\n  done\n- [x]  \n  hard break\n- [x]\\\n  backslash",
+  '> :codex-followup[a\n> b]{prompt="x"}',
+];
+
+// What the direct path leaves to rehype-raw, and the footnote it cannot build.
+const FALLBACK_CASES = [
+  "# a </h1> b",
+  "> a </blockquote> b",
+  "<div><span><div>one</span>two</div></div>",
+  "x[^1]\n\n[^1]: [see [^2]](u)\n\n[^2]: n",
 ];
 
 // Raw HTML the direct hast path nests itself instead of running parse5.
@@ -162,6 +173,10 @@ describe("chatRenderHast", () => {
       expect(withoutTextPositions(direct)).toEqual(withoutTextPositions(expected));
     },
   );
+
+  it.each(FALLBACK_CASES)("leaves %j to the rehype plugins", (markdown) => {
+    expect(bothHasts(markdown).direct).toBeNull();
+  });
 
   it("builds what the rehype plugins build for every CommonMark example it takes", () => {
     const differing = spec.tests.filter((test) => {

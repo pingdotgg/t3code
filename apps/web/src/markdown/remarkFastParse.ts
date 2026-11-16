@@ -19,11 +19,19 @@ function usesMath(extensions: ReadonlyArray<unknown>): boolean {
  * extensions. Use after remark-parse and the syntax plugins, so it can see whether math is on.
  */
 function attachFastParse(this: Processor) {
-  this.parser = (document) =>
-    parseMarkdown(document, {
-      math: usesMath(this.data().micromarkExtensions ?? []),
-      singleTilde: !disablesSingleTilde(this),
-    }) as Root;
+  const micromark = this.parser;
+  this.parser = (document, file) => {
+    try {
+      return parseMarkdown(document, {
+        math: usesMath(this.data().micromarkExtensions ?? []),
+        singleTilde: !disablesSingleTilde(this),
+      }) as Root;
+    } catch (error) {
+      // Thousands of nested labels overflow this recursive parser; micromark's is iterative.
+      if (error instanceof RangeError && micromark) return micromark(document, file);
+      throw error;
+    }
+  };
 }
 
 // A later `.use(remarkGfm, { singleTilde: false })` reconfigures the attacher in place.

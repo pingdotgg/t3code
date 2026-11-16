@@ -83,6 +83,18 @@ export function parseMarkdown(document: string, options: ParseOptions = {}): Roo
   return new DocumentParser(source, options.math ?? false, options.singleTilde ?? true).parse();
 }
 
+/** The last line whose text starts at or before `index`, searching from line `from`. */
+function lastLineAt(contentStarts: ReadonlyArray<number>, index: number, from: number): number {
+  let lo = from;
+  let hi = contentStarts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (contentStarts[mid]! <= index) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
 class DocumentParser {
   readonly source: string;
   readonly blocks: BlockParser;
@@ -144,10 +156,16 @@ class DocumentParser {
   extractDefinitions(block: ParagraphBlock) {
     if (block.definitions) return;
     block.definitions = [];
-    while (block.lines.length > 0) {
-      const first = block.lines[0]!;
+    if (this.source.charCodeAt(block.lines[0]?.start ?? -1) !== LBRACKET) return;
+    // One text for the paragraph, read with a cursor: a long run of definitions stays linear.
+    const content = this.contentOf(block.lines);
+    let line = 0;
+    while (line < block.lines.length) {
+      const first = block.lines[line]!;
       if (this.source.charCodeAt(first.start) !== LBRACKET) break;
-      const parsed = this.parseDefinition(block.lines);
+      // A continuation line's text keeps its indentation; the definition starts after it.
+      const from = content.contentStarts[line]! + (first.start - content.sourceStarts[line]!);
+      const parsed = this.parseDefinition(content, from);
       if (!parsed) break;
       block.definitions.push(parsed.definition);
       if (!this.definitions.links.has(parsed.definition.identifier)) {
@@ -156,22 +174,23 @@ class DocumentParser {
           title: parsed.definition.title,
         });
       }
-      block.lines = block.lines.slice(parsed.lines);
-      if (block.lines.length > 0) {
-        block.lines[0] = { ...block.lines[0]!, start: parsed.restStart ?? block.lines[0]!.start };
-      }
+      line =
+        parsed.next >= content.text.length
+          ? block.lines.length
+          : lastLineAt(content.contentStarts, parsed.next, line) + 1;
     }
+    if (line > 0) block.lines = block.lines.slice(line);
   }
 
-  /** A definition at the start of `lines`; how many lines it used. */
+  /** A definition at `from` in `content`, and where the line it ends on ends. */
   parseDefinition(
-    lines: ContentLine[],
-  ): { definition: ParsedDefinition; lines: number; restStart?: number } | null {
-    const content = this.contentOf(lines);
+    content: Content,
+    from: number,
+  ): { definition: ParsedDefinition; next: number } | null {
     const s = content.text;
-    if (s.charCodeAt(0) !== LBRACKET) return null;
+    if (s.charCodeAt(from) !== LBRACKET) return null;
     // Label.
-    let i = 1;
+    let i = from + 1;
     let labelLength = 0;
     while (i < s.length) {
       const c = s.charCodeAt(i);
@@ -186,7 +205,7 @@ class DocumentParser {
       labelLength++;
     }
     if (i >= s.length || labelLength > 999) return null;
-    const label = s.slice(1, i);
+    const label = s.slice(from + 1, i);
     if (label.trim() === "" || label.charCodeAt(0) === CARET) return null;
     if (s.charCodeAt(i + 1) !== COLON) return null;
     i += 2;
@@ -275,24 +294,19 @@ class DocumentParser {
       j = m;
       end = m;
     }
-    // Lines used: up to the line ending after the definition.
-    let used = 0;
-    for (let k = 0; k < lines.length; k++) {
-      if (content.contentStarts[k]! <= j) used = k + 1;
-    }
     const atLineEnd = j >= s.length || s.charCodeAt(j) === LF || s.charCodeAt(j) === CR;
     if (!atLineEnd) return null;
     const identifier = normalizeIdentifier(label);
     return {
       definition: {
-        start: this.mapContent(content, 0),
+        start: this.mapContent(content, from),
         end: this.mapContentEnd(content, end),
         label: unescapeString(label),
         identifier,
         url,
         title,
       },
-      lines: j >= s.length ? lines.length : used,
+      next: j,
     };
   }
 
@@ -415,8 +429,7 @@ class DocumentParser {
 
   mapContent(content: Content, index: number): number {
     const { contentStarts, sourceStarts } = content;
-    let lo = 0;
-    for (let i = 0; i < contentStarts.length; i++) if (contentStarts[i]! <= index) lo = i;
+    const lo = lastLineAt(contentStarts, index, 0);
     return sourceStarts[lo]! + (index - contentStarts[lo]!);
   }
 
@@ -646,6 +659,13 @@ class DocumentParser {
     return after === this.source.length ? after : Math.max(end, block.end);
   }
 
+  // After the check: a line ending, or spaces and then more than the end of the paragraph.
+  taskCheckEnds(at: number, moreFollows: boolean): boolean {
+    const code = this.source.charCodeAt(at);
+    if (code === 10 || code === 13) return true;
+    return (code === 32 || code === 9) && moreFollows;
+  }
+
   convertListItem(block: Block): ListItem {
     const children = this.convertChildren(block) as BlockContent[];
     let checked: boolean | null = null;
@@ -655,20 +675,34 @@ class DocumentParser {
       first.position!.start.line === this.point(block.start).line
     ) {
       const head = first.children[0];
-      // micromark-extension-gfm-task-list-item: whitespace, then more than the end of input.
-      const match = head?.type === "text" ? /^\[([ \t]|[xX])\][ \t]+/.exec(head.value) : null;
+      // micromark-extension-gfm-task-list-item: a line ending, or whitespace and then more input.
+      const match =
+        head?.type === "text" ? /^\[([ \t]|[xX])\](?:[\r\n]|[ \t]+|$)/.exec(head.value) : null;
+      const start = head?.position?.start.offset;
       if (
         head?.type === "text" &&
         match &&
-        (match[0].length < head.value.length || first.children.length > 1)
+        start !== undefined &&
+        // The check is syntax, so `\[x]` or `&#91;x]` is not one.
+        this.source.startsWith(match[0].slice(0, 3), start) &&
+        this.taskCheckEnds(
+          start + 3,
+          match[0].length < head.value.length || first.children.length > 1,
+        )
       ) {
         checked = match[1] !== " " && match[1] !== "\t";
-        // mdast-util-gfm-task-list-item drops the check and one whitespace character.
+        // mdast-util-gfm-task-list-item drops the check and one whitespace character, and moves
+        // the start one column right even past a line ending.
         head.value = head.value.slice(4);
         if (head.value.length === 0) {
           first.children.shift();
         } else {
-          head.position!.start = this.point(head.position!.start.offset! + 4);
+          const afterCheck = this.point(start + 3);
+          head.position!.start = {
+            ...afterCheck,
+            column: afterCheck.column + 1,
+            offset: start + 4,
+          };
           first.position!.start = { ...head.position!.start };
         }
       }

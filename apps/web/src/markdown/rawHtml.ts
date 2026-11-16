@@ -25,6 +25,17 @@ const CLOSES_P = new Set(
   ).split(" "),
 );
 const HEADINGS = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
+// parse5's special elements: an end tag for another element stops at them and is ignored.
+const SPECIAL = new Set(
+  (
+    "address applet area article aside base basefont bgsound blockquote body br button caption " +
+    "center col colgroup dd details dir div dl dt embed fieldset figcaption figure footer form " +
+    "frame frameset h1 h2 h3 h4 h5 h6 head header hgroup hr html iframe img input keygen li link " +
+    "listing main marquee menu meta nav noembed noframes noscript object ol p param plaintext pre " +
+    "script search section select source style summary table tbody td template textarea tfoot th " +
+    "thead title tr track ul wbr xmp"
+  ).split(" "),
+);
 // Tags whose parse5 handling this subset does not reproduce.
 const UNSUPPORTED = new Set(
   (
@@ -231,6 +242,8 @@ interface Scope {
   /** Markdown ancestors the HTML may not close: `p`, headings, links. */
   readonly inParagraph: boolean;
   readonly inLink: boolean;
+  /** Tag names of the elements around this scope, Markdown and raw. */
+  readonly ancestors: ReadonlyArray<string>;
 }
 
 const current = (scope: Scope): Element | Root => scope.open.at(-1) ?? scope.output;
@@ -316,6 +329,7 @@ function assemble(children: ReadonlyArray<ElementContent | RawNode>, scope: Scop
       open: [],
       inParagraph: scope.inParagraph || child.tagName === "p" || HEADINGS.has(child.tagName),
       inLink: scope.inLink || child.tagName === "a",
+      ancestors: [...scope.ancestors, ...scope.open.map((open) => open.tagName), child.tagName],
     };
     assemble(child.children as Array<ElementContent | RawNode>, inner);
     // Raw elements still open end with the Markdown element, unless parse5 would carry them on.
@@ -331,6 +345,12 @@ function endOpen(scope: Scope, end: Point | undefined) {
   }
   scope.open.length = 0;
 }
+
+// parse5 ends any open heading for a heading end tag, whatever its level.
+const closesAncestor = (scope: Scope, name: string) =>
+  scope.ancestors.some(
+    (ancestor) => ancestor === name || (HEADINGS.has(name) && HEADINGS.has(ancestor)),
+  );
 
 function applyToken(token: Token, raw: RawNode, scope: Scope) {
   const tokenEnd = pointIn(raw, token.end);
@@ -371,11 +391,12 @@ function applyToken(token: Token, raw: RawNode, scope: Scope) {
       const index = scope.open.findLastIndex((element) => element.tagName === name);
       if (index < 0) {
         // An end tag for an element outside this scope would close Markdown elements.
-        if (FORMATTING.has(name)) throw BAIL;
+        if (FORMATTING.has(name) || closesAncestor(scope, name)) throw BAIL;
         return;
       }
       for (const element of scope.open.slice(index + 1)) {
         if (FORMATTING.has(element.tagName)) throw BAIL;
+        if (!SPECIAL.has(name) && SPECIAL.has(element.tagName)) throw BAIL;
       }
       if (FORMATTING.has(name) && index !== scope.open.length - 1) throw BAIL;
       const element = scope.open[index]!;
@@ -462,6 +483,7 @@ export function assembleRawHtml(
       open: [],
       inParagraph: false,
       inLink: false,
+      ancestors: [],
     };
     assemble(tree.children as Array<ElementContent | RawNode>, scope);
     endOpen(scope, scope.lastEnd);
