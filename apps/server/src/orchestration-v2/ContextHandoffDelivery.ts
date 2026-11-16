@@ -25,6 +25,26 @@ const MESSAGE_KINDS: ReadonlySet<string> = new Set([
   "peer_reply",
 ]);
 
+const SUMMARY_TOOLS = "t3_conversation_summary_list and t3_conversation_summary_expand";
+
+function handoffReceiptLine(input: {
+  readonly summaryIds: ReadonlyArray<string>;
+  readonly omittedHaveSummaries: boolean;
+}): string {
+  if (input.summaryIds.length > 0) {
+    return `Replaced earlier spans with ${input.summaryIds.join(", ")}; read one with ${SUMMARY_TOOLS}.`;
+  }
+  if (input.omittedHaveSummaries) {
+    return `Omitted items have conversation summaries; read one with ${SUMMARY_TOOLS}.`;
+  }
+  return "";
+}
+
+function withHandoffReceipt(summaryText: string, line: string): string {
+  if (line === "" || summaryText.includes(line)) return summaryText;
+  return summaryText === "" ? line : `${summaryText}\n${line}`;
+}
+
 /** The provider prompt for a turn that carries inline context ahead of the user's text. */
 export const withInlineContext = (context: string, userText: string): string =>
   context === "" ? userText : `${context}\n\nUser message:\n${userText}`;
@@ -136,6 +156,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     });
     const summarized = new Set<TurnItemId>();
     const chosen: Array<HandoffSummary> = [];
+    let offers: ReadonlyArray<HandoffSummary> = [];
     const priorOmitted = new Set<string>(
       pending.flatMap((handoff) => handoff.history?.omittedItemIds ?? []),
     );
@@ -158,7 +179,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       );
       // Most covered items per byte first, so coarse summaries of old history come before the
       // finer ones next to the tail. Ties keep the offered order, nearest the present first.
-      const offers = (yield* input.summaries(eligible)).toSorted(
+      offers = (yield* input.summaries(eligible)).toSorted(
         (a, b) =>
           b.coveredItemIds.length / Buffer.byteLength(b.text) -
           a.coveredItemIds.length / Buffer.byteLength(a.text),
@@ -193,14 +214,9 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
         selected = reduced;
       }
     }
-    const estimatedTokens = historyCost(selected.messages, selected.context);
     const summaryFactIds = [
       ...new Set(chosen.flatMap((summary) => summary.knowledgeFactIds ?? [])),
     ];
-    if (estimatedTokens > budget) {
-      if (input.deferInline) return empty;
-      return yield* new ContextHandoffBudgetError();
-    }
     const omittedItemIds = new Set(selected.omittedItemIds);
     // Items that arrive neither verbatim nor beneath a delivered summary. An older record may
     // count omitted items without naming them, or carry only text that did not fit: both count,
@@ -232,12 +248,48 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
         summarizedItemIds,
       };
     };
+    const stillOmitted = (handoff: OrchestrationV2ContextHandoff) =>
+      new Set<string>([
+        ...(handoff.history?.omittedItemIds ?? []).filter((id) => !summarized.has(id)),
+        ...(handoff.history?.messages ?? [])
+          .filter((message) => omittedItemIds.has(message.itemId))
+          .map((message) => message.itemId),
+      ]);
+    const omittedHaveSummaries = (ids: ReadonlySet<string>) =>
+      offers.some((offer) => offer.coveredItemIds.some((id) => ids.has(id)));
+    const receiptFor = (handoff: OrchestrationV2ContextHandoff) =>
+      withHandoffReceipt(
+        handoff.summaryText,
+        handoffReceiptLine({
+          summaryIds: summaryDelivery(handoff).summaryIds ?? [],
+          omittedHaveSummaries: omittedHaveSummaries(stillOmitted(handoff)),
+        }),
+      );
+    const injectedLine = handoffReceiptLine({
+      summaryIds: [
+        ...new Set(pending.flatMap((handoff) => summaryDelivery(handoff).summaryIds ?? [])),
+      ],
+      omittedHaveSummaries: omittedHaveSummaries(
+        new Set(pending.flatMap((handoff) => [...stillOmitted(handoff)])),
+      ),
+    });
+    const context =
+      injectedLine !== "" &&
+      historyCost(selected.messages, `${selected.context}\n${injectedLine}`) <= budget
+        ? `${selected.context}\n${injectedLine}`
+        : selected.context;
+    const estimatedTokens = historyCost(selected.messages, context);
+    if (estimatedTokens > budget) {
+      if (input.deferInline) return empty;
+      return yield* new ContextHandoffBudgetError();
+    }
     const persist = (status: "pending" | "injected" | "inline") =>
       Effect.forEach(
         pending,
         (handoff, index) =>
           input.persist({
             ...handoff,
+            summaryText: receiptFor(handoff),
             ...(nativeThreadId === undefined
               ? {}
               : {

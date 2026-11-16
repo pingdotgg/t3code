@@ -9,8 +9,8 @@ accepting one only when more history items arrive with it than without it, count
 summarized items alike. The six newest messages are never traded away,
 which matches the tail the summary pass never covers. A summary's sources must all be carried by the
 handoffs, with one exception that only the caller can declare. A recovery replays every earlier run
-of its thread onto a fresh native conversation but reads history without MCP tool results, so the
-caller names those runs and a summary may cite history inside them. Nothing is inferred from a
+of its thread onto a fresh native conversation and carries tool results verbatim when they fit.
+The caller may still name those runs so a summary can cite a source the handoff did not carry. Nothing is inferred from a
 handoff record: it does not name the thread its run ordinals describe, and a fork's history spans
 its ancestors. These transfers do not
 reconstruct native provider session state, tool state, approvals, or attachments.
