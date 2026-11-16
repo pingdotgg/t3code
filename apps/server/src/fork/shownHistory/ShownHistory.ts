@@ -98,6 +98,12 @@ const PAGE_LIMITS: ShownLimits = {
   maxRuns: Number.POSITIVE_INFINITY,
 };
 const TARGETED_PAGE_LIMITS: ShownLimits = { ...PAGE_LIMITS, maxRows: 2_000, maxBytes: 2_097_152 };
+/** A tail read's caps; it asks for its own `minCores`. */
+export const SHOWN_TAIL_LIMITS = {
+  maxRows: 20_000,
+  maxBytes: 32 * 1_048_576,
+  maxRuns: Number.POSITIVE_INFINITY,
+} as const;
 
 const BATCH_ROWS = 32;
 // TurnItemPositionStore numbers a run's items from runOrdinal * 1_000_000.
@@ -429,6 +435,39 @@ export const selectShownWindow = Effect.fn("ShownHistory.selectWindow")(function
     WINDOW_LIMITS,
     (row) => projectedRowBoundedSnapshotEncodedBytes(shownWireRow(row, threadId, 0), threadId),
     null,
+  );
+});
+
+/**
+ * The thread's latest shown rows, oldest first, read back until they hold `minCores` messages, and
+ * why the read stopped there. Null when the thread is missing or deleted.
+ */
+export const selectShownTail = Effect.fn("ShownHistory.selectTail")(function* (
+  sql: SqlClient.SqlClient,
+  threadId: ThreadId,
+  forkOf: ForkOf,
+  minCores: number,
+) {
+  return yield* sql.withTransaction(
+    Effect.gen(function* () {
+      const segments = yield* shownSegments(sql, threadId, forkOf);
+      if (segments === null) return null;
+      const walk = yield* walkShownRows(
+        sql,
+        segments,
+        { ...SHOWN_TAIL_LIMITS, minCores },
+        // The rows stay in memory whole; a wire row would summarize a send's input.
+        (row) => Buffer.byteLength(JSON.stringify(row.item), "utf8"),
+        null,
+      );
+      const stop =
+        walk.next === null
+          ? ("start" as const)
+          : shownNeedsMet(walk.rows, minCores)
+            ? ("enough" as const)
+            : ("cap" as const);
+      return { rows: walk.rows.toReversed(), stop };
+    }),
   );
 });
 

@@ -288,7 +288,7 @@ function formatElementDetails(element: ElementContextDetails): string[] {
   return lines;
 }
 
-function formatComposerContextProviderPayload(record: KnownComposerContextRecord): string {
+export function formatComposerContextProviderPayload(record: KnownComposerContextRecord): string {
   switch (record.kind) {
     case "image":
     case "file":

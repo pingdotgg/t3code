@@ -89,6 +89,7 @@ import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 import * as SendToUser from "../fork/userMessageTools/SendToUser.ts";
 import * as DashboardTools from "../fork/threadDashboard/DashboardTools.ts";
+import * as UserViewTools from "../fork/userView/UserViewTools.ts";
 import { requestUrl } from "../requestUrl.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
@@ -1341,6 +1342,7 @@ export const layerTools = Layer.mergeAll(
   layerHtmlToolkit,
   layerMessageToolkit,
   toolkitRegistration(DashboardTools.DashboardToolkit, DashboardTools.layerHandlers),
+  toolkitRegistration(UserViewTools.UserViewToolkit, UserViewTools.layerHandlers),
 );
 
 const layerToolExposure = Layer.effect(

@@ -43,6 +43,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { Etag, HttpRouter } from "effect/http";
@@ -56,6 +57,7 @@ import * as OrchestrationEventStore from "../../persistence/OrchestrationEventSt
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ProjectEnrichmentService from "../../project/ProjectEnrichmentService.ts";
 import { subscribeOrchestrationV2Thread } from "../../ws.ts";
+import { selectShownTail } from "./ShownHistory.ts";
 
 const decodeBounded = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadBoundedSnapshot)),
@@ -87,6 +89,7 @@ const HIDDEN = ThreadId.make("thread:shown:hidden");
 const UNANSWERED = ThreadId.make("thread:shown:unanswered");
 const LARGE = ThreadId.make("thread:shown:large");
 const REWRITES = ThreadId.make("thread:shown:rewrites");
+const HUGE = ThreadId.make("thread:shown:huge");
 
 const runIdOf = (threadId: ThreadId, run: number) => RunId.make(`run:${threadId}:${run}`);
 const nodeIdOf = (threadId: ThreadId, run: number) => NodeId.make(`node:${threadId}:${run}`);
@@ -531,6 +534,14 @@ const largeThread = () => [
   ...range(2, 151).map((run) => send(LARGE, run, 1, `${LARGE_TEXT}${run}`)),
 ];
 
+const HUGE_TEXT = "x".repeat(5 * 1_048_576);
+
+/** A typed message and seven sends of 5 MiB each, more than a tail read holds. */
+const hugeThread = () => [
+  userMessage(HUGE, 1, 1, "Paste the logs."),
+  ...range(2, 8).map((run) => send(HUGE, run, 1, `${HUGE_TEXT}${run}`)),
+];
+
 /** Forks of PARENT: label, thread, runs, sends per run, and the thread the window's cursor is in. */
 const CHILDREN = [
   ["a child with fewer shown rows than the window holds", CHILD_SHORT, 9, 10, PARENT],
@@ -567,6 +578,7 @@ const seed = Effect.gen(function* () {
     [UNANSWERED, unansweredThread(), threadCreated(UNANSWERED)],
     [LARGE, largeThread(), threadCreated(LARGE)],
     [REWRITES, rewritesThread(), threadCreated(REWRITES)],
+    [HUGE, hugeThread(), threadCreated(HUGE)],
   ];
   for (const [threadId, items, created] of threads) {
     yield* projections.apply(created);
@@ -920,6 +932,34 @@ it.layer(TestLayer)("shown-only history", (it) => {
         ),
         shown,
       );
+    }),
+  );
+
+  it.effect("a tail read reaches back past the window's messages and says why it stopped", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const tail = (threadId: ThreadId, minCores: number) =>
+        selectShownTail(sql, threadId, ProjectionStore.inheritedRunFork, minCores);
+      const ids = (rows: ReadonlyArray<{ readonly itemId: TurnItemId }>) =>
+        rows.map((row) => String(row.itemId));
+      const paged = shownIdsOf(pagedThread());
+
+      const enough = yield* tail(PAGED, 240);
+      assert.strictEqual(enough?.stop, "enough");
+      assert.isAtLeast(enough!.rows.length, 240);
+      assert.isBelow(enough!.rows.length, paged.length);
+      assert.deepStrictEqual(ids(enough!.rows), paged.slice(-enough!.rows.length));
+
+      const start = yield* tail(PAGED, 400);
+      assert.strictEqual(start?.stop, "start");
+      assert.deepStrictEqual(ids(start!.rows), paged);
+
+      const cap = yield* tail(HUGE, 240);
+      assert.strictEqual(cap?.stop, "cap");
+      assert.deepStrictEqual(ids(cap!.rows), shownIdsOf(hugeThread()).slice(-cap!.rows.length));
+      assert.isBelow(cap!.rows.length, hugeThread().length);
+
+      assert.isNull(yield* tail(ThreadId.make("thread:shown:missing"), 240));
     }),
   );
 

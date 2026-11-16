@@ -13,6 +13,7 @@ import { ServerConfig } from "../config.ts";
 import { DeviceService } from "../device/DeviceService.ts";
 import { DisplayModeWrap } from "../fork/displayModeWrap/DisplayModeWrap.ts";
 import { ThreadDashboard } from "../fork/threadDashboard/ThreadDashboard.ts";
+import { UserView } from "../fork/userView/UserView.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
@@ -55,6 +56,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(AssetSigner)({}),
   Layer.mock(DeviceService)({}),
   Layer.mock(ThreadDashboard)({}),
+  Layer.mock(UserView)({}),
   Layer.mock(DisplayModeWrap)({ forgetNotesAfterCompaction: () => (ingest) => ingest }),
   Layer.mock(DocumentText)({}),
   Layer.mock(EnvironmentThemeService)({}),

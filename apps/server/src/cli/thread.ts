@@ -33,6 +33,7 @@ import { mcpToolSession, type McpToolSession } from "../mcp/AcpMcpStdioBridge.ts
 import { expandHomePath } from "../os-jank.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { readLiveServerRuntimeState } from "../serverRuntimeState.ts";
+import { userViewCommand } from "../fork/userView/userViewCommand.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 /**
@@ -142,7 +143,7 @@ const isThreadCliError = Schema.is(ThreadCliError);
  * These errors are expected outcomes for a script, so they print as one line
  * on stderr instead of the runtime's logged stack trace.
  */
-const reportThreadErrors = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+export const reportThreadErrors = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     Effect.tapError((error) =>
       isThreadCliError(error) ? Console.error(error.message) : Effect.void,
@@ -215,7 +216,7 @@ export type ThreadTools = ReturnType<typeof makeThreadTools>;
  * Signs in as a short-lived MCP client of the running server, the same way an
  * outside agent does, and revokes that session when the command ends.
  */
-const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E, R>(
+export const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E, R>(
   flags: { readonly baseDir: Option.Option<string> },
   run: (tools: ThreadTools) => Effect.Effect<A, E, R>,
 ) {
@@ -728,11 +729,13 @@ const waitFlag = Flag.Boolean("wait").pipe(
 const messageArgument = Argument.String("message").pipe(
   Argument.withDescription("Message for the agent, or - to read it from stdin."),
 );
-const threadArgument = Argument.String("thread").pipe(Argument.withDescription("Thread id."));
+export const threadArgument = Argument.String("thread").pipe(
+  Argument.withDescription("Thread id."),
+);
 
 const decodeThreadIdValue = Schema.decodeUnknownEffect(ThreadId);
 const decodeTitle = Schema.decodeUnknownEffect(TrimmedNonEmptyString);
-const decodeThreadId = (value: string) =>
+export const decodeThreadId = (value: string) =>
   decodeThreadIdValue(value.trim()).pipe(
     Effect.mapError(() => new ThreadUsageError({ detail: `'${value}' is not a thread id.` })),
   );
@@ -955,5 +958,6 @@ export const threadCommand = Command.make("thread").pipe(
     threadStartCommand,
     threadSendCommand,
     threadShowCommand,
+    userViewCommand({ decodeThreadId, reportThreadErrors, threadArgument, withThreadTools }),
   ]),
 );

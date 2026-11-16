@@ -43,6 +43,7 @@ import * as ServerConfig from "../config.ts";
 import { DeviceService } from "../device/DeviceService.ts";
 import { DisplayModeWrap } from "./displayModeWrap/DisplayModeWrap.ts";
 import { ThreadDashboard } from "./threadDashboard/ThreadDashboard.ts";
+import { UserView } from "./userView/UserView.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import * as EnvironmentTheme from "../environmentTheme.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
@@ -648,6 +649,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(AssetSigner)({}),
   Layer.mock(DeviceService)({}),
   Layer.mock(ThreadDashboard)({}),
+  Layer.mock(UserView)({}),
   Layer.mock(DisplayModeWrap)({ forgetNotesAfterCompaction: () => (ingest) => ingest }),
   Layer.mock(DocumentText)({}),
   Layer.mock(EnvironmentTheme.EnvironmentThemeService)({}),
