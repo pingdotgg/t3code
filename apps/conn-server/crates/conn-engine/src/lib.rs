@@ -261,6 +261,23 @@ pub enum EngineError<E> {
 }
 
 pub trait Engine: Send + Sync {
+    /// The project's provider policy, before selecting an instance by driver.
+    fn provider_instance_enabled(&self, _project_id: &str, _instance_id: &str) -> bool {
+        true
+    }
+    /// Whether a command already committed; retries must use its recorded target.
+    fn has_receipt<'a>(&'a self, _command_id: &'a str) -> BoxFuture<'a, Result<bool, String>> {
+        Box::pin(std::future::ready(Ok(false)))
+    }
+
+    /// The status in a command's original run.created event, including a replayed receipt.
+    fn created_run_status<'a>(
+        &'a self,
+        _command_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, String>> {
+        Box::pin(std::future::ready(Ok(None)))
+    }
+
     /// Decides, persists and applies one command. Resolves once its events are committed,
     /// with the sequence of the last event, so a client can wait for it on its streams.
     fn dispatch(
