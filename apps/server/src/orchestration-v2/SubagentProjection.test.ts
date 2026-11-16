@@ -92,6 +92,25 @@ it("resets a subagent child's snooze, title job and remote delegation but keeps 
       threadId: ThreadId.make("linked-parent"),
       title: "Linked parent",
     },
+    lastSnoozeWakeAt: snoozedAt,
+    activeOrderKey: "parent-active",
+    opens: { openedAt: 1_753_348_800_000, score: 4, picks: [] },
+    group: {
+      status: "active",
+      primary: { model: "gpt-5.4", label: "GPT", handle: "gpt" },
+      seats: [
+        {
+          threadId: ThreadId.make("thread:parent-seat"),
+          handle: "claude",
+          label: "Claude",
+          status: "seated",
+          joinedAfterRun: 1,
+        },
+      ],
+      discussion: { mode: "everyone", turnsLeft: 2, delivering: ["primary"] },
+      closedBecause: null,
+      closedAt: null,
+    },
   };
   const childProviderThreadId = ProviderThreadId.make("provider-thread:subagent-awake-child");
   const parentNodeId = NodeId.make("node:subagent-parent");
@@ -110,6 +129,10 @@ it("resets a subagent child's snooze, title job and remote delegation but keeps 
 
   assert.isNull(childThread.snoozedUntil);
   assert.isNull(childThread.snoozedAt);
+  assert.isNull(childThread.lastSnoozeWakeAt);
+  assert.isNull(childThread.activeOrderKey);
+  assert.isNull(childThread.opens);
+  assert.isNull(childThread.group);
   assert.isNull(childThread.titleRegeneration);
   assert.isUndefined(childThread.delegatedFrom);
   assert.equal(childThread.projectId, parentThread.projectId);
