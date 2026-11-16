@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { Children, type CSSProperties, isValidElement, type ReactNode, useState } from "react";
 
-import { translateDynamic } from "../../i18nCore";
+import { i18n, translateDynamic } from "../../i18nCore";
 import { cn } from "~/lib/utils";
 
 import { Badge } from "../ui/badge";
@@ -37,9 +37,14 @@ import {
   type PullRequestGlyphIcon,
 } from "./pullRequestIcons";
 
-/** Translates a presentation label stored as a `pullRequest` namespace key. */
+/**
+ * Translates a presentation label stored as a `pullRequest` namespace key.
+ * Callers also hand over already-resolved strings (interpolated values,
+ * user-visible composites); those are not catalog keys and pass through.
+ */
 export function presentationLabel(label: string): string {
-  return translateDynamic(`pullRequest:${label}`);
+  const key = `pullRequest:${label}`;
+  return i18n.exists(key) ? translateDynamic(key) : label;
 }
 
 export function PullRequestLabelChip({
