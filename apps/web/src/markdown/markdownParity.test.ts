@@ -124,6 +124,11 @@ describe("parseMarkdown", () => {
     expect(parseMarkdown(markdown)).toEqual(remark.parse(markdown));
   });
 
+  it("hands deeply nested directive labels to micromark instead of overflowing", () => {
+    const markdown = `${":codex-followup[".repeat(40)}x${"]".repeat(40)}`;
+    expect(fastRemark.parse(markdown)).toEqual(remark.parse(markdown));
+  });
+
   it("keeps a single tilde as text when the plugins turn singleTilde off, as user messages do", () => {
     const markdown = "Install as ~/a/x, then (~/b.md). ~one~ ~~two~~";
     const userPlugins = [...CHAT_MARKDOWN_REMARK_PLUGINS, ...CHAT_USER_MARKDOWN_REMARK_PLUGINS];
