@@ -608,7 +608,7 @@ export async function deleteSelectedThreadEntries<
   return { deletedThreadKeys, firstFailure };
 }
 
-export function isSidebarHiddenThread(thread: Pick<SidebarThreadSummary, "lineage">): boolean {
+function isSidebarHiddenThread(thread: Pick<SidebarThreadSummary, "lineage">): boolean {
   return !isListedThreadLineage(thread.lineage);
 }
 
@@ -825,6 +825,9 @@ export function resolveThreadLastVisitedAt(
 
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   if (!thread.latestRun?.completedAt) return false;
+  if (thread.latestRun.status === "interrupted" || thread.latestRun.status === "cancelled") {
+    return false;
+  }
   const completedAt = Date.parse(thread.latestRun.completedAt);
   if (Number.isNaN(completedAt)) return false;
   if (!thread.lastVisitedAt) return false;

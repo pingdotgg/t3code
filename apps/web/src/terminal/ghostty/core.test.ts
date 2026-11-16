@@ -130,28 +130,68 @@ describe("GhosttyTerminalCore snapshots", () => {
   });
 
   it.each([
+    { code: "Numpad1", key: "End", expected: "\x1b[F" },
+    { code: "Numpad5", key: "Clear", expected: "\x1b[E" },
+    { code: "Numpad8", key: "ArrowUp", expected: "\x1b[A" },
+    { code: "NumpadDecimal", key: "Delete", expected: "\x1b[3~" },
+    { mode: "\x1b[?1h", code: "Numpad8", key: "ArrowUp", expected: "\x1bOA" },
+    { mode: "\x1b[>1u", code: "Numpad8", key: "ArrowUp", expected: "\x1b[57419u" },
+    { mode: "\x1b=\x1b[?1035l", code: "Numpad8", key: "8", numLock: true, expected: "\x1bOx" },
+    { mode: "\x1b[>1u", code: "Numpad8", key: "8", numLock: true, expected: "8" },
     { code: "", key: "Backspace", expected: "\x7f" },
     { code: "Unidentified", key: "Backspace", expected: "\x7f" },
     { code: "Backspace", key: "Backspace", expected: "\x7f" },
     { code: "Delete", key: "Backspace", expected: "\x1b[3~" },
     { code: "", key: "a", expected: "a" },
     { code: "", key: "Unidentified", expected: "" },
-  ])("encodes key $key with physical code '$code'", async ({ code, key, expected }) => {
-    const core = await createCore();
-    const event = {
-      code,
-      key,
-      repeat: false,
-      shiftKey: false,
-      ctrlKey: false,
-      altKey: false,
-      metaKey: false,
-      isComposing: false,
-      getModifierState: () => false,
-    } as unknown as KeyboardEvent;
+  ])(
+    "encodes key $key with physical code '$code'",
+    async ({ mode = "", code, key, numLock = false, expected }) => {
+      const core = await createCore();
+      core.write(mode);
+      const event = {
+        code,
+        key,
+        repeat: false,
+        shiftKey: false,
+        ctrlKey: false,
+        altKey: false,
+        metaKey: false,
+        isComposing: false,
+        getModifierState: (modifier: string) => modifier === "NumLock" && numLock,
+      } as unknown as KeyboardEvent;
 
-    expect(core.encodeKey(event)).toBe(expected);
-  });
+      expect(core.encodeKey(event)).toBe(expected);
+    },
+  );
+
+  // smkx is what ncurses keypad(True) sends; a raw-mode parser such as Crossterm never does.
+  it.each([
+    { mode: "", ctrlKey: true, expected: "\x1b[13;5~" },
+    { mode: "\x1b[?1h\x1b=", ctrlKey: true, expected: "\x1b[1;5R" },
+    { mode: "\x1b[?1h\x1b=", shiftKey: true, expected: "\x1b[1;2R" },
+    { mode: "\x1b[?1h\x1b=\x1b[?1l\x1b>", ctrlKey: true, expected: "\x1b[13;5~" },
+    { mode: "\x1b[?1h\x1b=\x1b[>1u", ctrlKey: true, expected: "\x1b[13;5~" },
+  ])(
+    "encodes modified F3 as $expected after $mode",
+    async ({ mode, ctrlKey = false, shiftKey = false, expected }) => {
+      const core = await createCore();
+      core.write(mode);
+      const event = {
+        code: "F3",
+        key: "F3",
+        repeat: false,
+        shiftKey,
+        ctrlKey,
+        altKey: false,
+        metaKey: false,
+        isComposing: false,
+        getModifierState: () => false,
+      } as unknown as KeyboardEvent;
+
+      expect(core.encodeKey(event)).toBe(expected);
+    },
+  );
 
   it.each(["", "\x1b[>1u"])("encodes macOS Option text with keyboard mode %j", async (mode) => {
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
@@ -236,7 +276,7 @@ describe("GhosttyTerminalCore snapshots", () => {
     ]);
   });
 
-  it("paints ANSI colors from the theme palette and repaints them on theme change", async () => {
+  it("paints ANSI colors from the theme palette and repaints them when the theme or a program changes colors", async () => {
     const core = await createCore();
     const theme = {
       foreground: { r: 255, g: 255, b: 255 },
@@ -254,6 +294,41 @@ describe("GhosttyTerminalCore snapshots", () => {
     cells = core.snapshot().rowData[0]!.cells;
     expect(cells[0]!.foreground).toEqual({ r: 1, g: 9, b: 2 });
     expect(cells[1]!.foreground).toEqual({ r: 255, g: 0, b: 0 });
+
+    // Inverse, default and explicit-background cells, cached before a program sets OSC 10/11.
+    core.resetAndWrite("\x1b[7mI\x1b[0mD\x1b[48;2;9;8;7mB\x1b[0m\r\n");
+    core.snapshot();
+    const colors = () => {
+      const { background, rowData } = core.snapshot();
+      return {
+        background,
+        cells: rowData[0]!.cells
+          .slice(0, 3)
+          .map(({ foreground, background }) => ({ foreground, background })),
+      };
+    };
+    const programForeground = { r: 17, g: 34, b: 51 };
+    const programBackground = { r: 68, g: 85, b: 102 };
+    const explicitBackground = { r: 9, g: 8, b: 7 };
+    core.write("\x1b]10;rgb:11/22/33\x07\x1b]11;rgb:44/55/66\x07");
+    expect(colors()).toEqual({
+      background: programBackground,
+      cells: [
+        { foreground: programBackground, background: programForeground },
+        { foreground: programForeground, background: programBackground },
+        { foreground: programForeground, background: explicitBackground },
+      ],
+    });
+
+    core.write("\x1b]110\x07\x1b]111\x07");
+    expect(colors()).toEqual({
+      background: theme.background,
+      cells: [
+        { foreground: theme.background, background: theme.foreground },
+        { foreground: theme.foreground, background: theme.background },
+        { foreground: theme.foreground, background: explicitBackground },
+      ],
+    });
   });
 
   it("preserves Unicode and split ANSI parser state across batched renderer reads", async () => {
@@ -503,7 +578,7 @@ describe("GhosttyTerminalCore mouse encoding", () => {
       },
       () => {},
     );
-    const mouse = (
+    const report = (
       x: number,
       y: number,
       paddingTop: number,
@@ -526,6 +601,7 @@ describe("GhosttyTerminalCore mouse encoding", () => {
         paddingBottom: 279 - paddingTop - 15 * cellHeight,
         anyButtonPressed: true,
       });
+    const mouse = (...args: Parameters<typeof report>) => report(...args).data;
     try {
       core.write("\x1b[?1002h\x1b[?1006h");
       expect(mouse(218.5, 140, 4)).toBe("\x1b[<0;28;8M");
@@ -535,6 +611,12 @@ describe("GhosttyTerminalCore mouse encoding", () => {
       expect(mouse(500, 140, 4, 305, "release")).toBe("\x1b[<0;37;8m");
       core.write("\x1b[?1016h");
       expect(mouse(218.5, 22, 4.5)).toBe("\x1b[<0;215;17M");
+      core.resize(160, 15, cellWidth, cellHeight);
+      core.write("\x1b[?1002;1006;1016l\x1b[?1000h");
+      expect(report(4 + 99.5 * cellWidth, 140, 4, 1261)).toEqual({
+        data: "\x1b[M \x84(",
+        binary: true,
+      });
     } finally {
       core.dispose();
     }
