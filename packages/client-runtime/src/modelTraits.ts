@@ -4,10 +4,13 @@ import {
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
   isClaudeUltrathinkPrompt,
-  REASONING_EFFORT_OPTION_IDS,
 } from "@t3tools/shared/model";
+import { REASONING_EFFORT_OPTION_IDS } from "./state/threadExecution.ts";
 
-const REASONING_DESCRIPTOR_IDS: ReadonlySet<string> = new Set(REASONING_EFFORT_OPTION_IDS);
+const REASONING_DESCRIPTOR_IDS: ReadonlySet<string> = new Set([
+  ...REASONING_EFFORT_OPTION_IDS,
+  "thinking",
+]);
 
 /** The model's reasoning control: a known effort id, or a select its agent marked as reasoning. */
 export function isReasoningControl(descriptor: ProviderOptionDescriptor): boolean {
