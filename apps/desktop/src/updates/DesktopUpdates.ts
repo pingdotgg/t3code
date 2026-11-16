@@ -643,8 +643,22 @@ export const make = Effect.gen(function* () {
       return { accepted: false, completed: false };
     }
 
-    const state = yield* Ref.get(updateStateRef);
+    const offered = yield* Ref.get(updateStateRef);
+    let state = offered;
     return yield* Effect.gen(function* () {
+      // electron-updater downloads what its last check found, which can be hours old.
+      yield* checkForUpdates(
+        "download",
+        "held",
+        offered.channel !== desktopUpdateChannelOf(environment.appVersion),
+      );
+      state = yield* Ref.get(updateStateRef);
+      if (state.status === "error") {
+        // A failed check keeps electron-updater's earlier result, so the known offer still downloads.
+        state = offered;
+      } else if (state.status !== "available") {
+        return { accepted: true, completed: false };
+      }
       yield* setState(reduceDesktopUpdateStateOnDownloadStart(state));
       yield* electronUpdater.setDisableDifferentialDownload(
         isArm64HostRunningIntelBuild(environment.runtimeInfo),
