@@ -1,8 +1,8 @@
+import { isDarkThemeColor, themeColorWithContrast } from "@t3tools/shared/themeContrast";
+
 import {
   flattenThemeColor,
-  isDarkThemeColor,
   themeColorWithAlpha,
-  themeColorWithContrast,
   type MobileThemeVariables,
 } from "../../../lib/mobileTheme";
 

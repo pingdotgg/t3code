@@ -39,6 +39,10 @@
       "types": "./src/themePalettes.ts",
       "import": "./src/themePalettes.ts"
     },
+    "./themeContrast": {
+      "types": "./src/themeContrast.ts",
+      "import": "./src/themeContrast.ts"
+    },
     "./themeCss": {
       "types": "./src/themeCss.ts",
       "import": "./src/themeCss.ts"
