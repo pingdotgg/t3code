@@ -535,7 +535,10 @@ const ProviderModelRow = memo(function ProviderModelRow({
               variant="ghost-muted"
               disabled={!canWritePreferences}
               onClick={() => onToggleFavorite(model.slug)}
-              aria-label={`${isFavorite ? m(msg("Remove model from favorites")) : m(msg("Add model to favorites"))}: ${model.name}`}
+              aria-label={m(
+                isFavorite ? "Remove {model} from favorites" : "Add {model} to favorites",
+                { model: model.name },
+              )}
             />
           }
         >

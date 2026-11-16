@@ -1230,5 +1230,8 @@
   "839aa502d1c8bd84": "Last run {time}. Recovered {bytes}. {failed} items couldn't be removed.",
   "dfb592864b0f6c24": "Could not load the last run.",
   "dc46686aee0439ed": "Loading last run…",
-  "3719ceced4b9f235": "Cleanup hasn't run yet."
+  "3719ceced4b9f235": "Cleanup hasn't run yet.",
+  "bdc51675f63ab137": "Add a word or phrase to the {dictionary}",
+  "cf209fc2defee54b": "Remove {model} from favorites",
+  "ea239abc9ec6cb31": "Add {model} to favorites"
 }

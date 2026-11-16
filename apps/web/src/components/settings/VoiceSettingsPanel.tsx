@@ -390,7 +390,7 @@ function DictionaryEditor(props: {
             maxLength={5_100}
             disabled={disabled}
             placeholder={m(msg("Add words, separated by commas"))}
-            aria-label={`${m(msg("Add a word or phrase to"))} ${label}`}
+            aria-label={m("Add a word or phrase to the {dictionary}", { dictionary: label })}
             onChange={(event) => setTermDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -1599,7 +1599,7 @@ export function VoiceSettingsPanel() {
         >
           <div className="mt-3 pb-2">
             <DictionaryEditor
-              label="dictionary"
+              label={m(msg("dictionary"))}
               words={settings.speechCustomWords}
               onChange={(words) => void updateClientSettings({ speechCustomWords: words })}
             />
