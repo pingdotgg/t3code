@@ -4443,6 +4443,125 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
   });
+
+  describe("t3_thread_send modelSelection", () => {
+    const provider: ServerProvider = {
+      ...providerSnapshot({
+        instanceId: codexInstanceId,
+        driver: ProviderDriverKind.make("codex"),
+      }),
+      models: [
+        {
+          slug: "gpt-6",
+          name: "Sol",
+          aliases: ["sol"],
+          isCustom: false,
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "effort",
+                label: "Reasoning",
+                type: "select",
+                options: [
+                  { id: "low", label: "Low" },
+                  { id: "high", label: "High" },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    const send = (
+      input: Parameters<
+        OrchestratorMcpService.OrchestratorMcpService["Service"]["sendToThread"]
+      >[1],
+    ) =>
+      Effect.gen(function* () {
+        const sent: Array<ThreadManagementService.ThreadManagementSendInput> = [];
+        const dependencies = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadRecords: () => Effect.succeed(parentProjection([])),
+            sendToThread: (request) =>
+              Effect.sync(() => {
+                sent.push(request);
+                return {
+                  run: { id: RunId.make("run:mcp-send-model"), status: "queued" },
+                  delivery: "queued",
+                } as never;
+              }),
+          }),
+          ServerSettings.layerTest(),
+          providerRegistryLayer([provider]),
+          adapterRegistryLayer([codexInstanceId]),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+        const result = yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          return yield* service.sendToThread(scope, input).pipe(Effect.result);
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+        return { result, sent };
+      });
+
+    it.effect("queues a switch on the thread's own provider and reports what applied", () =>
+      Effect.gen(function* () {
+        const { result, sent } = yield* send({
+          threadId: parentThreadId,
+          message: "continue",
+          modelSelection: { model: "sol", options: [{ id: "effort", value: "high" }] },
+        });
+        assert.isTrue(result._tag === "Success");
+        const expected = { model: "gpt-6", options: [{ id: "effort", value: "high" }] };
+        assert.deepEqual(sent[0]?.modelSelection, { instanceId: codexInstanceId, ...expected });
+        assert.equal(sent[0]?.mode, "queue");
+        if (result._tag === "Success") assert.deepEqual(result.success.modelSelection, expected);
+      }),
+    );
+
+    it.effect.each(["steer", "restart"] as const)("refuses a switch with mode %s", (mode) =>
+      Effect.gen(function* () {
+        const { result, sent } = yield* send({
+          threadId: parentThreadId,
+          message: "continue",
+          mode,
+          modelSelection: { model: "gpt-6" },
+        });
+        assert.isTrue(result._tag === "Failure" && result.failure.code === "invalid_request");
+        assert.deepEqual(sent, []);
+      }),
+    );
+
+    it.effect.each([
+      {
+        name: "an unknown model",
+        model: "gpt-nope",
+        options: undefined,
+        code: "model_unavailable",
+      },
+      {
+        name: "an unknown effort",
+        model: "gpt-6",
+        options: [{ id: "effort", value: "max" }],
+        code: "invalid_request",
+      },
+    ] as const)("refuses $name and sends nothing", ({ model, options, code }) =>
+      Effect.gen(function* () {
+        const { result, sent } = yield* send({
+          threadId: parentThreadId,
+          message: "continue",
+          modelSelection: { model, ...(options === undefined ? {} : { options }) },
+        });
+        assert.isTrue(result._tag === "Failure" && result.failure.code === code);
+        assert.deepEqual(sent, []);
+      }),
+    );
+  });
 });
 
 describe("OrchestratorMcpService thread lookup", () => {

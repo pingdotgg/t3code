@@ -4,14 +4,35 @@ import * as Schema from "effect/Schema";
 import {
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
+  OrchestratorMcpThreadSendInput,
   OrchestratorMcpThreadWaitResult,
 } from "./orchestratorMcp.ts";
 
 const decodeDelegateTaskInput = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskInput);
 const decodeDelegateTaskResult = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskResult);
+const decodeThreadSendInput = Schema.decodeUnknownSync(OrchestratorMcpThreadSendInput);
 const decodeThreadWaitResult = Schema.decodeUnknownSync(OrchestratorMcpThreadWaitResult);
 
 describe("orchestrator MCP contracts", () => {
+  it("decodes a send's model switch from the record or the array options form", () => {
+    const base = { threadId: "thread-1", message: "go", mode: "queue" } as const;
+    const fromRecord = decodeThreadSendInput({
+      ...base,
+      modelSelection: { model: "claude-opus-5-5", options: { effort: "high" } },
+    });
+    const fromArray = decodeThreadSendInput({
+      ...base,
+      modelSelection: { model: "claude-opus-5-5", options: [{ id: "effort", value: "high" }] },
+    });
+    expect(fromRecord.modelSelection).toEqual({
+      model: "claude-opus-5-5",
+      options: [{ id: "effort", value: "high" }],
+    });
+    expect(fromArray).toEqual(fromRecord);
+    expect(decodeThreadSendInput(base).modelSelection).toBeUndefined();
+    expect(() => decodeThreadSendInput({ ...base, modelSelection: {} })).toThrow();
+  });
+
   it("decodes cross-provider delegated task requests and durable results", () => {
     const request = decodeDelegateTaskInput({
       task: "Inspect the workspace and report the result.",

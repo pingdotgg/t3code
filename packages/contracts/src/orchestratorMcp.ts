@@ -547,6 +547,23 @@ export const OrchestratorMcpThreadReadResult = Schema.Struct({
 });
 export type OrchestratorMcpThreadReadResult = typeof OrchestratorMcpThreadReadResult.Type;
 
+/**
+ * A model switch for a send. It names no provider instance: the target thread's own
+ * instance is used, so a send never moves a thread to another provider.
+ */
+export const OrchestratorMcpThreadSendModelSelection = Schema.Struct({
+  model: TrimmedNonEmptyString.annotate({
+    description: "Slug or alias on the thread's provider.",
+  }),
+  options: Schema.optional(
+    OrchestratorMcpTargetOptions.annotate({
+      description: "Such as {effort:'high'}. Overrides the thread's current ones. [] clears.",
+    }),
+  ),
+});
+export type OrchestratorMcpThreadSendModelSelection =
+  typeof OrchestratorMcpThreadSendModelSelection.Type;
+
 export const OrchestratorMcpThreadSendInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   threadId: ThreadId,
@@ -556,6 +573,12 @@ export const OrchestratorMcpThreadSendInput = Schema.Struct({
     Schema.Boolean.annotate({
       description:
         "Start a new provider session without the thread's earlier context, like /clear. Never steers.",
+    }),
+  ),
+  modelSelection: Schema.optional(
+    OrchestratorMcpThreadSendModelSelection.annotate({
+      description:
+        "Switch the thread's model from the new turn on. `auto` queues; `steer` and `restart` are refused.",
     }),
   ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
@@ -570,6 +593,13 @@ export const OrchestratorMcpThreadSendResult = Schema.Struct({
   taskId: Schema.optional(NodeId),
   status: OrchestrationV2RunStatus,
   delivery: Schema.Literals(["started", "queued", "steered", "restarted"]),
+  /** Present when the send asked for a model switch: the model and options that applied. */
+  modelSelection: Schema.optional(
+    Schema.Struct({
+      model: Schema.String,
+      options: Schema.optional(Schema.Array(ProviderOptionSelection)),
+    }),
+  ),
 });
 export type OrchestratorMcpThreadSendResult = typeof OrchestratorMcpThreadSendResult.Type;
 

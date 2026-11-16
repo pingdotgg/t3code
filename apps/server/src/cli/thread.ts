@@ -859,6 +859,16 @@ const threadSendCommand = Command.make("send", {
   ...projectLocationFlags,
   thread: threadArgument,
   message: messageArgument,
+  model: Flag.String("model").pipe(
+    Flag.withDescription(
+      "Switch the thread to this model, on its own provider, from this message on.",
+    ),
+    Flag.optional,
+  ),
+  effort: Flag.String("effort").pipe(
+    Flag.withDescription("Effort for --model, such as high. Pass with --model."),
+    Flag.optional,
+  ),
   wait: waitFlag,
   json: jsonFlag,
 }).pipe(
@@ -869,6 +879,9 @@ const threadSendCommand = Command.make("send", {
     Effect.gen(function* () {
       const threadId = yield* decodeThreadId(flags.thread);
       const message = yield* readMessageArgument(flags.message);
+      if (Option.isSome(flags.effort) && Option.isNone(flags.model)) {
+        return yield* new ThreadUsageError({ detail: "--effort goes with --model." });
+      }
       yield* withThreadTools(
         flags,
         Effect.fn("cli.thread.send")(function* (tools) {
@@ -876,7 +889,21 @@ const threadSendCommand = Command.make("send", {
           const followWakes = flags.wait ? yield* threadIsIdle(tools, threadId) : false;
           const sent = yield* tools.call(
             "t3_thread_send",
-            { threadId, message, mode: "queue" },
+            {
+              threadId,
+              message,
+              mode: "queue",
+              ...(Option.isSome(flags.model)
+                ? {
+                    modelSelection: {
+                      model: flags.model.value,
+                      ...(Option.isSome(flags.effort)
+                        ? { options: [{ id: "effort", value: flags.effort.value }] }
+                        : {}),
+                    },
+                  }
+                : {}),
+            },
             OrchestratorMcpThreadSendResult,
           );
           if (flags.wait) {
