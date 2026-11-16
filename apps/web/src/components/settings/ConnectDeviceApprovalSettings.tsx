@@ -7,6 +7,7 @@ import * as DateTime from "effect/DateTime";
 import { useState } from "react";
 
 import type { ServerPairingLinkRecord } from "~/environments/primary";
+import { useClientSettings } from "~/hooks/useSettings";
 import { authEnvironment } from "~/state/auth";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
@@ -49,6 +50,7 @@ export function ConnectDeviceApprovalSettings({
   const deny = useAtomCommand(authEnvironment.revokePairingLink, { reportFailure: false });
   const revoke = useAtomCommand(authEnvironment.revokeConnectDevice, { reportFailure: false });
   const [busyId, setBusyId] = useState<string | null>(null);
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
 
   const run = async (id: string, action: () => Promise<void>) => {
     setBusyId(id);
@@ -122,7 +124,8 @@ export function ConnectDeviceApprovalSettings({
                 <p className="text-xs text-muted-foreground">
                   <span className="font-mono tabular-nums">{device.verificationCode}</span>
                   <span aria-hidden> · </span>
-                  Trusted since {formatAccessTimestamp(DateTime.formatIso(device.approvedAt))}
+                  Trusted since{" "}
+                  {formatAccessTimestamp(DateTime.formatIso(device.approvedAt), timestampFormat)}
                 </p>
               </div>
               <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">

@@ -2,6 +2,7 @@ import { type DesktopWslState, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  formatAccessTimestamp,
   isServerNetworkAccessible,
   parseManualDesktopSshTarget,
   resolveAccessEnvironmentId,
@@ -9,6 +10,23 @@ import {
   selectQrEndpointOption,
   togglePairingScopeSelection,
 } from "./ConnectionsSettings.logic";
+
+describe("formatAccessTimestamp", () => {
+  const date = new Date(2026, 9, 20, 17, 30);
+
+  it.each([
+    ["12-hour", true],
+    ["24-hour", false],
+  ] as const)("formats the time with the %s setting", (timestampFormat, hour12) => {
+    expect(formatAccessTimestamp(date.toISOString(), timestampFormat)).toBe(
+      new Intl.DateTimeFormat(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+        hour12,
+      }).format(date),
+    );
+  });
+});
 
 describe("togglePairingScopeSelection", () => {
   it.each([

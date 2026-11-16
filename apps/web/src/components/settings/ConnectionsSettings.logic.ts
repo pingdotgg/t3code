@@ -24,6 +24,8 @@ import {
   type ServerAuthPolicy,
   type ServerDirectEndpoint,
 } from "@t3tools/contracts";
+import { type TimestampFormat } from "@t3tools/contracts/settings";
+import { formatDateTimeTimestamp } from "../../timestampFormat";
 import {
   getDesktopUpdateDownloadedVersion,
   resolveDesktopUpdateButtonAction,
@@ -162,17 +164,8 @@ export async function applyWslEnableSelection(input: {
   return await bridge.setWslBackendEnabled(true);
 }
 
-const accessTimestampFormatter = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
-
-export function formatAccessTimestamp(value: string): string {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return accessTimestampFormatter.format(parsed);
+export function formatAccessTimestamp(value: string, timestampFormat: TimestampFormat): string {
+  return formatDateTimeTimestamp(value, timestampFormat) || value;
 }
 
 export function parseManualDesktopSshTarget(input: {
