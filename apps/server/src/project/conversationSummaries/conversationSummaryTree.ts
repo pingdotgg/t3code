@@ -160,6 +160,7 @@ export function rootsBeforeFirstGap(input: {
  */
 export function planCondensation(
   roots: ReadonlyArray<SummaryNode>,
+  accept: (group: ReadonlyArray<SummaryNode>) => boolean = () => true,
 ): ReadonlyArray<SummaryNode> | null {
   let best: { readonly start: number; readonly depth: number } | null = null;
   for (let start = 0; start + CONDENSE_FAN_IN <= roots.length; start++) {
@@ -167,6 +168,7 @@ export function planCondensation(
     const depth = Math.max(...run.map((node) => node.depth));
     if (
       run.filter((node) => node.depth === depth).length >= CONDENSE_FAN_IN - 1 &&
+      accept(run) &&
       (best === null || depth < best.depth)
     )
       best = { start, depth };

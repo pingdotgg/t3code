@@ -156,6 +156,20 @@ export const ConversationSummaryPass = Schema.Struct({
   /** Settled messages still waiting for a summary after this pass. */
   waitingMessages: NonNegativeInt,
   at: IsoDateTime,
+  /**
+   * Chunks whose model output was empty or invalid. A skipped chunk stays uncovered, so delivery
+   * still treats its items as a gap.
+   */
+  chunkFailures: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        key: Schema.String,
+        failures: NonNegativeInt,
+        skipped: Schema.optionalKey(Schema.Boolean),
+        reason: Schema.String,
+      }),
+    ),
+  ),
 });
 export type ConversationSummaryPass = typeof ConversationSummaryPass.Type;
 

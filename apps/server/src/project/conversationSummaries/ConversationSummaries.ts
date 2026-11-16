@@ -82,6 +82,13 @@ const FRESH_TAIL_MESSAGES = 6;
 // Bounds the cost of opting in on a long thread; later passes continue where this one stopped.
 // Leaves and roll-ups share it.
 const MAX_SUMMARIES_PER_PASS = 3;
+// One empty or invalid reply can be a cold start. The second is the chunk, and retrying it
+// again only rehashes the thread.
+const CHUNK_FAILURES_BEFORE_SKIP = 2;
+const isDeterministicChunkFailure = (reason: string) =>
+  /returned empty/i.test(reason) ||
+  /invalid structured output/i.test(reason) ||
+  reason === "The model returned no statements citing the summarized sources.";
 // Measured as delivery measures it, so a few roll-ups fit beside the verbatim tail of a 16 KB
 // handoff in any script. The prompt asks for fewer characters, so this cut is a backstop.
 const CONDENSED_MAX_BYTES = 1_536;
@@ -853,6 +860,10 @@ const make = Effect.gen(function* () {
           )
           .map((row) => row.id);
       };
+      const chunkFailures = new Map<
+        string,
+        NonNullable<ConversationSummaryPass["chunkFailures"]>[number]
+      >();
       const finish = (
         result: ConversationSummaryPass["result"],
         reason: string | null,
@@ -862,16 +873,18 @@ const make = Effect.gen(function* () {
       ) =>
         cleanupSuperseded(superseded()).pipe(
           Effect.andThen(DateTime.now),
-          Effect.flatMap((now) =>
-            recordPass(projectId, threadId, {
+          Effect.flatMap((now) => {
+            const stored = [...chunkFailures.values()];
+            return recordPass(projectId, threadId, {
               runId,
               result,
               reason,
               generated,
               waitingMessages,
               at: DateTime.formatIso(now),
-            }),
-          ),
+              ...(stored.length === 0 ? {} : { chunkFailures: stored }),
+            });
+          }),
           Effect.as({ hasMore }),
         );
       if (records.thread.deletedAt !== null)
@@ -1117,36 +1130,89 @@ const make = Effect.gen(function* () {
         });
       });
 
+      const priorRows = yield* sql<{ readonly payload_json: string }>`
+        SELECT payload_json FROM conversation_summary_passes WHERE thread_id = ${threadId}
+      `;
+      if (priorRows[0] !== undefined) {
+        const prior = yield* decodePass(priorRows[0].payload_json).pipe(
+          Effect.orElseSucceed(() => undefined),
+        );
+        for (const failure of prior?.chunkFailures ?? []) chunkFailures.set(failure.key, failure);
+      }
+      const leafChunkKey = (chunk: ReadonlyArray<SummarySource>) =>
+        chunk
+          .map((source) => `${conversationSummarySourceKey(source.ref)}:${source.ref.digest}`)
+          .join("\n");
+      const rollupKey = (group: ReadonlyArray<SummaryNode>) =>
+        group.map((node) => node.row.id).join("\n");
+      const live = new Set<string>();
+      for (const chunk of planLeafChunks({ settled, covered })) live.add(leafChunkKey(chunk));
+      for (let start = 0; start + 4 <= tree.roots.length; start++)
+        live.add(rollupKey(tree.roots.slice(start, start + 4)));
+      for (const key of chunkFailures.keys()) if (!live.has(key)) chunkFailures.delete(key);
+
       // Roll up only roots that end before the first uncovered gap. Roots on the far side of a
       // replaced leaf stay put until that leaf exists, or the roll-up would skip the broken path.
-      const nextWork = () => {
+      const held = (key: string, extra: ReadonlySet<string>) =>
+        chunkFailures.get(key)?.skipped === true || extra.has(key);
+      const selectWork = (extra: ReadonlySet<string>) => {
         const group = planCondensation(
           rootsBeforeFirstGap({
             roots: tree.roots,
             order: settled.map((source) => conversationSummarySourceKey(source.ref)),
             covered,
           }),
+          (run) => !held(rollupKey(run), extra),
         );
-        if (group !== null) return { kind: "condense" as const, group };
-        const chunk = planLeafChunks({ settled, covered })[0];
-        return chunk === undefined ? null : { kind: "leaf" as const, chunk };
+        if (group !== null) return { kind: "condense" as const, group, key: rollupKey(group) };
+        const chunk = planLeafChunks({ settled, covered }).find(
+          (candidate) => !held(leafChunkKey(candidate), extra),
+        );
+        return chunk === undefined
+          ? null
+          : { kind: "leaf" as const, chunk, key: leafChunkKey(chunk) };
       };
-      while (generated < MAX_SUMMARIES_PER_PASS) {
-        const work = nextWork();
+      const blocked = new Set<string>();
+      let attempts = 0;
+      while (generated < MAX_SUMMARIES_PER_PASS && attempts < MAX_SUMMARIES_PER_PASS) {
+        const work = selectWork(blocked);
         if (work === null) break;
+        attempts += 1;
         const published =
           work.kind === "leaf" ? yield* summarizeLeaf(work.chunk) : yield* condense(work.group);
-        if (!published.ok) return yield* failPass(published.reason);
+        if (!published.ok) {
+          if (!isDeterministicChunkFailure(published.reason))
+            return yield* failPass(published.reason);
+          const count = (chunkFailures.get(work.key)?.failures ?? 0) + 1;
+          chunkFailures.set(work.key, {
+            key: work.key,
+            failures: count,
+            ...(count >= CHUNK_FAILURES_BEFORE_SKIP ? { skipped: true } : {}),
+            reason: published.reason.slice(0, 300),
+          });
+          blocked.add(work.key);
+          continue;
+        }
+        chunkFailures.delete(work.key);
         rows.set(published.row.id, published.row);
         rebuild();
         generated += 1;
       }
+      const skipped = [...chunkFailures.values()].filter((failure) => failure.skipped);
+      const skipReason =
+        skipped.length === 0
+          ? null
+          : `Skipped ${skipped.length === 1 ? "a stretch" : `${skipped.length} stretches`} after ${CHUNK_FAILURES_BEFORE_SKIP} empty or invalid summaries. ${skipped[0]!.reason}`.slice(
+              0,
+              300,
+            );
       return yield* finish(
         generated > 0 ? "ran" : "skipped",
-        generated > 0 ? null : "No settled stretch is long enough to summarize yet.",
+        skipReason ??
+          (generated > 0 ? null : "No settled stretch is long enough to summarize yet."),
         generated,
         waiting(),
-        nextWork() !== null,
+        selectWork(new Set()) !== null,
       );
     },
     (effect, { runId }) =>
