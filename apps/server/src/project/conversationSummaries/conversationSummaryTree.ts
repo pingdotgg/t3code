@@ -127,14 +127,16 @@ export function buildSummaryTree(
 
 /**
  * Current roots whose ranges all end before the first uncovered source. A gap splits the forest,
- * so a roll-up cannot join the neighbours of a missing leaf.
+ * so a roll-up cannot join the neighbours of a missing leaf. Skipped sources will get no leaf, so
+ * they split nothing.
  */
 export function rootsBeforeFirstGap(input: {
   readonly roots: ReadonlyArray<SummaryNode>;
   readonly order: ReadonlyArray<string>;
   readonly covered: ReadonlySet<string>;
+  readonly skipped: ReadonlySet<string>;
 }): ReadonlyArray<SummaryNode> {
-  const gapAt = input.order.findIndex((key) => !input.covered.has(key));
+  const gapAt = input.order.findIndex((key) => !input.covered.has(key) && !input.skipped.has(key));
   if (gapAt === -1) return input.roots;
   const indexByKey = new Map(input.order.map((key, index) => [key, index]));
   const prefix: Array<SummaryNode> = [];

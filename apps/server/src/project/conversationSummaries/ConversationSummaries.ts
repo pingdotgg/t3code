@@ -85,6 +85,8 @@ const MAX_SUMMARIES_PER_PASS = 3;
 // One empty or invalid reply can be a cold start. The second is the chunk, and retrying it
 // again only rehashes the thread.
 const CHUNK_FAILURES_BEFORE_SKIP = 2;
+// Live keys only survive a pass, so this bounds a thread with many failing stretches.
+const MAX_CHUNK_FAILURES = 64;
 // Measured as delivery measures it, so a few roll-ups fit beside the verbatim tail of a 16 KB
 // handoff in any script. The prompt asks for fewer characters, so this cut is a backstop.
 const CONDENSED_MAX_BYTES = 1_536;
@@ -124,8 +126,24 @@ const encodeStatements = Schema.encodeSync(
   Schema.fromJsonString(ConversationSummary.fields.statements),
 );
 const encodeIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+const encodeModelSelection = Schema.encodeSync(
+  Schema.fromJsonString(ConversationSummary.fields.modelSelection),
+);
 const decodePass = Schema.decodeUnknownEffect(Schema.fromJsonString(ConversationSummaryPass));
-const encodePass = Schema.encodeSync(Schema.fromJsonString(ConversationSummaryPass));
+// Server-only. A key digests the summary model with the chunk, so another model gets a new chance.
+const ChunkFailure = Schema.Struct({
+  key: Schema.String,
+  failures: Schema.Int,
+  skipped: Schema.optionalKey(Schema.Boolean),
+  reason: Schema.String,
+});
+type ChunkFailure = typeof ChunkFailure.Type;
+const StoredPass = Schema.Struct({
+  ...ConversationSummaryPass.fields,
+  chunkFailures: Schema.optionalKey(Schema.Array(ChunkFailure)),
+});
+const decodeStoredPass = Schema.decodeUnknownEffect(Schema.fromJsonString(StoredPass));
+const encodeStoredPass = Schema.encodeSync(Schema.fromJsonString(StoredPass));
 const isConversationSummaryError = Schema.is(ConversationSummaryError);
 const isConversationSummaryPassError = Schema.is(ConversationSummaryPassError);
 
@@ -765,11 +783,11 @@ const make = Effect.gen(function* () {
   const recordPass = Effect.fn("ConversationSummaries.recordPass")(function* (
     projectId: ProjectId,
     threadId: ThreadId,
-    pass: ConversationSummaryPass,
+    pass: typeof StoredPass.Type,
   ) {
     yield* sql`
       INSERT INTO conversation_summary_passes (thread_id, project_id, payload_json)
-      VALUES (${threadId}, ${projectId}, ${encodePass(pass)})
+      VALUES (${threadId}, ${projectId}, ${encodeStoredPass(pass)})
       ON CONFLICT (thread_id) DO UPDATE SET
         project_id = excluded.project_id,
         payload_json = excluded.payload_json
@@ -856,10 +874,18 @@ const make = Effect.gen(function* () {
           )
           .map((row) => row.id);
       };
-      const chunkFailures = new Map<
-        string,
-        NonNullable<ConversationSummaryPass["chunkFailures"]>[number]
-      >();
+      const priorRows = yield* sql<{ readonly payload_json: string }>`
+        SELECT payload_json FROM conversation_summary_passes WHERE thread_id = ${threadId}
+      `;
+      const prior =
+        priorRows[0] === undefined
+          ? undefined
+          : yield* decodeStoredPass(priorRows[0].payload_json).pipe(
+              Effect.orElseSucceed(() => undefined),
+            );
+      const chunkFailures = new Map<string, ChunkFailure>(
+        (prior?.chunkFailures ?? []).map((failure) => [failure.key, failure]),
+      );
       const finish = (
         result: ConversationSummaryPass["result"],
         reason: string | null,
@@ -870,7 +896,7 @@ const make = Effect.gen(function* () {
         cleanupSuperseded(superseded()).pipe(
           Effect.andThen(DateTime.now),
           Effect.flatMap((now) => {
-            const stored = [...chunkFailures.values()];
+            const stored = [...chunkFailures.values()].slice(-MAX_CHUNK_FAILURES);
             return recordPass(projectId, threadId, {
               runId,
               result,
@@ -1135,49 +1161,61 @@ const make = Effect.gen(function* () {
         });
       });
 
-      const priorRows = yield* sql<{ readonly payload_json: string }>`
-        SELECT payload_json FROM conversation_summary_passes WHERE thread_id = ${threadId}
-      `;
-      if (priorRows[0] !== undefined) {
-        const prior = yield* decodePass(priorRows[0].payload_json).pipe(
-          Effect.orElseSucceed(() => undefined),
-        );
-        for (const failure of prior?.chunkFailures ?? []) chunkFailures.set(failure.key, failure);
-      }
+      const modelKey = encodeModelSelection(settings.textGenerationModelSelection);
+      const keys = new Map<string, string>();
+      const keyOf = Effect.fnUntraced(function* (raw: string) {
+        const known = keys.get(raw);
+        if (known !== undefined) return known;
+        const key = yield* digest(`${modelKey}\n${raw}`);
+        keys.set(raw, key);
+        return key;
+      });
       const leafChunkKey = (chunk: ReadonlyArray<SummarySource>) =>
         chunk
           .map((source) => `${conversationSummarySourceKey(source.ref)}:${source.ref.digest}`)
           .join("\n");
       const rollupKey = (group: ReadonlyArray<SummaryNode>) =>
         group.map((node) => node.row.id).join("\n");
-      const live = new Set<string>();
-      for (const chunk of planLeafChunks({ settled, covered })) live.add(leafChunkKey(chunk));
+      for (const chunk of planLeafChunks({ settled, covered })) yield* keyOf(leafChunkKey(chunk));
       for (let start = 0; start + 4 <= tree.roots.length; start++)
-        live.add(rollupKey(tree.roots.slice(start, start + 4)));
+        yield* keyOf(rollupKey(tree.roots.slice(start, start + 4)));
+      const live = new Set(keys.values());
       for (const key of chunkFailures.keys()) if (!live.has(key)) chunkFailures.delete(key);
 
+      const isSkipped = (raw: string) => {
+        const key = keys.get(raw);
+        return key !== undefined && chunkFailures.get(key)?.skipped === true;
+      };
+      const held = (raw: string, blocked: ReadonlySet<string>) =>
+        blocked.has(raw) || isSkipped(raw);
       // Roll up only roots that end before the first uncovered gap. Roots on the far side of a
       // replaced leaf stay put until that leaf exists, or the roll-up would skip the broken path.
-      const held = (key: string, extra: ReadonlySet<string>) =>
-        chunkFailures.get(key)?.skipped === true || extra.has(key);
-      const selectWork = (extra: ReadonlySet<string>) => {
+      // A skipped stretch gets no replacement, so it is no gap.
+      const selectWork = (blocked: ReadonlySet<string>) => {
+        const chunks = planLeafChunks({ settled, covered });
         const group = planCondensation(
           rootsBeforeFirstGap({
             roots: tree.roots,
             order: settled.map((source) => conversationSummarySourceKey(source.ref)),
             covered,
+            skipped: new Set(
+              chunks
+                .filter((chunk) => isSkipped(leafChunkKey(chunk)))
+                .flatMap((chunk) =>
+                  chunk.map((source) => conversationSummarySourceKey(source.ref)),
+                ),
+            ),
           }),
-          (run) => !held(rollupKey(run), extra),
+          (run) => !held(rollupKey(run), blocked),
         );
         if (group !== null) return { kind: "condense" as const, group, key: rollupKey(group) };
-        const chunk = planLeafChunks({ settled, covered }).find(
-          (candidate) => !held(leafChunkKey(candidate), extra),
-        );
+        const chunk = chunks.find((candidate) => !held(leafChunkKey(candidate), blocked));
         return chunk === undefined
           ? null
           : { kind: "leaf" as const, chunk, key: leafChunkKey(chunk) };
       };
       const blocked = new Set<string>();
+      const failed: Array<{ readonly raw: string; readonly reason: string }> = [];
       let attempts = 0;
       while (generated < MAX_SUMMARIES_PER_PASS && attempts < MAX_SUMMARIES_PER_PASS) {
         const work = selectWork(blocked);
@@ -1187,20 +1225,30 @@ const make = Effect.gen(function* () {
           work.kind === "leaf" ? yield* summarizeLeaf(work.chunk) : yield* condense(work.group);
         if (!published.ok) {
           if (!published.unusableReply) return yield* failPass(published.reason);
-          const count = (chunkFailures.get(work.key)?.failures ?? 0) + 1;
-          chunkFailures.set(work.key, {
-            key: work.key,
-            failures: count,
-            ...(count >= CHUNK_FAILURES_BEFORE_SKIP ? { skipped: true } : {}),
-            reason: published.reason.slice(0, 300),
-          });
+          failed.push({ raw: work.key, reason: published.reason });
           blocked.add(work.key);
           continue;
         }
-        chunkFailures.delete(work.key);
+        const key = keys.get(work.key);
+        if (key !== undefined) chunkFailures.delete(key);
         rows.set(published.row.id, published.row);
         rebuild();
         generated += 1;
+      }
+      // With nothing else succeeding, the model may be down or unable to answer at all. Blaming
+      // the chunk would skip the thread's whole history.
+      if (generated === 0 && failed.length > 0)
+        return yield* finish("failed", failed[0]!.reason.slice(0, 300), 0, waiting());
+      for (const { raw, reason } of failed) {
+        const key = yield* keyOf(raw);
+        const failures = (chunkFailures.get(key)?.failures ?? 0) + 1;
+        chunkFailures.delete(key);
+        chunkFailures.set(key, {
+          key,
+          failures,
+          ...(failures >= CHUNK_FAILURES_BEFORE_SKIP ? { skipped: true } : {}),
+          reason: reason.slice(0, 300),
+        });
       }
       const skipped = [...chunkFailures.values()].filter((failure) => failure.skipped);
       const skipReason =
