@@ -2283,7 +2283,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             });
             const suggestion =
               (yield* decodeCodexThreadSampleResponse(response)).text?.trim() ?? "";
-            if (suggestion.length === 0) return;
+            // Delegated completion wakes arrive as user input, so samples can imitate one.
+            if (suggestion.length === 0 || suggestion.startsWith("Delegated task")) return;
             yield* emitProviderEvent({
               type: "prompt_suggestion.updated",
               driver: CODEX_PROVIDER,

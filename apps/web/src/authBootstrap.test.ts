@@ -328,7 +328,9 @@ describe("resolveInitialServerAuthGateState", () => {
         await expect(resolveInitialServerAuthGateState()).resolves.toEqual(requiresAuth);
 
         // Token removal synchronously reloads the TanStack auth gate via replaceState.
+        const pairingHistoryState = history.location.state;
         const token = takePairingTokenFromUrl();
+        expect(history.location.state).toEqual(pairingHistoryState);
         expect(gateLoads).toHaveLength(1);
         await expect(gateLoads[0]).resolves.toEqual(requiresAuth);
         const rejected = expect(submitServerAuthCredential(token!)).rejects.toMatchObject({

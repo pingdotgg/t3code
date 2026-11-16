@@ -8,6 +8,7 @@ import {
   type PullRequestDiffResult,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { __setClientSettingsForTests } from "../../hooks/useSettings";
@@ -85,7 +86,12 @@ vi.mock(import("./usePullRequestFilesViewed"), async () => {
         enabled: viewedPaths !== null,
         isViewed: (path: string) => viewedPaths?.has(path) === true,
         isStale: () => false,
-        setViewed: () => {},
+        setViewed: (path: string, viewed: boolean) => {
+          const next = new Set(mocks.viewedPaths);
+          if (viewed) next.add(path);
+          else next.delete(path);
+          deliverViewedPaths(next);
+        },
         truncated: false,
         error: null,
         refresh: () => {},
@@ -205,6 +211,52 @@ it("keeps the diff after a refresh that brings back the same page", async () => 
     .element(screen.getByText("This pull request has no file changes."))
     .not.toBeInTheDocument();
   await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+});
+
+it("restores saved Viewed folds, follows cleared marks, and allows explicit expansion", async () => {
+  setup({ paged: false });
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
+  using _preferences = {
+    [Symbol.dispose]() {
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    },
+  };
+  mocks.viewedPaths = new Set(["a.ts"]);
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(tab(0), { container });
+  await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).toBeChecked();
+  await expect
+    .element(screen.getByRole("button", { name: "Expand diff", exact: true }))
+    .toHaveAttribute("aria-expanded", "false");
+
+  await screen.getByRole("button", { name: "Expand diff", exact: true }).click();
+  await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
+  screen.getByRole("checkbox", { name: "Viewed" }).element().focus();
+  await userEvent.keyboard(" ");
+  await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).not.toBeChecked();
+  await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
+  screen.getByRole("checkbox", { name: "Viewed" }).element().focus();
+  await userEvent.keyboard(" ");
+  await expect
+    .element(screen.getByRole("button", { name: "Expand diff", exact: true }))
+    .toHaveAttribute("aria-expanded", "false");
+
+  deliverViewedPaths(new Set());
+  await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).not.toBeChecked();
+  await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
+  deliverViewedPaths(new Set(["a.ts"]));
+  await expect
+    .element(screen.getByRole("button", { name: "Expand diff", exact: true }))
+    .toHaveAttribute("aria-expanded", "false");
+  await screen.getByRole("button", { name: "Expand all files", exact: true }).click();
+  await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
+
+  await screen.rerender(<div />);
+  await screen.rerender(tab(1));
+  await expect
+    .element(screen.getByRole("button", { name: "Expand diff", exact: true }))
+    .toHaveAttribute("aria-expanded", "false");
 });
 
 // regression: #13279 a Viewed answer that lands after a link reveals a file must not fold it

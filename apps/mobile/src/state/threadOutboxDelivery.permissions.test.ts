@@ -163,6 +163,8 @@ import { appAtomRegistry } from "./atom-registry";
 import { environmentSession } from "./session";
 import { dispatchingQueuedMessageIdAtom, editingQueuedMessageIdsAtom } from "./use-thread-outbox";
 import { createThreadOutboxDelivery } from "./threadOutboxDelivery";
+import { composerAttachmentUploadsAtom } from "./composer-attachment-upload-states";
+import { workspaceConnections } from "./workspace";
 
 const message = (overrides: Partial<QueuedThreadMessage> = {}): QueuedThreadMessage => ({
   environmentId: EnvironmentId.make("secondary"),
@@ -649,5 +651,71 @@ describe("compaction before a queued send", () => {
     expect(state.start).toHaveBeenCalledOnce();
     expect(state.start.mock.calls[0]?.[0].input).toMatchObject(compactTurn);
     expect(remaining()).toEqual([queued]);
+  });
+});
+
+describe("queued delivery timing", () => {
+  /** Runs `change`, then resolves once the delivery it starts has settled. */
+  async function deliveryAfter(change: () => void): Promise<void> {
+    const settled = Promise.withResolvers<void>();
+    const release = appAtomRegistry.subscribe(dispatchingQueuedMessageIdAtom, (id) => {
+      if (id === null) settled.resolve();
+    });
+    change();
+    expect(appAtomRegistry.get(dispatchingQueuedMessageIdAtom)).not.toBeNull();
+    await settled.promise.finally(release);
+  }
+
+  it("waits for the composer's upload of a sent attachment instead of uploading it again", async () => {
+    setOperateGrant("secondary", true);
+    const photo = {
+      id: "photo-1",
+      type: "image" as const,
+      name: "photo.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      previewUri: "file:///photo.png",
+      fileUri: "file:///photo.png",
+    };
+    appAtomRegistry.set(composerAttachmentUploadsAtom, {
+      "secondary:photo-1": { status: "uploading", progress: 0.5 },
+    });
+    state.cleanups.push(() => appAtomRegistry.set(composerAttachmentUploadsAtom, {}));
+    await state.manager.enqueue(message({ attachments: [photo] }));
+    startDelivery();
+    expect(appAtomRegistry.get(dispatchingQueuedMessageIdAtom)).toBeNull();
+
+    await deliveryAfter(() =>
+      appAtomRegistry.set(composerAttachmentUploadsAtom, {
+        "secondary:photo-1": { status: "ready" },
+      }),
+    );
+    expect(state.prepare).toHaveBeenCalledOnce();
+    expect(state.start).toHaveBeenCalledOnce();
+    expect(remaining()).toEqual([]);
+  });
+
+  it("sends at once when its environment reconnects instead of waiting out the backoff", async () => {
+    setOperateGrant("secondary", true);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    state.cleanups.push(() => vi.useRealTimers());
+    const environments = workspaceConnections.environmentsAtom as unknown as Atom.Writable<
+      ReadonlyArray<{ environmentId: string; connectionState: string }>
+    >;
+    const connected = [{ environmentId: "secondary", connectionState: "connected" }];
+    state.cleanups.push(() => appAtomRegistry.set(environments, connected));
+    await state.manager.enqueue(message());
+    state.start.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("Socket is not connected"))),
+    );
+    await runDrain();
+    expect(state.start).toHaveBeenCalledOnce();
+
+    appAtomRegistry.set(environments, [
+      { environmentId: "secondary", connectionState: "disconnected" },
+    ]);
+    await deliveryAfter(() => appAtomRegistry.set(environments, connected));
+    expect(state.start).toHaveBeenCalledTimes(2);
+    expect(remaining()).toEqual([]);
   });
 });

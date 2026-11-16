@@ -330,6 +330,9 @@ export function acpRegistryProbeResult(
     instanceId,
     ready: true,
     icon,
+    ...(started.initializeResult.agentInfo?.version?.trim()
+      ? { agentVersion: boundedText(started.initializeResult.agentInfo.version, MAX_ID_LENGTH) }
+      : {}),
     authMethods: normalizeAcpRegistryAuthMethods(started.initializeResult.authMethods, spawn),
     sessionManagement: {
       canList: started.initializeResult.agentCapabilities?.sessionCapabilities?.list != null,

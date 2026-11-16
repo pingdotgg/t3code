@@ -91,6 +91,17 @@ export const readServerUsageLimits = Effect.fn("OpenCode2Client.usageLimits")(fu
         message: "No OpenCode Console workspace is signed in.",
       });
     const { go, budgets, workspace } = body.data;
+    const usageURL = URL.parse(workspace.usageURL);
+    const externalUsage =
+      usageURL?.protocol === "http:" || usageURL?.protocol === "https:"
+        ? { externalUsage: { label: workspace.name?.trim() || workspace.id, url: usageURL.href } }
+        : {};
+    // A Zen-only workspace has neither a Go subscription nor spend limits.
+    if (!go && budgets.length === 0)
+      return {
+        ...makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }),
+        ...externalUsage,
+      };
     const consoleProviders = budgets.some(
       (budget) => budget.coverage === "all" && budget.per === "set",
     )
@@ -168,13 +179,7 @@ export const readServerUsageLimits = Effect.fn("OpenCode2Client.usageLimits")(fu
         });
       }
     }
-    const usageURL = URL.parse(workspace.usageURL);
-    return {
-      ...makeUsageLimits({ checkedAt, windows }),
-      ...(usageURL?.protocol === "http:" || usageURL?.protocol === "https:"
-        ? { externalUsage: { label: workspace.name?.trim() || workspace.id, url: usageURL.href } }
-        : {}),
-    };
+    return { ...makeUsageLimits({ checkedAt, windows }), ...externalUsage };
   }).pipe(
     Effect.timeout("5 seconds"),
     Effect.orElseSucceed(() =>

@@ -923,7 +923,7 @@ export function ThreadRelationshipsPanel(props: {
                         ? `Merge back to ${parentTitle}`
                         : "Merge back to source conversation"
                     }
-                    disabled={!canMerge || busyAction !== null}
+                    aria-disabled={!canMerge || busyAction !== null || undefined}
                     onClick={() => void merge()}
                   >
                     {busyAction === "merge" ? (

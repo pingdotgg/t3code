@@ -343,9 +343,10 @@ export function useComposerCommandMenu({
     cwd: trigger?.kind === "path" ? projectCwd : null,
     query: trigger?.kind === "path" ? trigger.query : null,
   });
-  // Mounts older settled threads matching the mention, which shells may leave out.
+  // Mounts older settled threads matching the mention, here and on linked machines, which shells
+  // may leave out.
   useThreadSearch(
-    trigger?.kind === "path" && environmentId ? [environmentId] : [],
+    trigger?.kind === "path" && environmentId ? [environmentId, ...linkedEnvironments.keys()] : [],
     trigger?.kind === "path" ? trigger.query : "",
     { titlesOnly: true },
   );

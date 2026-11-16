@@ -117,8 +117,8 @@ it.effect.skipIf(windowsHost)("opens home-relative targets using the server home
     const spawned: ChildProcess.StandardCommand[] = [];
     yield* Effect.gen(function* () {
       const launcher = yield* ExternalLauncher.ExternalLauncher;
-      for (const cwd of ["~/Applications/My App.app", "/Applications/My App.app"]) {
-        yield* launcher.launchEditor({ editor: "file-manager", cwd });
+      for (const cwd of ["~/Applications/My App.app", "/Applications/My App.app", "/tmp/a:12"]) {
+        yield* launcher.launchEditor({ editor: "file-manager", cwd, position: { line: 5 } });
       }
       yield* launcher.launchEditor({ editor: "vscode", cwd: "~/notes/todo.md:3" });
       yield* launcher.launchEditor({
@@ -141,6 +141,7 @@ it.effect.skipIf(windowsHost)("opens home-relative targets using the server home
       [
         ["/Users/server/Applications/My App.app"],
         ["/Applications/My App.app"],
+        ["/tmp/a:12"],
         ["--goto", "/Users/server/notes/todo.md:3"],
         ["/Users/server/notes", "--line", "3", "/Users/server/notes/todo.md"],
       ],
@@ -203,12 +204,20 @@ it.effect.skipIf(windowsHost)(
       const path = yield* Path.Path;
       const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
       const project = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-project-" });
-      const codePath = path.join(binDir, "code");
-      yield* fileSystem.writeFileString(codePath, "#!/bin/sh\n");
-      yield* fileSystem.chmod(codePath, 0o755);
+      for (const name of ["code", "zeditor", "idea"]) {
+        const executable = path.join(binDir, name);
+        yield* fileSystem.writeFileString(executable, "#!/bin/sh\n");
+        yield* fileSystem.chmod(executable, 0o755);
+      }
       const colonProject = path.join(project, "build:2026");
       yield* fileSystem.makeDirectory(colonProject);
       const file = `${path.join(project, "file.ts")}:3:7`;
+      const exactFile = path.join(project, "a:12");
+      yield* fileSystem.writeFileString(exactFile, "exact");
+      yield* fileSystem.makeDirectory(`${exactFile}:1:1`);
+      const positionedFile = path.join(project, "position.txt");
+      yield* fileSystem.writeFileString(positionedFile, "position");
+      yield* fileSystem.writeFileString(`${positionedFile}:7`, "collision");
 
       const spawned: ChildProcess.StandardCommand[] = [];
       yield* Effect.gen(function* () {
@@ -216,6 +225,27 @@ it.effect.skipIf(windowsHost)(
         yield* launcher.launchEditor({ editor: "vscode", cwd: project });
         yield* launcher.launchEditor({ editor: "vscode", cwd: file });
         yield* launcher.launchEditor({ editor: "vscode", cwd: colonProject });
+        for (const position of [{}, { line: 5 }]) {
+          yield* launcher.launchEditor({ editor: "vscode", cwd: exactFile, position });
+        }
+
+        yield* launcher.launchEditor({ editor: "zed", cwd: exactFile, position: {} });
+        yield* launcher.launchEditor({
+          editor: "zed",
+          cwd: positionedFile,
+          position: { line: 5, column: 3 },
+        });
+        yield* launcher.launchEditor({ editor: "zed", cwd: positionedFile, position: { line: 7 } });
+        yield* launcher.launchEditor({
+          editor: "vscode",
+          cwd: `${project}/exponent:1e3`,
+          position: { line: 5 },
+        });
+        yield* launcher.launchEditor({
+          editor: "idea",
+          cwd: exactFile,
+          position: { line: 5, column: 3 },
+        });
       }).pipe(
         Effect.provide(
           layerTest({
@@ -233,6 +263,13 @@ it.effect.skipIf(windowsHost)(
           ["--new-window", project],
           ["--goto", file],
           ["--new-window", colonProject],
+          [exactFile],
+          [exactFile],
+          [exactFile],
+          [`${positionedFile}:5:3`],
+          [positionedFile],
+          [`${project}/exponent:1e3`],
+          ["--line", "5", "--column", "2", exactFile],
         ],
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

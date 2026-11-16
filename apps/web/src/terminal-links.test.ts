@@ -351,11 +351,32 @@ describe("resolvePathLinkTarget", () => {
   // regression: #36005 OSC 8 file URIs were joined onto the cwd as relative paths
   it("does not resolve an OSC 8 file URI target against the cwd", () => {
     expect(resolveTerminalLinkTarget("file:///var/tmp/report.txt", "/workspace/project")).toBe(
-      "/var/tmp/report.txt",
+      "file:///var/tmp/report.txt",
     );
     expect(
       resolveTerminalLinkTarget("file://remote.invalid/var/tmp/report.txt", "/workspace/project"),
     ).not.toMatch(/^\/workspace\/project\//);
+    expect(
+      resolveTerminalLinkTarget(
+        "file://myhost/var/tmp/report.txt:12#L5",
+        "/workspace/project",
+        "myhost",
+      ),
+    ).toBe("file:///var/tmp/report.txt:12#L5");
+    expect(
+      resolveTerminalLinkTarget(
+        "file://foreign/var/tmp/report.txt:12#L5",
+        "/workspace/project",
+        "myhost",
+      ),
+    ).toBe("file://foreign/var/tmp/report.txt:12#L5");
+    for (const name of ["report.txt:12-64", "report.txt:0", "report.txt:12"]) {
+      const uri = `file:///var/tmp/${encodeURIComponent(name)}`;
+      expect(resolveTerminalLinkTarget(uri, "/workspace/project")).toBe(uri);
+    }
+    expect(
+      resolveTerminalLinkTarget("file:///var/tmp/report.txt:12#L5", "/workspace/project"),
+    ).toBe("file:///var/tmp/report.txt:12#L5");
     expect(resolvePathLinkTarget("file:notes.md", "/workspace/project")).toBe(
       "/workspace/project/file:notes.md",
     );

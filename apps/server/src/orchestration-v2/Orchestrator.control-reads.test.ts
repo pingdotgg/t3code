@@ -2855,3 +2855,108 @@ it.effect("a running provider-turn update reads only the thread's queued and run
     );
   }),
 );
+
+it.effect(
+  "a delegated child's run end reads the parent's runs no matter how many deliveries it has open",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const parentThreadId = ThreadId.make("thread:busy-coordinator");
+      const now = yield* DateTime.now;
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-busy-coordinator"),
+        threadId: parentThreadId,
+        projectId: ProjectId.make("project:busy-coordinator"),
+        title: "Coordinator",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("start-busy-coordinator"),
+        threadId: parentThreadId,
+        messageId: MessageId.make("message:busy-coordinator"),
+        text: "Delegate the work",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const parentRun = (yield* projections.getThreadRecords(parentThreadId, ["runs"])).runs[0]!;
+      yield* orchestrator.dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make("delegate-busy-coordinator"),
+        parentThreadId,
+        parentRunId: parentRun.id,
+        parentNodeId: parentRun.rootNodeId!,
+        task: "Do the work",
+        completionWake: "always",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      const task = (yield* projections.getThreadRecords(parentThreadId, ["subagents"]))
+        .subagents[0]!;
+      const childThreadId = task.childThreadId!;
+      const childRun = (yield* projections.getThreadRecords(childThreadId, ["runs"])).runs[0]!;
+
+      const runReads: Array<string> = [];
+      const recordRunReads = Effect.provideService(
+        Statement.CurrentTransformer,
+        (statement, _make, _fiber, _span) => {
+          const [query, params] = statement.compile();
+          if (
+            query.includes("FROM orchestration_v2_projection_runs") &&
+            params.includes(parentThreadId)
+          )
+            runReads.push(query);
+          return Effect.succeed(statement);
+        },
+      );
+      const captureReads = Effect.gen(function* () {
+        runReads.length = 0;
+        yield* orchestrator
+          .recoverDelegatedTask(childThreadId, { completedRunId: childRun.id })
+          .pipe(recordRunReads);
+        return runReads.length;
+      });
+      const quietParent = yield* captureReads;
+
+      // Completion wakes queued behind the coordinator's own work, each with a delivery still open.
+      for (let index = 0; index < 40; index++) {
+        const runId = RunId.make(`run:busy-coordinator:wake:${index}`);
+        yield* projections.apply({
+          id: EventId.make(`event:busy-coordinator:wake:${index}`),
+          type: "run.updated",
+          threadId: parentThreadId,
+          runId,
+          occurredAt: now,
+          payload: {
+            ...parentRun,
+            id: runId,
+            ordinal: parentRun.ordinal + index + 1,
+            status: "queued",
+            delegatedCompletion: {
+              disposition: "open",
+              nextGeneration: 2,
+              delivery: {
+                generation: 1,
+                messageId: MessageId.make(`message:busy-coordinator:wake:${index}`),
+                taskIds: [NodeId.make(`task:busy-coordinator:other:${index}`)],
+              },
+            },
+          },
+        });
+      }
+      assert.equal(yield* captureReads, quietParent);
+    }).pipe(Effect.provide(layerTest)),
+);
