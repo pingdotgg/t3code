@@ -10,7 +10,7 @@ use conn_source_control::{
     cache::TtlCache,
     hosts::{DiscoveryContext, Endpoints, Environment},
     pull_requests::{
-        Client, Error, Lookup, listing,
+        Client, Error, Lookup, actions, listing,
         normalize::{array, text},
     },
     registry,
@@ -27,6 +27,8 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{OnceCell, mpsc, watch};
+mod guides;
+
 #[derive(Clone, Debug)]
 struct Project {
     id: String,
@@ -37,6 +39,25 @@ struct Project {
 }
 fn operation_error(operation: &str, detail: &str) -> Failure {
     Failure::Fail(json!({"_tag":"PullRequestOperationError","operation":operation,"detail":detail}))
+}
+fn routing_error() -> Failure {
+    operation_error(
+        "routeIdentity",
+        "The signed-in account could not be verified before starting the operation.",
+    )
+}
+fn action_unavailable(input: &Value) -> Failure {
+    let detail = if text(input, "action") == "delete-branch" {
+        "This host cannot delete a change request's source branch.".into()
+    } else if input.get("stackNumber").is_some() {
+        "This stack action is not supported or has no expected head revision.".into()
+    } else {
+        format!(
+            "This host cannot {} a change request.",
+            text(input, "action")
+        )
+    };
+    operation_error("runAction", &detail)
 }
 fn unsupported() -> Failure {
     Failure::Fail(json!({"_tag":"PullRequestUnavailableError","reason":"provider-unsupported"}))
@@ -76,6 +97,15 @@ struct Panel {
     linked: watch::Sender<u64>,
     monitor: OnceCell<tokio::task::JoinHandle<()>>,
     reports: Mutex<VecDeque<(String, Value, tokio::time::Instant)>>,
+}
+struct MutationReads<'a> {
+    panel: &'a Panel,
+    reference: ReadKey,
+}
+impl Drop for MutationReads<'_> {
+    fn drop(&mut self) {
+        self.panel.invalidate_cached(Some(&self.reference), false);
+    }
 }
 impl Drop for Panel {
     fn drop(&mut self) {
@@ -288,8 +318,137 @@ impl Panel {
             "routing" => self.routing(&input).await,
             "routingIdentity" => self.routing_identity(&input).await,
             "setFilesViewed" => self.set_files_viewed(&input).await,
+            "reviewGuide" => self.review_guide(&input).await,
+            "generateReviewGuide" => self.generate_review_guide(&input).await,
+            "runAction" | "reviewerCandidates" | "labelCandidates" => {
+                self.action(method, &input).await
+            }
+            _ if actions::is_mutation(method) => self.action(method, &input).await,
             _ => self.cached_read(method, &input).await,
         }
+    }
+    fn guide_unavailable(&self) -> Failure {
+        let off = self.environment.as_ref().is_some_and(|environment| {
+            environment.settings.for_client().get("reviewGuidesEnabled")
+                == Some(&Value::Bool(false))
+        });
+        operation_error(
+            "generateReviewGuide",
+            if off {
+                "Review guides are off. Turn them on in Settings → Source Control."
+            } else {
+                "This server cannot generate review guides yet."
+            },
+        )
+    }
+    async fn generate_review_guide(&self, input: &Value) -> Result<Value, Failure> {
+        if input.get("expectedAccountId").is_some() {
+            self.reference_client("routeIdentity", input)
+                .await
+                .map_err(|_| routing_error())?;
+        }
+        Err(self.guide_unavailable())
+    }
+    async fn action(&self, method: &str, input: &Value) -> Result<Value, Failure> {
+        let routed = input.get("expectedAccountId").is_some();
+        let project = self
+            .resolve(input)
+            .await
+            .map_err(|error| if routed { routing_error() } else { error })?;
+        let client = if routed {
+            let client = self
+                .client(&project, "routeIdentity")
+                .await
+                .map_err(|_| routing_error())?;
+            self.verified_identity(&project, &client, input)
+                .await
+                .map_err(|_| routing_error())?;
+            Some(client)
+        } else {
+            None
+        };
+        let lookup = Lookup::new(
+            &project.repository,
+            input.get("number").and_then(Value::as_u64).unwrap_or(0),
+        )
+        .map_err(|error| host_error(&error, method))?;
+        let invalidation = (actions::is_mutation(method) || method == "runAction").then(|| {
+            let reads = MutationReads {
+                panel: self,
+                reference: ReadKey {
+                    host: project.host.clone(),
+                    repo: project.repository.to_lowercase(),
+                    number: Some(lookup.number),
+                    ..ReadKey::default()
+                },
+            };
+            self.invalidate_cached(Some(&reads.reference), false);
+            reads
+        });
+        if method == "runAction" {
+            return Err(action_unavailable(input));
+        }
+        actions::validate(method, input).map_err(|error| host_error(&error, method))?;
+        let client = match client {
+            Some(client) => client,
+            None => self.client(&project, method).await?,
+        };
+        let result = client
+            .action(&lookup, method, input)
+            .await
+            .map_err(|error| host_error(&error, method));
+        drop(invalidation);
+        if result.is_ok() && actions::is_mutation(method) {
+            self.refreshes
+                .send_modify(|value| *value = value.saturating_add(1));
+        }
+        result
+    }
+    async fn review_guide(&self, input: &Value) -> Result<Value, Failure> {
+        let unidentified = || {
+            operation_error(
+                "reviewGuide",
+                "Could not identify this pull request's host.",
+            )
+        };
+        let shell = self
+            .engine
+            .shell_snapshot()
+            .await
+            .map_err(|_| unidentified())?;
+        if !array(shell.get("projects"))
+            .iter()
+            .any(|project| project.get("id") == input.get("projectId"))
+        {
+            return Err(unidentified());
+        }
+        let (project, client, lookup) =
+            self.reference_client("reviewGuide", input)
+                .await
+                .map_err(|error| {
+                    if text(input, "host").is_empty() {
+                        unidentified()
+                    } else {
+                        error
+                    }
+                })?;
+        let key = thread_key(input, &project.host).ok_or_else(unidentified)?;
+        let guide = if let Some(environment) = &self.environment {
+            guides::load(
+                environment.state_dir.join("statev2.sqlite"),
+                key.host,
+                key.repository,
+                lookup.number,
+            )
+            .await?
+        } else {
+            Value::Null
+        };
+        let detail = client
+            .detail(&lookup)
+            .await
+            .map_err(|error| host_error(&error, "detail"))?;
+        Ok(json!({"guide":guide,"run":null,"currentHeadSha":detail.get("headSha")}))
     }
     async fn report_state(&self, input: &Value) -> Result<Value, Failure> {
         let reference = input.get("reference").unwrap_or(&Value::Null);
@@ -332,10 +491,7 @@ impl Panel {
             && (identity.get("accountId") != Some(expected)
                 || !text(input, "host").eq_ignore_ascii_case(&project.host))
         {
-            return Err(operation_error(
-                "routeIdentity",
-                "The signed-in account could not be verified before starting the operation.",
-            ));
+            return Err(routing_error());
         }
         Ok(identity)
     }
@@ -425,6 +581,7 @@ impl Panel {
     ) -> Result<Value, Failure> {
         let observed = conn_support::time::now_ms();
         let mut value = match method {
+            "stack" => client.stack(lookup).await,
             "summary" => client.summary(lookup).await,
             "preview" => client.preview(lookup).await,
             "detail" | "checks" => client.detail(lookup).await,
@@ -471,26 +628,32 @@ impl Panel {
     async fn invalidate(&self, reference: Option<&Value>, viewed: bool) {
         let canonical = if let Some(reference) = reference {
             match self.resolve(reference).await {
-                Ok(p) => Some((
-                    p.host,
-                    p.repository.to_lowercase(),
-                    reference
+                Ok(project) => Some(ReadKey {
+                    host: project.host,
+                    repo: project.repository.to_lowercase(),
+                    number: reference
                         .get("number")
                         .and_then(Value::as_u64)
-                        .and_then(|n| u32::try_from(n).ok()),
-                )),
+                        .and_then(|number| u32::try_from(number).ok()),
+                    ..ReadKey::default()
+                }),
                 Err(_) => return,
             }
         } else {
             None
         };
+        self.invalidate_cached(canonical.as_ref(), viewed);
+    }
+    fn invalidate_cached(&self, canonical: Option<&ReadKey>, viewed: bool) {
         self.cache.invalidate_where(|key| {
             if !viewed && matches!(key.method.as_str(), "list" | "listStats") {
                 return true;
             }
             (!viewed || key.method == "filesViewed")
-                && canonical.as_ref().is_none_or(|(host, repo, number)| {
-                    key.host == *host && key.repo == *repo && key.number == *number
+                && canonical.is_none_or(|reference| {
+                    key.host == reference.host
+                        && key.repo == reference.repo
+                        && key.number == reference.number
                 })
         });
     }
@@ -1067,12 +1230,7 @@ fn linked_thread(thread: &Value) -> Value {
     })
 }
 fn capabilities() -> Value {
-    json!({
-        "diff":true, "comment":false, "actions":[], "mergeMethods":[], "search":true,
-        "reactions":false, "mentions":true, "referenceSigils":["#"], "viewedFiles":"host",
-        "review":{"inlineComment":false,"rangeComment":false,"reply":false,"resolve":false,"verdicts":[]},
-        "reviewers":{"request":false,"listCandidates":false}, "checksAlwaysReport":true
-    })
+    json!({"diff":true,"comment":true,"actions":[],"mergeMethods":[],"search":true,"reactions":true,"mentions":true,"referenceSigils":["#"],"viewedFiles":"host","review":{"inlineComment":true,"rangeComment":true,"reply":true,"resolve":true,"verdicts":["comment","approve","request-changes"]},"reviewers":{"request":true,"listCandidates":true,"searchCandidates":true},"edit":{"changeRequest":true,"comment":true,"maintainerEdits":true},"stacks":true,"labels":true,"checksAlwaysReport":true})
 }
 
 /// Lazily initialized so HTTP and RPC share the same bounded cache and refresh state.
@@ -1139,6 +1297,22 @@ fn register_panel(table: &mut MethodTable, panel: Arc<Panel>) {
         }};
     }
     unary!("pullRequests.list", list);
+    unary!("pullRequests.comment", comment);
+    unary!("pullRequests.replyToThread", reply_to_thread);
+    unary!("pullRequests.updateComment", update_comment);
+    unary!("pullRequests.setReaction", set_reaction);
+    unary!("pullRequests.setThreadResolution", set_thread_resolution);
+    unary!("pullRequests.submitReview", submit_review);
+    unary!("pullRequests.requestReviewers", request_reviewers);
+    unary!("pullRequests.reviewerCandidates", reviewer_candidates);
+    unary!("pullRequests.labelCandidates", label_candidates);
+    unary!("pullRequests.setLabels", set_labels);
+    unary!("pullRequests.update", update);
+    unary!("pullRequests.runAction", run_action);
+    unary!("pullRequests.stack", stack);
+    unary!("pullRequests.generateReviewGuide", generate_review_guide);
+    unary!("pullRequests.reviewGuide", review_guide);
+
     unary!("pullRequests.listStats", list_stats);
     unary!("pullRequests.filterOptions", filter_options);
     unary!("pullRequests.detail", detail);

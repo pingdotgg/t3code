@@ -1377,18 +1377,11 @@ async fn the_timer_waits_when_a_due_task_cannot_be_saved() {
     )
     .await;
     std::fs::set_permissions(&env.dir, std::fs::Permissions::from_mode(0o555)).expect("chmod");
-    async fn spin(millis: u64) {
-        let real = std::time::Instant::now();
-        while real.elapsed() < Duration::from_millis(millis) {
-            tokio::task::yield_now().await;
-        }
-    }
-    tokio::time::advance(Duration::from_secs(61)).await;
-    spin(300).await;
+    clock_jumps::ready(&service).await;
+    clock_jumps::advance(&service, Duration::from_secs(61)).await;
     let at_once = calls.load(Ordering::SeqCst);
     for _ in 0..12 {
-        tokio::time::advance(Duration::from_secs(5)).await;
-        spin(30).await;
+        clock_jumps::advance(&service, Duration::from_secs(5)).await;
     }
     let after_a_minute = calls.load(Ordering::SeqCst);
     std::fs::set_permissions(&env.dir, std::fs::Permissions::from_mode(0o755)).expect("chmod");
@@ -1563,12 +1556,16 @@ mod clock_jumps {
         }
     }
 
-    /// Lets the timer run what is due now. Saves run on blocking threads, so this sleeps a
-    /// few milliseconds of paused time, which waits for them.
-    async fn settle() {
-        for _ in 0..20 {
-            tokio::time::sleep(Duration::from_millis(1)).await;
-        }
+    pub(super) async fn advance(service: &ScheduledTasks, duration: Duration) {
+        let mut passes = service.inner.timer_pass.subscribe();
+        tokio::time::advance(duration).await;
+        passes.changed().await.expect("timer pass");
+    }
+
+    pub(super) async fn ready(service: &ScheduledTasks) {
+        let mut passes = service.inner.timer_pass.subscribe();
+        service.inner.wake.notify_one();
+        passes.changed().await.expect("timer ready");
     }
 
     /// The monotonic clock ran on: the timer wakes at once and an overdue interval runs once,
@@ -1584,12 +1581,11 @@ mod clock_jumps {
             json!({"schedule": {"type": "interval", "everyMs": 5 * 60_000}}),
         )
         .await;
-        settle().await;
+        ready(&service).await;
         let mut expected = 0;
         for jump in JUMPS {
-            tokio::time::advance(Duration::from_secs(jump)).await;
-            let woke = env.clock.now_ms();
-            settle().await;
+            let woke = env.clock.now_ms() + i64::try_from(jump * 1000).unwrap();
+            advance(&service, Duration::from_secs(jump)).await;
             expected += 1;
             assert_eq!(
                 launches.load(Ordering::SeqCst),
@@ -1622,18 +1618,15 @@ mod clock_jumps {
             json!({"schedule": {"type": "fixed_time", "timeOfDay": "09:00"}}),
         )
         .await;
-        settle().await;
+        ready(&service).await;
 
-        tokio::time::advance(Duration::from_secs(10 * MIN)).await; // 09:05
-        settle().await;
+        advance(&service, Duration::from_secs(10 * MIN)).await; // 09:05
         assert_eq!(launches.load(Ordering::SeqCst), 1, "5 minutes late runs");
 
-        tokio::time::advance(Duration::from_secs(2 * 60 * MIN)).await; // 11:05
-        settle().await;
+        advance(&service, Duration::from_secs(2 * 60 * MIN)).await; // 11:05
         assert_eq!(launches.load(Ordering::SeqCst), 1, "nothing due");
 
-        tokio::time::advance(Duration::from_secs(3 * 24 * 60 * MIN)).await; // 07-04 11:05
-        settle().await;
+        advance(&service, Duration::from_secs(3 * 24 * 60 * MIN)).await; // 07-04 11:05
         assert_eq!(launches.load(Ordering::SeqCst), 1, "missed, not run");
         let listed = service.find(&task.id).await.expect("task");
         assert_eq!(
@@ -1666,15 +1659,13 @@ mod clock_jumps {
                 json!({"schedule": {"type": "interval", "everyMs": 10 * 60_000}}),
             )
             .await;
-            settle().await;
+            ready(&service).await;
             // Frozen one minute into the 10-minute sleep; the wall clock jumps past the run.
             tokio::time::advance(Duration::from_secs(MIN)).await;
             env.clock
                 .set(env.clock.now_ms() + i64::try_from(jump * 1000).expect("ms"));
-            settle().await;
             assert_eq!(launches.load(Ordering::SeqCst), 0, "+{jump}s: still asleep");
-            tokio::time::advance(Duration::from_secs(9 * MIN)).await;
-            settle().await;
+            advance(&service, Duration::from_secs(9 * MIN)).await;
             assert_eq!(launches.load(Ordering::SeqCst), 1, "+{jump}s: one run");
         }
 
@@ -1689,11 +1680,10 @@ mod clock_jumps {
             json!({"schedule": {"type": "fixed_time", "timeOfDay": "09:00"}}),
         )
         .await;
-        settle().await;
+        ready(&service).await;
         tokio::time::advance(Duration::from_secs(MIN)).await;
         env.clock.set(ms("2026-07-01T09:05:00.000Z"));
-        tokio::time::advance(Duration::from_secs(9 * MIN)).await;
-        settle().await;
+        advance(&service, Duration::from_secs(9 * MIN)).await;
         assert_eq!(
             launches.load(Ordering::SeqCst),
             0,

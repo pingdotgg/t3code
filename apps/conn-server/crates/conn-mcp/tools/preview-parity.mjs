@@ -164,7 +164,7 @@ export async function previewParity(binary, browser) {
       { tool: "preview_snapshot", args: { includeImage: true } },
       {
         tool: "preview_act",
-        args: { action: "click", locator: "unknown-engine=anything", timeoutMs: 50 },
+        args: { action: "click", locator: "unknown-engine=anything" },
       },
       { tool: "preview_act", args: { action: "click", selector: "#missing", timeoutMs: 50 } },
       { tool: "preview_act", args: { action: "type", selector: "button", text: "wrong" } },

@@ -761,7 +761,7 @@ mod tests {
             b"broken record",
         )
         .unwrap();
-        let uppercase = format!("secret-request-{}", "A".repeat(32));
+        let uppercase = format!("secret-request-{}", "B".repeat(32));
         secret_store::write(&dir, &uppercase, b"keep").unwrap();
         secret_store::ensure_dir(&dir.join("files")).unwrap();
         fs::write(dir.join("files/unrelated"), b"keep").unwrap();
