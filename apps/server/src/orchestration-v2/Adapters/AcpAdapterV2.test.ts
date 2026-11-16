@@ -3388,6 +3388,7 @@ describe("AcpAdapterV2", () => {
       yield* replay("agent_message_chunk", "a1", "there");
       yield* replay("agent_message_chunk", "a3", "\t");
       yield* replay("agent_message_chunk", "a3", "code");
+      yield* replay("agent_message_chunk", "a4", "\n\n");
       const first = yield* runtime.readThreadSnapshot({ providerThread });
       yield* replay("agent_message_chunk", "a2", "done");
       yield* replay("user_message_chunk", "u2", "\n");

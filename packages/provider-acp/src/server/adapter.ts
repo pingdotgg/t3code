@@ -9762,7 +9762,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const state = yield* Ref.get(snapshot);
                   const messages = state.order.flatMap((key) => {
                     const message = state.messages.get(key);
-                    return message === undefined ? [] : [message];
+                    return message === undefined || message.text.trim().length === 0
+                      ? []
+                      : [message];
                   });
                   const now = yield* DateTime.now;
                   return {
