@@ -28,6 +28,9 @@ const NativeToolFields = Schema.Struct({
   CommandLine: Schema.optional(Schema.String),
   command_line: Schema.optional(Schema.String),
   commandLine: Schema.optional(Schema.String),
+  IsDaemon: Schema.optional(Schema.Boolean),
+  isDaemon: Schema.optional(Schema.Boolean),
+  is_daemon: Schema.optional(Schema.Boolean),
   cwd: Schema.optional(Schema.String),
   Cwd: Schema.optional(Schema.String),
   WorkingDirectory: Schema.optional(Schema.String),
@@ -439,12 +442,18 @@ export function normalizeAntigravityToolCall(
   const aggregatedOutput = nativeOutput === undefined ? undefined : boundText(nativeOutput);
   const exitCode = output?.exitCode ?? output?.exit_code;
   const imagePath = localImagePath(output?.imagePath);
+  const isDaemon =
+    input?.IsDaemon ??
+    input?.isDaemon ??
+    input?.is_daemon ??
+    (toolCall.data.isDaemon === true ? true : undefined);
   const sanitizedData = sanitizeAntigravityToolPayload(toolCall.data);
   const data: Record<string, unknown> = Predicate.isObject(sanitizedData) ? sanitizedData : {};
   const kind = toolCall.kind ?? (command !== undefined ? "execute" : undefined);
   if (kind !== undefined) data.kind = kind;
   if (command !== undefined) data.command = command;
   if (cwd !== undefined) data.cwd = cwd;
+  if (isDaemon === true) data.isDaemon = true;
   if (imagePath !== undefined) data.imagePath = imagePath;
   if (kind === "edit") {
     const content = Array.isArray(data.content) ? data.content : [];
@@ -481,8 +490,10 @@ export function normalizeAntigravityToolCall(
 }
 
 const ANTIGRAVITY_SUBAGENT_TITLES = new Set([
+  "Run start_subagent",
   "Running start_subagent",
   "Run start_subagent?",
+  "Run invoke_subagent",
   "Running invoke_subagent",
   "Run invoke_subagent?",
 ]);
@@ -506,4 +517,21 @@ export function classifyAntigravitySubagentToolCall(
 export function antigravitySubagentOutput(toolCall: AcpToolCallState): string | undefined {
   const output = toolCall.data.rawOutput;
   return typeof output === "string" && output.trim() ? boundText(output.trim()) : undefined;
+}
+
+export function isAntigravityForegroundCommand(toolCall: AcpToolCallState): boolean {
+  return (
+    (toolCall.kind === "execute" && toolCall.data.isDaemon !== true) ||
+    classifyAntigravitySubagentToolCall(toolCall) === "subagent"
+  );
+}
+
+export function isAntigravityForegroundCommandOpen(toolCall: AcpToolCallState): boolean {
+  return (
+    isAntigravityForegroundCommand(toolCall) &&
+    (toolCall.status === "pending" ||
+      toolCall.status === "inProgress" ||
+      (toolCall.status === "completed" &&
+        classifyAntigravitySubagentToolCall(toolCall) === "subagent"))
+  );
 }

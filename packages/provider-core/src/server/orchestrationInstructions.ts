@@ -78,6 +78,7 @@ export function t3AcpPromptWithInstructions(input: {
   readonly prompt: string;
   readonly state: T3AcpInstructionState;
   readonly previousState?: T3AcpInstructionState;
+  readonly mcpInstructions?: string | undefined;
 }): string {
   // Native slash commands must remain at the start of the prompt.
   if (input.prompt.trimStart().startsWith("/")) return input.prompt;
@@ -88,6 +89,7 @@ export function t3AcpPromptWithInstructions(input: {
   ) {
     return input.prompt;
   }
+  const mcpExtra = input.mcpInstructions?.trim();
   const instructions = [
     input.state.interactionMode === "plan"
       ? T3_CODE_ACP_PLAN_MODE_INSTRUCTIONS
@@ -97,6 +99,7 @@ export function t3AcpPromptWithInstructions(input: {
           T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim(),
           ...(input.state.hasDeviceTools ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS] : []),
           T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim(),
+          ...(mcpExtra ? [mcpExtra] : []),
           T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS,
         ]
       : []),

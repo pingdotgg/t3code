@@ -1588,7 +1588,7 @@ const make = Effect.gen(function* () {
     const { matched } = yield* runtime.value
       .awaitBackgroundTasks({ providerThread, taskIds: input.taskIds, awaited: input.awaited })
       .pipe(
-        Effect.timeout("15 seconds"),
+        Effect.timeout("5 minutes"),
         Effect.mapError(
           (cause) =>
             new ThreadManagementBackgroundWaitError({

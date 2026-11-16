@@ -39,6 +39,8 @@ import {
   antigravitySubagentOutput,
   classifyAntigravitySubagentToolCall,
   extractAntigravityUserInputQuestion,
+  isAntigravityForegroundCommand,
+  isAntigravityForegroundCommandOpen,
   makeAntigravityReadRepair,
   makeAntigravityUserInputResponse,
   normalizeAntigravityToolCall,
@@ -52,6 +54,12 @@ import {
 } from "@t3tools/provider-acp/server/adapter";
 
 const ANTIGRAVITY_PROVIDER = ProviderDriverKind.make("antigravity");
+
+// Over ACP, ending `session/prompt` detaches Antigravity's update and permission streams
+// before a backgrounded `run_command` finishes, stranding its wakeup without a listener.
+const ANTIGRAVITY_BACKGROUND_WAIT_INSTRUCTIONS = `### Background work you wait on
+
+Over ACP, ending your turn closes T3 Code's active stream before background work can report back. When a foreground \`run_command\` (\`IsDaemon\` false) moves to the background, call \`t3_background_wait\` with its task ID instead of ending your turn. After native subagent launches, pass their conversation IDs to the same tool. A completed launch means the worker was created, not that it finished. Repeat the wait when it returns before the results arrive. After all awaited subagent results or failures arrive, call the tool with those IDs and \`waiting: false\` before giving your final answer. Also use \`waiting: false\` for processes deliberately left running, such as dev servers and watchers.`;
 
 const AntigravityProviderCapabilitiesV2 = {
   ...AcpProviderCapabilitiesV2,
@@ -96,7 +104,7 @@ export interface AntigravityAdapterV2Options {
 
 /**
  * Native subagent tools report no child session ids, so children stay read-only.
- * Only permission prompts carry the launch; NativeChildWorkQuery matches their ids by this text.
+ * NativeChildWorkQuery matches launches against persisted records by this text.
  */
 const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractSubagentUpdate"]> = (
   toolCall,
@@ -180,7 +188,10 @@ export function makeAntigravityAcpAdapterFlavor(
             ),
           ),
         prompt: (payload, promptOptions) =>
-          Effect.sync(reads.reset).pipe(Effect.andThen(runtime.prompt(payload, promptOptions))),
+          Effect.sync(reads.reset).pipe(
+            Effect.andThen(runtime.prompt(payload, promptOptions)),
+            Effect.tap(() => updates.withPermit(Effect.void)),
+          ),
         handleSessionUpdate: (handler) => {
           projectUpdate = handler;
           return runtime.handleSessionUpdate((notification) =>
@@ -212,6 +223,33 @@ export function makeAntigravityAcpAdapterFlavor(
     supportsNativeGoals: options.supportsNativeGoals ?? Effect.succeed(false),
     // Agents that advertise HTTP MCP skip the stdio bridge process; others keep stdio.
     mcpOverHttp: true,
+    mcpInstructions: ANTIGRAVITY_BACKGROUND_WAIT_INSTRUCTIONS,
+    foregroundCommandWait: {
+      isOpenForegroundCommand: isAntigravityForegroundCommandOpen,
+      isForegroundCommand: isAntigravityForegroundCommand,
+      buildContinuationPrompt: (openTools, { hasT3Mcp }) => {
+        const commands = openTools
+          .map((tool) => tool.command ?? tool.title)
+          .filter((value): value is string => Boolean(value?.trim()))
+          .slice(0, 3);
+        const summary = commands.length > 0 ? ` (${commands.join("; ")})` : "";
+        const hasSubagents = openTools.some(
+          (tool) => classifyAntigravitySubagentToolCall(tool) === "subagent",
+        );
+        const waitInstruction =
+          hasT3Mcp && hasSubagents
+            ? "Call `t3_background_wait` with the native subagents' conversation IDs while their results are pending. After all awaited work finishes, release the wait with `waiting: false` and finish the user's request."
+            : hasT3Mcp
+              ? "If it is still running, call `t3_background_wait` with its task ID until its `<SYSTEM_MESSAGE>` completion arrives, or pass `waiting: false` only if it is meant to stay running in the background."
+              : "If it is still running, wait for its `<SYSTEM_MESSAGE>` completion in this turn before ending your turn.";
+        return [
+          {
+            type: "text",
+            text: `<t3_background_continuation>\nBackground work started in this turn${summary} was still pending when your turn ended. ${waitInstruction} Once its output arrives, continue and finish the user's request.\n</t3_background_continuation>`,
+          },
+        ];
+      },
+    },
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
     makeRuntime,
     buildAttachmentPrompt: ({

@@ -19,8 +19,8 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
@@ -1272,5 +1272,345 @@ describe("AntigravityAdapterV2 session system prompt", () => {
           assert.include(sent, "<pull_request_linking>");
         }
       }).pipe(Effect.provide(layerSession)),
+  );
+});
+
+describe("AntigravityAdapterV2 foreground command waits", () => {
+  it.effect(
+    "holds awaitBackgroundTasks until a backgrounded foreground command settles and ignores IsDaemon",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* SecureRandom.SecureRandom;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-bg-wait-" });
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        type SessionUpdateHandler = Parameters<RuntimeService["handleSessionUpdate"]>[0];
+        let sessionUpdate: SessionUpdateHandler | undefined;
+        let promptCalls = 0;
+        const foregroundStarted = yield* Deferred.make<void>();
+        const finishForeground = yield* Deferred.make<void>();
+        const finishPrompt = yield* Deferred.make<void>();
+
+        const instanceId = ProviderInstanceId.make("antigravity-bg-wait-test");
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          makeRuntime: (input) =>
+            makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [mockAgentPath],
+                cwd: input.cwd,
+                env: { T3_ACP_ANTIGRAVITY: "1" },
+              },
+            }).pipe(
+              Effect.provideService(SecureRandom.SecureRandom, crypto),
+              Effect.map((runtime): RuntimeService => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Effect.sync(() => {
+                    sessionUpdate = handler;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+                prompt: (_payload, promptOptions) =>
+                  Effect.gen(function* () {
+                    promptCalls += 1;
+                    if (promptOptions?.dispatched !== undefined) {
+                      yield* Deferred.succeed(promptOptions.dispatched, undefined);
+                    }
+                    const send = sessionUpdate!;
+                    const emit = (update: EffectAcpSchema.SessionUpdate) =>
+                      send(
+                        normalizeAntigravitySessionUpdate({ sessionId: "mock-session-1", update }),
+                      );
+                    yield* emit({
+                      sessionUpdate: "tool_call",
+                      toolCallId: "call_daemon",
+                      title: "Dev server",
+                      kind: "execute",
+                      status: "in_progress",
+                      rawInput: { CommandLine: "npm run dev", IsDaemon: true },
+                    });
+                    yield* emit({
+                      sessionUpdate: "tool_call",
+                      toolCallId: "call_fg",
+                      title: "Unit tests",
+                      kind: "execute",
+                      status: "in_progress",
+                      rawInput: { CommandLine: "npm test", IsDaemon: false },
+                    });
+                    yield* Deferred.succeed(foregroundStarted, undefined);
+                    yield* Deferred.await(finishForeground);
+                    yield* emit({
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "call_fg",
+                      status: "completed",
+                      rawOutput: "Command output:\nALL_TESTS_OK\n",
+                    });
+                    yield* Deferred.await(finishPrompt);
+                    return { stopReason: "end_turn" as const };
+                  }),
+              })),
+            ),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.undefined,
+        });
+
+        const threadId = ThreadId.make("thread-antigravity-bg-wait");
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+        const session = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-bg-wait"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const eventsFiber = yield* session.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        const now = yield* DateTime.now;
+        yield* session.startTurn({
+          appThread: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make("project-antigravity-bg-wait"),
+            title: "Antigravity foreground wait",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: workspace,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          threadId,
+          runId: RunId.make("run-antigravity-bg-wait"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("attempt-antigravity-bg-wait"),
+          rootNodeId: NodeId.make("node-antigravity-bg-wait"),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-antigravity-bg-wait"),
+            text: "start dev server and run tests",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+
+        yield* Deferred.await(foregroundStarted);
+        assert.isDefined(session.awaitBackgroundTasks);
+        const waitFiber = yield* session
+          .awaitBackgroundTasks({
+            providerThread,
+            taskIds: ["mock-session-1/task-1"],
+            awaited: true,
+          })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.succeed(finishForeground, undefined);
+        const waited = yield* Fiber.join(waitFiber);
+        assert.deepEqual(waited, { matched: ["mock-session-1/task-1"] });
+
+        yield* Deferred.succeed(finishPrompt, undefined);
+        const events = Array.from(yield* Fiber.join(eventsFiber));
+        assert.equal(promptCalls, 1);
+        const terminal = events.filter((event) => event.type === "turn.terminal");
+        assert.equal(terminal.length, 1);
+        assert.equal(terminal[0]?.status, "completed");
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
+  it.effect(
+    "re-attaches a continuation prompt when end_turn arrives while an unreleased foreground command is open",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* SecureRandom.SecureRandom;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-bg-cont-" });
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        type SessionUpdateHandler = Parameters<RuntimeService["handleSessionUpdate"]>[0];
+        let sessionUpdate: SessionUpdateHandler | undefined;
+        const receivedPrompts: Array<string> = [];
+
+        const instanceId = ProviderInstanceId.make("antigravity-bg-continuation-test");
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          makeRuntime: (input) =>
+            makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [mockAgentPath],
+                cwd: input.cwd,
+                env: { T3_ACP_ANTIGRAVITY: "1" },
+              },
+            }).pipe(
+              Effect.provideService(SecureRandom.SecureRandom, crypto),
+              Effect.map((runtime): RuntimeService => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Effect.sync(() => {
+                    sessionUpdate = handler;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+                prompt: (payload, promptOptions) =>
+                  Effect.gen(function* () {
+                    receivedPrompts.push(JSON.stringify(payload.prompt));
+                    if (promptOptions?.dispatched !== undefined) {
+                      yield* Deferred.succeed(promptOptions.dispatched, undefined);
+                    }
+                    const send = sessionUpdate!;
+                    const emit = (update: EffectAcpSchema.SessionUpdate) =>
+                      send(
+                        normalizeAntigravitySessionUpdate({ sessionId: "mock-session-1", update }),
+                      );
+                    if (receivedPrompts.length === 1) {
+                      yield* emit({
+                        sessionUpdate: "tool_call",
+                        toolCallId: "call_build",
+                        title: "Build package",
+                        kind: "execute",
+                        status: "in_progress",
+                        rawInput: { CommandLine: "npm run build", IsDaemon: false },
+                      });
+                      return { stopReason: "end_turn" as const };
+                    }
+                    yield* emit({
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "call_build",
+                      status: "completed",
+                      rawOutput: "Command output:\nBUILD_OK\n",
+                    });
+                    yield* emit({
+                      sessionUpdate: "agent_message_chunk",
+                      content: { type: "text", text: "Build finished." },
+                    });
+                    return { stopReason: "end_turn" as const };
+                  }),
+              })),
+            ),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.undefined,
+        });
+
+        const threadId = ThreadId.make("thread-antigravity-bg-continuation");
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+        const session = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-bg-continuation"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const eventsFiber = yield* session.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        const now = yield* DateTime.now;
+        yield* session.startTurn({
+          appThread: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make("project-antigravity-bg-continuation"),
+            title: "Antigravity continuation fallback",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: workspace,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          threadId,
+          runId: RunId.make("run-antigravity-bg-continuation"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("attempt-antigravity-bg-continuation"),
+          rootNodeId: NodeId.make("node-antigravity-bg-continuation"),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-antigravity-bg-continuation"),
+            text: "build the project",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+
+        const events = Array.from(yield* Fiber.join(eventsFiber));
+        assert.equal(receivedPrompts.length, 2);
+        assert.include(receivedPrompts[1] ?? "", "<t3_background_continuation>");
+        assert.include(receivedPrompts[1] ?? "", "npm run build");
+        const completedCommand = events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "call_build",
+        );
+        assert.equal(
+          completedCommand?.type === "turn_item.updated" ? completedCommand.turnItem.status : null,
+          "completed",
+        );
+        const terminals = events.filter((event) => event.type === "turn.terminal");
+        assert.equal(terminals.length, 1);
+        assert.equal(terminals[0]?.status, "completed");
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
