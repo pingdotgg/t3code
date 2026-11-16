@@ -259,16 +259,18 @@ describe("mergePathEntries", () => {
 });
 
 describe("windowsEnvironmentValueCommand", () => {
-  it("reads PATH from Machine, User, and Process so a stale Electron PATH still sees User installs", () => {
-    expect(windowsEnvironmentValueCommand("PATH")).toContain(
-      "[Environment]::GetEnvironmentVariable('PATH','Machine')",
-    );
-    expect(windowsEnvironmentValueCommand("PATH")).toContain(
-      "[Environment]::GetEnvironmentVariable('PATH','User')",
-    );
-    expect(windowsEnvironmentValueCommand("PATH")).toContain(
+  it("joins PATH as Process, then Machine, then User so prepends win and User installs still appear", () => {
+    const command = windowsEnvironmentValueCommand("PATH");
+    const processAt = command.indexOf(
       "[Environment]::GetEnvironmentVariable('PATH','Process')",
     );
+    const machineAt = command.indexOf(
+      "[Environment]::GetEnvironmentVariable('PATH','Machine')",
+    );
+    const userAt = command.indexOf("[Environment]::GetEnvironmentVariable('PATH','User')");
+    expect(processAt).toBeGreaterThan(-1);
+    expect(processAt).toBeLessThan(machineAt);
+    expect(machineAt).toBeLessThan(userAt);
   });
 
   it("leaves non-PATH names on the process scope", () => {
@@ -422,12 +424,19 @@ describe("readEnvironmentFromWindowsShell", () => {
         expect.arrayContaining(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]),
         { encoding: "utf8", timeout: 5000 },
       );
-      expect(execFile.mock.calls[0]?.[1].at(-1)).toContain(
-        "[Environment]::GetEnvironmentVariable('PATH','User')",
+      const captureCommand = String(execFile.mock.calls[0]?.[1].at(-1));
+      const processAt = captureCommand.indexOf(
+        "[Environment]::GetEnvironmentVariable('PATH','Process')",
       );
-      expect(execFile.mock.calls[0]?.[1].at(-1)).toContain(
+      const machineAt = captureCommand.indexOf(
         "[Environment]::GetEnvironmentVariable('PATH','Machine')",
       );
+      const userAt = captureCommand.indexOf(
+        "[Environment]::GetEnvironmentVariable('PATH','User')",
+      );
+      expect(processAt).toBeGreaterThan(-1);
+      expect(processAt).toBeLessThan(machineAt);
+      expect(machineAt).toBeLessThan(userAt);
     }),
   );
 

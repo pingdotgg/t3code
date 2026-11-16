@@ -278,14 +278,14 @@ export function buildEnvironmentCaptureCommand(
     : command;
 }
 
-// Electron's process PATH is the launch snapshot. User and Machine are the registry.
+// Process first so profile prepends win; User and Machine add dirs missing from the launch snapshot.
 export function windowsEnvironmentValueCommand(name: string): string {
   if (name === "PATH") {
     return (
       "$value = (@(" +
+      "[Environment]::GetEnvironmentVariable('PATH','Process')," +
       "[Environment]::GetEnvironmentVariable('PATH','Machine')," +
-      "[Environment]::GetEnvironmentVariable('PATH','User')," +
-      "[Environment]::GetEnvironmentVariable('PATH','Process')" +
+      "[Environment]::GetEnvironmentVariable('PATH','User')" +
       ") | Where-Object { $_ }) -join ';'"
     );
   }
