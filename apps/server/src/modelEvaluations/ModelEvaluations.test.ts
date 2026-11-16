@@ -555,6 +555,9 @@ it.effect(
         { options: [{ id: "effort", value: "low" }] },
         { options: [{ id: "reasoningEffort", value: "high" }] },
         { options: [{ id: "reasoning_effort", value: "medium" }] },
+        { options: [{ id: "thinking", value: true }] },
+        { options: [{ id: "thinking", value: false }] },
+        { options: [{ id: "thinking_level", value: "high" }] },
         { options: [], switchJudge: true },
         { options: [], subagent: true },
       ];
@@ -581,7 +584,7 @@ it.effect(
         report.guidance.filter((group) =>
           (group.modelSelection.options ?? []).some((option) => option.id === id),
         );
-      assert.equal(report.guidance.length, 7);
+      assert.equal(report.guidance.length, 10);
       const learned = report.guidance.find((group) => group.sampleCount === 6)!;
       assert.equal(learned.confidence, "observed");
       assert.equal(learned.meanScores.taskCompletion, 3);
@@ -592,6 +595,8 @@ it.effect(
       assert.equal(groupsWith("effort").length, 2);
       assert.equal(groupsWith("reasoningEffort").length, 1);
       assert.equal(groupsWith("reasoning_effort").length, 1);
+      assert.equal(groupsWith("thinking").length, 2);
+      assert.equal(groupsWith("thinking_level").length, 1);
       assert.equal(report.guidance.filter((group) => group.scope === "subagent").length, 1);
       yield* settings.updateSettings({ enableModelEvaluations: false });
       assert.deepEqual(yield* service.guidance(scope), []);
