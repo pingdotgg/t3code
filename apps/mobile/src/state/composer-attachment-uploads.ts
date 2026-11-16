@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { attachmentUploadError } from "@t3tools/client-runtime/state/attachment-uploads";
 import { Atom } from "effect/reactivity";
 
 import { uploadComposerAttachment } from "../lib/attachmentUpload";
@@ -11,7 +12,6 @@ import {
   type DraftComposerAttachment,
 } from "../lib/composerImages";
 import {
-  uploadError,
   composerAttachmentUploadKey,
   composerDraftEnvironmentId,
   canUploadComposerAttachment,
@@ -162,7 +162,7 @@ const recordQueuedAttachmentUpload = Effect.fn("ComposerAttachments.recordQueued
               ? null
               : withUploadedAttachment(current, uploaded),
           ),
-        catch: uploadError,
+        catch: attachmentUploadError,
       }),
     { concurrency: "unbounded", discard: true },
   );
@@ -226,7 +226,7 @@ const recordComposerAttachmentUpload = Effect.fn("ComposerAttachments.recordUplo
   yield* recordQueuedAttachmentUpload(environmentId, uploaded);
   if (!draftsChanged) return;
   // A failed draft save only costs a re-upload after restart; the outbox saves its own references.
-  yield* Effect.tryPromise({ try: () => flushComposerDrafts(), catch: uploadError }).pipe(
+  yield* Effect.tryPromise({ try: () => flushComposerDrafts(), catch: attachmentUploadError }).pipe(
     Effect.catchIf(
       (error) => isComposerDraftPersistenceError(error.cause),
       (error) =>
@@ -241,14 +241,17 @@ const recordComposerAttachmentUpload = Effect.fn("ComposerAttachments.recordUplo
 function composerAttachmentUploads() {
   uploadQueue ??= createComposerAttachmentUploadQueue({
     onChange: (states) => appAtomRegistry.set(composerAttachmentUploadsAtom, states),
-    upload: ({ environmentId, attachment }, signal, onProgress) => {
-      const release = isFileBackedComposerAttachment(attachment)
-        ? retainComposerAttachmentFileForPreview(attachment)
-        : undefined;
-      return uploadComposerAttachment(environmentId, attachment, signal, onProgress).finally(() =>
-        release?.(),
-      );
-    },
+    // The file stays on disk while its upload reads it, even if its draft lets go meanwhile.
+    upload: ({ environmentId, attachment }, reportProgress) =>
+      Effect.acquireUseRelease(
+        Effect.sync(() =>
+          isFileBackedComposerAttachment(attachment)
+            ? retainComposerAttachmentFileForPreview(attachment)
+            : undefined,
+        ),
+        () => uploadComposerAttachment(environmentId, attachment, reportProgress),
+        (release) => Effect.sync(() => release?.()),
+      ),
     onUploaded: recordComposerAttachmentUpload,
   });
   return uploadQueue;

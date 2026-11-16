@@ -93,7 +93,6 @@ vi.mock("expo-file-system", () => ({
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
-import { uploadError } from "./composerAttachmentUploadQueue";
 import {
   prepareTurnAttachments as prepareWithUploads,
   releasePendingAttachmentUploads,
@@ -109,30 +108,14 @@ function prepare(
 ) {
   return prepareWithUploads({
     ...input,
-    // An interrupted send waits for its transfer to settle, as the shared registry does.
     uploadAttachment: (attachment) =>
-      Effect.suspend(() => {
-        const controller = new AbortController();
-        const upload = uploadComposerAttachment(
-          input.environmentId,
-          attachment,
-          controller.signal,
-          input.onUploadProgress
-            ? (progress) => input.onUploadProgress?.(attachment.id, progress)
-            : undefined,
-        );
-        return Effect.tryPromise({ try: () => upload, catch: uploadError }).pipe(
-          Effect.onInterrupt(() =>
-            Effect.promise(() => {
-              controller.abort();
-              return upload.then(
-                () => undefined,
-                () => undefined,
-              );
-            }),
-          ),
-        );
-      }),
+      uploadComposerAttachment(
+        input.environmentId,
+        attachment,
+        input.onUploadProgress
+          ? (progress) => input.onUploadProgress?.(attachment.id, progress)
+          : undefined,
+      ),
   });
 }
 import type { DraftComposerAttachment } from "./composerImages";
