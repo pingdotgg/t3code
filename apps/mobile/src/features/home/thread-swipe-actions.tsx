@@ -236,6 +236,8 @@ interface ThreadSwipeableProps {
   /** Omitted uses Delete only with the built-in Delete secondary action; otherwise it uses primary. */
   readonly fullSwipeAction?: "delete" | "primary";
   readonly fullSwipeWidth: number;
+  /** The list animates item layout; collapse in one step so its transition moves siblings once. */
+  readonly listAnimatesLayout?: boolean;
   readonly onDelete: () => void;
   readonly onSwipeableClose?: (methods: SwipeableMethods) => void;
   readonly onSwipeableWillOpen?: (methods: SwipeableMethods) => void;
@@ -278,6 +280,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   const primaryAction = props.primaryAction;
   const onDelete = props.onDelete;
   const onSwipeableClose = props.onSwipeableClose;
+  const listAnimatesLayout = props.listAnimatesLayout === true;
 
   const restoreRow = useCallback(() => {
     if (!mountedRef.current) return;
@@ -346,6 +349,13 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
       translation.set(
         withTiming(Math.min(translation.value, -rowWidth.value), timing, (finished) => {
           if (!finished) return;
+          // LegendList moves siblings from JS onLayout; animating the height here restarts
+          // its item transition on every late layout, so the gap closes in stutters.
+          if (listAnimatesLayout) {
+            collapse.set(1);
+            runOnJS(finishDismiss)(id);
+            return;
+          }
           collapse.set(
             withTiming(1, { ...timing, duration: 180 }, (collapsed) => {
               if (collapsed) runOnJS(finishDismiss)(id);
@@ -354,7 +364,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
         }),
       );
     },
-    [actionOpacity, collapse, dismissing, finishDismiss, rowWidth],
+    [actionOpacity, collapse, dismissing, finishDismiss, listAnimatesLayout, rowWidth],
   );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this row's animated dismissal in the module-level thread dismissal registry
   useLayoutEffect(
