@@ -10606,9 +10606,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 Effect.forkIn(sessionScope),
               );
             } else if (
-              // Background tasks from earlier turns keep streaming while the root request hangs.
+              // Background tasks from earlier turns keep streaming while the root request hangs;
+              // a task this turn starts (a forked skill) is the turn's own progress.
               Reflect.get(message, "parent_tool_use_id") == null &&
-              !(message.type === "system" && message.subtype.startsWith("task_"))
+              !(
+                message.type === "system" &&
+                message.subtype.startsWith("task_") &&
+                message.subtype !== "task_started"
+              )
             ) {
               context.unansweredRequestSince = undefined;
             }

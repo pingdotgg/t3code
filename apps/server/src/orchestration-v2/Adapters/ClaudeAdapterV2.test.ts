@@ -15228,6 +15228,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   it.effect.each([
     { case: "after the prompt starts", requesting: false, backgroundProgress: false },
     { case: "after a request goes out", requesting: true, backgroundProgress: false },
+    { case: "while a skill it forked runs", requesting: false, forkedTask: true },
     {
       case: "while an earlier background task reports progress",
       requesting: false,
@@ -15235,7 +15236,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     },
   ])(
     "does not keep a turn silently running when Claude goes quiet $case",
-    ({ requesting, backgroundProgress }) =>
+    ({ requesting, backgroundProgress = false, forkedTask = false }) =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
         const now = yield* DateTime.now;
@@ -15285,6 +15286,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             }),
           );
         }
+        if (forkedTask) {
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: "forked-skill-task",
+              description: "Forked skill",
+              uuid: "00000000-0000-4000-8000-000000000794",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
         assert.lengthOf(harness.terminalEvents(), 0);
 
         yield* TestClock.adjust("1 hour");
@@ -15296,7 +15309,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               event.type === "turn_item.updated" &&
               (event.turnItem.type === "system_notice" || event.turnItem.type === "error"),
           );
-        assert.isTrue(surfaced, "an hour of silence after the prompt started surfaced nothing");
+        if (forkedTask) {
+          assert.lengthOf(harness.terminalEvents(), 0, "a long forked skill was failed as silence");
+        } else {
+          assert.isTrue(surfaced, "an hour of silence after the prompt started surfaced nothing");
+        }
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
