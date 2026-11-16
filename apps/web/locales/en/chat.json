@@ -78,9 +78,9 @@
     "failedToResumeGoal": "Failed to resume goal.",
     "forceStop": "Force stop",
     "forceStopDetail": "It may be short on memory. Force stop kills its processes.",
+    "forceStopping": "Force stopping...",
     "hideServerHint": "Hide this server's threads. Switch it on again in Environments.",
     "manualUpdateRequired": "Manual update required",
-    "forceStopping": "Force stopping...",
     "open": "Open",
     "openApproval": "Open approval",
     "openQuestion": "Open question",
@@ -88,10 +88,10 @@
     "projectCloneFailed": "Failed to clone {{name}}",
     "projectCloneRetryHint": "Retry to bring in the repository.",
     "removeProject": "Remove project",
-    "retry": "Retry",
     "restoreBranch": "Restore branch",
     "restoring": "Restoring...",
     "resume": "Resume",
+    "retry": "Retry",
     "sideChatWaiting": "Side chat waiting",
     "stop": "Stop",
     "stopping": "Stopping...",
@@ -240,12 +240,12 @@
     "loadingUncommitted": "Loading uncommitted changes...",
     "moreFilesInFullDiff_one": "{{count}} more file in the full diff",
     "moreFilesInFullDiff_other": "{{count}} more files in the full diff",
-    "openDiff": "Open diff",
-    "openFullDiffAria": "Open the full diff",
     "noCommitsOnBranch": "No commits on this branch.",
     "noMatchingRefs": "No matching refs.",
     "noNetChanges": "No net changes in this selection.",
     "noPatchAvailable": "No patch available for this selection.",
+    "openDiff": "Open diff",
+    "openFullDiffAria": "Open the full diff",
     "previewExceedsSizeLimit": "This preview exceeds the size limit. Changes shown are incomplete.",
     "refreshDiff": "Refresh diff",
     "refreshingDiff": "Refreshing diff",
@@ -279,18 +279,18 @@
     "addAProject": "Add a project",
     "addProject": "Add project",
     "addProjectToStart": "Add a project to start",
-    "chooseProject": "Choose a project",
-    "chooseToStart": "{selector} to start",
-    "noProject": "No project",
-    "searchProjects": "Search projects",
-    "searchProjectsPlaceholder": "Search projects...",
     "buildInLead": "What should we build in",
     "buildInSuffix": " in",
     "buildInTail": "?",
     "buildLead": "What should we build",
     "buildLeadTail": "?",
-    "whatWentWrong": "What went wrong?",
-    "whatNext": "What should we work on?"
+    "chooseProject": "Choose a project",
+    "chooseToStart": "{selector} to start",
+    "noProject": "No project",
+    "searchProjects": "Search projects",
+    "searchProjectsPlaceholder": "Search projects...",
+    "whatNext": "What should we work on?",
+    "whatWentWrong": "What went wrong?"
   },
   "errors": {
     "chatgptLimitReached": "ChatGPT usage limit reached",
@@ -426,6 +426,20 @@
     "wakeNow": "Wake now",
     "waking": "Waking..."
   },
+  "limitRecovery": {
+    "autoResumeFailed": "Could not change auto-resume",
+    "cancelAutoResume": "Cancel auto-resume",
+    "limitReached": "Usage limit reached",
+    "resetPassed": "The reset time has passed. Retry the thread manually.",
+    "resets": "Resets {{time}}",
+    "resetUnavailable": "Reset time unavailable; retry manually",
+    "resumeAtReset": "Resume at reset",
+    "resumes": "Resumes {{time}}",
+    "saving": "Saving...",
+    "snoozeFailed": "Could not snooze thread",
+    "snoozeUntilReset": "Snooze until reset",
+    "wakeNow": "Wake now"
+  },
   "link": {
     "address": "Address",
     "addressHint": "This app has no address for {{target}} that another machine can reach. Enter its https or Tailscale address.",
@@ -453,20 +467,6 @@
     "stepMachine": "Machine",
     "useThisLink": "Use this link"
   },
-  "limitRecovery": {
-    "autoResumeFailed": "Could not change auto-resume",
-    "cancelAutoResume": "Cancel auto-resume",
-    "limitReached": "Usage limit reached",
-    "resetPassed": "The reset time has passed. Retry the thread manually.",
-    "resets": "Resets {{time}}",
-    "resetUnavailable": "Reset time unavailable; retry manually",
-    "resumeAtReset": "Resume at reset",
-    "resumes": "Resumes {{time}}",
-    "saving": "Saving...",
-    "snoozeFailed": "Could not snooze thread",
-    "snoozeUntilReset": "Snooze until reset",
-    "wakeNow": "Wake now"
-  },
   "markdown": {
     "alerts": {
       "caution": "Caution",
@@ -490,13 +490,6 @@
     "toggleTask": "Toggle task",
     "unlinkFailed": "Unable to unlink pull request"
   },
-  "media": {
-    "nextMedia": "Next media",
-    "previousMedia": "Previous media",
-    "zoomHint": "Click to zoom in or return to fit. Pinch or Ctrl+scroll to zoom, scroll or drag to pan. Use Enter to toggle zoom, plus or minus to zoom, and 0 to fit.",
-    "zoomPercent": "{{percent}}% zoom",
-    "zoomableImageAria": "{{name}}, zoomable image"
-  },
   "mcp": {
     "appLeftPage": "The {{server}} app left its page and was stopped",
     "appWasClosed": "The {{server}} app was closed",
@@ -507,6 +500,13 @@
     "requestFailed": "Request failed.",
     "showApp": "Show app",
     "unableToLoad": "Unable to load the {{server}} app"
+  },
+  "media": {
+    "nextMedia": "Next media",
+    "previousMedia": "Previous media",
+    "zoomableImageAria": "{{name}}, zoomable image",
+    "zoomHint": "Click to zoom in or return to fit. Pinch or Ctrl+scroll to zoom, scroll or drag to pan. Use Enter to toggle zoom, plus or minus to zoom, and 0 to fit.",
+    "zoomPercent": "{{percent}}% zoom"
   },
   "mermaid": {
     "expand": "Expand diagram",
@@ -543,8 +543,8 @@
   },
   "plan": {
     "actions": "Plan actions",
-    "cancel": "Cancel",
     "badge": "Plan",
+    "cancel": "Cancel",
     "collapse": "Collapse plan",
     "copied": "Copied!",
     "copyErrorGeneric": "An error occurred while copying.",
@@ -563,6 +563,10 @@
     "workspacePath": "Workspace path",
     "workspaceUnavailable": "Workspace path is unavailable",
     "workspaceUnavailableDetail": "This thread does not have a workspace path to save into."
+  },
+  "providerSubagent": {
+    "openParent": "Open parent",
+    "runsOnItsOwn": "Runs on its own"
   },
   "prRow": {
     "cancel": "Cancel",
@@ -583,15 +587,11 @@
     "stopWatchingAria": "Stop watching #{{number}}",
     "watching": "Watching: the agent wakes when checks finish, someone comments, or the branch conflicts. Click to stop."
   },
-  "providerSubagent": {
-    "openParent": "Open parent",
-    "runsOnItsOwn": "Runs on its own"
-  },
   "queuedRuns": {
     "count": "{{count}} queued",
-    "sentBy": "Sent by T3 Code",
     "count_one": "{{count}} queued",
-    "count_other": "{{count}} queued"
+    "count_other": "{{count}} queued",
+    "sentBy": "Sent by T3 Code"
   },
   "relations": {
     "contextTransfer": "Context transfer",
@@ -611,26 +611,22 @@
     "parentThread": "Parent thread",
     "previousAgents": "Previous agents",
     "relatedThreads": "Related threads",
+    "runsOn": "on {{label}}",
+    "showMore": "Show {{count}} more",
+    "showMore_one": "Show {{count}} more",
+    "showMore_other": "Show {{count}} more",
     "sideChat": "Side chat",
     "sideChats": "Side chats",
     "sideChatsRunning": "Side chats · {{count}} running",
     "stopSubagentAria": "Stop subagent {{title}}",
     "stopSubagentFailed": "Could not stop subagent",
     "stopWorkflowFailed": "Could not stop workflow",
-    "subagent": "Subagent",
-    "showMore": "Show {{count}} more",
-    "runsOn": "on {{label}}",
-    "showMore_one": "Show {{count}} more",
-    "showMore_other": "Show {{count}} more"
+    "subagent": "Subagent"
   },
   "secretRequest": {
     "decline": "Decline",
     "open": "Open {{host}}",
     "saveSecurely": "Save securely"
-  },
-  "skills": {
-    "noDescription": "No description is available for this skill.",
-    "viewInstructions": "View instructions"
   },
   "sideChat": {
     "addToMainDetail": "Adds this side chat to the main thread's next message.",
@@ -641,15 +637,19 @@
     "broughtBackDetail": "The main thread gets this side chat with your next message there.",
     "clearDetail": "This permanently clears its conversation history.",
     "clearFailed": "Could not delete the side chat",
-    "deleted": "This side chat was deleted.",
     "closeAria": "Close side chat",
     "connectionCannotChange": "This connection cannot change threads.",
     "deleteAria": "Delete side chat",
     "deleteConfirm": "Delete side chat \"{{title}}\"?",
+    "deleted": "This side chat was deleted.",
     "deleteFailed": "Could not delete the side chat",
     "mainIdleOnly": "Available when the main thread is idle.",
     "newSideChat": "New side chat",
     "sideChat": "Side chat"
+  },
+  "skills": {
+    "noDescription": "No description is available for this skill.",
+    "viewInstructions": "View instructions"
   },
   "snapshot": {
     "a11yUnnamed": "Structured accessibility elements were included, but they have no readable names or values.",
@@ -743,9 +743,9 @@
     "microphone": "Microphone",
     "microphoneUnavailable": "The selected microphone is unavailable. Choose another or use the system default.",
     "multilingualHint": "Speak and transcribe in multiple languages or translate into English, and get names and technical terms right with the dictionary in Voice settings.",
-    "retryLoadingModels": "Retry loading models",
     "recommendedFor": "Recommended for {{language}}",
     "refreshMics": "Refresh microphones",
+    "retryLoadingModels": "Retry loading models",
     "selectedUnavailable": "Selected microphone (Unavailable)",
     "sileroDetail": "Silero (1.2 MB), used for silence filtering and pause detection, downloads alongside the speech model. An installed copy is reused.",
     "startDictating": "Start dictating",
