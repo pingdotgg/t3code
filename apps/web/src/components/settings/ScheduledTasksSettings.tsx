@@ -1811,49 +1811,51 @@ function ScheduledTaskEditorForm({
             </div>
           </Field>
 
-          <Field label="Permissions" htmlFor="scheduled-task-runtime-mode">
-            <Select
-              value={draft.runtimeMode}
-              // Bound runs use their thread's permissions.
-              disabled={saving || !connected || draft.threadId !== ""}
-              onValueChange={(value) => {
-                if (value) setDraft((current) => ({ ...current, runtimeMode: value }));
-              }}
-            >
-              <SelectTrigger size="sm" id="scheduled-task-runtime-mode">
-                <RuntimeModeIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                <SelectValue>{runtimeModeConfig[draft.runtimeMode].label}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup alignItemWithTrigger={false}>
-                {runtimeModeOptions.map((mode) => {
-                  const option = runtimeModeConfig[mode];
-                  const Icon = option.icon;
-                  const managedReason = managedRuntimeModeDenial(
-                    environment?.serverConfig?.managedPolicy,
-                    mode,
-                  );
-                  return (
-                    <SelectItem
-                      key={mode}
-                      value={mode}
-                      disabled={managedReason !== undefined}
-                      className="min-w-64"
-                    >
-                      <div className="grid gap-0.5">
-                        <span className="inline-flex items-center gap-1.5 font-medium">
-                          <Icon className="size-3.5 shrink-0 text-muted-foreground" />
-                          {option.label}
-                        </span>
-                        <span className="text-xs leading-4 text-muted-foreground">
-                          {managedReason ?? option.description}
-                        </span>
-                      </div>
-                    </SelectItem>
-                  );
-                })}
-              </SelectPopup>
-            </Select>
-          </Field>
+          {/* Bound runs use their thread's permissions, not the stored mode. */}
+          {draft.threadId === "" ? (
+            <Field label="Permissions" htmlFor="scheduled-task-runtime-mode">
+              <Select
+                value={draft.runtimeMode}
+                disabled={saving || !connected}
+                onValueChange={(value) => {
+                  if (value) setDraft((current) => ({ ...current, runtimeMode: value }));
+                }}
+              >
+                <SelectTrigger size="sm" id="scheduled-task-runtime-mode">
+                  <RuntimeModeIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                  <SelectValue>{runtimeModeConfig[draft.runtimeMode].label}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup alignItemWithTrigger={false}>
+                  {runtimeModeOptions.map((mode) => {
+                    const option = runtimeModeConfig[mode];
+                    const Icon = option.icon;
+                    const managedReason = managedRuntimeModeDenial(
+                      environment?.serverConfig?.managedPolicy,
+                      mode,
+                    );
+                    return (
+                      <SelectItem
+                        key={mode}
+                        value={mode}
+                        disabled={managedReason !== undefined}
+                        className="min-w-64"
+                      >
+                        <div className="grid gap-0.5">
+                          <span className="inline-flex items-center gap-1.5 font-medium">
+                            <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                            {option.label}
+                          </span>
+                          <span className="text-xs leading-4 text-muted-foreground">
+                            {managedReason ?? option.description}
+                          </span>
+                        </div>
+                      </SelectItem>
+                    );
+                  })}
+                </SelectPopup>
+              </Select>
+            </Field>
+          ) : null}
 
           <div className="space-y-3">
             {task?.schedule.type === "interval" &&
