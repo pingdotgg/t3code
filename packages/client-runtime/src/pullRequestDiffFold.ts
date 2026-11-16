@@ -15,8 +15,11 @@ export function isFileDiffCollapsed(
 export function withFileDiffFold(
   choices: FileDiffFoldChoices,
   fileKey: string,
-  collapsed: boolean,
+  collapsed: boolean | undefined,
 ): FileDiffFoldChoices {
   if (choices.get(fileKey) === collapsed) return choices;
-  return new Map(choices).set(fileKey, collapsed);
+  const next = new Map(choices);
+  if (collapsed === undefined) next.delete(fileKey);
+  else next.set(fileKey, collapsed);
+  return next;
 }

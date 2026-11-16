@@ -31,10 +31,11 @@ describe("isFileDiffCollapsed", () => {
 });
 
 describe("withFileDiffFold", () => {
-  it("records an absolute choice and keeps the same map when nothing changes", () => {
+  it("records or clears a choice and keeps the same map when nothing changes", () => {
     const folded = withFileDiffFold(new Map(), "a.ts", true);
     expect(folded.get("a.ts")).toBe(true);
     expect(withFileDiffFold(folded, "a.ts", true)).toBe(folded);
     expect(withFileDiffFold(folded, "a.ts", false).get("a.ts")).toBe(false);
+    expect(withFileDiffFold(folded, "a.ts", undefined).has("a.ts")).toBe(false);
   });
 });
