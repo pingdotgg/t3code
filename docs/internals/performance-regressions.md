@@ -54,7 +54,10 @@ The v2 checks pin these invariants:
 - The initial shell contains active navigation rows only. Archived rows use the dedicated archive
   query, and transcript message bodies stay in thread detail regardless of message size.
 - Shell resume sends deltas plus compact repository-enrichment metadata, not another full project
-  and thread snapshot.
+  and thread snapshot. A cursor at the head sequence always resumes, even below the pruned
+  boundary, so a client that just loaded the HTTP snapshot never downloads it again over the
+  socket. That client also names the snapshot's project identities, and a server whose
+  identities did not change since resends only the roots that resolved to no identity.
 - Auto, steer, and restart sends resolve delivery from authoritative state inside the
   server's per-thread dispatch lock. Model selection and identified-checkpoint rollback also
   dispatch without first fetching a full thread projection when the server advertises support.
@@ -76,7 +79,10 @@ bounded snapshot and one older page) and after it finishes (the deferred cold op
 over the socket alone, and the first page of its deferred work). It caps the socket bytes of three
 resumes that must not send a snapshot: a thread after one ordinary turn, an idle thread, and a
 shell cursor too old to replay. It caps the cold-connect shell for a sidebar of settled threads and
-idle subagents, and the subscription a client opens from that snapshot. It also caps the bytes and
+idle subagents, and the subscription a client opens from that snapshot with its project identities.
+It caps both answers of the HTTP shell route to a client that holds rows and names their cursor: the
+few bytes that keep them, and the snapshot that replaces rows too old to replay. It also caps the
+bytes and
 the node, subagent, plan, provider turn and checkpoint counts of the bounded snapshot for a thread
 of 40 finished runs behind one working run, so finished runs cannot ride along with a window. The
 working run has a ready context handoff, so its history cannot ride along either.
@@ -124,6 +130,13 @@ advances `lastVisitedAt` monotonically without changing `updatedAt` or decoding 
 queries read item counts from a per-thread, per-run table that turn-item triggers keep exact, and
 use a partial index for nonterminal background items, including idle items. Latest user-message
 reads use an index ordered by update time.
+
+A projection read that orders messages by their first user or assistant turn item groups those
+items by `$.messageId` through a partial index on that expression (migration 94), so it does not
+parse every message item's payload; the index's expression and `WHERE` must stay identical to the
+query's. Migration 94 scans the turn-item table once on first start; a message item whose payload
+is not valid JSON is left out of the index. Each message-item write re-parses the old and new
+payload for the index, so its cost grows with the payload.
 
 Command palette results keep live VCS and linked pull-request queries leased to the visible
 viewport, including a small overscan region. Cached badges remain available while leases are
