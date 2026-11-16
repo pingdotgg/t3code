@@ -107,7 +107,11 @@ import { serverEnvironment } from "../state/server";
 import { reviewEnvironment } from "../state/review";
 import { vcsEnvironment } from "../state/vcs";
 import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
-import { createGitDiffFileContentsLoader } from "../lib/diffFileContents";
+import {
+  claimHighlightContextLoad,
+  createGitDiffFileContentsLoader,
+  releaseHighlightContextLoad,
+} from "../lib/diffFileContents";
 
 import { observeIntersection } from "~/lib/observeIntersection";
 import { useReviewFilePatches } from "./diffs/useReviewFilePatches";
@@ -536,17 +540,30 @@ export default function DiffPanel({
           { additions: 0, deletions: 0 },
         )
       : null;
+  const turnDiffSource =
+    selectedTurn && !toolCallSelection ? activeCheckpointDiff.data?.source : undefined;
   const currentLoadDiffFiles =
-    isGitSelection && activeThread && preview && selectedGitSource && canReadFiles
-      ? createGitDiffFileContentsLoader(getDiffFileContents, {
-          environmentId: activeThread.environmentId,
-          cwd: preview.cwd,
-          sourceKind: selectedGitSource.kind,
-          baseRef: selectedGitSource.baseRef,
-          headRef: selectedGitSource.headRef,
-          cacheKey: selectedGitSource.diffHash,
-        })
-      : undefined;
+    !activeThread || !canReadFiles
+      ? undefined
+      : turnDiffSource && selectedTurn
+        ? createGitDiffFileContentsLoader(getDiffFileContents, {
+            environmentId: activeThread.environmentId,
+            cwd: turnDiffSource.cwd,
+            sourceKind: "revision-range",
+            baseRef: turnDiffSource.baseRef,
+            headRef: turnDiffSource.headRef,
+            cacheKey: `turn:${selectedTurn.runId}`,
+          })
+        : isGitSelection && preview && selectedGitSource
+          ? createGitDiffFileContentsLoader(getDiffFileContents, {
+              environmentId: activeThread.environmentId,
+              cwd: preview.cwd,
+              sourceKind: selectedGitSource.kind,
+              baseRef: selectedGitSource.baseRef,
+              headRef: selectedGitSource.headRef,
+              cacheKey: selectedGitSource.diffHash,
+            })
+          : undefined;
   const loadDiffFiles: FileDiffContentsLoader = useStableCallback(async (fileDiff) => {
     if (!currentLoadDiffFiles) {
       throw new Error("Diff file contents are unavailable for this selection.");
@@ -1487,7 +1504,22 @@ export default function DiffPanel({
                       preferredHighlighter: PREFERRED_HIGHLIGHTER,
                       themeType: resolvedTheme as DiffThemeType,
                       stickyHeaders: true,
-                      onPostRender: flushCodeView,
+                      onPostRender: (_node, _instance, phase, context) => {
+                        if (context.type === "diff") {
+                          const { fileDiff, collapsed } = context.item;
+                          if (phase === "unmount") {
+                            releaseHighlightContextLoad(fileDiff);
+                          } else if (
+                            currentLoadDiffFiles &&
+                            collapsed !== true &&
+                            claimHighlightContextLoad(fileDiff)
+                          ) {
+                            // Rejects when the files cannot load; the patch stays as rendered.
+                            context.instance.prepareForEditing().catch(() => undefined);
+                          }
+                        }
+                        flushCodeView();
+                      },
                       ...(currentLoadDiffFiles ? { loadDiffFiles } : {}),
                     }}
                   />

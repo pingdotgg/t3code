@@ -60,6 +60,7 @@ function layerFor(input: {
         }),
         Layer.mock(CheckpointStore.CheckpointStore)({
           diffCheckpoints: input.diffCheckpoints ?? (() => Effect.succeed("diff")),
+          resolveDiffBase: () => Effect.succeed("turn-start-sha"),
           listAuthoredPaths: () => Effect.succeed(input.authoredPaths ?? null),
         }),
       ),
@@ -159,6 +160,11 @@ it.effect.each([false, true])(
       const result = yield* query.getTurnDiff({ threadId, fromTurnCount: 2, toTurnCount: 3 });
 
       assert.strictEqual(result.diff, "diff --git a/file b/file");
+      assert.deepEqual(result.source, {
+        cwd: "/repo",
+        baseRef: "turn-start-sha",
+        headRef: "refs/t3/test/ordinal/3",
+      });
       yield* query.getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 3 });
       yield* query.getFullThreadDiff({ threadId, toTurnCount: 3 });
       assert.deepEqual(

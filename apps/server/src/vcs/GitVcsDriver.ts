@@ -2096,6 +2096,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       return result.stdout;
     }),
 
+    resolveDiffBase: resolveTurnStart,
+
     listAuthoredPaths: Effect.fn("GitVcsDriver.checkpoints.listAuthoredPaths")(function* (input) {
       const operation = "GitVcsDriver.checkpoints.listAuthoredPaths";
       const turnStart = yield* resolveTurnStart(input);

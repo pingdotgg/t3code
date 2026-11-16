@@ -71,12 +71,14 @@ function buildTurnDiffResult(
     readonly toTurnCount: number;
   },
   diff: string,
+  source?: OrchestrationGetTurnDiffResultType["source"],
 ): OrchestrationGetTurnDiffResultType {
   return {
     threadId: input.threadId,
     fromTurnCount: input.fromTurnCount,
     toTurnCount: input.toTurnCount,
     diff,
+    ...(source === undefined ? {} : { source }),
   };
 }
 
@@ -253,7 +255,16 @@ export const make = Effect.gen(function* () {
         remainingBytes -= patchBytes;
       }
 
-      const turnDiff = buildTurnDiffResult(input, diff);
+      const baseRef = yield* checkpointStore
+        .resolveDiffBase(comparison)
+        .pipe(Effect.orElseSucceed(() => undefined));
+      const turnDiff = buildTurnDiffResult(
+        input,
+        diff,
+        baseRef === undefined
+          ? undefined
+          : { cwd: comparison.cwd, baseRef, headRef: comparison.toCheckpointRef },
+      );
       if (!isTurnDiffResult(turnDiff)) {
         return yield* new CheckpointDiffResultInvalidError({
           operation,

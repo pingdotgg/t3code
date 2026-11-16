@@ -10,7 +10,6 @@ import type {
   PullRequestRef,
   ReviewDiffFileContentsInput,
   ReviewDiffFileContentsResult,
-  ReviewDiffPreviewSourceKind,
 } from "@t3tools/contracts";
 
 import { resolveFileDiffPath } from "./diffRendering";
@@ -18,7 +17,7 @@ import { resolveFileDiffPath } from "./diffRendering";
 interface GitDiffFileContentsSource {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
-  readonly sourceKind: ReviewDiffPreviewSourceKind;
+  readonly sourceKind: ReviewDiffFileContentsInput["sourceKind"];
   readonly baseRef: string | null;
   readonly headRef: string | null;
   readonly cacheKey: string;
@@ -104,6 +103,29 @@ function reproducesPatch(fileDiff: FileDiffMetadata, oldContents: string, newCon
   );
 }
 
+const highlightContextLoads = new WeakMap<FileDiffMetadata, "requested" | "failed">();
+
+// Pierre tokenizes each hunk of a partial patch from a fresh grammar state, so one that starts
+// inside a docstring or an embedded script block gets the wrong syntax colours until the whole
+// files are loaded. True once per mounted diff with such a hunk, and never after a failed load.
+export function claimHighlightContextLoad(fileDiff: FileDiffMetadata): boolean {
+  if (
+    !fileDiff.isPartial ||
+    (fileDiff.type !== "change" && fileDiff.type !== "rename-changed") ||
+    !fileDiff.hunks.some((hunk) => hunk.collapsedBefore > 0) ||
+    highlightContextLoads.has(fileDiff)
+  ) {
+    return false;
+  }
+  highlightContextLoads.set(fileDiff, "requested");
+  return true;
+}
+
+/** Pierre drops the files loaded for a diff that unmounts, so its next mount asks again. */
+export function releaseHighlightContextLoad(fileDiff: FileDiffMetadata): void {
+  if (highlightContextLoads.get(fileDiff) === "requested") highlightContextLoads.delete(fileDiff);
+}
+
 function createDiffFileContentsLoader(
   load: (input: {
     readonly changeType: PullRequestDiffFileContentsInput["changeType"];
@@ -117,7 +139,12 @@ function createDiffFileContentsLoader(
     const oldPath = fileDiff.prevName
       ? resolveFileDiffPath({ ...fileDiff, name: fileDiff.prevName })
       : newPath;
-    const contents = await load({ changeType: fileDiff.type, oldPath, newPath });
+    const contents = await load({ changeType: fileDiff.type, oldPath, newPath }).catch(
+      (error: unknown) => {
+        highlightContextLoads.set(fileDiff, "failed");
+        throw error;
+      },
+    );
     const newFile = {
       name: newPath,
       contents: contents.newContents,
@@ -127,6 +154,7 @@ function createDiffFileContentsLoader(
       return { oldFile: null, newFile };
     }
     if (!reproducesPatch(fileDiff, contents.oldContents, contents.newContents)) {
+      highlightContextLoads.set(fileDiff, "failed");
       throw new Error(
         "This file changed since the diff was loaded. Refresh the diff to expand it.",
       );

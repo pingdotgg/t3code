@@ -25,6 +25,14 @@ export const ThreadTurnDiff = TurnCountRange.mapFields(
   Struct.assign({
     threadId: ThreadId,
     diff: Schema.String,
+    // The revisions the patch compares, for loading either side's whole file. Older servers omit it.
+    source: Schema.optionalKey(
+      Schema.Struct({
+        cwd: TrimmedNonEmptyString,
+        baseRef: TrimmedNonEmptyString,
+        headRef: TrimmedNonEmptyString,
+      }),
+    ),
   }),
   { unsafePreserveChecks: true },
 );
