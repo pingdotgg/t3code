@@ -2873,6 +2873,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           return;
         case "session.step.ended":
         case "session.step.failed": {
+          // OpenCode runs its goal check, and any continuation, right after a step that stops.
+          if (
+            event.type === "session.step.ended" &&
+            event.data.finish !== "tool-calls" &&
+            state.providerThread.goal?.status === "active" &&
+            !state.goalPausedForWake
+          ) {
+            yield* Effect.forkIn(pauseGoalForWake(state, turn), sessionScope);
+          }
           const tokens = event.data.tokens;
           if (tokens === undefined) return;
           turn.steps += 1;
@@ -3148,9 +3157,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     ) {
       if (end.status === "completed" && (turn.steers.size > 0 || goalHoldsTurn(state))) {
         turn.heldEnd = end;
-        if (state.providerThread.goal?.status === "active" && !state.goalPausedForWake) {
-          yield* Effect.forkIn(pauseGoalForWake(state, turn), sessionScope);
-        }
         return;
       }
       yield* finishTurn(state, end);
@@ -3168,7 +3174,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         Effect.sync(() => {
           if (
             state.active !== turn ||
-            turn.heldEnd === undefined ||
             state.goalPausedForWake ||
             state.providerThread.goal?.status !== "active"
           ) {
