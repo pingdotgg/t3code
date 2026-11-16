@@ -4489,7 +4489,12 @@ describe("OrchestratorMcpService provider resolution", () => {
               Effect.sync(() => {
                 sent.push(request);
                 return {
-                  run: { id: RunId.make("run:mcp-send-model"), status: "queued" },
+                  // The stored run carries the selection the send applied.
+                  run: {
+                    id: RunId.make("run:mcp-send-model"),
+                    status: "queued",
+                    modelSelection: request.modelSelection,
+                  },
                   delivery: "queued",
                 } as never;
               }),

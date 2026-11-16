@@ -3429,9 +3429,14 @@ const make = Effect.gen(function* () {
               target: input.modelSelection,
               providers,
             })).modelSelection;
-      const switchedProvider = providers.find(
-        (provider) => provider.instanceId === switchedTo?.instanceId,
-      );
+      // Look the alias up in the catalog that accepted it: resolveTargetRechecking may have
+      // refreshed the instance, so the list loaded above can be stale.
+      const switchedProvider =
+        switchedTo === undefined
+          ? undefined
+          : (yield* loadProviders).find(
+              (provider) => provider.instanceId === switchedTo.instanceId,
+            );
       // A model given as an alias is stored under its slug, as the picker would store it.
       const switchedSelection =
         switchedTo === undefined
@@ -3493,11 +3498,12 @@ const make = Effect.gen(function* () {
         ...(switchedSelection === undefined
           ? {}
           : {
+              // Report what the run stored, not what was requested.
               modelSelection: {
-                model: switchedSelection.model,
-                ...(switchedSelection.options === undefined
+                model: result.run.modelSelection.model,
+                ...(result.run.modelSelection.options === undefined
                   ? {}
-                  : { options: switchedSelection.options }),
+                  : { options: result.run.modelSelection.options }),
               },
             }),
       } satisfies OrchestratorMcpThreadSendResult;
