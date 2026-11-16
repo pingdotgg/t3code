@@ -607,6 +607,61 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     },
   );
 
+  it.effect(
+    "keeps a card whose first token read was still pending when the app backgrounded",
+    () => {
+      const registrations = stubLiveActivityRelay();
+      let tokenListener: ((event: { readonly pushToken: string }) => void) | undefined;
+      let resolveFirstRead: (token: string | null) => void = () => {};
+      const activity = {
+        getId: () => "activity-1",
+        getPushToken: vi
+          .fn((): Promise<string | null> => Promise.resolve(null))
+          .mockImplementationOnce(
+            () =>
+              new Promise((resolve) => {
+                resolveFirstRead = resolve;
+              }),
+          ),
+        addPushTokenListener: vi.fn((listener: typeof tokenListener) => {
+          tokenListener = listener;
+        }),
+        end: vi.fn(() => Promise.resolve()),
+      };
+
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      return Effect.gen(function* () {
+        const arming = yield* Effect.forkChild(armCardOnSend(activity));
+        yield* Effect.promise(() =>
+          vi.waitFor(() => expect(activity.getPushToken).toHaveBeenCalled()),
+        );
+
+        appStateMock.currentState = "background";
+        for (const listener of appStateMock.listeners) listener("background");
+        const cleanup = backgroundRuntime.pending.shift()!;
+        const cleaningUp = yield* Effect.forkChild(
+          cleanup.operation as Effect.Effect<unknown, never, ManagedRelay.ManagedRelayClient>,
+        );
+        resolveFirstRead(null);
+        yield* Fiber.join(arming);
+        yield* TestClock.adjust("1 second");
+        expect(activity.end).not.toHaveBeenCalled();
+
+        tokenListener?.({ pushToken: "activity-token" });
+        yield* runBackgroundOperations();
+        yield* Fiber.join(cleaningUp);
+        expect(registrations).toEqual([
+          { deviceId: "device-1", activityPushToken: "activity-token" },
+        ]);
+        expect(activity.end).not.toHaveBeenCalled();
+      }).pipe(
+        Effect.ensuring(Effect.sync(() => vi.useRealTimers())),
+        Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+        Effect.provide(layerRelayTest),
+      );
+    },
+  );
+
   it.effect.each(["never arrives", "arrives after the app backgrounds"] as const)(
     "settles a card armed without a token when the token %s",
     (token) => {

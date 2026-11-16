@@ -9,6 +9,7 @@ import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { AppState, Platform } from "react-native";
@@ -93,6 +94,8 @@ const activityPushTokenLocks = new Map<string, Semaphore.Semaphore>();
 const unregisteredStartedLiveActivities = new Map<string, LiveActivity<AgentActivityProps>>();
 const endedUnregisteredLiveActivityIds = new Set<string>();
 const liveActivityRegistrationWaiters = new Map<string, Deferred.Deferred<void>>();
+// Cards whose background budget ran out while a registration held their token lock.
+const liveActivityEndsLeftToLockHolder = new Set<string>();
 // Each accepted registration replays the relay aggregate, repairing drifted or orphaned activities.
 const ACTIVITY_TOKEN_REREGISTER_INTERVAL_MS = 60_000;
 // Match the relay's STALE_AFTER_SECONDS so activities expire even if registration fails.
@@ -932,6 +935,7 @@ export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
   unregisteredStartedLiveActivities.clear();
   endedUnregisteredLiveActivityIds.clear();
   liveActivityRegistrationWaiters.clear();
+  liveActivityEndsLeftToLockHolder.clear();
   widgetSnapshotReads = 0;
 }
 
@@ -973,11 +977,10 @@ export const registerLiveActivityPushToken = Effect.fn(
   const lock = observeLiveActivityPushTokens(input.activity);
   return yield* lock.withPermit(
     registerCurrentLiveActivityPushToken(input.activity).pipe(
-      // The background cleanup may have given up waiting for this registration.
       Effect.onExit((exit) =>
         Exit.isSuccess(exit) && exit.value
           ? Effect.void
-          : endUnregisteredLiveActivityInBackground(input.activity.getId(), input.activity),
+          : endLiveActivityLeftToLockHolder(input.activity.getId(), input.activity),
       ),
     ),
   );
@@ -1037,7 +1040,7 @@ function observeLiveActivityPushTokens(
           );
           // The background cleanup may have given up waiting for this registration.
           if (!registered) {
-            yield* endUnregisteredLiveActivityInBackground(activityId, activity);
+            yield* endLiveActivityLeftToLockHolder(activityId, activity);
           }
         }),
       ),
@@ -1088,10 +1091,26 @@ const endUnregisteredStartedLiveActivity = Effect.fn(
   );
   // The relay keeps one token per device, so a card must not end while its registration is in
   // flight: the late token would replace a newer card's. A holder that fails ends the card itself.
-  yield* lock.withPermitsIfAvailable(1)(
+  liveActivityEndsLeftToLockHolder.add(activityId);
+  const ended = yield* lock.withPermitsIfAvailable(1)(
     endUnregisteredLiveActivityInBackground(activityId, activity),
   );
+  if (Option.isSome(ended)) {
+    liveActivityEndsLeftToLockHolder.delete(activityId);
+  }
 });
+
+// Only once the cleanup's budget has run out may a failed registration end its card.
+function endLiveActivityLeftToLockHolder(
+  activityId: string,
+  activity: LiveActivity<AgentActivityProps>,
+): Effect.Effect<void> {
+  return Effect.suspend(() =>
+    liveActivityEndsLeftToLockHolder.delete(activityId)
+      ? endUnregisteredLiveActivityInBackground(activityId, activity)
+      : Effect.void,
+  );
+}
 
 // Callers hold the activity's token lock.
 const endUnregisteredLiveActivityInBackground = Effect.fn(
@@ -1157,6 +1176,7 @@ const registerLiveActivityPushTokenValue = Effect.fn(
 function markLiveActivityRegistered(activityId: string): Effect.Effect<void> {
   return Effect.suspend(() => {
     unregisteredStartedLiveActivities.delete(activityId);
+    liveActivityEndsLeftToLockHolder.delete(activityId);
     const waiter = liveActivityRegistrationWaiters.get(activityId);
     return waiter ? Effect.asVoid(Deferred.succeed(waiter, undefined)) : Effect.void;
   });
