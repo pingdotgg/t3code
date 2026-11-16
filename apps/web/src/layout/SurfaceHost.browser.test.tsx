@@ -1,13 +1,24 @@
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
-import { render } from "../../test/render";
+import { act, render } from "../../test/render";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
+import { pullRequestSurface, useRightPanelStore } from "../rightPanelStore";
 import { useLayoutBehaviorStore } from "./layoutBehavior";
-import { createLayoutLauncherContent, createLayoutState, selectFocusedTab } from "./layoutModel";
+import { commitLayoutDrop, isLayoutDropUseful, type LayoutDragSource } from "./layoutDrag";
+import {
+  createLayoutLauncherContent,
+  createLayoutState,
+  findLayoutChatForThread,
+  findLayoutSurfaceTabs,
+  selectFocusedTab,
+} from "./layoutModel";
 import { useLayoutStore } from "./layoutStore";
 import { LayoutSurfaceHost } from "./SurfaceHost";
+import { useLayoutSurfaceSync } from "./surfaceSync";
 
 const TOUR_KEY = "t3code:layout-tour:v1";
 
@@ -200,4 +211,109 @@ it("keeps an unfocused pane's joined tab with a dim rim, and black chrome keeps 
   } finally {
     document.documentElement.classList.remove("black-chrome");
   }
+});
+
+const threadRef = scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("chat"));
+const pullRequestThreadRef = scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("pr"));
+
+function SurfaceSync() {
+  useLayoutSurfaceSync();
+  return null;
+}
+
+function setupPullRequestDrop() {
+  const stack = new DisposableStack();
+  const layout = useLayoutStore.getState().layout;
+  const panels = useRightPanelStore.getState();
+  stack.defer(() => useLayoutStore.setState({ layout }));
+  stack.defer(() => useRightPanelStore.setState(panels));
+  useLayoutStore.setState({ layout: createLayoutState() });
+  useRightPanelStore.setState({ byThreadKey: {} });
+  useLayoutStore.getState().openTab({ kind: "chat", target: { kind: "server", threadRef } });
+  const chatPaneId = findLayoutChatForThread(useLayoutStore.getState().layout, threadRef)!.pane.id;
+  return { chatPaneId, [Symbol.dispose]: () => stack.dispose() };
+}
+
+it("opens a thread's pull request beside a chat of another thread, and it survives a reload", async () => {
+  using fixture = setupPullRequestDrop();
+  const { chatPaneId } = fixture;
+  const source: LayoutDragSource = {
+    kind: "surface",
+    threadRef: pullRequestThreadRef,
+    surface: pullRequestSurface({
+      projectId: "project",
+      repository: "owner/repo",
+      number: 7,
+      url: "https://github.com/owner/repo/pull/7",
+    }),
+  };
+  const surfaceTab = () =>
+    findLayoutSurfaceTabs(useLayoutStore.getState().layout, pullRequestThreadRef).find(
+      ({ tab }) => tab.content.kind === "surface" && tab.content.surfaceId === source.surface.id,
+    );
+  await using screen = await render(<SurfaceSync />);
+
+  await act(() => {
+    expect(commitLayoutDrop(source, { kind: "side", paneId: chatPaneId, side: "down" })).toBe(true);
+  });
+  const chatColumn = findLayoutChatForThread(useLayoutStore.getState().layout, threadRef)!.column;
+  expect(surfaceTab()!.column.id).toBe(chatColumn.id);
+  expect(chatColumn.panes.map((pane) => pane.id)).toEqual([chatPaneId, surfaceTab()!.pane.id]);
+  expect(findLayoutChatForThread(useLayoutStore.getState().layout, pullRequestThreadRef)).toBe(
+    null,
+  );
+  expect(
+    isLayoutDropUseful(useLayoutStore.getState().layout, source, {
+      kind: "side",
+      paneId: surfaceTab()!.pane.id,
+      side: "left",
+    }),
+  ).toBe(false);
+
+  await screen.unmount();
+  await using _reloaded = await render(<SurfaceSync />);
+  expect(surfaceTab()?.pane.id).toBeDefined();
+
+  await act(() => {
+    expect(commitLayoutDrop(source, { kind: "into", paneId: chatPaneId })).toBe(true);
+  });
+  expect(surfaceTab()!.pane.id).toBe(chatPaneId);
+  expect(
+    findLayoutSurfaceTabs(useLayoutStore.getState().layout, pullRequestThreadRef),
+  ).toHaveLength(1);
+});
+
+it("drops only the dragged pull request where it lands when the thread's panel hides other surfaces", async () => {
+  using fixture = setupPullRequestDrop();
+  const { chatPaneId } = fixture;
+  useRightPanelStore.setState({
+    byThreadKey: {
+      [scopedThreadKey(pullRequestThreadRef)]: {
+        isOpen: false,
+        activeSurfaceId: "files",
+        surfaces: [{ id: "files", kind: "files" }],
+      },
+    },
+  });
+  const surface = pullRequestSurface({
+    projectId: "project",
+    repository: "owner/repo",
+    number: 7,
+    url: "https://github.com/owner/repo/pull/7",
+  });
+  const source: LayoutDragSource = { kind: "surface", threadRef: pullRequestThreadRef, surface };
+  const tabFor = (surfaceId: string) =>
+    findLayoutSurfaceTabs(useLayoutStore.getState().layout, pullRequestThreadRef).find(
+      ({ tab }) => tab.content.kind === "surface" && tab.content.surfaceId === surfaceId,
+    );
+  await using _screen = await render(<SurfaceSync />);
+
+  await act(() => {
+    expect(commitLayoutDrop(source, { kind: "side", paneId: chatPaneId, side: "down" })).toBe(true);
+  });
+  const dropped = tabFor(surface.id)!;
+  const chatColumn = findLayoutChatForThread(useLayoutStore.getState().layout, threadRef)!.column;
+  expect(chatColumn.panes.map((pane) => pane.id)).toEqual([chatPaneId, dropped.pane.id]);
+  expect(dropped.pane.tabs.map((tab) => tab.id)).toEqual([dropped.tab.id]);
+  expect(tabFor("files")?.pane.id).toBe(chatPaneId);
 });

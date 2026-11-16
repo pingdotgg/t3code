@@ -43,6 +43,7 @@ export type LayoutSurfacePlacement =
   | { kind: "beside" }
   | { kind: "below" }
   | { kind: "pane"; paneId: string; index?: number; replaceTabId?: string }
+  | Extract<LayoutTabDestination, { kind: "split" }>
   | { kind: "column"; workspaceId: string; index: number }
   | { kind: "workspace"; workspaceId: string };
 
@@ -244,6 +245,8 @@ function placeSurfaceTabs(
         ...(pending.index === undefined ? {} : { index: pending.index }),
       };
     }
+  } else if (pending?.kind === "split") {
+    if (findLayoutPane(layout, pending.paneId)) placement = pending;
   } else if (pending?.kind === "column") {
     if (layout.workspaces.some((workspace) => workspace.id === pending.workspaceId)) {
       placement = pending;
