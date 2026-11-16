@@ -1651,28 +1651,6 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   background-blend-mode: var(--chrome-art-blend, normal);
 }
 
-@media (width >= 48rem) {
-  [data-sidebar-state="collapsed"]
-    [data-slot="sidebar-inset"][data-strip-under-controls]
-    ~ [data-sidebar-control] {
-    margin-inline-start: calc(1px - var(--workspace-titlebar-control-gap));
-    padding-inline: var(--workspace-titlebar-control-gap);
-    border-radius: var(--radius-pane);
-    background-color: var(--app-chrome-background);
-    background-image: var(--surface-grain);
-    background-size: var(--surface-grain-size);
-    background-attachment: fixed;
-  }
-
-  [data-chrome-art][data-sidebar-state="collapsed"]
-    [data-slot="sidebar-inset"][data-strip-under-controls]
-    ~ [data-sidebar-control] {
-    background: var(--chrome-art-paint);
-    background-attachment: fixed;
-    background-blend-mode: var(--chrome-art-blend, normal);
-  }
-}
-
 /* The dev drafting marks (DevDraftingSheetMarks). Each mark is placed with
    the layout's own tokens: the titlebar controls (AppSidebarLayout), the inset
    pane (SidebarInset), and the sidebar rows and footer (ui/sidebar). The
