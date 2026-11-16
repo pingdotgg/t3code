@@ -2301,3 +2301,93 @@ describe("locating a device id across hosts", () => {
     ),
   );
 });
+
+it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
+  "lists never-used iOS simulators from the installed inventory on %s",
+  (hostId) =>
+    Effect.gen(function* () {
+      const udid = "67ADAA34-8537-42D8-A2E2-2ACBF6471000";
+      const http = HttpClient.make((request) => {
+        const path = new URL(request.url).pathname;
+        if (path === "/api/devices") {
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                simulators: [],
+                emulators: [],
+                errors: [],
+              }),
+            ),
+          );
+        }
+        if (
+          path === "/vendor/serve-sim/grid/api" ||
+          path === "/vendor/serve-sim/grid/api/catalog"
+        ) {
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                devices: [
+                  {
+                    device: udid,
+                    name: "iPhone 17",
+                    runtime: "iOS-27-0",
+                    state: "Shutdown",
+                    helper: null,
+                  },
+                ],
+                total: 1,
+                offset: 0,
+                limit: 1,
+              }),
+            ),
+          );
+        }
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(request, new Response("Not found", { status: 404 })),
+        );
+      });
+      const run: DeviceHost.DeviceHostReady["run"] = (command, args) =>
+        Effect.succeed(
+          command === "xcrun" && args[0] === "simctl" && args[1] === "list"
+            ? {
+                code: 0,
+                stdout: JSON.stringify({
+                  devices: {
+                    "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [
+                      {
+                        udid,
+                        name: "iPhone 17",
+                        state: "Shutdown",
+                        isAvailable: true,
+                        deviceTypeIdentifier: "com.apple.CoreSimulator.SimDeviceType.iPhone-17",
+                      },
+                    ],
+                  },
+                }),
+                stderr: "",
+              }
+            : { code: 127, stdout: "", stderr: "command not found" },
+        );
+      const operations = makeDeviceHubOperations({
+        hostId,
+        origin: "http://device.test",
+        http,
+        run,
+        platformAvailable: (platform) => Effect.succeed(platform === "ios"),
+      });
+      const listed = yield* operations.list;
+      expect(
+        listed.devices.map((device) => device.id),
+        "expect never-used installed iPhone 17 to appear in the device list",
+      ).toContain(udid);
+      expect(listed.devices.find((device) => device.id === udid)).toMatchObject({
+        name: "iPhone 17",
+        platform: "ios",
+        booted: false,
+        physical: false,
+      });
+    }),
+);
