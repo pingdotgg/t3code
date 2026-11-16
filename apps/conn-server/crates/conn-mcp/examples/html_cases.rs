@@ -63,6 +63,7 @@ async fn run(state: PathBuf, cases: Vec<Value>) -> Result<Vec<Value>, Error> {
     })
     .await??;
     let service = McpService::new(McpConfig {
+        test_logins: None,
         refresh_provider: None,
         worktrees: None,
         engine,
@@ -100,6 +101,7 @@ async fn run(state: PathBuf, cases: Vec<Value>) -> Result<Vec<Value>, Error> {
             provider_session_id: runtime.into(),
             provider_instance_id: "claudeAgent".into(),
             subagent: false,
+            preview: false,
         });
         let headers = open(&service, &caller).await?;
         agents.push((caller, headers));

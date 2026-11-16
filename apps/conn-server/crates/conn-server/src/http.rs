@@ -294,7 +294,7 @@ fn authenticated(state: &AppState, headers: &HeaderMap) -> Result<Principal, Box
 }
 
 /// The bearer session behind a request that needs `scope`, or the response refusing it.
-fn require_scope(
+pub(crate) fn require_scope(
     state: &AppState,
     headers: &HeaderMap,
     scope: &str,
@@ -599,7 +599,7 @@ fn error_invalid() -> Response {
 }
 
 /// `EnvironmentInternalError`, 500. The cause goes to the log, never to the client.
-fn internal_reason(reason: &str) -> Response {
+pub(crate) fn internal_reason(reason: &str) -> Response {
     error(
         StatusCode::INTERNAL_SERVER_ERROR,
         "EnvironmentInternalError",
@@ -1363,5 +1363,65 @@ mod tests {
         assert_eq!(status, 401);
         let (status, _) = call(addr, head, &form).await;
         assert_eq!(status, 200);
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn pull_request_diff_http_requires_the_read_scope_and_preserves_typed_errors() {
+        let (addr, auth) = serve().await;
+        let session = |scopes: &[&str]| {
+            auth.issue_session(auth::SessionRequest {
+                scopes: scopes.iter().map(|s| s.to_string()).collect(),
+                label: None,
+                subject: None,
+                ttl_ms: auth::SESSION_TTL_MS,
+            })
+            .expect("session")
+            .token
+        };
+        let denied = session(&["access:read"]);
+        let reader = session(&["orchestration:read"]);
+        let head = "POST /api/pull-requests/diff HTTP/1.1\r\ncontent-type: application/json";
+        let body = json!({"projectId":"missing","host":"github.com","repository":"a/b","number":7})
+            .to_string();
+        assert_eq!(call(addr, head, &body).await.0, 401, "bearer required");
+        assert_eq!(
+            call(addr, head, "{").await.0,
+            401,
+            "auth precedes JSON decoding"
+        );
+        assert_eq!(
+            call(
+                addr,
+                &format!("{head}\r\nauthorization: Bearer {denied}"),
+                "{"
+            )
+            .await
+            .0,
+            403,
+            "scope precedes JSON decoding"
+        );
+        let (status, body_denied) = call(
+            addr,
+            &format!("{head}\r\nauthorization: Bearer {denied}"),
+            &body,
+        )
+        .await;
+        assert_eq!(status, 403, "{body_denied}");
+        let denied: Value = serde_json::from_str(&body_denied).expect("permission error");
+        assert_eq!(
+            denied["requiredPermission"], "orchestration:read",
+            "HTTP and WS use the same permission"
+        );
+        let (status, error) = call(
+            addr,
+            &format!("{head}\r\nauthorization: Bearer {reader}"),
+            &body,
+        )
+        .await;
+        assert_eq!(status, 503, "{error}");
+        let error: Value = serde_json::from_str(&error).expect("typed PR error");
+        assert_eq!(
+            error["_tag"], "PullRequestUnavailableError",
+            "typed error body"
+        );
     }
 }

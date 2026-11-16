@@ -9114,6 +9114,46 @@ pub struct ProviderReplayTranscript {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PullRequestDiffInput {
+    pub project_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_account_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_stale: Option<bool>,
+    pub repository: String,
+    pub number: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestOmittedFileStat {
+    pub path: String,
+    pub additions: JsNumber,
+    pub deletions: JsNumber,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestDiffResult {
+    pub patch: String,
+    pub truncated: bool,
+    pub next_cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub omitted_file_stats: Option<Vec<PullRequestOmittedFileStat>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub withheld_files_readable: Option<bool>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProviderAdapterCapabilitiesError {
     #[serde(rename = "_tag")]
     pub tag: lit::ProviderAdapterCapabilitiesError,

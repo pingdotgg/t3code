@@ -9,6 +9,9 @@ annotations_release
 t3_background_wait
 html_render
 request_secret
+save_test_login
+request_credentials
+database_query
 panel_open
 mcp_call
 mcp_connect
