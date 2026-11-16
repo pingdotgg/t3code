@@ -538,6 +538,28 @@ describe("AcpRuntimeModel", () => {
     });
   });
 
+  it.each(["CommandLine", "command_line"])(
+    "shows the command of an Antigravity permission request given as rawInput.%s",
+    (key) => {
+      const request = parsePermissionRequest({
+        sessionId: "session-1",
+        options: [],
+        toolCall: {
+          toolCallId: "tool-1",
+          kind: "execute",
+          status: "pending",
+          title: "git status --short",
+          rawInput: { [key]: "git status --short" },
+        },
+      });
+
+      expect(request).toMatchObject({
+        detail: "git status --short",
+        toolCall: { command: "git status --short" },
+      });
+    },
+  );
+
   it("keeps an explicit permission request kind over the tracked tool call's kind", () => {
     const request = withTrackedPermissionToolCall(
       {
