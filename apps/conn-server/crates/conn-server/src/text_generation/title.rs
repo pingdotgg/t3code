@@ -15,11 +15,11 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use conn_engine::{BoxFuture, TitleGenerator, TitleKind, TitleMessage, TitleRequest};
-use conn_provider::{ProviderError, TextGenerationRequest};
+use conn_provider::TextGenerationRequest;
 use serde_json::{Map, Value};
 
 use super::{
-    TextGenerators, generator_label,
+    TextGenerators,
     prompts::{self, Attachment, Message, TitlePromptInput},
 };
 
@@ -79,23 +79,22 @@ impl Titles {
     }
 }
 
-/// Whether a selection's instance is on (`resolveTextGenerationSelectionEnabled`, without the
-/// project's own provider switches).
-fn selection_enabled(settings: &Map<String, Value>, instance_id: &str) -> bool {
+/// Whether a selection's instance is on (`resolveTextGenerationSelectionEnabled`).
+pub(crate) fn selection_enabled(
+    settings: &Map<String, Value>,
+    project_id: Option<&str>,
+    instance_id: &str,
+) -> bool {
     if let Some(generator) = settings
         .get("textGenerators")
         .and_then(|g| g.get(instance_id))
     {
         return generator.get("enabled") != Some(&Value::Bool(false));
     }
-    settings
-        .get("providerInstances")
-        .and_then(|p| p.get(instance_id))
-        .and_then(|i| i.get("enabled"))
-        != Some(&Value::Bool(false))
+    crate::settings::provider_instance_enabled(settings, project_id, instance_id)
 }
 
-fn project_override<'a>(
+pub(crate) fn project_override<'a>(
     settings: &'a Map<String, Value>,
     project_id: Option<&str>,
     key: &str,
@@ -130,7 +129,7 @@ pub fn title_model_selection(
     };
     if let Some(selection) = project_override(settings, project_id, "textGenerationModelSelection")
         .and_then(read)
-        .filter(|(instance, _, _)| selection_enabled(settings, instance))
+        .filter(|(instance, _, _)| selection_enabled(settings, project_id, instance))
     {
         return selection;
     }
@@ -144,15 +143,6 @@ pub fn title_model_selection(
                 serde_json::json!({"instanceId": DEFAULT_INSTANCE, "model": ""}),
             )
         })
-}
-
-/// How a provider's driver is named in "… returned invalid structured output.".
-fn driver_label(driver: &str) -> String {
-    match driver {
-        "codex" => "Codex".to_owned(),
-        "claudeAgent" => "Claude".to_owned(),
-        other => other.to_owned(),
-    }
 }
 
 /// The image attachments of the request's messages that the prompt names, as saved files
@@ -261,42 +251,6 @@ enum Attempt {
 }
 
 impl Titles {
-    /// One try through an agent provider instance (`instance.textGeneration`).
-    async fn attempt_provider(
-        &self,
-        instance: &str,
-        selection: &Value,
-        cwd: &str,
-        prompt: &str,
-        images: &[PathBuf],
-    ) -> Attempt {
-        let Some(provider) = self.providers.get(instance) else {
-            return Attempt::Failed(format!(
-                "No provider instance registered for id '{instance}'."
-            ));
-        };
-        let Ok(model_selection) = conn_contract::from_json(selection.clone()) else {
-            return Attempt::Failed("The title model selection is not valid.".to_owned());
-        };
-        let request = TextGenerationRequest {
-            operation: "generateThreadTitle".to_owned(),
-            cwd: cwd.to_owned(),
-            prompt: prompt.to_owned(),
-            output_schema: prompts::TITLE_OUTPUT_SCHEMA.to_owned(),
-            model_selection,
-            image_paths: images.to_vec(),
-            timeout: None,
-        };
-        let label = driver_label(provider.driver());
-        let value = match provider.generate_text(request).await {
-            Ok(value) => value,
-            Err(ProviderError::Unsupported { .. }) => return Attempt::NotServed,
-            Err(ProviderError::Failed { detail, .. }) => return Attempt::Failed(detail),
-            Err(other) => return Attempt::Failed(other.to_string()),
-        };
-        Self::accept(&value.to_string(), &label)
-    }
-
     /// The reply's title, sanitized, or why it cannot be one.
     fn accept(text: &str, label: &str) -> Attempt {
         let Some(reply) = prompts::decode_title_reply(text) else {
@@ -312,26 +266,11 @@ impl Titles {
         Attempt::Done(title)
     }
 
-    async fn attempt(&self, instance: &str, model: &str, prompt: &str) -> Attempt {
-        let Some(result) = self.generators.run(instance, model, prompt).await else {
-            return Attempt::NotServed;
-        };
-        let text = match result {
-            Ok(text) => text,
-            Err(detail) => return Attempt::Failed(detail),
-        };
-        let label = self
-            .generators
-            .config(instance)
-            .map_or_else(|| "The model API".to_owned(), |c| generator_label(&c));
-        Self::accept(&text, &label)
-    }
-
     /// One title: the prompt, and up to three tries for a first title.
     pub async fn title(&self, request: TitleRequest) -> Result<String, String> {
         let settings = self.generators.settings();
         let project_id = request.project_id.as_deref();
-        let (instance, model, selection) = title_model_selection(&settings, project_id);
+        let (instance, _model, selection) = title_model_selection(&settings, project_id);
         let input = prompt_input(&request, title_instructions(&settings, project_id))?;
         let prompt = prompts::thread_title_prompt(&input);
         let initial = matches!(request.kind, TitleKind::Initial { .. });
@@ -357,11 +296,21 @@ impl Titles {
                 .unwrap_or_else(|_| "/".to_owned())
         });
         loop {
-            let attempt = if agent {
-                self.attempt_provider(&instance, &selection, &cwd, &prompt, &images)
-                    .await
-            } else {
-                self.attempt(&instance, &model, &prompt).await
+            let model_selection = conn_contract::from_json(selection.clone())
+                .map_err(|_| "The title model selection is not valid.".to_owned())?;
+            let request = TextGenerationRequest {
+                operation: "generateThreadTitle".into(),
+                cwd: cwd.clone(),
+                prompt: prompt.clone(),
+                output_schema: prompts::TITLE_OUTPUT_SCHEMA.into(),
+                model_selection,
+                image_paths: images.clone(),
+                timeout: None,
+            };
+            let attempt = match super::generate(&self.generators, &self.providers, request).await {
+                Ok(Some((text, label))) => Self::accept(&text, &label),
+                Ok(None) => Attempt::NotServed,
+                Err(detail) => Attempt::Failed(detail),
             };
             match attempt {
                 Attempt::Done(title) => return Ok(title),

@@ -556,8 +556,14 @@ async fn metadata_binding_rejects_stale_worktrees_and_keeps_idle_continuations()
 #[tokio::test(flavor = "current_thread")]
 async fn handoff_setup_runs_in_a_thread_terminal_with_the_project_environment() {
     let mut f = fixture("handoff-setup");
+    let shell = f.dir.join("shell");
+    conn_support::test_util::executable(
+        &shell,
+        "#!/bin/sh\nexport HISTFILE=/dev/null\nexec /bin/sh \"$@\"\n",
+    )
+    .unwrap();
     let terminals = conn_terminal::TerminalManager::new(conn_terminal::TerminalConfig {
-        shells: vec!["/bin/sh".into()],
+        shells: vec![shell.to_string_lossy().into_owned()],
         ..Default::default()
     });
     Arc::get_mut(&mut f.service)
@@ -602,6 +608,41 @@ async fn handoff_setup_runs_in_a_thread_terminal_with_the_project_environment() 
         }
     }
     let path = moved["worktreePath"].as_str().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(PathBuf::from(path).join("setup-proof.txt")).unwrap(),
+        format!("{}\n{path}\n", root.display())
+    );
+    std::fs::remove_file(PathBuf::from(path).join("setup-proof.txt")).unwrap();
+    terminals.close(
+        conn_contract::from_json(json!({"threadId":thread,"terminalId":"setup-setup"})).unwrap(),
+    );
+    let shell = f.service.config.engine.shell_snapshot().await.unwrap();
+    let project = shell["projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == project_id())
+        .unwrap();
+    f.service
+        .run_worktree_setup(thread, path, project)
+        .await
+        .unwrap();
+    let mut output = terminals
+        .observe(
+            conn_contract::from_json(json!({"threadId":thread,"terminalId":"setup-setup"}))
+                .unwrap(),
+        )
+        .unwrap();
+    let mut text = String::new();
+    while !text.contains("SETUP-done") {
+        match output.next().await {
+            conn_contract::TerminalAttachStreamEvent::Output(event) => text.push_str(&event.data),
+            conn_contract::TerminalAttachStreamEvent::Snapshot(event) => {
+                text.push_str(&event.snapshot.history)
+            }
+            _ => {}
+        }
+    }
     assert_eq!(
         std::fs::read_to_string(PathBuf::from(path).join("setup-proof.txt")).unwrap(),
         format!("{}\n{path}\n", root.display())

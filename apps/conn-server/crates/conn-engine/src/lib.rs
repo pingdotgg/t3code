@@ -343,6 +343,20 @@ pub trait Engine: Send + Sync {
         unsupported("the shell snapshot")
     }
 
+    /// Live project summaries, without loading thread projections.
+    fn projects_snapshot(
+        &self,
+    ) -> BoxFuture<'_, Result<Vec<Value>, EngineError<GetShellSnapshotError>>> {
+        Box::pin(async move {
+            let shell = self.shell_snapshot().await?;
+            Ok(shell
+                .get("projects")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default())
+        })
+    }
+
     /// The unary and stream RPC methods [`Engine::call`] and [`Engine::open_stream`] serve, by
     /// tag. The server registers each one; the rest answer "not supported".
     fn methods(&self) -> &'static [&'static str] {

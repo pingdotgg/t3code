@@ -28,7 +28,7 @@ mod tasks;
 mod test_logins;
 mod threads;
 mod workflows;
-mod worktree;
+pub(crate) mod worktree;
 
 pub(crate) type Args = Map<String, Value>;
 

@@ -30,6 +30,48 @@ use serde_json::{Map, Value};
 use crate::settings::SECRET_REDACTED;
 pub use drivers::{Connection, Kind, RequestError};
 
+pub(crate) async fn generate(
+    generators: &TextGenerators,
+    providers: &conn_provider::ProviderSet,
+    request: conn_provider::TextGenerationRequest,
+) -> Result<Option<(String, String)>, String> {
+    let instance = request
+        .model_selection
+        .instance_id
+        .as_ref()
+        .and_then(Option::as_ref)
+        .and_then(Value::as_str)
+        .unwrap_or("codex");
+    if let Some(result) = generators
+        .run(
+            instance,
+            request.model_selection.model.as_str().unwrap_or_default(),
+            &request.prompt,
+        )
+        .await
+    {
+        let label = generators
+            .config(instance)
+            .map_or_else(|| "The model API".into(), |c| generator_label(&c));
+        return result.map(|text| Some((text, label)));
+    }
+    let provider = providers
+        .get(instance)
+        .ok_or_else(|| format!("No provider instance registered for id '{instance}'."))?;
+    let label = match provider.driver() {
+        "codex" => "Codex",
+        "claudeAgent" => "Claude",
+        other => other,
+    }
+    .to_owned();
+    match provider.generate_text(request).await {
+        Ok(value) => Ok(Some((value.to_string(), label))),
+        Err(conn_provider::ProviderError::Unsupported { .. }) => Ok(None),
+        Err(conn_provider::ProviderError::Failed { detail, .. }) => Err(detail),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 /// Model lists kept, one per generator id; the oldest goes first. The T3 server keeps one per
 /// id without a cap.
 const MAX_CACHED_LISTS: usize = 32;
