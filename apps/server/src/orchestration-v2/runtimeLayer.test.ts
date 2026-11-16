@@ -5820,12 +5820,17 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       ];
       let status = "pending";
       const detailReads = yield* Queue.unbounded<void>();
+      const fingerprintReads = yield* Queue.unbounded<void>();
       const host = Layer.mergeAll(
         NodeServices.layer,
         NodeCrypto.layer,
         Layer.mock(PullRequestService.PullRequestService)({
-          detail: () =>
-            Queue.offer(detailReads, undefined).pipe(
+          // Earlier cases' watches share this host, so only this project's reads count.
+          detail: (input) =>
+            (input.projectId === projectId
+              ? Queue.offer(detailReads, undefined)
+              : Effect.void
+            ).pipe(
               Effect.as({
                 ...watchedPullRequestDetail({
                   projectId,
@@ -5844,7 +5849,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
               reviewThreads: [],
               commits: [],
             }),
-          watchFingerprint: () => Effect.sync(() => ({ status, remarks: "none" })),
+          watchFingerprint: (input) =>
+            (input.projectId === projectId
+              ? Queue.offer(fingerprintReads, undefined)
+              : Effect.void
+            ).pipe(Effect.andThen(Effect.sync(() => ({ status, remarks: "none" })))),
           invalidate: () => Effect.void,
           // Without the GitHub app sign-in no feed is on, so only the sweep hears checks.
           changes: () => Stream.empty,
@@ -5860,10 +5869,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
       yield* reactor.start();
+      yield* Queue.take(fingerprintReads);
       yield* Queue.take(detailReads);
       yield* worker.drain();
       assert.lengthOf(yield* wakes, 0);
 
+      // A probe whose fingerprint has not moved reads nothing more.
+      yield* TestClock.adjust("30 seconds");
+      yield* Queue.take(fingerprintReads);
       status = "passed";
       checks = [{ name: "lint", status: "success", description: null, url: null, required: true }];
       // The probe must hear the concluded checks long before the 2-minute sweep could.
@@ -5873,6 +5886,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const woken = yield* wakes;
       assert.lengthOf(woken, 1);
       assert.equal(woken[0]!.notification?.summary, "#14: checks passed");
+      assert.equal(yield* Queue.size(detailReads), 0);
 
       // The settled pull request stays quiet until the sweep.
       yield* TestClock.adjust("30 seconds");

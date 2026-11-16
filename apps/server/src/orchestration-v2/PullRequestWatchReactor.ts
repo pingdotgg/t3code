@@ -841,13 +841,25 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("PullRequestWatchReactor.readOnChange"),
     );
 
-  /** Targeted reads for the watches whose last read saw checks or mergeability still pending. */
+  // Hosts without fingerprints are left to the sweep, since every probe there would be a full read.
   const probePending = Effect.suspend(() =>
     Effect.forEach(
-      currentGroups
-        .filter((group) => lastReads.get(group.key)?.inFlight === true)
-        .map(pullRequestOf),
-      readOnChange,
+      currentGroups.filter((group) => {
+        const last = lastReads.get(group.key);
+        return last?.inFlight === true && last.status !== null;
+      }),
+      (group) =>
+        fingerprintOf(group).pipe(
+          Effect.flatMap((fingerprint) => {
+            const last = lastReads.get(group.key);
+            return fingerprint !== null &&
+              fingerprint !== "paused" &&
+              last !== undefined &&
+              (last.status !== fingerprint.status || last.remarks !== fingerprint.remarks)
+              ? readOnChange(pullRequestOf(group))
+              : Effect.void;
+          }),
+        ),
       { concurrency: "unbounded", discard: true },
     ),
   );
@@ -885,13 +897,7 @@ export const make = Effect.gen(function* () {
     );
     // A host without a live feed leaves the sweep as the only reader, so a pending watch
     // would wait the whole sweep for its checks; the probes catch the conclusion sooner.
-    yield* forkParked(
-      Effect.sleep(PENDING_PROBE_MS).pipe(
-        Effect.andThen(probePending),
-        Effect.repeat(Schedule.spaced(PENDING_PROBE_MS)),
-        Effect.asVoid,
-      ),
-    );
+    yield* forkParked(probePending.pipe(Effect.delay(PENDING_PROBE_MS), Effect.forever));
   });
 
   return { start, sweep } satisfies PullRequestWatchReactor["Service"];
