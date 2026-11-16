@@ -4959,10 +4959,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       if (terminal?.status !== "failed") return;
       assert.equal(terminal.failure.class, "usage_limit");
       assert.equal(terminal.failure.code, "responseStreamDisconnected");
-      assert.equal(
+      assert.include(
         terminal.failure.message,
         "exceeded retry limit, last status: 429 Too Many Requests",
       );
+      // Attempts were left (2/5): the failure has to say the retry time limit ended it.
+      assert.match(terminal.failure.message, /time limit/i);
       assert.equal(terminal.retry?.attempt, 2);
       assert.equal(terminal.threadDisposition, "reusable");
     }).pipe(
