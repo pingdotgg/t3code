@@ -167,7 +167,6 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { threadStreamHaptics } from "./threadStreamHaptics";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { orchestrationEnvironment } from "../../state/orchestration";
-import { useDelayedStatus } from "../../lib/useDelayedStatus";
 import type { PendingUserInputDraftAnswer } from "@t3tools/client-runtime/state/pending-user-input";
 import type { RunStopPresentation } from "@t3tools/client-runtime/state/thread-execution";
 import type {
@@ -267,7 +266,6 @@ export interface ThreadDetailScreenProps {
   readonly activePendingUserInputAnswers: Record<string, string | ReadonlyArray<string>> | null;
   readonly respondingUserInputId: RuntimeRequestId | null;
   readonly connectionStateLabel: EnvironmentConnectionPhase;
-  readonly connectionAwaitingApproval?: boolean;
   readonly historyControls?: ThreadFeedHistoryControls;
   readonly activeThreadBusy: boolean;
   readonly canStopThread: boolean;
@@ -379,9 +377,6 @@ const COMPOSER_HEIGHT_SETTLE_MS = 220;
 const NO_RUN_STOP_ATOM = Atom.make<RunStopPresentation | null>(null).pipe(
   Atom.withLabel("mobile-thread-run-stop:empty"),
 );
-
-// Connection failures survive retries and app suspension.
-const RECONNECT_ERROR_DELAY_MS = 5_000;
 
 // Anchors, the submitted message, follow state and pending scrolls belong to
 // one thread, so the body remounts when the thread changes.
@@ -566,14 +561,6 @@ function ThreadDetailBody(
   );
   const composerKeyboardOffset = composerBottomInset;
   const contentPresentationKind = props.contentPresentation.kind;
-  const connectionRetrying =
-    props.connectionStateLabel === "connecting" || props.connectionStateLabel === "reconnecting";
-  const retryError = connectionRetrying ? props.connectionError : null;
-  const retryConnectionError = useDelayedStatus(
-    `${props.environmentId}:${retryError !== null}`,
-    retryError,
-    RECONNECT_ERROR_DELAY_MS,
-  );
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
@@ -749,9 +736,8 @@ function ThreadDetailBody(
     : null;
   const floatingStatus = ((): FloatingWorkingStatus | null => {
     const connectionStatus = connectionFloatingStatus({
-      connectionError: connectionRetrying ? retryConnectionError : props.connectionError,
+      connectionError: props.connectionError,
       connectionState: props.connectionStateLabel,
-      connectionAwaitingApproval: props.connectionAwaitingApproval === true,
       environmentLabel: props.environmentLabel,
       onReconnect: props.onReconnectEnvironment,
     });
