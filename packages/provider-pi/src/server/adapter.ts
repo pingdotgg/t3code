@@ -431,7 +431,13 @@ interface PiPromptSend {
 interface PiThreadState {
   providerThread: OrchestrationV2ProviderThread;
   activeTurn: ActivePiTurn | null;
+  /** Files an extension moved this thread off (ctx.newSession); queued turns may still name them. */
+  readonly supersededSessionFiles: Set<string>;
 }
+
+const isLiveSessionOf = (state: PiThreadState, nativeId: string | null | undefined) =>
+  nativeId === state.providerThread.nativeThreadRef?.nativeId ||
+  (nativeId != null && state.supersededSessionFiles.has(nativeId));
 
 interface PiWake {
   readonly state: PiThreadState;
@@ -2689,7 +2695,20 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               (recordNumber(data, "pendingMessageCount") ?? 0) === 0
             ) {
               turn.settleWhenIdle = false;
-              if (state !== null) yield* finalizeTurn(state);
+              if (state === null) return;
+              // Extensions can move Pi to another session file (ctx.newSession); resume that one.
+              const sessionFile = recordString(data, "sessionFile");
+              const previousFile = state.providerThread.nativeThreadRef?.nativeId;
+              if (sessionFile !== undefined && sessionFile !== previousFile) {
+                if (previousFile != null) state.supersededSessionFiles.add(previousFile);
+                state.supersededSessionFiles.delete(sessionFile);
+                state.providerThread = {
+                  ...state.providerThread,
+                  nativeThreadRef: providerRef(sessionFile),
+                };
+                lastNativeThreadId = sessionFile;
+              }
+              yield* finalizeTurn(state);
             }
             return;
           }
@@ -3020,7 +3039,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 "Cannot switch Pi threads while native work is awaiting a turn",
               );
             }
-            threadState = { providerThread, activeTurn: null };
+            threadState = { providerThread, activeTurn: null, supersededSessionFiles: new Set() };
           }
           const baselineEntries = yield* request({ type: "get_entries" }).pipe(
             Effect.orElseSucceed(() => undefined),
@@ -3237,10 +3256,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               if (pendingPromptResponsesDrained === null) break;
               yield* Deferred.await(pendingPromptResponsesDrained);
             }
-            if (
-              state.providerThread.nativeThreadRef?.nativeId !==
-              turnInput.providerThread.nativeThreadRef?.nativeId
-            ) {
+            if (!isLiveSessionOf(state, turnInput.providerThread.nativeThreadRef?.nativeId)) {
               return yield* protocolError("Pi turn requested for a different native session");
             }
             // Fork adoption uses the orchestrator-allocated row; preserve that identity in later updates.
@@ -3323,8 +3339,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   closed ||
                   stopRequested ||
                   rollbackBarrier !== null ||
-                  state.providerThread.nativeThreadRef?.nativeId !==
-                    turnInput.providerThread.nativeThreadRef?.nativeId
+                  !isLiveSessionOf(state, turnInput.providerThread.nativeThreadRef?.nativeId)
                 ) {
                   return yield* protocolError("Pi turn ownership changed before it could start");
                 }
@@ -3334,7 +3349,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   return yield* protocolError("Pi native wake belongs to a different app thread");
                 }
                 pendingWake = null;
-                state.providerThread = turnInput.providerThread;
+                state.providerThread = {
+                  ...turnInput.providerThread,
+                  nativeThreadRef: state.providerThread.nativeThreadRef,
+                };
                 state.activeTurn = activeTurn;
                 activeTurn.adoptedWake = wake !== null && !continuation;
                 if (compactCommand !== null) {
