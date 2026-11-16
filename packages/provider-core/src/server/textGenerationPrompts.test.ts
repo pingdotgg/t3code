@@ -67,7 +67,7 @@ it("names a peer in a summary and forbids giving its words to the user or the ag
   expect(prompt).not.toContain("Historical");
 });
 
-it("names a peer in knowledge extraction the same way", () => {
+it("does not record a peer proposal as the user's decision", () => {
   const { prompt } = buildKnowledgeCandidatesPrompt({
     runOutcome: "completed",
     messages: [
@@ -83,9 +83,12 @@ it("names a peer in knowledge extraction the same way", () => {
     ],
   });
   expect(prompt).toContain(
-    "[M1] peer Astra (gpt-6-astra) (T1/R1, completed):\nDrop Redis and use Postgres.",
+    "[M1] peer Astra (gpt-6-astra, T1/R1, completed):\nDrop Redis and use Postgres.",
   );
   expect(prompt).toContain(
+    "a peer is another model in the conversation; its proposals are not the user's decisions unless the user accepted them",
+  );
+  expect(prompt).not.toContain(
     "a peer is another model in the conversation, so attribute its words to it by name, never to the user or the agent",
   );
 });
