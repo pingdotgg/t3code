@@ -48,6 +48,12 @@ builder with a test that fails without the fix.
   `sourceControlHosts` and `offeredSourceControlProviders`. `registry-diff` (8,901 cases)
   compares against T3's registry with GitHub alone. `tools/check.sh` 44/44. The canary still
   trips on the other hosts' CLIs and tokens, since the diff checks start the full T3 server.
+- **Test logins and database panel** (PR #107): `testLogins.*`, `save_test_login`,
+  `request_credentials` (both need the session's agent browser access, as in T3) and
+  `database_query` (sent to the Mac's database panel; the server opens no database). Logins live
+  in the settings secret store; passwords never enter events, projections or results. Known
+  differences: at most 1,024 logins and a 16 MiB store; `fill_credential` and the site
+  credential RPCs wait for the preview tabs.
 - **Clients** (VMPal macOS VM, Conn `c969c3ebd1`): the web client (through a host T3 as a
   remote environment) and the iOS dev client in a simulator (paired straight to the Conn
   Server) each ran a Haiku turn against the Conn Server on macOS.

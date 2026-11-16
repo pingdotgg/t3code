@@ -21,7 +21,7 @@ use axum::{
     routing::{get, post},
 };
 use conn_files::{Files, Served, assets, attachments};
-use tokio::io::{AsyncRead, AsyncSeekExt, AsyncWriteExt, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, ReadBuf};
 
 use crate::AppState;
 
@@ -79,8 +79,21 @@ async fn asset(
             download,
             file_name,
             mime_type,
+            render_intent,
             identity,
         }) => {
+            if render_intent.is_some() && !download {
+                return serve_mcp_app_html(
+                    &path,
+                    file_name.as_deref(),
+                    mime_type.as_deref(),
+                    method == Method::HEAD,
+                )
+                .await
+                .unwrap_or_else(|| {
+                    text(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
+                });
+            }
             let range = (method == Method::GET && !headers.contains_key(header::IF_RANGE))
                 .then(|| headers.get(header::RANGE).and_then(|v| v.to_str().ok()))
                 .flatten()
@@ -98,6 +111,41 @@ async fn asset(
             .unwrap_or_else(|| text(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"))
         }
     }
+}
+
+async fn serve_mcp_app_html(
+    path: &std::path::Path,
+    name: Option<&str>,
+    mime: Option<&str>,
+    head: bool,
+) -> Option<Response> {
+    let file = tokio::fs::File::open(path).await.ok()?;
+    let mut bytes = Vec::new();
+    const PREVIEW_LIMIT: usize = 5 * 1024 * 1024 + 128 * 1024;
+    file.take((PREVIEW_LIMIT + 1) as u64)
+        .read_to_end(&mut bytes)
+        .await
+        .ok()?;
+    if bytes.len() > PREVIEW_LIMIT {
+        return Some(text(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "MCP app is too large to preview.",
+        ));
+    }
+    let html = conn_files::mcp_apps::bootstrap(&String::from_utf8_lossy(&bytes));
+    let mut headers = HeaderMap::new();
+    for (name, value) in assets::response_headers(path, assets::Disposition::Inline, name, mime) {
+        headers.insert(name, HeaderValue::from_str(&value).ok()?);
+    }
+    headers.insert(header::CONTENT_LENGTH, HeaderValue::from(html.len()));
+    Some(
+        (
+            StatusCode::OK,
+            headers,
+            if head { String::new() } else { html },
+        )
+            .into_response(),
+    )
 }
 
 async fn serve_file(
@@ -298,4 +346,83 @@ async fn receive(body: Body, part: &std::path::Path, limit: u64) -> std::io::Res
     }
     file.flush().await?;
     Ok(received)
+}
+
+#[cfg(test)]
+mod mcp_app_asset_tests {
+    use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn app_assets_keep_csp_add_bootstraps_and_bound_reads_for_get_and_head() {
+        let dir = std::env::temp_dir().join(format!("conn-app-asset-{}", conn_support::uuid_v4()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let path = dir.join("app.html");
+        tokio::fs::write(&path,"<!doctype html><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline'\"><h1>App</h1>").await.unwrap();
+        let response = serve_mcp_app_html(&path, None, Some("text/html"), false)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(!response.headers().contains_key(header::ACCEPT_RANGES));
+        assert_eq!(
+            response.headers()[header::CONTENT_SECURITY_POLICY],
+            "sandbox allow-scripts allow-forms allow-popups allow-downloads"
+        );
+        let length = response.headers()[header::CONTENT_LENGTH].clone();
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body.find("Content-Security-Policy").unwrap() < body.find("<script>").unwrap());
+        assert!(body.contains("document.cookie"));
+        assert!(body.contains("t3-color-scheme"));
+        let head = serve_mcp_app_html(&path, None, Some("text/html"), true)
+            .await
+            .unwrap();
+        assert_eq!(head.headers()[header::CONTENT_LENGTH], length);
+        assert!(
+            axum::body::to_bytes(head.into_body(), 1)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let source = "a".repeat(5 * 1024 * 1024);
+        let store = conn_files::AttachmentStore::new(dir.clone());
+        let reference = tokio::task::spawn_blocking(move || {
+            store.snapshot_mcp_app(
+                "thread",
+                "server",
+                "tool",
+                "ui://app",
+                &serde_json::json!([{"mimeType":"text/html;profile=mcp-app","text":source}]),
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+        let snapshot = dir.join(format!(
+            "{}.html",
+            reference["attachmentId"].as_str().unwrap()
+        ));
+        assert_eq!(
+            serve_mcp_app_html(&snapshot, None, Some("text/html"), true)
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK,
+            "a max-sized snapshot includes CSP overhead"
+        );
+        let file = tokio::fs::File::create(&path).await.unwrap();
+        file.set_len(5 * 1024 * 1024 + 128 * 1024 + 1)
+            .await
+            .unwrap();
+        assert_eq!(
+            serve_mcp_app_html(&path, None, Some("text/html"), false)
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
 }

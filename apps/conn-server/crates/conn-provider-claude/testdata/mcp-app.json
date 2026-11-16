@@ -1,0 +1,109 @@
+{
+  "frames": [
+    {
+      "type": "system",
+      "subtype": "init",
+      "uuid": "mcp-app-init",
+      "session_id": "native-thread-claude-wake",
+      "capabilities": [
+        "mcp_tool_ui_meta_v1",
+        "mcp_read_resource_v1",
+        "mcp_call_result_not_for_model_v1"
+      ]
+    },
+    {
+      "type": "assistant",
+      "uuid": "mcp-app-assistant",
+      "session_id": "native-thread-claude-wake",
+      "parent_tool_use_id": null,
+      "message": {
+        "id": "mcp-app-message",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-sonnet-4-6",
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "weather-app-call",
+            "name": "mcp__probe_server__show_weather",
+            "input": {
+              "city": "Oslo"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "user",
+      "uuid": "mcp-app-result",
+      "session_id": "native-thread-claude-wake",
+      "parent_tool_use_id": null,
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "weather-app-call",
+            "content": "{\"tempC\":21}"
+          }
+        ]
+      },
+      "tool_use_result": {
+        "content": "{\"tempC\":21}",
+        "structuredContent": {
+          "tempC": 21
+        }
+      }
+    },
+    {
+      "type": "result",
+      "subtype": "success",
+      "duration_ms": 10,
+      "duration_api_ms": 10,
+      "is_error": false,
+      "num_turns": 1,
+      "result": "Shown",
+      "stop_reason": "end_turn",
+      "total_cost_usd": 0,
+      "usage": {
+        "input_tokens": 1,
+        "output_tokens": 1,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0
+      },
+      "modelUsage": {},
+      "permission_denials": [],
+      "uuid": "mcp-app-terminal",
+      "session_id": "native-thread-claude-wake",
+      "terminal_reason": "completed"
+    }
+  ],
+  "status": {
+    "name": "probe.server",
+    "status": "connected",
+    "tools": [
+      {
+        "name": "show_weather",
+        "_meta": {
+          "ui": {
+            "resourceUri": "ui://probe/weather.html"
+          }
+        }
+      },
+      {
+        "name": "refresh_weather",
+        "annotations": {
+          "readOnly": true,
+          "destructive": false
+        },
+        "_meta": {
+          "ui": {
+            "visibility": [
+              "app"
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

@@ -135,10 +135,9 @@ after. Errors carry T3's texts ("Codex CLI request timed out.", "Codex CLI comma
 - **Retries:** `error` with `willRetry: true` makes no retry row; the turn keeps running.
 - **Rate limits:** `account/rateLimits/*` is ignored, so usage-limit failures have no `resetAt`.
 - **T3 context details:** browser tools are assumed on and device tools off (TS reads both
-  from the MCP session); app context entries go in `additionalContext` as `untrusted`, but
-  the engine has no MCP apps and passes none. Snap-shot window context of image
-  attachments is not added.
-- **Tool rows:** MCP presentation (titles, icons, surfaces) and MCP apps.
+  from the MCP session). App context entries go in `additionalContext` as `untrusted`.
+  Snapshot window context of image attachments is not added.
+- **Tool rows:** MCP presentation (titles, icons, surfaces).
 - **Elicitations:** URL elicitations and forms an approval cannot fill are declined, as in T3.
   `item/tool/call` and auth-refresh requests get an error reply.
 - **Image generation**, prompt suggestions, async questions in agent messages, and the Linux
