@@ -1610,6 +1610,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         terminalEvents,
         subagentUpdates,
         hasPendingBackgroundWork,
+        pendingBackgroundTasks: () =>
+          events
+            .flatMap((event) =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.id === providerThread.id
+                ? [event.providerThread.pendingBackgroundTasks ?? []]
+                : [],
+            )
+            .at(-1) ?? [],
         firstTerminal: Deferred.await(firstTerminal),
         until: changes.until,
         awaitTerminal: (count: number) => changes.until(() => terminalEvents().length >= count),
@@ -5756,50 +5765,151 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ],
   });
 
-  it.effect("marks a root command it wakes the agent for once the command finishes", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeCodexReplayHarness({
-        ...backgroundExecTranscript,
-        entries: backgroundExecTranscript.entries.map((entry) =>
-          entry.type === "emit_inbound" && entry.label === "item/completed/command-late"
-            ? { ...entry, afterMs: 0 }
-            : entry,
-        ),
-      });
-      yield* harness.runtime.startTurn(
-        makeCodexTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("attempt-command-completion-wake"),
-          text: BG_PROMPT,
-        }),
-      );
-      const commands = () =>
-        harness.events.flatMap((event) =>
-          event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
-            ? [[event.turnItem.status, event.turnItem.completionWake]]
-            : [],
+  it.effect.each([0, 1])(
+    "holds only explicitly awaited root commands and wakes with exit %s",
+    (exitCode) =>
+      Effect.gen(function* () {
+        const settled = yield* Deferred.make<void>();
+        const completed = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          {
+            ...backgroundExecTranscript,
+            entries: backgroundExecTranscript.entries.map((entry) =>
+              entry.type === "emit_inbound" && entry.label === "item/completed/command-late"
+                ? {
+                    ...entry,
+                    afterMs: 0,
+                    frame: {
+                      method: "item/completed",
+                      params: {
+                        item: { ...backgroundCommandItem("completed"), exitCode },
+                        threadId: BG_NATIVE_THREAD,
+                        turnId: BG_NATIVE_TURN,
+                        completedAtMs: 1782622465500,
+                      },
+                    },
+                  }
+                : entry,
+            ),
+          },
+          undefined,
+          undefined,
+          undefined,
+          (entry) =>
+            entry.label === "turn/completed"
+              ? Deferred.await(settled)
+              : entry.label === "item/completed/command-late"
+                ? Deferred.await(completed)
+                : Effect.void,
         );
-      yield* harness.until(
-        () => harness.continuationRequests.length === 1 && commands().length === 2,
-      );
-      // Restart recovery reads this to keep the wake the restart cut.
-      assert.deepEqual(commands(), [
-        ["running", "always"],
-        ["completed", "always"],
-      ]);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-command-completion-wake"),
+            text: BG_PROMPT,
+          }),
+        );
+        const commands = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
+              ? [[event.turnItem.status, event.turnItem.completionWake]]
+              : [],
+          );
+        yield* harness.until(() => commands().length === 1);
+        const wait = harness.runtime.awaitBackgroundTasks;
+        assert.isDefined(wait);
+        const tasks = harness.pendingBackgroundTasks;
+        assert.deepEqual(tasks(), []);
+        assert.deepEqual(
+          yield* wait!({
+            providerThread: {
+              ...harness.providerThread,
+              id: ProviderThreadId.make("foreign-thread"),
+            },
+            taskIds: ["4242"],
+            awaited: true,
+          }),
+          { matched: [] },
+        );
+        assert.deepEqual(
+          yield* wait!({
+            providerThread: harness.providerThread,
+            taskIds: ["unknown"],
+            awaited: true,
+          }),
+          { matched: [] },
+        );
+        assert.deepEqual(
+          yield* wait!({
+            providerThread: harness.providerThread,
+            taskIds: ["4242", "4242", "unknown"],
+            awaited: true,
+          }),
+          { matched: ["4242"] },
+        );
+        yield* harness.until(() => tasks().length === 1);
+        assert.deepEqual(tasks(), [
+          { taskId: BG_COMMAND_ITEM, kind: "command", description: BG_COMMAND, awaited: true },
+        ]);
+        yield* Deferred.succeed(settled, undefined);
+        yield* harness.firstTerminal;
+        assert.lengthOf(tasks(), 1);
+        assert.deepEqual(
+          yield* wait!({
+            providerThread: harness.providerThread,
+            taskIds: ["4242"],
+            awaited: false,
+          }),
+          { matched: ["4242"] },
+        );
+        yield* harness.until(() => tasks().length === 0);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        yield* wait!({ providerThread: harness.providerThread, taskIds: ["4242"], awaited: true });
+        yield* harness.until(() => tasks().length === 1);
+        yield* Deferred.succeed(completed, undefined);
+        yield* harness.until(
+          () =>
+            harness.continuationRequests.length === 1 &&
+            commands().length === 2 &&
+            tasks().length === 0,
+        );
+        // Restart recovery reads this to keep the wake the restart cut.
+        assert.deepEqual(commands(), [
+          ["running", "always"],
+          ["completed", "always"],
+        ]);
+        assert.include(harness.continuationRequests[0]?.detail, "CODEX_BG_WAKE_DONE");
+        assert.include(harness.continuationRequests[0]?.detail, `exit ${exitCode}`);
+        assert.isBelow(
+          harness.events.findLastIndex((event) => event.type === "provider_thread.updated"),
+          harness.events.findLastIndex(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "command_execution" &&
+              event.turnItem.status === "completed",
+          ),
+        );
+        assert.deepEqual(
+          yield* wait!({
+            providerThread: harness.providerThread,
+            taskIds: ["4242"],
+            awaited: true,
+          }),
+          { matched: [] },
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
-    ),
   );
 
   it.effect.each([
@@ -6018,6 +6128,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         );
         yield* harness.firstTerminal;
         const unload = harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+        yield* harness.runtime.awaitBackgroundTasks!({
+          providerThread: harness.providerThread,
+          taskIds: ["4242"],
+          awaited: true,
+        });
+        yield* harness.until(() => harness.pendingBackgroundTasks().length === 1);
         yield* unload;
         assert.isTrue(yield* harness.hasPendingBackgroundWork);
         yield* unload;
@@ -6025,6 +6141,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         yield* unload;
         assert.equal(yield* harness.hasPendingBackgroundWork, retainContext);
         yield* Deferred.await(interrupted);
+        yield* harness.until(() => harness.pendingBackgroundTasks().length === 0);
         yield* unload;
         if (retainContext) yield* Deferred.await(monitorCompleted);
         assert.deepEqual(
@@ -6187,6 +6304,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const terminal = harness.terminalEvents()[0]!;
         assert.equal(terminal.status, "completed");
         assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        yield* harness.runtime.awaitBackgroundTasks!({
+          providerThread: harness.providerThread,
+          taskIds: ["4242"],
+          awaited: true,
+        });
+        yield* harness.until(() => harness.pendingBackgroundTasks().length === 1);
         assert.isFalse(
           yield* harness.runtime.hasPendingBackgroundWorkForThread!({
             ...harness.providerThread,
@@ -6203,6 +6326,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             .pipe(Effect.exit);
           assert.equal(failed._tag, "Failure");
           assert.isTrue(yield* harness.hasPendingBackgroundWork);
+          assert.lengthOf(harness.pendingBackgroundTasks(), 1);
         }
         yield* harness.runtime.interruptTurn({
           providerThread: harness.providerThread,
@@ -6212,6 +6336,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           requestRuntimeRestart: true,
         });
         yield* Deferred.await(stopped);
+        yield* harness.until(() => harness.pendingBackgroundTasks().length === 0);
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
         assert.lengthOf(harness.terminalEvents(), 1);
         assert.equal(harness.terminalEvents()[0]?.status, "completed");
