@@ -2,7 +2,11 @@ import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-width";
-import { ThreadMarkdownVideo, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
+import {
+  ThreadMarkdownVideo,
+  ThreadMediaRetainContext,
+  ThreadMediaVisibleContext,
+} from "./ThreadMarkdownVideo";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import {
   enrichedContextLinkCustomization,
@@ -81,6 +85,7 @@ import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import {
   executeAtomQuery,
+  isAtomCommandInterrupted,
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
@@ -98,7 +103,7 @@ import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { textDirection } from "@t3tools/shared/textDirection";
-import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { useFocusEffect, useIsFocused, useNavigation } from "@react-navigation/native";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useDeviceType } from "../../native/native-layout-metrics";
 import { isDuoDevice } from "../../lib/device-type";
@@ -114,8 +119,10 @@ import {
   useSyncExternalStore,
   useId,
   type ComponentPropsWithRef,
+  type Dispatch,
   type ReactNode,
   type RefObject,
+  type SetStateAction,
 } from "react";
 import {
   Image,
@@ -134,9 +141,15 @@ import { useResolveClassNames } from "uniwind";
 import { useReduceMotionEnabled } from "../../lib/appState";
 import { useFilePreviewGallery, FilePreviewGallery } from "../../components/ui/FilePreviewGallery";
 import { assetImageSource } from "../../lib/assetImageSource";
+import { filePreviewSourceIdentifier } from "../../lib/filePreviewGallery";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { isFileBackedComposerAttachment } from "../../lib/composerImages";
 import { useLocalAttachmentPreview } from "../../lib/localAttachmentPreview";
+import {
+  rememberSentImage,
+  sentImageHandoff,
+  type SentImageHandoff,
+} from "../../lib/sentImageHandoff";
 import { messageImageGallery } from "./messageImageGallery";
 import { MARKDOWN_IMAGE_MAX_WIDTH, resolveMarkdownImageDisplaySize } from "./markdownImageSize";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
@@ -438,7 +451,14 @@ function AssistantForkButton(props: {
           },
         })
           .then(async (result) => {
-            if (result._tag !== "Success") return;
+            if (isAtomCommandInterrupted(result)) return;
+            if (result._tag !== "Success") {
+              Dialog.alert(
+                "Could not confirm fork",
+                "Reconnect and check the thread list before trying again.",
+              );
+              return;
+            }
             const targetThreadReady = await waitForThreadShell(
               scopeThreadRef(props.environmentId, targetThreadId),
             );
@@ -483,12 +503,18 @@ function MessageImage(props: {
   readonly maxWidth?: number;
   readonly height?: number;
   readonly accessibilityLabel: string;
+  readonly handoff?: SentImageHandoff;
   readonly onPress: () => void;
-  readonly onLoad?: () => void;
+  readonly onLoad?: (size: { readonly width: number; readonly height: number }) => void;
   readonly onError?: () => void;
 }) {
   const imageStyle = useResolveClassNames(props.className);
-  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
+  const [loadedSize, setSize] = useState<{ width: number; height: number } | null>(null);
+  // Until it loads, assume a handed-off image is a photo larger than the bubble's caps.
+  const size =
+    loadedSize ??
+    (props.handoff ? { width: props.handoff.aspectRatio * 4096, height: 4096 } : null);
+  const contentFit = props.maxWidth === undefined ? "cover" : "contain";
   const displaySize =
     props.maxWidth !== undefined && size !== null
       ? resolveMarkdownImageDisplaySize({
@@ -519,10 +545,12 @@ function MessageImage(props: {
         source={props.source}
         cachePolicy="memory-disk"
         style={{ width: "100%", height: "100%" }}
-        contentFit={props.maxWidth === undefined ? "cover" : "contain"}
+        contentFit={contentFit}
+        placeholder={props.handoff ? { uri: props.handoff.uri } : undefined}
+        placeholderContentFit={contentFit}
         onLoad={(event) => {
           if (props.maxWidth !== undefined) setSize(event.source);
-          props.onLoad?.();
+          props.onLoad?.(event.source);
         }}
         onError={props.onError}
       />
@@ -538,21 +566,34 @@ function MessageAttachmentImage(props: {
   readonly className: string;
   readonly maxWidth?: number;
   readonly height?: number;
+  readonly handoff?: SentImageHandoff;
+  readonly onImageLoad?: (image: SentImageHandoff) => void;
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }) {
   const withGallery = useFilePreviewGallery();
-  const sourceIdentifier = useId();
   const resource = {
     _tag: "attachment" as const,
     attachmentId: props.attachmentId,
     fileName: props.name,
     mimeType: props.mimeType,
   };
+  const sourceIdentifier = filePreviewSourceIdentifier({
+    kind: "image",
+    environmentId: props.environmentId,
+    resource,
+  });
   const uri = useAssetUrl(props.environmentId, resource);
   const refreshAssetUrl = useRefreshAssetUrl(props.environmentId, resource);
   const retriedImage = useRef(false);
+  const { handoff } = props;
+  const source =
+    uri !== null
+      ? assetImageSource(props.environmentId, resource, uri)
+      : handoff !== undefined
+        ? { uri: handoff.uri }
+        : null;
 
-  if (uri === null) {
+  if (source === null) {
     return (
       <View
         className={`${props.className} items-center justify-center`}
@@ -573,11 +614,12 @@ function MessageAttachmentImage(props: {
     <PresentationSource identifier={sourceIdentifier}>
       <MessageImage
         key={props.attachmentId}
-        source={assetImageSource(props.environmentId, resource, uri)}
+        source={source}
         className={props.className}
         maxWidth={props.maxWidth}
         height={props.height}
         accessibilityLabel={`Open ${props.name}`}
+        {...handoffProps(handoff)}
         onPress={() =>
           props.onPressPreview(
             withGallery({
@@ -595,8 +637,10 @@ function MessageAttachmentImage(props: {
             }),
           )
         }
-        onLoad={() => {
+        onLoad={(size) => {
           retriedImage.current = false;
+          if (handoff)
+            props.onImageLoad?.({ uri: handoff.uri, aspectRatio: size.width / size.height });
         }}
         onError={() => {
           if (retriedImage.current) return;
@@ -835,7 +879,10 @@ function MessageAttachmentFile(props: {
   );
 }
 
+const handoffProps = (handoff: SentImageHandoff | undefined) => (handoff ? { handoff } : {});
+
 function UserMessageMedia(props: {
+  readonly messageId: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly pendingAttachments: QueuedThreadMessage["attachments"];
   readonly environmentId: EnvironmentId;
@@ -870,6 +917,8 @@ function UserMessageMedia(props: {
               name={attachment.name}
               mimeType={attachment.mimeType}
               {...imageProps(index)}
+              {...handoffProps(sentImageHandoff(props.messageId, index, attachment.id))}
+              onImageLoad={(loaded) => rememberSentImage(props.messageId, index, loaded)}
               onPressPreview={props.onPressPreview}
             />
           ) : !image && attachment.uploadedAttachmentId ? (
@@ -886,6 +935,8 @@ function UserMessageMedia(props: {
             <PendingMessageMedia
               attachment={attachment}
               {...imageProps(index)}
+              {...handoffProps(sentImageHandoff(props.messageId, index, attachment.id))}
+              onImageLoad={(image) => rememberSentImage(props.messageId, index, image)}
               onPressPreview={props.onPressPreview}
               onPlaybackStart={props.onPlaybackStart}
             />
@@ -902,6 +953,7 @@ function UserMessageMedia(props: {
           name={attachment.name}
           mimeType={attachment.mimeType}
           {...imageProps(props.pendingAttachments.length + index)}
+          {...handoffProps(sentImageHandoff(props.messageId, index))}
           onPressPreview={props.onPressPreview}
         />
       ) : isFileAttachment(attachment) ? (
@@ -968,23 +1020,31 @@ function PendingMessageMedia(props: {
   readonly className: string;
   readonly maxWidth?: number;
   readonly height?: number;
+  readonly handoff?: SentImageHandoff;
+  readonly onImageLoad?: (image: SentImageHandoff) => void;
   readonly onPressPreview: (source: FilePreviewSource) => void;
   readonly onPlaybackStart: () => void;
 }) {
   const withGallery = useFilePreviewGallery();
-  const { attachment } = props;
+  const { attachment, handoff } = props;
   const fileBacked = isFileBackedComposerAttachment(attachment);
   const preview = useLocalAttachmentPreview(fileBacked ? attachment : null);
   if (isImageAttachment(attachment)) {
-    const uri = fileBacked ? preview.uri : (attachment.dataUrl ?? attachment.previewUri);
+    // The composer already showed this image; reuse its pixels and shape instead of a blank box.
+    const uri =
+      handoff?.uri ?? (fileBacked ? preview.uri : (attachment.dataUrl ?? attachment.previewUri));
     return (
       <MessageImage
         key={attachment.id}
-        source={uri === null ? undefined : { uri }}
+        source={uri == null ? undefined : { uri }}
         className={props.className}
         maxWidth={props.maxWidth}
         height={props.height}
         accessibilityLabel={`Open ${attachment.name}`}
+        {...handoffProps(handoff)}
+        onLoad={(size) => {
+          if (uri) props.onImageLoad?.({ uri, aspectRatio: size.width / size.height });
+        }}
         onPress={() => {
           const source = composerImageGallery([attachment])[0];
           if (source) props.onPressPreview(withGallery(source));
@@ -1073,12 +1133,26 @@ function ThreadFeedScrollView(props: ComponentPropsWithRef<typeof Animated.Scrol
   );
 }
 
-function ThreadMediaVisibility(props: { readonly children: ReactNode }) {
+function ThreadMediaVisibility(props: {
+  readonly rowId: string;
+  readonly setRetainedRowId: Dispatch<SetStateAction<string | null>>;
+  readonly children: ReactNode;
+}) {
+  const { rowId, setRetainedRowId } = props;
   const [visible, setVisible] = useState(false);
   useViewabilityAmount<ThreadFeedEntry>(
     useCallback((token) => setVisible(token.sizeVisible > 0), []),
   );
-  return <ThreadMediaVisibleContext value={visible}>{props.children}</ThreadMediaVisibleContext>;
+  const retain = useCallback(
+    (retained: boolean) =>
+      setRetainedRowId((current) => (retained ? rowId : current === rowId ? null : current)),
+    [rowId, setRetainedRowId],
+  );
+  return (
+    <ThreadMediaRetainContext value={retain}>
+      <ThreadMediaVisibleContext value={visible}>{props.children}</ThreadMediaVisibleContext>
+    </ThreadMediaRetainContext>
+  );
 }
 
 /** The reply a link sits in; a file it cites may be where the agent worked before writing it. */
@@ -2061,6 +2135,7 @@ function renderFeedEntry(
               style={{ width: props.duoColumns ? "85%" : props.userBubbleMaxWidth }}
             >
               <UserMessageMedia
+                messageId={message.id}
                 attachments={mediaAttachments}
                 pendingAttachments={pendingMedia}
                 environmentId={props.environmentId}
@@ -2759,6 +2834,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const openPullRequest = useOpenPullRequest();
   const navigation = useNavigation();
   const openLinkedThread = useOpenLinkedThread();
+  // Recycling a row disposes its native audio player, so a started clip's row stays rendered.
+  const [retainedMediaRowId, setRetainedMediaRowId] = useState<string | null>(null);
+  const focused = useIsFocused();
+  if (!focused && retainedMediaRowId !== null) setRetainedMediaRowId(null);
   const onOpenTurnDiff = useCallback(
     (checkpoint: ThreadCheckpointSummary) => {
       setReviewSelectedSectionId(
@@ -3386,9 +3465,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     headerMaterialVisibleRef.current = visible;
     onHeaderMaterialVisibilityChange?.(visible);
   };
+  const feedThreadKey = scopedThreadKey(props.environmentId, props.threadId);
+  const [loadedListKey, setLoadedListKey] = useState<string | null>(null);
+  // LegendList hides rows until it has scrolled to the end, but not its header.
+  const settling = props.feed.length > 0 && loadedListKey !== feedThreadKey;
   const handleMetricsChange = () => {
     const state = listRef.current?.getState();
-    if (state) onIsAtEndChange?.(state.isAtEnd);
+    // Offset 0 before the first positioning, and the gaps while rows measure in, are not the
+    // user leaving the end; only a scroll away stops end following.
+    if (state) onIsAtEndChange?.(settling || state.isAtEnd || state.isFollowingEnd);
   };
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     reportHeaderMaterialVisibility(
@@ -3403,6 +3488,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     handleMetricsChange();
     const stops = [
       state.listen("isAtEnd", handleMetricsChange),
+      state.listen("isFollowingEnd", handleMetricsChange),
       state.listen("totalSize", handleMetricsChange),
       state.listen("footerSize", handleMetricsChange),
       state.listen("headerSize", handleMetricsChange),
@@ -3411,7 +3497,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       for (const stop of stops) stop();
     };
   }, [listRef, handleMetricsChange]);
-  const feedThreadKey = scopedThreadKey(props.environmentId, props.threadId);
   const [workGroupScrollPositions] = useState(
     () => new Map<string, ThreadWorkGroupScrollPosition>(),
   );
@@ -3419,7 +3504,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // Opening at a message: once the filled list has loaded, the render that sees
   // the jump unfolds a run hiding the message and stops following the end, so
   // the committed list holds the target row with end maintenance off.
-  const [loadedListKey, setLoadedListKey] = useState<string | null>(null);
   const { jumpToMessageId } = props;
   const jumpReady = !!jumpToMessageId && loadedListKey === feedThreadKey;
   if (jumpReady && revealedMessageId !== jumpToMessageId) {
@@ -3751,7 +3835,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         threadId={props.threadId}
         workspaceRoot={props.workspaceRoot}
       >
-        <ThreadMediaVisibility>
+        <ThreadMediaVisibility rowId={info.item.id} setRetainedRowId={setRetainedMediaRowId}>
           {info.item.type === "message" &&
           info.item.message.projectedItem?.item.type === "user_message" &&
           info.item.message.projectedItem.item.freshContext ? (
@@ -3890,6 +3974,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             }}
             getFixedItemSize={getFixedItemSize}
             drawDistance={500}
+            {...(retainedMediaRowId ? { alwaysRender: { keys: [retainedMediaRowId] } } : {})}
             keyboardShouldPersistTaps="always"
             keyboardDismissMode="none"
             // Android scrolls a tapped selectable message into view when it takes focus, which reads
@@ -3913,7 +3998,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onScroll={handleScroll}
             scrollEventThrottle={16}
             ListHeaderComponent={
-              <>
+              <View style={settling ? { opacity: 0 } : undefined}>
                 {usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />}
                 {setupAnchorIndex < 0 && props.worktreeSetup ? (
                   <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
@@ -3923,7 +4008,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
                 {props.historyControls ? (
                   <ThreadFeedLoadEarlierControl {...props.historyControls} />
                 ) : null}
-              </>
+              </View>
             }
             ListFooterComponent={
               props.pendingHandoff ? (

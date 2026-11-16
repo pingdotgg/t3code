@@ -70,6 +70,7 @@ import { getProviderOptionCurrentValue, withLegacyUltracodeEffort } from "@t3too
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { withOneShotContext } from "@t3tools/shared/forkOneShot"; // fork: one-shot
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { threadPullRequestUpdatedAtMs } from "@t3tools/shared/threadPullRequests";
 import {
@@ -396,16 +397,26 @@ const advertisedModel = (provider: ServerProvider, model: string) =>
     candidate.aliases?.some((alias) => alias.toLowerCase() === model.toLowerCase()),
   );
 
+const withV = (version: string) => (version.startsWith("v") ? version : `v${version}`);
+
 /** A provider that lists no models accepts any slug. */
-export const requireAdvertisedModel = (provider: ServerProvider, model: string) =>
-  provider.models.length > 0 && advertisedModel(provider, model) === undefined
-    ? Effect.fail(
-        failure(
-          "model_unavailable",
-          `Model ${model} is not advertised by provider ${provider.instanceId}. ${advertisedModelsHint(provider.models, model)}`,
-        ),
-      )
-    : Effect.void;
+export const requireAdvertisedModel = (provider: ServerProvider, model: string) => {
+  if (provider.models.length === 0 || advertisedModel(provider, model) !== undefined) {
+    return Effect.void;
+  }
+  const updateRequired = provider.updateRequiredModels?.find(
+    (candidate) => candidate.slug === model,
+  );
+  const detectedVersion = provider.installedVersion ?? provider.version;
+  return Effect.fail(
+    failure(
+      "model_unavailable",
+      updateRequired === undefined
+        ? `Model ${model} is not advertised by provider ${provider.instanceId}. ${advertisedModelsHint(provider.models, model)}`
+        : `Model ${model} needs provider ${provider.instanceId} at ${withV(updateRequired.minVersion)} or newer, but the detected CLI is ${detectedVersion === null ? "an unknown version" : withV(detectedVersion)}. Ask the user to update it or point the provider's binary path at a newer install.`,
+    ),
+  );
+};
 
 function providerConstraints(
   provider: ServerProvider | undefined,
@@ -1272,17 +1283,21 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const projectDefaultModelSelection = (
-    project: Effect.Success<ReturnType<typeof requireProject>>,
-  ) =>
-    project.defaultModelSelection === null
-      ? Effect.fail(
-          failure(
-            "invalid_request",
-            `Project ${project.id} has no default model, so this caller cannot pick one for it.`,
-          ),
-        )
-      : Effect.succeed(project.defaultModelSelection);
+  const projectDefaultModelSelection = Effect.fn(
+    "OrchestratorMcpService.projectDefaultModelSelection",
+  )(function* (project: Effect.Success<ReturnType<typeof requireProject>>) {
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+    );
+    const selection = resolveProjectSettings(settings, project.id, project).settings
+      .defaultModelSelection;
+    if (selection === null)
+      return yield* failure(
+        "invalid_request",
+        `Project ${project.id} has no default model, so this caller cannot pick one for it.`,
+      );
+    return selection;
+  });
   const secretRequests = yield* SecretRequests.SecretRequests;
 
   const requireCapability = (scope: McpInvocationScope) =>
@@ -2009,7 +2024,7 @@ const make = Effect.gen(function* () {
       hasPendingChildRuns: false,
       providerInstanceId: task.providerInstanceId,
       model: task.model,
-      executedModel: null,
+      executedModel: task.executedModel ?? null,
       summary: task.result,
       resultContextTransferId: null,
       latestTerminalRunId: null,

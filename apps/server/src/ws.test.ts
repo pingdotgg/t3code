@@ -24,6 +24,7 @@ import {
   TurnItemId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderThreadId,
   RunId,
   SourceControlRepositoryError,
   WS_METHODS,
@@ -2358,6 +2359,7 @@ const acpThreadId = (sessionId: string) =>
 const acpSessionTags = [
   WS_METHODS.serverListAcpRegistrySessions,
   WS_METHODS.serverImportAcpRegistrySession,
+  WS_METHODS.serverDeleteAcpRegistrySession,
 ] as const;
 const acpSessionRpcs = WsRpcGroup.omit(
   ...[...WsRpcGroup.requests.keys()].filter(
@@ -2375,7 +2377,7 @@ const acpStores = Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
 
 const seedAcpThread = Effect.fn(function* (
   sessionId: string,
-  state: { readonly imported: boolean; readonly ran: boolean },
+  state: { readonly imported: boolean; readonly ran: boolean; readonly nativeId?: string },
 ) {
   const sink = yield* EventSink.EventSinkV2;
   const now = DateTime.makeUnsafe("2026-10-23T00:00:00.000Z");
@@ -2413,6 +2415,32 @@ const seedAcpThread = Effect.fn(function* (
       payload: thread,
     },
   ];
+  if (state.nativeId !== undefined) {
+    events.push({
+      id: EventId.make(`${threadId}:provider`),
+      type: "provider-thread.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: ProviderThreadId.make(`${threadId}:provider`),
+        appThreadId: threadId,
+        ownerNodeId: null,
+        driver: acpDriver,
+        providerInstanceId: acpInstanceId,
+        providerSessionId: null,
+        nativeThreadRef: { driver: acpDriver, nativeId: state.nativeId, strength: "strong" },
+        nativeConversationHeadRef: null,
+        status: "idle",
+        firstRunOrdinal: null,
+        lastRunOrdinal: null,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        pendingBackgroundTasks: [],
+      },
+    });
+  }
   if (state.ran) {
     events.push({
       id: EventId.make(`${threadId}:run`),
@@ -2445,10 +2473,17 @@ const seedAcpThread = Effect.fn(function* (
 it.effect("ACP session RPCs list a thread missing its history and repair it on import", () =>
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
     const pending = yield* seedAcpThread("pending", { imported: false, ran: false });
     const complete = yield* seedAcpThread("complete", { imported: true, ran: false });
     const ran = yield* seedAcpThread("ran", { imported: false, ran: true });
+    const owned = yield* seedAcpThread("existing-t3-thread", {
+      imported: false,
+      ran: true,
+      nativeId: "owned-session",
+    });
     const repaired: Array<ThreadId> = [];
+    const deleted: Array<string> = [];
     const session = (sessionId: string) => ({
       sessionId,
       cwd: "/workspace/acp",
@@ -2459,15 +2494,21 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
     });
     const instance = {
       driverKind: acpDriver,
-      snapshot: { getSnapshot: Effect.succeed({ nativeSessions: { canLoad: true } }) },
+      snapshot: {
+        getSnapshot: Effect.succeed({ nativeSessions: { canLoad: true, canDelete: true } }),
+      },
       acpSessionManagement: {
         listSessions: () =>
           Effect.succeed({
-            sessions: ["new", "pending", "complete", "ran"].map(session),
+            sessions: ["new", "pending", "complete", "ran", "owned-session"].map(session),
             nextCursor: null,
             canLoad: true,
             canResume: true,
             canDelete: true,
+          }),
+        deleteSession: ({ sessionId }: { readonly sessionId: string }) =>
+          Effect.sync(() => {
+            deleted.push(sessionId);
           }),
       },
     } as unknown as ProviderInstance;
@@ -2518,6 +2559,7 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
         importNativeHistory: ({ threadId }) =>
           Effect.sync(() => repaired.push(threadId)).pipe(Effect.as(1)),
       }),
+      Layer.succeed(SqlClient.SqlClient, sql),
     );
     const services = AcpRegistrySessions.layer.pipe(Layer.provideMerge(dependencies));
     const client = yield* RpcTest.makeClient(acpSessionRpcs).pipe(
@@ -2559,6 +2601,7 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
         ["pending", pending, true],
         ["complete", complete, undefined],
         ["ran", ran, undefined],
+        ["owned-session", owned, undefined],
       ],
     );
 
@@ -2569,6 +2612,20 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
     });
     assert.deepEqual(imported, { threadId: pending, imported: true });
     assert.deepEqual(repaired, [pending]);
+    const reopened = yield* client[WS_METHODS.serverImportAcpRegistrySession]({
+      instanceId: acpInstanceId,
+      projectId: acpProjectId,
+      sessionId: "owned-session",
+    });
+    assert.deepEqual(reopened, { threadId: owned, imported: false });
+    assert.deepEqual(repaired, [pending]);
+    const deletion = yield* client[WS_METHODS.serverDeleteAcpRegistrySession]({
+      instanceId: acpInstanceId,
+      projectId: acpProjectId,
+      sessionId: "owned-session",
+    }).pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(deletion));
+    assert.deepEqual(deleted, []);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
