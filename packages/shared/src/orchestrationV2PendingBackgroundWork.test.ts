@@ -473,6 +473,28 @@ describe("derivePendingBackgroundWork kinds", () => {
       expect(backgroundWorkHoldsCompletion(running)).toBe(true);
     });
 
+    it("keeps holding the thread after checks finish until a required review approves", () => {
+      const holds = (reviewDecision: "approved" | "changes-requested" | "review-required" | null) =>
+        backgroundWorkHoldsCompletion(
+          derivePendingBackgroundWork({
+            latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+            providerThreads: [],
+            turnItems: [],
+            pullRequests: [
+              {
+                ...link(1, {}),
+                snapshot: { state: "open", reviewDecision },
+                watch: { ...watch, passed: true, checksPending: false },
+              },
+            ],
+          }),
+        );
+      expect(holds("review-required")).toBe(true);
+      expect(holds("changes-requested")).toBe(true);
+      expect(holds("approved")).toBe(false);
+      expect(holds(null)).toBe(false);
+    });
+
     it("lists no watch while a run is active", () => {
       expect(
         derivePendingBackgroundWork({

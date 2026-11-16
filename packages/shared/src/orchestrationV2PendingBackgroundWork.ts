@@ -134,7 +134,10 @@ type PendingBackgroundWorkPullRequest = Pick<
   ThreadPullRequestLink,
   "host" | "repository" | "number" | "url" | "source" | "watch"
 > & {
-  readonly snapshot: Pick<NonNullable<ThreadPullRequestLink["snapshot"]>, "state"> | null;
+  readonly snapshot: Pick<
+    NonNullable<ThreadPullRequestLink["snapshot"]>,
+    "state" | "reviewDecision"
+  > | null;
 };
 
 type PendingBackgroundWorkProviderThread = Pick<
@@ -326,9 +329,20 @@ function pullRequestWatchTasks(
             taskId: `${PULL_REQUEST_WATCH_TASK_ID}${link.host.toLowerCase()}/${link.repository.toLowerCase()}#${link.number}`,
             description: `Watching pull request #${link.number}`,
             kind: "monitor" as const,
-            // Once every check finished, a person moves the PR next: the watch stays on but holds nothing.
-            ...(link.watch.checksPending === false ? {} : { awaited: true as const }),
+            ...(watchHoldsThread(link.watch, link.snapshot) ? { awaited: true as const } : {}),
           },
         ],
+  );
+}
+
+// After checks finish, a required review still holds the thread until it approves.
+// A PR that needs no review then holds nothing, though the watch stays on.
+function watchHoldsThread(
+  watch: NonNullable<PendingBackgroundWorkPullRequest["watch"]>,
+  snapshot: PendingBackgroundWorkPullRequest["snapshot"],
+): boolean {
+  const reviewDecision = snapshot?.reviewDecision ?? null;
+  return (
+    watch.checksPending !== false || (reviewDecision !== null && reviewDecision !== "approved")
   );
 }

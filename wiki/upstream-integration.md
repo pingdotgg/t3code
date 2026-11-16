@@ -5,8 +5,8 @@ description: Main and branch integration boundaries and fork compatibility excep
 tags: [upstream, fork, integration]
 status: stable
 generated:
-  by: opencode/gpt-6.1-sol
-  at: 2026-11-16T18:15:36+00:00
+  by: claude-code/claude-opus-5-5
+  at: 2026-11-16T23:30:09+00:00
 verified:
   - by: opencode/gpt-6.1-sol
     at: 2026-11-16T18:15:36+00:00
@@ -408,6 +408,9 @@ sources:
   - id: open-in-default-app
     resource: ../apps/web/src/components/chat/OpenInPicker.tsx
     title: Open-in picker item that opens a file with the host's default app
+  - id: pr-watch-review-hold
+    resource: ../packages/shared/src/orchestrationV2PendingBackgroundWork.ts
+    title: Pull request watch task that stays awaited until a required review approves
 ---
 
 # Upstream integration
@@ -1153,6 +1156,16 @@ and never becomes the favorite editor, so the contracts and server stay
 unchanged. Keep the item when integrating upstream picker
 changes.[^open-in-default-app]
 
+## Pull request watches hold through review
+
+Upstream (`36254ab82`) stops a watched pull request from holding its thread
+once every check finishes, so the thread leaves Waiting while it still needs a
+reviewer. The fork keeps the watch task awaited while checks run, then while the
+snapshot's `reviewDecision` is `review-required` or `changes-requested`. A pull
+request with no review decision stops holding once its checks finish, as
+upstream does. Keep `watchHoldsThread` when integrating upstream pull request
+watch changes.[^pr-watch-review-hold]
+
 ## Rechecking the boundary
 
 After fetching `origin main` and `upstream main`, use ancestry to identify the
@@ -1266,6 +1279,8 @@ git log --reverse --oneline origin/main..upstream/main
 [^sidebar-all-projects-search]: The sidebar project filter's search ranking, which keeps the "All projects" row searchable.
 
 [^open-in-default-app]: The Open-in picker's "Default app" item and its local-exec, file-only gate.
+
+[^pr-watch-review-hold]: The pull request watch task and the review decision that keeps it awaited.
 
 [^reviewed-fork-main]: Exact fork main revision fetched for this review.
 
