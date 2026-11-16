@@ -22,8 +22,10 @@ export function assertPiProviderThreadResumeOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
 ) {
-  const processStarts = transcript.entries.filter(
-    (entry) => entry.type === "expect_outbound" && field(entry.frame, "type") === "process_start",
+  const processStarts = transcript.entries.flatMap((entry) =>
+    entry.type === "expect_outbound" && field(entry.frame, "type") === "process_start"
+      ? [entry.frame]
+      : [],
   );
   assert.lengthOf(processStarts, 2, "the idle release must retire the first Pi process");
   const switches = transcript.entries.flatMap((entry) =>
@@ -31,11 +33,13 @@ export function assertPiProviderThreadResumeOutput(
       ? [entry]
       : [],
   );
+  const resumedArgs = field(processStarts[1], "args");
   assert.deepEqual(
-    switches.map((entry) => [entry.label, field(entry.frame, "sessionPath")]),
-    [["switch_session@p2", "/pi-sessions/session-1.jsonl"]],
-    "the respawned process must resume the first session file",
+    Array.isArray(resumedArgs) ? resumedArgs.slice(0, 4) : resumedArgs,
+    ["--mode", "rpc", "--session", "/pi-sessions/session-1.jsonl"],
+    "the respawned process must attach the first session file at startup",
   );
+  assert.lengthOf(switches, 0, "an already attached session must not reload extensions");
 
   assertBaseProjection({
     result,
