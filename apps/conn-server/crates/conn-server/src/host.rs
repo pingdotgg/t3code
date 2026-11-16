@@ -136,6 +136,7 @@ impl EngineHost for Host {
                 return Ok(attachments);
             };
             let list: Vec<ChatAttachment> = from_json(attachments).map_err(|e| e.to_string())?;
+            conn_files::attachments::validate_claims(&list)?;
             tokio::task::spawn_blocking(move || {
                 let mut claimed = Vec::with_capacity(list.len());
                 for attachment in &list {

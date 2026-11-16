@@ -197,7 +197,7 @@ const CARGO_RUN_VARIABLE =
  */
 export const RUN_KNOBS = [
   "ACP_FIXTURE", "ACP_DUMP", "CONN_CONTRACT_REAL_PAYLOADS",
-  "RSS_TURNS", "RSS_SETTINGS", "STREAM", "REOPEN", "IDLE_MS", "CHECKPOINTS",
+  "REPLAY_MCP_CAPTURE", "RSS_TURNS", "RSS_SETTINGS", "STREAM", "REOPEN", "IDLE_MS", "CHECKPOINTS",
 ];
 
 /** What the cargo runner sets itself, whatever the shell has. */

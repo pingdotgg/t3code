@@ -226,6 +226,30 @@ impl TerminalManager {
         &self,
         input: TerminalOpenInput,
     ) -> Result<TerminalSessionSnapshot, TerminalOpenError> {
+        let mut state = self.inner.lock();
+        let key = self.open_in(&mut state, input)?;
+        state
+            .sessions
+            .get(&key)
+            .map(|s| s.snapshot(None))
+            .ok_or_else(|| lookup_error(&key))
+    }
+
+    /// Opens a setup terminal and subscribes before its first output can be published.
+    pub fn open_observed(
+        &self,
+        input: TerminalOpenInput,
+    ) -> Result<Subscription, TerminalOpenError> {
+        let mut state = self.inner.lock();
+        let key = self.open_in(&mut state, input)?;
+        Ok(self.subscribe(&mut state, key, None, None, None))
+    }
+
+    fn open_in(
+        &self,
+        state: &mut State,
+        input: TerminalOpenInput,
+    ) -> Result<Key, TerminalOpenError> {
         let key = (input.thread_id.clone(), input.terminal_id.clone());
         let launch = Launch {
             cwd: input.cwd,
@@ -235,14 +259,9 @@ impl TerminalManager {
             env: input.env.map(into_env),
             stop_on_settle: input.stop_on_settle,
         };
-        let mut state = self.inner.lock();
         let grid = state.shared_grid(&key);
-        self.inner.open_locked(&mut state, &key, launch, grid)?;
-        state
-            .sessions
-            .get(&key)
-            .map(|s| s.snapshot(None))
-            .ok_or_else(|| lookup_error(&key))
+        self.inner.open_locked(state, &key, launch, grid)?;
+        Ok(key)
     }
 
     /// `terminal.attach`: the terminal's stream, starting with a snapshot (or `closed`).

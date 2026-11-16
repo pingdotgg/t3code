@@ -11,3 +11,6 @@ request_secret
 panel_open
 mcp_call
 mcp_connect
+create_threads
+t3_worktree_handoff
+t3_worktree_status
