@@ -84,6 +84,31 @@ it.effect("asks for no credential when the identity resolver left the base URL e
   }),
 );
 
+it.effect.each([
+  ["github-work", "git@github-work:team/project.git"],
+  ["github-ci", "git@github-ci:team/project.git"],
+  ["github-work", "ssh://git@github-work:22/team/project.git"],
+  ["github.com-work", "git@github.com-work:team/project.git"],
+] as const)("recognizes a GitHub SSH alias on %s (%s)", ([host, remoteUrl]) =>
+  Effect.gen(function* () {
+    const discovery = yield* makeDiscovery((host) =>
+      host === "github.com"
+        ? Effect.succeed({ token: Redacted.make("token"), fingerprint: `${host}:fingerprint` })
+        : Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host })),
+    );
+    if (discovery.type !== "managed-cli") return assert.fail("expected a managed CLI");
+    const provider = yield* discovery.refineUnknownRemote({
+      cwd: "/repo",
+      context: { ...unknownContext(`https://${host}`), remoteUrl },
+    });
+    assert.deepStrictEqual(provider, {
+      kind: SourceControlProviderKind.make("github"),
+      name: "GitHub",
+      baseUrl: "https://github.com",
+    });
+  }),
+);
+
 const decodeSettings = Schema.decodeSync(ServerSettings);
 const referencedTokenSettings = decodeSettings({
   sourceControlHosts: {
@@ -92,9 +117,26 @@ const referencedTokenSettings = decodeSettings({
 });
 
 it.effect.each([
-  { name: "readable", token: "resolved-token", source: "the token saved in Settings" },
-  { name: "unreadable", token: "", source: "GH_TOKEN from the server environment" },
-])("checks the $name GitHub token reference against the API", (scenario) =>
+  {
+    name: "a readable",
+    token: "resolved-token",
+    status: "authenticated",
+    detail: "the token saved in Settings",
+  },
+  {
+    name: "no",
+    token: "",
+    status: "authenticated",
+    detail: "GH_TOKEN from the server environment",
+  },
+  // getWithSecrets leaves a reference its secret provider could not read in place.
+  {
+    name: "an unreadable",
+    token: { provider: "vault", reference: "op://v/gh" },
+    status: "unauthenticated",
+    detail: 'secret provider "vault"',
+  },
+])("reports $name saved GitHub token instead of another credential", (scenario) =>
   Effect.gen(function* () {
     const paths: Array<string> = [];
     const discovery = yield* GitHubSourceControlProvider.makeDiscovery.pipe(
@@ -153,9 +195,13 @@ it.effect.each([
     );
     if (discovery.type !== "managed-cli") return assert.fail("expected a managed CLI");
     const item = yield* discovery.probe("/repo");
-    assert.deepStrictEqual(paths, ["user"]);
-    assert.strictEqual(item.auth.status, "authenticated");
-    assert.deepStrictEqual(item.auth.account, Option.some("octocat"));
-    assert.include(Option.getOrThrow(item.auth.detail), scenario.source);
+    const authenticated = scenario.status === "authenticated";
+    assert.deepStrictEqual(paths, authenticated ? ["user"] : []);
+    assert.strictEqual(item.auth.status, scenario.status);
+    assert.deepStrictEqual(
+      item.auth.account,
+      authenticated ? Option.some("octocat") : Option.none(),
+    );
+    assert.include(Option.getOrThrow(item.auth.detail), scenario.detail);
   }),
 );

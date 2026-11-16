@@ -5,6 +5,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { createModelSelection } from "@t3tools/shared/model";
 import { beforeEach, vi } from "vite-plus/test";
@@ -40,7 +41,7 @@ const layerFs = FileSystem.layerNoop({
   exists: () => Effect.succeed(hasCustomPolicy),
   makeTempDirectoryScoped: () => Effect.succeed("/isolated-text-generation"),
 });
-const layerTest = Layer.merge(layerFs, CursorSdk.layer);
+const layerTest = CursorSdk.layer.pipe(Layer.provideMerge(Layer.merge(layerFs, Path.layer)));
 
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 const cursorSettings = decodeCursorSettings({ enabled: true });
@@ -107,11 +108,18 @@ describe("CursorTextGeneration", () => {
 
   it.effect("continues in the temp directory when the SDK cannot sandbox", () =>
     Effect.gen(function* () {
-      cursorSdkMock.create.mockImplementationOnce(async () => {
-        throw new Error(
-          "Local SDK sandboxing was requested, but sandboxing is not supported in this environment. Disable local.sandboxOptions.enabled or remove ~/.cursor/sandbox.json to run without sandboxing.",
-        );
-      });
+      // The SDK checks sandbox support lazily, so create succeeds and send rejects.
+      cursorSdkMock.create.mockImplementationOnce(async () => ({
+        close: cursorSdkMock.close,
+        [Symbol.asyncDispose]: async () => {
+          cursorSdkMock.close();
+        },
+        send: async () => {
+          throw new Error(
+            "Local SDK sandboxing was requested, but sandboxing is not supported in this environment. Disable local.sandboxOptions.enabled or remove ~/.cursor/sandbox.json to run without sandboxing.",
+          );
+        },
+      }));
       const textGeneration = yield* makeCursorTextGeneration(cursorSettings, {
         CURSOR_API_KEY: "test-cursor-key",
       });
@@ -194,14 +202,28 @@ describe("CursorTextGeneration", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect.each(["error", "cancelled"] as const)(
-    "rejects a %s Cursor SDK run that includes valid title JSON",
-    (status) =>
+  it.effect.each([
+    {
+      status: "error",
+      error: { message: "Raw Cursor usage text", code: "PRO_USER_USAGE_LIMIT" },
+      detail:
+        "Cursor usage limit reached. Try again later or choose another text-generation provider.",
+    },
+    {
+      status: "error",
+      error: { message: "Raw Cursor backend text", code: "internal" },
+      detail: "Cursor SDK request finished with an error.",
+    },
+    { status: "cancelled", error: undefined, detail: "Cursor SDK request was cancelled." },
+  ] as const)(
+    "rejects a $status Cursor SDK run ($error.code) that includes valid title JSON",
+    ({ status, error, detail }) =>
       Effect.gen(function* () {
         const promptResult = {
           id: "run-cursor-partial-title-test",
           status,
           result: '{"title":"Partial title from a failed run."}',
+          ...(error ? { error } : {}),
         } satisfies RunResult;
         cursorSdkMock.prompt.mockResolvedValueOnce(promptResult);
         const generation = yield* makeCursorTextGeneration(cursorSettings, {
@@ -219,11 +241,9 @@ describe("CursorTextGeneration", () => {
         );
         expect(failure).toBeInstanceOf(TextGenerationError);
         expect(failure.operation).toBe("generateThreadTitle");
-        expect(failure.detail).toBe(
-          status === "cancelled"
-            ? "Cursor SDK request was cancelled."
-            : "Cursor SDK request finished with an error.",
-        );
+        expect(failure.detail).toBe(detail);
+        expect(failure.message).not.toContain("Raw Cursor");
+        expect(failure.cause).toBe(error);
         expect(cursorSdkMock.close).toHaveBeenCalledOnce();
       }).pipe(Effect.provide(layerTest)),
   );

@@ -149,6 +149,16 @@ describe("resolveSearchUrlTemplate", () => {
 });
 
 describe("normalizePreviewUrl", () => {
+  it.each([
+    ["127.0.0.2:3000/path", "http://127.0.0.2:3000/path"],
+    ["127.255.255.254:443/path", "http://127.255.255.254:443/path"],
+    ["0x7f.0.0.2:3000", "http://127.0.0.2:3000/"],
+    ["127.0.0.2.example.com:3000", "https://127.0.0.2.example.com:3000/"],
+    ["https://127.0.0.2:80/path", "https://127.0.0.2:80/path"],
+  ])("infers the scheme for loopback-looking %s", (input, expected) => {
+    expect(normalizePreviewUrl(input)).toBe(expected);
+  });
+
   it("tells agents how to open a blank tab and which URLs are accepted", () => {
     expect(() => normalizePreviewUrl("about:blank")).toThrow(
       /preview_open, omit url when creating a new tab[^.]*blank tab/i,
@@ -178,5 +188,19 @@ describe("normalizePreviewUrl", () => {
         /user|password|access_token|secret|fragment/,
       );
     }
+  });
+
+  it("reports explicit non-web schemes instead of reading them as a host", () => {
+    for (const [rawUrl, protocol] of [
+      ["about:blank", "about:"],
+      ["mailto:alice@example.com", "mailto:"],
+      ["javascript:alert(1)", "javascript:"],
+    ] as const) {
+      expect(() => normalizePreviewUrl(rawUrl)).toThrow(
+        expect.objectContaining({ reason: "unsupported-protocol", protocol }),
+      );
+    }
+    expect(normalizePreviewUrl("localhost:3000")).toBe("http://localhost:3000/");
+    expect(normalizePreviewUrl("devbox:8080")).toBe("https://devbox:8080/");
   });
 });

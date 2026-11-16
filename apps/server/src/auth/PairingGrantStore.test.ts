@@ -70,6 +70,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
     ),
   );
 
+  it.effect("accepts a one-time token typed in hyphen- or space-separated groups", () =>
+    Effect.gen(function* () {
+      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+      const issued = yield* bootstrapCredentials.issueOneTimeToken();
+      const formatted = issued.credential.match(/.{1,4}/g)!.join("-");
+      const consumed = yield* bootstrapCredentials.consume(formatted.toLowerCase());
+      const second = yield* bootstrapCredentials.issueOneTimeToken();
+      const spaced = yield* bootstrapCredentials.consume(
+        second.credential.match(/.{1,4}/g)!.join(" "),
+      );
+
+      expect(consumed.method).toBe("one-time-token");
+      expect(spaced.method).toBe("one-time-token");
+    }).pipe(Effect.provide(layerPairingGrantStore())),
+  );
+
   it.effect("atomically consumes a one-time token when multiple requests race", () =>
     Effect.gen(function* () {
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
@@ -182,15 +198,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
       yield* TestClock.adjust(Duration.days(5));
       const now = 5 * 24 * 60 * 60 * 1000;
       const current = yield* bootstrapCredentials.consume(
-        currentDesktopBootstrapToken("desktop-secret", now),
+        yield* currentDesktopBootstrapToken("desktop-secret", now).pipe(
+          Effect.provide(NodeCrypto.layerMac),
+        ),
       );
       expect(current.method).toBe("desktop-bootstrap");
 
-      const stale = yield* Effect.flip(
-        bootstrapCredentials.consume(
-          currentDesktopBootstrapToken("desktop-secret", now - 2 * window),
-        ),
-      );
+      const staleToken = yield* currentDesktopBootstrapToken(
+        "desktop-secret",
+        now - 2 * window,
+      ).pipe(Effect.provide(NodeCrypto.layerMac));
+      const stale = yield* Effect.flip(bootstrapCredentials.consume(staleToken));
       expect(stale._tag).toBe("UnknownBootstrapCredentialError");
 
       const launch = yield* Effect.flip(bootstrapCredentials.consume("desktop-bootstrap-token"));
@@ -216,6 +234,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
         Stream.runForEach((change) => Queue.offer(changes, change)),
         Effect.forkScoped({ startImmediately: true }),
       );
+      // An app approval code sends no update, issued or spent; the next belongs to a plain code.
+      const approval = yield* grants.issueOneTimeToken({ mcpApproval: "auto" });
+      yield* grants.consume(approval.credential, { mcpApproval: "auto" });
       for (const input of [{}, { label: "Synthetic phone" }]) {
         const issued = yield* grants.issueOneTimeToken(input);
         const change = yield* Queue.take(changes);

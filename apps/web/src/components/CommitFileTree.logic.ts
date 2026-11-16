@@ -20,7 +20,6 @@ export function buildCommitFileTree(files: ReadonlyArray<CommitFile>): TurnDiffT
       additions: file.insertions,
       deletions: file.deletions,
     })),
-    { splitBackslashes: false },
   );
 }
 

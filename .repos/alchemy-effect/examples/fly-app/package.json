@@ -17,9 +17,13 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@alchemy.run/fly": "workspace:*",
     "@distilled.cloud/fly-io": "workspace:*",
     "@effect/platform-node": "catalog:",
     "alchemy": "workspace:*",
     "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/test": "workspace:*"
   }
 }

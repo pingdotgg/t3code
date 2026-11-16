@@ -4,8 +4,9 @@ import UIKit
 /// Wraps a screen's header scroll view. Where a column pads its content away from the iPhone Duo's
 /// vertical bar, this widens the scroll view under the bar, like the system apps' lists. UIKit
 /// draws the header's scroll-edge effect inside the scroll view, so the blur reaches the bar while
-/// the content stays in the safe area. Everything happens in UIKit layout, so folds move the blur
-/// and the content together.
+/// the content stays in the safe area, and the scroll indicator runs along the screen edge past the
+/// bar, as in Messages. Everything happens in UIKit layout, so folds move the blur and the content
+/// together.
 final class T3ScrollEdgeBleedView: ExpoView {
   // Fabric recycles scroll views, so everything changed here is put back before this view leaves
   // the window, which unmounting does before any recycling.
@@ -95,8 +96,11 @@ final class T3ScrollEdgeBleedView: ExpoView {
     // The vertical-bar API ships in the iOS 27.1 SDK (UIKit 9127.0.85); see T3LayoutMetricsView.
     #if canImport(UIKit, _version: 9127.0.85)
     if #available(iOS 27.1, *) {
+      // UIKit leaves the trait unset in a split view's inspector column, though the bar overlaps
+      // it; the flush check above still decides whether this view sits at the bar.
+      let traits = window?.rootViewController?.traitCollection ?? traitCollection
       let rtl = effectiveUserInterfaceLayoutDirection == .rightToLeft
-      switch traitCollection.verticalBarEdge {
+      switch traits.verticalBarEdge {
       case .leading: return rtl ? .right : .left
       case .trailing: return rtl ? .left : .right
       default: return nil
@@ -132,11 +136,6 @@ final class T3ScrollEdgeBleedView: ExpoView {
       // The scroll view itself still clips its content.
       containerClipped = containerClipped ?? true
       container.layer.masksToBounds = false
-    }
-    var indicators = scrollView.verticalScrollIndicatorInsets
-    if indicators.right != bleed.right {
-      indicators.right = bleed.right
-      scrollView.verticalScrollIndicatorInsets = indicators
     }
     applied = bleeding
   }
