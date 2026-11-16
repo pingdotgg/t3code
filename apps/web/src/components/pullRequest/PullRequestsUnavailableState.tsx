@@ -7,6 +7,9 @@ import { PullRequestGlyph } from "./pullRequestIcons";
 
 import { translateDynamic } from "../../i18nCore";
 
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 export function PullRequestsUnavailableState({
   title = translateDynamic("pullRequest:list.couldNotLoad"),
   error,
@@ -40,7 +43,7 @@ export function PullRequestsUnavailableState({
               aria-busy={refreshing}
             >
               <RefreshIcon size="sm" refreshing={refreshing} />
-              Retry
+              {td("common.retry")}
             </Button>
           ) : null}
           {host ? (

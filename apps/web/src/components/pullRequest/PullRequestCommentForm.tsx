@@ -165,7 +165,7 @@ export function PullRequestCommentForm({
               // The longest label holds the width, so the confirming click lands on the button.
               <span className="inline-grid">
                 <span aria-hidden className="invisible col-start-1 row-start-1">
-                  Close with comment
+                  {td("commentForm.closeWithComment")}
                 </span>
                 <span className="col-start-1 row-start-1">
                   {submitting === "close"

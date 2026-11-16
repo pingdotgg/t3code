@@ -206,7 +206,7 @@ export function PullRequestStackMenu({
               ) : null}
               {mergeHasClosed || mergeLayers.some((layer) => layer.isDraft) ? (
                 <p className="px-2 py-1 text-xs text-muted-foreground">
-                  Every layer being merged must be open and ready for review.
+                  {td("stack.mergeRequirement")}
                 </p>
               ) : null}
             </>
@@ -227,7 +227,7 @@ export function PullRequestStackMenu({
                   onClick={mergeDisabled ? undefined : () => setConfirmation("merge")}
                 >
                   <PullRequestGlyph.merged aria-hidden className="size-3.5" />
-                  Merge stack
+                  {td("stack.merge")}
                 </Button>
               </span>
             }
@@ -272,7 +272,7 @@ export function PullRequestStackMenu({
           </DialogPanel>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfirmation(null)}>
-              Cancel
+              {td("common.cancel")}
             </Button>
             <Button onClick={() => void run()}>
               {confirmation === "merge" ? td("stack.merge") : td("stack.rebase")}

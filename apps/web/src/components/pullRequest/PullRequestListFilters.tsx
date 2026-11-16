@@ -199,7 +199,9 @@ function PullRequestFilterRadioGroup<Value extends string>({
             <span className="flex min-w-0 items-center gap-2">
               <PullRequestFilterOptionIcon option={option} />
               <span className="min-w-0 flex-1 truncate">{option.label}</span>
-              {option.unavailable ? <span className="shrink-0">· Unavailable</span> : null}
+              {option.unavailable ? (
+                <span className="shrink-0">{td("list.unavailableDot")}</span>
+              ) : null}
               <MenuRadioItemIndicator />
             </span>
           </MenuRadioItem>
@@ -310,7 +312,7 @@ function PullRequestAuthorChoices({
         <MenuRadioItem value="">
           <span className="flex min-w-0 items-center gap-2">
             <LayersIcon aria-hidden className="size-3.5" />
-            Anyone
+            {td("list.anyone")}
           </span>
         </MenuRadioItem>
         {visible.map((option) => (
@@ -320,7 +322,7 @@ function PullRequestAuthorChoices({
               <span className="min-w-0 flex-1 truncate">{option.actor.login}</span>
               {option.mergedCount > 0 ? (
                 <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                  {option.mergedCount} merges loaded
+                  {td("list.mergesLoaded", { count: option.mergedCount })}
                 </span>
               ) : null}
             </span>
@@ -351,7 +353,7 @@ function PullRequestAuthorFilter({
     <MenuSub>
       <MenuSubTrigger>
         <UserRoundIcon aria-hidden className="size-3.5" />
-        <span className="flex-1">Author</span>
+        <span className="flex-1">{td("list.author")}</span>
         <span className="min-w-0 max-w-32 truncate text-xs text-muted-foreground">
           {value ?? td("list.anyone")}
         </span>
@@ -454,7 +456,7 @@ function PullRequestLabelFilter({
     <MenuSub>
       <MenuSubTrigger>
         <TagIcon aria-hidden className="size-3.5" />
-        <span className="flex-1">Labels</span>
+        <span className="flex-1">{td("meta.labels")}</span>
         <span className="text-xs text-muted-foreground">
           {value.length === 0 ? td("list.any") : td("list.selectedCount", { count: value.length })}
         </span>

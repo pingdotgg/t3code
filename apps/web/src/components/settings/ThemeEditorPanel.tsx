@@ -893,7 +893,7 @@ export function ThemeEditorPanel({
 
   const renderNameField = () => (
     <label className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] items-center gap-3">
-      <span className="text-sm font-medium">Theme name</span>
+      <span className="text-sm font-medium">{t("themeEditor.themeName")}</span>
       <Input
         autoFocus
         size="sm"
@@ -952,7 +952,7 @@ export function ThemeEditorPanel({
       <div>
         <h3 className="text-sm font-medium">{t("themeEditor.colors")}</h3>
         {isAdvanced ? null : (
-          <p className="text-xs text-muted-foreground">t("themeEditor.twoColorsNote")</p>
+          <p className="text-xs text-muted-foreground">{t("themeEditor.twoColorsNote")}</p>
         )}
       </div>
       <div className="flex min-w-0 items-start gap-3">
@@ -1022,7 +1022,7 @@ export function ThemeEditorPanel({
           </section>
         ))}
         {groups.length === 0 ? (
-          <p className="text-xs text-muted-foreground">t("themeEditor.noMatches")</p>
+          <p className="text-xs text-muted-foreground">{t("themeEditor.noMatches")}</p>
         ) : null}
       </div>
     ) : (
@@ -1238,7 +1238,7 @@ export function ThemeEditorPanel({
           </div>
           <div className="flex items-center justify-end gap-2 border-t border-border/70 px-3 py-2">
             <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
-              Cancel
+              {t("themeEditor.cancel")}
             </Button>
             <Button disabled={!name.trim()} size="sm" onClick={handleSubmit}>
               {isEditing ? (

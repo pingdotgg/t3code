@@ -167,6 +167,9 @@ import { PullRequestGuideTab } from "./PullRequestGuideTab";
 import { guideRunKey, useGuideRunStore } from "./guide/guideRunStore";
 import { useReviewGuideWriter } from "./guide/useReviewGuideWriter";
 
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 const actionFailureLabels = (term: string): Record<PullRequestAction, string> => ({
   merge: translateDynamic("pullRequest:actionFailure.merge", { term }),
   ready: translateDynamic("pullRequest:actionFailure.ready"),
@@ -1436,7 +1439,7 @@ export function PullRequestDetailPanel({
               ) : null}
               {!nativeStack && supportsStackActions && nativeStackQuery.error ? (
                 <Button variant="ghost" size="xs" onClick={nativeStackQuery.refresh}>
-                  Retry stack lookup
+                  {td("stack.retryLookup")}
                 </Button>
               ) : null}
               {nativeStack ? (
@@ -1651,7 +1654,7 @@ export function PullRequestDetailPanel({
                 }
                 updated={
                   <span>
-                    updated <RelativeTime timestamp={detail.updatedAt} />
+                    {td("ghosts.updated")} <RelativeTime timestamp={detail.updatedAt} />
                   </span>
                 }
                 checkout={

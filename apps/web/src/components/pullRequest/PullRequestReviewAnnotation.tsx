@@ -258,7 +258,7 @@ export function ReviewThreadCard({
           {thread.isResolved ? td("thread.resolved") : td("thread.open")} · {commentCount}{" "}
           {commentCount === 1 ? "comment" : "comments"}
         </button>
-        {thread.isOutdated ? <span>outdated</span> : null}
+        {thread.isOutdated ? <span>{td("common.outdatedLower")}</span> : null}
         {onFix ? (
           <Button
             size="compact"
@@ -279,7 +279,7 @@ export function ReviewThreadCard({
             onClick={() => onAddToChat({ ...thread, comments })}
           >
             <MessageSquarePlusIcon className="size-3" />
-            Add to chat
+            {td("comments.addToChat")}
           </Button>
         ) : null}
         {canResolve ? (
@@ -394,7 +394,7 @@ export function ReviewThreadCard({
                     <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
                       <TextFieldSpeechControls speech={speech} disabled={pending} />
                       <Button size="xs" variant="ghost" onClick={() => setReplying(false)}>
-                        Cancel
+                        {td("common.cancel")}
                       </Button>
                       <Button
                         size="xs"
@@ -405,7 +405,7 @@ export function ReviewThreadCard({
                         }
                         onClick={() => speech.submitAfterDictation((text) => void send(text))}
                       >
-                        Reply
+                        {td("annotation.reply")}
                       </Button>
                     </div>
                   </div>
@@ -413,7 +413,7 @@ export function ReviewThreadCard({
               </SpeechTextField>
             ) : (
               <Button size="xs" variant="ghost" className="mt-2" onClick={() => setReplying(true)}>
-                Reply
+                {td("annotation.reply")}
               </Button>
             )
           ) : null}

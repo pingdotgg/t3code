@@ -206,11 +206,15 @@
   },
   "addUsageLimitSource": {
     "addHub": "Add hub",
+    "cliProxy": "CLI Proxy",
     "description": "Show the quota of every account the hub pools, next to the providers on {{environment}}. The key stays on that server.",
+    "disabledDot": "· Disabled",
     "hubUrl": "Hub URL",
     "labelOptional": "Label (optional)",
     "labelPlaceholder": "Defaults to the hub's host name",
     "managementKey": "Management key",
+    "noHubs": "No hubs configured.",
+    "removeHub": "Remove hub",
     "title": "Add a CLIProxyAPI hub"
   },
   "advanced": {
@@ -228,6 +232,7 @@
     "composerContextDescription": "Keep branch and worktree controls below the composer after a thread starts.",
     "contrast": "Contrast",
     "contrastDescription": "Adjust the contrast of colors and borders across the interface.",
+    "durationMs": "{{value}} ms",
     "effortBars": "Bars",
     "effortDisplay": "Effort display",
     "effortDisplayDescription": "Show reasoning effort in the composer as its name, such as High, or as bars.",
@@ -555,6 +560,7 @@
     "backup": "Backup: {{path}}",
     "changeKeysHint": "Change the keys if needed.",
     "changesAria": "Shortcut changes",
+    "changeShortcut": "Change shortcut",
     "chooseDifferentFile": "Choose a different file…",
     "connecting": "Connecting to your desktop…",
     "copied": "Copied",
@@ -600,6 +606,7 @@
     "removeConnection": "Remove connection",
     "useDifferentAccount": "Use a different account",
     "welcomeDescription": "Eligible usage in T3 Code uses your ChatGPT plan. Manage your shared usage and any credit settings in ChatGPT.",
+    "welcomeOnEnvironment": "{{provider}} on {{environment}}",
     "welcomeTitle": "Your ChatGPT plan is connected"
   },
   "chatPanel": {
@@ -769,7 +776,10 @@
     "cancel": "Cancel",
     "continue": "Continue",
     "done": "Done",
-    "mixed": "Mixed"
+    "mixed": "Mixed",
+    "remove": "Remove",
+    "save": "Save",
+    "test": "Test"
   },
   "connDiagnosis": {
     "addDirectRoute": "Add direct route",
@@ -930,7 +940,9 @@
     "unsupported": "Client not supported"
   },
   "customModel": {
+    "add": "Add",
     "addChoice": "Add choice",
+    "addCustomModel": "Add custom model",
     "cancel": "Cancel",
     "choiceLabelAria": "Choice label",
     "choiceNeedsValue": "{{position}} has a choice without a value.",
@@ -941,11 +953,14 @@
     "copyFromModelAria": "Copy options from a built-in model",
     "custom": "Custom…",
     "customOption": "Custom option",
+    "customTag": "custom",
     "default": "Default",
     "defaultChoiceAria": "Default choice",
     "displayName": "Display name",
     "idUsedTwice": "{{position}}: id \"{{id}}\" is used twice.",
     "labelPlaceholder": "Label",
+    "modelCount_one": "{{count}} model",
+    "modelCount_other": "{{count}} models",
     "needsChoice": "{{position}} needs at least one choice.",
     "needsId": "{{position}} needs an id.",
     "needsLabel": "{{position}} needs a label.",
@@ -1251,6 +1266,8 @@
     "viaRoute": "via {{route}}"
   },
   "expandable": {
+    "overriddenBy": "Overridden by",
+    "sameOnAllMachines": "Same on all machines",
     "showFullError": "Show full error",
     "showLess": "Show less"
   },
@@ -1271,7 +1288,8 @@
     "noFonts": "No fonts found.",
     "notMonospace": "\"{{font}}\" isn't monospace",
     "notMonospaceDescription": "Code and terminal need a fixed-width font, so the current font was kept.",
-    "searchPlaceholder": "Search fonts…"
+    "searchPlaceholder": "Search fonts…",
+    "terminalPreviewAria": "Terminal font preview"
   },
   "general": {
     "archiveAria": "Confirm thread archiving",
@@ -1879,6 +1897,7 @@
     "removeThreadsNote": "Those threads and any archived threads are deleted from T3 Code. Provider sessions are kept.",
     "renameFailed": "Failed to rename project",
     "sharedNeedPermission": "Shared settings require permission to change every checkout in this group.",
+    "showAllEnvironments": "Show all environments",
     "titleEmpty": "Project title cannot be empty",
     "unarchive": "Unarchive",
     "unarchiveFailed": "Failed to unarchive project",
@@ -1952,6 +1971,15 @@
     "workspaceDescProject": "Where new threads in this project start.",
     "workspaceTitle": "Workspace"
   },
+  "projectIcon": {
+    "color": "Color",
+    "iconColor": "Icon color",
+    "letters": "Letters",
+    "monogramHint": "One or two letters or numbers.",
+    "noIcons": "No icons found.",
+    "pasteEmoji": "Or paste any emoji",
+    "saveIcon": "Save icon"
+  },
   "providerAdvisory": {
     "compatBroken": "Known broken version",
     "compatGraceful": "Limited support",
@@ -2020,15 +2048,20 @@
     "variableValueAria": "Environment variable value {{index}}"
   },
   "providerPanel": {
+    "accentColor": "Accent color",
+    "addArgument": "Add argument",
+    "addColor": "Add color",
     "addProvider": "Add provider",
     "advanced": "Advanced",
     "authContinueFailed": "Could not continue authentication",
     "authExpired": "Authentication request expired",
     "authExpiredDescription": "Refresh the provider and start the authentication flow again.",
+    "changeAccentColor": "Change accent color",
     "checkedPrefix": "Checked",
     "checkedUnavailable": "Checked unavailable",
     "checkingPermissions": "Checking what this session is allowed to change.",
     "cleanupFailed": "Managed binary cleanup failed.",
+    "clearColor": "Clear color",
     "connectFailed": "Could not connect to this device",
     "cursorAccount": "Cursor account",
     "cursorAccountDescription": "Using CURSOR_API_KEY. Remove it from this provider's environment to use browser sign-in.",
@@ -2062,6 +2095,17 @@
     "updateStartFailed": "The provider update command could not be started.",
     "waitingForConfig": "Waiting for {{label}}'s configuration."
   },
+  "providerSetup": {
+    "aria": "Antigravity setup",
+    "autoInstallUnavailable": "Automatic installation unavailable. Set a binary path or use another environment.",
+    "cancelInstallation": "Cancel installation",
+    "customBinaryNote": "Uses the custom binary path below. Installation keeps that path.",
+    "enable": "Enable Antigravity",
+    "environment": "Environment",
+    "environmentDescription": "Device that runs this provider.",
+    "removeRuntime": "Remove downloaded runtime",
+    "retryStatus": "Retry setup status"
+  },
   "providerSummary": {
     "antigravitySignIn": "Installed · Sign-in not checked",
     "authenticated": "Authenticated",
@@ -2088,12 +2132,22 @@
   },
   "providerWizardAuth": {
     "accountTitle": "Account",
+    "cancelSignIn": "Cancel sign-in",
+    "connect": "Connect",
+    "copySignInLink": "Copy sign-in link",
     "discovering": "Discovering sign-in methods…",
     "done": "Done",
+    "enterCode": "Enter code <code>{{userCode}}</code> in your browser.",
+    "loadingTerminal": "Loading sign-in terminal…",
     "noInAppSignIn": "No in-app sign-in advertised. Follow the provider's docs to finish setup.",
+    "openBrowser": "Open browser",
     "openDocs": "Open docs",
+    "pasteCallbackUrl": "If the final localhost page does not load, paste its full URL here.",
+    "signedInAs": "Signed in as",
     "signIn": "Sign in",
-    "skipForNow": "Skip for now"
+    "signOut": "Sign out",
+    "skipForNow": "Skip for now",
+    "terminalAria": "Provider sign-in terminal"
   },
   "prRouting": {
     "description": "Machines you trust here can read PR data through each other's source control access. Enable both machines. Read and act may use broader permissions than the machine that owns them. This applies only to this device.",
@@ -2379,6 +2433,7 @@
     "routes": "Routes",
     "runLinkCli": "Run `t3 connect link` on the host, then restart T3 Code there.",
     "serverLabel": "{{name}} server",
+    "signIn": "Sign in",
     "signInToLink": "Sign in to make this environment available to your other devices through T3 Connect.",
     "signInToPublish": "Sign in to send activity to mobile notifications and Live Activities.",
     "statusConnected": "Connected",
@@ -2876,6 +2931,27 @@
     "notSet": "Not set",
     "storedPlaceholder": "Stored secret, enter a new value to replace"
   },
+  "secrets": {
+    "accountHint": "The account shorthand, sign-in address without https://, or ID that op account list shows.",
+    "addProvider": "Add provider",
+    "connectToManage": "Connect an environment to manage the secret providers its provider variables read from.",
+    "edit": "Edit",
+    "environmentWide": "Environment-wide setting. Select an environment to change it.",
+    "name": "Name",
+    "removeProvider": "Remove provider",
+    "updateServer": "Update T3 Code on {{environment}} to manage its secret providers."
+  },
+  "simlock": {
+    "checking": "Checking…",
+    "clearAgentToken": "Clear agent token",
+    "gatewayUrl": "Gateway URL",
+    "leaseEnds": "A lease ends after the lease minutes even while in use.",
+    "leaseEndsRestart": "A lease ends after the lease minutes even while in use. Saving restarts this host, which releases its devices.",
+    "name": "Name",
+    "perEnvironment": " per environment",
+    "saveHost": "Save host",
+    "tokenHint": "Leases, drives, and streams devices. Create one{{perEnvironment}} with <code>simlock --gateway token create --role agent</code>, or leave it blank to add it later. A blank token uses the machine's <code>AGENT_DEVICE_DAEMON_AUTH_TOKEN</code> when its <code>AGENT_DEVICE_DAEMON_BASE_URL</code> is this gateway."
+  },
   "snapShotSetup": {
     "accessibilityIncludedDescription": "Include text and controls from the captured app.",
     "accessibilityOptionalDescription": "Optional. Include text and controls from the captured app.",
@@ -2948,6 +3024,8 @@
     "shortcutPortalDescription": "Choose your keys, then approve the permission prompt if asked.",
     "shortcutShiftDescription": "Use both Shift keys, or record a different shortcut.",
     "shortcutTitle": "Choose your shortcut",
+    "soundClick": "Click",
+    "soundOff": "Off",
     "stepAccess": "Access",
     "stepError": "Couldn’t finish this step. Try again or check Advanced for help.",
     "stepShortcut": "Shortcut",
@@ -2955,6 +3033,7 @@
     "tryAgain": "Try again",
     "updateExtension": "Update extension",
     "updateHelper": "Update helper",
+    "whooshDefault": "Whoosh (Default)",
     "wizardTitle": "Set up snapshots",
     "wizardTitleFor": "Set up snapshots for {{desktop}}",
     "working": "Working…"
@@ -2996,6 +3075,57 @@
     "unit": "Unit",
     "wednesday": "Wednesday",
     "when": "When"
+  },
+  "sourceControl": {
+    "account": "Account",
+    "activeCliAccount": "Active {{cliName}} account",
+    "appReachesRepos": "Reaches repositories in accounts and organizations that installed the app.",
+    "approveOnHost": "Approve the app on GitHub to finish signing in.",
+    "appSignInBenefit": "A far higher GitHub API rate limit than a personal token or gh login.",
+    "as": "as",
+    "authenticated": "Authenticated",
+    "available": "Available",
+    "availableWithHint": "Available. {{hint}}",
+    "chooseLogin": "Choose which <code>{{cliName}}</code> login each {{label}} host uses, or turn a host off.",
+    "chosenLoginSignedOut": "The chosen login is no longer signed in, so the active {{cliName}} login is used.",
+    "comingSoon": "Support for {{label}} is coming soon.",
+    "connectToInspect": "Connect an environment to inspect its version control tools and hosting integrations.",
+    "copyCode": "Copy code",
+    "copyCodeOpenHost": "Copy code & open GitHub",
+    "couldNotScan": "Could not scan the server environment",
+    "couldNotVerify": "Could not verify {{label}}. {{detail}}",
+    "createToken": "Create a token",
+    "envVarOverrides": "{{variable}} is set on the server, so it overrides the account choice here until it is unset.",
+    "everyHostOff": "Every {{label}} host is turned off.",
+    "host": "Host",
+    "installHintText": "Install Git on the server, add optional hosting integrations or credentials your workspace needs, then rescan.",
+    "installOnOrg": "Install on an organization",
+    "loginReportedInvalid": "{{cliName}} reports this login as invalid.",
+    "loginUnusable": "can't be used: {{error}}",
+    "manageOnHost": "Manage on GitHub",
+    "notAuthenticated": "{{label}} is not authenticated on this server. Sign in or configure credentials using the <code>{{executable}}</code> tool on the server host to enable change request features.",
+    "nothingDetected": "Nothing detected yet",
+    "noTokenSaved": "No token saved; the server uses {{tokenEnvVar}} or the {{cliName}} login.",
+    "notOnServer": "Not available on this server: {{hint}}",
+    "orOwnCredentials": "Or use your own credentials",
+    "providers": "Source control providers",
+    "rescanDetail": "Rescan Git and hosting integrations",
+    "rescanServer": "Rescan server environment",
+    "savedFor": "Saved for {{hosts}}.",
+    "scan": "Scan",
+    "serverEnvironment": "Server environment",
+    "signedIn": "Signed in",
+    "signedInAs": "Signed in as",
+    "signedInTokenUsed": "Signed in, but the token saved below is used while it can be read.",
+    "signInWith": "Sign in with {{name}}",
+    "signInWithCommand": "Sign in with <code>{{loginCommand}}</code> on the server host, then rescan to choose accounts here.",
+    "signOut": "Sign out",
+    "token": "Token",
+    "tokenIntro": "A token saved here is used before <code>{{tokenEnvVar}}</code> and the <code>{{cliName}}</code> login, so {{label}} works without the <code>{{cliLabel}}</code>. Give it {{tokenAccess}}.",
+    "tryAgain": "Try again",
+    "useActiveLogin": "Use active login",
+    "versionControl": "Version Control",
+    "waitingApprovalExpires": "Waiting for approval · code expires at {{time}}"
   },
   "storage": {
     "artifactsAndLogs": "Artifacts and logs",
@@ -3071,26 +3201,50 @@
     "worktrees": "Worktrees",
     "worktreesDirectoryDescription": "Folder where new worktrees are created, on any drive, such as D:\\worktrees or ~/worktrees. Existing worktrees stay where they are. Leave empty to use the T3 home folder."
   },
+  "telemetry": {
+    "description": "Send traces, metrics, and logs to an OTLP HTTP receiver. Restart the server to apply. Environment variables override these settings.",
+    "disabled": "Disabled",
+    "discard": "Discard",
+    "endpointLabel": "{{signal}} endpoint",
+    "lacksPermission": "This connection lacks permission to change settings on {{environment}}.",
+    "running": "Running: {{value}}",
+    "runningFrom": "Running: {{value}} from {{variable}}",
+    "saving": "Saving…",
+    "selectedEnvironment": "the selected environment"
+  },
   "textGenerators": {
+    "add": "Add generator",
     "addDescription": "Writes thread titles, commit messages, and other short text without starting a coding agent. Your API key is stored on this environment.",
     "addGenerator": "Add a text generator",
+    "answeredItWorks": "{{model}} answered. It works.",
     "apiKey": "API key",
     "apiKeyOptional": "API key (optional)",
+    "back": "Back",
+    "baseUrl": "Base URL",
     "connect": "Connect",
+    "connectedLists_one": "{{name}} is connected and lists {{count}} model. Switch any of these to it, or keep what they use now.",
+    "connectedLists_other": "{{name}} is connected and lists {{count}} models. Switch any of these to it, or keep what they use now.",
+    "connectedLists_one": "textGenerators.connectedLists",
+    "connectedLists_other": "textGenerators.connectedLists",
     "connecting": "Connecting",
     "custom": "Custom",
     "editGenerator": "Edit {{name}}",
     "emptyDescription": "Add a model API to write thread titles, commit messages, and other short text without starting a coding agent.",
     "emptyTitle": "No text generators yet",
+    "followsTextModel": "Follows the text generation model",
     "modelListFailed": "The model list couldn't load.",
     "modelListLoading": "Loading the model list.",
     "models": "Models",
+    "nameOptional": "Name (optional)",
+    "noModelsMatch": "No models match.",
     "purposeCommits": "Commit messages, pull requests, and branch names",
     "purposeThreadTitles": "Thread titles and other generated text",
     "purposeVoice": "Voice transcript cleanup",
+    "refresh": "Refresh",
     "saveAndContinue": "Save and continue",
     "searchModels": "Search models",
     "service": "Service",
+    "test": "Test",
     "useIt": "Use it"
   },
   "theme": {
@@ -3161,6 +3315,7 @@
     "cancel": "Cancel",
     "cancelInspectingAria": "Cancel inspecting app colors",
     "cancelInspectingTooltip": "Cancel and clear the selection",
+    "chooseAColor": "Choose a color",
     "chooseColor": "Choose {{label}} color",
     "closeAria": "Close the theme editor",
     "CodeSurface": "Code surface",
@@ -3178,6 +3333,7 @@
     "expandAria": "Expand the theme editor",
     "filterColors": "Filter colors",
     "Foundation": "Foundation",
+    "hexLabel": "HEX",
     "hexValue": "{{label}} hex value",
     "hideUsage": "Hide {{label}} usage",
     "HighlightSurface": "Highlight surface",
@@ -3202,6 +3358,7 @@
     "pickerHexValue": "{{label}} picker hex value",
     "pickerRgbValue": "{{label}} picker RGB value",
     "RaisedSurface": "Raised surface",
+    "rgbLabel": "RGB",
     "role": {
       "accent": "Accent",
       "accentForeground": "Accent Foreground",
@@ -3306,6 +3463,17 @@
     "storageUnavailable": "Browser storage is unavailable, so the change was not kept.",
     "updated": "{{label}} updated"
   },
+  "themeImport": {
+    "addTheme": "Add theme",
+    "alreadyInstalled": "Already installed",
+    "back": "Back",
+    "fileLabel": "Theme file",
+    "jsonAria": "Theme JSON",
+    "jsonLabel": "Theme JSON",
+    "keepBoth": "Keep both",
+    "orImportFile": "or import a file",
+    "updateExisting": "Update existing"
+  },
   "themeSearch": {
     "actionAria": "{{action}} {{name}}",
     "addFailed": "That theme could not be added.",
@@ -3385,7 +3553,8 @@
     "textGenDescription": "For thread titles and other generated text. Source control has its own setting. Text generators from Providers also appear here.",
     "textGenNoneAvailable": "No text generation providers available.",
     "textGenReset": "text generation model",
-    "textGenToastTitle": "Text generation model not saved"
+    "textGenToastTitle": "Text generation model not saved",
+    "threadTitleInstructions": "Thread title instructions"
   },
   "uiLocale": {
     "change": "Change interface language",
@@ -3483,6 +3652,7 @@
     "download": "Download",
     "downloadedPercent": "{{percent}}% downloaded",
     "downloadProgress": "{{name}} download progress",
+    "errorPercent": "{{percent}}% error",
     "languages_one": "{{count}} language",
     "languages_other": "{{count}} languages",
     "livePreview": "Live preview",
@@ -3490,6 +3660,7 @@
     "recommended": "Recommended",
     "recommendedTooltip": "A good default pick for the languages it covers.",
     "selected": "Selected",
+    "speed": "Speed:",
     "stopUsingFile": "Stop using your {{name}} file; the file stays on disk",
     "translate": "Translate",
     "translateTooltip": "Can write English text from speech in another language. Turn on Translate to English to use it.",

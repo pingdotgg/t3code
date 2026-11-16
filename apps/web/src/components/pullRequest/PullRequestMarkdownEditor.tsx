@@ -101,7 +101,7 @@ export function PullRequestMarkdownEditor({
       {preview ? (
         <div className="rounded-lg border border-border/60 px-3 py-2">
           {empty ? (
-            <p className="text-xs text-muted-foreground">Nothing to preview.</p>
+            <p className="text-xs text-muted-foreground">{td("editor.nothingToPreview")}</p>
           ) : (
             <PullRequestMarkdown
               text={draft}
@@ -125,7 +125,7 @@ export function PullRequestMarkdownEditor({
       )}
       <div className="flex justify-end gap-2">
         <Button size="xs" variant="ghost" disabled={saving} onClick={onCancel}>
-          Cancel
+          {td("common.cancel")}
         </Button>
         <Button
           size="xs"

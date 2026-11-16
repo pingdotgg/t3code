@@ -4,6 +4,11 @@ import { cn } from "~/lib/utils";
 
 import { GuideProse } from "./GuideProse";
 
+import { translateDynamic } from "../../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 export function GuideNoteMarker({ marker }: { marker: string }) {
   return (
     <span
@@ -26,7 +31,7 @@ export function GuideNotes({
   return (
     <section className={cn("flex min-w-0 flex-col gap-2", className)}>
       <h4 className="flex items-baseline justify-between gap-2 text-xs font-medium text-foreground">
-        Notes on this stop
+        {td("guide.notesOnThisStop")}
         <span className="font-normal text-muted-foreground tabular-nums">
           {notes.length === 1 ? "1 note" : `${notes.length} notes`}
         </span>

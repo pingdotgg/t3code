@@ -27,6 +27,11 @@ import {
   resolvePullRequestState,
 } from "./pullRequestPresentation";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 interface PullRequestLinkPreviewTarget {
   readonly environmentId: EnvironmentId;
   readonly input: PullRequestRef;
@@ -174,7 +179,7 @@ export function PullRequestLinkPreview({
                       <>
                         <span aria-hidden>·</span>
                         <span className="shrink-0">
-                          opened <RelativeTime timestamp={preview.createdAt} />
+                          {td("previewLink.opened")} <RelativeTime timestamp={preview.createdAt} />
                         </span>
                       </>
                     )}
@@ -207,7 +212,7 @@ function LinkedComment({
           {actorLabel(subject.author)}
         </span>
         {outcome === null ? (
-          <span className="shrink-0">commented</span>
+          <span className="shrink-0">{td("previewLink.commented")}</span>
         ) : (
           <PullRequestReviewOutcomeBadge outcome={outcome} className="shrink-0" />
         )}

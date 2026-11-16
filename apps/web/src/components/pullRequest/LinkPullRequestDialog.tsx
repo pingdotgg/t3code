@@ -166,7 +166,7 @@ function LinkPullRequestDialog({
             onClick={() => onOpenChange(false)}
             disabled={pending}
           >
-            Cancel
+            {td("common.cancel")}
           </Button>
           <Button
             type="button"

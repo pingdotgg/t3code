@@ -595,7 +595,7 @@ function ConfiguredCloudLinkRow({
   const signedOut = isSignedIn === false;
   const signInButton = (
     <Button size="sm" variant="outline" onClick={openAuthPrompt}>
-      Sign in
+      {t("savedEnv.signIn")}
     </Button>
   );
   const refreshLinkState = useEffectEvent(cloudLinkState.refresh);

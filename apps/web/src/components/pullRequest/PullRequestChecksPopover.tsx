@@ -71,7 +71,7 @@ function ChecksBody({
   const visibleChecks = [...attention, ...running, ...(showAll || !canCollapse ? completed : [])];
   const hasDetails = visibleChecks.some((check) => check.url !== null);
   if (checks.length === 0) {
-    return <p className="text-muted-foreground text-xs">No checks reported</p>;
+    return <p className="text-muted-foreground text-xs">{td("checks.noChecksReported")}</p>;
   }
   return (
     <>
@@ -110,7 +110,7 @@ function ChecksBody({
                       });
                     }}
                   >
-                    Details
+                    {td("checks.details")}
                   </button>
                 )}
               </li>
@@ -190,10 +190,15 @@ export function PullRequestChecksPopover({
           <>
             {checks !== undefined && incompleteCount > 0 ? (
               <span className="tabular-nums">
-                {checks.length - incompleteCount}/{checks.length} checks
+                {td("checks.counter", {
+                  done: checks.length - incompleteCount,
+                  total: checks.length,
+                })}
               </span>
             ) : failedCount > 0 ? (
-              <span className="tabular-nums">{failedCount} failed</span>
+              <span className="tabular-nums">
+                {td("checks.failedCount", { count: failedCount })}
+              </span>
             ) : null}
           </>
         ) : null}
@@ -202,9 +207,7 @@ export function PullRequestChecksPopover({
         <p className="mb-2 font-medium text-sm">{presentation.label}</p>
         {summary === null ? null : <p className="mb-2 text-muted-foreground text-xs">{summary}</p>}
         {stale ? (
-          <p className="text-muted-foreground text-xs">
-            Check details are out of date. Refresh the pull request to update them.
-          </p>
+          <p className="text-muted-foreground text-xs">{td("checks.outOfDateDetail")}</p>
         ) : checks !== undefined ? (
           <ChecksBody checks={checks} threadRef={threadRef} />
         ) : environmentId !== undefined && reference !== undefined ? (
