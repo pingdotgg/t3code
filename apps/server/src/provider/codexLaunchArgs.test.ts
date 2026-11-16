@@ -25,6 +25,8 @@ describe("codexAppServerArgs", () => {
       "app-server",
       "-c",
       "thread_unload_delay_secs=0",
+      "-c",
+      "plugins.codex-app-tools@openai-bundled.enabled=false",
       ...row.expected,
     ]);
   });
