@@ -101,3 +101,33 @@ it.each<{ focus: string; control: ReactNode; toggles: boolean }>([
     expect(onToggleOption.mock.calls).toEqual(toggles ? [["question", "Incremental"]] : []);
   },
 );
+
+it.each([
+  { state: "the thread is read-only", disabled: true, responding: false },
+  { state: "an answer is sending", disabled: false, responding: true },
+])("does not dismiss a question while $state", async ({ disabled, responding }) => {
+  const onDismiss = vi.fn();
+  await using screen = await render(
+    <ComposerPendingUserInputPanel
+      pendingUserInputs={[{ ...prompt, dismissible: true }]}
+      cwd={undefined}
+      threadRef={threadRef}
+      disabled={disabled}
+      respondingRequestIds={responding ? [prompt.requestId] : []}
+      answers={{}}
+      questionIndex={0}
+      onToggleOption={vi.fn()}
+      onAdvance={vi.fn()}
+      onDismiss={onDismiss}
+    />,
+  );
+  const dismiss = screen.getByRole("button", { name: "Dismiss question without answering" });
+  await expect.element(dismiss).toBeVisible();
+  // Playwright refuses to click aria-disabled targets; a real pointer still reaches the span.
+  (dismiss.element() as HTMLElement).click();
+  (dismiss.element() as HTMLElement).focus();
+  await userEvent.keyboard("{Enter}");
+
+  expect(onDismiss).not.toHaveBeenCalled();
+  await expect.element(dismiss).toHaveAttribute("aria-disabled", "true");
+});
