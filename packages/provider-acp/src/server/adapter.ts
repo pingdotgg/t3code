@@ -7957,10 +7957,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const terminalizeOpenForegroundTools = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           status: "completed" | "failed" = "completed",
+          options?: { readonly unstartedOnly?: boolean },
         ) {
           for (const tool of context.tools.values()) {
             if (!acpCompletedTurnShouldTerminalizeTool(tool, { ...flavor, extractSubagentUpdate }))
               continue;
+            if (options?.unstartedOnly === true && tool.status !== "pending") continue;
             yield* emitTool(context, tool, status);
           }
         });
@@ -8973,12 +8975,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     if (!interrupted && flavor.restartRuntimeAfterPromptError?.(failure) === true) {
                       yield* Ref.set(runtimeRestartRequired, true);
                     }
-                    // An agent that answered with an error is still alive and may finish its
-                    // tools; any other failure means its process or pipe is gone.
+                    // An agent that answered with an error may still finish tools it started,
+                    // never pending ones; any other failure means its process or pipe is gone.
                     const agentAnswered =
                       Result.isSuccess(error) && error.success._tag === "AcpRequestError";
-                    if (!interrupted && !agentAnswered) {
-                      yield* terminalizeOpenForegroundTools(context, "failed");
+                    if (!interrupted) {
+                      yield* terminalizeOpenForegroundTools(context, "failed", {
+                        unstartedOnly: agentAnswered,
+                      });
                     }
                     yield* finalizeTurn(
                       context,
