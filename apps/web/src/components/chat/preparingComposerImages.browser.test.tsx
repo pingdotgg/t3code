@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { expect, it, vi } from "vite-plus/test";
-import { create } from "zustand";
+import { createStore, type StoreApi, useStore } from "zustand";
 
 import { act, render } from "../../../test/render";
 import {
@@ -12,16 +12,21 @@ import {
 
 type QueueSubmit = ReturnType<typeof useSubmitAfterPreparingImages>;
 
-const useDraftImages = create<{ readonly ids: ReadonlyArray<string> }>(() => ({ ids: [] }));
+type DraftImagesStore = StoreApi<{ readonly ids: ReadonlyArray<string> }>;
+
+function createDraftImagesStore(): DraftImagesStore {
+  return createStore(() => ({ ids: [] }));
+}
 
 // Mirrors ChatComposer: the send reads draft images that a later effect syncs from the store.
 function Probe(props: {
   targetKey: string;
+  draftImagesStore: DraftImagesStore;
   onReady: (queue: QueueSubmit) => void;
   onCommit?: (images: ReadonlyArray<string>) => void;
 }) {
   const queue = useSubmitAfterPreparingImages(props.targetKey);
-  const draftImages = useDraftImages((state) => state.ids);
+  const draftImages = useStore(props.draftImagesStore, (state) => state.ids);
   const { onCommit } = props;
   useEffect(() => {
     onCommit?.(draftImages);
@@ -36,17 +41,14 @@ function preparingImage(id: string) {
 
 it("sends after pasted images finish compressing, with the compressed image in the draft", async () => {
   const target = "submit-after-preparing";
-  using _store = {
-    [Symbol.dispose]: () => {
-      cancelPreparingComposerImages(target);
-      useDraftImages.setState({ ids: [] });
-    },
-  };
+  using _store = { [Symbol.dispose]: () => cancelPreparingComposerImages(target) };
+  const draftImagesStore = createDraftImagesStore();
   let queueSubmit: QueueSubmit | undefined;
   let committedImages: ReadonlyArray<string> = [];
   await using _screen = await render(
     <Probe
       targetKey={target}
+      draftImagesStore={draftImagesStore}
       onCommit={(images) => {
         committedImages = images;
       }}
@@ -70,7 +72,7 @@ it("sends after pasted images finish compressing, with the compressed image in t
   // Intake drops the placeholder and adds the compressed image in the same tick.
   await act(() => {
     removePreparingComposerImages(target, new Set(["second"]));
-    useDraftImages.setState({ ids: ["second"] });
+    draftImagesStore.setState({ ids: ["second"] });
   });
   expect(submit).toHaveBeenCalledOnce();
   expect(submit.mock.results[0]?.value).toEqual(["second"]);
@@ -85,22 +87,30 @@ it("drops a waiting send when the composer moves to another draft", async () => 
       cancelPreparingComposerImages(otherTarget);
     },
   };
+  const draftImagesStore = createDraftImagesStore();
   let queueSubmit: QueueSubmit | undefined;
   const onReady = (queue: QueueSubmit) => {
     queueSubmit = queue;
   };
-  await using screen = await render(<Probe targetKey={target} onReady={onReady} />, {
-    // A bare hook probe; nothing here navigates.
-    router: false,
-  });
+  await using screen = await render(
+    <Probe targetKey={target} draftImagesStore={draftImagesStore} onReady={onReady} />,
+    {
+      // A bare hook probe; nothing here navigates.
+      router: false,
+    },
+  );
   const submit = vi.fn();
   addPreparingComposerImages(target, [preparingImage("pasted")]);
   expect(queueSubmit?.(submit)).toBe(true);
 
   // The other draft is still compressing too, so the switch alone must drop the send.
   addPreparingComposerImages(otherTarget, [preparingImage("other")]);
-  await screen.rerender(<Probe targetKey={otherTarget} onReady={onReady} />);
+  await screen.rerender(
+    <Probe targetKey={otherTarget} draftImagesStore={draftImagesStore} onReady={onReady} />,
+  );
   await act(() => removePreparingComposerImages(target, new Set(["pasted"])));
-  await screen.rerender(<Probe targetKey={target} onReady={onReady} />);
+  await screen.rerender(
+    <Probe targetKey={target} draftImagesStore={draftImagesStore} onReady={onReady} />,
+  );
   expect(submit).not.toHaveBeenCalled();
 });
