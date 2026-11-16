@@ -1,5 +1,6 @@
 {
   "attachment": {
+    "annotationAria": "Annotated preview crop",
     "attachAgain": "Attach again",
     "attachFiles": "Attach files",
     "draftMayNotPersist": "Draft attachment may not persist",
@@ -11,6 +12,7 @@
     "removeAria": "Remove {{name}}",
     "removeToSend": "Remove to send",
     "retryUploadAria": "Retry upload for {{name}}",
+    "screenshotUnavailable": "Screenshot unavailable",
     "showMoreAria_one": "Show {{count}} more image attachment",
     "showMoreAria_other": "Show {{count}} more image attachments",
     "uploadingMany": "Attachments still uploading",

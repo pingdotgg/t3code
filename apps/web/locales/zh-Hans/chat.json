@@ -481,7 +481,8 @@
     "requestFailed": "请求失败。",
     "thread": "线程",
     "toggleTask": "切换任务",
-    "unlinkFailed": "取消关联拉取请求失败"
+    "unlinkFailed": "取消关联拉取请求失败",
+    "useTemplate": "使用模板"
   },
   "mcp": {
     "appLeftPage": "{{server}} 应用离开了其页面，已被停止",

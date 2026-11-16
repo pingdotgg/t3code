@@ -266,6 +266,8 @@
     "providerUpdates_other": "{{count}} 个提供商更新",
     "restartsLast": "稍后重启",
     "runningCount": "{{count}} 个正在运行",
+    "runningCount_one": "{{count}} 个正在运行",
+    "runningCount_other": "{{count}} 个正在运行",
     "server": "服务器",
     "skipped": "已跳过",
     "skippedCount": "已跳过 {{count}} 项",

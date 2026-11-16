@@ -62,7 +62,6 @@
     "stack": "{{count}} 个 {{term}}的堆叠，{{state}}"
   },
   "base": {
-    "behindBy": "，落后 {{formatted}} 个提交",
     "behindBy_other": "，落后 {{formatted}} 个提交",
     "cleanMerge": "更改可以干净地合并。",
     "outOfDate": "此分支落后于 {{branch}}{{behind}}。",
@@ -223,9 +222,7 @@
     "commits": "{{formatted}} 个提交",
     "commits_other": "{{formatted}} 个提交",
     "commitsUnavailable": "提交不可用",
-    "conversation": "{{count}} 个会话",
-    "conversation_other": "{{count}} 个会话",
-    "conversations": "{{formatted}} 个会话",
+    "conversation_other": "{{formatted}} 个会话",
     "conversations_other": "{{formatted}} 个会话"
   },
   "crumbs": {
@@ -666,9 +663,11 @@
     "timeline": "时间线"
   },
   "thread": {
+    "branchLine": "#{{number}} · {{head}} → {{base}}",
     "open": "打开",
     "resolve": "解决",
     "resolved": "已解决",
+    "resolving": "正在解析 {{name}}……",
     "unresolve": "取消解决"
   },
   "timeline": {

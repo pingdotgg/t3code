@@ -1,5 +1,6 @@
 {
   "attachment": {
+    "annotationAria": "标注预览截图",
     "attachAgain": "重新附加",
     "attachFiles": "附加文件",
     "draftMayNotPersist": "草稿附件可能不会保留",
@@ -11,6 +12,7 @@
     "removeAria": "移除 {{name}}",
     "removeToSend": "移除后发送",
     "retryUploadAria": "重试上传 {{name}}",
+    "screenshotUnavailable": "截图不可用",
     "showMoreAria_other": "显示另外 {{count}} 张图片附件",
     "uploadingMany": "附件仍在上传",
     "uploadingOne": "附件仍在上传"

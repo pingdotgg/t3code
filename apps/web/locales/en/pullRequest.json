@@ -62,7 +62,6 @@
     "stack": "Stack of {{count}} {{term}}, {{state}}"
   },
   "base": {
-    "behindBy": " by {{formatted}} {{count, plural, one {commit} other {commits}}}",
     "behindBy_one": " by {{formatted}} commit",
     "behindBy_other": " by {{formatted}} commits",
     "cleanMerge": "Changes can be cleanly merged.",
@@ -669,9 +668,11 @@
     "timeline": "Timeline"
   },
   "thread": {
+    "branchLine": "#{{number}} · {{head}} to {{base}}",
     "open": "Open",
     "resolve": "Resolve",
     "resolved": "Resolved",
+    "resolving": "Resolving {{name}}...",
     "unresolve": "Unresolve"
   },
   "timeline": {

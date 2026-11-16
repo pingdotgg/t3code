@@ -321,7 +321,7 @@ function CodexArtifactTemplateCard(props: {
           className="shrink-0"
           onClick={() => props.onUse?.(props.template)}
         >
-          Use template
+          {td("markdown.useTemplate")}
         </Button>
       ) : null}
     </div>

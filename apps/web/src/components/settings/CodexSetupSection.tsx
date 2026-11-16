@@ -26,7 +26,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useTranslation } from "react-i18next";
+import { useTranslation, Trans } from "react-i18next";
 
 import { ensureLocalApi } from "../../localApi";
 import { managedInstanceLocks, useManagedPolicy } from "../../state/managedPolicy";
@@ -127,17 +127,20 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
         description={
           existingReady ? (
             props.provider?.auth.email?.trim() ? (
-              <>
-                {t("codexSetup.signedInAsPrefix")}{" "}
-                <RedactedSensitiveText
-                  value={props.provider.auth.email.trim()}
-                  ariaLabel={t("codexSetup.emailAria")}
-                  revealTooltip={t("codexSetup.revealEmail")}
-                  hideTooltip={t("codexSetup.hideEmail")}
-                  className="break-all"
-                />
-                {t("codexSetup.signedInAsSuffix")}
-              </>
+              <Trans
+                i18nKey="codexSetup.signedInAs"
+                components={{
+                  email: (
+                    <RedactedSensitiveText
+                      value={props.provider.auth.email.trim()}
+                      ariaLabel={t("codexSetup.emailAria")}
+                      revealTooltip={t("codexSetup.revealEmail")}
+                      hideTooltip={t("codexSetup.hideEmail")}
+                      className="break-all"
+                    />
+                  ),
+                }}
+              />
             ) : (
               t("codexSetup.connectedWithCli")
             )
@@ -644,16 +647,19 @@ function ManagedCodexSetup({
     )
   ) : authenticated ? (
     provider?.auth.email?.trim() ? (
-      <>
-        {t("codexSetup.signedInAsPrefix")}{" "}
-        <RedactedSensitiveText
-          value={provider.auth.email.trim()}
-          ariaLabel={t("codexSetup.emailAria")}
-          revealTooltip={t("codexSetup.revealEmail")}
-          hideTooltip={t("codexSetup.hideEmail")}
-        />
-        {t("codexSetup.signedInAsSuffix")}
-      </>
+      <Trans
+        i18nKey="codexSetup.signedInAs"
+        components={{
+          email: (
+            <RedactedSensitiveText
+              value={provider.auth.email.trim()}
+              ariaLabel={t("codexSetup.emailAria")}
+              revealTooltip={t("codexSetup.revealEmail")}
+              hideTooltip={t("codexSetup.hideEmail")}
+            />
+          ),
+        }}
+      />
     ) : (
       t("codexSetup.signedInWithChatGpt")
     )
@@ -834,17 +840,20 @@ function ManagedCodexSetup({
               runtimeDescription
             ) : authenticated ? (
               provider?.auth.email?.trim() ? (
-                <>
-                  {t("codexSetup.signedInAsPrefix")}{" "}
-                  <RedactedSensitiveText
-                    value={provider.auth.email.trim()}
-                    ariaLabel={t("codexSetup.emailAria")}
-                    revealTooltip={t("codexSetup.revealEmail")}
-                    hideTooltip={t("codexSetup.hideEmail")}
-                    className="break-all"
-                  />
-                  {t("codexSetup.signedInAsSuffix")}
-                </>
+                <Trans
+                  i18nKey="codexSetup.signedInAs"
+                  components={{
+                    email: (
+                      <RedactedSensitiveText
+                        value={provider.auth.email.trim()}
+                        ariaLabel={t("codexSetup.emailAria")}
+                        revealTooltip={t("codexSetup.revealEmail")}
+                        hideTooltip={t("codexSetup.hideEmail")}
+                        className="break-all"
+                      />
+                    ),
+                  }}
+                />
               ) : (
                 t("codexSetup.connectedToChatGpt")
               )

@@ -1045,7 +1045,7 @@ export function GeneralSettingsPanel() {
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  {Object.entries(QUIT_CONFIRMATION_MODE_LABELS).map(([value, label]) => (
+                  {Object.entries(QUIT_CONFIRMATION_MODE_LABELS).map(([value, _label]) => (
                     <SelectItem hideIndicator key={value} value={value}>
                       {t(QUIT_CONFIRMATION_MODE_LABELS[value as QuitConfirmationMode])}
                     </SelectItem>
@@ -1230,13 +1230,12 @@ export function ChatSettingsPanel() {
         <SettingsRow
           {...searchableSetting("follow-up-behavior")}
           description={
-            t("chatPanel.followUpIntro") +
-            (settings.sendShortcut === "mod-enter-multiline"
-              ? t("chatPanel.followUpMultiline", { mod: modifierLabel })
-              : t("chatPanel.followUpOther", {
+            settings.sendShortcut === "mod-enter-multiline"
+              ? t("chatPanel.followUpDescriptionMultiline", { mod: modifierLabel })
+              : t("chatPanel.followUpDescriptionOther", {
                   mod: modifierLabel,
                   shift: settings.sendShortcut === "mod-enter" ? " + Shift" : "",
-                }))
+                })
           }
           resetAction={
             settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior ? (

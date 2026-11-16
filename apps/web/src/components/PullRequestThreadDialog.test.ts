@@ -40,6 +40,10 @@ vi.mock("react", async (importOriginal) => ({
 vi.mock("@tanstack/react-pacer", () => ({
   useDebouncedValue: (value: unknown) => [value, { state: { isPending: false } }],
 }));
+vi.mock("react-i18next", () => ({
+  initReactI18next: { type: "3rd-party", init: () => {} },
+  useTranslation: () => ({ t: (key: string) => key }),
+}));
 vi.mock("~/state/session", () => ({
   useEnvironmentScope: (_environmentId: unknown, scope: string) =>
     scope === AuthOrchestrationOperateScope

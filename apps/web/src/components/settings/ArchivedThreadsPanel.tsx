@@ -21,7 +21,7 @@ import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 
 import { useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { useTranslation, Trans } from "react-i18next";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { translateDynamic } from "../../i18nCore";
 
@@ -244,12 +244,21 @@ export function ArchivedThreadsPanel() {
                   title={thread.title}
                   description={
                     <span className={hasMultipleEnvironments ? "block truncate" : undefined}>
-                      {hasMultipleEnvironments ? `${thread.environmentLabel} · ` : null}
-                      {t("archivedThreads.archivedAt")}
-                      <RelativeTime timestamp={thread.archivedAt ?? thread.createdAt} />
-                      {" \u00b7 "}
-                      {t("archivedThreads.createdAt")}
-                      <RelativeTime timestamp={thread.createdAt} />
+                      <Trans
+                        i18nKey="archivedThreads.archivedLine"
+                        values={{
+                          environment: hasMultipleEnvironments
+                            ? `${thread.environmentLabel} · `
+                            : "",
+                        }}
+                        components={[
+                          <RelativeTime
+                            key="archived"
+                            timestamp={thread.archivedAt ?? thread.createdAt}
+                          />,
+                          <RelativeTime key="created" timestamp={thread.createdAt} />,
+                        ]}
+                      />
                     </span>
                   }
                   control={

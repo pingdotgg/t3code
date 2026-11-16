@@ -12,7 +12,7 @@ import { searchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import { firstManagedDenial, usePrimaryManagedPolicy } from "~/state/managedPolicy";
-import { useTranslation } from "react-i18next";
+import { useTranslation, Trans } from "react-i18next";
 
 /** Features still settling in. */
 export function LabsSettingsPanel() {
@@ -120,13 +120,13 @@ function GuestLinksRow() {
       // Turning guest links off still works without T3 Connect.
       managed={settings.guestSharingEnabled ? undefined : connectDenial}
       description={
-        <>
-          {t("labs.guestLinksDescription1")}{" "}
-          <Link to="/settings/access" className="underline underline-offset-2">
-            {t("nav.sharingAccess")}
-          </Link>
-          {t("labs.guestLinksDescription2")}
-        </>
+        <Trans
+          i18nKey="labs.guestLinks"
+          values={{ label: t("nav.sharingAccess") }}
+          components={{
+            link: <Link to="/settings/access" className="underline underline-offset-2" />,
+          }}
+        />
       }
       control={
         <ScopedSwitch
@@ -150,13 +150,13 @@ function LinkedEnvironmentsRow() {
       {...searchableSetting("linked-environments-beta")}
       settingKeys={["linkedEnvironmentsEnabled"]}
       description={
-        <>
-          {t("labs.linkedEnvironmentsDescription1")}{" "}
-          <Link to="/settings/connections" className="underline underline-offset-2">
-            {t("navGroups.connections")}
-          </Link>
-          {t("labs.linkedEnvironmentsDescription2")}
-        </>
+        <Trans
+          i18nKey="labs.linkedEnvironments"
+          values={{ label: t("navGroups.connections") }}
+          components={{
+            link: <Link to="/settings/connections" className="underline underline-offset-2" />,
+          }}
+        />
       }
       control={
         <ScopedSwitch
@@ -206,22 +206,21 @@ function SimlockHostsRow() {
       {...searchableSetting("simlock-hosts")}
       settingKeys={["simlockDeviceHostsEnabled"]}
       description={
-        <>
-          {t("labs.simlockHostsDescription1")}{" "}
-          <a
-            href="https://incubator.callstack.com/simlock/"
-            target="_blank"
-            rel="noreferrer"
-            className="underline underline-offset-2"
-          >
-            Simlock
-          </a>{" "}
-          {t("labs.simlockHostsDescription2")}{" "}
-          <Link to="/settings/devices" className="underline underline-offset-2">
-            {t("nav.devices")}
-          </Link>
-          {t("labs.simlockHostsDescription3")}
-        </>
+        <Trans
+          i18nKey="labs.simlockHosts"
+          values={{ label: t("nav.devices") }}
+          components={{
+            simlock: (
+              <a
+                href="https://incubator.callstack.com/simlock/"
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2"
+              />
+            ),
+            devices: <Link to="/settings/devices" className="underline underline-offset-2" />,
+          }}
+        />
       }
       control={
         <ScopedSwitch

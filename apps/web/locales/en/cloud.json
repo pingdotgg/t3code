@@ -1,12 +1,15 @@
 {
+  "add": "Add",
   "cancel": "Cancel",
   "done": "Done",
   "dontShowAgain": "Don't show this again",
   "linkT3Chat": "Link T3 Chat",
+  "loadFailed": "Could not load T3 Connect environments",
   "manageTunnels": "Manage tunnels",
   "noPublishedEnvironments": "No other environments are published to your account yet. Publish one from another device and it will show up here.",
   "notNow": "Not now",
   "signIn": "Sign in",
+  "tryAgain": "Try again",
   "tunnelsInUse": "{{used}} of {{limit}} tunnels in use",
   "tunnelsInUseLabel": "T3 Connect tunnels in use",
   "upgradeOnT3Chat": "Upgrade on T3 Chat"

@@ -488,7 +488,8 @@
     "requestFailed": "The request failed.",
     "thread": "Thread",
     "toggleTask": "Toggle task",
-    "unlinkFailed": "Unable to unlink pull request"
+    "unlinkFailed": "Unable to unlink pull request",
+    "useTemplate": "Use template"
   },
   "mcp": {
     "appLeftPage": "The {{server}} app left its page and was stopped",

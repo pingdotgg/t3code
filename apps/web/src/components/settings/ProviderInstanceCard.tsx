@@ -17,7 +17,7 @@ import {
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { Fragment, useState, type ReactElement, type ReactNode } from "react";
-import { useTranslation } from "react-i18next";
+import { useTranslation, Trans } from "react-i18next";
 import {
   isProviderDriverKind,
   resolveProviderInstanceEnabled,
@@ -1286,9 +1286,11 @@ export function ProviderInstanceCard({
       title={t("providerInstance.driver")}
       description={
         <span>
-          {t("providerInstance.driverUnavailablePrefix")}{" "}
-          <code className="text-foreground">{String(instance.driver)}</code>
-          {t("providerInstance.driverUnavailableSuffix")}
+          <Trans
+            i18nKey="providerInstance.driverUnavailable"
+            values={{ driver: String(instance.driver) }}
+            components={{ code: <code className="text-foreground" /> }}
+          />
         </span>
       }
     />
