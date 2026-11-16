@@ -92,8 +92,7 @@ describe("V2 preview upgrade", () => {
         [110, "ProviderTurnAttemptIndex"],
         [111, "TurnItemMessageOrdinalIndex"],
         [112, "TurnItemInlineWorkOutput"],
-        [113, "RepairSubagentGroups"],
-        [114, "ProjectKnowledgeRecallIndex"],
+        [113, "ProjectKnowledgeRecallIndex"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -229,8 +228,7 @@ describe("V2 preview upgrade", () => {
         [110, "ProviderTurnAttemptIndex"],
         [111, "TurnItemMessageOrdinalIndex"],
         [112, "TurnItemInlineWorkOutput"],
-        [113, "RepairSubagentGroups"],
-        [114, "ProjectKnowledgeRecallIndex"],
+        [113, "ProjectKnowledgeRecallIndex"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
