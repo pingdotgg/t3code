@@ -20,6 +20,7 @@ import { CollapsibleSectionHeader, SectionHeaderStatus } from "../ui/collapsible
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Spinner } from "../ui/spinner";
 import {
+  THREAD_LINEAGE_ROW_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./threadDetailsPanelStyles";
@@ -73,9 +74,10 @@ function WorkflowMemberRow({
   const threadId = member.childThreadId;
   const canOpen = threadId !== null;
   return (
-    <li className="flex items-center">
+    <li className={cn(THREAD_LINEAGE_ROW_CLASS, "flex items-center")}>
       {threadId !== null ? (
         <ThreadInsightsMenu
+          placement="overlay"
           parent={parentRef}
           target={{ environmentId: parentRef.environmentId, threadId: ThreadId.make(threadId) }}
         />
@@ -101,7 +103,10 @@ function WorkflowMemberRow({
           <span className="min-w-0 flex-1 truncate">{member.title}</span>
           <span className="sr-only">{member.status}</span>
           {member.startedAt ? (
-            <span className="shrink-0 text-2xs font-normal tabular-nums text-muted-foreground">
+            <span
+              data-slot="lineage-meta"
+              className="shrink-0 text-2xs font-normal tabular-nums text-muted-foreground"
+            >
               <AgentElapsed agent={member} />
             </span>
           ) : null}

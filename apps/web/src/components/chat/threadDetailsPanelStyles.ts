@@ -45,3 +45,6 @@ export const THREAD_DETAILS_PANEL_SPLIT_SECONDARY_CLASS = `${THREAD_DETAILS_PANE
 // The split hairline shows only while the pair is in use, so resting rows read as plain rows.
 export const THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS =
   "h-4 w-px shrink-0 bg-transparent group-hover/details-split:bg-border/65 group-has-[[data-popup-open]]/details-split:bg-border/65";
+
+export const THREAD_LINEAGE_ROW_CLASS =
+  "group/lineage relative has-[[data-slot=thread-insights-menu]]:hover:[&_[data-slot=lineage-meta]]:invisible has-[[data-slot=thread-insights-menu]]:focus-within:[&_[data-slot=lineage-meta]]:invisible has-[[data-slot=thread-insights-menu]_[data-popup-open]]:[&_[data-slot=lineage-meta]]:invisible pointer-coarse:has-[[data-slot=thread-insights-menu]]:[&_[data-slot=lineage-meta]]:invisible [@media(hover:none)]:has-[[data-slot=thread-insights-menu]]:[&_[data-slot=lineage-meta]]:invisible";
