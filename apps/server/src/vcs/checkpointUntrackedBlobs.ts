@@ -23,7 +23,20 @@ interface Snapshot {
   readonly head: string;
   readonly config: string;
   readonly blobs: ReadonlyArray<UntrackedBlob>;
+  /** Files hashed without a reading of their conversion state from before staging. */
+  readonly pending: ReadonlyArray<string>;
 }
+
+/** The conversion state read before staging; a blob is remembered only if it reads the same after. */
+interface ConversionState {
+  readonly config: string;
+  readonly attributes: ReadonlyMap<string, string | undefined>;
+}
+
+export const NOTHING: {
+  readonly reused: ReadonlyArray<UntrackedBlob>;
+  readonly before: ConversionState | undefined;
+} = { reused: [], before: undefined };
 
 // Every attribute convert_to_git reads; a blob is reused only while all of them are unchanged.
 const CONVERSION_ATTRIBUTES = [
@@ -124,8 +137,56 @@ export const make = (
     }).pipe(Effect.map((result) => `${result.exitCode}\0${result.stdout}`));
 
   /**
+   * Finds directories whose .gitattributes may have changed while Git hashed: a present file
+   * touched since just before the capture, or a missing one in a directory touched since then.
+   * Reading attributes before and after staging cannot see a change that was undone in between.
+   */
+  const changingAttributeDirectories = Effect.fnUntraced(function* (
+    topLevel: string,
+    paths: ReadonlyArray<string>,
+    settledNs: bigint,
+  ) {
+    const directories = new Set<string>(paths.length === 0 ? [] : [""]);
+    for (const entryPath of paths) {
+      for (
+        let end = entryPath.lastIndexOf("/");
+        end > 0 && !directories.has(entryPath.slice(0, end + 1));
+        end = entryPath.lastIndexOf("/", end - 1)
+      ) {
+        directories.add(entryPath.slice(0, end + 1));
+      }
+    }
+    const list = [...directories];
+    const [files, parents] = yield* Effect.all([
+      lstatAll(
+        topLevel,
+        list.map((directory) => `${directory}.gitattributes`),
+      ),
+      lstatAll(topLevel, list),
+    ]);
+    const changing = new Set(
+      list.filter((_, index) => {
+        const changedNs = (files[index] ?? parents[index])?.changedNs;
+        return changedNs === undefined || changedNs >= settledNs;
+      }),
+    );
+    return (entryPath: string) => {
+      if (changing.has("")) return true;
+      for (
+        let end = entryPath.lastIndexOf("/");
+        end > 0;
+        end = entryPath.lastIndexOf("/", end - 1)
+      ) {
+        if (changing.has(entryPath.slice(0, end + 1))) return true;
+      }
+      return false;
+    };
+  });
+
+  /**
    * Adds the still-valid blobs to the scratch index, flagged so `git add` does not read their
-   * files. The index must hold exactly HEAD's paths. Returns the blobs it added.
+   * files. The index must hold exactly HEAD's paths. Returns the blobs it added, and the
+   * conversion state of every file this capture may remember, read before any of them is hashed.
    */
   const reuse = Effect.fn("GitVcsDriver.checkpoints.reuseUntrackedBlobs")(
     function* (input: {
@@ -138,7 +199,7 @@ export const make = (
       const snapshot = snapshots.get(input.cwd);
       // A capture that fails after this point hashes everything once more, then remembers again.
       snapshots.delete(input.cwd);
-      if (snapshot === undefined || snapshot.topLevel !== input.topLevel) return [];
+      if (snapshot === undefined || snapshot.topLevel !== input.topLevel) return NOTHING;
       let blobs = snapshot.blobs;
       if (snapshot.head !== input.head) {
         // A path HEAD now tracks, or one below a path it changed, is no longer untracked.
@@ -184,38 +245,46 @@ export const make = (
           (blob) => !nested.some((directory) => blob.path.startsWith(`${directory}/`)),
         );
       }
-      if (blobs.length === 0) return [];
-
-      const paths = blobs.map((blob) => blob.path);
-      const stdin = `${paths.join("\0")}\0`;
+      const paths = [...blobs.map((blob) => blob.path), ...snapshot.pending];
+      if (paths.length === 0) return NOTHING;
+      const unchecked = Effect.succeed({ exitCode: 1, stdout: "" });
+      const stdin = `${blobs.map((blob) => `${blob.path}\0`).join("")}`;
       const [config, attributes, ignored, objects] = yield* Effect.all(
         [
           readConfig(input.cwd),
           readAttributes(input.topLevel, input.env, paths),
           // Without --no-index this reports only untracked paths, which these are in this index.
-          execute({
-            operation,
-            cwd: input.topLevel,
-            args: [...input.indexConfig, "check-ignore", "-z", "--stdin"],
-            stdin,
-            env: input.env,
-            allowNonZeroExit: true,
-            maxOutputBytes: Buffer.byteLength(stdin),
-            outputMode: "error",
-          }),
+          blobs.length === 0
+            ? unchecked
+            : execute({
+                operation,
+                cwd: input.topLevel,
+                args: [...input.indexConfig, "check-ignore", "-z", "--stdin"],
+                stdin,
+                env: input.env,
+                allowNonZeroExit: true,
+                maxOutputBytes: Buffer.byteLength(stdin),
+                outputMode: "error",
+              }),
           // Blobs of deleted checkpoints can be pruned while this process still remembers them.
-          execute({
-            operation,
-            cwd: input.cwd,
-            args: ["cat-file", "--batch-check=%(objectname) %(objecttype)"],
-            stdin: `${[...new Set(blobs.map((blob) => blob.oid))].join("\n")}\n`,
-            maxOutputBytes: blobs.length * 128,
-            outputMode: "error",
-          }),
+          blobs.length === 0
+            ? unchecked
+            : execute({
+                operation,
+                cwd: input.cwd,
+                args: ["cat-file", "--batch-check=%(objectname) %(objecttype)"],
+                stdin: `${[...new Set(blobs.map((blob) => blob.oid))].join("\n")}\n`,
+                maxOutputBytes: blobs.length * 128,
+                outputMode: "error",
+              }),
         ],
         { concurrency: "unbounded" },
       );
-      if (config !== snapshot.config || ignored.exitCode > 1) return [];
+      const before: ConversionState = {
+        config,
+        attributes: new Map(paths.map((entryPath, index) => [entryPath, attributes[index]])),
+      };
+      if (config !== snapshot.config || ignored.exitCode > 1) return { reused: [], before };
       const ignoredPaths = new Set(ignored.stdout.split("\0"));
       const present = new Set(objects.stdout.split("\n"));
       blobs = blobs.filter(
@@ -224,11 +293,11 @@ export const make = (
           !ignoredPaths.has(blob.path) &&
           present.has(`${blob.oid} blob`),
       );
-      if (blobs.length === 0) return [];
+      if (blobs.length === 0) return { reused: [], before };
 
       const indexFile = input.env.GIT_INDEX_FILE!;
       const { mtime } = yield* fileSystem.stat(indexFile);
-      if (Option.isNone(mtime)) return [];
+      if (Option.isNone(mtime)) return { reused: [], before };
       yield* execute({
         operation,
         cwd: input.cwd,
@@ -247,9 +316,9 @@ export const make = (
       // Tracked entries are racy against the index's old timestamp, not this rewrite's.
       const indexTime = Math.floor(mtime.value.getTime() / 1000);
       yield* fileSystem.utimes(indexFile, indexTime, indexTime);
-      return blobs;
+      return { reused: blobs, before };
     },
-    Effect.orElseSucceed((): ReadonlyArray<UntrackedBlob> => []),
+    Effect.orElseSucceed(() => NOTHING),
   );
 
   /** Records the untracked files the published checkpoint `tree` holds, for the next capture. */
@@ -263,6 +332,7 @@ export const make = (
       readonly startedAt: number;
       readonly stagingMs: number;
       readonly reused: ReadonlyArray<UntrackedBlob>;
+      readonly before: ConversionState | undefined;
     }) {
       if (input.reused.length === 0 && input.stagingMs < MIN_STAGING_MS) return;
       const listed = yield* execute({
@@ -309,34 +379,67 @@ export const make = (
         added.map((entry) => entry.path),
       );
       const settledNs = BigInt(input.startedAt - SETTLED_MS) * 1_000_000n;
-      const settled = added.flatMap((entry, index) => {
+      const hashed = added.flatMap((entry, index) => {
         const stat = stats[index];
-        return stat !== undefined && stat.regular && stat.changedNs < settledNs
-          ? [{ ...entry, size: stat.size, stat: stat.stat }]
+        return stat !== undefined && stat.regular
+          ? [{ ...entry, size: stat.size, stat: stat.stat, settled: stat.changedNs < settledNs }]
           : [];
       });
-      const largest = [...kept, ...settled]
+      const largest = [...kept, ...hashed]
         .sort((left, right) => (left.size < right.size ? 1 : left.size > right.size ? -1 : 0))
         .slice(0, MAX_BLOBS);
       if (largest.reduce((total, blob) => total + blob.size, 0n) < MIN_TOTAL_BYTES) return;
 
-      const unchecked = largest.filter((blob) => !("attributes" in blob));
-      const attributes = yield* readAttributes(
-        input.topLevel,
-        input.env,
-        unchecked.map((blob) => blob.path),
+      // Git hashed these under rules nobody recorded. Reading the rules now would pair the blob
+      // with whatever they have since become, so only a reading from before staging counts.
+      const before = input.before;
+      const candidates = largest.flatMap((blob) =>
+        "settled" in blob && blob.settled && before?.attributes.get(blob.path) !== undefined
+          ? [blob]
+          : [],
       );
-      const checked = new Map(unchecked.map((blob, index) => [blob.path, attributes[index]]));
-      const blobs = largest.flatMap((blob): UntrackedBlob[] => {
-        if ("attributes" in blob) return [blob];
-        const value = checked.get(blob.path);
+      const candidatePaths = candidates.map((blob) => blob.path);
+      const [config, attributes, changing] = yield* Effect.all(
+        [
+          readConfig(input.cwd),
+          readAttributes(input.topLevel, input.env, candidatePaths),
+          changingAttributeDirectories(input.topLevel, candidatePaths, settledNs),
+        ],
+        { concurrency: "unbounded" },
+      );
+      const sameConfig = before !== undefined && config === before.config;
+      const admitted = candidates.flatMap((blob, index): UntrackedBlob[] => {
+        const value = attributes[index];
         // A clean filter is a program whose output can depend on more than the file.
-        return value !== undefined && /\0(?:unspecified|unset)$/.test(value)
-          ? [{ ...blob, attributes: value }]
+        return sameConfig &&
+          value !== undefined &&
+          value === before.attributes.get(blob.path) &&
+          /\0(?:unspecified|unset)$/.test(value) &&
+          !changing(blob.path)
+          ? [
+              {
+                path: blob.path,
+                mode: blob.mode,
+                oid: blob.oid,
+                size: blob.size,
+                stat: blob.stat,
+                attributes: value,
+              },
+            ]
           : [];
       });
-      const config = yield* readConfig(input.cwd);
-      snapshots.set(input.cwd, { topLevel: input.topLevel, head: input.head, config, blobs });
+      // Reused blobs were checked against the earlier config; a different one now vouches for none.
+      const blobs = sameConfig
+        ? [...largest.flatMap((blob) => ("settled" in blob ? [] : [blob])), ...admitted]
+        : [];
+      const remembered = new Set(blobs.map((blob) => blob.path));
+      snapshots.set(input.cwd, {
+        topLevel: input.topLevel,
+        head: input.head,
+        config,
+        blobs,
+        pending: largest.flatMap((blob) => (remembered.has(blob.path) ? [] : [blob.path])),
+      });
       if (snapshots.size > MAX_WORKSPACES) snapshots.delete(snapshots.keys().next().value!);
     },
     (effect) => Effect.ignore(effect),

@@ -541,6 +541,20 @@ it.effect("checkpoint capture ignores an inherited object directory", () =>
 it.effect.each([
   { name: "nothing changed", reuses: true, change: () => Effect.void },
   {
+    name: "its conversion attributes changed while it was being captured",
+    reuses: false,
+    change: () => Effect.void,
+    during: ({ write }: UntrackedBlobChange) =>
+      Effect.orDie(write(".gitattributes", "*.txt text eol=lf\n")),
+  },
+  {
+    name: "its conversion config changed while it was being captured",
+    reuses: false,
+    change: () => Effect.void,
+    during: ({ git }: UntrackedBlobChange) =>
+      Effect.orDie(Effect.asVoid(git(["config", "core.autocrlf", "true"]))),
+  },
+  {
     name: "its conversion attributes changed",
     reuses: false,
     change: ({ write }: UntrackedBlobChange) => write(".gitattributes", "*.txt text eol=lf\n"),
@@ -592,19 +606,23 @@ it.effect.each([
   },
 ])(
   "checkpoint capture skips hashing an untracked file only while a fresh hash would match: $name",
-  ({ reuses, change }) =>
+  ({ reuses, change, during }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const liveProcess = yield* VcsProcess.VcsProcess;
       let reused = 0;
+      let afterPublish: Effect.Effect<void> = Effect.void;
       const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
         Effect.provideService(VcsProcess.VcsProcess, {
           run: (input) => {
             if (input.args.includes("core.ignorestat=true")) reused++;
             // Only a capture whose staging took real time looks for files to remember.
-            return input.args.includes("add")
-              ? liveProcess.run(input).pipe(Effect.tap(() => TestClock.adjust("1 second")))
+            if (input.args.includes("add"))
+              return liveProcess.run(input).pipe(Effect.tap(() => TestClock.adjust("1 second")));
+            // The files are hashed and published by now, but not yet remembered.
+            return input.args.includes("update-ref")
+              ? liveProcess.run(input).pipe(Effect.tap(() => afterPublish))
               : liveProcess.run(input);
           },
         }),
@@ -620,6 +638,10 @@ it.effect.each([
       // Only files left alone for a few seconds before a capture are remembered.
       yield* TestClock.adjust("36500 days");
       yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      // A file is remembered by the first capture that read its conversion rules before hashing it.
+      if (during !== undefined) afterPublish = during({ git, write, checkpointRef });
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      afterPublish = Effect.void;
 
       yield* change({ git, write, checkpointRef });
       yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });

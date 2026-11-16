@@ -1389,8 +1389,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           topLevel === undefined || head === undefined || sparseCheckout || workspaceIgnored
             ? undefined
             : { cwd: input.cwd, topLevel, head, env: commitEnv };
-        const reused =
-          untracked === undefined ? [] : yield* untrackedBlobs.reuse({ ...untracked, indexConfig });
+        const { reused, before } =
+          untracked === undefined
+            ? CheckpointUntrackedBlobs.NOTHING
+            : yield* untrackedBlobs.reuse({ ...untracked, indexConfig });
 
         const stageFiles = (exclusions: ReadonlyArray<string>) =>
           execute({
@@ -1746,6 +1748,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             startedAt,
             stagingMs,
             reused,
+            before,
           });
         }
       }).pipe(Effect.ensuring(cleanupTempIndex));
