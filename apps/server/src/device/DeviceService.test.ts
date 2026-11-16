@@ -229,7 +229,9 @@ const fixture = Effect.fn("fixture")(function* (
   const run = (command: string) =>
     command === "emulator"
       ? Effect.succeed({ code: 0, stdout: "Pixel_API_35\n", stderr: "" })
-      : Ref.get(encoderResult);
+      : command === "xcrun"
+        ? Effect.succeed({ code: 0, stdout: '{"devices":{}}', stderr: "" })
+        : Ref.get(encoderResult);
   const ready: DeviceHost.DeviceHostReady = {
     nodePath: process.execPath,
     hub: { origin: "http://device.test" },
@@ -1180,7 +1182,12 @@ it.effect.each(["shutdown", "close"] as const)(
           return HttpClientResponse.fromWeb(request, Response.json({ ok: true, id: deviceId }));
         }),
       );
-      const run = () => Effect.succeed({ code: 0, stdout: "", stderr: "" });
+      const run = (command: string) =>
+        Effect.succeed({
+          code: 0,
+          stdout: command === "xcrun" ? '{"devices":{}}' : "",
+          stderr: "",
+        });
       const ready: DeviceHost.DeviceHostReady = {
         nodePath: process.execPath,
         hub: { origin: "http://device.test" },
@@ -1341,7 +1348,8 @@ it.effect("leaves a session its host leases to every thread open when one thread
           : HttpClientResponse.fromWeb(request, Response.json({ ok: true, id: deviceId })),
       ),
     );
-    const run = () => Effect.succeed({ code: 0, stdout: "", stderr: "" });
+    const run = (command: string) =>
+      Effect.succeed({ code: 0, stdout: command === "xcrun" ? '{"devices":{}}' : "", stderr: "" });
     const ready: DeviceHost.DeviceHostAgentReady = {
       nodePath: process.execPath,
       hub: { origin: "http://device.test" },
@@ -1463,7 +1471,12 @@ it.effect.each([
           throw new Error(`Unexpected hub path: ${path}`);
         }),
       );
-      const run = () => Effect.succeed({ code: 0, stdout: "", stderr: "" });
+      const run = (command: string) =>
+        Effect.succeed({
+          code: 0,
+          stdout: command === "xcrun" ? '{"devices":{}}' : "",
+          stderr: "",
+        });
       const ready: DeviceHost.DeviceHostReady = {
         nodePath: process.execPath,
         hub: { origin: "http://device.test" },
@@ -1522,7 +1535,10 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
   (hostId) =>
     Effect.gen(function* () {
       let enumeration = { code: 1, stdout: "private stdout", stderr: "private stderr" };
-      const run = () => Effect.sync(() => enumeration);
+      const run = (command: string) =>
+        command === "xcrun"
+          ? Effect.succeed({ code: 0, stdout: '{"devices":{}}', stderr: "" })
+          : Effect.sync(() => enumeration);
       const hubDevices = [
         { id: "iphone", name: "iPhone", platform: "ios", physical: false },
         { id: "phone", name: "Pixel", platform: "android", physical: true },
@@ -1601,6 +1617,92 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
       expect(recovered.hostStatuses[hostId]).toEqual({ status: "ready" });
       if (hostId === LOCAL_DEVICE_HOST_ID) expect(recovered.hostStatusDetail).toBeUndefined();
     }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true }))),
+);
+
+it.effect.each([
+  { code: 1, stdout: "private output" },
+  { code: 124, stdout: "" },
+  { code: 0, stdout: "not JSON" },
+  { code: 0, stdout: '{"devices":null}' },
+])("retains iOS inventory after enumeration fails (%j) and recovers", (failure) =>
+  Effect.gen(function* () {
+    let enumeration = {
+      code: 0,
+      stdout: JSON.stringify({
+        devices: {
+          "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [
+            { udid: "never-used", name: "iPhone 17", state: "Shutdown" },
+          ],
+        },
+      }),
+      stderr: "",
+    };
+    const run = () => Effect.sync(() => enumeration);
+    const http = HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(request, Response.json({ simulators: [], emulators: [] })),
+      ),
+    );
+    const hostId = LOCAL_DEVICE_HOST_ID;
+    const ready: DeviceHost.DeviceHostReady = {
+      nodePath: process.execPath,
+      hub: { origin: "http://device.test" },
+      devices: makeDeviceHubOperations({
+        hostId,
+        origin: "http://device.test",
+        http,
+        run,
+        platformAvailable: (platform) => Effect.succeed(platform === "ios"),
+      }),
+      helpers: { serveSimAxSettings: null, serveSimCli: null },
+      run,
+    };
+    const host: DeviceHost.DeviceHost["Service"] = {
+      id: hostId,
+      label: "Test device host",
+      summary: Effect.succeed({
+        id: hostId,
+        kind: "local",
+        label: "Test device host",
+        platforms: [{ platform: "ios", available: true }],
+        hubInstalled: true,
+        agentDeviceInstalled: false,
+      }),
+      platformAvailability: (platform) =>
+        Effect.succeed({ platform, available: platform === "ios" }),
+      ensureReady: () => Effect.succeed(ready),
+      ensureAgentReady: () => Effect.die("Agent access is not used in this test"),
+      current: Effect.succeed(ready),
+      stop: Effect.void,
+      stopAgent: Effect.void,
+    };
+    const service = yield* DeviceService.makeWithHosts(new Map([[hostId, host]])).pipe(
+      Effect.provide(NodeCrypto.layer),
+      Effect.provideService(HttpClient.HttpClient, http),
+    );
+    const initial = yield* service.list;
+    expect(initial.devices).toMatchObject([{ id: "never-used", booted: false }]);
+    expect(initial.hostStatuses[hostId]).toEqual({ status: "ready" });
+
+    enumeration = { ...failure, stderr: "private stderr".repeat(1_000) };
+    const incomplete = yield* service.retryHost(hostId);
+    expect(incomplete.devices).toEqual(initial.devices);
+    expect(incomplete.hostStatuses[hostId]).toEqual({
+      status: "ready",
+      incompletePlatforms: ["ios"],
+      detail:
+        failure.code === 0
+          ? "Could not decode the iOS simulator inventory (xcrun simctl list devices available --json). Previous iOS devices remain listed."
+          : `Could not list iOS simulators (xcrun simctl list devices available --json, exit code ${failure.code}). Previous iOS devices remain listed.`,
+    });
+    expect(incomplete.hostStatusDetail).toBe(incomplete.hostStatuses[hostId]?.detail);
+
+    enumeration = { code: 0, stdout: '{"devices":{}}', stderr: "" };
+    const recovered = yield* service.retryHost(hostId);
+    expect(recovered.devices).toEqual([]);
+    expect(recovered.hostStatuses[hostId]).toEqual({ status: "ready" });
+    expect(recovered.hostStatusDetail).toBeUndefined();
+  }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true }))),
 );
 
 it.effect("retry keeps device and agent consent unchanged", () =>

@@ -70,25 +70,23 @@ const IOS_RUNTIME = /\.SimRuntime\.iOS-(\d+(?:-\d+)*)$/;
 
 // expo-device-hub drops simulators that were never booted, so a fresh runtime
 // install lists none; simctl's inventory fills them in.
-const installedIosSimulators = (stdout: string): Array<HostDevice> =>
-  Option.match(decodeSimctlDeviceList(stdout), {
-    onNone: () => [],
-    onSome: ({ devices }) =>
-      Object.entries(devices).flatMap(([runtime, simulators]) => {
-        const version = IOS_RUNTIME.exec(runtime)?.[1];
-        if (version === undefined) return [];
-        return simulators
-          .filter((simulator) => simulator.isAvailable !== false)
-          .map((simulator) => ({
-            id: simulator.udid,
-            name: simulator.name,
-            version: `iOS ${version.replaceAll("-", ".")}`,
-            platform: "ios" as const,
-            booted: simulator.state.toLowerCase() === "booted",
-            physical: false,
-          }));
-      }),
-  });
+const installedIosSimulators = (stdout: string): Option.Option<Array<HostDevice>> =>
+  Option.map(decodeSimctlDeviceList(stdout), ({ devices }) =>
+    Object.entries(devices).flatMap(([runtime, simulators]) => {
+      const version = IOS_RUNTIME.exec(runtime)?.[1];
+      if (version === undefined) return [];
+      return simulators
+        .filter((simulator) => simulator.isAvailable !== false)
+        .map((simulator) => ({
+          id: simulator.udid,
+          name: simulator.name,
+          version: `iOS ${version.replaceAll("-", ".")}`,
+          platform: "ios" as const,
+          booted: simulator.state.toLowerCase() === "booted",
+          physical: false,
+        }));
+    }),
+  );
 
 // Hub diagnostics can carry a whole stderr dump.
 const boundDiagnostics = (text: string) =>
@@ -199,12 +197,21 @@ export const makeDeviceHubOperations = (options: {
         const head = errorHead(error.error ?? "");
         return boundDiagnostics(head ? `${error.message} ${head}` : error.message);
       }) ?? [];
+    let iosDiscoveryIncomplete = false;
     if (yield* options.platformAvailable("ios")) {
       const simctl = yield* run("xcrun", ["simctl", "list", "devices", "available", "--json"]);
-      if (simctl.code === 0) {
-        for (const simulator of installedIosSimulators(simctl.stdout)) {
+      const inventory = simctl.code === 0 ? installedIosSimulators(simctl.stdout) : Option.none();
+      if (Option.isSome(inventory)) {
+        for (const simulator of inventory.value) {
           if (!devices.some((device) => device.id === simulator.id)) devices.push(simulator);
         }
+      } else {
+        iosDiscoveryIncomplete = true;
+        details.push(
+          simctl.code === 0
+            ? "Could not decode the iOS simulator inventory (xcrun simctl list devices available --json). Previous iOS devices remain listed."
+            : `Could not list iOS simulators (xcrun simctl list devices available --json, exit code ${simctl.code}). Previous iOS devices remain listed.`,
+        );
       }
     }
     let androidDiscoveryIncomplete = false;
@@ -240,7 +247,9 @@ export const makeDeviceHubOperations = (options: {
       devices,
       detail: details.join("\n") || undefined,
       androidDiscoveryIncomplete,
-      ...(simulatorsUnlisted ? { incompletePlatforms: ["ios"] as const } : {}),
+      ...(simulatorsUnlisted || iosDiscoveryIncomplete
+        ? { incompletePlatforms: ["ios"] as const }
+        : {}),
     };
   }).pipe(Effect.withSpan("DeviceHubOperations.list"));
 
