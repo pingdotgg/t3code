@@ -182,8 +182,9 @@ jobs:
           tag="mobile-ios-preview-build/$hash"
           link=""
           if git fetch --quiet origin "refs/tags/$tag:refs/tags/$tag" 2>/dev/null; then
-            link="$(git tag -l --format='%(contents:subject)' "$tag")"
-          else
+            link="$(git tag -l --format='%(contents)' "$tag" | node "$GITHUB_WORKSPACE/.trusted/.github/scripts/mobile-ios-preview-record.cjs" read)"
+          fi
+          if [ -z "$link" ]; then
             link="$(eas build:list --platform ios --build-profile preview:dev --runtime-version "$hash" --status finished --limit 5 --json --non-interactive \
               | sed -n '/^\[/,$p' \
               | jq -r --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '[.[] | select((.expirationDate // "9999") > $now)][0] | select(. != null) | "https://expo.dev/accounts/pingdotgg/projects/t3-code/builds/\(.id)"')"

@@ -127,8 +127,9 @@ jobs:
           tag="mobile-ios-preview-build/$hash"
           link=""
           if git fetch --quiet origin "refs/tags/$tag:refs/tags/$tag" 2>/dev/null; then
-            link="$(git tag -l --format='%(contents:subject)' "$tag")"
-          else
+            link="$(git tag -l --format='%(contents)' "$tag" | node "$GITHUB_WORKSPACE/.github/scripts/mobile-ios-preview-record.cjs" read)"
+          fi
+          if [ -z "$link" ]; then
             # A client EAS built before this job existed; expired ones are gone.
             link="$(eas build:list --platform ios --build-profile preview:dev --runtime-version "$hash" --status finished --limit 5 --json --non-interactive \
               | sed -n '/^\[/,$p' \
@@ -501,12 +502,20 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: package.json
+
       - id: record
         name: Check build record
         run: |
           if git fetch --quiet origin "refs/tags/$BUILD_TAG:refs/tags/$BUILD_TAG" 2>/dev/null; then
-            echo "built=true" >> "$GITHUB_OUTPUT"
-            echo "link=$(git tag -l --format='%(contents:subject)' "$BUILD_TAG")" >> "$GITHUB_OUTPUT"
+            link="$(git tag -l --format='%(contents)' "$BUILD_TAG" | node .github/scripts/mobile-ios-preview-record.cjs read)"
+            if [ -n "$link" ]; then
+              echo "built=true" >> "$GITHUB_OUTPUT"
+              echo "link=$link" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
       # The steps below run the PR's dependency and build scripts; they get no token.
@@ -555,12 +564,6 @@ jobs:
           curl -fsSL -o "$RUNNER_TEMP/AppleWWDRCAG3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
           sudo security add-certificates -k /Library/Keychains/System.keychain "$RUNNER_TEMP/AppleWWDRCAG3.cer" || true
           security find-certificate -c "Apple Worldwide Developer Relations" /Library/Keychains/System.keychain | grep -m1 labl
-
-      - name: Setup Node
-        if: steps.record.outputs.built != 'true'
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
-        with:
-          node-version-file: package.json
 
       - name: Enable corepack
         if: steps.record.outputs.built != 'true'
@@ -624,7 +627,7 @@ jobs:
             echo "### iOS preview client for \`$FINGERPRINT\`: $link"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # The tag is the record later runs look up; its message is the install link.
+      # The tag stores the install link and provisioning-profile expiry.
       - name: Record build
         if: steps.record.outputs.built != 'true'
         env:
@@ -633,9 +636,15 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$BUILD_TAG" -m "$LINK"
+          profile_path="$(unzip -Z -1 "$RUNNER_TEMP/t3code-preview.ipa" | awk '/^Payload\/[^/]+\.app\/embedded.mobileprovision$/')"
+          test -n "$profile_path"
+          unzip -p "$RUNNER_TEMP/t3code-preview.ipa" "$profile_path" > "$RUNNER_TEMP/preview.mobileprovision"
+          security cms -D -i "$RUNNER_TEMP/preview.mobileprovision" > "$RUNNER_TEMP/preview-profile.plist"
+          record="$(node .github/scripts/mobile-ios-preview-record.cjs create "$LINK" "$RUNNER_TEMP/preview-profile.plist")"
+          old_tag="$(git rev-parse -q --verify "refs/tags/$BUILD_TAG" || true)"
+          git tag -f -a "$BUILD_TAG" -m "$record"
           # Only this step has the token; the checkout's copy was removed before the build.
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/$BUILD_TAG"
+          git push --force-with-lease="refs/tags/$BUILD_TAG:$old_tag" "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/$BUILD_TAG"
 
   comment:
     name: Mobile preview comment
