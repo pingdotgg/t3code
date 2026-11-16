@@ -1,3 +1,7 @@
+import {
+  T3_CODE_BROWSER_TOOL_INSTRUCTIONS,
+  T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+} from "@t3tools/provider-core/server/orchestrationInstructions";
 import * as NodeURL from "node:url";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -159,6 +163,7 @@ const noOpenRequests: ReadonlyArray<ProviderReplayEntry> = [
 
 const withInstructions = (
   entries: ReadonlyArray<ProviderReplayEntry>,
+  instructions = "<any>",
 ): ReadonlyArray<ProviderReplayEntry> => {
   const first = entries.findIndex(
     (entry) =>
@@ -192,7 +197,7 @@ const withInstructions = (
         out("session.instructions.entry.put", {
           sessionID: SESSION,
           key: "t3-code",
-          value: "<any>",
+          value: instructions,
         }),
         reply("session.instructions.entry.put", null),
         ...entries.slice(at),
@@ -340,6 +345,7 @@ const resumed = (
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly fileSystem?: FileSystem.FileSystem;
     readonly onPrompt?: (input: unknown) => void;
+    readonly instructions?: string;
   },
 ) =>
   Effect.gen(function* () {
@@ -360,17 +366,20 @@ const resumed = (
                   ? [out("job.list", { kind: "shell" }), reply("job.list", { data: [] })]
                   : emptyShellInventory),
               ])),
-        ...withInstructions([
-          ...(options?.supervised === true
-            ? [
-                out("agent.list", "<any>"),
-                reply("agent.list", agentList),
-                out("session.update", { sessionID: SESSION, permissions: supervisedRules }),
-                reply("session.update", null),
-              ]
-            : []),
-          ...entries,
-        ]),
+        ...withInstructions(
+          [
+            ...(options?.supervised === true
+              ? [
+                  out("agent.list", "<any>"),
+                  reply("agent.list", agentList),
+                  out("session.update", { sessionID: SESSION, permissions: supervisedRules }),
+                  reply("session.update", null),
+                ]
+              : []),
+            ...entries,
+          ],
+          options?.instructions,
+        ),
       ],
       {
         ...(options?.version === undefined ? {} : { version: options.version }),
@@ -5113,69 +5122,84 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
-  it.effect("re-registers T3 MCP each turn and drops its instructions when adding fails", () =>
-    Effect.gen(function* () {
-      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      yield* mcpSessions.set({
-        environmentId: EnvironmentId.make("environment:opencode2-adapter"),
-        threadId,
-        providerSessionId: "mcp:opencode2-adapter",
-        providerInstanceId: instanceId,
-        endpoint: "http://127.0.0.1:3773/mcp",
-        authorizationHeader: "Bearer thread-credential",
-        browserToolsAvailable: false,
-      });
-      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
-      const server = "t3-code-thread_opencode2-adapter";
-      const add = out("mcp.add", {
-        server,
-        "location[directory]": WORK,
-        config: {
-          type: "remote",
-          url: "http://127.0.0.1:3773/mcp",
-          headers: { Authorization: "Bearer thread-credential" },
-          oauth: false,
-        },
-      });
-      const turn = [
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-        promptAccepted,
-        event("session.execution.succeeded", { sessionID: SESSION }),
-      ];
-      const prompts: Array<unknown> = [];
-      // Idle Location eviction drops OpenCode's runtime MCP servers without a reconnect.
-      const { runtime, thread } = yield* resumed(
-        [
-          add,
-          reply("mcp.add", null),
-          ...turn,
-          add,
-          reply("mcp.add", { status: 500, body: { message: "MCP unavailable" } }),
-          out("session.instructions.entry.put", {
-            sessionID: SESSION,
-            key: "t3-code",
-            value: buildRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model }),
-          }),
-          reply("session.instructions.entry.put", null),
-          ...turn,
-          out("mcp.remove", { server, "location[directory]": WORK }),
-          reply("mcp.remove", null),
-        ],
-        { onPrompt: (input) => prompts.push(input) },
-      );
-      for (let index = 0; index < 2; index++) {
-        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
-        const started = yield* runtime.startTurn(turnInput(thread)).pipe(Effect.forkScoped);
-        // OpenCode before 2.2.6 loads a newly added server's tools after a debounce.
-        if (index === 0) {
-          yield* TestClock.adjust("249 millis");
-          assert.lengthOf(prompts, 0, "prompted before OpenCode loaded the new MCP server's tools");
-          yield* TestClock.adjust("1 millis");
+  it.effect.each([false, true])(
+    "re-registers T3 MCP with browser access %s and drops its instructions when adding fails",
+    (browser) =>
+      Effect.gen(function* () {
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* mcpSessions.set({
+          environmentId: EnvironmentId.make("environment:opencode2-adapter"),
+          threadId,
+          providerSessionId: "mcp:opencode2-adapter",
+          providerInstanceId: instanceId,
+          endpoint: "http://127.0.0.1:3773/mcp",
+          authorizationHeader: "Bearer thread-credential",
+          browserToolsAvailable: browser,
+          capabilities: new Set(browser ? ["preview"] : []),
+        });
+        yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+        const server = "t3-code-thread_opencode2-adapter";
+        const add = out("mcp.add", {
+          server,
+          "location[directory]": WORK,
+          config: {
+            type: "remote",
+            url: "http://127.0.0.1:3773/mcp",
+            headers: { Authorization: "Bearer thread-credential" },
+            oauth: false,
+          },
+        });
+        const turn = [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ];
+        const prompts: Array<unknown> = [];
+        // Idle Location eviction drops OpenCode's runtime MCP servers without a reconnect.
+        const { runtime, thread } = yield* resumed(
+          [
+            add,
+            reply("mcp.add", null),
+            ...turn,
+            add,
+            reply("mcp.add", { status: 500, body: { message: "MCP unavailable" } }),
+            out("session.instructions.entry.put", {
+              sessionID: SESSION,
+              key: "t3-code",
+              value: buildRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model }),
+            }),
+            reply("session.instructions.entry.put", null),
+            ...turn,
+            out("mcp.remove", { server, "location[directory]": WORK }),
+            reply("mcp.remove", null),
+          ],
+          {
+            onPrompt: (input) => prompts.push(input),
+            instructions: [
+              buildRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model }),
+              T3_CODE_ORCHESTRATION_INSTRUCTIONS +
+                (browser ? `\n${T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim()}\n` : ""),
+              "To wait for a background shell you started (tests, a build), call `t3_background_wait` with its shell ID before you end your turn. Do not mark work you leave running, or PRs.",
+            ].join("\n\n"),
+          },
+        );
+        for (let index = 0; index < 2; index++) {
+          const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+          const started = yield* runtime.startTurn(turnInput(thread)).pipe(Effect.forkScoped);
+          // OpenCode before 2.2.6 loads a newly added server's tools after a debounce.
+          if (index === 0) {
+            yield* TestClock.adjust("249 millis");
+            assert.lengthOf(
+              prompts,
+              0,
+              "prompted before OpenCode loaded the new MCP server's tools",
+            );
+            yield* TestClock.adjust("1 millis");
+          }
+          yield* Fiber.join(started);
+          assert.equal((yield* Fiber.join(terminal))?.status, "completed");
         }
-        yield* Fiber.join(started);
-        assert.equal((yield* Fiber.join(terminal))?.status, "completed");
-      }
-    }),
+      }),
   );
 
   it.effect("registers a long thread id's MCP server under a name OpenCode accepts", () =>

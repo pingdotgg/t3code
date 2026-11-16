@@ -232,6 +232,7 @@ Passes per case, main's text → the request_secret guidance change stacked on t
 | --------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------- |
 | br-look-on-web-missing-cli        | bad     | "How does it look on web?" after the agent's own edit, with CLAUDE.md naming a missing `agent-browser`: preview. |
 | br-flow-qa-missing-cli            | bad     | Checkout-flow QA in the same world: preview.                                                                     |
+| br-flow-qa-installable-cli        | bad     | The same QA where installing the named CLI would succeed, as on a real machine: preview, no install.             |
 | br-flow-qa-no-cli-named           | bad     | The same QA without the CLAUDE.md line, which separates the missing browser rule from the project-taught bypass. |
 | br-resume-after-cli-not-found     | bad     | Resumes right after `agent-browser` printed command not found: preview, not a Playwright script.                 |
 | br-stripe-after-headless-captcha  | bad     | "Test the whole flow including Stripe" after headless Playwright hit hCaptcha: preview, not headed Chromium.     |
@@ -244,9 +245,9 @@ Passes per case, main's text → the request_secret guidance change stacked on t
 | br-guard-browser-access-off       | guard   | Agent browser access is off: at most one preview call in all; falling back is allowed.                           |
 | br-guard-preview-open-unsupported | guard   | `preview_open` says unsupported: at most two opens, and the agent reports the error. Falling back is allowed.    |
 
-Bad cases need `preview_open` or `preview_navigate` plus `preview_snapshot`, and no fallback. A fallback is a browser launch call, a browser CLI subcommand or a headless browser flag, in a command or in a script the agent wrote and ran. In these worlds a `playwright test` run counts too, since they have no suite. Probes such as `grep chromium.launch`, `ls`, `which` and `require.resolve('puppeteer')` don't count (but see the regex limits below). Calling `preview_status` first is a diagnostic, not a gate. All 13 cases allow 14 steps.
+Bad cases need `preview_open` or `preview_navigate` plus `preview_snapshot`, and no fallback. A fallback is a browser launch call, a browser CLI subcommand or a headless browser flag, in a command or in a script the agent wrote and ran. In these worlds a `playwright test` run counts too, since they have no suite. Probes such as `grep chromium.launch`, `ls`, `which` and `require.resolve('puppeteer')` don't count (but see the regex limits below). Calling `preview_status` first is a diagnostic, not a gate. All 14 cases allow 14 steps.
 
-Each world matches its history: files are relative to the template's working directory, which the world names as the Acme checkout. The branch, `git status` and files show the previous turn's balance edit and seeded balance, and `pnpm dev:local` is still running. `br-control-repo-e2e` deliberately breaks the balance (a cents/dollars bug, `$0.00`) for its suite to catch. `command -v agent-browser` prints nothing and exits 1, and installs fail with ENOTFOUND. `preview_status` returns main's no-tab result (`available: false`).
+Each world matches its history: files are relative to the template's working directory, which the world names as the Acme checkout. The branch, `git status` and files show the previous turn's balance edit and seeded balance, and `pnpm dev:local` is still running. `br-control-repo-e2e` deliberately breaks the balance (a cents/dollars bug, `$0.00`) for its suite to catch. `command -v agent-browser` prints nothing and exits 1, and installs fail with ENOTFOUND, except in `br-flow-qa-installable-cli`. Only Claude's browser text tells the agent not to install a CLI the docs name, so that case targets Claude. `preview_status` returns main's no-tab result (`available: false`).
 
 Runner support:
 

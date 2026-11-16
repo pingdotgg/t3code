@@ -214,6 +214,7 @@ import {
 } from "../../provider/claudeUsageLimits.ts";
 import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 import {
+  T3_CODE_BROWSER_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
@@ -2159,14 +2160,19 @@ const CLAUDE_SEND_TO_USER_INSTRUCTIONS = `
 Text you write before a tool call may reach the user only as a one-line summary. When the user must read something in full before your turn ends, such as a draft, a code block, or what a question you're about to ask refers to, send it with \`send_to_user\`. Put everything else in your final reply.
 `;
 
+// Claude reads a CLAUDE.md that names a missing browser CLI as the user asking for it, and installs it.
+const CLAUDE_BROWSER_INSTRUCTIONS = `${T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim()} A browser tool that project docs name but that is not installed is no reason to switch: use preview, and do not install it.`;
+
 // Native subagents start from their task, not this session's system prompt.
-const subagentDeviceInstructions: HookCallback = () =>
-  Promise.resolve({
-    hookSpecificOutput: {
-      hookEventName: "SubagentStart",
-      additionalContext: T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
-    },
-  });
+const subagentInstructions =
+  (additionalContext: string): HookCallback =>
+  () =>
+    Promise.resolve({
+      hookSpecificOutput: {
+        hookEventName: "SubagentStart",
+        additionalContext,
+      },
+    });
 
 export function makeClaudeQueryOptions(input: {
   readonly modelSelection: ModelSelection;
@@ -2182,6 +2188,8 @@ export function makeClaudeQueryOptions(input: {
   readonly sdkSettings?: string | ClaudeSdkSettings;
   readonly environment?: NodeJS.ProcessEnv;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+  /** The thread's T3 MCP session holds the `preview` capability. */
+  readonly browserToolsAvailable?: boolean;
   /** The thread's T3 MCP session holds the `device` capability. */
   readonly deviceToolsAvailable?: boolean;
   readonly tools?: ClaudeAgentSdkQueryTools;
@@ -2280,6 +2288,8 @@ export function makeClaudeQueryOptions(input: {
               : { ENABLE_TOOL_SEARCH: input.toolSearchOverride }),
           },
         } as ClaudeSdkSettings);
+  const browserInstructions =
+    input.mcpServers !== undefined && input.browserToolsAvailable === true;
   const deviceInstructions = input.mcpServers !== undefined && input.deviceToolsAvailable === true;
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
@@ -2340,17 +2350,33 @@ export function makeClaudeQueryOptions(input: {
             : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
               CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
               CLAUDE_SEND_TO_USER_INSTRUCTIONS +
+              (browserInstructions ? `\n${CLAUDE_BROWSER_INSTRUCTIONS}\n` : "") +
               (deviceInstructions
                 ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
                 : "")),
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
-    ...(deviceInstructions || input.onStop !== undefined
+    ...(deviceInstructions || browserInstructions || input.onStop !== undefined
       ? {
           hooks: {
-            ...(deviceInstructions
-              ? { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] }
+            ...(deviceInstructions || browserInstructions
+              ? {
+                  SubagentStart: [
+                    {
+                      hooks: [
+                        subagentInstructions(
+                          [
+                            ...(browserInstructions ? [CLAUDE_BROWSER_INSTRUCTIONS] : []),
+                            ...(deviceInstructions
+                              ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH]
+                              : []),
+                          ].join("\n\n"),
+                        ),
+                      ],
+                    },
+                  ],
+                }
               : {}),
             ...(input.onStop === undefined ? {} : { Stop: [{ hooks: [input.onStop] }] }),
           },
@@ -12783,6 +12809,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(mcpOverrides.mcpServers === undefined
               ? {}
               : { mcpServers: mcpOverrides.mcpServers }),
+            browserToolsAvailable: mcpSession?.capabilities?.has("preview") === true,
             deviceToolsAvailable: mcpSession?.capabilities?.has("device") === true,
             permissionMode: queryPolicy.permissionMode,
             ...(queryPolicy.allowDangerouslySkipPermissions === undefined
