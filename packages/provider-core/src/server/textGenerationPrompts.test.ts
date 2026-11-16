@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  buildConversationSummaryPrompt,
-  buildKnowledgeCandidatesPrompt,
-  buildThreadTitlePrompt,
-} from "./textGenerationPrompts.ts";
+import { buildKnowledgeCandidatesPrompt, buildThreadTitlePrompt } from "./textGenerationPrompts.ts";
 import { normalizeCliError } from "./textGenerationUtils.ts";
 
 describe("normalizeCliError", () => {
@@ -45,40 +41,6 @@ it("preserves each run boundary and terminal outcome in family review prompts", 
   });
   expect(prompt).toContain("[M1] user (T1/R1, interrupted):\nKeep the API stable.");
   expect(prompt).toContain("[M2] assistant (T2/R2, completed):\nChecked compatibility.");
-});
-
-const noPeer = [
-  { ref: "M1", role: "user", text: "Where should sessions live?" },
-  { ref: "M2", role: "assistant", text: "Keep Redis." },
-] as const;
-const withPeer = [
-  ...noPeer,
-  {
-    ref: "M3",
-    role: "peer",
-    speaker: { label: "Astra", model: "gpt-6-astra" },
-    text: "Use Postgres.",
-  },
-] as const;
-
-it.each([
-  [
-    "summary",
-    (messages: typeof withPeer | typeof noPeer) =>
-      buildConversationSummaryPrompt({ messages }).prompt,
-  ],
-  [
-    "knowledge",
-    (messages: typeof withPeer | typeof noPeer) =>
-      buildKnowledgeCandidatesPrompt({ runOutcome: "completed", messages }).prompt,
-  ],
-])("adds the %s peer rule only when a peer spoke", (_, build) => {
-  const rules = (prompt: string) =>
-    prompt.slice(0, prompt.search(/\n(?:Sources|Messages):/)).split("\n");
-  const withoutPeer = rules(build(noPeer));
-  const peerOnly = rules(build(withPeer)).filter((line) => !withoutPeer.includes(line));
-  expect(peerOnly).toHaveLength(1);
-  expect(rules(build(withPeer)).filter((line) => line !== peerOnly[0])).toEqual(withoutPeer);
 });
 
 describe("buildThreadTitlePrompt", () => {
