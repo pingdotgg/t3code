@@ -41,10 +41,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          fetch-depth: 0
           sparse-checkout: |
             /*
             !/.repos/
           sparse-checkout-cone-mode: false
+
+      - name: Restore Rust source timestamps
+        run: |
+          git ls-files -z apps/conn-server | while IFS= read -r -d '' file; do
+            case "$file" in
+              *.rs|*/Cargo.toml|*/Cargo.lock|*/.cargo/config.toml)
+                touch -d "$(git log -1 --format=%cI -- "$file")" "$file" ;;
+            esac
+          done
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
@@ -86,7 +96,9 @@ jobs:
             ~/.cargo/git/db
             apps/conn-server/target
           key: conn-server-build-v3-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('apps/conn-server/Cargo.lock') }}
-          restore-keys: conn-server-build-v3-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
+          restore-keys: |
+            conn-server-build-v3-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
+            conn-server-check-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
 
       - name: Build comparison binaries
         working-directory: apps/conn-server
@@ -128,10 +140,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          fetch-depth: 0
           sparse-checkout: |
             /*
             !/.repos/
           sparse-checkout-cone-mode: false
+
+      - name: Restore Rust source timestamps
+        run: |
+          git ls-files -z apps/conn-server | while IFS= read -r -d '' file; do
+            case "$file" in
+              *.rs|*/Cargo.toml|*/Cargo.lock|*/.cargo/config.toml)
+                touch -d "$(git log -1 --format=%cI -- "$file")" "$file" ;;
+            esac
+          done
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
