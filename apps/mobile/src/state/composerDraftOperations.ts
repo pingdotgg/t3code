@@ -24,6 +24,10 @@ export function startComposerDraftOperation(draftKey: string): {
   };
 }
 
+export function hasComposerDraftOperations(draftKey: string): boolean {
+  return operationsByDraftKey.has(draftKey);
+}
+
 export function abortComposerDraftOperations(draftKey: string): void {
   const operations = operationsByDraftKey.get(draftKey);
   if (!operations) return;

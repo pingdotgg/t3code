@@ -30,6 +30,7 @@ export interface NewTaskFlowState {
   readonly draftKey: string | null;
   readonly submitting: boolean;
   readonly expandedProvider: string | null;
+  readonly unsentDraftChecked: boolean;
 }
 
 export const INITIAL_NEW_TASK_FLOW_STATE: NewTaskFlowState = {
@@ -38,6 +39,7 @@ export const INITIAL_NEW_TASK_FLOW_STATE: NewTaskFlowState = {
   draftKey: null,
   submitting: false,
   expandedProvider: null,
+  unsentDraftChecked: false,
 };
 
 // Every draft route on the stack keeps its flow, not just the one the provider
@@ -64,6 +66,68 @@ export function updateNewTaskFlowState(flowKey: string, patch: Partial<NewTaskFl
     ...flows,
     [flowKey]: { ...(flows[flowKey] ?? INITIAL_NEW_TASK_FLOW_STATE), ...patch },
   });
+}
+
+/**
+ * Whether a plain draft route's flow should now resume its project's newest
+ * unsent draft: once per flow, after drafts load, and only for the route's
+ * project or, without one, the project the flow settled on. Draft, branch,
+ * clone, and share routes keep their fresh draft.
+ */
+export function unsentDraftResumeDue(input: {
+  readonly route: NewTaskDraftRouteParams | undefined;
+  readonly flow: NewTaskFlowState;
+  readonly draftsLoaded: boolean;
+  readonly selectedProject: {
+    readonly environmentId: EnvironmentId;
+    readonly id: ProjectId;
+  } | null;
+}): boolean {
+  const { route, flow, selectedProject } = input;
+  if (
+    route === undefined ||
+    selectedProject === null ||
+    flow.draftKey === null ||
+    flow.unsentDraftChecked ||
+    !input.draftsLoaded
+  ) {
+    return false;
+  }
+  const first = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);
+  if (
+    first(route.draftId) !== undefined ||
+    first(route.incomingShareId) !== undefined ||
+    route.branch ||
+    first(route.cloning) === "1"
+  ) {
+    return false;
+  }
+  const environmentId = first(route.environmentId);
+  const projectId = first(route.projectId);
+  if (environmentId && projectId) {
+    return selectedProject.environmentId === environmentId && selectedProject.id === projectId;
+  }
+  return flow.projectKey === scopedProjectKey(selectedProject.environmentId, selectedProject.id);
+}
+
+/**
+ * Draft keys held by draft routes on the stack: bound by a flow, or still only
+ * named by a route whose flow has not written yet.
+ */
+export function boundNewTaskDraftKeys(state: NavigationRoutes | undefined): ReadonlySet<string> {
+  const keys = new Set(
+    Object.values(appAtomRegistry.get(flowStatesAtom)).flatMap((flow) =>
+      flow.draftKey === null ? [] : [flow.draftKey],
+    ),
+  );
+  for (const route of state?.routes ?? []) {
+    const draftId = isDraftThreadRoute(route)
+      ? (route.params as { draft: NewTaskDraftRouteParams }).draft.draftId
+      : undefined;
+    const key = Array.isArray(draftId) ? draftId[0] : draftId;
+    if (key !== undefined) keys.add(key);
+  }
+  return keys;
 }
 
 /**
