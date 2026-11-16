@@ -88,9 +88,16 @@ export function applyThemeBackground(themeId: string | undefined): void {
   }, failed);
 }
 
-/** A new image revision does not change the palette, so it does not repaint the theme. */
+/**
+ * A new image revision does not change the palette, so it does not repaint the theme.
+ * Coming back online retries a download that failed; a shown image is left alone.
+ */
 export function startThemeBackground(): () => void {
-  return subscribeAtomChanges(themeServerEnvironmentThemesAtom, () =>
-    applyThemeBackground(document.documentElement.dataset.themeId),
-  );
+  const reapply = () => applyThemeBackground(document.documentElement.dataset.themeId);
+  const unsubscribe = subscribeAtomChanges(themeServerEnvironmentThemesAtom, reapply);
+  window.addEventListener("online", reapply);
+  return () => {
+    unsubscribe();
+    window.removeEventListener("online", reapply);
+  };
 }
