@@ -414,7 +414,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "app-icon",
     title: "App icon",
     to: "/settings/appearance",
-    searchTerms: ["dock taskbar favicon logo nightly blueprint sunrise black classic"],
+    searchTerms: ["dock taskbar favicon logo nightly blueprint sunrise orbital black classic"],
   },
   {
     id: "math-rendering",
