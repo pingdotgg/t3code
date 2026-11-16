@@ -14,6 +14,7 @@ import {
   type ModelSelection,
   NodeId,
   type OrchestrationV2Run,
+  type OrchestrationV2Subagent,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -3541,13 +3542,75 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           },
         });
 
-        // An earlier follow-up starts an awaited command, which keeps running throughout.
+        const wake = (name: string, backgroundTaskIds: ReadonlyArray<string>) =>
+          Effect.gen(function* () {
+            const messageId = MessageId.make(`message:followup-earlier-work-wake-${name}`);
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "agent",
+              creationSource: "server",
+              commandId: CommandId.make(`command:followup-earlier-work-wake-${name}`),
+              threadId: child.childThreadId,
+              messageId,
+              text: "Background activity updated",
+              notification: {
+                source: { kind: "command" },
+                outcome: "completed",
+                summary: `Background work "${name}" finished`,
+                backgroundTaskIds,
+              },
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+            });
+            return (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
+              (run) => run.userMessageId === messageId,
+            )!;
+          });
+
+        // An earlier follow-up starts an awaited command, which keeps running throughout, and a
+        // native subagent, which reports under its own task id outside the roster.
         const earlierRun = yield* sendFollowup("earlier", "Start the build and wait for it.");
         const earlierTaskId = earlierRun.delegatedTaskId!;
         const earlierBuild = ["earlier-build", earlierRun.id] as const;
+        const earlierAgent = {
+          id: NodeId.make("node:followup-earlier-work-agent"),
+          threadId: child.childThreadId,
+          runId: earlierRun.id,
+          parentNodeId: earlierRun.rootNodeId!,
+          origin: "provider_native" as const,
+          createdBy: "agent" as const,
+          driver,
+          providerInstanceId: modelSelection.instanceId,
+          providerThreadId: null,
+          childThreadId: null,
+          nativeTaskRef: { driver, nativeId: "earlier-agent", strength: "strong" as const },
+          prompt: "Check the logs",
+          title: null,
+          model: null,
+          status: "running" as const,
+          result: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        };
+        const agentEvent = (payload: OrchestrationV2Subagent) => ({
+          id: EventId.make(`event:followup-earlier-work-agent-${payload.status}`),
+          type: "subagent.updated" as const,
+          threadId: child.childThreadId,
+          runId: earlierRun.id,
+          nodeId: earlierAgent.id,
+          driver,
+          providerInstanceId: modelSelection.instanceId,
+          occurredAt: now,
+          payload,
+        });
         yield* eventSink.write({
           commandId: reconcileCommandId("followup-earlier-work-awaited"),
-          events: [roster("earlier", [earlierBuild]), ...reply(earlierRun, "STARTED")],
+          events: [
+            roster("earlier", [earlierBuild]),
+            agentEvent(earlierAgent),
+            ...reply(earlierRun, "STARTED"),
+          ],
         });
         yield* orchestrator.recoverDelegatedTasks;
         assert.equal((yield* taskOf(earlierTaskId))?.status, "running");
@@ -3575,28 +3638,20 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         yield* orchestrator.recoverDelegatedTasks;
         assert.equal((yield* taskOf(laterTaskId))?.status, "running");
 
-        // The earlier command's wake continues the follow-up that started it.
-        const wakeMessageId = MessageId.make("message:followup-earlier-work-wake");
-        yield* orchestrator.dispatch({
-          type: "message.dispatch",
-          createdBy: "agent",
-          creationSource: "server",
-          commandId: CommandId.make("command:followup-earlier-work-wake"),
-          threadId: child.childThreadId,
-          messageId: wakeMessageId,
-          text: "Background activity updated",
-          notification: {
-            source: { kind: "command" },
-            outcome: "completed",
-            summary: 'Command "build" finished',
-            backgroundTaskIds: ["earlier-build"],
-          },
-          attachments: [],
-          dispatchMode: { type: "queue_after_active" },
+        // Each wake continues the follow-up that started the work it reports.
+        const agentWake = yield* wake("agent", ["earlier-agent"]);
+        assert.equal(agentWake.delegatedTaskId, earlierTaskId);
+        yield* eventSink.write({
+          commandId: reconcileCommandId("followup-earlier-work-agent-done"),
+          events: [
+            agentEvent({ ...earlierAgent, status: "completed", result: "done", completedAt: now }),
+            ...reply(agentWake, "AGENT-DONE"),
+          ],
         });
-        const wakeRun = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
-          (run) => run.userMessageId === wakeMessageId,
-        )!;
+        yield* orchestrator.recoverDelegatedTasks;
+        assert.equal((yield* taskOf(earlierTaskId))?.status, "running");
+
+        const wakeRun = yield* wake("build", ["earlier-build"]);
         assert.equal(wakeRun.delegatedTaskId, earlierTaskId);
         yield* eventSink.write({
           commandId: reconcileCommandId("followup-earlier-work-settled"),

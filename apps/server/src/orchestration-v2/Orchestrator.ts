@@ -9688,18 +9688,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.notification === undefined
         ? undefined
         : yield* projectionStore
-            .getThreadRecords(command.threadId, ["runs", "messages", "providerThreads"], {
-              messageRoles: ["user"],
-            })
+            .getThreadRecords(
+              command.threadId,
+              ["runs", "messages", "providerThreads", "subagents"],
+              { messageRoles: ["user"] },
+            )
             .pipe(mapDispatchError(command));
     const reportedWork = new Set(command.notification?.backgroundTaskIds);
-    const startedBy = new Set(
-      woken?.providerThreads.flatMap((thread) =>
+    // Native subagents report under their task id and never enter the roster.
+    const startedBy = new Set([
+      ...(woken?.providerThreads ?? []).flatMap((thread) =>
         (thread.pendingBackgroundTasks ?? []).flatMap((work) =>
           reportedWork.has(work.taskId) && work.runId !== undefined ? [work.runId] : [],
         ),
       ),
-    );
+      ...(woken?.subagents ?? []).flatMap((task) =>
+        task.runId !== null &&
+        task.nativeTaskRef?.nativeId != null &&
+        reportedWork.has(task.nativeTaskRef.nativeId)
+          ? [task.runId]
+          : [],
+      ),
+    ]);
     const followupIds = [
       ...new Set(
         (woken?.runs ?? [])
