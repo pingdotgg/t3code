@@ -34,3 +34,11 @@ unlink_pull_request
 unlink_pull_requests
 list_thread_pull_requests
 t3_background_wait
+
+create_threads
+t3_attachment_prepare_upload
+t3_attachment_discard
+t3_thread_send_attachments
+t3_worktree_handoff
+t3_worktree_list
+t3_worktree_status

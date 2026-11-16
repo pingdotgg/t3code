@@ -33,7 +33,23 @@ pub fn service(deps: &Deps) -> Option<Arc<McpService>> {
     let environment = deps.environment.clone()?;
     let descriptor = &environment.descriptor;
     let providers = deps.providers.clone();
+    let defaults = environment.clone();
+    let directory = environment.clone();
+    let refresh_deps = deps.clone();
     Some(McpService::new(McpConfig {
+        refresh_provider: Some(Arc::new(move |id| {
+            let deps = refresh_deps.clone();
+            Box::pin(async move {
+                crate::methods::provider::refresh(&deps, Some(&id)).await;
+            })
+        })),
+        files: deps.files.clone(),
+        worktrees: Some(conn_mcp::WorktreeConfig {
+            directory: Arc::new(move || crate::host::worktrees_dir(&directory)),
+            settings: Arc::new(move || serde_json::Value::Object(defaults.settings.raw())),
+            terminals: deps.terminals.clone(),
+            hub: deps.vcs.hub.clone(),
+        }),
         engine,
         environment_id: environment.environment_id().to_owned(),
         label: descriptor["label"].as_str().unwrap_or_default().to_owned(),

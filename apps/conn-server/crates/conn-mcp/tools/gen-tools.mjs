@@ -262,7 +262,50 @@ const outsideHiddenOut = NodePath.join(here, "..", "src", "outside-hidden.txt");
 // Every tool apps/server registers, whoever may see it: the tests check the agent texts by it.
 const allNamesOut = NodePath.join(here, "..", "fixtures", "t3-tool-names.txt");
 const allNames = tools.map((tool) => `${tool.name}\n`).join("");
+// MCP's advertised schemas omit decode-time checks and string normalization.
+const { TrimmedString } = await import(NodeURL.pathToFileURL(NodePath.join(repo,"packages/contracts/src/baseSchemas.ts")).href);
+const trimTransform = TrimmedString.ast.encoding[0].transformation;
+const expected = (ast) => ast.getExpected(expected).replaceAll("undefined","null");
+function inputRule(ast) {
+  if (ast._tag === "Suspend") return inputRule(ast.thunk());
+  if (!["String","Number","Boolean","Null","Literal","Union","Objects","Arrays"].includes(ast._tag)) throw new Error(`thread tool input needs AST ${ast._tag}`);
+  const rule = {kind:ast._tag, expected:expected(ast)};
+  if (ast.context?.isOptional) rule.optional = true;
+  if (ast.encoding?.some((e) => e.transformation === trimTransform)) rule.trim = true;
+  if (ast._tag === "Literal") rule.literal = ast.literal;
+  if (ast._tag === "Union") rule.members = ast.types.filter((t) => t._tag !== "Undefined").map(inputRule);
+  if (ast._tag === "Objects") {
+    rule.fields = ast.propertySignatures.map((p) => ({key:p.name,rule:inputRule(p.type)}));
+    if (ast.indexSignatures.length) rule.values = inputRule(ast.indexSignatures[0].type);
+  }
+  if (ast._tag === "Arrays") {
+    if (ast.elements.length || ast.rest.length !== 1) throw new Error("thread tool input needs a homogeneous array");
+    rule.items = inputRule(ast.rest[0]);
+    if (ast.encoding?.some((e) => e.to._tag === "Objects" && e.to.indexSignatures.length)) rule.fromRecord = true;
+  }
+  rule.checks = (ast.checks ?? []).flatMap((check) => {
+    const annotations = check.annotations ?? {};
+    if (annotations.expected === "a non-blank string") return [{id:"nonBlank",expected:annotations.expected}];
+    const r = annotations.representation;
+    if (r === undefined) return [];
+    const supported = ["isMinLength","isMaxLength","isInt","isGreaterThanOrEqualTo","isLessThanOrEqualTo","isPattern"];
+    const id = r.id.replace("effect/schema/", "");
+    if (!supported.includes(id)) throw new Error(`thread tool input needs check ${r.id}`);
+    return [{id,expected:annotations.expected,...r.payload}];
+  });
+  return rule;
+}
+const threadInputs = {};
+for (const [module,name] of [["attachment","AttachmentToolkit"],["worktree","WorktreeToolkit"],["orchestrator","OrchestratorToolkit"]]) {
+  const toolkit = (await src(`mcp/toolkits/${module}/tools.ts`))[name];
+  for (const [name,tool] of Object.entries(toolkit.tools)) {
+    if (!["create_threads","t3_attachment_prepare_upload","t3_attachment_discard","t3_thread_send_attachments","t3_worktree_handoff"].includes(name)) continue;
+    threadInputs[name] = inputRule(tool.parametersSchema.ast);
+  }
+}
+const threadInputsOut = NodePath.join(here,"..","src","thread-inputs.json");
 const outputs = [
+  [threadInputsOut,`${JSON.stringify(threadInputs)}\n`,"thread tool input checks"],
   [out, text, `${catalog.length} tools`],
   [outsideHiddenOut, outsideHidden.join(""), `${outsideHidden.length} tools hidden from outside clients`],
   [allNamesOut, allNames, `${tools.length} tool names`],

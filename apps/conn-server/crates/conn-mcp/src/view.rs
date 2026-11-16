@@ -26,7 +26,10 @@ pub(crate) fn latest_run(projection: &Value) -> Option<&Value> {
 }
 
 pub(crate) fn active_run(projection: &Value) -> Option<&Value> {
-    runs(projection).into_iter().rev().find(|run| is_live(run))
+    runs(projection)
+        .into_iter()
+        .rev()
+        .find(|run| is_live(run) && run["status"] != "queued")
 }
 
 pub(crate) fn run_by_id<'a>(projection: &'a Value, run_id: &str) -> Option<&'a Value> {
@@ -381,6 +384,14 @@ pub(crate) fn turn_item_text(item: &Value) -> Option<String> {
         }
         "error" => return text(&item["failure"]["message"]),
         "compaction" => return text(&item["summary"]),
+        "thread_created" => format!(
+            "Created thread {} with {} ({}).",
+            item["targetThreadId"].as_str().unwrap_or_default(),
+            item["targetProviderInstanceId"]
+                .as_str()
+                .unwrap_or_default(),
+            item["targetModel"].as_str().unwrap_or_default()
+        ),
         "subagent" => {
             return text(&item["result"])
                 .or_else(|| text(&item["progress"]))

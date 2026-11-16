@@ -591,8 +591,14 @@ impl Inner {
         let Some(host) = &self.host else {
             return Ok((command, None));
         };
-        if command["type"] != "message.dispatch"
-            || command["attachments"].as_array().is_none_or(Vec::is_empty)
+        let initial = command["type"] == "thread.create";
+        let attachments = if initial {
+            &command["initialMessage"]["attachments"]
+        } else {
+            &command["attachments"]
+        };
+        if (!initial && command["type"] != "message.dispatch")
+            || attachments.as_array().is_none_or(Vec::is_empty)
         {
             return Ok((command, None));
         }
@@ -605,11 +611,20 @@ impl Inner {
             return Ok((command, None));
         }
         let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
+        let attachments = if initial {
+            command["initialMessage"]["attachments"].take()
+        } else {
+            command["attachments"].take()
+        };
         let claimed = host
-            .claim_attachments(thread_id, command["attachments"].take())
+            .claim_attachments(thread_id, attachments)
             .await
             .map_err(DispatchError::Rejected)?;
-        command["attachments"] = claimed.clone();
+        if initial {
+            command["initialMessage"]["attachments"] = claimed.clone();
+        } else {
+            command["attachments"] = claimed.clone();
+        }
         Ok((command, Some(claimed)))
     }
 
@@ -732,6 +747,7 @@ impl Inner {
             }
             Effect::Respond { thread_id, request } => self.respond(thread_id, request).await,
             Effect::CloseSession { thread_id } => self.close_session(&thread_id).await,
+            Effect::DetachWorkspace { thread_id } => self.close_workspace_session(&thread_id).await,
             Effect::ApplyModelSelection {
                 thread_id,
                 selection,
@@ -979,6 +995,21 @@ fn projection_error(
 }
 
 impl Engine for SqliteEngine {
+    fn provider_instance_enabled(&self, project_id: &str, instance_id: &str) -> bool {
+        self.inner
+            .host
+            .as_ref()
+            .is_none_or(|host| host.provider_instance_enabled(Some(project_id), instance_id))
+    }
+    fn has_receipt<'a>(&'a self, command_id: &'a str) -> BoxFuture<'a, Result<bool, String>> {
+        let command_id = command_id.to_owned();
+        Box::pin(async move {
+            self.inner
+                .db(move |store| store.receipt(&command_id).map(|r| r.is_some()))
+                .await
+        })
+    }
+
     fn dispatch(
         &self,
         command: Command,
