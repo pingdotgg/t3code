@@ -227,13 +227,67 @@ describe("check log excerpts", () => {
       lines: 1,
     },
     { chunks: ["one\ntw", "o\nthree"], text: "one\ntwo\nthree", lines: 3 },
-  ])("strips formatting and counts lines across chunks %#", ({ chunks, text, lines }) => {
-    expect(excerptCheckLog(chunks)).toEqual({
-      _tag: "excerpt",
-      text,
-      totalLines: lines,
-      truncated: false,
-    });
+    {
+      chunks: [
+        [
+          " ❯ ~effect/Effect/successCont ../../node_modules/.pnpm/effect@4.1.3/node_modules/effect/dist/esm/Effect.js:1:1",
+          " ❯ FiberImpl.runLoop ../../node_modules/.pnpm/effect@4.1.3/node_modules/effect/dist/esm/internal/fiberRuntime.js:1:1",
+          "##[start-action 123",
+          "##[end-action 123",
+          "Post job cleanup.",
+          "Cleaning up orphan processes",
+          " ❯ runAssertion src/example.test.ts:10:5",
+        ].join("\n"),
+      ],
+      text: " ❯ runAssertion src/example.test.ts:10:5",
+      lines: 7,
+      truncated: true,
+    },
+  ])(
+    "strips formatting and counts lines across chunks %#",
+    ({ chunks, text, lines, truncated = false }) => {
+      expect(excerptCheckLog(chunks)).toEqual({
+        _tag: "excerpt",
+        text,
+        totalLines: lines,
+        truncated,
+      });
+    },
+  );
+
+  it("does not let noise consume error context or tail slots", () => {
+    const noise = [
+      " ❯ FiberImpl.runLoop ../../node_modules/.pnpm/effect@4.1.3/node_modules/effect/dist/esm/internal/fiberRuntime.js:1:1",
+      "##[start-action 123",
+      "##[end-action 123",
+      "Post job cleanup.",
+      "Cleaning up orphan processes",
+    ];
+    const expected = [
+      "##[group]Run vp test",
+      "before 1",
+      "before 2",
+      "before 3",
+      "##[error]Assertion failed",
+      "after 1",
+      "after 2",
+      "after 3",
+      ...Array.from({ length: 20 }, (_, i) => `tail ${i}`),
+    ];
+    const result = excerptCheckLog([
+      [
+        ...expected.slice(0, 4),
+        ...noise,
+        ...expected.slice(4, 5),
+        ...noise,
+        ...expected.slice(5),
+        ...noise,
+      ].join("\n"),
+    ]);
+
+    expect(result.text).toBe(expected.join("\n"));
+    expect(result.totalLines).toBe(expected.length + noise.length * 3);
+    expect(result.truncated).toBe(true);
   });
 
   it("keeps error context, its Run header and the tail within both budgets", () => {
