@@ -2581,7 +2581,7 @@ function TurnDiffStat(props: {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Review ${fileCountLabel}, ${additions} additions, ${deletions} deletions`}
+      accessibilityLabel={`Review ${fileCountLabel}, ${additions} addition${additions === 1 ? "" : "s"}, ${deletions} deletion${deletions === 1 ? "" : "s"}`}
       onPress={() => props.onOpenTurnDiff(props.checkpoint)}
       className="min-h-11 shrink-0 flex-row items-center gap-2 px-2 active:bg-subtle"
     >
