@@ -559,6 +559,14 @@
       "types": "./src/pullRequestReply.ts",
       "default": "./src/pullRequestReply.ts"
     },
+    "./issue-presentation": {
+      "types": "./src/issuePresentation.ts",
+      "default": "./src/issuePresentation.ts"
+    },
+    "./issue-list": {
+      "types": "./src/issueList.ts",
+      "default": "./src/issueList.ts"
+    },
     "./pull-request-query": {
       "types": "./src/pullRequestQuery.ts",
       "default": "./src/pullRequestQuery.ts"
