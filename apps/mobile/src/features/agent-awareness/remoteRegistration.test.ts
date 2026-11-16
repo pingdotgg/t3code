@@ -31,6 +31,7 @@ import { makeRelayDeviceRegistrationRequest } from "./registrationPayload";
 import {
   __resetAgentAwarenessRemoteRegistrationForTest,
   agentAwarenessNotificationsReady,
+  armAgentAwarenessLiveActivityForLocalWork,
   getAgentAwarenessRegistrationStatus,
   refreshActiveLiveActivityRemoteRegistration,
   refreshAgentAwarenessRegistration,
@@ -71,6 +72,7 @@ const backgroundRuntime = vi.hoisted(() => ({
   }>,
 }));
 const appStateMock = vi.hoisted(() => ({
+  currentState: "active",
   listeners: [] as Array<(state: string) => void>,
 }));
 const registrationRecordStore = vi.hoisted(() => ({
@@ -167,6 +169,9 @@ vi.mock("react-native", () => ({
     },
   },
   AppState: {
+    get currentState() {
+      return appStateMock.currentState;
+    },
     addEventListener: (_event: string, listener: (state: string) => void) => {
       appStateMock.listeners.push(listener);
       return {
@@ -270,6 +275,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     Constants.expoConfig!.extra = {};
     __resetAgentAwarenessRemoteRegistrationForTest();
     appStateMock.listeners.length = 0;
+    appStateMock.currentState = "active";
     registrationRecordStore.current = null;
     vi.mocked(saveAgentAwarenessRegistrationRecord).mockClear();
     vi.mocked(loadAgentAwarenessRegistrationRecord).mockClear();
@@ -495,6 +501,133 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       expect(activity.end).not.toHaveBeenCalled();
       expect(widgetMocks.start).not.toHaveBeenCalled();
     }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(layerRelayTest),
+    );
+  });
+
+  // Stubbed before the effect is built, so the provided Fetch service is the stub.
+  function stubLiveActivityRelay() {
+    const registrations: unknown[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      if (request.url.endsWith("/v1/client/dpop-token")) {
+        return Response.json({
+          access_token: "relay-dpop-token",
+          issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+          token_type: "DPoP",
+          expires_in: 300,
+          scope: "mobile:registration",
+        });
+      }
+      if (request.url.endsWith("/v1/mobile/live-activities")) {
+        registrations.push(await request.json());
+      }
+      return Response.json({ ok: true });
+    });
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test/" } };
+    return registrations;
+  }
+
+  const armCardOnSend = Effect.fn("TestRemoteRegistration.armCardOnSend")(function* (activity: {
+    readonly getId: () => string;
+  }) {
+    vi.mocked(loadPreferences).mockResolvedValue({} as Preferences);
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+    yield* runBackgroundOperations();
+
+    const started = new Promise<void>((resolve) => {
+      widgetMocks.start.mockImplementationOnce(() => {
+        widgetMocks.getInstances.mockReturnValue([activity] as never);
+        resolve();
+        return activity;
+      });
+    });
+    armAgentAwarenessLiveActivityForLocalWork({
+      environmentId: "env-1" as EnvironmentId,
+      threadTitle: "Fix the widget",
+      projectTitle: "t3code",
+    });
+    yield* Effect.promise(() => started);
+    yield* runBackgroundOperations();
+  });
+
+  it.effect.each(["missed", "rejected"] as const)(
+    "retries a card armed on send after its token event was %s",
+    (tokenEvent) => {
+      const registrations = stubLiveActivityRelay();
+      let pushToken: string | null = null;
+      let tokenListener: ((event: { readonly pushToken: string }) => void) | undefined;
+      const activity = {
+        getId: () => "activity-1",
+        getPushToken: vi.fn(() => Promise.resolve(pushToken)),
+        addPushTokenListener: vi.fn((listener: typeof tokenListener) => {
+          tokenListener = listener;
+        }),
+        end: vi.fn(() => Promise.resolve()),
+      };
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+
+      return Effect.gen(function* () {
+        yield* armCardOnSend(activity);
+        expect(registrations).toEqual([]);
+
+        pushToken = "activity-token";
+        if (tokenEvent === "rejected") {
+          const client = yield* ManagedRelay.ManagedRelayClient;
+          vi.spyOn(client, "registerLiveActivity").mockReturnValueOnce(
+            Effect.fail(
+              new ManagedRelay.ManagedRelayRequestFailedError({
+                action: "register relay live activity",
+                cause: new Error("Offline"),
+                transportFailed: true,
+              }),
+            ),
+          );
+          tokenListener?.({ pushToken });
+          yield* runBackgroundOperations();
+          expect(registrations).toEqual([]);
+        }
+        vi.advanceTimersByTime(15_000);
+        yield* runBackgroundOperations();
+        expect(registrations).toEqual([
+          { deviceId: "device-1", activityPushToken: "activity-token" },
+        ]);
+
+        appStateMock.currentState = "background";
+        for (const listener of appStateMock.listeners) listener("background");
+        yield* runBackgroundOperations();
+        expect(activity.end).not.toHaveBeenCalled();
+      }).pipe(
+        Effect.ensuring(Effect.sync(() => vi.useRealTimers())),
+        Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+        Effect.provide(layerRelayTest),
+      );
+    },
+  );
+
+  it.effect("ends a card the relay never accepted when the app goes to the background", () => {
+    const registrations = stubLiveActivityRelay();
+    const activity = {
+      getId: () => "activity-1",
+      getPushToken: vi.fn((): Promise<string | null> => Promise.resolve(null)),
+      addPushTokenListener: vi.fn(),
+      end: vi.fn(() => Promise.resolve()),
+    };
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    return Effect.gen(function* () {
+      yield* armCardOnSend(activity);
+
+      appStateMock.currentState = "background";
+      for (const listener of appStateMock.listeners) listener("background");
+      yield* runBackgroundOperations();
+
+      expect(registrations).toEqual([]);
+      expect(activity.end).toHaveBeenCalledWith("immediate");
+      expect(vi.getTimerCount()).toBe(0);
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => vi.useRealTimers())),
       Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
       Effect.provide(layerRelayTest),
     );
