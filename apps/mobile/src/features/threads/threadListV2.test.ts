@@ -1907,6 +1907,11 @@ describe("resolveThreadListV2ReadAction", () => {
     const thread = completedThread();
     expect(resolveThreadListV2ReadAction({ ...thread, lastVisitedAt: undefined })).toBeNull();
     expect(resolveThreadListV2ReadAction({ ...thread, latestRun: null })).toBeNull();
+    for (const status of ["cancelled", "interrupted"] as const) {
+      expect(
+        resolveThreadListV2ReadAction({ ...thread, latestRun: { ...thread.latestRun!, status } }),
+      ).toBeNull();
+    }
     expect(
       resolveThreadListV2ReadAction({
         ...thread,
