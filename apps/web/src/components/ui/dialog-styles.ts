@@ -10,24 +10,10 @@ const DIALOG_POPUP_BASE_CLASS =
 const DIALOG_POPUP_CLASS = `dialog-glass ${DIALOG_POPUP_BASE_CLASS} rounded-2xl border`;
 const DIALOG_MEDIA_POPUP_CLASS = `${DIALOG_POPUP_BASE_CLASS} max-h-[92vh] w-auto max-w-[92vw] overflow-visible rounded-none border border-transparent bg-transparent p-0 shadow-none`;
 
-const ALERT_DIALOG_HEADER_CLASS =
-  "flex min-h-0 flex-col gap-2 p-6 text-center max-sm:pb-4 sm:text-left";
-const ALERT_DIALOG_FOOTER_CLASS =
-  "flex flex-col-reverse gap-2 px-6 sm:flex-row sm:justify-end sm:rounded-b-[calc(var(--radius-2xl)-1px)]";
-const ALERT_DIALOG_FOOTER_DEFAULT_CLASS = "border-t bg-muted/72 py-4";
-const ALERT_DIALOG_TITLE_CLASS = "wrap-anywhere shrink-0 font-semibold text-xl leading-snug";
-const ALERT_DIALOG_DESCRIPTION_CLASS =
-  "wrap-anywhere max-h-[min(24rem,60dvh)] min-h-0 overflow-y-auto overscroll-contain text-muted-foreground text-sm select-text";
-
 const DIALOG_MOBILE_SHEET_CLASS =
   "max-sm:max-w-none max-sm:rounded-none max-sm:border-x-0 max-sm:border-t max-sm:border-b-0 max-sm:opacity-[calc(1-min(var(--nested-dialogs),1))] max-sm:data-ending-style:translate-y-4 max-sm:data-starting-style:translate-y-4";
 
 export {
-  ALERT_DIALOG_DESCRIPTION_CLASS,
-  ALERT_DIALOG_FOOTER_CLASS,
-  ALERT_DIALOG_FOOTER_DEFAULT_CLASS,
-  ALERT_DIALOG_HEADER_CLASS,
-  ALERT_DIALOG_TITLE_CLASS,
   DIALOG_BACKDROP_CLASS,
   DIALOG_MEDIA_BACKDROP_CLASS,
   DIALOG_MOBILE_SHEET_CLASS,

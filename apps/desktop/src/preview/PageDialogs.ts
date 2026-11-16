@@ -9,7 +9,8 @@ interface RunDialogInfo {
 }
 
 export interface PageDialogHold {
-  readonly answer: (accept: boolean, promptText?: string) => boolean;
+  /** Answers the pending dialog; with `id`, only when it is still that dialog. */
+  readonly answer: (accept: boolean, id?: number) => boolean;
   readonly closed: () => void;
   readonly current: () => DesktopPreviewDialog | null;
 }
@@ -22,6 +23,7 @@ export function holdPageDialogs(
   changed: (dialog: DesktopPreviewDialog | null) => void,
 ): PageDialogHold {
   let pending: DialogCallback | null = null;
+  let nextId = 0;
   let shown: DesktopPreviewDialog | null = null;
   const clear = () => {
     if (pending === null) return;
@@ -45,7 +47,9 @@ export function holdPageDialogs(
     const previous = pending;
     if (previous !== null) deliver(previous, false, "");
     pending = callback;
+    nextId += 1;
     shown = {
+      id: nextId,
       type: info.dialogType,
       message: info.messageText,
       defaultValue: info.defaultPromptText,
@@ -56,11 +60,11 @@ export function holdPageDialogs(
     contents.off("-run-dialog", listener as (...args: unknown[]) => void);
   }
   contents.on("-run-dialog", run);
-  const answer = (accept: boolean, promptText?: string) => {
+  const answer = (accept: boolean, id?: number) => {
     const callback = pending;
-    if (callback === null) return false;
+    if (callback === null || (id !== undefined && shown?.id !== id)) return false;
     clear();
-    return deliver(callback, accept, promptText ?? "");
+    return deliver(callback, accept, "");
   };
   contents.on("-cancel-dialogs", clear);
   // Chrome dismisses page dialogs when a navigation starts; a held one would block the commit.

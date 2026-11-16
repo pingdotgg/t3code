@@ -2732,8 +2732,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   const answerDialog = Effect.fn("PreviewManager.answerDialog")(function* (
     tabId: string,
+    dialogId: number,
     accept: boolean,
-    promptText: string | undefined,
   ) {
     const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
     if (!tab) {
@@ -2742,7 +2742,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const webContentsId = tab.webContentsId;
     if (webContentsId === null) return;
     yield* attempt({ operation: "answerDialog", tabId, webContentsId }, () =>
-      dialogHolds.get(webContentsId)?.answer(accept, promptText),
+      dialogHolds.get(webContentsId)?.answer(accept, dialogId),
     );
   });
 
@@ -4009,8 +4009,8 @@ export class PreviewManager extends Context.Service<
     ) => Effect.Effect<void, PreviewManagerError>;
     readonly answerDialog: (
       tabId: string,
+      dialogId: number,
       accept: boolean,
-      promptText: string | undefined,
     ) => Effect.Effect<void, PreviewManagerError>;
     readonly setShown: (tabId: string, shown: boolean) => Effect.Effect<void>;
     readonly setCaptureDrawn: (tabId: string, drawn: boolean) => Effect.Effect<void>;

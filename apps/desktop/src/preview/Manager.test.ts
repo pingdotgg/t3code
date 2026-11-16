@@ -1833,13 +1833,14 @@ describe("PreviewManager", () => {
           guest.emit("-run-dialog", dialogInfo, answer);
           yield* Effect.yieldNow;
           expect(states.at(-1)?.dialog).toEqual({
+            id: 1,
             type: "confirm",
             message: "Delete it?",
             defaultValue: "",
           });
           expect(answer).not.toHaveBeenCalled();
 
-          yield* manager.answerDialog("tab_dialog", true, undefined);
+          yield* manager.answerDialog("tab_dialog", 1, true);
           yield* Effect.yieldNow;
           expect(answer).toHaveBeenCalledExactlyOnceWith(true, "");
           expect(states.at(-1)?.dialog).toBeUndefined();
@@ -1850,7 +1851,7 @@ describe("PreviewManager", () => {
           guest.emitDebuggerMessage("Page.javascriptDialogClosed");
           yield* Effect.yieldNow;
           expect(states.at(-1)?.dialog).toBeUndefined();
-          yield* manager.answerDialog("tab_dialog", true, undefined);
+          yield* manager.answerDialog("tab_dialog", 2, true);
           expect(answeredByAgent).not.toHaveBeenCalled();
 
           const replacedAnswer = vi.fn();
@@ -1919,9 +1920,14 @@ describe("PreviewManager", () => {
         yield* Effect.yieldNow;
 
         expect(native).not.toHaveBeenCalled();
-        expect(states.at(-1)?.dialog).toEqual({ type: "alert", message: "Hi", defaultValue: "" });
+        expect(states.at(-1)?.dialog).toEqual({
+          id: 1,
+          type: "alert",
+          message: "Hi",
+          defaultValue: "",
+        });
 
-        yield* manager.answerDialog("tab_dialog_early", true, undefined);
+        yield* manager.answerDialog("tab_dialog_early", 1, true);
         expect(answer).toHaveBeenCalledExactlyOnceWith(true, "");
       }),
     ),

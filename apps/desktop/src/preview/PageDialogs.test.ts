@@ -24,27 +24,29 @@ describe("holdPageDialogs", () => {
     expect(native).not.toHaveBeenCalled();
     expect(callback).not.toHaveBeenCalled();
     expect(changed).toHaveBeenLastCalledWith({
+      id: 1,
       type: "confirm",
       message: "Delete it?",
       defaultValue: "",
     });
   });
 
-  it("answers the page once and clears the dialog", () => {
+  it("answers only the dialog it was meant for, once", () => {
     const { contents, changed, hold, callback } = setup();
     contents.emit("-run-dialog", info, callback);
 
-    expect(hold.answer(true, "yes")).toBe(true);
+    expect(hold.answer(true, 1)).toBe(true);
     expect(hold.answer(false)).toBe(false);
-
-    expect(callback).toHaveBeenCalledOnce();
-    expect(callback).toHaveBeenCalledWith(true, "yes");
+    expect(callback).toHaveBeenCalledExactlyOnceWith(true, "");
     expect(changed).toHaveBeenLastCalledWith(null);
 
-    const first = vi.fn();
-    contents.emit("-run-dialog", info, first);
+    const next = vi.fn();
+    contents.emit("-run-dialog", info, next);
+    expect(hold.answer(true, 1)).toBe(false);
+    expect(next).not.toHaveBeenCalled();
+
     contents.emit("-run-dialog", info, callback);
-    expect(first).toHaveBeenCalledExactlyOnceWith(false, "");
+    expect(next).toHaveBeenCalledExactlyOnceWith(false, "");
   });
 
   // A frame without the renderer prompt override reaches the hold
@@ -58,7 +60,12 @@ describe("holdPageDialogs", () => {
 
     expect(prompt).toHaveBeenCalledExactlyOnceWith(false, "");
     expect(changed).not.toHaveBeenCalled();
-    expect(hold.current()).toEqual({ type: "confirm", message: "Delete it?", defaultValue: "" });
+    expect(hold.current()).toEqual({
+      id: 1,
+      type: "confirm",
+      message: "Delete it?",
+      defaultValue: "",
+    });
     expect(callback).not.toHaveBeenCalled();
     expect(hold.answer(true)).toBe(true);
     expect(callback).toHaveBeenCalledExactlyOnceWith(true, "");

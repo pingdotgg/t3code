@@ -153,7 +153,6 @@ export function ServerBrowserSurface(props: {
   readonly onPopup?: (tabId: string) => void;
   readonly className?: string;
   readonly pdfUrl?: string | null;
-  readonly pageUrl?: string;
   readonly ref?: Ref<ServerBrowserHandle>;
 }) {
   const {
@@ -169,7 +168,6 @@ export function ServerBrowserSurface(props: {
     onPopup,
     className,
     pdfUrl = null,
-    pageUrl,
     ref,
   } = props;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -855,7 +853,6 @@ export function ServerBrowserSurface(props: {
           <BrowserDialogCard
             key={`${control.dialog.message}\n${control.dialog.defaultValue}`}
             dialog={control.dialog}
-            url={pageUrl}
             canAnswer={control.controller === "you"}
             onAnswer={(accept, promptText) =>
               send({ type: "dialog", accept, ...(promptText === undefined ? {} : { promptText }) })

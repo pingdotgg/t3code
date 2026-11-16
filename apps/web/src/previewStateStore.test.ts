@@ -208,7 +208,7 @@ describe("previewStateStore (single-tab)", () => {
       ...loaded,
       navStatus: { ...loaded.navStatus, url: "https://example.com/next" },
     });
-    const dialog = { type: "confirm", message: "Delete it?", defaultValue: "" };
+    const dialog = { id: 1, type: "confirm", message: "Delete it?", defaultValue: "" };
     applyPreviewDesktopState(ref, snapshot.tabId, { ...loaded, dialog });
     applyPreviewDesktopState(ref, snapshot.tabId, { ...loaded, dialog: { ...dialog } });
     applyPreviewDesktopState(ref, snapshot.tabId, loaded);

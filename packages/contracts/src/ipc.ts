@@ -604,6 +604,7 @@ export interface DesktopPreviewFavicon {
 }
 
 export interface DesktopPreviewDialog {
+  id: number;
   type: string;
   message: string;
   defaultValue: string;
@@ -1027,8 +1028,8 @@ export const DesktopPreviewSetAudioMutedInputSchema = Schema.Struct({
 
 export const DesktopPreviewAnswerDialogInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
+  dialogId: Schema.Number,
   accept: Schema.Boolean,
-  promptText: Schema.optional(Schema.String),
 });
 
 export const DesktopPreviewSetShownInputSchema = Schema.Struct({
@@ -1300,7 +1301,7 @@ export interface DesktopPreviewBridge {
   hardReload: (tabId: string) => Promise<void>;
   setColorScheme: (tabId: string, colorScheme: DesktopPreviewColorScheme) => Promise<void>;
   setAudioMuted: (tabId: string, audioMuted: boolean) => Promise<void>;
-  answerDialog: (tabId: string, accept: boolean, promptText?: string) => Promise<void>;
+  answerDialog: (tabId: string, dialogId: number, accept: boolean) => Promise<void>;
   findInPage: (
     tabId: string,
     text: string,

@@ -412,9 +412,7 @@ function isPreviewStateEqual(
       previous.audioMuted === next.audioMuted &&
       previous.audible === next.audible &&
       previous.controller === next.controller &&
-      previous.dialog?.type === next.dialog?.type &&
-      previous.dialog?.message === next.dialog?.message &&
-      previous.dialog?.defaultValue === next.dialog?.defaultValue &&
+      previous.dialog?.id === next.dialog?.id &&
       previous.favicon?.dataUrl === next.favicon?.dataUrl &&
       previous.favicon?.pageUrl === next.favicon?.pageUrl &&
       previous.favicon?.capturedAt === next.favicon?.capturedAt)

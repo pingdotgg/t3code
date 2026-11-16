@@ -231,9 +231,9 @@ const answerDialog = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_ANSWER_DIALOG_CHANNEL,
   payload: DesktopPreviewAnswerDialogInputSchema,
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.answerDialog")(function* ({ tabId, accept, promptText }) {
+  handler: Effect.fn("desktop.ipc.preview.answerDialog")(function* ({ tabId, dialogId, accept }) {
     const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.answerDialog(tabId, accept, promptText);
+    yield* manager.answerDialog(tabId, dialogId, accept);
   }),
 });
 const setShown = DesktopIpc.makeIpcMethod({

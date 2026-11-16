@@ -251,6 +251,7 @@ export function PreviewView({
   const serverStreamPending =
     isServerTab && !showEmptyState && !isUnreachable && serverFrameTabId !== runtimeTabId;
   const controller = desktopOverlay?.controller ?? "none";
+  const pageDialog = desktopOverlay?.dialog;
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
   const browserDefaults = useBrowserDefaults();
   // IPC interprets undefined profile ids as all profiles.
@@ -1094,7 +1095,6 @@ export function PreviewView({
                     ? previewPdfAssetUrl(url, environmentHttpBaseUrl)
                     : null
                 }
-                pageUrl={url}
                 visible={visible}
                 onFirstFrame={() => setServerFrameTabId(runtimeTabId)}
                 onControl={(control) =>
@@ -1132,15 +1132,15 @@ export function PreviewView({
             onOpenUrl={(next) => void handleOpenServerUrl(next)}
           />
         ) : null}
-        {desktopOverlay?.dialog && runtimeTabId ? (
+        {pageDialog && runtimeTabId ? (
           <BrowserDialogCard
-            key={`${desktopOverlay.dialog.message}\n${desktopOverlay.dialog.defaultValue}`}
-            dialog={desktopOverlay.dialog}
-            url={url}
+            key={pageDialog.id}
+            dialog={pageDialog}
             canAnswer
-            onAnswer={(accept, promptText) =>
+            className="z-40"
+            onAnswer={(accept) =>
               void previewBridge
-                ?.answerDialog(runtimeTabId, accept, promptText)
+                ?.answerDialog(runtimeTabId, pageDialog.id, accept)
                 .catch(() => undefined)
             }
           />
