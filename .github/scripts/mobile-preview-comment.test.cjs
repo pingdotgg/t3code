@@ -30,8 +30,13 @@ test("the build job adds the install link without losing the update", () => {
   );
 });
 
-test("a new fingerprint drops the old client; the same one keeps it", () => {
+test("only a successful publication changes the fingerprint and client", () => {
   const built = { fingerprint, client: "https://expo.dev/a/b", group: "old" };
+  assert.equal(mergeState(null, { fingerprint, client: "", group: "" }), null);
+  assert.deepEqual(
+    mergeState(built, { fingerprint: "f".repeat(40), client: "", group: "" }),
+    built,
+  );
   assert.deepEqual(mergeState(built, { fingerprint, client: "", group: "new" }), {
     fingerprint,
     client: "https://expo.dev/a/b",
