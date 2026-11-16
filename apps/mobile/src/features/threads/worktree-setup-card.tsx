@@ -7,7 +7,6 @@ import {
 } from "@t3tools/contracts";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
-import { useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -38,7 +37,13 @@ const icons: Record<WorktreeSetupStage["status"], AppSymbolName> = {
   warning: "exclamationmark.triangle",
 };
 
-export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
+/** The feed owns whether the details sheet is open, so it survives the card turning into a chip or summary. */
+interface SetupDetailsControl {
+  readonly detailsOpen: boolean;
+  readonly onOpenDetails: () => void;
+}
+
+export function WorktreeSetupCard(props: WorktreeSetupCardProps & SetupDetailsControl) {
   // Once the agent has the turn, running setup is a chip on the live Working row.
   if (worktreeSetupHandedOff(props)) {
     return props.snapshot.phase === "running" ? null : <WorktreeSetupSummaryRow {...props} />;
@@ -46,10 +51,9 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
   return <WorktreeSetupHeaderCard {...props} />;
 }
 
-function WorktreeSetupHeaderCard(props: WorktreeSetupCardProps) {
-  const { snapshot } = props;
+function WorktreeSetupHeaderCard(props: WorktreeSetupCardProps & SetupDetailsControl) {
+  const { snapshot, detailsOpen } = props;
   const running = snapshot.phase === "running";
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const now = useVisibleSecondClock(running);
   const failed =
     snapshot.phase === "failed" || snapshot.stages.some((stage) => stage.status === "failed");
@@ -77,7 +81,7 @@ function WorktreeSetupHeaderCard(props: WorktreeSetupCardProps) {
           accessibilityRole="button"
           accessibilityLabel="Worktree setup details"
           accessibilityState={{ expanded: detailsOpen }}
-          onPress={() => setDetailsOpen(true)}
+          onPress={props.onOpenDetails}
           className="min-h-11 max-w-[55%] justify-center px-2"
         >
           <View className="flex-row items-center gap-1">
@@ -109,9 +113,6 @@ function WorktreeSetupHeaderCard(props: WorktreeSetupCardProps) {
             />
           ))}
       </View>
-      {detailsOpen ? (
-        <SetupDetailsSheet {...props} now={now} onClose={() => setDetailsOpen(false)} />
-      ) : null}
     </View>
   );
 }
@@ -122,39 +123,29 @@ export function worktreeSetupHandedOff(props: WorktreeSetupCardProps): boolean {
 }
 
 /** The card's state on the turn's fold row: setup still running, or a failure to look at. */
-export function WorktreeSetupFoldChip(props: WorktreeSetupCardProps) {
-  const { snapshot } = props;
-  const running = snapshot.phase === "running";
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const now = useVisibleSecondClock(running && detailsOpen);
-  if (!running && !detailsOpen) return null;
-  const scriptName = snapshot.setupScript?.name ?? "Setup script";
+export function WorktreeSetupFoldChip(props: WorktreeSetupCardProps & SetupDetailsControl) {
+  const scriptName = props.snapshot.setupScript?.name ?? "Setup script";
   return (
-    <>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Background setup is still running: ${scriptName}. Show setup progress.`}
-        onPress={() => setDetailsOpen(true)}
-        hitSlop={8}
-        className="ml-2 min-w-0 max-w-[55%] flex-row items-center gap-1 rounded-full border border-border px-2 py-1 active:opacity-70"
-      >
-        <AppActivityIndicator
-          size={Platform.OS === "android" ? 12 : "small"}
-          colorClassName="accent-icon-muted"
-          style={{
-            width: 12,
-            height: 12,
-            transform: Platform.OS === "android" ? undefined : [{ scale: 0.65 }],
-          }}
-        />
-        <Text numberOfLines={1} className="shrink text-2xs text-foreground-secondary">
-          Background setup
-        </Text>
-      </Pressable>
-      {detailsOpen ? (
-        <SetupDetailsSheet {...props} now={now} onClose={() => setDetailsOpen(false)} />
-      ) : null}
-    </>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Background setup is still running: ${scriptName}. Show setup progress.`}
+      onPress={props.onOpenDetails}
+      hitSlop={8}
+      className="ml-2 min-w-0 max-w-[55%] flex-row items-center gap-1 rounded-full border border-border px-2 py-1 active:opacity-70"
+    >
+      <AppActivityIndicator
+        size={Platform.OS === "android" ? 12 : "small"}
+        colorClassName="accent-icon-muted"
+        style={{
+          width: 12,
+          height: 12,
+          transform: Platform.OS === "android" ? undefined : [{ scale: 0.65 }],
+        }}
+      />
+      <Text numberOfLines={1} className="shrink text-2xs text-foreground-secondary">
+        Background setup
+      </Text>
+    </Pressable>
   );
 }
 
@@ -162,9 +153,8 @@ export function WorktreeSetupFoldChip(props: WorktreeSetupCardProps) {
  * Setup that ended after the agent took the turn, as one row under the prompt, like web's
  * collapsed summary. Tapping it opens the details.
  */
-function WorktreeSetupSummaryRow(props: WorktreeSetupCardProps) {
+function WorktreeSetupSummaryRow(props: WorktreeSetupCardProps & SetupDetailsControl) {
   const { snapshot } = props;
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const now = useVisibleSecondClock(false);
   const failed =
     snapshot.phase === "failed" ||
@@ -179,44 +169,47 @@ function WorktreeSetupSummaryRow(props: WorktreeSetupCardProps) {
           ? "Worktree ready, setup script failed"
           : "Worktree ready";
   return (
-    <>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`${label}. Show setup details.`}
-        onPress={() => setDetailsOpen(true)}
-        className="mb-1 min-h-8 flex-row items-center px-1 active:opacity-70"
-        style={{ columnGap: 8 }}
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${label}. Show setup details.`}
+      onPress={props.onOpenDetails}
+      className="mb-1 min-h-8 flex-row items-center px-1 active:opacity-70"
+      style={{ columnGap: 8 }}
+    >
+      <View className="w-6 items-center">
+        <SymbolView
+          name={failed ? "xmark" : "checkmark"}
+          size={14}
+          tintColorClassName={failed ? "accent-danger-foreground" : "accent-icon-muted"}
+        />
+      </View>
+      <Text
+        numberOfLines={1}
+        className={
+          failed
+            ? "flex-1 text-sm text-danger-foreground"
+            : "flex-1 text-sm text-foreground-secondary"
+        }
       >
-        <View className="w-6 items-center">
-          <SymbolView
-            name={failed ? "xmark" : "checkmark"}
-            size={14}
-            tintColorClassName={failed ? "accent-danger-foreground" : "accent-icon-muted"}
-          />
-        </View>
-        <Text
-          numberOfLines={1}
-          className={
-            failed
-              ? "flex-1 text-sm text-danger-foreground"
-              : "flex-1 text-sm text-foreground-secondary"
-          }
-        >
-          {label}
-        </Text>
-        <Text
-          className="text-2xs text-foreground-secondary"
-          style={{ fontVariant: ["tabular-nums"] }}
-        >
-          {elapsed(snapshot.startedAt, snapshot.endedAt, now)}
-        </Text>
-        <SymbolView name="chevron.right" size={10} tintColorClassName="accent-icon-muted" />
-      </Pressable>
-      {detailsOpen ? (
-        <SetupDetailsSheet {...props} now={now} onClose={() => setDetailsOpen(false)} />
-      ) : null}
-    </>
+        {label}
+      </Text>
+      <Text
+        className="text-2xs text-foreground-secondary"
+        style={{ fontVariant: ["tabular-nums"] }}
+      >
+        {elapsed(snapshot.startedAt, snapshot.endedAt, now)}
+      </Text>
+      <SymbolView name="chevron.right" size={10} tintColorClassName="accent-icon-muted" />
+    </Pressable>
   );
+}
+
+/** The one setup details sheet, opened from the card, the chip, or the summary row. */
+export function WorktreeSetupDetails(
+  props: WorktreeSetupCardProps & { readonly onClose: () => void },
+) {
+  const now = useVisibleSecondClock(props.snapshot.phase === "running");
+  return <SetupDetailsSheet {...props} now={now} />;
 }
 
 /** Holds the card's place until the server publishes the first setup snapshot. */
