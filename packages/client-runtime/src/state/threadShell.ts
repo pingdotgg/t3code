@@ -22,6 +22,7 @@ import {
   arrayElementsEqual,
   parseProjectRefCollectionKey,
   parseThreadKey,
+  projectKey,
   projectRefCollectionKey,
   threadKey,
   threadRefsEqual,
@@ -702,6 +703,26 @@ export function createEnvironmentThreadShellAtoms(input: {
     return next;
   }).pipe(Atom.withLabel("environment-delegated-under-parent"));
 
+  // Lets an empty scoped list tell "no threads" from "its threads show under their parent".
+  let previousDelegatedUnderParentProjectKeys: ReadonlySet<string> = new Set();
+  const delegatedUnderParentProjectKeysAtom = Atom.make((get) => {
+    const next = new Set<string>();
+    for (const key of get(delegatedUnderParentAtom)) {
+      const ref = parseThreadKey(key);
+      const thread = get(environmentThreadIndexAtom(ref.environmentId)).get(ref.threadId);
+      if (thread === undefined || thread.archivedAt !== null) continue;
+      next.add(projectKey({ environmentId: ref.environmentId, projectId: thread.projectId }));
+    }
+    if (
+      next.size === previousDelegatedUnderParentProjectKeys.size &&
+      [...next].every((key) => previousDelegatedUnderParentProjectKeys.has(key))
+    ) {
+      return previousDelegatedUnderParentProjectKeys;
+    }
+    previousDelegatedUnderParentProjectKeys = next;
+    return next;
+  }).pipe(Atom.withLabel("environment-delegated-under-parent-project-keys"));
+
   let previousNavigationShells: ReadonlyArray<EnvironmentThreadShell> = [];
   const navigationThreadShellsAtom = Atom.make((get) => {
     const next: EnvironmentThreadShell[] = [];
@@ -738,6 +759,7 @@ export function createEnvironmentThreadShellAtoms(input: {
     quietThreadShellsAtom,
     navigationThreadShellsAtom,
     delegatedUnderParentAtom,
+    delegatedUnderParentProjectKeysAtom,
     pendingSubagentRequestsAtom,
     threadShellsForProjectRefsAtom: (refs: ReadonlyArray<ScopedProjectRef>) =>
       threadShellsForProjectRefsAtomFamily(projectRefCollectionKey(refs)),

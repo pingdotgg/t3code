@@ -143,10 +143,12 @@ import {
   readThreadShell,
   useAllEnvironmentProjectSnapshotsReady,
   useDelegatedUnderParent,
+  useDelegatedUnderParentProjectKeys,
   useProjects,
   useServerConfigs,
   useQuietThreadShells,
 } from "../state/entities";
+import { projectKey } from "@t3tools/client-runtime/state/entities";
 import { environmentPresentations } from "../state/presentation";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { environmentProjects } from "../state/projects";
@@ -912,6 +914,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     projectScopeItems: lookupProjectScopeItems,
   } = useSidebarLookups();
   const delegatedUnderParent = useDelegatedUnderParent();
+  const delegatedUnderParentProjectKeys = useDelegatedUnderParentProjectKeys();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -1932,6 +1935,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     });
   };
   const hasProjectFolders = projectFolders !== null && projectFolders.length > 0;
+  const scopedProjectLabel =
+    scopedProjectGroups.length > 1 ? "these projects" : scopedProjectGroups[0]?.displayName;
   const sidebarListItemsFresh = ((): readonly SidebarListItem[] => {
     const rowsOf = (
       list: readonly EnvironmentThreadShell[],
@@ -3298,11 +3303,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               ) : scopedProjectGroups.length > 0 ? (
                 <>
                   <span>
-                    {`No ${settledCount > 0 ? "active threads" : "threads"} in ${
-                      scopedProjectGroups.length > 1
-                        ? "these projects"
-                        : scopedProjectGroups[0]!.displayName
-                    }${settledCount > 0 ? "" : " yet"}`}
+                    {settledCount === 0 &&
+                    scopedProjectRefs.some((ref) =>
+                      delegatedUnderParentProjectKeys.has(projectKey(ref)),
+                    )
+                      ? `Threads in ${scopedProjectLabel} show under the threads that delegated them`
+                      : `No ${settledCount > 0 ? "active threads" : "threads"} in ${scopedProjectLabel}${
+                          settledCount > 0 ? "" : " yet"
+                        }`}
                   </span>
                   <button
                     type="button"

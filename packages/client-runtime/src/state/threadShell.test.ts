@@ -16,6 +16,7 @@ import { PrimaryConnectionTarget } from "../connection/model.ts";
 import { v2Now, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
 import { isThreadWorking } from "./threadInbox.ts";
+import { projectKey } from "./entities.ts";
 import { childThreadInputsTitle, createEnvironmentThreadShellAtoms } from "./threadShell.ts";
 
 const environmentId = EnvironmentId.make("environment-v2");
@@ -387,6 +388,10 @@ describe("v2 thread shell lists", () => {
         .get(threads.navigationThreadShellsAtom)
         .map((thread) => `${thread.environmentId}/${thread.id}`);
     expect(listed()).toEqual([`${environmentId}/${parent.id}`]);
+    // Its project there, though empty in the list, holds threads.
+    expect(registry.get(threads.delegatedUnderParentProjectKeysAtom)).toEqual(
+      new Set([projectKey({ environmentId: remoteEnvironmentId, projectId: task.projectId })]),
+    );
 
     // The helper the task started there asks for approval: the parent here hears of it.
     registry.set(snapshotAtom(remoteEnvironmentId), {
@@ -429,6 +434,7 @@ describe("v2 thread shell lists", () => {
     // parent's environment is switched off.
     registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [] });
     expect(listed()).toEqual([`${remoteEnvironmentId}/${task.id}`]);
+    expect(registry.get(threads.delegatedUnderParentProjectKeysAtom)).toEqual(new Set());
     // Archiving the parent here leaves the task there unarchived, so it is listed on its own.
     registry.set(snapshotAtom(environmentId), {
       ...v2ShellSnapshot,
