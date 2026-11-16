@@ -169,7 +169,7 @@ export const makeGitHubCheckFailureReader = Effect.gen(function* () {
         .filter(
           (annotation) =>
             annotation.path !== ".github" ||
-            annotation.message !== "Process completed with exit code 1.",
+            !/^Process completed with exit code \d+\.$/.test(annotation.message),
         )
         .slice(0, 20)
         .map((annotation) => ({
