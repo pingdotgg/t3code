@@ -816,16 +816,14 @@ mod tests {
         // A CLI that ignores stdin and SIGTERM: only the watcher's SIGKILL can end it.
         let stub = dir.join("claude");
         let pid_file = dir.join("pid");
-        std::fs::write(
+        conn_support::test_util::executable(
             &stub,
-            format!(
+            &format!(
                 "#!/bin/sh\necho $$ > {}\ntrap '' TERM\nwhile :; do sleep 1; done\n",
                 pid_file.display()
             ),
         )
         .unwrap();
-        std::fs::set_permissions(&stub, std::os::unix::fs::PermissionsExt::from_mode(0o755))
-            .unwrap();
         let helper = Helper::new(command, "claudeAgent", plain_driver("claude"));
         let mut query = helper
             .open(
@@ -879,13 +877,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let fake = dir.join("host");
-        std::fs::write(
+        conn_support::test_util::executable(
             &fake,
             "#!/bin/sh\necho '{\"ch\":\"host\",\"t\":\"ready\",\"protocol\":99}'\nexec sleep 30\n",
         )
         .unwrap();
-        std::fs::set_permissions(&fake, std::os::unix::fs::PermissionsExt::from_mode(0o755))
-            .unwrap();
         let helper = Helper::new(
             HelperCommand::from_path(&fake),
             "claudeAgent",
@@ -962,15 +958,13 @@ process.stdin.on("end", () => {{ fs.writeFileSync({marker:?}, "eof"); process.ex
         std::fs::create_dir_all(&dir).unwrap();
         // A host that never answers.
         let fake = dir.join("host");
-        std::fs::write(
+        conn_support::test_util::executable(
             &fake,
             "#!/bin/sh
 exec sleep 30
 ",
         )
         .unwrap();
-        std::fs::set_permissions(&fake, std::os::unix::fs::PermissionsExt::from_mode(0o755))
-            .unwrap();
         let helper = Helper::new(
             HelperCommand::from_path(&fake),
             "claudeAgent",

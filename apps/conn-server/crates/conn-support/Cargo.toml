@@ -7,6 +7,9 @@ license.workspace = true
 publish.workspace = true
 rust-version.workspace = true
 
+[features]
+test-util = []
+
 [dependencies]
 # HMAC-SHA256 needs the hash; already in the tree (workspace dependency).
 sha2.workspace = true

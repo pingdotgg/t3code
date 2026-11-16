@@ -1370,9 +1370,8 @@ done
                     std::env::temp_dir().join(format!("conn-codex-fake-{}", std::process::id()));
                 std::fs::create_dir_all(&dir).unwrap();
                 let script = dir.join("codex");
-                std::fs::write(&script, format!("#!/bin/sh\n{FAKE}")).unwrap();
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+                conn_support::test_util::executable(&script, &format!("#!/bin/sh\n{FAKE}"))
+                    .unwrap();
                 script
             })
             .clone();
@@ -1671,9 +1670,7 @@ done
         let dir = std::env::temp_dir().join(format!("conn-codex-fork-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let script = dir.join("codex");
-        std::fs::write(&script, format!("#!/bin/sh\n{FAKE}")).unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        conn_support::test_util::executable(&script, &format!("#!/bin/sh\n{FAKE}")).unwrap();
         let log = dir.join("codex.stdin");
         let _ = std::fs::remove_file(&log);
         let provider = CodexProvider::new(
@@ -1804,9 +1801,7 @@ done
         let dir = std::env::temp_dir().join(format!("conn-codex-restart-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let script = dir.join("codex");
-        std::fs::write(&script, format!("#!/bin/sh\n{FAKE}")).unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        conn_support::test_util::executable(&script, &format!("#!/bin/sh\n{FAKE}")).unwrap();
         let log = dir.join("codex.stdin");
         let _ = std::fs::remove_file(&log);
         let provider = CodexProvider::new(

@@ -30,6 +30,7 @@ webpki-roots = "1"
 url = { version = "2.5", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+conn-support = { workspace = true, features = ["test-util"] }
 tokio = { workspace = true, features = ["rt", "macros", "test-util", "net"] }
 
 [lints]
