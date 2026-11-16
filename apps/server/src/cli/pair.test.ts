@@ -495,7 +495,10 @@ describe("t3 pair", () => {
           ]);
           assert.isTrue(Exit.isFailure(exit));
           if (Exit.isFailure(exit)) {
-            assert.include(String(Cause.squash(exit.cause)), "t3@0.0.45 pair");
+            assert.include(
+              String(Cause.squash(exit.cause)),
+              `t3@0.0.45 pair --base-dir ${baseDir}`,
+            );
           }
         }),
       "127.0.0.1",
@@ -618,6 +621,72 @@ describe("t3 pair", () => {
 
       assert.instanceOf(error, TailscaleServeTargetRefusedError);
       assert.include(String(error), "127.0.0.2");
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  // regression: #37459 - on Linux without an operator, tailscaled refuses Serve config
+  // from a normal user, and the CLI must say how to fix it.
+  it.effect("explains the operator fix when Tailscale denies the Serve config", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-remote-"));
+      yield* persistServerRuntimeState({
+        path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+        state: yield* makePersistedServerRuntimeState({
+          config: { host: "127.0.0.1", devUrl: undefined },
+          port: 3773,
+        }),
+      });
+      const spawner = ChildProcessSpawner.make((command) => {
+        const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
+        const serve = args[0] === "serve" && args[1] !== "status";
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(serve ? 1 : 0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.make(
+              new TextEncoder().encode(
+                serve
+                  ? ""
+                  : args[0] === "status"
+                    ? '{"Self":{"DNSName":"pair-test.tail.ts.net."}}'
+                    : "{}",
+              ),
+            ),
+            stderr: Stream.make(
+              new TextEncoder().encode(
+                serve
+                  ? "sending serve config: Access denied: serve config denied\n\nUse 'sudo tailscale serve --https=443 --bg http://127.0.0.1:3773'.\nTo not require root, use 'sudo tailscale set --operator=$USER' once.\n"
+                  : "",
+              ),
+            ),
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        );
+      });
+
+      const error = yield* provideCliTestLayers(
+        runCli(["pair", "--base-dir", baseDir, "--tailscale"]).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(FetchHttpClient.Fetch, async (input) => {
+            if (String(input) === "http://127.0.0.1:3773/.well-known/t3/environment") {
+              return Response.json(testDescriptor);
+            }
+            assert.equal(String(input), "https://pair-test.tail.ts.net/.well-known/t3/environment");
+            return new Response(null, { status: 503 });
+          }),
+          Effect.flip,
+        ),
+      );
+
+      assert.include(String(error), "sudo tailscale set --operator=$USER");
+      assert.notInclude(String(error), "by hand to see why");
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });
