@@ -1,3 +1,4 @@
+import VirtualTablePreview from "./VirtualTablePreview";
 import { ZoomableMediaViewport } from "./ZoomableMediaViewport";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
@@ -80,9 +81,10 @@ it("zooms video from a fitted 100 percent to 500 percent and resets", async () =
   const locator = screen.getByLabelText("Zoom video");
   const video = locator.element();
   const width = video.getBoundingClientRect().width;
-  const slider = screen.getByRole("slider", { name: "Video zoom" }).element();
-  expect(slider.getAttribute("min")).toBe("100");
-  expect(slider.getAttribute("max")).toBe("500");
+  expect(screen.container.querySelector('input[type="range"]')).toBeNull();
+  await expect
+    .element(screen.getByRole("button", { name: "Zoom out", exact: true }))
+    .toBeDisabled();
   await userEvent.keyboard("{Control>}");
   await userEvent.wheel(locator, { delta: { y: 30 } });
   await userEvent.keyboard("{/Control}");
@@ -93,4 +95,27 @@ it("zooms video from a fitted 100 percent to 500 percent and resets", async () =
   await vi.waitFor(() => expect(video.getBoundingClientRect().width).toBe(width * 5));
   await screen.getByRole("button", { name: "Reset zoom to 100%", exact: true }).click();
   await vi.waitFor(() => expect(video.getBoundingClientRect().width).toBe(width));
+});
+
+it("keeps virtual tables filling their viewport when zoomed out", async () => {
+  const rows = Array.from({ length: 50 }, (_, row) =>
+    Array.from({ length: 8 }, (_, col) => `${row}:${col}`),
+  );
+  await using screen = await render(
+    <div className="flex h-[400px] w-[600px]">
+      <VirtualTablePreview name="Grid" count={rows.length} columns={8} getRows={() => rows} />
+    </div>,
+  );
+  const viewport = screen.getByRole("region", { name: "Table preview" }).element();
+  for (let step = 0; step < 3; step++)
+    await screen.getByRole("button", { name: "Zoom out", exact: true }).click();
+  await expect.element(screen.getByText("25%", { exact: true })).toBeVisible();
+  await vi.waitFor(() => {
+    const area = viewport.getBoundingClientRect();
+    const grid = viewport.querySelector("[data-zoom-scroll]")!.getBoundingClientRect();
+    expect(Math.abs(grid.width - area.width)).toBeLessThan(2);
+    expect(Math.abs(grid.height - area.height)).toBeLessThan(2);
+    expect(Math.abs(grid.left - area.left)).toBeLessThan(2);
+    expect(Math.abs(grid.top - area.top)).toBeLessThan(2);
+  });
 });

@@ -34,12 +34,16 @@ it("selects the cell under the pointer after zooming a workbook", async () => {
   const locator = screen.getByRole("grid", { name: "Zoom" });
   await expect.element(locator).toBeVisible();
   const root = locator.element() as HTMLElement;
+  const bounds = root.getBoundingClientRect();
   const canvas = root.querySelector("canvas")!;
   await vi.waitFor(() => expect(canvas.clientWidth).toBeGreaterThan(0));
-  await userEvent.keyboard("{Control>}");
-  await userEvent.wheel(locator, { delta: { y: -69.314718 } });
-  await userEvent.keyboard("{/Control}");
+  for (let step = 0; step < 4; step++)
+    await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
   await expect.element(screen.getByText("200%", { exact: true })).toBeVisible();
+  await vi.waitFor(() => {
+    expect(Math.abs(root.getBoundingClientRect().width - bounds.width)).toBeLessThan(2);
+    expect(Math.abs(root.getBoundingClientRect().height - bounds.height)).toBeLessThan(2);
+  });
   using _capture = vi.spyOn(root, "setPointerCapture").mockImplementation(() => {});
   using _release = vi.spyOn(root, "releasePointerCapture").mockImplementation(() => {});
   const rect = canvas.getBoundingClientRect();
@@ -58,4 +62,17 @@ it("selects the cell under the pointer after zooming a workbook", async () => {
   await vi.waitFor(() =>
     expect(root.getAttribute("aria-activedescendant")).toBe("office-cell-0-1"),
   );
+  await userEvent.keyboard("{Control>}");
+  await userEvent.wheel(locator, { delta: { y: 168.139916 } });
+  await userEvent.keyboard("{/Control}");
+  await expect.element(screen.getByText("37%", { exact: true })).toBeVisible();
+  await vi.waitFor(() => {
+    const rect = root.getBoundingClientRect();
+    expect(Math.abs(rect.width - bounds.width)).toBeLessThan(2);
+    expect(Math.abs(rect.height - bounds.height)).toBeLessThan(2);
+    const viewport = root.closest('[role="region"]')!.getBoundingClientRect();
+    expect(Math.abs(rect.left - viewport.left)).toBeLessThan(2);
+    expect(Math.abs(rect.top - viewport.top)).toBeLessThan(2);
+  });
+  expect(screen.container.querySelector('input[type="range"]')).toBeNull();
 });

@@ -103,7 +103,7 @@ export default function Spreadsheet(props: {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {error ? <FileSurfaceNotice>{error}</FileSurfaceNotice> : null}
-      <ZoomableMediaViewport minZoom={0.25} maxZoom={5} label="Spreadsheet zoom">
+      <ZoomableMediaViewport minZoom={0.25} maxZoom={5} layout="table" label="Spreadsheet preview">
         <SpreadsheetGrid
           key={opened.layout.info.activeSheet}
           engine={opened.engine}
@@ -249,7 +249,8 @@ function SpreadsheetGrid(props: {
       space.style.height = `${headers.height + height}px`;
     };
     const paint = () => {
-      const ratio = window.devicePixelRatio || 1;
+      const scale = root.getBoundingClientRect().width / root.offsetWidth || 1;
+      const ratio = (window.devicePixelRatio || 1) * scale;
       const width = root.clientWidth;
       const height = root.clientHeight;
       const size = { width: width - headers.width, height: height - headers.height };
@@ -714,6 +715,7 @@ function SpreadsheetGrid(props: {
     <div className="relative flex h-full w-full min-h-0 flex-1">
       <div
         ref={scroller}
+        data-zoom-scroll
         dir="ltr"
         tabIndex={0}
         role="grid"

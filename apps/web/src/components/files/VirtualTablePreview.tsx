@@ -1,10 +1,22 @@
 /* oxlint-disable react/no-array-index-key -- Positions identify source rows and columns. */
+import { ZoomableMediaViewport } from "./ZoomableMediaViewport";
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { observeResize } from "~/lib/observeResize";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { PREVIEW_PAGE_ROWS } from "./largeTextProtocol";
 
-export default function VirtualTablePreview(props: {
+export default function VirtualTablePreview(props: Parameters<typeof VirtualTableContent>[0]) {
+  if (props.source) return <VirtualTableContent {...props} />;
+  return (
+    <ZoomableMediaViewport minZoom={0.25} layout="table" label="Table preview">
+      <div className="flex h-full w-full min-h-0">
+        <VirtualTableContent {...props} />
+      </div>
+    </ZoomableMediaViewport>
+  );
+}
+
+function VirtualTableContent(props: {
   readonly name: string;
   readonly count: number;
   readonly columns: number;
@@ -75,6 +87,7 @@ export default function VirtualTablePreview(props: {
   return (
     <div
       ref={ref}
+      data-zoom-scroll
       className="relative min-h-0 flex-1 overflow-x-auto contain-strict"
       onScroll={(event) => {
         event.currentTarget.style.setProperty(
@@ -433,6 +446,7 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
   return (
     <div
       ref={ref}
+      data-zoom-scroll
       tabIndex={0}
       className="min-h-0 flex-1 overflow-auto"
       onKeyDown={(event) => {

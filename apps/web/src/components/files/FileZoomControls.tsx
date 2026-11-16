@@ -14,7 +14,6 @@ export function FileZoomControls(props: {
   onReset: () => void;
   resetLabel?: string;
   displayValue?: string | undefined;
-  sliderLabel?: string;
   disabled?: boolean;
 }) {
   const actions = use(FilePreviewActions);
@@ -30,19 +29,6 @@ export function FileZoomControls(props: {
       <span className="min-w-14 text-center font-medium tabular-nums">
         {props.displayValue ?? `${Math.round(props.zoom * 100)}%`}
       </span>
-      {props.sliderLabel ? (
-        <input
-          type="range"
-          aria-label={props.sliderLabel}
-          min={props.min * 100}
-          max={props.max * 100}
-          step={1}
-          value={Math.round(props.zoom * 100)}
-          disabled={props.disabled ?? false}
-          onChange={(event) => props.onChange(Number(event.target.value) / 100)}
-          className="h-1 w-24 accent-foreground"
-        />
-      ) : null}
       <FileSurfaceAction
         label="Zoom in"
         disabled={props.disabled || props.zoom >= props.max}
