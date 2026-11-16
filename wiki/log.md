@@ -1,5 +1,9 @@
 # Wiki update log
 
+## 2026-11-16
+
+- **Validated candidate**: [PR #81](https://github.com/NicholasZolton/t3code/pull/81) preserves both histories and incorporates all 967 incoming commits through `c8c51af4e3`; fork `main` remains at `863c2620ff`. The [November 16 candidate](upstream-integration.md#november-16-candidate) passes 17,582 tests after fixture repairs; all 19 remaining failures reproduce on pristine upstream or fork main. Upstream folder matching replaces the overlapping fork implementation, while shared Git/Jujutsu PR routing and OpenCode input-delivery safeguards remain. No main integration or deployment has occurred.
+
 ## 2026-11-15
 
 - **Permissions**: Removed the fork's [OpenCode permission override](upstream-integration.md#opencode-compatibility-boundary); upstream thread-controlled modes now apply on session creation, resume, child setup, and rollback.

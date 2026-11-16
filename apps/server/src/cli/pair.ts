@@ -143,6 +143,15 @@ export class TailscaleServeFailedError extends Schema.TaggedError<TailscaleServe
   }
 }
 
+export class TailscaleOperatorRequiredError extends Schema.TaggedError<TailscaleOperatorRequiredError>()(
+  "TailscaleOperatorRequiredError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Tailscale refused the Serve config because this user is not its operator. Run `sudo tailscale set --operator=$USER` once, then run this command again.";
+  }
+}
+
 export class TailscaleServeTargetRefusedError extends Schema.TaggedError<TailscaleServeTargetRefusedError>()(
   "TailscaleServeTargetRefusedError",
   { localHost: Schema.String },
@@ -161,10 +170,14 @@ export class ServePortOccupiedError extends Schema.TaggedError<ServePortOccupied
   }
 }
 
-const resolveDirectPairingBaseUrl = (state: PersistedServerRuntimeState): string =>
+const resolveDirectPairingBaseUrl = (
+  state: PersistedServerRuntimeState,
+  platform: NodeJS.Platform,
+): string =>
   state.devUrl ??
   resolveHeadlessConnectionString(state.host, state.port, {
     privateNetworkOnly: state.privateNetworkOnly,
+    platform,
   });
 
 const formatPairOutput = (input: {
@@ -391,6 +404,7 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
         input.target.state.devUrl === undefined ? undefined : new URL(input.target.state.devUrl),
     });
     if (isDevServerNotProxiableError(localTarget)) return yield* localTarget;
+    const platform = yield* HostProcess.Platform;
     const holder = yield* readTailscaleServeRootHolder(input.servePort, {
       host: (localTarget.localHost ?? "127.0.0.1").replace(/^\[|\]$/gu, ""),
       port: localTarget.localPort,
@@ -408,17 +422,20 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
         servePort: input.servePort,
       })
       .pipe(
-        Effect.mapError((cause) =>
-          cause._tag === "DevServerNotProxiableError"
-            ? cause
-            : cause._tag === "TailscaleServeHttpsDisabledError"
-              ? new TailscaleServeNotEnabledError()
-              : cause._tag === "TailscaleCommandExitError" &&
-                  cause.stderrDiagnostic === "unsupported-target" &&
-                  localTarget.localHost !== undefined
-                ? new TailscaleServeTargetRefusedError({ localHost: localTarget.localHost })
-                : new TailscaleServeFailedError({ servePort: input.servePort, cause }),
-        ),
+        Effect.mapError((cause) => {
+          if (cause._tag === "DevServerNotProxiableError") return cause;
+          if (cause._tag === "TailscaleServeHttpsDisabledError")
+            return new TailscaleServeNotEnabledError();
+          const diagnostic =
+            cause._tag === "TailscaleCommandExitError" ? cause.stderrDiagnostic : undefined;
+          if (diagnostic === "unsupported-target" && localTarget.localHost !== undefined) {
+            return new TailscaleServeTargetRefusedError({ localHost: localTarget.localHost });
+          }
+          if (diagnostic === "permission-denied" && platform === "linux") {
+            return new TailscaleOperatorRequiredError({ cause });
+          }
+          return new TailscaleServeFailedError({ servePort: input.servePort, cause });
+        }),
       );
     notes.push(
       `Tailscale Serve now maps ${baseUrl} to this server. T3 Code will restore it on restart. Remove it with \`t3 pair --tailscale=false\`.`,
@@ -558,7 +575,7 @@ export const pairCommand = Command.make("pair", {
         pairingBaseUrl = resolved.baseUrl;
         notes.push(...resolved.notes);
       } else {
-        pairingBaseUrl = resolveDirectPairingBaseUrl(target.state);
+        pairingBaseUrl = resolveDirectPairingBaseUrl(target.state, yield* HostProcess.Platform);
         if (isLoopbackHost(new URL(pairingBaseUrl).hostname)) {
           notes.push(
             "This URL is only reachable from this machine. To reach it from your other devices, run `t3 up`, or re-run with --tailscale.",

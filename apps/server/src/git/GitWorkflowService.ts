@@ -57,6 +57,7 @@ export interface VcsWorkflowOps {
   ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
   readonly localStatus: (
     input: VcsStatusInput,
+    options?: GitManager.GitLocalStatusOptions,
   ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
   readonly remoteStatus: (
     input: VcsStatusInput,
@@ -163,6 +164,11 @@ export class GitWorkflowService extends Context.Service<
       } | null,
       GitManagerServiceError
     >;
+    readonly readRefSnapshot: (cwd: string) => Effect.Effect<string | null>;
+    readonly resolveDefaultBranchName: (
+      cwd: string,
+      remoteName: string,
+    ) => Effect.Effect<string | null, GitCommandError>;
     readonly deleteLocalBranch: (
       input: GitVcsDriver.GitDeleteLocalBranchInput,
     ) => Effect.Effect<void, GitCommandError>;
@@ -556,11 +562,33 @@ export const make = Effect.gen(function* () {
       () => Effect.succeed(nonRepositoryStatus()),
       { git: gitManager.status, jj: jjWorkflow.status },
     ),
-    localStatus: routeOr(
-      "GitWorkflowService.localStatus",
-      workflowRouting,
-      () => Effect.succeed(nonRepositoryLocalStatus()),
-      { git: gitManager.localStatus, jj: jjWorkflow.localStatus },
+    localStatus: Effect.fn("GitWorkflowService.localStatus")((input, options) =>
+      routeOr(
+        "GitWorkflowService.localStatus",
+        workflowRouting,
+        () => Effect.succeed(nonRepositoryLocalStatus()),
+        {
+          git: (request: VcsStatusInput) => gitManager.localStatus(request, options),
+          jj: jjWorkflow.localStatus,
+        },
+      )(input),
+    ),
+    readRefSnapshot: Effect.fn("GitWorkflowService.readRefSnapshot")((cwd) =>
+      resolveWorkflowKind(cwd).pipe(
+        Effect.flatMap((kind) =>
+          kind === "git" ? git.readRefSnapshot(cwd) : Effect.succeed(null),
+        ),
+        Effect.orElseSucceed(() => null),
+      ),
+    ),
+    resolveDefaultBranchName: Effect.fn("GitWorkflowService.resolveDefaultBranchName")(
+      (cwd, remoteName) =>
+        ownership.repositoryCwd(cwd).pipe(
+          Effect.flatMap((repositoryCwd) =>
+            git.resolveDefaultBranchName(repositoryCwd, remoteName),
+          ),
+          commandFailure("GitWorkflowService.resolveDefaultBranchName", cwd),
+        ),
     ),
     currentBranch: Effect.fn("GitWorkflowService.currentBranch")((cwd) =>
       routeOr<{ readonly cwd: string }, string | null, GitManagerServiceError>(

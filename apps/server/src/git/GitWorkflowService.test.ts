@@ -296,6 +296,8 @@ describe("GitWorkflowService", () => {
       const workflow = yield* GitWorkflowService.GitWorkflowService;
       yield* workflow.listRefs({ cwd: "/git-repo" });
       yield* workflow.listRefs({ cwd: "/jj-repo" });
+      assert.equal(yield* workflow.readRefSnapshot("/git-repo"), "git-refs");
+      assert.isNull(yield* workflow.readRefSnapshot("/jj-repo"));
 
       assert.equal(gitListRefs.mock.calls.length, 1);
       assert.equal(jjListRefs.mock.calls.length, 1);
@@ -303,7 +305,10 @@ describe("GitWorkflowService", () => {
       Effect.provide(
         layer({
           detect: ({ cwd }) => Effect.succeed(handleFor(cwd === "/jj-repo" ? "jj" : "git")),
-          git: { listRefs: gitListRefs },
+          git: {
+            listRefs: gitListRefs,
+            readRefSnapshot: () => Effect.succeed("git-refs"),
+          },
           jj: { listRefs: jjListRefs },
         }),
       ),
