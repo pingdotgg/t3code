@@ -218,6 +218,7 @@ const QUERY_METHODS = new Set([
   "backgroundTasks",
   "initializationResult",
   "mcpServerStatus",
+  "readMcpResource",
 ]);
 
 /**
@@ -490,13 +491,39 @@ export function createDriver(host) {
     },
 
     async call(session, method, args) {
-      if (method === "renameSession") return renameSession(session.state?.query, args?.[0]);
-      if (!QUERY_METHODS.has(method)) throw new Error(`unknown query method ${method}`);
-      const q = session.state?.query;
-      const fn = q?.[method];
-      if (typeof fn !== "function") throw new Error(`this SDK has no Query.${method}`);
-      const value = await fn.apply(q, args);
-      return value === undefined ? null : value;
+      const state = session.state;
+      const mcp = ["mcpServerStatus", "readMcpResource", "callMcpTool", "listPermissionRules"].includes(method);
+      if (mcp) {
+        state.mcpRequests ??= 0;
+        if (state.mcpRequests >= 32) throw new Error("Too many pending MCP App requests.");
+        state.mcpRequests += 1;
+      }
+      try {
+        if (method === "callMcpTool" || method === "listPermissionRules") {
+          const q = session.state?.query;
+          const send = q === undefined ? undefined : Reflect.get(q, "request");
+          const subtype = method === "callMcpTool" ? "mcp_call" : "list_permission_rules";
+          if (typeof send !== "function") throw new Error(`This Claude Agent SDK cannot send ${subtype}.`);
+          const reply = await Reflect.apply(send, q, [method === "callMcpTool"
+            ? { subtype, tool: args[0].tool, arguments: args[0].arguments, result_not_for_model: true }
+            : { subtype }]);
+          if (method === "callMcpTool") return reply?.response ?? null;
+          const state = reply?.response?.state;
+          if (!Array.isArray(state?.rules) || (state.errors !== undefined && (!Array.isArray(state.errors) || state.errors.length !== 0)) || state.rules.some((rule) => !rule || !["allow", "deny", "ask"].includes(rule.behavior) || typeof rule.rule !== "string" || (rule.notInEffect !== undefined && typeof rule.notInEffect !== "boolean"))) {
+            throw new Error("Claude's permission rules could not be read.");
+          }
+          return state.rules;
+        }
+        if (method === "renameSession") return renameSession(session.state?.query, args?.[0]);
+        if (!QUERY_METHODS.has(method)) throw new Error(`unknown query method ${method}`);
+        const q = session.state?.query;
+        const fn = q?.[method];
+        if (typeof fn !== "function") throw new Error(`this SDK has no Query.${method}`);
+        const value = await fn.apply(q, args);
+        return value === undefined ? null : value;
+      } finally {
+        if (mcp) state.mcpRequests -= 1;
+      }
     },
 
     async close(session) {
