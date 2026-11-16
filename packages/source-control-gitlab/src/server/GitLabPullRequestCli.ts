@@ -56,6 +56,7 @@ import {
   decodeMergeRequestGraphqlListJson,
   decodeMergeRequestListJson,
   decodeMergeRequestFileStatsJson,
+  decodeMergeRequestWatchFingerprintJson,
   decodeMergeRequestStatsJson,
   decodeMutationErrorsJson,
   decodeNotesJson,
@@ -75,6 +76,7 @@ import {
   LABEL_PERMISSION_GRAPHQL_QUERY,
   MERGE_MESSAGES_GRAPHQL_QUERY,
   MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY,
+  MERGE_REQUEST_WATCH_FINGERPRINT_GRAPHQL_QUERY,
   MERGE_REQUEST_STATS_GRAPHQL_QUERY,
   REPOSITORY_BLOBS_GRAPHQL_QUERY,
   LIST_ITEM_GRAPHQL_FIELDS,
@@ -89,6 +91,7 @@ import {
 } from "./gitLabMergeRequestJson.ts";
 import type {
   ProviderChangeRequestSummary,
+  ProviderChangeRequestWatchFingerprint,
   ProviderFileStats,
   ProviderListCursor,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
@@ -447,6 +450,13 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly repository: string;
       readonly number: number;
     }) => Effect.Effect<ProviderFileStats, GitLabPullRequestCliError>;
+
+    readonly getMergeRequestWatchFingerprint: (input: {
+      readonly cwd: string;
+      readonly host?: string | undefined;
+      readonly repository: string;
+      readonly number: number;
+    }) => Effect.Effect<ProviderChangeRequestWatchFingerprint | null, GitLabPullRequestCliError>;
 
     readonly listNotes: (input: {
       readonly cwd: string;
@@ -2306,6 +2316,19 @@ export const make = Effect.gen(function* () {
       }),
     ),
 
+    getMergeRequestWatchFingerprint: Effect.fn(
+      "GitLabPullRequestCli.getMergeRequestWatchFingerprint",
+    )((input) =>
+      graphqlRead({
+        cwd: input.cwd,
+        host: input.host,
+        operation: "getMergeRequestWatchFingerprint",
+        query: MERGE_REQUEST_WATCH_FINGERPRINT_GRAPHQL_QUERY,
+        variables: { fullPath: input.repository, iid: String(input.number) },
+        decode: decodeMergeRequestWatchFingerprintJson,
+      }),
+    ),
+
     listNotes: Effect.fn("GitLabPullRequestCli.listNotes")(function (input) {
       return notesPage({ ...input, page: 1, collected: [] });
     }),
@@ -2330,26 +2353,39 @@ export const make = Effect.gen(function* () {
       // GitLab deletes an award by its id and takes no emoji name there, so the reader's own
       // award of that name is looked up first.
       const viewer = yield* viewerUsername(input);
-      const listed = yield* api({ cwd: input.cwd, host: input.host, path: subject });
-      const own = decodeOwnAwardIdJson(listed.stdout.trim(), {
-        content: input.content,
-        viewer,
-      });
-      if (!Result.isSuccess(own)) {
-        return yield* new GitLabMergeRequestReadError({
-          command: "glab",
+      for (let page = 1; ; page++) {
+        const listed = yield* api({
           cwd: input.cwd,
-          operation: "setReaction",
-          cause: own.failure,
+          host: input.host,
+          path: `${subject}?${query([
+            ["per_page", String(MAX_PAGE_SIZE)],
+            ["page", String(page)],
+          ])}`,
         });
+        const own = decodeOwnAwardIdJson(listed.stdout.trim(), {
+          content: input.content,
+          viewer,
+        });
+        if (!Result.isSuccess(own)) {
+          return yield* new GitLabMergeRequestReadError({
+            command: "glab",
+            cwd: input.cwd,
+            operation: "setReaction",
+            cause: own.failure,
+          });
+        }
+        if (own.success.id !== null) {
+          yield* api({
+            cwd: input.cwd,
+            host: input.host,
+            path: `${subject}/${own.success.id}`,
+            method: "DELETE",
+          });
+          return;
+        }
+        // An empty raw page establishes exhaustion even when the host caps page size.
+        if (own.success.empty) return;
       }
-      if (own.success === null) return;
-      yield* api({
-        cwd: input.cwd,
-        host: input.host,
-        path: `${subject}/${own.success}`,
-        method: "DELETE",
-      });
     }),
 
     listCommits: Effect.fn("GitLabPullRequestCli.listCommits")(function (input) {

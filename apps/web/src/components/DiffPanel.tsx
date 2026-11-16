@@ -54,8 +54,7 @@ import { useHideTestFiles } from "./diffs/useHideTestFiles";
 import { useRenderedAppearance } from "../hooks/useTheme";
 import { useStableCallback } from "../hooks/useStableCallback";
 import {
-  buildFileDiffContentVersion,
-  buildFileDiffIdentityKey,
+  buildFileDiffEntries,
   getDiffLineStat,
   getRenderablePatch,
   resolveDiffThemeName,
@@ -96,6 +95,7 @@ import {
 import { DiffFileTree } from "./diffs/DiffFileTree";
 import { FileExplorerPane } from "./files/FileExplorerPane";
 import { diffFileTreeEntries } from "./diffs/diffFileTree.logic";
+import { getDiffHeaderClickAction } from "./diffs/diffHeaderClick";
 import { Button } from "./ui/button";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 import { Switch } from "./ui/switch";
@@ -139,22 +139,15 @@ import { useOpenLink } from "../browser/useOpenLink";
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
 const DIFF_FILE_TREE_STORAGE_KEY = "t3code.diffFileTreeOpen";
-const fileEntryCache = new WeakMap<
-  FileDiffMetadata,
-  { fileDiff: FileDiffMetadata; fileKey: string; fileVersion: number; viewedFingerprint: string }
->();
+const viewedFingerprintCache = new WeakMap<FileDiffMetadata, string>();
 
-function getCachedFileEntry(fileDiff: FileDiffMetadata) {
-  const cached = fileEntryCache.get(fileDiff);
-  if (cached) return cached;
-  const entry = {
-    fileDiff,
-    fileKey: buildFileDiffIdentityKey(fileDiff),
-    fileVersion: buildFileDiffContentVersion(fileDiff),
-    viewedFingerprint: diffViewedFingerprint(fileDiff),
-  };
-  fileEntryCache.set(fileDiff, entry);
-  return entry;
+function getViewedFingerprint(fileDiff: FileDiffMetadata) {
+  let fingerprint = viewedFingerprintCache.get(fileDiff);
+  if (fingerprint === undefined) {
+    fingerprint = diffViewedFingerprint(fileDiff);
+    viewedFingerprintCache.set(fileDiff, fingerprint);
+  }
+  return fingerprint;
 }
 
 const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
@@ -208,6 +201,7 @@ function DiffFileCollapseToggle({
                   { rootMargin: "600px" },
                 );
               }}
+              data-diff-file-key={fileKey}
               onClick={(event) => {
                 event.stopPropagation();
                 onToggle(fileKey);
@@ -229,12 +223,14 @@ function DiffFileCollapseToggle({
 
 function DiffFileHeaderSuffix({
   filePath,
+  workspaceRoot,
   hasStat,
   error,
   truncated,
   onRetry,
 }: {
   filePath: string;
+  workspaceRoot: string | undefined;
   hasStat: boolean;
   error: boolean;
   truncated: boolean;
@@ -243,7 +239,7 @@ function DiffFileHeaderSuffix({
   return (
     <>
       <span data-diff-copy-path className="inline-flex">
-        <DiffFilePathCopyButton filePath={filePath} />
+        <DiffFilePathCopyButton filePath={filePath} workspaceRoot={workspaceRoot} />
       </span>
       {hasStat ? (
         <DiffFileStatus error={error} truncated={truncated} retry={() => onRetry(filePath)} />
@@ -288,7 +284,6 @@ export default function DiffPanel({
   const [baseRefQuery, setBaseRefQuery] = useState("");
   // The open commit menu keeps the list it opened with, so rows do not move under the pointer.
   const [openCommitMenu, setOpenCommitMenu] = useState<ReviewBranchCommitsResult | null>(null);
-  const [codeViewRevision, setCodeViewRevision] = useState(0);
 
   const routeThreadRef = useThreadRouteRef();
   const activeThreadId = routeThreadRef?.threadId ?? null;
@@ -305,9 +300,6 @@ export default function DiffPanel({
       : null,
   );
   const activeCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot;
-  const activeRepositoryRoot = activeThread?.worktreePath
-    ? undefined
-    : activeProject?.repositoryIdentity?.rootPath;
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(activeThread?.environmentId ?? null),
   );
@@ -325,6 +317,9 @@ export default function DiffPanel({
         })
       : null,
   );
+  const activeRepositoryRoot =
+    gitStatusQuery.data?.workingTree.rootPath ??
+    (activeThread?.worktreePath ? undefined : activeProject?.repositoryIdentity?.rootPath);
   const diffSelection = useDiffPanelStore((state) =>
     selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),
   );
@@ -332,6 +327,9 @@ export default function DiffPanel({
     selectThreadBranchBaseRef(state, routeThreadRef),
   );
   const toolCallSelection = diffSelection.kind === "tool-call" ? diffSelection : null;
+  // Turn and git diffs name files from the repository root; a tool call's diff names them as
+  // its provider recorded them, absolute or relative to the workspace.
+  const diffPathRepositoryRoot = toolCallSelection ? undefined : activeRepositoryRoot;
   const isGitSelection =
     diffSelection.kind === "branch" ||
     diffSelection.kind === "unstaged" ||
@@ -396,7 +394,7 @@ export default function DiffPanel({
   const collapseScopeKey = routeThreadRef
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}:${reviewSectionId}`
     : null;
-  const codeViewMountKey = `${collapseScopeKey ?? reviewSectionId}:${codeViewRevision}`;
+  const codeViewMountKey = collapseScopeKey ?? reviewSectionId;
   const selectedCheckpointRange =
     typeof selectedCheckpointTurnCount === "number"
       ? {
@@ -689,10 +687,10 @@ export default function DiffPanel({
 
   const isRefreshingDiff = branchDiffPreview.isPending || areFilePatchesPending;
   const pathOccurrences = new Map<string, number>();
-  const renderableFileEntries = renderableFiles.map((fileDiff) => {
-    const entry = getCachedFileEntry(fileDiff);
+  const renderableFileEntries = buildFileDiffEntries(renderableFiles).map((entry) => {
     if (!isGitSelection) return entry;
-    // Metadata has no change type; keep each path's identity when its patch arrives.
+    const { fileDiff } = entry;
+    // Metadata's change type can be missing or differ from the patch's; key each path's identity by path.
     const pathKey = JSON.stringify([fileDiff.prevName ?? fileDiff.name, fileDiff.name]);
     const occurrence = pathOccurrences.get(pathKey) ?? 0;
     pathOccurrences.set(pathKey, occurrence + 1);
@@ -733,10 +731,7 @@ export default function DiffPanel({
   const viewedEntrySet = new Set(viewedEntries);
   const isFileViewed = (fileDiff: FileDiffMetadata) =>
     viewedEntrySet.has(
-      diffViewedEntry(
-        resolveFileDiffPath(fileDiff),
-        getCachedFileEntry(fileDiff).viewedFingerprint,
-      ),
+      diffViewedEntry(resolveFileDiffPath(fileDiff), getViewedFingerprint(fileDiff)),
     );
   const setFileViewed = (fileDiff: FileDiffMetadata, viewed: boolean) => {
     if (!viewedThreadKey) return;
@@ -745,7 +740,7 @@ export default function DiffPanel({
       .setFileViewed(
         viewedThreadKey,
         resolveFileDiffPath(fileDiff),
-        getCachedFileEntry(fileDiff).viewedFingerprint,
+        getViewedFingerprint(fileDiff),
         viewed,
       );
   };
@@ -754,7 +749,7 @@ export default function DiffPanel({
       .filter(({ fileDiff }) => isFilePending(fileDiff))
       .map((file) => file.fileKey),
   );
-  const setDiffFileCollapsed = (fileKey: string, collapsed: boolean) => {
+  const setDiffFileCollapsed = useStableCallback((fileKey: string, collapsed: boolean) => {
     const file = renderableFileEntries.find((candidate) => candidate.fileKey === fileKey);
     if (!collapsed && lazySource && file) requestFile(resolveFileDiffPath(file.fileDiff));
     updateCollapsedDiffFiles((current) => {
@@ -764,7 +759,7 @@ export default function DiffPanel({
       else next.delete(fileKey);
       return next;
     });
-  };
+  });
   const reviewFiles: DiffReviewFile[] = shownFileEntries.map(({ fileDiff, fileKey }) => ({
     fileKey,
     filePath: resolveFileDiffPath(fileDiff),
@@ -803,7 +798,10 @@ export default function DiffPanel({
     isCollapsed: (fileKey) => collapsedDiffFileKeys.has(fileKey) || pendingFileKeys.has(fileKey),
     setCollapsed: setDiffFileCollapsed,
     isViewed: (file) => isFileViewed(file.fileDiff),
-    setViewed: (file, viewed) => setFileViewed(file.fileDiff, viewed),
+    setViewed: (file, viewed) => {
+      setFileViewed(file.fileDiff, viewed);
+      setDiffFileCollapsed(file.fileKey, viewed);
+    },
     revealFile: (file, align) =>
       revealFileAt(
         renderableFileEntries.findIndex(({ fileKey }) => fileKey === file.fileKey),
@@ -868,7 +866,7 @@ export default function DiffPanel({
       threadRef: routeThreadRef,
       filePath,
       activeCwd,
-      repositoryRoot: activeRepositoryRoot,
+      repositoryRoot: diffPathRepositoryRoot,
       openInEditor: (targetPath) => {
         void (async () => {
           const result = await openInPreferredEditor(targetPath);
@@ -888,20 +886,10 @@ export default function DiffPanel({
       },
     });
   };
-  // Find can ask again before the unfolded file reaches the viewer, so this must never fold.
-  const unfoldDiffFile = useStableCallback((fileKey: string) => {
-    updateCollapsedDiffFiles((current) => {
-      if (!current.has(fileKey)) return current;
-      const next = new Set(current);
-      next.delete(fileKey);
-      return next;
-    });
-  });
 
   const toggleDiffFileCollapse = () => {
     codeViewScroll.discard();
     review.showAllFiles();
-    setCodeViewRevision((current) => current + 1);
     updateCollapsedDiffFiles((current) => toggleAllDiffFiles(shownFileKeys, current));
   };
 
@@ -1518,37 +1506,10 @@ export default function DiffPanel({
                   <div
                     className="min-h-0 min-w-0 flex-1"
                     onClickCapture={(event) => {
-                      const composedPath = event.nativeEvent.composedPath?.() ?? [];
-                      for (const node of composedPath) {
-                        if (!(node instanceof HTMLElement)) continue;
-                        // Header controls own their clicks; bubbling a chevron click would toggle twice.
-                        if (
-                          node instanceof HTMLButtonElement ||
-                          node instanceof HTMLAnchorElement ||
-                          node instanceof HTMLLabelElement
-                        ) {
-                          return;
-                        }
-                      }
-                      const title = composedPath.find(
-                        (node): node is HTMLElement =>
-                          node instanceof HTMLElement && node.hasAttribute("data-title"),
-                      );
-                      const filePath = title?.textContent;
-                      if (filePath) {
-                        openDiffFile(filePath);
-                        return;
-                      }
-                      const header = composedPath.find(
-                        (node): node is HTMLElement =>
-                          node instanceof HTMLElement && node.hasAttribute("data-diffs-header"),
-                      );
-                      const headerFilePath = header?.querySelector("[data-title]")?.textContent;
-                      if (!headerFilePath) return;
-                      const file = codeViewFiles.find(
-                        (candidate) => candidate.filePath === headerFilePath,
-                      );
-                      if (file) review.toggleFileCollapsed(file.fileKey);
+                      const action = getDiffHeaderClickAction(event.nativeEvent);
+                      if (action?.type === "open") openDiffFile(action.filePath);
+                      else if (action?.type === "toggle")
+                        review.toggleFileCollapsed(action.fileKey);
                     }}
                     onContextMenuCapture={(event) => {
                       const composedPath = event.nativeEvent.composedPath?.() ?? [];
@@ -1564,7 +1525,7 @@ export default function DiffPanel({
                           environmentId: activeThread?.environmentId ?? null,
                           filePath,
                           workspaceRoot: activeCwd,
-                          repositoryRoot: activeRepositoryRoot,
+                          repositoryRoot: diffPathRepositoryRoot,
                         },
                         event,
                       );
@@ -1594,6 +1555,7 @@ export default function DiffPanel({
                         return (
                           <DiffFileHeaderSuffix
                             filePath={path}
+                            workspaceRoot={activeCwd}
                             hasStat={fileStats.has(path)}
                             error={state?.error ?? false}
                             truncated={state?.truncated ?? false}
@@ -1632,7 +1594,7 @@ export default function DiffPanel({
                           </>
                         );
                       }}
-                      onRevealSearchMatch={unfoldDiffFile}
+                      onFileCollapsedChange={setDiffFileCollapsed}
                       renderHeaderPrefix={(fileDiff, fileKey, collapsed) => (
                         <DiffFileCollapseToggle
                           filePath={resolveFileDiffPath(fileDiff)}

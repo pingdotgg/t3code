@@ -117,7 +117,7 @@ interface AnnotatableCodeViewProps {
     fileKey: string,
     collapsed: boolean,
   ) => ReactNode;
-  onRevealSearchMatch: (fileKey: string) => void;
+  onFileCollapsedChange: (fileKey: string, collapsed: boolean) => void;
 }
 
 export function AnnotatableCodeView({
@@ -143,7 +143,7 @@ export function AnnotatableCodeView({
   renderHeaderMetadata,
   renderHeaderFilenameSuffix,
   renderHeaderPrefix,
-  onRevealSearchMatch,
+  onFileCollapsedChange,
 }: AnnotatableCodeViewProps) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
@@ -317,7 +317,8 @@ export function AnnotatableCodeView({
         enableGutterUtility: draft === null,
         enableLineSelection: draft === null,
         onGutterUtilityClick,
-        onRevealSearchMatch: (item) => onRevealSearchMatch(item.id),
+        onItemCollapsedChange: (_item, nextItem) =>
+          onFileCollapsedChange(nextItem.id, nextItem.collapsed === true),
       }}
       renderHeaderFilenameSuffix={(item) =>
         item.type === "diff" ? renderHeaderFilenameSuffix(item.fileDiff) : null

@@ -98,7 +98,7 @@ function SelectableCodeView(props: {
       options={{}}
       renderHeaderFilenameSuffix={() => null}
       renderHeaderPrefix={() => null}
-      onRevealSearchMatch={() => {}}
+      onFileCollapsedChange={() => {}}
     />
   );
 }

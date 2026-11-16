@@ -155,7 +155,7 @@ interface DiffReviewKeyboardInput<Annotation> {
   readonly isCollapsed: (fileKey: string) => boolean;
   readonly setCollapsed: (fileKey: string, collapsed: boolean) => void;
   readonly isViewed: (file: DiffReviewFile) => boolean;
-  /** Null where files can't be marked viewed, which leaves the key to others. */
+  /** Folds the file as its Viewed checkbox does. Null where files can't be marked viewed, which leaves the key to others. */
   readonly setViewed: ((file: DiffReviewFile, viewed: boolean) => void) | null;
   /** Loads the file if needed and scrolls it into view. */
   readonly revealFile: (file: DiffReviewFile, align?: "start" | "nearest") => void;
@@ -233,7 +233,7 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
     return visibleDiffRows(
       item?.type === "diff" ? item.fileDiff : file.fileDiff,
       input.diffStyle,
-      fileDiffInstance(file.fileKey)?.getExpandedHunksForSearch() ?? NO_EXPANSIONS,
+      fileDiffInstance(file.fileKey)?.getExpandedHunks() ?? NO_EXPANSIONS,
     );
   };
   const canExpand = (file: DiffReviewFile) => !file.fileDiff.isPartial || input.canLoadFullFiles;
@@ -342,7 +342,6 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
         if (!cursorFile.rendered) return true;
         const viewed = !input.isViewed(cursorFile);
         input.setViewed(cursorFile, viewed);
-        input.setCollapsed(cursorFile.fileKey, viewed);
         const nextKey =
           viewed && input.autoAdvanceOnViewed
             ? adjacentUnviewedFileKey(

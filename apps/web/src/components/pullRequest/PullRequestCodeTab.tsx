@@ -1,7 +1,14 @@
 import {
+  isFileDiffCollapsed,
+  withFileDiffFold,
+  type DiffFoldOverride,
+  type FileDiffFoldChoices,
+} from "@t3tools/client-runtime/pull-request-diff-fold";
+import {
   parsePullRequestAnchor,
   pullRequestDiffPathMatches,
   pullRequestLinkCommit,
+  resolvePullRequestAnchorRange,
 } from "@t3tools/shared/pullRequestAnchor";
 import {
   capitalizeTerm,
@@ -43,11 +50,13 @@ import {
   ChevronsDownUpIcon,
   ChevronsUpDownIcon,
 } from "lucide-react";
-import { useAtomRefresh } from "@effect/atom-react";
+import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { AsyncResult, Atom } from "effect/reactivity";
 import * as Schema from "effect/Schema";
 import {
   createContext,
   use,
+  useContext,
   useEffect,
   useEffectEvent,
   useRef,
@@ -142,17 +151,12 @@ import {
   toViewerSide,
 } from "./PullRequestReviewAnnotation";
 import { pullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
-import {
-  getFileViewedRange,
-  isFileDiffCollapsed,
-  isLineInFileDiff,
-  withFileDiffFold,
-  type DiffFoldOverride,
-  type FileDiffFoldChoices,
-} from "./pullRequestDiff.logic";
+import { getFileViewedRange, isLineInFileDiff } from "./pullRequestDiff.logic";
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
 import { PullRequestDiffUnavailableState } from "./PullRequestDiffUnavailableState";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
+import { hasCutLines } from "@t3tools/shared/diffCutLines";
+import { CUT_LINES_CSS, markCutLineNotes } from "./cutLineNotes";
 import {
   nextPendingReviewCommentId,
   pullRequestReviewKey,
@@ -166,7 +170,28 @@ interface ReviewAnnotationGroup {
   readonly pending: ReadonlyArray<PendingReviewComment>;
   readonly draft: boolean;
   readonly image?: { readonly url: string; readonly path: string };
+  readonly withheld?: { readonly path: string; readonly status: WithheldFileStatus };
 }
+
+type WithheldFileStatus = "idle" | "loading" | "error" | "empty";
+
+type PullRequestDiffTarget = Parameters<typeof pullRequestEnvironment.diff>[0];
+
+// One read per withheld file the reader asked for, so only that file's diff crosses the wire.
+const withheldFileDiffsAtom = Atom.family((key: string) => {
+  const { environmentId, input, paths } = JSON.parse(key) as {
+    readonly environmentId: PullRequestDiffTarget["environmentId"];
+    readonly input: PullRequestDiffTarget["input"];
+    readonly paths: ReadonlyArray<string>;
+  };
+  return Atom.make((get) =>
+    paths.map((path) =>
+      get(pullRequestEnvironment.diff({ environmentId, input: { ...input, path } })),
+    ),
+  ).pipe(Atom.withLabel(`pull-request-withheld-file-diffs:${key}`));
+});
+
+const NO_PATHS: ReadonlyArray<string> = [];
 
 type ReviewAnnotation = DiffLineAnnotation<ReviewAnnotationGroup>;
 
@@ -347,6 +372,18 @@ export interface PullRequestAgentSelectionInput {
   readonly request: string;
 }
 
+function isRemovedLine(fileDiff: FileDiffMetadata, oldLine: number): boolean {
+  return fileDiff.hunks.some((hunk) => {
+    let next = hunk.deletionStart;
+    return hunk.hunkContent.some((content) => {
+      const count = content.type === "context" ? content.lines : content.deletions;
+      const removed = content.type === "change" && oldLine >= next && oldLine < next + count;
+      next += count;
+      return removed;
+    });
+  });
+}
+
 function PullRequestCodeTab({
   scrollerRef,
   environmentId,
@@ -400,8 +437,7 @@ function PullRequestCodeTab({
   const [lastViewedFileKey, setLastViewedFileKey] = useState<string | null>(null);
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
   const [foldOverride, setFoldOverride] = useState<DiffFoldOverride>(null);
-  const effectiveFoldOverride =
-    foldOverride ?? (settings.diffFilesCollapsed ? "folded" : "expanded");
+  const effectiveFoldOverride = foldOverride ?? (settings.diffFilesCollapsed ? "folded" : null);
   const diffLayout = settings.diffLayout;
   const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
   const wordWrap = wordWrapOverride ?? settings.wordWrap;
@@ -489,6 +525,7 @@ function PullRequestCodeTab({
         existing.patch === next.patch &&
         existing.truncated === next.truncated &&
         existing.nextCursor === next.nextCursor &&
+        existing.source.withheldFilesReadable === next.source.withheldFilesReadable &&
         existing.omittedFileStats.length === next.omittedFileStats.length &&
         existing.omittedFileStats.every((file, index) => {
           const refreshed = next.omittedFileStats[index];
@@ -543,6 +580,20 @@ function PullRequestCodeTab({
     isViewed: isFileViewed,
     isStale: isFileViewedStale,
   } = filesViewed;
+  const [withheldLoads, setWithheldLoads] = useState<{
+    readonly scope: string;
+    readonly paths: ReadonlyArray<string>;
+    /** The render key each loaded file was last shown under; a changed patch gets a new one. */
+    readonly shownKeys: ReadonlyMap<string, string>;
+  }>({ scope: "", paths: NO_PATHS, shownKeys: new Map() });
+  const withheldPaths = withheldLoads.scope === scopeKey ? withheldLoads.paths : NO_PATHS;
+  const withheldInput = { ...reference, ...(commit === null ? {} : { commit }) };
+  const atomRegistry = useContext(RegistryContext);
+  const withheldFileDiff = (path: string) =>
+    pullRequestEnvironment.diff({ environmentId, input: { ...withheldInput, path } });
+  const refreshWithheldFiles = useEffectEvent(() => {
+    for (const path of withheldPaths) atomRegistry.refresh(withheldFileDiff(path));
+  });
   const appliedRefreshToken = useRef(refreshToken);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a new refresh token clears loaded slices and refetches the first diff page and viewed files
   useEffect(() => {
@@ -553,6 +604,7 @@ function PullRequestCodeTab({
     // applied page is forgotten too.
     setAppliedPage(null);
     refreshFirstDiffPage();
+    refreshWithheldFiles();
     refreshFilesViewed();
   }, [refreshToken, scopeKey, refreshFirstDiffPage, refreshFilesViewed]);
   const appliedBackgroundRefreshToken = useRef(backgroundRefreshToken);
@@ -563,6 +615,7 @@ function PullRequestCodeTab({
     // Keeping slices mounted preserves scroll; the page merge invalidates changed pages.
     setSliceState((previous) => ({ ...previous, cursor: null }));
     refreshFirstDiffPage();
+    refreshWithheldFiles();
     refreshFilesViewed();
   }, [backgroundRefreshToken, refreshFirstDiffPage, refreshFilesViewed]);
 
@@ -590,11 +643,89 @@ function PullRequestCodeTab({
   // Agent context is local, so it does not require host comment permission.
   const canSelectLines =
     commit === null && (review.inlineComment || onAddToAgentSelection !== undefined);
-  const { parsedSlices, loadedFiles, sourceFileStats } = diffModel(
+  const {
+    parsedSlices,
+    loadedFiles: pagedFiles,
+    sourceFileStats,
+  } = diffModel(
     loadedSlices,
     `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}`,
     ignoreWhitespace,
   );
+  const withheldResults = useAtomValue(
+    withheldFileDiffsAtom(
+      JSON.stringify({ environmentId, input: withheldInput, paths: withheldPaths }),
+    ),
+  );
+  // A refetch keeps showing the last patch, whose lines may not exist at the new head.
+  const withheldRefetching = withheldResults.some((result) => result.waiting);
+  const withheldStatuses = new Map<string, WithheldFileStatus>();
+  const withheldFiles = new Map<string, (typeof pagedFiles)[number]>();
+  const cutFiles = new Set<unknown>();
+  withheldPaths.forEach((path, index) => {
+    const result = withheldResults[index];
+    if (result === undefined) return;
+    // A failed refresh still carries the earlier patch; show the failure instead of stale code.
+    const data = result._tag === "Failure" ? null : AsyncResult.getOrElse(result, () => null);
+    if (data === null) {
+      withheldStatuses.set(path, result._tag === "Failure" ? "error" : "loading");
+      return;
+    }
+    const parsed = parseSlice(
+      {
+        source: data,
+        cursor: null,
+        patch: data.patch,
+        truncated: false,
+        nextCursor: null,
+        omittedFileStats: [],
+      },
+      `pull-request:${scopeKey}:${resolvedTheme}:withheld:${path}`,
+      // Cut lines can match up to the cut and differ after it; hiding them would drop changes.
+      false,
+    );
+    const file = parsed?.kind === "files" ? parsed.files[0] : undefined;
+    if (file !== undefined && file.hunks.length > 0) {
+      withheldFiles.set(path, file);
+      if (hasCutLines(data.patch)) cutFiles.add(file);
+    } else withheldStatuses.set(path, "empty");
+  });
+  // Fold choices follow render keys, so a loaded or refetched patch would otherwise fold again
+  // when marked Viewed: it opens on first load and keeps its earlier key's choice after.
+  const rekeyed = [...withheldFiles].flatMap(([path, file]) => {
+    const key = buildFileDiffRenderKey(file);
+    return withheldLoads.shownKeys.get(path) === key ? [] : [[path, key] as const];
+  });
+  if (withheldLoads.scope === scopeKey && rekeyed.length > 0) {
+    setWithheldLoads({
+      ...withheldLoads,
+      shownKeys: new Map([...withheldLoads.shownKeys, ...rekeyed]),
+    });
+    setFoldChoices((current) =>
+      rekeyed.reduce((next, [path, key]) => {
+        const shown = withheldLoads.shownKeys.get(path);
+        const collapsed = shown === undefined ? false : current.get(shown);
+        return collapsed === undefined ? next : withFileDiffFold(next, key, collapsed);
+      }, current),
+    );
+  }
+  const loadedFiles =
+    withheldFiles.size === 0
+      ? pagedFiles
+      : // A refreshed page may carry the file's patch itself now.
+        pagedFiles.map((file) =>
+          file.hunks.length === 0 ? (withheldFiles.get(resolveFileDiffPath(file)) ?? file) : file,
+        );
+  const loadWithheldFile = (path: string) => {
+    // The read is keyed without the head, so even a first load must not reuse an older one.
+    atomRegistry.refresh(withheldFileDiff(path));
+    if (withheldPaths.includes(path)) return;
+    setWithheldLoads({
+      scope: scopeKey,
+      paths: [...withheldPaths, path],
+      shownKeys: withheldLoads.scope === scopeKey ? withheldLoads.shownKeys : new Map(),
+    });
+  };
   const linkAnchor = parsePullRequestAnchor(revealUrl);
   const linkFile =
     linkAnchor?.kind === "diff"
@@ -716,6 +847,17 @@ function PullRequestCodeTab({
         lineNumber: 0,
         metadata: { threads: [], pending: [], draft: false, image: { url: imageUrl, path } },
       });
+    } else if (fileDiff.hunks.length === 0 && omittedFileStats.has(path)) {
+      annotations.push({
+        side: "additions",
+        lineNumber: 0,
+        metadata: {
+          threads: [],
+          pending: [],
+          draft: false,
+          withheld: { path, status: withheldStatuses.get(path) ?? "idle" },
+        },
+      });
     }
     return {
       fileKey,
@@ -727,7 +869,7 @@ function PullRequestCodeTab({
         annotations
           .map(
             ({ side, lineNumber, metadata }) =>
-              `${side}:${lineNumber}:${metadata.image?.url ?? ""}:${metadata.draft ? "d" : ""}:${metadata.pending
+              `${side}:${lineNumber}:${metadata.image?.url ?? ""}:${metadata.withheld?.status ?? ""}:${metadata.draft ? "d" : ""}:${metadata.pending
                 .map((comment) => `${comment.id}:${comment.body}`)
                 .join(",")}:${metadata.threads
                 .map(
@@ -753,6 +895,7 @@ function PullRequestCodeTab({
   });
 
   const nextCursor = loadedSlices.at(-1)?.nextCursor ?? null;
+  const withheldFilesReadable = loadedSlices[0]?.source.withheldFilesReadable === true;
   const withheldContent =
     loadedSlices.some((slice) => slice.truncated) ||
     parsedSlices.some((parsed) => parsed?.kind === "raw");
@@ -784,9 +927,8 @@ function PullRequestCodeTab({
       </div>
     );
 
-  // A stale mark means the file changed since it was viewed; Fold all and Expand all outrank marks.
   const foldsAsViewed = (path: string) =>
-    foldOverride === null && filesViewedEnabled && isFileViewed(path) && !isFileViewedStale(path);
+    filesViewedEnabled && isFileViewed(path) && !isFileViewedStale(path);
   const pathByFileKey = new Map(annotatedFiles.map((file) => [file.fileKey, file.path]));
   const isCollapsed = (fileKey: string) => {
     const path = pathByFileKey.get(fileKey);
@@ -811,7 +953,11 @@ function PullRequestCodeTab({
       setViewed(file.path, viewed, commit === null ? file.fileDiff.newObjectId : undefined);
     }
     setFoldChoices((current) =>
-      range.reduce((next, file) => withFileDiffFold(next, file.fileKey, viewed), current),
+      range.reduce(
+        (next, file) =>
+          withFileDiffFold(next, file.fileKey, effectiveFoldOverride === null ? undefined : viewed),
+        current,
+      ),
     );
   };
   const viewerHandleRef = useRef<CodeViewHandle<ReviewAnnotationGroup, undefined> | null>(null);
@@ -923,7 +1069,7 @@ function PullRequestCodeTab({
 
   const beginComment = useStableCallback(
     (range: SelectedLineRange | null, context: { item: CodeViewItem<ReviewAnnotationGroup> }) => {
-      if (!range || !canSelectLines || draft !== null) return;
+      if (!range || !canSelectLines || draft !== null || withheldRefetching) return;
       const item = context.item;
       if (item.type !== "diff") return;
       const file = files.find((candidate) => buildFileDiffRenderKey(candidate) === item.id);
@@ -1059,15 +1205,28 @@ function PullRequestCodeTab({
     preferredHighlighter: PREFERRED_HIGHLIGHTER,
     themeType: resolvedTheme,
     stickyHeaders: true,
-    loadDiffFiles,
-    enableGutterUtility: canSelectLines && draft === null,
-    enableLineSelection: canSelectLines && draft === null,
+    // Full contents would not match the cut lines, and would bring back the lines just cut.
+    loadDiffFiles: (fileDiff: FileDiffMetadata) =>
+      cutFiles.has(fileDiff)
+        ? Promise.reject(new Error("Unchanged lines are unavailable in a file with cut lines."))
+        : loadDiffFiles(fileDiff),
+    enableGutterUtility: canSelectLines && draft === null && !withheldRefetching,
+    enableLineSelection: canSelectLines && draft === null && !withheldRefetching,
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
-    onPostRender,
-    // Find may repeat requests before render; only unfold, never toggle.
-    onRevealSearchMatch: (item: CodeViewItem<ReviewAnnotationGroup>) =>
-      setFoldChoices((current) => withFileDiffFold(current, item.id, false)),
+    onPostRender: (fileContainer: HTMLElement, instance: object) => {
+      onPostRender();
+      // Containers are reused across files, so the flag is set or cleared on every render.
+      fileContainer.toggleAttribute(
+        "data-cut-lines",
+        "fileDiff" in instance && cutFiles.has(instance.fileDiff),
+      );
+      if (withheldFiles.size > 0) markCutLineNotes(fileContainer);
+    },
+    onItemCollapsedChange: (
+      _item: CodeViewItem<ReviewAnnotationGroup>,
+      nextItem: CodeViewItem<ReviewAnnotationGroup>,
+    ) => setCollapsed(nextItem.id, nextItem.collapsed === true),
   };
 
   const runThreadCommand = async (
@@ -1171,6 +1330,12 @@ function PullRequestCodeTab({
             alt={annotation.metadata.image.path}
           />
         </div>
+      ) : null}
+      {annotation.metadata.withheld ? (
+        <WithheldFileNotice
+          {...annotation.metadata.withheld}
+          onLoad={withheldFilesReadable ? loadWithheldFile : undefined}
+        />
       ) : null}
       <InlineReviewThreads threads={annotation.metadata.threads} renderThread={renderThreadCard} />
       {annotation.metadata.pending.map((comment) => (
@@ -1601,7 +1766,12 @@ function PullRequestCodeTab({
     answeredLink.current = key;
     setRevealedLink({ scope: scopeKey, path: pendingLinkPath });
     onRevealSettled?.(revealUrl);
-    const range = linkAnchor.range;
+    const range =
+      linkAnchor.range &&
+      resolvePullRequestAnchorRange(
+        linkAnchor.range,
+        (line) => linkFile !== undefined && isRemovedLine(linkFile, line),
+      );
     revealFile(
       pendingLinkPath,
       range
@@ -1774,7 +1944,7 @@ function PullRequestCodeTab({
                 renderHeaderPrefix={renderHeaderPrefix}
                 renderHeaderMetadata={renderHeaderMetadata}
                 renderAnnotation={renderAnnotation}
-                unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
+                unsafeCSSExtra={`${REPLACE_FILE_COUNTS_CSS}\n${CUT_LINES_CSS}`}
               />
             </DiffReviewCursorContext>
           </FileViewedToggleContext>
@@ -1817,6 +1987,39 @@ function PullRequestCodeTab({
         ) : null}
       </div>
       {unstructured}
+    </div>
+  );
+}
+
+function WithheldFileNotice({
+  path,
+  status,
+  onLoad,
+}: {
+  readonly path: string;
+  readonly status: WithheldFileStatus;
+  readonly onLoad: ((path: string) => void) | undefined;
+}) {
+  return (
+    <div className="flex items-center gap-2 bg-warning/8 px-3 py-2 text-xs text-warning-foreground">
+      <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0 text-warning" />
+      <span>
+        {status === "error"
+          ? "Couldn't load this diff."
+          : status === "empty"
+            ? "No text diff for this file."
+            : "Diff too large to display."}
+      </span>
+      {onLoad === undefined || status === "empty" ? null : (
+        <Button
+          size="micro"
+          variant="warning-outline"
+          disabled={status === "loading"}
+          onClick={() => onLoad(path)}
+        >
+          {status === "loading" ? "Loading..." : status === "error" ? "Retry" : "Load diff"}
+        </Button>
+      )}
     </div>
   );
 }
