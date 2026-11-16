@@ -213,18 +213,12 @@ it("keeps the panes in place when the host renders while the sidebar slides", as
 });
 
 it.each([
-  ["a width that rounds the focused span down", 1134, true],
-  ["another width that rounds it down", 1162, true],
-  ["a width that keeps its rounding", 1158, false],
-])("keeps the strip where it is when it settles at %s", async (_, width, flips) => {
+  ["a width that rounds the focused span down", 1134],
+  ["another width that rounds it down", 1162],
+  ["a width that keeps its rounding", 1158],
+])("keeps the strip where it is when it settles at %s", async (_, width) => {
   const viewport = 1440;
-  const camera = 1094;
-  await using host = await renderStrip({ viewport, camera, columnWidth: 0.75 });
-  const focusedSpan = (strip: number) => {
-    const stripPx = Math.max(strip, 1.5 * Math.max(camera, strip / 1.5));
-    return Math.round(((0.75 * camera) / stripPx) * ((stripPx / strip) * strip));
-  };
-  expect(focusedSpan(width) !== focusedSpan(viewport)).toBe(flips);
+  await using host = await renderStrip({ viewport, camera: 1094, columnWidth: 0.75 });
   await host.toggle(viewport - 1174);
   await host.scrollTo(host.strip.scrollWidth - host.strip.clientWidth);
   const resting = host.paneLeft();

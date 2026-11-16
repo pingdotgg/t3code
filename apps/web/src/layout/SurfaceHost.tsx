@@ -69,12 +69,12 @@ import { ThreadSurfaceServices, ThreadSurfaceTab } from "../components/ThreadSur
 import { findThreadChat, useLayoutSurfaceSync } from "./surfaceSync";
 import {
   isLayoutPageContent,
+  sameLayoutSpan,
   selectFocusedPane,
   selectFocusedTab,
   selectFocusedWorkspace,
   selectLayoutPaneSlots,
   selectLayoutStripSize,
-  sameLayoutSpan,
   selectWindowStartPaneId,
   type LayoutColumn,
   type LayoutSpan,
@@ -866,8 +866,14 @@ export function LayoutSurfaceHost({
       revealedSpan.current = null;
       return;
     }
-    if (focusedLeft === null || focusedWidth === null) return;
-    if (focusedStart === null || focusedShare === null) return;
+    if (
+      focusedLeft === null ||
+      focusedWidth === null ||
+      focusedStart === null ||
+      focusedShare === null
+    ) {
+      return;
+    }
     const span = { paneId: focusedPaneId, left: focusedStart, width: focusedShare };
     // The first render sizes the strip for the window's width, before the
     // scroller is measured, and a scroll then clamps short of the pane. The
