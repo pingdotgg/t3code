@@ -115,7 +115,14 @@ describe("layoutThreadListV2RowMenuActions", () => {
       direct: actions("new-thread-on-branch", "copy-thread", "copy-thread-id", "settle", "snooze"),
       reorder: actions("arrange", "move-up", "move-down"),
       pin: actions("unpin"),
-      secondary: actions("rename", "regenerate-title", "turn-into-project", "archive", "delete"),
+      secondary: actions(
+        "rename",
+        "regenerate-title",
+        "mark-unread",
+        "turn-into-project",
+        "archive",
+        "delete",
+      ),
     };
     const flat = layoutThreadListV2RowMenuActions({ ...full, nested: false });
     const nested = layoutThreadListV2RowMenuActions({ ...full, nested: true });
@@ -133,6 +140,7 @@ describe("layoutThreadListV2RowMenuActions", () => {
       "more",
     ]);
     expect(nested.at(-1)?.subactions?.map((action) => action.id)).toEqual([
+      "mark-unread",
       "arrange-menu",
       "rename",
       "regenerate-title",
@@ -148,7 +156,12 @@ describe("layoutThreadListV2RowMenuActions", () => {
       reorder: actions("arrange"),
       nested: true,
     });
-    expect(slim.at(-1)?.subactions?.[0]?.id).toBe("arrange");
+    expect(
+      slim
+        .at(-1)
+        ?.subactions?.slice(0, 2)
+        .map((action) => action.id),
+    ).toEqual(["mark-unread", "arrange"]);
   });
 });
 

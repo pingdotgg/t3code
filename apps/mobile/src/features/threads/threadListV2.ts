@@ -160,6 +160,7 @@ export function layoutThreadListV2RowMenuActions(
   if (!input.nested) {
     return [...input.direct, ...input.reorder, ...input.pin, ...input.secondary];
   }
+  const markUnread = input.secondary.find((action) => action.id === "mark-unread");
   return [
     ...input.direct,
     ...input.pin,
@@ -168,6 +169,7 @@ export function layoutThreadListV2RowMenuActions(
       title: resolve(msg("More", { $context: "menu that holds more thread actions" })),
       image: "ellipsis.circle",
       subactions: [
+        ...(markUnread ? [markUnread] : []),
         ...(input.reorder.length > 1
           ? [
               {
@@ -178,7 +180,7 @@ export function layoutThreadListV2RowMenuActions(
               },
             ]
           : input.reorder),
-        ...input.secondary,
+        ...input.secondary.filter((action) => action.id !== "mark-unread"),
       ],
     },
   ];
