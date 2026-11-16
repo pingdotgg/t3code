@@ -879,7 +879,6 @@ function ThreadDetailBody(
     agentsSegment !== null ||
     devicePreviews.length > 0 ||
     browserTabs.tabs.length > 0 ||
-    props.connectionStateLabel !== "connected" ||
     (!worktreeSetupInFeed &&
       (props.queuedMessages.length > 0 ||
         props.selectedThreadFeed.some(
