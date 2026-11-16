@@ -969,7 +969,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 style={[
                   {
                     minWidth:
-                      compactEditor.isExpanded || stripAttachments.length > 0
+                      compactEditor.isExpanded ||
+                      stripAttachments.length > 0 ||
+                      (Platform.OS === "android" && compactBeforeSend !== null)
                         ? 0
                         : INLINE_EDITOR_MIN_WIDTH,
                   },
