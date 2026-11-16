@@ -35,7 +35,7 @@ env:
 jobs:
   build:
     name: Conn Server prerequisites
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CONN_SERVER_RUNNER || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 24
     steps:
       - name: Checkout
@@ -114,7 +114,7 @@ jobs:
   compare:
     name: Conn Server comparisons (${{ matrix.group }})
     needs: build
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CONN_SERVER_RUNNER || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 12
     strategy:
       fail-fast: false
@@ -181,7 +181,7 @@ jobs:
     name: Conn Server checks
     if: always()
     needs: [build, compare]
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CONN_SERVER_RUNNER || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - name: Require every group

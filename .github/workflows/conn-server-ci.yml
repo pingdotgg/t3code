@@ -44,7 +44,7 @@ defaults:
 jobs:
   rust:
     name: Format, Clippy, Tests
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CONN_SERVER_RUNNER || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 12
     env:
       # The test build of the whole workspace filled the runner's disk on 2026-11-14 ("No space
@@ -122,7 +122,7 @@ jobs:
 
   deny:
     name: cargo-deny
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CONN_SERVER_RUNNER || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
       - name: Checkout
@@ -142,7 +142,7 @@ jobs:
 
   musl:
     name: Linux musl release build
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CONN_SERVER_RUNNER || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
       - name: Checkout
