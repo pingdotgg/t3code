@@ -69,6 +69,46 @@ export function isShownUnderParent(
   return !isListedThreadLineage(lineage) || delegatedUnderParent.has(threadKey(ref));
 }
 
+// Subagents, side chats and tasks delegated from a listed parent have no list row,
+// so an open one is represented by its nearest listed ancestor. A broken chain
+// (missing or archived parent, cycle) resolves to the thread itself, which then matches no row.
+export function resolveListedAncestorThreadRef(
+  ref: ScopedThreadRef,
+  threads: readonly Pick<
+    EnvironmentThreadShell,
+    "id" | "environmentId" | "lineage" | "delegatedFrom" | "archivedAt"
+  >[],
+): ScopedThreadRef {
+  const findThread = (target: ScopedThreadRef) =>
+    threads.find(
+      (thread) => thread.id === target.threadId && thread.environmentId === target.environmentId,
+    );
+  const visited = new Set<string>();
+  let current = ref;
+  let thread = findThread(current);
+  while (thread !== undefined) {
+    let parent: ScopedThreadRef;
+    if (!isListedThreadLineage(thread.lineage)) {
+      if (thread.lineage.parentThreadId === null) return ref;
+      parent = { environmentId: thread.environmentId, threadId: thread.lineage.parentThreadId };
+    } else if (thread.delegatedFrom != null) {
+      parent = {
+        environmentId: thread.delegatedFrom.environmentId,
+        threadId: thread.delegatedFrom.threadId,
+      };
+      // Mirrors delegatedUnderParent: a task whose parent is not listed keeps its own row.
+      if (findThread(parent)?.archivedAt !== null) return current;
+    } else {
+      return current;
+    }
+    if (visited.has(threadKey(current))) return ref;
+    visited.add(threadKey(current));
+    current = parent;
+    thread = findThread(current);
+  }
+  return ref;
+}
+
 /** Provider-native
     subagents ask on their parent, so they are skipped. */
 function subagentRequest(thread: OrchestrationV2ThreadShell): PendingSubagentRequest | null {
