@@ -217,6 +217,8 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
       theme: terminalThemeFromApp(mount),
       font: initialFont,
       onData: echo,
+      onBinary: noop,
+      onReply: noop,
       onResize: noop,
       onSelectionChange: noop,
       beforeKey: (event) => event.key !== "Tab",

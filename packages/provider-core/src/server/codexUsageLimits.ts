@@ -225,6 +225,49 @@ export function codexUsageLimitResetAt(
   );
 }
 
+const CODEX_RESET_TEXT =
+  /[Tt]ry again at (?:([A-Z][a-z]{2}) (\d{1,2})(?:st|nd|rd|th), (\d{4}) )?(\d{1,2}):(\d{2}) ([AP]M)\./;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** The zone Codex prints reset times in: its own `TZ`, else the server's. */
+export function codexTimeZone(
+  environment: Readonly<Record<string, string | undefined>>,
+): DateTime.TimeZone {
+  return Option.getOrElse(
+    DateTime.zoneMakeNamed(environment.TZ?.replace(/^:/, "") ?? ""),
+    DateTime.zoneMakeLocal,
+  );
+}
+
+// Proxies can strip snapshots, leaving only Codex's local reset time; use the failure's date.
+export function codexMessageResetAt(
+  message: string,
+  failedAt: DateTime.DateTime,
+  zone: DateTime.TimeZone,
+): string | null {
+  const match = CODEX_RESET_TEXT.exec(message);
+  if (!match) return null;
+  const [, month, day, year, hour, minute, meridiem] = match;
+  const monthIndex = month === undefined ? undefined : MONTHS.indexOf(month);
+  if (monthIndex === -1) return null;
+  const today = DateTime.toParts(DateTime.setZone(failedAt, zone));
+  const reset = DateTime.makeZoned(
+    {
+      year: monthIndex === undefined ? today.year : Number(year),
+      month: monthIndex === undefined ? today.month : monthIndex + 1,
+      day: monthIndex === undefined ? today.day : Number(day),
+      hour: (Number(hour) % 12) + (meridiem === "PM" ? 12 : 0),
+      minute: Number(minute),
+    },
+    // A repeated DST hour takes the later instant so a resume never fires early.
+    { timeZone: zone, adjustForTimeZone: true, disambiguation: "later" },
+  );
+  if (Option.isNone(reset)) return null;
+  // Codex drops the seconds, so the next minute is the first one past the reset.
+  const resetAt = DateTime.add(reset.value, { minutes: 1 });
+  return DateTime.isGreaterThan(resetAt, failedAt) ? DateTime.formatIso(resetAt) : null;
+}
+
 const CodexUsageWindow = Schema.Struct({
   used_percent: Schema.Finite,
   reset_at: Schema.optionalKey(Schema.NullOr(Schema.Finite)),

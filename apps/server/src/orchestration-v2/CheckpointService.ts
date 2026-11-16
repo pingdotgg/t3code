@@ -412,6 +412,7 @@ export const layer: Layer.Layer<
             .captureCheckpoint({
               cwd: input.scope.cwd,
               checkpointRef,
+              ...(input.ordinalWithinScope > 0 ? { previousCheckpointRef } : {}),
             })
             .pipe(
               Effect.map((captured) => ({

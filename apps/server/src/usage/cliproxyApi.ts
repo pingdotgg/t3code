@@ -60,7 +60,7 @@ const AuthFile = Schema.Struct({
 const AuthFiles = Schema.Struct({ files: Schema.Array(AuthFile) });
 const ApiResponse = Schema.Struct({ status_code: Schema.Number, body: Schema.String });
 const ClaudeWindow = Schema.Struct({
-  utilization: Schema.Number,
+  utilization: Schema.NullOr(Schema.Number),
   resets_at: Schema.NullOr(Schema.String),
 });
 const ClaudeUsage = Schema.Struct({

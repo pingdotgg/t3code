@@ -388,10 +388,11 @@ export const make = Effect.gen(function* () {
         );
         return bookmark?.target ? { baseBranch: bookmark.name, baseRef: bookmark.target } : null;
       }),
-      headContext: (configCwd, name, upstreamRef) =>
+      headContext: (configCwd, name, upstreamRef, remoteName) =>
         GitManager.resolveBranchHeadContext({ readConfigValue, executeGit }, configCwd, {
           branch: name,
           upstreamRef,
+          ...(remoteName === undefined ? {} : { remoteName }),
         }),
       resolvePrimaryRemoteName: (remoteCwd) =>
         remotes.requirePrimaryRemoteName("JjWorkflow.resolvePrimaryRemoteName", remoteCwd),

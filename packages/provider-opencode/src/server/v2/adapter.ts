@@ -70,6 +70,8 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
+import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
+import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
@@ -97,7 +99,11 @@ import {
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { OPENCODE_PROVIDER, openCodePermissionRequestKind } from "../adapter.ts";
-import { openCodeCommandFailed, openCodeToolTurnItem } from "../toolItems.ts";
+import {
+  openCodeCodeModeHtmlRenders,
+  openCodeCommandFailed,
+  openCodeToolTurnItem,
+} from "../toolItems.ts";
 
 const NativeGoal = Schema.NullOr(
   Schema.Struct({
@@ -228,6 +234,8 @@ interface ActiveTurn {
   readonly input: TurnOwner;
   providerTurn: OrchestrationV2ProviderTurn;
   readonly texts: Map<string, OpenBlock>;
+  /** The last assistant text this turn completed. */
+  answer: string | undefined;
   readonly tools: Map<string, { readonly name: string; input: Record<string, unknown> }>;
   readonly startedAt: Map<string, DateTime.Utc>;
   readonly ordinals: Map<string, number>;
@@ -261,6 +269,8 @@ interface ActiveTurn {
   unsent: boolean;
   readonly steers: Set<string>;
   readonly settledInbox: Set<string>;
+  // Reconnects replay finished tools, so each nested html_render takes a page only once.
+  readonly takenPages: Set<string>;
   heldEnd: TurnTerminal | undefined;
   awaitingStart: boolean;
   /** Scope child tool IDs because model-generated IDs can repeat parent IDs. */
@@ -281,7 +291,10 @@ interface SubagentCall {
   model: string | null;
   /** The tool returned while the subagent runs on; normally its parent report settles it. */
   background: boolean;
-  joined: SubagentCall | undefined;
+  /** The child's turn this call prompted or steered; unset until that turn starts. */
+  run: number | undefined;
+  /** That turn's last text once it ended, which OpenCode sends as the run's report. */
+  answer: string | undefined;
   child: ThreadState | undefined;
   status: OrchestrationV2Subagent["status"];
   result: string | null;
@@ -473,6 +486,7 @@ const sameRules = (left: ReadonlyArray<Rule> | undefined, right: ReadonlyArray<R
 
 // Rejection without a message stops the whole execution, meaning Cancel.
 const DECLINED = "The user declined this request.";
+const DISMISSED = "The user dismissed this question. Continue without an answer.";
 
 // Steer before decline; otherwise the model sees only Unable to execute command and retries.
 const declinedNote = (action: string, resources: ReadonlyArray<string>) =>
@@ -603,6 +617,17 @@ const claudeUsageLimit = (message: string | undefined) =>
   message !== undefined && /^You've hit your [^\n·]*\blimit\b/.test(message)
     ? { resetAt: /\bResets at (\d{4}-\d\d-\d\dT[\d:.]+Z)\.?\s*$/.exec(message)?.[1] ?? null }
     : undefined;
+
+// OpenCode types an empty balance as provider.quota too, but it answers
+// that with HTTP 402 and it never resets. Usage windows and budgets are 429.
+const isUsageLimit = (error: {
+  readonly type: string;
+  readonly status?: number | undefined;
+  readonly message: string;
+}) =>
+  (error.type === "provider.quota" && error.status !== 402) ||
+  error.type === "provider.rate-limit" ||
+  claudeUsageLimit(error.message) !== undefined;
 
 const INTERRUPT_TIMEOUT = 10_000;
 const INSTRUCTIONS_KEY = "t3-code";
@@ -994,6 +1019,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         tool?: { name: string; input: Record<string, unknown> };
         command: string;
         running: boolean;
+        awaited?: boolean;
         stopping?: boolean;
         output: string;
         cursor: number;
@@ -1167,6 +1193,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (completed) turn.texts.delete(nativeId);
       else turn.texts.set(nativeId, entry);
       if (entry.text.length === 0) return;
+      if (completed && kind === "text") turn.answer = entry.text;
       const status = completed ? "completed" : "running";
       const completedAt = completed ? updatedAt : null;
       const nodeKind = kind === "text" ? "assistant_message" : "reasoning";
@@ -1385,28 +1412,52 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           ? "failed"
           : status;
       yield* emitNode(state, turn, nativeId, "tool_call", settled, startedAt, completedAt);
-      yield* emit({
-        type: "turn_item.updated",
-        driver,
-        turnItem: openCodeToolTurnItem(
-          {
-            ...itemBase(state, turn, nativeId, settled, startedAt, completedAt, updatedAt),
-            ...(result?.nativeTaskId === undefined
-              ? {}
-              : { nativeItemRef: ref(result.nativeTaskId) }),
+      const turnItem = openCodeToolTurnItem(
+        {
+          ...itemBase(state, turn, nativeId, settled, startedAt, completedAt, updatedAt),
+          ...(result?.nativeTaskId === undefined
+            ? {}
+            : { nativeItemRef: ref(result.nativeTaskId) }),
+        },
+        {
+          name: tool.name,
+          input: tool.input,
+          output: result?.output,
+          files: result?.files,
+          completedMetadata:
+            status === "completed" || result?.nativeTaskId !== undefined
+              ? result?.metadata
+              : undefined,
+        },
+      );
+      yield* emit({ type: "turn_item.updated", driver, turnItem });
+      if (status === "running") return;
+      // A script that returns the reference already renders through its own item.
+      const returnedPage =
+        turnItem.type === "dynamic_tool" ? htmlRenderFromToolItem(turnItem) : undefined;
+      const pages = openCodeCodeModeHtmlRenders(
+        result?.metadata,
+        yield* mcpServerNameFor(turn.input.threadId),
+      );
+      for (const { index, input } of pages) {
+        const pageId = `${nativeId}:${HTML_RENDER_TOOL_NAME}:${index}`;
+        if (turn.takenPages.has(pageId)) continue;
+        turn.takenPages.add(pageId);
+        const page = yield* mcpSessions.takeHtmlRender(turn.input.threadId, input);
+        if (page === undefined || page.attachmentId === returnedPage?.attachmentId) continue;
+        yield* emitNode(state, turn, pageId, "tool_call", "completed", startedAt, updatedAt);
+        yield* emit({
+          type: "turn_item.updated",
+          driver,
+          turnItem: {
+            ...itemBase(state, turn, pageId, "completed", startedAt, updatedAt, updatedAt),
+            type: "dynamic_tool",
+            toolName: `t3-code.${HTML_RENDER_TOOL_NAME}`,
+            input: { title: page.title, height: page.height },
+            output: { htmlRender: page },
           },
-          {
-            name: tool.name,
-            input: tool.input,
-            output: result?.output,
-            files: result?.files,
-            completedMetadata:
-              status === "completed" || result?.nativeTaskId !== undefined
-                ? result?.metadata
-                : undefined,
-          },
-        ),
-      });
+        });
+      }
     });
 
     const emitCompaction = Effect.fnUntraced(function* (
@@ -1493,13 +1544,21 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         failure: makeProviderFailure({
           message: readableProviderErrorMessage(error.message, error.status, error.response?.body),
           code: error.type,
-          class: "provider_error",
+          class: isUsageLimit(error) ? "usage_limit" : "provider_error",
           retryable: true,
         }),
         startedAt: turn.retry?.startedAt ?? (yield* DateTime.now),
       };
       yield* emitRetry(state, turn, "running");
     });
+
+    // A background child's question outlives its parent's turn; keep the ingestor from dismissing it.
+    const retainedRequestsOf = (turn: ActiveTurn) => {
+      const ids = [...pending.values()].flatMap((entry) =>
+        entry.turn === turn ? [entry.request.id] : [],
+      );
+      return ids.length === 0 ? {} : { retainedRuntimeRequestIds: ids };
+    };
 
     const emitProviderTurn = (
       state: ThreadState,
@@ -1512,6 +1571,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         driver,
         threadId: turn.input.threadId,
         providerTurn,
+        ...(providerTurn.completedAt === null ? {} : retainedRequestsOf(turn)),
       });
     };
 
@@ -1523,6 +1583,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       input: owner,
       providerTurn,
       texts: new Map(),
+      answer: undefined,
       tools: new Map(),
       startedAt: new Map(),
       ordinals: new Map(),
@@ -1542,6 +1603,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       unsent: false,
       steers: new Set(),
       settledInbox: new Set(),
+      takenPages: new Set(),
       heldEnd: undefined,
       awaitingStart: options.awaitingStart,
       scope: options.scope,
@@ -1655,6 +1717,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             taskId,
             kind: "command",
             description: shell.command,
+            ...(shell.awaited === true ? { awaited: true } : {}),
             ...(shell.state.subagent === undefined
               ? {}
               : { parentTaskId: shell.state.subagent.call.nativeId }),
@@ -1674,7 +1737,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             : [],
         ),
       );
-      const allTasks = [...roster, ...imageTasks];
+      const allTasks = roster.concat(imageTasks);
       const current = state.providerThread.pendingBackgroundTasks ?? [];
       if (
         state.publishedBackgroundWork === hasBackground(state) &&
@@ -1683,6 +1746,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           (task, index) =>
             task.taskId === allTasks[index]?.taskId &&
             task.description === allTasks[index]?.description &&
+            task.awaited === allTasks[index]?.awaited &&
             (task.kind === "subagent" ? task.childThreadId : undefined) ===
               (allTasks[index]?.kind === "subagent" ? allTasks[index]?.childThreadId : undefined),
         )
@@ -1872,6 +1936,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                     tool: { name: "shell", input: { command: info.command } },
                   }),
               command: info.command,
+              awaited:
+                state.providerThread.pendingBackgroundTasks?.some(
+                  (task) => task.taskId === info.id && task.awaited === true,
+                ) === true,
               running: true,
               output: "",
               cursor: 0,
@@ -2037,23 +2105,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           // Reports carry only the session ID, not the job generation. Once
           // reused ahead of its report, only execution terminals are safe.
           previous.ambiguousSubagentReports = true;
-          yield* Effect.forEach(
-            ended,
-            (candidate) => settleCall(candidate, candidate.executionStatus),
-            { discard: true },
-          );
         }
         if (previous.ambiguousSubagentReports && call.background) {
           previous.awaitingSubagentReport = true;
         }
       }
-      // Repeated subagent calls steer the same run; OpenCode reports it once for every joined call.
-      if (previous?.active !== undefined) {
-        call.joined = [...call.state.calls.values()].findLast(
-          (candidate) =>
-            candidate !== call && candidate.child === previous && candidate.joined === undefined,
-        );
-      }
+      // A call to a running child steers that run; OpenCode reports it once for all its calls.
+      if (previous?.active !== undefined) call.run = previous.subagent?.turns;
       const subagent = {
         call,
         appThread,
@@ -2148,6 +2206,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const subagent = child.subagent;
       if (subagent === undefined || child.active !== undefined) return;
       subagent.turns += 1;
+      for (const call of callsForChild(child)) call.run ??= subagent.turns;
       const startedAt = yield* DateTime.now;
       const nativeTurnId = `${child.sessionId}:turn:${subagent.turns}`;
       const rootNodeId = idAllocator.derive.nodeFromProviderItem({
@@ -2338,6 +2397,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       // Subagent turns are runless; their calls own settlement.
       if (state.subagent !== undefined) {
         const call = state.subagent.call;
+        for (const attached of callsForChild(state)) {
+          if (attached.run === state.subagent.turns) attached.answer = turn.answer;
+        }
         if (!call.background && terminal.status !== "completed") {
           yield* settleCall(call, terminal.status);
         }
@@ -2369,6 +2431,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         providerTurnId: turn.providerTurn.id,
         runOrdinal: turn.input.runOrdinal,
         threadDisposition,
+        ...retainedRequestsOf(turn),
       };
       yield* emit(
         terminal.status === "failed"
@@ -2726,7 +2789,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         agent: undefined,
         model: null,
         background: false,
-        joined: undefined,
+        run: undefined,
+        answer: undefined,
         child: undefined,
         status: "running",
         result: null,
@@ -2919,20 +2983,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           return yield* endExecution(state, turn, { status: "interrupted" });
         case "session.execution.failed": {
           const { type, message, status, response } = event.data.error;
-          // OpenCode types an empty balance as provider.quota too, but it answers
-          // that with HTTP 402 and it never resets. Usage windows and budgets are 429.
-          const claudeLimit = claudeUsageLimit(message);
-          const usageLimit =
-            (type === "provider.quota" && status !== 402) ||
-            type === "provider.rate-limit" ||
-            claudeLimit !== undefined;
           return yield* endExecution(state, turn, {
             status: "failed",
             failure: makeProviderFailure({
               message: readableProviderErrorMessage(message, status, response?.body),
               code: type,
-              class: usageLimit ? "usage_limit" : "provider_error",
-              resetAt: claudeLimit?.resetAt ?? null,
+              class: isUsageLimit(event.data.error) ? "usage_limit" : "provider_error",
+              resetAt: claudeUsageLimit(message)?.resetAt ?? null,
             }),
           });
         }
@@ -3114,24 +3171,46 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const childId = stringField(payload.metadata, "childID");
       if (stringField(payload.metadata, "source") !== "subagent" || childId === undefined) return;
       strays.delete(childId);
-      const calls: ReadonlyArray<SubagentCall> = [...state.calls.values()].filter(
+      const open = [...state.calls.values()].filter(
         (candidate) => candidate.child?.sessionId === childId,
       );
-      const call = calls[0];
+      const admitted = open.filter((candidate) => !candidate.awaitingChildInput);
+      const output = subagentOutput(payload.text);
+      const started = admitted
+        .flatMap((candidate) =>
+          candidate.run === undefined ? [] : [{ call: candidate, run: candidate.run }],
+        )
+        .sort((a, b) => a.run - b.run);
+      // The report names only the child, and reports arrive in order. So it belongs to the oldest
+      // open run, unless that run ended with a different text: then its own report is lost.
+      const next = started.find(
+        (candidate) => candidate.call.answer === undefined || candidate.call.answer === output,
+      );
+      const written = next?.call.answer === output ? next.run : undefined;
+      const call = written === undefined ? admitted[0] : next?.call;
+      const calls =
+        call?.run === undefined
+          ? admitted.slice(0, 1)
+          : admitted.filter((candidate) => candidate.run === call.run);
+      const lost = started.flatMap((candidate) =>
+        written !== undefined && candidate.run < written ? [candidate.call] : [],
+      );
       const child = threads.get(childId);
-      calls.forEach((candidate) => {
+      open.forEach((candidate) => {
         candidate.observedSubagentReport = true;
       });
+      const inputObserved = open.some((candidate) => candidate.childInputObserved);
+      const awaitingInput = open.some((candidate) => candidate.awaitingChildInput);
       if (
         child?.reusedSubagent &&
-        calls.some(
-          (candidate) =>
-            candidate.executionStatus === undefined &&
-            (candidate.joined === undefined || candidate.childInputObserved),
-        )
+        (awaitingInput ||
+          open.some(
+            (candidate) => candidate.childInputObserved && candidate.executionStatus === undefined,
+          ))
       ) {
         child.ambiguousSubagentReports = true;
       }
+      const ambiguous = child?.ambiguousSubagentReports === true && (inputObserved || awaitingInput);
       const outcome = reportOutcome(stringField(payload.metadata, "state"));
       state.reports.set(inboxId, {
         inboxId,
@@ -3139,17 +3218,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         text: payload.text,
         report: {
           kind: "subagent",
-          label: child?.ambiguousSubagentReports
+          label: ambiguous
             ? payload.description
             : (call?.title ?? payload.description ?? stringField(payload.metadata, "description")),
           childThreadId: child?.subagent?.appThread.id,
           outcome,
         },
       });
-      if (child?.ambiguousSubagentReports) {
-        child.awaitingSubagentReport = false;
+      if (child !== undefined) child.awaitingSubagentReport = false;
+      if (ambiguous) {
         yield* Effect.forEach(
-          calls,
+          open,
           (candidate) =>
             candidate.executionStatus === undefined
               ? Effect.void
@@ -3165,7 +3244,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           : outcome === "cancelled"
             ? "cancelled"
             : "completed";
-      const result: string = subagentOutput(payload.text);
+      yield* Effect.forEach(
+        lost,
+        (candidate) => settleCall(candidate, "completed", candidate.answer),
+        { discard: true },
+      );
+      const result: string = output;
       yield* Effect.forEach(
         calls,
         (call: SubagentCall): Effect.Effect<void> => settleCall(call, status, result),
@@ -3191,7 +3275,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       calls.forEach((call) => {
         call.executionStatus = status;
       });
-      if (!child.ambiguousSubagentReports) return;
+      if (
+        !child.ambiguousSubagentReports ||
+        !callsForChild(child).some((call) => call.childInputObserved)
+      )
+        return;
       const background: ReadonlyArray<SubagentCall> = calls.filter((call) => call.background);
       yield* Effect.forEach(background, (call) => settleCall(call, status), { discard: true });
     });
@@ -3411,6 +3499,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             call.pendingChildInputs.add(event.data.inboxID);
             call.pendingExecutionStatus = undefined;
           });
+        if (state.ambiguousSubagentReports) {
+          yield* Effect.forEach(
+            callsForChild(state),
+            (call) =>
+              call.executionStatus === undefined
+                ? Effect.void
+                : settleCall(call, call.executionStatus),
+            { discard: true },
+          );
+        }
       }
       if (state.subagent !== undefined && event.type === "session.inbox.delivered") {
         recordChildInputDelivery(state, event.data.inboxID);
@@ -4452,6 +4550,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           model: turnInput.modelSelection.model,
         }),
         t3OrchestrationSystemPrompt(mcpAvailable, mcpSession?.capabilities?.has("device") === true),
+        mcpAvailable
+          ? "To wait for a background shell you started (tests, a build), call `t3_background_wait` with its shell ID before you end your turn. Do not mark work you leave running, or PRs."
+          : undefined,
       ]
         .filter((part) => part !== undefined && part.length > 0)
         .join("\n\n");
@@ -4756,7 +4857,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const mentions = skillMentions(text);
       const skills = mentions.length === 0 ? [] : yield* skillsMentioned(location, mentions);
       const files = yield* promptFiles(turnInput.message.attachments);
-      const messageText = yield* promptText(turnInput);
+      const messageText = turnInput.resume ? "" : yield* promptText(turnInput);
       if (!sending()) return;
       return yield* client.session
         .prompt({
@@ -4920,6 +5021,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ),
       compactThread: (turnInput) =>
         runtime.startTurn({ ...turnInput, message: { ...turnInput.message, text: "/compact" } }),
+      resumeTurn: (input) => runtime.startTurn(ProviderAdapter.resumeTurnInput(input)),
       startTurn: Effect.fn("OpenCode2Adapter.startTurn")(
         function* (turnInput) {
           // Waited out before the session's gate, so a rollback or fork is not
@@ -5239,6 +5341,26 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ),
           ),
       ),
+      awaitBackgroundTasks: Effect.fn("OpenCode2Adapter.awaitBackgroundTasks")(
+        function* ({ providerThread, taskIds, awaited }) {
+          const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
+          const state = nativeThreadId == null ? undefined : threads.get(nativeThreadId);
+          if (state === undefined) return { matched: [] };
+          const sessions = sessionsOf(state);
+          const matched = [...new Set(taskIds)].filter((taskId) => {
+            const shell = shells.get(taskId);
+            return shell !== undefined && shell.running && sessions.includes(shell.state);
+          });
+          if (matched.length === 0) return { matched };
+          for (const taskId of matched) {
+            const shell = shells.get(taskId)!;
+            shell.awaited = awaited;
+            yield* syncRosterAncestors(shell.state);
+          }
+          return { matched };
+        },
+        (effect) => effect.pipe(lock.withPermit),
+      ),
       stopTask: Effect.fn("OpenCode2Adapter.stopTask")(function* ({ providerThread, taskId }) {
         const shell = shells.get(taskId);
         const state =
@@ -5340,6 +5462,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   ? client.session.form.cancel({
                       sessionID: entry.sessionId,
                       formID: Form.ID.make(native.id),
+                      // Without a message OpenCode aborts the step, and a background subagent never reports.
+                      ...(asker.subagent === undefined ? {} : { message: DISMISSED }),
                     })
                   : client.session.form.reply({
                       sessionID: entry.sessionId,
