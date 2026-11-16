@@ -1736,10 +1736,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       readonly detail: string;
     }
   >();
-  // Keyed by cwd; holds the HEAD and merge base whose totals diff failed (timed out or overflowed).
+  // Keyed by cwd: the HEAD and merge base whose totals diff failed, retried after a backoff.
   const branchTotalsDiffFailures = new Map<
     string,
-    { readonly key: string; readonly detail: string }
+    {
+      readonly key: string;
+      readonly count: number;
+      readonly retryAt: number;
+      readonly detail: string;
+    }
   >();
   const statusRemoteRefreshFailureKey = (cacheKey: StatusRemoteRefreshCacheKey) =>
     `${cacheKey.gitCommonDir}\0${cacheKey.remoteName}`;
@@ -3872,10 +3877,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       branch === null || (yield* branchExists(cwd, branch))
         ? resolved
         : { baseRef: null, mergeBase: "HEAD" };
-    // The same range would only fail again, so wait for HEAD or the merge base to move.
+    // A moved HEAD or merge base skips the backoff and diffs again.
     const diffKey = options?.headOid ? `${options.headOid}\0${mergeBase}` : null;
     const diffFailure = branchTotalsDiffFailures.get(cwd);
-    if (diffFailure !== undefined && diffFailure.key === diffKey) {
+    if (
+      diffFailure !== undefined &&
+      diffFailure.key === diffKey &&
+      (yield* Clock.currentTimeMillis) < diffFailure.retryAt
+    ) {
       return yield* new GitCommandError({
         operation: "GitVcsDriver.readBranchChangeTotals",
         command: "git diff --numstat",
@@ -3946,10 +3955,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
     let result = yield* readNumstat(mergeBase).pipe(
       Effect.tapError((error) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           if (diffKey === null) return;
+          const count = diffFailure?.key === diffKey ? diffFailure.count + 1 : 1;
           branchTotalsDiffFailures.delete(cwd);
-          branchTotalsDiffFailures.set(cwd, { key: diffKey, detail: error.detail });
+          branchTotalsDiffFailures.set(cwd, {
+            key: diffKey,
+            count,
+            retryAt:
+              (yield* Clock.currentTimeMillis) +
+              Math.min(
+                UNTRACKED_TOTALS_RETRY_MIN_MS * 2 ** (count - 1),
+                UNTRACKED_TOTALS_RETRY_MAX_MS,
+              ),
+            detail: error.detail,
+          });
           if (branchTotalsDiffFailures.size > STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY) {
             const oldestKey = branchTotalsDiffFailures.keys().next().value;
             if (oldestKey !== undefined) branchTotalsDiffFailures.delete(oldestKey);
