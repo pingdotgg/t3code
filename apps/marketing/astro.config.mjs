@@ -1,4 +1,4 @@
-import { defineConfig } from "astro/config";
+import { defineConfig, fontProviders } from "astro/config";
 
 import { LOCALES } from "./src/i18n/locales.ts";
 
@@ -20,6 +20,17 @@ export default defineConfig({
     ),
     routing: { prefixDefaultLocale: false },
   },
+  fonts: [
+    {
+      provider: fontProviders.fontsource(),
+      name: "Geist Mono",
+      cssVariable: "--font-geist-mono",
+      weights: [400, 500],
+      styles: ["normal"],
+      subsets: ["latin"],
+      fallbacks: ["ui-monospace", "monospace"],
+    },
+  ],
   server: {
     port: Number(process.env.PORT ?? 4173),
   },

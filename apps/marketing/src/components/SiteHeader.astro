@@ -1,0 +1,200 @@
+---
+import { GITHUB_REPOSITORY_URL } from "../lib/site";
+import { MARKETING_STATS } from "../lib/stats";
+import { messagesFor } from "../i18n";
+import { fillTemplate, type Locale, type LocalizedPath, LOCALES, localizedHref } from "../i18n/locales";
+
+interface Props {
+  locale: Locale;
+  /** Set when the page exists in every locale; shows the language menu. */
+  localizedPath?: LocalizedPath;
+}
+
+const { locale, localizedPath } = Astro.props;
+const l = messagesFor(locale).layout;
+const lower = (value: string) => value.toLocaleLowerCase(locale);
+---
+
+<header class="head">
+  <a class="head-brand" href={localizedHref(locale, "/")} aria-label={l.homeLabel}>
+    <svg class="brand-mark" viewBox="15.5309 37 94.3941 56.96" fill="currentColor" aria-hidden="true">
+      <path d="M33.4509 93V47.56H15.5309V37H64.3309V47.56H46.4109V93H33.4509ZM86.7253 93.96C82.832 93.96 78.9653 93.4533 75.1253 92.44C71.2853 91.3733 68.032 89.88 65.3653 87.96L70.4053 78.04C72.5386 79.5867 75.0186 80.8133 77.8453 81.72C80.672 82.6267 83.5253 83.08 86.4053 83.08C89.6586 83.08 92.2186 82.44 94.0853 81.16C95.952 79.88 96.8853 78.12 96.8853 75.88C96.8853 73.7467 96.0586 72.0667 94.4053 70.84C92.752 69.6133 90.0853 69 86.4053 69H80.4853V60.44L96.0853 42.76L97.5253 47.4H68.1653V37H107.365V45.4L91.8453 63.08L85.2853 59.32H89.0453C95.9253 59.32 101.125 60.8667 104.645 63.96C108.165 67.0533 109.925 71.0267 109.925 75.88C109.925 79.0267 109.099 81.9867 107.445 84.76C105.792 87.48 103.259 89.6933 99.8453 91.4C96.432 93.1067 92.0586 93.96 86.7253 93.96Z" />
+    </svg>
+    <span class="brand-name">Code</span>
+  </a>
+  <nav class="head-links">
+    <a href={localizedHref(locale, "/features")} aria-current={localizedPath === "/features" ? "page" : undefined}>{lower(l.features)}</a>
+    <a href={localizedHref(locale, "/download")} aria-current={localizedPath === "/download" ? "page" : undefined}>{lower(l.download)}</a>
+    <a href={GITHUB_REPOSITORY_URL} target="_blank" rel="noopener noreferrer" aria-label={fillTemplate(l.starsLabel, { stars: MARKETING_STATS.githubStars })}>
+      github <span class="head-stars">★ {MARKETING_STATS.githubStars}</span>
+    </a>
+    <a href="https://discord.gg/jn4EGJjrvv" target="_blank" rel="noopener noreferrer">discord</a>
+  </nav>
+  {localizedPath && (
+    <details class="lang" data-lang>
+      <summary aria-label={l.language}>
+        {locale.toLowerCase()}
+        <svg viewBox="0 0 10 6" width="9" height="6" aria-hidden="true"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
+      </summary>
+      <nav class="lang-menu" aria-label={l.language}>
+        {LOCALES.map((entry) => (
+          <a
+            href={localizedHref(entry.code, localizedPath)}
+            hreflang={entry.code}
+            lang={entry.code}
+            aria-current={entry.code === locale ? "true" : undefined}
+          >
+            {entry.name}
+          </a>
+        ))}
+      </nav>
+    </details>
+  )}
+</header>
+
+<script>
+  const menu = document.querySelector<HTMLDetailsElement>("[data-lang]");
+  if (menu) {
+    document.addEventListener("click", (event) => {
+      if (menu.open && !menu.contains(event.target as Node)) menu.open = false;
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || !menu.open) return;
+      menu.open = false;
+      menu.querySelector("summary")?.focus();
+    });
+  }
+</script>
+
+<style>
+  .head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 16px;
+    padding-top: 112px;
+    font-size: 15px;
+  }
+
+  .head-brand {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    color: var(--fg);
+    font-size: 16px;
+    font-weight: 500;
+    letter-spacing: -0.025em;
+  }
+
+  /* The app's own logo: the T3 lettering at cap height, then "Code" in muted text. */
+  .brand-mark {
+    width: auto;
+    height: 1cap;
+    flex: none;
+  }
+
+  .brand-name {
+    color: var(--fg-muted);
+  }
+
+  .head-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+  }
+
+  .head-links a {
+    color: var(--fg-dim);
+    transition: color 0.18s ease;
+  }
+
+  .head-links a:hover {
+    color: var(--fg);
+  }
+
+  .head-stars {
+    font-size: 13px;
+    color: var(--fg-faint);
+  }
+
+  .head-links a[aria-current="page"] {
+    color: var(--fg);
+  }
+
+  .lang {
+    position: relative;
+    margin-left: auto;
+  }
+
+  .lang summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--fg-dim);
+    cursor: pointer;
+    list-style: none;
+    transition: color 0.18s ease;
+  }
+
+  .lang summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .lang summary:hover,
+  .lang[open] summary {
+    color: var(--fg);
+  }
+
+  .lang-menu {
+    position: absolute;
+    top: calc(100% + 10px);
+    right: 0;
+    z-index: 10;
+    display: grid;
+    min-width: 176px;
+    padding: 4px;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    background: #111;
+    box-shadow: 0 12px 32px rgb(0 0 0 / 0.5);
+    font-size: 14px;
+  }
+
+  .lang-menu a {
+    padding: 7px 10px;
+    border-radius: 6px;
+    color: var(--fg-dim);
+  }
+
+  .lang-menu a:hover {
+    background: rgb(255 255 255 / 0.06);
+    color: var(--fg);
+  }
+
+  .lang-menu a[aria-current="true"] {
+    color: var(--fg);
+  }
+
+  /* Short windows give up top air so the download page still fits without scrolling. */
+  @media (max-height: 780px) {
+    .head {
+      padding-top: 64px;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .head {
+      padding-top: 64px;
+    }
+
+    /* Brand and language share the first row; the links take the second. */
+    .lang {
+      order: 1;
+    }
+
+    .head-links {
+      order: 2;
+      flex-basis: 100%;
+    }
+  }
+</style>

@@ -71,6 +71,7 @@ export const jsonLdGraph = (nodes: ReadonlyArray<JsonLd>): string =>
 // Indexable static pages. The 404 (noindex) and the /95 easter egg stay out of the sitemap.
 export const STATIC_PAGES = [
   { path: "/", priority: "1.0" },
+  { path: "/features", priority: "0.8" },
   { path: "/download", priority: "0.9" },
   { path: "/legal", priority: "0.3" },
   { path: "/privacy-policy", priority: "0.3" },

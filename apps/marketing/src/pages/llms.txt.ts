@@ -14,6 +14,7 @@ The only official websites are https://t3.codes and the web app at https://app.t
 ## Official links
 
 - [Download T3 Code](${absoluteUrl("/download")}): macOS, Windows, and Linux installers
+- [Features](${absoluteUrl("/features")}): what T3 Code does
 - [Web app](https://app.t3.codes): connect to a T3 Code server from a browser
 - [Source code](${GITHUB_REPOSITORY_URL}): the MIT-licensed repository
 - [Releases](${GITHUB_REPOSITORY_URL}/releases): release builds and changelogs
