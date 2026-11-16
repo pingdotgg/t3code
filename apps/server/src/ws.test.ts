@@ -47,7 +47,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { Headers } from "effect/http";
+import { Headers, HttpClient } from "effect/http";
 import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -1780,6 +1780,140 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
         Layer.mock(ServerBrowser.ServerBrowser)({}),
       ),
     ),
+  ),
+);
+
+it.effect("a limits-only refresh answers without the provider probe's result", () =>
+  Effect.gen(function* () {
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const probeStarted = yield* Deferred.make<void>();
+    const provider: ServerProvider = {
+      instanceId,
+      driver: ProviderDriverKind.make("claudeAgent"),
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-11-12T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    };
+    const providerRegistryLayer = Layer.mock(ProviderRegistry.ProviderRegistry)({
+      getProviders: Effect.succeed([provider]),
+      refresh: () => Deferred.succeed(probeStarted, undefined).pipe(Effect.as([provider])),
+    });
+    const usageLimitSources = yield* UsageLimitSources.make.pipe(
+      Effect.provide([
+        ServerSettings.layerTest({ usageLimitSources: {} }),
+        Layer.succeed(SecretResolver.SecretResolver, {
+          label: (provider) => Effect.succeed(provider),
+          read: (references) => Effect.succeed(references.map(() => undefined)),
+          invalidate: () => Effect.void,
+        }),
+        Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+          shouldRunScopeWork: () => Effect.succeed(false),
+        }),
+        providerRegistryLayer,
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("Unexpected network request")),
+        ),
+        NodeCrypto.layer,
+      ]),
+    );
+    const responses = yield* Queue.unbounded<unknown>();
+    const services = Layer.mergeAll(
+      layerUnusedConfigRpcServices,
+      providerRegistryLayer,
+      Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+      Layer.mock(ProjectService.ProjectService)({
+        workspaceScanDirectory: (cwd) => Effect.succeed(cwd),
+      }),
+      Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+        listInstances: Effect.succeed([]),
+        getInstance: () => Effect.succeed({ instanceId } as never),
+      }),
+      Layer.succeed(UsageLimitSources.UsageLimitSources, usageLimitSources),
+      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+      Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        scratchRoot: Effect.succeedNone,
+        namedProjectsRoot: process.cwd(),
+      }),
+      Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({
+        getDescriptor: Effect.succeed({
+          environmentId: EnvironmentId.make("limits-test"),
+          label: "Limits test",
+          platform: { os: "linux", arch: "x64" },
+          serverVersion: "0.0.0",
+          capabilities: { repositoryIdentity: false },
+        }),
+      }),
+      Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+        getDescriptor: () =>
+          Effect.succeed({
+            policy: "loopback-browser",
+            bootstrapMethods: [],
+            sessionMethods: ["browser-session-cookie"],
+            sessionCookieName: "limits-test-session",
+          }),
+      }),
+    );
+    const server = yield* RpcServer.makeNoSerialization(
+      RpcGroup.make(WsServerRefreshProvidersRpc),
+      {
+        ...WS_RPC_SERVER_OPTIONS,
+        onFromServer: (response) =>
+          response._tag === "Exit" && response.exit._tag === "Success"
+            ? Queue.offer(responses, response.exit.value)
+            : response._tag === "Exit"
+              ? Queue.offer(responses, response.exit)
+              : Effect.void,
+      },
+    ).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: AuthSessionId.make("limits-test"),
+            subject: "limits-test",
+            method: "browser-session-cookie",
+            scopes: [],
+          },
+          {},
+          yield* ServerBrowser.ServerBrowser,
+          () => Effect.void,
+          { secretReferences: true },
+        ).pipe(Layer.provide(services)),
+      ),
+    );
+
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("limits-refresh"),
+      tag: WS_METHODS.serverRefreshProviders,
+      payload: { usageLimitsOnly: true },
+      headers: Headers.empty,
+    });
+    const reply = yield* Queue.take(responses);
+    if (Exit.isExit(reply)) return yield* Effect.die(`Refresh failed: ${JSON.stringify(reply)}`);
+    // The reply carries no provider list, so it did not wait for the probe's result.
+    assert.deepEqual(
+      (reply as { readonly providers: ReadonlyArray<ServerProvider> }).providers,
+      [],
+    );
+    yield* Deferred.await(probeStarted);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+    Effect.scoped,
   ),
 );
 
