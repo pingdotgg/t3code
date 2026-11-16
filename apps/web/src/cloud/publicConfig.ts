@@ -62,10 +62,6 @@ export function resolveCloudPublicConfig(): CloudPublicConfig {
 }
 
 export function resolveRelayTracingConfig() {
-  // The relay exporter is created during module initialization, so this must be synchronous.
-  if (typeof window !== "undefined" && window.desktopBridge?.getRelayTelemetryEnabled() === false) {
-    return null;
-  }
   const { relayTracing } = resolveCloudPublicConfig();
   return relayTracing.tracesUrl && relayTracing.tracesDataset && relayTracing.tracesToken
     ? {
@@ -74,6 +70,13 @@ export function resolveRelayTracingConfig() {
         tracesToken: relayTracing.tracesToken,
       }
     : null;
+}
+
+/** The desktop host's opt-out can arrive after this module loads, from the login shell. */
+export function isRelayTracingAllowed(): boolean {
+  return (
+    typeof window === "undefined" || window.desktopBridge?.getRelayTelemetryEnabled() !== false
+  );
 }
 
 export function hasCloudPublicConfig(): boolean {

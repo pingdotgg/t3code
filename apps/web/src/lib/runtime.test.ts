@@ -21,11 +21,18 @@ describe("web runtime relay telemetry policy", () => {
       exports: true,
     },
     {
+      surface: "desktop opt-out from the login shell after the runtime loads",
+      desktopBridge: { getRelayTelemetryEnabled: () => true },
+      optOutAfterLoad: true,
+      exports: false,
+    },
+    {
       surface: "ordinary browser ignores host opt-out",
       desktopBridge: undefined,
       exports: true,
     },
-  ])("applies $surface before the first relay span", async ({ desktopBridge, exports }) => {
+  ])("applies $surface before the first relay span", async (row) => {
+    const { desktopBridge, exports } = row;
     vi.resetModules();
     vi.stubEnv("T3CODE_TELEMETRY_ENABLED", "false");
     vi.stubEnv("T3CODE_OTEL_SDK_DISABLED", "true");
@@ -39,6 +46,9 @@ describe("web runtime relay telemetry policy", () => {
     // Re-import after setting runtime policy: static initialization creates the exporter layer.
     const { runtime: freshRuntime } = await import("./runtime");
     const { setDelegate } = await import("../observability/clientTracer");
+    if ("optOutAfterLoad" in row && desktopBridge) {
+      desktopBridge.getRelayTelemetryEnabled = () => false;
+    }
     const userSpans: Array<string> = [];
 
     try {

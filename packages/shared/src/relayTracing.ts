@@ -139,9 +139,11 @@ export function nonInterferingTracer(delegate: Tracer.Tracer): Tracer.Tracer {
   });
 }
 
+/** `isEnabled` is checked as each relay span starts; spans started while it is false are not exported. */
 export function layer(
   config: RelayClientTracingConfig | null,
   resource: RelayClientTracingResource,
+  isEnabled: () => boolean = () => true,
 ): Layer.Layer<never, never, HttpClient.HttpClient> {
   if (config === null) {
     return Layer.succeed(RelayClientTracer, Option.none());
@@ -169,6 +171,16 @@ export function layer(
 
   return Layer.effect(
     RelayClientTracer,
-    Tracer.Tracer.pipe(Effect.map(nonInterferingTracer), Effect.asSome),
+    Tracer.Tracer.pipe(
+      Effect.map((exporting) =>
+        nonInterferingTracer(
+          Tracer.make({
+            span: (options) =>
+              isEnabled() ? exporting.span(options) : Tracer.nativeTracer.span(options),
+          }),
+        ),
+      ),
+      Effect.asSome,
+    ),
   ).pipe(Layer.provide(layerTracer));
 }
