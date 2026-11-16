@@ -555,8 +555,14 @@ async fn metadata_binding_rejects_stale_worktrees_and_keeps_idle_continuations()
 #[tokio::test(flavor = "current_thread")]
 async fn handoff_setup_runs_in_a_thread_terminal_with_the_project_environment() {
     let mut f = fixture("handoff-setup");
+    let shell = f.dir.join("shell");
+    conn_support::test_util::executable(
+        &shell,
+        "#!/bin/sh\nexport HISTFILE=/dev/null\nexec /bin/sh \"$@\"\n",
+    )
+    .unwrap();
     let terminals = conn_terminal::TerminalManager::new(conn_terminal::TerminalConfig {
-        shells: vec!["/bin/sh".into()],
+        shells: vec![shell.to_string_lossy().into_owned()],
         ..Default::default()
     });
     Arc::get_mut(&mut f.service)
