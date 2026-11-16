@@ -57,6 +57,7 @@ import * as ProviderTurnStartServiceTestkit from "./ProviderTurnStartService.tes
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { PROVIDER_STOP_REASON_SIGNAL } from "@t3tools/provider-core/server/subagentProjection";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
 
 const layerPlatformTest = Layer.merge(
@@ -4652,6 +4653,7 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
   it.effect("cancelling a task whose child already finished keeps its completed result", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread:cancel-finished-parent");
       const projectId = ProjectId.make("project:cancel-finished-parent");
@@ -4678,6 +4680,43 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         runStatus: "completed",
         now,
       });
+      const stopReason = "sessionStart hook (user): Plugin guard blocked this session.";
+      yield* eventSink.write({
+        commandId: CommandId.make("command:cancel-finished-child:stop-reason"),
+        events: [
+          {
+            id: EventId.make("event:cancel-finished-child:stop-reason"),
+            type: "turn-item.updated",
+            threadId: child.childThreadId,
+            runId: child.childRunId,
+            nodeId: rootNodeId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              id: IdAllocator.derive.runSignalTurnItem({
+                runId: child.childRunId,
+                signal: PROVIDER_STOP_REASON_SIGNAL,
+              }),
+              type: "system_notice",
+              level: "warning",
+              threadId: child.childThreadId,
+              runId: child.childRunId,
+              nodeId: rootNodeId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 98,
+              status: "completed",
+              title: "Stopped by the provider",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              message: stopReason,
+            },
+          },
+        ],
+      });
       yield* orchestrator.cancelDelegatedTask({
         parentThreadId: threadId,
         taskId: child.taskId,
@@ -4693,6 +4732,10 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         (row) => row.id === child.taskId,
       );
       assert.equal(task?.status, "completed");
+      assert.equal(
+        task?.result,
+        `Child task completed without an assistant result.\n\n${stopReason}`,
+      );
       assert.isUndefined(task?.cancelledRunId);
     }),
   );
