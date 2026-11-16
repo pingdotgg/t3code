@@ -18,7 +18,7 @@ import {
 } from "@t3tools/shared/usageLimits";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
-import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
+import { AlertTriangleIcon, ChevronRightIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
 import {
   createContext,
   Fragment,
@@ -31,6 +31,7 @@ import {
 } from "react";
 
 import { ensureLocalApi } from "../../localApi";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
@@ -38,10 +39,21 @@ import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { providerClients } from "../settings/providerDriverMeta";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { Button } from "../ui/button";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { PaceIcon, ResetCreditDialog, barColor, usePaceMark, useResetCredit } from "./UsageLimits";
+import { UsageLimitLayoutControls } from "./UsageLimitLayoutControls";
+import {
+  DEFAULT_LIMIT_LAYOUT,
+  limitWindowKey,
+  moveLimitItem,
+  orderLimitItems,
+  USAGE_LIMIT_LAYOUT_KEY,
+  UsageLimitLayoutSchema,
+  type UsageLimitLayout,
+} from "./usageLimitLayout";
 
 function accountInitials(email: string): string {
   const [local = "", domain = ""] = email.split("@");
@@ -474,74 +486,210 @@ function PoolWindowCard({
   now,
   label,
   description,
+  controls,
+  hidden = false,
 }: {
   readonly pool: LimitPoolWindow;
   readonly color: string;
   readonly now: number;
   readonly label?: string | null | undefined;
   readonly description?: string | undefined;
+  readonly controls?: ReactNode;
+  readonly hidden?: boolean;
 }) {
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
   return (
-    <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
-      <div className="flex flex-col gap-1">
-        {label !== null ? (
-          <span className="text-sm font-medium text-foreground">{label ?? pool.label}</span>
+    <div
+      className={cn(
+        "group/limit-row grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-3 rounded-lg border border-border/60 p-4 @xl/limits:grid-cols-[9rem_minmax(0,1fr)] @xl/limits:items-center",
+        controls && "@xl/limits:grid-cols-[9rem_minmax(0,1fr)_auto]",
+      )}
+    >
+      <div className="flex min-w-0 flex-col gap-1">
+        {hidden || label !== null ? (
+          <span
+            className={cn(
+              "text-sm font-medium",
+              hidden ? "text-muted-foreground" : "text-foreground",
+            )}
+          >
+            {label ?? pool.label}
+            {hidden ? <span className="ml-2 font-normal text-muted-foreground">Hidden</span> : null}
+          </span>
         ) : null}
-        <span className="flex items-baseline gap-2">
-          <span className="text-3xl font-semibold text-foreground tabular-nums">
-            {pool.remainingPercent}%
-          </span>
-          <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-            <span>left</span>
-            {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
-          </span>
-        </span>
-        {nextRefill && pool.columns.length > 1 ? (
-          <span className="text-xs font-medium text-foreground tabular-nums">
-            ↻ +{nextRefill.restoresPercent}%
-          </span>
+        {!hidden ? (
+          <>
+            <span className="flex items-baseline gap-2">
+              <span className="text-3xl font-semibold text-foreground tabular-nums">
+                {pool.remainingPercent}%
+              </span>
+              <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+                <span>left</span>
+                {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
+              </span>
+            </span>
+            {nextRefill && pool.columns.length > 1 ? (
+              <span className="text-xs font-medium text-foreground tabular-nums">
+                ↻ +{nextRefill.restoresPercent}%
+              </span>
+            ) : null}
+          </>
         ) : null}
       </div>
-      <PoolBar pool={pool} color={color} now={now} />
-      {description ? (
-        <p className="text-xs text-muted-foreground md:col-span-2">{description}</p>
+      {controls ? (
+        <div className="col-start-2 row-start-1 @xl/limits:col-start-3">{controls}</div>
+      ) : null}
+      {!hidden ? (
+        <>
+          <div className="col-span-2 min-w-0 @xl/limits:col-span-1 @xl/limits:col-start-2 @xl/limits:row-start-1">
+            <PoolBar pool={pool} color={color} now={now} />
+          </div>
+          {description ? (
+            <p className="col-span-full text-xs text-muted-foreground">{description}</p>
+          ) : null}
+        </>
       ) : null}
     </div>
   );
 }
 
-function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: number }) {
+function PoolSection({
+  pool,
+  windows,
+  now,
+  providerKeys,
+  layout,
+  onChange,
+}: {
+  readonly pool: LimitPool;
+  readonly windows: readonly LimitPoolWindow[];
+  readonly now: number;
+  readonly providerKeys: readonly string[];
+  readonly layout: UsageLimitLayout;
+  readonly onChange: (update: (current: UsageLimitLayout) => UsageLimitLayout) => void;
+}) {
   const color = barColor(pool.driver);
   const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
-  const windows = displayLimitWindows(pool);
+  const hidden = layout.hiddenProviders.includes(pool.driver);
+  const collapsed = layout.collapsedProviders.includes(pool.driver);
   return (
-    <section className="flex flex-col gap-3">
-      <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
-        <ProviderInstanceIcon
-          driverKind={pool.driver}
-          displayName={label}
-          indicatorBackground="var(--background)"
-          className="size-5"
-          iconClassName="size-4 text-foreground/80"
-        />
-        {label}
-      </h2>
-      {windows.map((window) => {
-        const details =
-          pool.driver === "cursor" ? cursorUsageWindowDetails(window.id, pool) : undefined;
-        return (
-          <PoolWindowCard
-            key={`${window.kind}:${window.id}`}
-            pool={window}
-            color={color}
-            now={now}
-            label={details?.label}
-            description={details?.description}
+    <Collapsible
+      open={!hidden && !collapsed}
+      onOpenChange={(open) =>
+        onChange((current) => ({
+          ...current,
+          collapsedProviders: open
+            ? current.collapsedProviders.filter((driver) => driver !== pool.driver)
+            : [...current.collapsedProviders, pool.driver],
+        }))
+      }
+      render={<section className="@container/limits flex flex-col gap-3" />}
+    >
+      <div className="group/limit-row flex items-center gap-2">
+        <h2 className="flex min-w-0 flex-1 items-center gap-2 text-sm font-medium text-foreground">
+          <ProviderInstanceIcon
+            driverKind={pool.driver}
+            displayName={label}
+            indicatorBackground="var(--background)"
+            className="size-5"
+            iconClassName="size-4 text-foreground/80"
           />
-        );
-      })}
-    </section>
+          {label}
+          {hidden ? (
+            <span className="text-xs font-normal text-muted-foreground">Hidden</span>
+          ) : null}
+        </h2>
+        <UsageLimitLayoutControls
+          label={label}
+          index={providerKeys.indexOf(pool.driver)}
+          count={providerKeys.length}
+          hidden={hidden}
+          onMove={(direction) =>
+            onChange((current) => ({
+              ...current,
+              providerOrder: moveLimitItem(
+                current.providerOrder,
+                providerKeys,
+                pool.driver,
+                direction,
+              ),
+            }))
+          }
+          onToggleVisibility={() =>
+            onChange((current) => ({
+              ...current,
+              hiddenProviders: hidden
+                ? current.hiddenProviders.filter((driver) => driver !== pool.driver)
+                : [...current.hiddenProviders, pool.driver],
+            }))
+          }
+        />
+        <CollapsibleTrigger
+          disabled={hidden}
+          aria-label={`${collapsed ? "Expand" : "Collapse"} ${label} limits`}
+          render={
+            <button className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default" />
+          }
+        >
+          <ChevronRightIcon
+            aria-hidden
+            className={cn(
+              "size-4 opacity-0 group-focus-within/limit-row:opacity-100 group-hover/limit-row:opacity-100 pointer-coarse:opacity-100 [@media(hover:none)]:opacity-100",
+              !hidden && !collapsed && "rotate-90",
+            )}
+          />
+        </CollapsibleTrigger>
+      </div>
+      <CollapsiblePanel animate={false}>
+        <div className="flex flex-col gap-3">
+          {windows.map((window, index) => {
+            const details =
+              pool.driver === "cursor" ? cursorUsageWindowDetails(window.id, pool) : undefined;
+            const key = limitWindowKey(pool.driver, window);
+            const windowHidden = layout.hiddenWindows.includes(key);
+            const controls = (
+              <UsageLimitLayoutControls
+                label={`${label} ${details?.label ?? window.label}`}
+                index={index}
+                count={windows.length}
+                hidden={windowHidden}
+                onMove={(direction) =>
+                  onChange((current) => ({
+                    ...current,
+                    windowOrder: moveLimitItem(
+                      current.windowOrder,
+                      windows.map((item) => limitWindowKey(pool.driver, item)),
+                      key,
+                      direction,
+                    ),
+                  }))
+                }
+                onToggleVisibility={() =>
+                  onChange((current) => ({
+                    ...current,
+                    hiddenWindows: windowHidden
+                      ? current.hiddenWindows.filter((id) => id !== key)
+                      : [...current.hiddenWindows, key],
+                  }))
+                }
+              />
+            );
+            return (
+              <PoolWindowCard
+                key={key}
+                pool={window}
+                color={color}
+                now={now}
+                label={details?.label}
+                description={details?.description}
+                controls={controls}
+                hidden={windowHidden}
+              />
+            );
+          })}
+        </div>
+      </CollapsiblePanel>
+    </Collapsible>
   );
 }
 
@@ -553,24 +701,109 @@ export function UsageLimitsPooled({
   readonly now: number;
 }) {
   const [segmentPopover] = useState(() => PopoverCreateHandle<SegmentPayload>());
+  const [showHidden, setShowHidden] = useState(false);
+  const restoreButton = useRef<HTMLButtonElement | null>(null);
+  const limitsRoot = useRef<HTMLDivElement | null>(null);
+  const focusedBeforeChange = useRef<Element | null>(null);
+  const [layout, setLayout] = useLocalStorage(
+    USAGE_LIMIT_LAYOUT_KEY,
+    DEFAULT_LIMIT_LAYOUT,
+    UsageLimitLayoutSchema,
+  );
   const segmentPopoverActions = useRef<PopoverPrimitive.Root.Actions | null>(null);
-  const pools = collectLimitPools(collectLimitAccounts(presentations), now);
+  const pools = orderLimitItems(
+    collectLimitPools(collectLimitAccounts(presentations), now),
+    layout.providerOrder,
+    (pool) => pool.driver,
+  );
+  const arrangedPools = pools.map((pool) => ({
+    pool,
+    windows: orderLimitItems(displayLimitWindows(pool), layout.windowOrder, (window) =>
+      limitWindowKey(pool.driver, window),
+    ),
+  }));
+  const visiblePools = arrangedPools
+    .map(({ pool, windows }) => ({
+      pool,
+      windows: windows.filter(
+        (window) => !layout.hiddenWindows.includes(limitWindowKey(pool.driver, window)),
+      ),
+    }))
+    .filter(
+      ({ pool, windows }) => !layout.hiddenProviders.includes(pool.driver) && windows.length > 0,
+    );
+  const hasHidden = layout.hiddenProviders.length > 0 || layout.hiddenWindows.length > 0;
+  const hasLayout = Object.values(layout).some((items) => items.length > 0);
+  const shownPools = showHidden ? arrangedPools : visiblePools;
   const notices = collectLimitNotices(presentations);
   const externalLinks = collectExternalUsageLinks(presentations);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Hand off focus after an action removes its control.
+  useLayoutEffect(() => {
+    if (focusedBeforeChange.current && !focusedBeforeChange.current.isConnected) {
+      const target =
+        restoreButton.current ??
+        limitsRoot.current?.querySelector<HTMLButtonElement>("button[aria-expanded]") ??
+        limitsRoot.current;
+      target?.focus();
+    }
+    focusedBeforeChange.current = null;
+  });
   return (
-    <div className="flex flex-col gap-8">
+    <div ref={limitsRoot} tabIndex={-1} className="flex flex-col gap-8 outline-none">
+      {pools.length > 0 && visiblePools.length === 0 && !showHidden ? (
+        <p className="text-sm text-muted-foreground">All limits are hidden.</p>
+      ) : null}
       {pools.length === 0 && notices.length === 0 && externalLinks.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           No provider on the selected environments reports subscription limits.
         </p>
       ) : null}
       <SegmentPopoverContext value={segmentPopover}>
-        {pools.map((pool) => (
+        {shownPools.map(({ pool, windows }) => (
           <Fragment key={pool.driver}>
-            <PoolSection pool={pool} now={now} />
+            <PoolSection
+              pool={pool}
+              windows={windows}
+              now={now}
+              providerKeys={pools.map((item) => item.driver)}
+              layout={layout}
+              onChange={(update) => {
+                focusedBeforeChange.current = document.activeElement;
+                setLayout(update);
+              }}
+            />
           </Fragment>
         ))}
       </SegmentPopoverContext>
+      {hasLayout || showHidden ? (
+        <div className="flex flex-wrap items-center gap-2">
+          {hasHidden || showHidden ? (
+            <Button
+              ref={restoreButton}
+              variant="ghost-muted"
+              size="sm"
+              aria-pressed={showHidden}
+              onClick={() => {
+                focusedBeforeChange.current = document.activeElement;
+                setShowHidden(!showHidden);
+              }}
+            >
+              {showHidden ? "Hide hidden limits" : "Show hidden limits"}
+            </Button>
+          ) : null}
+          <Button
+            variant="ghost-muted"
+            size="sm"
+            onClick={() => {
+              focusedBeforeChange.current = document.activeElement;
+              setLayout(DEFAULT_LIMIT_LAYOUT);
+              setShowHidden(false);
+            }}
+          >
+            Reset layout
+          </Button>
+        </div>
+      ) : null}
       <Popover handle={segmentPopover} actionsRef={segmentPopoverActions}>
         {({ payload }) =>
           payload ? (
@@ -578,7 +811,9 @@ export function UsageLimitsPooled({
               handle={segmentPopover}
               actions={segmentPopoverActions}
               payload={payload}
-              pools={pools}
+              pools={visiblePools
+                .filter(({ pool }) => !layout.collapsedProviders.includes(pool.driver))
+                .map(({ pool, windows }) => ({ ...pool, windows }))}
               now={now}
             />
           ) : null
