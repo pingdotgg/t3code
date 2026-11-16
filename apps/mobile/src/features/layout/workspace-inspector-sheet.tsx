@@ -1,10 +1,8 @@
 import { createContext, useRef, useState } from "react";
-import { Platform, View } from "react-native";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
-import { FormSheet } from "react-native-screens";
-import { useResolveClassNames } from "uniwind";
 
 import { PaneContext } from "../../components/ui/Pane";
+import { PaneSheet } from "../../components/ui/PaneSheet";
 import { RoutedFormSheetContext } from "../../components/ui/RoutedFormSheetContext";
 import { formSheetDetents } from "../../native/sheet-surface";
 import { InspectorPanes } from "./inspector-host";
@@ -22,7 +20,6 @@ export function WorkspaceInspectorSheet(props: {
   readonly onClose: () => void;
   readonly content: InspectorContent | undefined;
 }) {
-  const containerStyle = useResolveClassNames(Platform.OS === "android" ? "bg-header" : "bg-sheet");
   const insets = useSafeAreaInsets();
   // Stays mounted until the sheet has finished closing, so it doesn't empty as it slides away.
   // Each opening gets a fresh native sheet, even one that starts while the last is closing.
@@ -51,15 +48,12 @@ export function WorkspaceInspectorSheet(props: {
   };
   if (!presented.mounted) return null;
   return (
-    <FormSheet
+    <PaneSheet
       key={presented.session}
       isOpen={props.open}
       detents={formSheetDetents(0.6, 0.95)}
-      prefersGrabberVisible={Platform.OS === "ios"}
       // The inspector's bar holds its actions, so the Duo needs no rail inside this sheet.
       prefersHorizontalBars
-      preferredCornerRadius={Platform.OS === "android" ? 28 : undefined}
-      nativeContainerStyle={containerStyle}
       onDismiss={closed}
       onNativeDismiss={() => {
         props.onClose();
@@ -71,25 +65,11 @@ export function WorkspaceInspectorSheet(props: {
           {/* The sheet starts below the status bar. */}
           <SafeAreaInsetsContext value={{ ...insets, top: 0 }}>
             <PaneContext value="inspector">
-              {/* Android FormSheet does not bound flex children. */}
-              <View
-                collapsable={false}
-                className={
-                  Platform.OS === "android" ? "absolute inset-0 bg-header pt-3" : "flex-1 bg-sheet"
-                }
-              >
-                <InspectorPanes content={props.content} onClose={() => close()} />
-                {Platform.OS === "android" ? (
-                  <View
-                    pointerEvents="none"
-                    className="absolute top-1 h-1 w-8 self-center rounded-full bg-header-foreground/40"
-                  />
-                ) : null}
-              </View>
+              <InspectorPanes content={props.content} onClose={() => close()} />
             </PaneContext>
           </SafeAreaInsetsContext>
         </RoutedFormSheetContext>
       </InspectorSheetContext>
-    </FormSheet>
+    </PaneSheet>
   );
 }
