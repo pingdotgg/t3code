@@ -54,7 +54,14 @@ const remaining: RecallFactText = {
   entities: ["checkout"],
 };
 
-const facts = [ledger, remaining];
+const receipts: RecallFactText = {
+  id: "receipt-archive",
+  content:
+    "Archive receipts preserve invoice timestamps during nightly exports and reconciliation.",
+  entities: ["receipt archive"],
+};
+
+const facts = [ledger, remaining, receipts];
 
 const filler = "Continue the remaining work and keep the current structure in place. ";
 const boilerplate = filler.repeat(Math.ceil(240 / filler.length)).slice(0, 240);
@@ -122,12 +129,20 @@ it("recalls a fact the message actually names, and stays quiet otherwise", () =>
       ids: [],
     },
     {
-      name: "pull request watch names the fact",
+      name: "pull request watch has only seven matching terms",
       message: {
-        text: "Checks failed for the ledger labs toggle.",
+        text: "Checks failed: archive receipts preserve invoice timestamps during exports.",
         notification: { source: { kind: "monitor" } },
       },
-      ids: ["ledger-labs"],
+      ids: [],
+    },
+    {
+      name: "pull request watch has eight matching terms",
+      message: {
+        text: "Checks failed: archive receipts preserve invoice timestamps during nightly exports.",
+        notification: { source: { kind: "monitor" } },
+      },
+      ids: ["receipt-archive"],
     },
     {
       name: "a person names the fact",
