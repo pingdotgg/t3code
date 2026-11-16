@@ -66,6 +66,7 @@ function Composer({
   onCommandKeyDown = () => false,
   importContextFragment,
   literalText = false,
+  onPaste = () => {},
 }: {
   value: string;
   richTextEnabled: boolean;
@@ -74,6 +75,7 @@ function Composer({
   onCommandKeyDown?: ComposerPromptEditorProps["onCommandKeyDown"] | undefined;
   importContextFragment?: ComposerPromptEditorProps["importContextFragment"];
   literalText?: boolean;
+  onPaste?: ComposerPromptEditorProps["onPaste"];
 }) {
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
   return (
@@ -90,7 +92,7 @@ function Composer({
         setPrompt({ value: args[0], cursor: args[1] });
         onChange?.(...args);
       }}
-      onPaste={() => {}}
+      onPaste={onPaste}
       onCommandKeyDown={onCommandKeyDown}
       importContextFragment={importContextFragment}
       literalText={literalText}
@@ -481,6 +483,39 @@ it("keeps unknown dollar names editable when restoring and pasting a draft", asy
   });
   expect(editor.state.doc.textContent).toBe(value.replace("$babysit", ""));
   expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
+});
+
+function copyToClipboard(text: string) {
+  const onCopy = (event: ClipboardEvent) => {
+    event.clipboardData?.setData("text/plain", text);
+    event.preventDefault();
+  };
+  document.addEventListener("copy", onCopy, true);
+  document.execCommand("copy");
+  document.removeEventListener("copy", onCopy, true);
+}
+
+// regression: #16985 Chromium returns "" from getData() once the system clipboard changes
+it("keeps pasted text when the clipboard changes after the composer first reads it", async () => {
+  await using screen = await render(
+    <Composer
+      value=""
+      richTextEnabled
+      skills={[]}
+      onPaste={(event) => {
+        // ChatComposer reads the paste here first; a dictation tool then puts its next item on the clipboard.
+        event.clipboardData.getData("text/plain");
+        copyToClipboard("next item");
+      }}
+    />,
+  );
+  const editor = editorIn(screen.container);
+  await userEvent.click(editor.view.dom);
+  copyToClipboard("Check this. ");
+
+  await userEvent.keyboard("{ControlOrMeta>}v{/ControlOrMeta}");
+
+  await vi.waitFor(() => expect(serializeEditorDoc(editor.state.doc).value).toBe("Check this. "));
 });
 
 // regression: #25180 Tiptap's paste rules styled the pasted text a second time
