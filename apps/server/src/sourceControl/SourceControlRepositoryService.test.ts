@@ -964,3 +964,64 @@ it.effect("finishes a retried publish when the repository already exists as the 
     ),
   );
 });
+
+it.effect(
+  "does not publish into an existing repository the remote has already fetched from",
+  () => {
+    let pushAttempts = 0;
+    return Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const error = yield* service
+        .publishRepository({
+          cwd: "/workspace",
+          provider: SourceControlProviderKind.make("github"),
+          repository: "octocat/t3code",
+          visibility: "private",
+          remoteName: "origin",
+        })
+        .pipe(Effect.flip);
+
+      assert.strictEqual(error.operation, "publishRepository");
+      assert.strictEqual(pushAttempts, 0);
+    }).pipe(
+      Effect.provide(
+        layer({
+          provider: makeProvider({
+            createRepository: (input) =>
+              Effect.fail(
+                new SourceControlProviderError({
+                  provider: SourceControlProviderKind.make("github"),
+                  operation: "createRepository",
+                  cwd: input.cwd,
+                  repository: input.repository,
+                  detail: "GitHub API request failed (422): name already exists on this account",
+                }),
+              ),
+          }),
+          git: {
+            execute: (input) =>
+              Effect.succeed({
+                ...processOutput(),
+                stdout:
+                  input.args[0] === "remote"
+                    ? `${CLONE_URLS.url}\n`
+                    : input.args[0] === "for-each-ref"
+                      ? "refs/remotes/origin/main\n"
+                      : "",
+              }),
+            pushCurrentBranch: () =>
+              Effect.sync(() => {
+                pushAttempts += 1;
+                return {
+                  status: "pushed" as const,
+                  branch: "main",
+                  upstreamBranch: "origin/main",
+                  setUpstream: true,
+                };
+              }),
+          },
+        }),
+      ),
+    );
+  },
+);

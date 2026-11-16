@@ -502,6 +502,19 @@ export const make = Effect.gen(function* () {
             cwd: input.cwd,
             args: ["remote", "get-url", "--", preferredRemoteName],
           });
+          // Only a never-fetched remote is a half-finished publish; an established one may have
+          // another visibility than the one requested.
+          const trackingRefs = yield* git.execute({
+            operation: "SourceControlRepositoryService.publishRepository.existingRemoteRefs",
+            cwd: input.cwd,
+            args: [
+              "for-each-ref",
+              "--count=1",
+              "--format=%(refname)",
+              `refs/remotes/${preferredRemoteName}/`,
+            ],
+          });
+          if (trackingRefs.stdout.trim().length > 0) return yield* createError;
           const urls = yield* provider.getRepositoryCloneUrls({ cwd: input.cwd, repository });
           const remoteKey = sourceControlDefinitions.repositoryKeyFromRemote(remote.stdout.trim());
           if (remoteKey !== sourceControlDefinitions.repositoryKeyFromRemote(urls.url)) {
