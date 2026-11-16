@@ -342,3 +342,9 @@ The live tests (11, about 20 Haiku turns) cover one turn, a permission round tri
 resume in a new session, steer, idle close then resume (the helper stops), an MCP tool call,
 fork, rollback, a foreground subagent running Bash, and an image. They need `npm ci` in
 `helpers/sdk-host`.
+
+MCP Apps use the live SDK query, without a turn: status and resource reads, and the same
+`mcp_call` and `list_permission_rules` control requests as T3. The process must advertise
+T3's App capabilities. Ambiguous names and applicable deny rules refuse calls. Unknown
+permission rules remove the read-only hint. A completed MCP tool can ask the engine to store
+its UI document; the server reads no provider credentials.

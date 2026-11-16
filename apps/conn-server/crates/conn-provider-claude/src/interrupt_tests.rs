@@ -37,7 +37,13 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     case "call":
       log(`call ${cmd.method}`);
       // A CLI still booting: `initializationResult` does not answer.
-      if (!(HANG_INIT && cmd.method === "initializationResult")) reply(cmd.id, null);
+      if (["mcpServerStatus", "readMcpResource", "callMcpTool", "listPermissionRules"].includes(cmd.method)) log(`mcp ${JSON.stringify(cmd)}`);
+      if (cmd.method === "initializationResult" && !HANG_INIT) reply(cmd.id, {capabilities:["mcp_tool_ui_meta_v1","mcp_call_result_not_for_model_v1"]});
+      else if (cmd.method === "mcpServerStatus") reply(cmd.id, fs.existsSync(LOG + ".servers") ? JSON.parse(fs.readFileSync(LOG + ".servers","utf8")) : [{name:"weather",status:"connected",tools:[{name:"show",_meta:{ui:{resourceUri:"ui://weather"}},annotations:{readOnly:true}}]}]);
+      else if (cmd.method === "listPermissionRules") reply(cmd.id, fs.existsSync(LOG + ".rules") ? JSON.parse(fs.readFileSync(LOG + ".rules","utf8")) : []);
+      else if (cmd.method === "callMcpTool") reply(cmd.id, {content:[{type:"text",text:"sunny"}],_meta:{stub:true}});
+      else if (cmd.method === "readMcpResource") reply(cmd.id, {contents:[{uri:cmd.args[1],mimeType:"text/html;profile=mcp-app",text:"<h1>Weather</h1>"}]});
+      else if (!(HANG_INIT && cmd.method === "initializationResult")) reply(cmd.id, null);
       break;
     case "abort": {
       log("abort");
@@ -434,4 +440,127 @@ async fn an_abandoned_start_aborts_the_booting_query() {
     );
     assert!(session.live_query().is_none());
     session.close().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn mcp_apps_use_the_live_query_and_honor_permission_rules() {
+    use conn_provider::mcp_apps::{Operation, Request};
+    use serde_json::json;
+    let scratch = Scratch::new("mcp-apps");
+    let (helper, log) = fake_host(&scratch.0, true);
+    let (session, mut events) = session(&helper);
+    let cwd = scratch.cwd();
+    let thread = new_thread(&session, "full-access", &cwd).await;
+    let request = |operation| Request {
+        provider_thread: thread.clone(),
+        server: "weather".into(),
+        operation,
+    };
+    assert!(matches!(
+        session.mcp_app_request(request(Operation::ListTools)).await,
+        Err(ProviderError::SessionStopped)
+    ));
+    session
+        .start_turn(turn(1, &thread, "one", "full-access", &cwd))
+        .await
+        .unwrap();
+    running_turn_id(&mut events).await;
+    let tools = session
+        .mcp_app_request(request(Operation::ListTools))
+        .await
+        .unwrap();
+    assert_eq!(tools[0]["annotations"]["readOnlyHint"], true);
+    let source = session
+        .mcp_app_source(json!({"toolName":"mcp__weather__show"}))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(source.resource_uri, "ui://weather");
+    let result = session
+        .mcp_app_request(request(Operation::CallTool {
+            tool: "show".into(),
+            arguments: json!({"city":"Amsterdam"}),
+        }))
+        .await
+        .unwrap();
+    assert_eq!(result["content"][0]["text"], "sunny");
+    let result = session
+        .mcp_app_request(request(Operation::ReadResource {
+            uri: "ui://weather".into(),
+        }))
+        .await
+        .unwrap();
+    assert_eq!(result["contents"][0]["uri"], "ui://weather");
+    let mut other = conn_contract::to_json(&thread);
+    other["nativeThreadRef"]["nativeId"] = json!("another-thread");
+    assert!(matches!(
+        session
+            .read_mcp_app_document(Request {
+                provider_thread: conn_contract::from_json(other).unwrap(),
+                server: "weather".into(),
+                operation: Operation::ReadResource {
+                    uri: "ui://weather".into()
+                }
+            })
+            .await,
+        Err(ProviderError::SessionStopped)
+    ));
+    std::fs::write(
+        log.with_extension("log.rules"),
+        json!([{"behavior":"deny","rule":"mcp__alias__tool"}]).to_string(),
+    )
+    .unwrap();
+    let tools = session
+        .mcp_app_request(request(Operation::ListTools))
+        .await
+        .unwrap();
+    assert!(tools[0]["annotations"].get("readOnlyHint").is_none());
+    assert!(
+        session
+            .mcp_app_request(request(Operation::CallTool {
+                tool: "show".into(),
+                arguments: json!({})
+            }))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("deny rule")
+    );
+    std::fs::write(log.with_extension("log.rules"), "[]").unwrap();
+    std::fs::write(log.with_extension("log.servers"),json!([{"name":"weather","status":"connected","tools":[{"name":"show.weather"},{"name":"show_weather"}]}]).to_string()).unwrap();
+    assert!(
+        session
+            .mcp_app_request(request(Operation::CallTool {
+                tool: "show.weather".into(),
+                arguments: json!({})
+            }))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("same Claude tool name")
+    );
+    std::fs::write(
+        log.with_extension("log.servers"),
+        json!([{"name":"weather"},{"name":"weather__other"}]).to_string(),
+    )
+    .unwrap();
+    assert!(
+        session
+            .mcp_app_request(request(Operation::ListTools))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("overlap")
+    );
+    let transcript = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(
+        transcript
+            .lines()
+            .filter(|line| line.contains("call callMcpTool"))
+            .count(),
+        1
+    );
+    assert!(transcript.contains("mcp__weather__show"));
+    session.close().await;
+    helper.stop().await;
 }

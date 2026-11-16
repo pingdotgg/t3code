@@ -9,3 +9,5 @@ annotations_release
 t3_background_wait
 request_secret
 panel_open
+mcp_call
+mcp_connect

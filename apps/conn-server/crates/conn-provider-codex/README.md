@@ -135,10 +135,9 @@ after. Errors carry T3's texts ("Codex CLI request timed out.", "Codex CLI comma
 - **Retries:** `error` with `willRetry: true` makes no retry row; the turn keeps running.
 - **Rate limits:** `account/rateLimits/*` is ignored, so usage-limit failures have no `resetAt`.
 - **T3 context details:** browser tools are assumed on and device tools off (TS reads both
-  from the MCP session); app context entries go in `additionalContext` as `untrusted`, but
-  the engine has no MCP apps and passes none. Snap-shot window context of image
-  attachments is not added.
-- **Tool rows:** MCP presentation (titles, icons, surfaces) and MCP apps.
+  from the MCP session). App context entries go in `additionalContext` as `untrusted`.
+  Snapshot window context of image attachments is not added.
+- **Tool rows:** MCP presentation (titles, icons, surfaces).
 - **Elicitations:** URL elicitations and forms an approval cannot fill are declined, as in T3.
   `item/tool/call` and auth-refresh requests get an error reply.
 - **Image generation**, prompt suggestions, async questions in agent messages, and the Linux
@@ -344,3 +343,9 @@ node tools/capture-ts-events.mjs   # regenerate testdata, offline
 - `session::tests` drives a whole session against a scripted fake app-server: a turn, an
   approval, an interrupt, close and process exit.
 - The live tests use `gpt-6-luna` in a temporary folder.
+
+MCP App requests use the existing app-server (`mcpServerStatus/list`, `mcpServer/tool/call`,
+`mcpServer/resource/read`). An unloaded thread resumes once before retrying. Native UI
+resource metadata triggers an HTML snapshot through the engine; the server reads no MCP or
+provider credentials. The stub test `mcp_apps_forward_through_the_existing_app_server` proves
+the forwarding and retry.

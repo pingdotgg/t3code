@@ -901,8 +901,10 @@ impl Inner {
             restart_continuation_of_run_id: context.run["restartContinuationOfRunId"]
                 .as_str()
                 .map(Into::into),
-            // No MCP apps here, so no app model context.
-            app_context: vec![],
+            app_context: self
+                .app_context(thread_id.to_owned())
+                .await
+                .unwrap_or_default(),
             app_thread: from_json(context.thread.clone()).map_err(|e| e.to_string())?,
             thread_id: thread_id.into(),
             run_id: run_id.into(),
@@ -1013,6 +1015,7 @@ impl Inner {
                 },
             };
             let Some(event) = event else { break };
+            let event = self.capture_app_event(&live, event).await;
             taken += 1;
             // T3's adapters offer a continuation to `ProviderContinuationRequests`, a queue apart
             // from their event stream, and `ProviderContinuationService` dispatches it at once:
@@ -2056,7 +2059,8 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
         ProviderEvent::MessageUpdated { message } => {
             Translated::Event(scoped("message.updated", to_json(&message)))
         }
-        ProviderEvent::TurnItemUpdated { turn_item } => {
+        ProviderEvent::TurnItemUpdated { turn_item }
+        | ProviderEvent::McpAppCapture { turn_item, .. } => {
             Translated::Event(scoped("turn-item.updated", to_json(&turn_item)))
         }
         ProviderEvent::RuntimeRequestUpdated {

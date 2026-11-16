@@ -12,6 +12,7 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { checkMcpApps } from "./mcp-apps-parity.mjs";
 import { McpSession, oauthMcpToken, pairBearer } from "./mcp-client.mjs";
 import { monorepo } from "../../../tools/monorepo.mjs";
 import { canaryEnv, gitEnv, sealedEnv, sealedPath } from "../../../tools/sealed-env.mjs";
@@ -31,6 +32,7 @@ if (rustBinary === undefined) {
   process.exit(2);
 }
 monorepo();
+await checkMcpApps(NodePath.join(NodePath.dirname(rustBinary), "mcp_apps"));
 const implemented = NodeFS.readFileSync(new URL("../tools.implemented", import.meta.url), "utf8")
   .split("\n")
   .map((line) => line.trim())
@@ -282,6 +284,9 @@ const searchOrder = (value) => value.matches.map((match) => [match.title, match.
 // Per-server state the calls refer to: project and thread ids differ.
 const context = [{}, {}];
 const steps = [
+  ["mcp_call", () => ({ tool: "weather", arguments: {} })],
+  ["mcp_connect", () => ({ name: "stub", url: "http://127.0.0.1:1/mcp" })],
+  ["mcp_connect", () => ({ name: "stub" })],
   [
     "t3_project_list",
     () => ({}),

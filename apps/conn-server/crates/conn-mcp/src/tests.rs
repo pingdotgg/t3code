@@ -2706,3 +2706,80 @@ async fn saved_secret_refs_sign_webhooks_with_project_scope_one_use_and_safe_rep
     );
     f.service.config.engine.shutdown().await;
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn mcp_panel_tools_relay_to_the_mac_and_keep_caller_guards() {
+    let f = fixture("mcp-panel-tools");
+    let mut outside = Client::open(&f.service, client(true)).await;
+    not_offered(&mut outside, "mcp_call", json!({"tool":"weather"})).await;
+    not_offered(
+        &mut outside,
+        "mcp_connect",
+        json!({"name":"stub","url":"http://127.0.0.1/mcp"}),
+    )
+    .await;
+    let thread = launch_as_swamp(&mut outside, "MCP", "hang", "full-access", "default").await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &thread)).await;
+    let error = agent
+        .request(
+            "tools/call",
+            json!({"name":"mcp_connect","arguments":{"name":"stub"}}),
+        )
+        .await;
+    assert!(
+        error.to_string().contains("Pass url or command, not both."),
+        "{error}"
+    );
+    let error = agent
+        .request(
+            "tools/call",
+            json!({"name":"mcp_call","arguments":{"tool":"weather"}}),
+        )
+        .await;
+    assert!(
+        error
+            .to_string()
+            .contains("No Conn desktop app is connected"),
+        "{error}"
+    );
+    let broker = f.service.config.panels.as_ref().unwrap();
+    let mut desktop = broker.subscribe().unwrap();
+    let connect = agent.ok("mcp_connect",json!({"name":"stub","url":"http://127.0.0.1/mcp","headers":{"X-Test":"stub"},"focusWindow":false}));
+    let stub = async {
+        let request = conn_contract::to_json(&desktop.recv().await.unwrap());
+        assert_eq!(request["threadId"], thread);
+        assert_eq!(request["focusWindow"], false);
+        assert_eq!(
+            request["mcpServer"],
+            json!({"name":"stub","url":"http://127.0.0.1/mcp","headers":{"X-Test":"stub"}})
+        );
+        broker.respond(conn_contract::from_json(json!({"requestId":request["requestId"],"ok":true,"deviceName":"Test Mac","mcp":{"server":"stub","tools":[{"name":"weather"}]}})).unwrap());
+    };
+    assert_eq!(
+        tokio::join!(connect, stub).0,
+        json!({"server":"stub","tools":[{"name":"weather"}],"shownOn":"Test Mac"})
+    );
+    let call = agent.ok(
+        "mcp_call",
+        json!({"server":"stub","tool":"weather","arguments":{"city":"Amsterdam"}}),
+    );
+    let stub = async {
+        let request = conn_contract::to_json(&desktop.recv().await.unwrap());
+        assert_eq!(
+            request["mcpCall"],
+            json!({"server":"stub","tool":"weather","arguments":{"city":"Amsterdam"}})
+        );
+        broker.respond(conn_contract::from_json(json!({"requestId":request["requestId"],"ok":true,"mcpCall":{"server":"stub","tool":"weather","content":[{"type":"text","text":"sunny"}],"isError":false,"truncated":false,"durationMs":1}})).unwrap());
+    };
+    assert_eq!(tokio::join!(call, stub).0["shownOn"], "Conn desktop");
+    dispatch(
+        &f,
+        json!({"type":"thread.archive","commandId":"close-mcp","threadId":thread}),
+    )
+    .await;
+    assert_eq!(
+        agent.failure("mcp_call", json!({"tool":"weather"})).await.0,
+        "parent_not_active"
+    );
+    f.service.config.engine.shutdown().await;
+}

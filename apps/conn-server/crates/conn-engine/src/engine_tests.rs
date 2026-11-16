@@ -4227,3 +4227,207 @@ async fn closing_a_secret_card_clears_the_shell_snapshot_and_resume_stream() {
     }
     engine.shutdown().await;
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn mcp_apps_calls_only_the_source_session_and_stores_context_without_a_session() {
+    let db = TempDb::new("mcp-apps");
+    struct AppSnapshots;
+    impl crate::EngineHost for AppSnapshots {
+        fn snapshot_mcp_app(
+            &self,
+            _thread: String,
+            source: conn_provider::mcp_apps::Source,
+            contents: Value,
+        ) -> crate::BoxFuture<'_, Result<Option<Value>, String>> {
+            Box::pin(async move {
+                assert_eq!(source.resource_uri, "ui://stub");
+                assert_eq!(contents[0]["text"], "<h1>App</h1>");
+                Ok(Some(
+                    json!({"attachmentId":"snapshot-html","server":source.server,"tool":source.tool,"resourceUri":source.resource_uri}),
+                ))
+            })
+        }
+    }
+    let provider = Arc::new(FakeProvider::new("claudeAgent"));
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![provider.clone()];
+    config.host = Some(Arc::new(AppSnapshots));
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId":"t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    dispatch(&engine, message("t1", "c2", "mcp-app")).await;
+    until_run_ends(&mut stream).await;
+    let projection = engine.get_thread_projection("t1".into()).await.unwrap();
+    let item = projection["turnItems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["id"] == "app:item")
+        .unwrap();
+    assert_eq!(item["output"]["t3McpApp"]["attachmentId"], "snapshot-html");
+    assert_eq!(
+        item["output"]["result"]["content"],
+        json!([{"type":"text","text":"Weather"}])
+    );
+    let target = json!({"threadId":"t1","itemId":"app:item","name":"refresh"});
+    let info = engine
+        .call("mcpApps.toolInfo", target.clone())
+        .await
+        .unwrap();
+    assert_eq!(info["callable"], true);
+    assert_eq!(info["readOnly"], true);
+    assert_eq!(info["title"], "Refresh");
+    let result = engine.call("mcpApps.callTool",json!({"threadId":"t1","itemId":"app:item","name":"refresh","arguments":{"city":"Amsterdam"}})).await.unwrap();
+    assert_eq!(
+        result["content"],
+        json!([{"type":"text","text":"Amsterdam"}])
+    );
+    let resources = engine
+        .call(
+            "mcpApps.readResource",
+            json!({"threadId":"t1","itemId":"app:item","uri":"ui://other"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resources["contents"][0]["uri"], "ui://other");
+    for name in ["hidden", "missing"] {
+        let error = engine
+            .call(
+                "mcpApps.callTool",
+                json!({"threadId":"t1","itemId":"app:item","name":name,"arguments":{}}),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error,EngineError::Rejected(v) if v["reason"] == "tool-not-callable"));
+    }
+    engine.shutdown().await;
+    let stopped = engine.call("mcpApps.toolInfo", target).await.unwrap_err();
+    assert!(matches!(stopped,EngineError::Rejected(v) if v["reason"] == "session-stopped"));
+    let context = |content| json!({"threadId":"t1","itemId":"app:item","conversationThreadId":"t1","content":content});
+    engine
+        .call(
+            "mcpApps.updateModelContext",
+            context(json!([{"type":"text","text":"one"}])),
+        )
+        .await
+        .unwrap();
+    engine
+        .call(
+            "mcpApps.updateModelContext",
+            context(json!([{"type":"text","text":"two"}])),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        engine.inner().app_context("t1".into()).await.unwrap(),
+        vec![conn_provider::AppContextEntry {
+            key: "mcp_app_app_item".into(),
+            text: "two".into()
+        }]
+    );
+    let mut fork = projection["thread"].clone();
+    fork["id"] = json!("fork");
+    fork["lineage"] =
+        json!({"rootThreadId":"t1","parentThreadId":"t1","relationshipToParent":"fork"});
+    let mut unrelated = fork.clone();
+    unrelated["id"] = json!("other");
+    unrelated["lineage"] =
+        json!({"rootThreadId":"other","parentThreadId":null,"relationshipToParent":null});
+    engine
+        .inner()
+        .db(move |s| {
+            let mut tx = s.tx()?;
+            tx.append(crate::store::Draft::new("fork", "thread.created", fork))?;
+            tx.append(crate::store::Draft::new(
+                "other",
+                "thread.created",
+                unrelated,
+            ))?;
+            tx.commit(None)
+        })
+        .await
+        .unwrap();
+    let fork_input = json!({"threadId":"t1","itemId":"app:item","conversationThreadId":"fork","structuredContent":{"city":"Amsterdam"}});
+    engine
+        .call("mcpApps.updateModelContext", fork_input)
+        .await
+        .unwrap();
+    assert_eq!(
+        engine.inner().app_context("fork".into()).await.unwrap()[0].text,
+        "{\"city\":\"Amsterdam\"}"
+    );
+    let unrelated = engine
+        .call(
+            "mcpApps.updateModelContext",
+            json!({"threadId":"t1","itemId":"app:item","conversationThreadId":"other"}),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(unrelated,EngineError::Rejected(v) if v["reason"] == "not-an-app"));
+    let mut run = projection["runs"][0].clone();
+    run["status"] = json!("rolled_back");
+    engine
+        .inner()
+        .db(move |s| {
+            let mut tx = s.tx()?;
+            tx.append(crate::store::Draft::new("t1", "run.updated", run))?;
+            tx.commit(None)
+        })
+        .await
+        .unwrap();
+    assert!(
+        engine
+            .inner()
+            .app_context("t1".into())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        engine
+            .inner()
+            .app_context("fork".into())
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    for (content, reason) in [
+        (json!([{"type":"image"}]), "unsupported-content"),
+        (
+            json!([{"type":"text","text":"é".repeat(8193)}]),
+            "request-failed",
+        ),
+    ] {
+        let error = engine
+            .call("mcpApps.updateModelContext", context(content))
+            .await
+            .unwrap_err();
+        assert!(matches!(error,EngineError::Rejected(v) if v["reason"] == reason));
+    }
+    engine
+        .call("mcpApps.updateModelContext", context(json!([])))
+        .await
+        .unwrap();
+    assert!(
+        engine
+            .inner()
+            .app_context("t1".into())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        provider.sessions.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "App requests never open sessions"
+    );
+}
