@@ -261,6 +261,8 @@ export function resolveThreadListV2ReadAction(thread: EnvironmentThreadShell) {
   if (
     thread.lastVisitedAt === undefined ||
     !thread.latestRun?.completedAt ||
+    thread.latestRun.status === "cancelled" ||
+    thread.latestRun.status === "interrupted" ||
     resolveThreadListV2Status(thread) !== "ready"
   )
     return null;
