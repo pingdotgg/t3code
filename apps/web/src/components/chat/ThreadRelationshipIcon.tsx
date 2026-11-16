@@ -1,5 +1,6 @@
 import type { ProviderDriverKind, ServerProvider } from "@t3tools/contracts";
 import { BotIcon, type LucideIcon } from "lucide-react";
+import { translateDynamic } from "../../i18nCore";
 import { cn } from "../../lib/utils";
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
@@ -8,38 +9,38 @@ export function threadRelationshipStatusLabel(status: string | null): string {
   switch (status) {
     case "preparing":
     case "starting":
-      return "Starting";
+      return translateDynamic("chat:relationshipStatus.starting");
     case "running":
     case "in_progress":
-      return "Running";
+      return translateDynamic("chat:relationshipStatus.running");
     case "pending":
     case "queued":
-      return "Queued";
+      return translateDynamic("chat:relationshipStatus.queued");
     case "waiting":
     case "blocked":
-      return "Waiting";
+      return translateDynamic("chat:relationshipStatus.waiting");
     case "completed":
-      return "Done";
+      return translateDynamic("chat:relationshipStatus.done");
     case "failed":
     case "error":
-      return "Failed";
+      return translateDynamic("chat:relationshipStatus.failed");
     case "cancelled":
     case "interrupted":
-      return "Stopped";
+      return translateDynamic("chat:relationshipStatus.stopped");
     case "rolled_back":
-      return "Reverted";
+      return translateDynamic("chat:relationshipStatus.reverted");
     case "resolved_native":
-      return "Resolved (native)";
+      return translateDynamic("chat:relationshipStatus.resolvedNative");
     case "resolved_portable":
-      return "Resolved (portable)";
+      return translateDynamic("chat:relationshipStatus.resolvedPortable");
     case "consumed":
-      return "Consumed";
+      return translateDynamic("chat:relationshipStatus.consumed");
     case "superseded":
-      return "Superseded";
+      return translateDynamic("chat:relationshipStatus.superseded");
     case "idle":
-      return "Idle";
+      return translateDynamic("chat:relationshipStatus.idle");
     default:
-      return "Unknown";
+      return translateDynamic("chat:relationshipStatus.unknown");
   }
 }
 

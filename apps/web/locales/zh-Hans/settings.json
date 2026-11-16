@@ -941,6 +941,8 @@
     "customOption": "自定义选项",
     "customTag": "自定义",
     "default": "默认",
+    "disableAll": "全部停用",
+    "enableAll": "全部启用",
     "defaultChoiceAria": "默认选项值",
     "displayName": "显示名称",
     "idUsedTwice": "{{position}}：id「{{id}}」被使用了两次。",
@@ -1959,6 +1961,11 @@
     "noIcons": "未找到图标。",
     "pasteEmoji": "或粘贴任意 emoji",
     "saveIcon": "保存图标"
+  },
+  "providerSettingText": {
+    "binaryPath": { "label": "二进制文件路径" },
+    "launchArgs": { "label": "启动参数" },
+    "shadowHomePath": { "label": "影子主目录路径" }
   },
   "providerAdvisory": {
     "compatBroken": "已知损坏版本",

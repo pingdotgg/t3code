@@ -950,6 +950,8 @@
     "copyFromModelAria": "Copy options from a built-in model",
     "custom": "Custom…",
     "customOption": "Custom option",
+    "disableAll": "Disable all",
+    "enableAll": "Enable all",
     "customTag": "custom",
     "default": "Default",
     "defaultChoiceAria": "Default choice",
@@ -1977,6 +1979,11 @@
     "noIcons": "No icons found.",
     "pasteEmoji": "Or paste any emoji",
     "saveIcon": "Save icon"
+  },
+  "providerSettingText": {
+    "binaryPath": { "label": "Binary path" },
+    "launchArgs": { "label": "Launch arguments" },
+    "shadowHomePath": { "label": "Shadow home path" }
   },
   "providerAdvisory": {
     "compatBroken": "Known broken version",
