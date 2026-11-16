@@ -1070,7 +1070,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ...input.env,
           ...trace2Monitor.env,
         };
-        const env = { ...baseEnv, ...explicitBareRepositoryEnv(baseEnv, hostPlatform) };
+        const bareEnv = { ...baseEnv, ...explicitBareRepositoryEnv(baseEnv, hostPlatform) };
+        // Polls never save a refreshed index, so inode, owner or ctime written differently by
+        // another Git (Git for Windows read from WSL) would re-read every file on every poll.
+        const env = {
+          ...bareEnv,
+          ...gitConfigEnv(bareEnv, "core.checkStat", "minimal", hostPlatform),
+        };
         const spawnEnv = { ...env, ...windowsLongPathConfigEnv(hostPlatform, env) };
         const resolved = yield* resolveSpawnCommand("git", [], { env: spawnEnv });
         const spawnError = (cause: unknown) =>

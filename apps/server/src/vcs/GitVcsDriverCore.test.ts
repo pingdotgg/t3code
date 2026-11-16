@@ -462,6 +462,36 @@ it.effect.each(["root", "nested", "worktree"] as const)(
     }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("does not re-read a file that only differs from the index by inode", () =>
+  Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const cwd = yield* makeTmpDir();
+    yield* initRepoWithCommit(cwd);
+    yield* git(cwd, ["config", "filter.probe.clean", "echo clean >> .filter-runs; cat"]);
+    yield* writeTextFile(cwd, ".gitattributes", "asset.bin filter=probe\n");
+    yield* writeTextFile(cwd, ".gitignore", ".filter-runs\n");
+    yield* writeTextFile(cwd, "asset.bin", "original\n");
+    const assetPath = path.join(cwd, "asset.bin");
+    // An mtime older than the index keeps Git's racy-entry check from reading the file anyway.
+    NodeFS.utimesSync(assetPath, 1, 1);
+    yield* git(cwd, ["add", "."]);
+    yield* git(cwd, ["commit", "-m", "filtered asset"]);
+    // Same size and mtime, new inode: what Linux Git sees in an index written by Git for Windows.
+    NodeFS.copyFileSync(assetPath, `${assetPath}.copy`);
+    NodeFS.utimesSync(`${assetPath}.copy`, 1, 1);
+    NodeFS.renameSync(`${assetPath}.copy`, assetPath);
+    const runsPath = path.join(cwd, ".filter-runs");
+    yield* fs.remove(runsPath, { force: true });
+
+    const status = yield* driver.statusDetailsLocal(cwd);
+
+    assert.isFalse(status.hasWorkingTreeChanges);
+    assert.isFalse(yield* fs.exists(runsPath));
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each(["origin", "github"] as const)(
   "recognizes %s as the primary remote after a driver mutation",
   (remoteName) =>
