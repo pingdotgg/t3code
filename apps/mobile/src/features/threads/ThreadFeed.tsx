@@ -3672,22 +3672,18 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const setupAnchorIndex = presentedFeed.findIndex(
     (entry) => entry.type === "message" && entry.message.role === "user",
   );
-  // As on web: once the agent has the turn, setup still running shows as a chip on the live
-  // Working row; setup that ended shows as the card's summary row under the prompt.
-  const setupRunningHandedOff =
-    !!props.worktreeSetup &&
+  // As on web, setup still running after the agent took the turn rides on the live Working row.
+  const setupFoldRowId =
+    props.worktreeSetup &&
     worktreeSetupHandedOff(props.worktreeSetup) &&
-    props.worktreeSetup.snapshot.phase === "running";
-  const setupFoldRowId = setupRunningHandedOff
-    ? (presentedFeed.find(
-        (entry, index) =>
-          index > setupAnchorIndex && entry.type === "run-fold" && entry.workingSince !== undefined,
-      )?.id ?? null)
-    : null;
-  // Zen has no Working row to carry the chip, so it keeps the card.
-  const showSetupCard =
-    !!props.worktreeSetup &&
-    (!setupRunningHandedOff || (setupFoldRowId === null && props.toolCallVisibility === "zen"));
+    props.worktreeSetup.snapshot.phase === "running"
+      ? (presentedFeed.find(
+          (entry, index) =>
+            index > setupAnchorIndex &&
+            entry.type === "run-fold" &&
+            entry.workingSince !== undefined,
+        )?.id ?? null)
+      : null;
   const [groupFeed] = useState(createThreadFeedGrouping);
   const groupedFeed = groupFeed(presentedFeed, {
     workflowOpeningMessageId: workflowOpening?.messageId,
@@ -4066,7 +4062,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             workspaceRoot: props.workspaceRoot,
             workflowOpening,
           })}
-          {props.worktreeSetup && showSetupCard && info.index === setupAnchorIndex ? (
+          {props.worktreeSetup && info.index === setupAnchorIndex ? (
             <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
           ) : props.preparingWorktree && info.index === setupAnchorIndex ? (
             <WorktreePreparingHeader />

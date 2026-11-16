@@ -39,27 +39,22 @@ const icons: Record<WorktreeSetupStage["status"], AppSymbolName> = {
 };
 
 export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
-  if (worktreeSetupHandedOff(props) && props.snapshot.phase !== "running") {
-    return <WorktreeSetupSummaryRow {...props} />;
+  // Once the agent has the turn, running setup is a chip on the live Working row.
+  if (worktreeSetupHandedOff(props)) {
+    return props.snapshot.phase === "running" ? null : <WorktreeSetupSummaryRow {...props} />;
   }
   return <WorktreeSetupHeaderCard {...props} />;
 }
 
 function WorktreeSetupHeaderCard(props: WorktreeSetupCardProps) {
-  const { snapshot, turnStarted } = props;
-  const handedOff = turnStarted && worktreeSetupAgentStarted(snapshot);
+  const { snapshot } = props;
   const running = snapshot.phase === "running";
-  const backgroundSetup = handedOff && running;
-  const scriptName = snapshot.setupScript?.name ?? "Setup script";
   const [detailsOpen, setDetailsOpen] = useState(false);
   const now = useVisibleSecondClock(running);
   const failed =
     snapshot.phase === "failed" || snapshot.stages.some((stage) => stage.status === "failed");
-  // Once the agent has the turn, its own fold row carries the working timer.
   const label = running
-    ? handedOff
-      ? "Setup continues…"
-      : "Setting up worktree…"
+    ? "Setting up worktree…"
     : snapshot.phase === "cancelled"
       ? "Worktree setup cancelled"
       : snapshot.phase === "failed"
@@ -72,43 +67,21 @@ function WorktreeSetupHeaderCard(props: WorktreeSetupCardProps) {
     <View accessibilityLabel="Worktree setup" className="py-1">
       <View className="min-h-11 flex-row items-center gap-2 border-b border-border px-1">
         <HeaderLabel label={label} active={running && !detailsOpen} failed={failed} />
-        {!handedOff ? (
-          <Text
-            className="text-2xs text-foreground-secondary"
-            style={{ fontVariant: ["tabular-nums"] }}
-          >
-            {elapsed(snapshot.startedAt, snapshot.endedAt, now)}
-          </Text>
-        ) : null}
+        <Text
+          className="text-2xs text-foreground-secondary"
+          style={{ fontVariant: ["tabular-nums"] }}
+        >
+          {elapsed(snapshot.startedAt, snapshot.endedAt, now)}
+        </Text>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={
-            backgroundSetup
-              ? `Background setup is still running: ${scriptName}. Show setup progress.`
-              : "Worktree setup details"
-          }
+          accessibilityLabel="Worktree setup details"
           accessibilityState={{ expanded: detailsOpen }}
           onPress={() => setDetailsOpen(true)}
           className="min-h-11 max-w-[55%] justify-center px-2"
         >
-          <View
-            className={
-              backgroundSetup
-                ? "min-w-0 flex-row items-center gap-1 rounded-full border border-border px-2 py-1"
-                : "flex-row items-center gap-1"
-            }
-          >
-            {backgroundSetup ? (
-              <AppActivityIndicator
-                size={Platform.OS === "android" ? 12 : "small"}
-                colorClassName="accent-icon-muted"
-                style={{
-                  width: 12,
-                  height: 12,
-                  transform: Platform.OS === "android" ? undefined : [{ scale: 0.65 }],
-                }}
-              />
-            ) : failed ? (
+          <View className="flex-row items-center gap-1">
+            {failed ? (
               <SymbolView
                 name="exclamationmark.circle"
                 size={12}
@@ -116,30 +89,26 @@ function WorktreeSetupHeaderCard(props: WorktreeSetupCardProps) {
               />
             ) : null}
             <Text numberOfLines={1} className="shrink text-2xs text-foreground-secondary">
-              {backgroundSetup ? "Background setup" : "Details"}
+              Details
             </Text>
-            {!backgroundSetup ? (
-              <SymbolView name="chevron.right" size={10} tintColorClassName="accent-icon-muted" />
-            ) : null}
+            <SymbolView name="chevron.right" size={10} tintColorClassName="accent-icon-muted" />
           </View>
         </Pressable>
       </View>
-      {!handedOff ? (
-        <View className="pt-1 pb-2">
-          {snapshot.stages
-            .filter((stage) => stage.id !== "agent")
-            .map((stage) => (
-              <StageRow
-                key={stage.id}
-                stage={stage}
-                scriptName={snapshot.setupScript?.name ?? null}
-                now={now}
-                compact
-                animate={!detailsOpen}
-              />
-            ))}
-        </View>
-      ) : null}
+      <View className="pt-1 pb-2">
+        {snapshot.stages
+          .filter((stage) => stage.id !== "agent")
+          .map((stage) => (
+            <StageRow
+              key={stage.id}
+              stage={stage}
+              scriptName={snapshot.setupScript?.name ?? null}
+              now={now}
+              compact
+              animate={!detailsOpen}
+            />
+          ))}
+      </View>
       {detailsOpen ? (
         <SetupDetailsSheet {...props} now={now} onClose={() => setDetailsOpen(false)} />
       ) : null}
