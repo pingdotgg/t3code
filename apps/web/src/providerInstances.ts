@@ -3,6 +3,8 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
   resolveProjectProviderInstanceEnabled,
+  resolveProviderIconUrl,
+  resolveOfficialAcpRegistryIconUrl,
   type ModelSelection,
   type ProjectId,
   type ProviderDriverKind,
@@ -142,11 +144,22 @@ function applyProviderInstanceBranding(
     explicitInstance.config !== null && typeof explicitInstance.config === "object"
       ? (explicitInstance.config as Readonly<Record<string, unknown>>)
       : null;
+  const customIconUrl = resolveProviderIconUrl(
+    typeof config?.iconUrl === "string" ? config.iconUrl : null,
+  );
   if (config?.source === "local") {
-    return { ...entry, acpRegistryAgentId: undefined, acpRegistryIconUrl: undefined };
+    return {
+      ...entry,
+      acpRegistryAgentId: undefined,
+      acpRegistryIconUrl: customIconUrl ?? undefined,
+    };
   }
   const agentId = config?.agentId;
-  const iconUrl = config?.registryIconUrl;
+  const iconUrl =
+    customIconUrl ??
+    resolveOfficialAcpRegistryIconUrl(
+      typeof config?.registryIconUrl === "string" ? config.registryIconUrl : null,
+    );
   return {
     ...entry,
     ...(typeof agentId === "string" && agentId.trim()

@@ -20,6 +20,8 @@ import { Fragment, useState, type ReactElement, type ReactNode } from "react";
 import {
   isProviderDriverKind,
   resolveProviderInstanceEnabled,
+  resolveProviderIconUrl,
+  resolveOfficialAcpRegistryIconUrl,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type ProviderInstanceId,
@@ -960,9 +962,12 @@ export function ProviderInstanceCard({
           : (readConfigString(instance.config, "agentId") ?? undefined)
       }
       acpRegistryIconUrl={
-        readConfigString(instance.config, "source") === "local"
+        resolveProviderIconUrl(readConfigString(instance.config, "iconUrl")) ??
+        (readConfigString(instance.config, "source") === "local"
           ? undefined
-          : (readConfigString(instance.config, "registryIconUrl") ?? undefined)
+          : (resolveOfficialAcpRegistryIconUrl(
+              readConfigString(instance.config, "registryIconUrl"),
+            ) ?? undefined))
       }
       showBadge={Boolean(accentColor)}
       className="size-5"

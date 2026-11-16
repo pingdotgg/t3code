@@ -41,6 +41,19 @@ export function resolveOfficialAcpRegistryIconUrl(icon: string | null | undefine
   }
 }
 
+/** User-configured icons may use any HTTPS host; registry metadata stays CDN-only. */
+export function resolveProviderIconUrl(icon: string | null | undefined): string | null {
+  if (!icon || icon.length > 2048) return null;
+  try {
+    const url = new URL(icon);
+    return url.protocol === "https:" && url.username === "" && url.password === ""
+      ? url.href
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export const AcpRegistryDistribution = Schema.Literals(["binary", "npx", "uvx"]);
 export type AcpRegistryDistribution = typeof AcpRegistryDistribution.Type;
 

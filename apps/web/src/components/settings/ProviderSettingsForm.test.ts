@@ -70,6 +70,26 @@ describe("ProviderSettingsForm helpers", () => {
     ).toEqual({ launchArgs: "--x", autoCompactWindow: "300000" });
   });
 
+  it("offers an icon override for local ACP agents and clears it without changing the command", () => {
+    const definition = providerClients.get(ProviderDriverKind.make("acpRegistry"));
+    expect(definition).toBeDefined();
+    const config = {
+      source: "local",
+      commandPath: "hermes",
+      commandArgs: ["acp"],
+      iconUrl: "https://example.com/icon.png",
+    };
+    const field = deriveProviderSettingsFields(definition!, config).find(
+      (field) => field.key === "iconUrl",
+    );
+    expect(field).toBeDefined();
+    expect(nextProviderConfigWithFieldValue(config, field!, "")).toEqual({
+      source: "local",
+      commandPath: "hermes",
+      commandArgs: ["acp"],
+    });
+  });
+
   it("stores false boolean fields when true is the default", () => {
     const next = nextProviderConfigWithFieldValue(
       undefined,

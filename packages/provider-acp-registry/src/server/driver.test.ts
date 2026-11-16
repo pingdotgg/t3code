@@ -125,6 +125,28 @@ describe("acpRegistrySnapshotReadiness", () => {
     expect(model?.capabilities?.optionDescriptors).toEqual([fastMode]);
   });
 
+  it.each(["local", "registry"] as const)(
+    "uses a custom icon for %s agents and restores the default when cleared",
+    (source) => {
+      const snapshot = (iconUrl: string) =>
+        buildCheckedAcpRegistrySnapshot({
+          ...identity,
+          settings: decodeSettings({ source, agentId: "example", commandPath: "example", iconUrl }),
+          checkedAt: "2026-08-13T10:00:00.000Z",
+          inspection: { status: "ready", agentId: "example", version: null, distribution: "local" },
+        });
+      expect(snapshot("https://example.com/hermes.png").iconUrl).toBe(
+        "https://example.com/hermes.png",
+      );
+      expect(snapshot("").iconUrl).toBe(
+        source === "local"
+          ? undefined
+          : "https://cdn.agentclientprotocol.com/registry/v1/latest/example.svg",
+      );
+      expect(() => snapshot("file:///tmp/icon.png")).toThrow();
+    },
+  );
+
   it("shows the version reported by a local ACP agent", () => {
     const probe = acpRegistryProbeResult(identity.instanceId, {
       sessionId: "test-session",

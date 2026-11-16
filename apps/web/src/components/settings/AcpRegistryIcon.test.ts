@@ -23,8 +23,10 @@ describe("ACP Registry icon cache", () => {
     vi.stubGlobal("fetch", fetchIcon);
   });
 
-  it("single-flights the first fetch and serves later reads from persistent cache", async () => {
-    const url = "https://cdn.agentclientprotocol.com/registry/icons/cache-test.svg";
+  it.each([
+    "https://cdn.agentclientprotocol.com/registry/icons/cache-test.svg",
+    "https://example.com/custom-icon.svg",
+  ])("single-flights and caches icon requests for %s", async (url) => {
     fetchIcon.mockResolvedValue(
       new Response("<svg/>", {
         status: 200,

@@ -4,6 +4,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { useId, useState } from "react";
 import {
   resolveOfficialAcpRegistryIconUrl,
+  resolveProviderIconUrl,
   officialAcpRegistryIconUrlForAgentId,
 } from "@t3tools/contracts";
 
@@ -30,7 +31,7 @@ async function checkedIconBlob(response: Response): Promise<Blob> {
 }
 
 export function loadCachedAcpRegistryIcon(iconUrl: string): Promise<Blob> {
-  if (resolveOfficialAcpRegistryIconUrl(iconUrl) !== iconUrl) {
+  if (resolveProviderIconUrl(iconUrl) !== iconUrl) {
     return Promise.reject(new Error("ACP registry icon URL was not allowed."));
   }
   const pending = inFlightIcons.get(iconUrl);
@@ -41,7 +42,7 @@ export function loadCachedAcpRegistryIcon(iconUrl: string): Promise<Blob> {
       try {
         cache = await caches.open(ACP_REGISTRY_ICON_CACHE);
       } catch {
-        // Privacy modes may expose CacheStorage but reject access; icons still load from the allowlisted CDN.
+        // Privacy modes may expose CacheStorage but reject access; icons still load directly.
       }
     }
     if (cache !== null) {
@@ -69,7 +70,7 @@ export function loadCachedAcpRegistryIcon(iconUrl: string): Promise<Blob> {
   return load;
 }
 
-// Falls back to the raw allowlisted CDN URL when the validating fetch fails: the
+// Falls back to the validated HTTPS URL when the validating fetch fails: the
 // CDN serves no CORS headers, so the fetch is often blocked cross-origin while
 // native <img> loading still works. The object URL is shared per agent and
 // revoked when the last icon unmounts.
@@ -106,7 +107,7 @@ export function AcpRegistryAgentIcon({
   readonly fallbackClassName?: string;
 }) {
   const colorFilterId = useId();
-  const iconUrl = resolveOfficialAcpRegistryIconUrl(icon);
+  const iconUrl = resolveProviderIconUrl(icon);
   // Render only after the load pipeline resolves, so the fallback icon does
   // not flash a broken image.
   const source = AsyncResult.getOrElse(
@@ -150,7 +151,11 @@ export function AcpRegistryAgentIcon({
             "size-full object-contain",
             status !== "loaded" && "invisible absolute inset-0",
           )}
-          style={{ filter: `url(#${colorFilterId})` }}
+          style={
+            resolveOfficialAcpRegistryIconUrl(icon)
+              ? { filter: `url(#${colorFilterId})` }
+              : undefined
+          }
           decoding="async"
           referrerPolicy="no-referrer"
           src={source}

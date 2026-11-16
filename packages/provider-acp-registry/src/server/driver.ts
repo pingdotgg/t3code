@@ -2,6 +2,7 @@ import {
   officialAcpRegistryIconUrlForAgentId,
   ProviderDriverKind,
   resolveOfficialAcpRegistryIconUrl,
+  resolveProviderIconUrl,
   TextGenerationError,
   type AcpRegistryOperationError,
   type AcpRegistryProbeModel,
@@ -290,10 +291,11 @@ function baseSnapshot(
   },
 ): ServerProvider {
   const iconUrl =
-    input.settings.source === "local"
+    resolveProviderIconUrl(input.settings.iconUrl) ??
+    (input.settings.source === "local"
       ? null
       : (resolveOfficialAcpRegistryIconUrl(input.probe?.probe.icon) ??
-        officialAcpRegistryIconUrlForAgentId(input.settings.agentId));
+        officialAcpRegistryIconUrlForAgentId(input.settings.agentId)));
   return {
     instanceId: input.instanceId,
     driver: DRIVER_KIND,
