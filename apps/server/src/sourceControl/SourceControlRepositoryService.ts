@@ -33,6 +33,7 @@ import {
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
+import { sourceControlDefinitions } from "./sourceControlDefinitions.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { cloneUrlForProtocol, cloneUrlProtocol } from "@t3tools/shared/cloneUrl";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
@@ -489,15 +490,34 @@ export const make = Effect.gen(function* () {
         provider: input.provider,
       });
       const provider = yield* providers.get(providerKind);
-      const urls = yield* provider.createRepository({
-        cwd: input.cwd,
-        repository: input.repository.trim(),
-        visibility: input.visibility,
-      });
+      const repository = input.repository.trim();
+      const preferredRemoteName = input.remoteName?.trim() || "origin";
+      // A retry after a failed first push finds the repository created and added as the remote.
+      const useExistingRemote = Effect.fn(
+        "SourceControlRepositoryService.publishRepository.useExistingRemote",
+      )(
+        function* (createError: SourceControlProviderError) {
+          const remote = yield* git.execute({
+            operation: "SourceControlRepositoryService.publishRepository.existingRemote",
+            cwd: input.cwd,
+            args: ["remote", "get-url", "--", preferredRemoteName],
+          });
+          const urls = yield* provider.getRepositoryCloneUrls({ cwd: input.cwd, repository });
+          const remoteKey = sourceControlDefinitions.repositoryKeyFromRemote(remote.stdout.trim());
+          if (remoteKey !== sourceControlDefinitions.repositoryKeyFromRemote(urls.url)) {
+            return yield* createError;
+          }
+          return urls;
+        },
+        (effect, createError) => Effect.mapError(effect, () => createError),
+      );
+      const urls = yield* provider
+        .createRepository({ cwd: input.cwd, repository, visibility: input.visibility })
+        .pipe(Effect.catch(useExistingRemote));
       const remoteUrl = selectRemoteUrl(urls, input.protocol);
       const remoteName = yield* git.ensureRemote({
         cwd: input.cwd,
-        preferredName: input.remoteName?.trim() || "origin",
+        preferredName: preferredRemoteName,
         url: remoteUrl,
       });
 
