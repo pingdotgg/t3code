@@ -7,6 +7,7 @@ import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -968,7 +969,16 @@ export const registerLiveActivityPushToken = Effect.fn(
   }
 
   const lock = observeLiveActivityPushTokens(input.activity);
-  return yield* lock.withPermit(registerCurrentLiveActivityPushToken(input.activity));
+  return yield* lock.withPermit(
+    registerCurrentLiveActivityPushToken(input.activity).pipe(
+      // The background cleanup may have given up waiting for this registration.
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit) && exit.value
+          ? Effect.void
+          : endUnregisteredLiveActivityInBackground(input.activity.getId(), input.activity),
+      ),
+    ),
+  );
 });
 
 // Callers hold the activity's token lock.

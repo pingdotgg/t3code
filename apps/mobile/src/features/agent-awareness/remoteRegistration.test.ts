@@ -634,14 +634,19 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     );
   });
 
-  it.effect.each(["accepted", "rejected"] as const)(
-    "settles a card whose registration is still in flight in the background once the relay has %s it",
-    (outcome) => {
+  it.effect.each([
+    ["accepted", "token listener"],
+    ["rejected", "token listener"],
+    ["rejected", "retry"],
+  ] as const)(
+    "settles a card whose registration is still in flight in the background once the relay has %s it (%s)",
+    ([outcome, registeredBy]) => {
       const registrations = stubLiveActivityRelay();
+      let pushToken: string | null = null;
       let tokenListener: ((event: { readonly pushToken: string }) => void) | undefined;
       const activity = {
         getId: () => "activity-1",
-        getPushToken: vi.fn((): Promise<string | null> => Promise.resolve(null)),
+        getPushToken: vi.fn(() => Promise.resolve(pushToken)),
         addPushTokenListener: vi.fn((listener: typeof tokenListener) => {
           tokenListener = listener;
         }),
@@ -670,10 +675,15 @@ describe("makeRelayDeviceRegistrationRequest", () => {
             ),
           ),
         );
-        tokenListener?.({ pushToken: "activity-token" });
-        const listenerRegistration = backgroundRuntime.pending.shift()!;
+        if (registeredBy === "retry") {
+          pushToken = "activity-token";
+          vi.advanceTimersByTime(15_000);
+        } else {
+          tokenListener?.({ pushToken: "activity-token" });
+        }
+        const registration = backgroundRuntime.pending.shift()!;
         const inFlight = yield* Effect.forkChild(
-          listenerRegistration.operation as Effect.Effect<
+          registration.operation as Effect.Effect<
             unknown,
             AgentAwarenessRegistrationError,
             ManagedRelay.ManagedRelayClient
