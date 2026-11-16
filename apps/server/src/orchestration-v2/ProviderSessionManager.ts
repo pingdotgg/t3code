@@ -667,6 +667,7 @@ export const layerWithOptions = (
         const error = new ProviderAdapter.ProviderAdapterEventStreamError({
           driver: entry.runtime.driver,
           providerSessionId: entry.runtime.providerSessionId,
+          raisedByT3: true,
           ...(detachedThreadId === undefined ? {} : { detachedThreadId }),
           cause: detail,
         });
@@ -2710,6 +2711,9 @@ export const layerWithOptions = (
               retry: stalled.retry,
               ...(stalled.startedAt === null ? {} : { retryStartedAt: stalled.startedAt }),
               threadDisposition: event.threadDisposition,
+              ...(event.retainedRuntimeRequestIds === undefined
+                ? {}
+                : { retainedRuntimeRequestIds: event.retainedRuntimeRequestIds }),
             },
           };
         };
@@ -2854,6 +2858,7 @@ export const layerWithOptions = (
                               new ProviderAdapter.ProviderAdapterEventStreamError({
                                 driver: entry.runtime.driver,
                                 providerSessionId: entry.runtime.providerSessionId,
+                                raisedByT3: true,
                                 cause,
                               }),
                           ),
@@ -2894,6 +2899,7 @@ export const layerWithOptions = (
                       new ProviderAdapter.ProviderAdapterEventStreamError({
                         driver: entry.runtime.driver,
                         providerSessionId: entry.runtime.providerSessionId,
+                        raisedByT3: true,
                         cause: "Provider event stream ended unexpectedly.",
                       }),
                     );
