@@ -1,3 +1,5 @@
+/// <reference lib="dom" />
+// The DOM lib types the function this scenario runs in the page.
 import { expect } from "e2e";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -8,9 +10,22 @@ import { makeState, runPromise, test, WEB } from "./t3.ts";
 test(
   "Latest turn in the Diff panel moves to the next completed turn",
   WEB,
-  async ({ t3, app, screen }) => {
+  async ({ t3, app, browser, screen }) => {
     const project = await t3.project("demo", { "notes.txt": "first line\n" });
     const thread = await t3.thread({ project, title: "Latest turn", messages: ["first"] });
+
+    // The diff renders in shadow roots that locators do not reach.
+    const diffPanelLines = () =>
+      browser.evaluate(() => {
+        const panel = document
+          .querySelector('[aria-label^="Diff scope:"]')
+          ?.closest("[data-surface-subheader]")?.parentElement;
+        return Array.from(panel?.querySelectorAll("*") ?? []).flatMap((host) =>
+          Array.from(host.shadowRoot?.querySelectorAll("[data-line]") ?? [], (line) =>
+            (line.textContent ?? "").trim(),
+          ),
+        );
+      });
 
     await t3.open(thread);
     await expect(screen.getByText("first fixture turn complete", { exact: false })).toBeVisible();
@@ -34,5 +49,7 @@ test(
     await expect(screen.getByText("Loading code...")).toBeHidden();
     await app.screenshot("after-next-turn");
     await expect(screen.getByRole("button", "Diff scope: Latest turn")).toBeVisible();
+    await screen.getByRole("button", "Expand notes.txt").tap();
+    await expect.poll(diffPanelLines).toContain("second turn line");
   },
 );
