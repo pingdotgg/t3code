@@ -55,10 +55,12 @@ function fixture(t) {
     write,
     commit,
     before,
+    report: path.join(cwd, ".git", "sync-report.md"),
     sync: () =>
       spawnSync(bash, [script.replaceAll("\\", "/"), "upstream"], {
         cwd,
         encoding: "utf8",
+        env: { ...process.env, SYNC_REPORT: path.join(cwd, ".git", "sync-report.md") },
       }),
   };
 }
@@ -69,6 +71,8 @@ test("resolves generated budget and workflow conflicts while preserving the fork
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(git("diff", "--name-only", "--diff-filter=U"), "");
   assert.equal(git("diff", "--cached", before, "--", ".github/workflows"), "");
+  assert.equal(fs.existsSync(path.join(cwd, ".github/workflows/fork-removed.yml")), false);
+  assert.equal(fs.existsSync(path.join(cwd, ".github/workflows/added.yml")), false);
   assert.equal(fs.readFileSync(path.join(cwd, budget), "utf8"), '{"bytes":3}\n');
   assert.equal(fs.existsSync(path.join(cwd, "upstream.txt")), true);
   assert.equal(git("rev-parse", "MERGE_HEAD"), git("rev-parse", "upstream"));
@@ -81,9 +85,10 @@ test("resolves generated budget and workflow conflicts while preserving the fork
   assert.equal(git("status", "--porcelain"), "");
 });
 
-test("aborts source conflicts without changing the fork branch or worktree", (t) => {
-  const { cwd, git, write, commit, sync } = fixture(t);
+test("stops before an upstream commit whose source conflicts, without touching main", (t) => {
+  const { cwd, git, write, commit, sync, report } = fixture(t);
   git("checkout", "upstream");
+  git("reset", "--hard", "HEAD~1");
   write("source.txt", "upstream\n");
   commit("upstream source");
   git("checkout", "main");
@@ -91,9 +96,37 @@ test("aborts source conflicts without changing the fork branch or worktree", (t)
   commit("fork source");
   const before = git("rev-parse", "HEAD");
   const result = sync();
-  assert.equal(result.status, 1);
+  assert.equal(result.status, 3, result.stdout + result.stderr);
   assert.match(result.stdout + result.stderr, /source\.txt/);
   assert.equal(git("rev-parse", "HEAD"), before);
   assert.equal(git("status", "--porcelain"), "");
   assert.equal(spawnSync("git", ["rev-parse", "--verify", "MERGE_HEAD"], { cwd }).status, 128);
+  assert.match(
+    fs.readFileSync(report, "utf8"),
+    /upstream source[\s\S]*nothing[\s\S]*`source\.txt`/,
+  );
+});
+
+test("merges the clean upstream commits before the first conflicting one", (t) => {
+  const { cwd, git, write, commit, sync, report } = fixture(t);
+  const clean = git("rev-parse", "upstream");
+  git("checkout", "upstream");
+  write("source.txt", "upstream\n");
+  commit("upstream source");
+  write("later.txt", "later\n");
+  commit("upstream later");
+  git("checkout", "main");
+  write("source.txt", "fork\n");
+  commit("fork source");
+  const result = sync();
+  assert.equal(result.status, 3, result.stdout + result.stderr);
+  assert.equal(git("rev-parse", "MERGE_HEAD"), clean);
+  assert.equal(git("diff", "--name-only", "--diff-filter=U"), "");
+  assert.equal(fs.readFileSync(path.join(cwd, "source.txt"), "utf8"), "fork\n");
+  assert.equal(fs.existsSync(path.join(cwd, "upstream.txt")), true);
+  assert.equal(fs.existsSync(path.join(cwd, "later.txt")), false);
+  assert.match(
+    fs.readFileSync(report, "utf8"),
+    /upstream source[\s\S]*Merged up to:\*\* \w+ upstream\n[\s\S]*`source\.txt`/,
+  );
 });

@@ -18,8 +18,10 @@ name: Fork release
 #
 # Upstream workflow changes are not taken: the sync restores .github/workflows to the
 # fork's version, which also keeps the default token allowed to push. The generated agent
-# context budget is measured again after merging. Other conflicts fail the run; resolve
-# them on a branch, merge that into main, and the next run releases.
+# context budget is measured again after merging. When other files conflict, the sync merges
+# upstream up to the last commit before the conflict and still releases, then opens (or
+# updates) an "Upstream sync is blocked" issue naming the commit and files, and the run
+# fails. Resolve them on a branch and merge that into main; the next run closes the issue.
 # To push merges that need more than the default token, add a SYNC_TOKEN secret (a PAT).
 
 on:
@@ -37,6 +39,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 concurrency:
   group: fork-release
@@ -48,6 +51,7 @@ jobs:
     if: github.repository != 'pingdotgg/t3code'
     runs-on: ubuntu-latest
     outputs:
+      blocked: ${{ steps.sync.outputs.blocked }}
       build: ${{ steps.plan.outputs.build }}
       version: ${{ steps.plan.outputs.version }}
       sha: ${{ steps.plan.outputs.sha }}
@@ -71,7 +75,13 @@ jobs:
           git remote add upstream https://github.com/pingdotgg/t3code.git
           git fetch --no-tags upstream main
 
-          bash .github/scripts/sync-upstream.sh
+          status=0
+          SYNC_REPORT="$RUNNER_TEMP/sync-report.md" bash .github/scripts/sync-upstream.sh || status=$?
+          if [ "$status" -eq 3 ]; then
+            echo "blocked=true" >> "$GITHUB_OUTPUT"
+          elif [ "$status" -ne 0 ]; then
+            exit "$status"
+          fi
           if git rev-parse --verify MERGE_HEAD >/dev/null 2>&1; then
             echo "merged=true" >> "$GITHUB_OUTPUT"
           fi
@@ -101,6 +111,27 @@ jobs:
           git add apps/server/src/provider/agentContextBudget.json
           git commit --no-edit
           git push origin HEAD:main
+
+      # One open issue tracks a blocked sync: updated while blocked, closed once it merges.
+      - name: Report sync status
+        if: steps.sync.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BLOCKED: ${{ steps.sync.outputs.blocked }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Upstream sync is blocked by a conflict"
+          issue="$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')"
+          if [ "$BLOCKED" = "true" ]; then
+            { cat "$RUNNER_TEMP/sync-report.md"; echo; echo "Last checked by $RUN_URL"; } > sync-issue.md
+            if [ -n "$issue" ]; then
+              gh issue edit "$issue" --body-file sync-issue.md
+            else
+              gh issue create --title "$title" --body-file sync-issue.md
+            fi
+          elif [ -n "$issue" ]; then
+            gh issue close "$issue" --comment "Resolved: $RUN_URL merged upstream/main."
+          fi
 
       - name: Plan release
         id: plan
@@ -302,3 +333,14 @@ jobs:
             --title "T3 Code $VERSION" \
             --notes-file release-notes.md \
             --latest
+
+  sync-blocked:
+    name: Upstream sync blocked
+    needs: [prepare, publish]
+    if: always() && needs.prepare.outputs.blocked == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail for the blocked sync
+        run: |
+          echo "::error::Upstream sync is blocked by a conflict. See the open \"Upstream sync is blocked by a conflict\" issue."
+          exit 1
