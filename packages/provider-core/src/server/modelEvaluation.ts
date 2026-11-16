@@ -197,6 +197,7 @@ export function buildModelEvaluationEvidence(input: {
     .filter((item) => item.threadId === input.run.threadId && item.runId === input.run.id)
     .toSorted((a, b) => a.ordinal - b.ordinal);
   const requestMessage = messageById.get(input.run.userMessageId);
+  if (requestMessage?.notification !== undefined) return null;
   const requestItem = items.find(
     (item) => item.type === "user_message" && item.messageId === input.run.userMessageId,
   );

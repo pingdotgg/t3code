@@ -466,17 +466,22 @@ const make = Effect.gen(function* () {
           runOutcome,
         });
       const evidence = build(records);
+      const automatedWake = records.messages.some(
+        (message) => message.id === records.run.userMessageId && message.notification !== undefined,
+      );
       const attributed =
         records.run.providerInstanceId === records.run.modelSelection.instanceId &&
         (yield* attributionKnown(threadId, runId, records.run.modelSelection));
       let status: ModelEvaluationRecord["status"] = "skipped";
-      let reason: string | null = "The run has no complete request and final response to evaluate.";
+      let reason: string | null = automatedWake
+        ? "The request was an automated wake, not a user prompt. No model score was recorded."
+        : "The run has no complete request and final response to evaluate.";
       let verdict: ModelEvaluationRecord["verdict"] = null;
-      if (!attributed)
+      if (!automatedWake && !attributed)
         reason = "The executed model could not be attributed to one stable model selection.";
-      if (!settled)
+      if (!automatedWake && !settled)
         reason = "The run could not finish checkpoint finalization. No model score was recorded.";
-      if (evidence !== null && attributed && settled) {
+      if (!automatedWake && evidence !== null && attributed && settled) {
         const generated = yield* Effect.gen(function* () {
           const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-model-evaluation-" });
           return yield* textGeneration.generateModelEvaluation({
