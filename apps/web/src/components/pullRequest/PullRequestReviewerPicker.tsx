@@ -9,6 +9,12 @@ import {
   reviewerCandidateView,
   type ReviewerTruncation,
 } from "@t3tools/client-runtime/pull-request-reviewers";
+import {
+  emptySelection,
+  isSelected,
+  selectionChanges,
+  toggleSelection,
+} from "@t3tools/client-runtime/pull-request-selection";
 import { CheckIcon, UserPlusIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -46,7 +52,7 @@ export function PullRequestReviewerPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [pending, setPending] = useState<string | null>(null);
+  const [draft, setDraft] = useState(emptySelection<PullRequestReviewerCandidate>);
 
   const candidatesQuery = useEnvironmentQuery(
     open ? pullRequestEnvironment.reviewerCandidates({ environmentId, input: reference }) : null,
@@ -72,40 +78,43 @@ export function PullRequestReviewerPicker({
     search: searchResult,
   });
 
-  const toggle = async (candidate: PullRequestReviewerCandidate) => {
-    if (pending !== null) return;
-    setPending(candidate.id);
+  const send = async (people: ReadonlyArray<PullRequestReviewerCandidate>, requested: boolean) => {
+    if (people.length === 0) return;
     const result = await requestReviewers({
       environmentId,
       input: {
         ...reference,
-        reviewers: [{ id: candidate.id, kind: candidate.kind }],
-        requested: !candidate.isRequested,
+        reviewers: people.map(({ id, kind }) => ({ id, kind })),
+        requested,
       },
     });
-    setPending(null);
-    if (result._tag === "Failure") {
-      toastManager.add({
-        type: "error",
-        title: candidate.isRequested
-          ? `Could not take back the review request to ${candidate.login}`
-          : `Could not ask ${candidate.login} for a review`,
-        description: readableFailure(
-          squashAtomCommandFailure(result),
-          "The host refused it. Check that you have write access on this repository, and that they still have access to it.",
-        ),
-      });
-      return;
-    }
-    // The command reads the loaded list again only for somebody it lacked, and a search result
-    // is keyed by what was typed, so the one on screen is read here or it keeps the old request.
-    if (hostQuery !== null) searchResult.refresh();
+    if (result._tag === "Success") return;
+    const logins = people.map((person) => person.login).join(", ");
     toastManager.add({
-      type: "success",
-      title: candidate.isRequested
-        ? `Review request to ${candidate.login} taken back`
-        : `Review requested from ${candidate.login}`,
+      type: "error",
+      title: requested
+        ? `Could not ask ${logins} for a review`
+        : `Could not take back the review request to ${logins}`,
+      description: readableFailure(
+        squashAtomCommandFailure(result),
+        "The host refused it. Check that you have write access on this repository, and that they still have access to it.",
+      ),
     });
+  };
+
+  const onOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (nextOpen) return;
+    const latest = candidatesQuery.data?.candidates ?? [];
+    const { add, remove } = selectionChanges(
+      draft,
+      (key, person) =>
+        latest.find((entry) => `${entry.kind}:${entry.id}` === key)?.isRequested ??
+        person.isRequested,
+    );
+    setDraft(emptySelection());
+    // Removing first lets a host that keeps one reviewer take the new one.
+    void send(remove, false).then(() => send(add, true));
   };
 
   return (
@@ -115,7 +124,7 @@ export function PullRequestReviewerPicker({
       allowed={allowed}
       disabledReason="Asking someone to review needs write access on this repository"
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={onOpenChange}
       query={query}
       onQueryChange={setQuery}
       searchLabel="Search people with access"
@@ -134,8 +143,16 @@ export function PullRequestReviewerPicker({
       truncated={truncation !== null}
       truncatedLabel={truncation === null ? "" : TRUNCATED_LABELS[truncation](searchError)}
       candidateKey={(candidate) => `${candidate.kind}:${candidate.id}`}
-      disabled={pending !== null}
-      onSelect={(candidate) => void toggle(candidate)}
+      onSelect={(candidate) =>
+        setDraft((current) =>
+          toggleSelection(
+            current,
+            `${candidate.kind}:${candidate.id}`,
+            candidate,
+            candidate.isRequested,
+          ),
+        )
+      }
     >
       {(candidate) => (
         <>
@@ -143,7 +160,7 @@ export function PullRequestReviewerPicker({
           {candidate.kind === "team" ? (
             <span className="shrink-0 text-muted-foreground">team</span>
           ) : null}
-          {candidate.isRequested ? (
+          {isSelected(draft, `${candidate.kind}:${candidate.id}`, candidate.isRequested) ? (
             <CheckIcon aria-label="Already asked" className="size-3.5 shrink-0" />
           ) : null}
         </>
