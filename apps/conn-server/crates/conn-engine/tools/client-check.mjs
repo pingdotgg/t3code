@@ -402,7 +402,7 @@ check("fork: lineage, a native fork, and the relationship graph", () => {
   );
 });
 
-// Pull request links: T3's keys, GitCafe's spelling, a stack tombstone lifted by hand.
+// Pull request links: T3's GitHub keys, a stack tombstone lifted by hand.
 check("pull requests: link, unlink and relink as T3 writes them", () => {
   const followed = followThread(exported.pullRequestLinkItems);
   assert.equal(followed.status, "live");
@@ -418,7 +418,7 @@ check("pull requests: link, unlink and relink as T3 writes them", () => {
     source: link.source,
   }));
   assert.deepEqual(links, [
-    { host: "git.cafe", repository: "o/r", number: 4, url: "https://git.cafe/o/r/pulls/4", source: "manual" },
+    { host: "github.com", repository: "o/r", number: 4, url: "https://github.com/O/R/pull/4", source: "manual" },
     { host: "github.com", repository: "o/r", number: 9, url: "https://github.com/o/r/pull/9", source: "manual" },
   ]);
 });

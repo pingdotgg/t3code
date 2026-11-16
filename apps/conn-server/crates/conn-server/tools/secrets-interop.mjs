@@ -77,7 +77,6 @@ function secretSettings(tag) {
     },
     sourceControlHosts: {
       github: { tokens: { "github.com": `ghp-${tag}` } },
-      bitbucket: { accessToken: `bb-${tag}` },
     },
     cloudSpeechCredentials: { openai: `voice-${tag}` },
     usageLimitSources: {
@@ -120,7 +119,6 @@ function expectedSecrets(tag) {
     textGenerators: { tg: { apiKey: `tg-${tag}` } },
     sourceControlHosts: {
       github: { tokens: { "github.com": `ghp-${tag}` } },
-      bitbucket: { accessToken: `bb-${tag}` },
     },
     cloudSpeechCredentials: { openai: `voice-${tag}` },
     usageLimitSources: { u: { managementKey: `mk-${tag}` } },

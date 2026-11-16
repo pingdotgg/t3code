@@ -6,7 +6,7 @@
 //! step is `git`: the clone (its own child, see [`run_clone`]), the remote, the push.
 //!
 //! What reaches the client: a host's failure reads as T3's fixed "could not be completed" text
-//! unless the host gives a user-facing detail (only Bitbucket's "workspace/repository"
+//! unless the host gives a user-facing detail (a repository selector
 //! complaint does); git's stderr only through the redacted last lines of a failed clone; a
 //! failed push only through T3's fixed texts.
 

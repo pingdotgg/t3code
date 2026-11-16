@@ -64,7 +64,7 @@ function runtimeVariables() {
   };
 }
 
-/** Provider, source control host and VCS CLIs (not git): a server a check starts finds none. */
+/** Also hides upstream host CLIs: comparisons still start the full T3 server. */
 export const HOST_CLIS = [
   "claude", "codex", "grok", "gh", "glab", "fj", "tea", "az", "cafe", "origin",
   "cursor-agent", "opencode", "kiro-cli", "jj",
@@ -107,7 +107,7 @@ export function sealedPath(dir, path = process.env.PATH ?? "/usr/bin:/bin") {
 /**
  * The environment for a server that a check starts: `RUNTIME_VARIABLES` from the shell, a
  * fresh HOME, a stand-in shell and a `PATH` without provider or host CLIs. Discovery (`server.discoverSourceControl`) then reads no CLI
- * login of this machine (gh, glab, fj, ...), no token variable, and calls no host's API; the
+ * login of this machine (gh), no token variable, and calls no host's API; the
  * Claude and Codex status probes are off. `dir` must be a fresh temp folder the check removes.
  */
 export function sealedEnv(dir) {

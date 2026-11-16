@@ -474,19 +474,7 @@ mod tests {
                 .unwrap_or_default()
         };
         assert_eq!(kinds("versionControlSystems"), ["git", "jj"], "VCS");
-        assert_eq!(
-            kinds("sourceControlProviders"),
-            [
-                "github",
-                "cursor-origin",
-                "gitlab",
-                "gitcafe",
-                "forgejo",
-                "bitbucket",
-                "azure-devops"
-            ],
-            "hosts"
-        );
+        assert_eq!(kinds("sourceControlProviders"), ["github"], "hosts");
         let github = &answer["sourceControlProviders"][0];
         assert_eq!(github["status"], "missing", "no gh on the empty PATH");
         assert_eq!(github["auth"]["status"], "unknown", "{github}");
@@ -523,14 +511,14 @@ mod tests {
             waiting.detail, "No sign-in is in progress. Start again.",
             "wait detail"
         );
-        let other = sign_in_refusal(&sign_in("gitlab", "gitlab.com"), SignInStep::Cancel);
+        let other = sign_in_refusal(&sign_in("unknown", "example.com"), SignInStep::Cancel);
         assert_eq!(
             other.reason,
             SourceControlSignInFailure::Unsupported,
             "other host"
         );
         assert_eq!(
-            other.detail, "This server cannot sign in to gitlab. Use a token or the host's CLI.",
+            other.detail, "This server cannot sign in to unknown. Use a token or the host's CLI.",
             "other detail"
         );
         assert_eq!(
@@ -543,8 +531,8 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn only_github_can_star() {
         let input = SourceControlStarredInput {
-            provider: "gitlab".into(),
-            host: "gitlab.com".into(),
+            provider: "unknown".into(),
+            host: "example.com".into(),
             repository: "group/project".into(),
         };
         let dir = std::env::temp_dir();

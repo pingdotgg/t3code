@@ -18,9 +18,7 @@
       "stored": {
         "cloudSpeechCredentials": { "openai": "sk-openai", "xai": "xai-key" },
         "sourceControlHosts": {
-          "github": { "tokens": { "github.com": "ghp-token" } },
-          "gitcafe": { "token": "gitcafe-token" },
-          "bitbucket": { "accessToken": "bb-access", "apiToken": "bb-api" }
+          "github": { "tokens": { "github.com": "ghp-token" } }
         },
         "textGenerators": {
           "tg1": { "kind": "openaiCompatible", "baseUrl": "https://api.example.com/v1", "apiKey": "tg-key", "enabled": true }
@@ -46,14 +44,14 @@
       "name": "a patch that echoes the marker keeps the stored secrets",
       "stored": {
         "cloudSpeechCredentials": { "openai": "sk-openai" },
-        "sourceControlHosts": { "bitbucket": { "accessToken": "bb-access" } },
+        "sourceControlHosts": { "github": { "tokens": { "github.com": "ghp-token" } } },
         "textGenerators": {
           "tg1": { "kind": "openaiCompatible", "baseUrl": "https://api.example.com/v1", "apiKey": "tg-key", "enabled": true }
         }
       },
       "patch": {
         "cloudSpeechCredentials": { "openai": "••••••" },
-        "sourceControlHosts": { "bitbucket": { "accessToken": "••••••" } },
+        "sourceControlHosts": { "github": { "tokens": { "github.com": "••••••" } } },
         "textGenerators": {
           "tg1": { "kind": "openaiCompatible", "baseUrl": "https://api.example.com/v1", "apiKey": "••••••", "enabled": false }
         }

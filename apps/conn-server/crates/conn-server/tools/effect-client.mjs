@@ -544,7 +544,7 @@ const decodeEach = (client) =>
     yield* call("shell.openInEditor", { cwd: repo, editor: "vscode" });
     yield* call("terminal.clear", { threadId: none, terminalId: "default" });
     yield* call("terminal.observe", { threadId: none, terminalId: "default" });
-    // Source control: every host probed, with no login or token of this machine (sealedEnv).
+    // Source control: GitHub probed, with no login or token of this machine (sealedEnv).
     yield* call("server.discoverSourceControl", {});
     // As a T3 server without an app client id: typed refusals, signed-out, not starred.
     const signIn = { provider: "github", host: "github.com" };
@@ -554,9 +554,8 @@ const decodeEach = (client) =>
     const repository = { ...signIn, repository: "pingdotgg/t3code" };
     yield* call("sourceControl.appAccess", repository);
     yield* call("sourceControl.starred", repository);
-    yield* call("sourceControl.star", { ...repository, provider: "gitlab" });
-    // Repositories, with no host asked: a provider still "unknown" is refused, a Bitbucket name
-    // without a workspace fails before any request, and a clone copies the local repository.
+    yield* call("sourceControl.star", { ...repository, provider: "unknown" });
+    // Unknown providers are refused before any request; a clone copies the local repository.
     yield* call("sourceControl.lookupRepository", { provider: "unknown", repository: "o/r" });
     yield* call("sourceControl.cloneRepository", {
       remoteUrl: repo,
@@ -564,7 +563,7 @@ const decodeEach = (client) =>
     });
     yield* call("sourceControl.publishRepository", {
       cwd: repo,
-      provider: "bitbucket",
+      provider: "unknown",
       repository: "no-workspace",
       visibility: "private",
     });

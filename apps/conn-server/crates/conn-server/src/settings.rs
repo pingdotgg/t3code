@@ -163,6 +163,7 @@ impl SettingsStore {
                 Map::new()
             }
         };
+        retain_supported_hosts(&mut sparse);
         if secrets::move_inline(&secrets_dir, &mut sparse)
             && let Err(error) = write_settings(&path, &sparse)
         {
@@ -394,6 +395,8 @@ fn merge_entries(current: &mut Map<String, Value>, key: &str, patch: Value) {
 
 /// `applyServerSettingsPatch`, for the fields clients send.
 pub fn apply_patch(settings: &mut Map<String, Value>, mut patch: Map<String, Value>) {
+    retain_supported_hosts(settings);
+    retain_supported_hosts(&mut patch);
     translate_legacy_project_overrides(settings, &mut patch);
     let idle_compaction = patched_idle_compaction(settings, &patch);
     let background_profile = preset_background_profile(&patch);
@@ -653,6 +656,12 @@ fn derive_legacy_project_overrides(settings: &mut Map<String, Value>) {
             .filter_map(|(project, entry)| Some((project.clone(), entry.get(*key)?.clone())))
             .collect();
         settings.insert((*map).into(), Value::Object(derived));
+    }
+}
+
+pub(super) fn retain_supported_hosts(settings: &mut Map<String, Value>) {
+    if let Some(Value::Object(hosts)) = settings.get_mut("sourceControlHosts") {
+        hosts.retain(|kind, _| kind == "github");
     }
 }
 
@@ -922,14 +931,49 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_host_settings_are_ignored_on_load_and_update() {
+        let dir = temp_state();
+        let old = json!({"sourceControlHosts": {
+            "github": {"tokens": {"github.com": "ghp"}},
+            "gitlab": {"tokens": {"gitlab.com": "old"}},
+            "bitbucket": {"accessToken": "old"},
+            "gitcafe": {"token": "old"},
+            "forgejo": {"tokens": {"codeberg.org": "old"}},
+            "azure-devops": {}, "cursor-origin": {}
+        }});
+        fs::write(dir.join("settings.json"), old.to_string()).expect("settings");
+        let store = SettingsStore::open(dir.join("settings.json"));
+        assert_eq!(
+            store
+                .raw()
+                .get("sourceControlHosts")
+                .and_then(Value::as_object)
+                .map(Map::len),
+            Some(1)
+        );
+        assert_eq!(
+            store.for_client()["sourceControlHosts"],
+            json!({"github": {"tokens": {"github.com": SECRET_REDACTED}}})
+        );
+        let answer = store.update(old, None).expect("update");
+        assert_eq!(
+            answer["sourceControlHosts"],
+            json!({"github": {"tokens": {"github.com": SECRET_REDACTED}}})
+        );
+        assert_eq!(
+            on_disk(&dir)["sourceControlHosts"],
+            answer["sourceControlHosts"]
+        );
+        fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
     fn secrets_are_redacted_per_group_for_clients() {
         let mut view = object(json!({
             "providerInstances": { "oc": { "driver": "opencode", "config": { "serverPassword": "pw", "apiKey": "not-a-secret-here" },
                 "environment": [{ "name": "KEY", "value": "s3cret", "sensitive": true }, { "name": "MODE", "value": "x", "sensitive": false }] } },
             "sourceControlHosts": {
                 "github": { "tokens": { "GitHub.com": "ghp" } },
-                "gitcafe": { "token": "gc" },
-                "bitbucket": { "accessToken": "a", "apiToken": "b" },
             },
             "cloudSpeechCredentials": { "openai": "sk", "xai": "" },
             "textGenerators": { "t": { "apiKey": { "provider": "op", "reference": "op://v/i/f" } } },
@@ -947,8 +991,6 @@ mod tests {
         assert_eq!(instance["environment"][1]["value"], "x");
         let hosts = &view["sourceControlHosts"];
         assert_eq!(hosts["github"]["tokens"]["github.com"], SECRET_REDACTED);
-        assert_eq!(hosts["gitcafe"]["token"], SECRET_REDACTED);
-        assert_eq!(hosts["bitbucket"]["apiToken"], SECRET_REDACTED);
         assert_eq!(
             view["cloudSpeechCredentials"],
             json!({ "openai": SECRET_REDACTED, "xai": "" })
@@ -978,7 +1020,7 @@ mod tests {
             "providerInstances": { "oc": { "driver": "opencode", "config": { "serverPassword": "pw" },
                 "environment": [{ "name": "KEY", "value": "s3cret", "sensitive": true }, { "name": "MODE", "value": "x", "sensitive": false }] } },
             "textGenerators": { "t": { "kind": "openaiCompatible", "label": "T", "baseUrl": "http://127.0.0.1:9/v1", "apiKey": "key", "enabled": true } },
-            "sourceControlHosts": { "github": { "tokens": { "GitHub.com": "ghp" } }, "bitbucket": { "accessToken": "a" } },
+            "sourceControlHosts": { "github": { "tokens": { "GitHub.com": "ghp" } } },
             "cloudSpeechCredentials": { "openai": "sk", "xai": { "provider": "op", "reference": "op://v/i/f" } },
             "usageLimitSources": { "u": { "kind": "cliproxy", "url": "http://127.0.0.1:9", "managementKey": "mk" } },
         })
@@ -1001,10 +1043,6 @@ mod tests {
         assert_eq!(
             stored(&dir, "source-control-Z2l0aHVi-dG9rZW5z-Z2l0aHViLmNvbQ").as_deref(),
             Some("ghp")
-        );
-        assert_eq!(
-            stored(&dir, "source-control-Yml0YnVja2V0-YWNjZXNzVG9rZW4").as_deref(),
-            Some("a")
         );
         assert_eq!(stored(&dir, "voice-cloud-openai").as_deref(), Some("sk"));
         assert_eq!(stored(&dir, "usage-limit-source-dQ").as_deref(), Some("mk"));
@@ -1173,8 +1211,8 @@ mod tests {
     }
 
     /// Source control host tokens the T3 server moved to its store reach the host code as
-    /// tokens, never as the marker (the review's finding 3): GitHub sends the stored token,
-    /// Bitbucket no longer drops it, and a marker whose file is gone reads as no token, so the
+    /// tokens, never as the marker: GitHub sends the stored token,
+    /// and a marker whose file is gone reads as no token, so the
     /// environment's token is tried (the `github.rs` discovery table covers both paths).
     #[test]
     fn host_tokens_the_t3_server_moved_reach_source_control() {
@@ -1185,24 +1223,18 @@ mod tests {
             json!({
                 "sourceControlHosts": {
                     "github": { "tokens": { "github.com": SECRET_REDACTED, "ghe.example.com": SECRET_REDACTED } },
-                    "bitbucket": { "accessToken": SECRET_REDACTED },
-                    "gitcafe": { "token": SECRET_REDACTED },
                 },
             })
             .to_string(),
         )
         .unwrap();
         // `sourceControlHostSecretName`: kind, field and host, base64url.
-        for (name, value) in [
-            (
-                "source-control-Z2l0aHVi-dG9rZW5z-Z2l0aHViLmNvbQ",
-                "ghp-stored",
-            ),
-            ("source-control-Yml0YnVja2V0-YWNjZXNzVG9rZW4", "bb-stored"),
-        ] {
-            conn_support::secret_store::write(&dir.join("secrets"), name, value.as_bytes())
-                .unwrap();
-        }
+        conn_support::secret_store::write(
+            &dir.join("secrets"),
+            "source-control-Z2l0aHVi-dG9rZW5z-Z2l0aHViLmNvbQ",
+            b"ghp-stored",
+        )
+        .unwrap();
         let store = SettingsStore::open(dir.join("settings.json"));
         // What `HostInputs::settings` builds for each call.
         let settings = Settings::new(store.raw());
@@ -1215,17 +1247,9 @@ mod tests {
             Some("ghp-stored")
         );
         assert_eq!(
-            literal(settings.host("bitbucket").secret_field("accessToken")).as_deref(),
-            Some("bb-stored")
-        );
-        assert_eq!(
             settings
                 .host("github")
                 .keyed_secret("tokens", "ghe.example.com"),
-            SecretSetting::Unset
-        );
-        assert_eq!(
-            settings.host("gitcafe").secret_field("token"),
             SecretSetting::Unset
         );
         fs::remove_dir_all(dir).unwrap();

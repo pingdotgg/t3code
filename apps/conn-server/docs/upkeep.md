@@ -32,6 +32,11 @@ On the `sync/*` branch, after the upstream merge:
    reason, in the check's known list and in `docs/status.md`.
 5. Commit on the sync branch, and let both workflows pass before the merge.
 
+Source-control parity follows only GitHub and the core registry's unknown-host fallback
+(`FORK.md`, "Upstream scope"). `registry-diff` constructs T3's registry with its GitHub
+definition alone; it does not import or harvest other hosts. The followed files include
+source-control core, definitions and GitHub, but no other host packages.
+
 ## The tools
 
 | Command | What it does |
