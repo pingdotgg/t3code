@@ -12,7 +12,7 @@ read by the marketplace.
 
 Every skill but one in upstream's plugin manifest. From `skills/engineering/`: `code-review` (now `diff-review`),
 `codebase-design`, `diagnosing-bugs`, `domain-modeling`, `grill-with-docs`, `implement`,
-`implement-spec`, `improve-codebase-architecture`, `pr`, `prototype`, `research`, `retro`,
+`implement-spec`, `improve-codebase-architecture`, `prototype`, `research`, `retro`,
 `setup-matt-pocock-skills`, `tdd`, `to-spec`, `to-tickets`, `triage`, `wayfinder`, and `wizard`. From
 `skills/productivity/`: `grill-me`, `grilling`, `handoff`, `teach`, `to-questionnaire`, `wait-what`,
 and `writing-for-agents`.
@@ -23,6 +23,8 @@ and `writing-for-agents`.
   `skills/misc/`. Upstream's manifest does not ship them.
 - `ask-matt`, removed after the migration review: `ak-help` routes over every group, while
   `ask-matt` only knew this one. Skip it when syncing.
+- `pr`, removed when `tstack` came in: its `file-pr` covers filing a pull request, and nothing
+  else in `workflow/skills/` referenced `pr`. Skip it when syncing.
 - Each skill's `agents/openai.yaml`. It configures another vendor's agent and nothing here reads it.
 
 ## Local modifications

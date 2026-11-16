@@ -183,6 +183,7 @@ export default defineConfig({
       // Vendored skills stay byte-identical to upstream so syncs diff cleanly.
       "workflow/skills/mattpocock/**",
       "workflow/skills/pstack/**",
+      "workflow/skills/tstack/**",
       // Macroscope requires one glob per line; Markdown formatting corrupts it.
       ".macroscope/ignore.md",
       ".alchemy",
