@@ -5213,7 +5213,7 @@ describe("AcpAdapterV2", () => {
       { ending: "prompt returns an RPC error", followAgentWorkState },
     ]),
   )(
-    "ends a running tool call when its $ending (followAgentWorkState: $followAgentWorkState)",
+    "ends an open tool call when its $ending (followAgentWorkState: $followAgentWorkState)",
     ({ ending, followAgentWorkState }) =>
       Effect.gen(function* () {
         const agentExits = ending === "agent process exits mid-prompt";
