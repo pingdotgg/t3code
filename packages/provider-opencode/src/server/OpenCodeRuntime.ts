@@ -12,6 +12,7 @@ import {
   type QuestionAnswer,
   type QuestionRequest,
 } from "@opencode-ai/sdk/v2";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -505,6 +506,7 @@ function ensureRuntimeError(
 }
 
 const makeOpenCodeRuntime = Effect.gen(function* () {
+  const random = yield* SecureRandom.SecureRandom.pipe(Effect.provide(SecureRandom.layerWebCrypto));
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const netService = yield* NetService.NetService;
   const hostPlatform = yield* HostProcess.Platform;
@@ -630,6 +632,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           shell: spawnCommand.shell,
           env: {
             ...input.environment,
+            [OpenCodeServerLedger.SERVER_MARKER_ENV]: yield* random.uuidV4(),
             ...(serverPassword !== undefined ? { OPENCODE_SERVER_PASSWORD: serverPassword } : {}),
             // The value is set explicitly (rather than relying on inheritance) because
             // `extendEnv` is false whenever `input.environment` is provided.

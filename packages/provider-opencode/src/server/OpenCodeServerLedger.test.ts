@@ -5,6 +5,7 @@ import * as NodeReadline from "node:readline";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -48,7 +49,11 @@ const groupLeaderGuard = `pgid="$(ps -o pgid= -p $$ 2>&1 | tr -d ' ')"; [ "$pgid
 // Yields the group, or a description of why this shell cannot be used as one.
 const spawnGroupLeader = (args: ReadonlyArray<string>, script: string) =>
   Effect.gen(function* () {
+    const random = yield* SecureRandom.SecureRandom.pipe(
+      Effect.provide(SecureRandom.layerWebCrypto),
+    );
     const child = NodeChildProcess.spawn("/bin/sh", ["-c", groupLeaderGuard + script, ...args], {
+      env: { ...process.env, T3CODE_OPENCODE_SERVER_MARKER: yield* random.uuidV4() },
       detached: true,
       stdio: ["ignore", "pipe", "ignore"],
     });
@@ -162,6 +167,37 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
       expect(yield* fs.readDirectory(path.join(stateDir, "opencode-servers"))).toEqual([]);
       expect(groupExists(server.pid)).toBe(false);
     }).pipe(provideHost),
+  );
+
+  it.live.each(["missing", "different"])(
+    "leaves a same-boot leaderless replacement group with a %s marker alone",
+    (marker) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-ledger-" });
+        const gate = path.join(stateDir, "gate");
+        const ready = path.join(stateDir, "ready");
+        NodeChildProcess.execFileSync("mkfifo", [gate, ready]);
+        const environment =
+          marker === "missing"
+            ? "-u T3CODE_OPENCODE_SERVER_MARKER"
+            : "T3CODE_OPENCODE_SERVER_MARKER=unrelated-marker";
+        const unrelated = yield* spawnGroup(
+          SERVE_ARGS,
+          `env ${environment} /bin/sh -c 'echo > "${ready}"; exec sleep 600' & read _ < '${gate}'; exit 0`,
+        );
+        yield* fs.readFileString(ready);
+        yield* recordFromDeadServer(stateDir, unrelated);
+        yield* fs.writeFileString(gate, "\n");
+        yield* unrelated.exited;
+
+        const restarted = yield* OpenCodeServerLedger.make({ stateDir });
+        yield* restarted.reapOrphans;
+
+        expect(groupExists(unrelated.pid)).toBe(true);
+        expect(yield* fs.readDirectory(path.join(stateDir, "opencode-servers"))).toEqual([]);
+      }).pipe(provideHost),
   );
 
   it.live("leaves a leaderless group alone when it was recorded in an earlier boot", () =>

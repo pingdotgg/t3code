@@ -26,6 +26,7 @@ const OpenCodeServerEntry = Schema.Struct({
   stateDir: Schema.String,
   owner: ProcessIdentity,
   boot: Schema.optionalKey(Schema.Int),
+  marker: Schema.optionalKey(Schema.String),
 });
 type OpenCodeServerEntry = typeof OpenCodeServerEntry.Type;
 const OpenCodeServerEntryJson = Schema.fromJsonString(OpenCodeServerEntry);
@@ -42,6 +43,8 @@ export class OpenCodeServerLedger extends Context.Service<
     }) => Effect.Effect<Effect.Effect<void>>;
   }
 >()("@t3tools/provider-opencode/server/OpenCodeServerLedger") {}
+
+export const SERVER_MARKER_ENV = "T3CODE_OPENCODE_SERVER_MARKER";
 
 const ENTRY_DIRECTORY = "opencode-servers";
 const ENTRY_FILE = /^\d+\.json$/;
@@ -178,6 +181,35 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
     return Effect.succeed([]);
   };
 
+  const readMarker = Effect.fn("OpenCodeServerLedger.readMarker")(function* (
+    member: ObservedProcess,
+  ) {
+    const environment = yield* (
+      platform === "linux"
+        ? fs.readFileString(`/proc/${member.pid}/environ`)
+        : spawner.string(
+            ChildProcess.make("/bin/ps", ["eww", "-p", String(member.pid), "-o", "command="], {
+              stdin: "ignore",
+              stderr: "ignore",
+            }),
+          )
+    ).pipe(
+      Effect.timeout("5 seconds"),
+      Effect.orElseSucceed(() => ""),
+    );
+    // BSD ps appends the environment to argv; assignments in argv are not ownership markers.
+    const prefix = `${member.command} `;
+    const values =
+      platform === "linux"
+        ? environment
+        : environment.trimStart().startsWith(prefix)
+          ? environment.trimStart().slice(prefix.length)
+          : "";
+    const fields = values.split(platform === "linux" ? "\0" : /\s+/);
+    const marker = fields.find((field) => field.startsWith(`${SERVER_MARKER_ENV}=`));
+    return marker?.slice(SERVER_MARKER_ENV.length + 1);
+  });
+
   const isRunning = (identity: ProcessIdentity) =>
     observe(identity.pid).pipe(
       Effect.map(
@@ -213,6 +245,7 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
         return Effect.void;
       }
       const entryPath = path.join(directory, `${pgid}.json`);
+      const marker = yield* readMarker(member);
       const entry: OpenCodeServerEntry = {
         version: 1,
         pgid,
@@ -224,6 +257,7 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
         stateDir: input.stateDir,
         owner,
         boot,
+        ...(marker !== undefined ? { marker } : {}),
       };
       yield* writeFileStringAtomically({
         filePath: entryPath,
@@ -260,22 +294,27 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
       ),
     );
 
-  // Commands the server started can outlive it in its group. A reused pgid needs a new
-  // leader, which must exit too before its group is leaderless, so a leaderless group
-  // from the recorded boot is taken as the server's.
+  // A pgid can be reused within one boot after its original group empties.
+  // Surviving commands must carry the unique marker inherited from this server.
   const leaderlessGroupRemains = Effect.fn("OpenCodeServerLedger.leaderlessGroupRemains")(
     function* (entry: OpenCodeServerEntry) {
-      if (entry.boot === undefined || Math.abs(entry.boot - boot) > BOOT_TOLERANCE_SECONDS) {
+      if (
+        !entry.marker ||
+        entry.boot === undefined ||
+        Math.abs(entry.boot - boot) > BOOT_TOLERANCE_SECONDS
+      ) {
         return false;
       }
       const leader = yield* observe(entry.pgid);
       if (leader !== undefined && !leader.zombie && leader.pgid === entry.pgid) return false;
-      return (yield* observeGroup(entry.pgid)).some((member) => !member.zombie);
+      for (const member of yield* observeGroup(entry.pgid)) {
+        if (!member.zombie && (yield* readMarker(member)) === entry.marker) return true;
+      }
+      return false;
     },
   );
 
-  // Signals a group only while its recorded member still runs as recorded, or while the
-  // group lives on without a leader, so a recycled pid that leads its own group is never touched.
+  // Identity or an inherited per-spawn marker is required before signalling the group.
   const stopOrphan = Effect.fn("OpenCodeServerLedger.stopOrphan")(function* (
     entry: OpenCodeServerEntry,
   ) {
