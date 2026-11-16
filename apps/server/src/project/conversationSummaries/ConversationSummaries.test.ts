@@ -670,12 +670,14 @@ it.effect("records an unavailable model as a failed pass without publishing a su
 });
 
 it.effect.each([
-  "OpenCode returned empty output.",
-  "OpenCode returned invalid structured output.",
-] as const)("summarizes the next stretch after %s", (detail) => {
+  { kind: "empty", detail: "Router returned no text." },
+  { kind: "invalid-output", detail: "Router returned a reply T3 Code couldn't read." },
+] as const)("summarizes the next stretch after $kind output", ({ kind, detail }) => {
   const model = scripted((input) =>
     input.messages[0]?.text === rawText(0)
-      ? Effect.fail(new TextGenerationError({ operation: "generateConversationSummary", detail }))
+      ? Effect.fail(
+          new TextGenerationError({ operation: "generateConversationSummary", detail, kind }),
+        )
       : Effect.succeed({
           statements: [{ text: "The later stretch.", citations: [input.messages[0]!.ref] }],
         }),

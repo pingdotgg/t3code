@@ -711,6 +711,7 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
           .pipe(Effect.flip);
 
         expect(error.message).toContain("OpenCode returned empty output.");
+        expect(error.kind).toBe("empty");
         expect(error.cause).toMatchObject({
           _tag: "OpenCodeTextGenerationEmptyOutputError",
           operation: "generateCommitMessage",
