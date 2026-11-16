@@ -1871,9 +1871,6 @@ function markdownRenderer(remarkPlugins: PluggableList, rehypePlugins: Pluggable
   return renderer;
 }
 
-// VITE_T3_MARKDOWN_ISLANDS=0 measures against rendering every element with React.
-const MARKDOWN_ISLANDS = import.meta.env.VITE_T3_MARKDOWN_ISLANDS !== "0";
-
 type ChatMarkdownComponentState = ReturnType<typeof useChatMarkdownState>["componentState"];
 
 function hastClassName(node: HastElement): string | undefined {
@@ -2014,7 +2011,7 @@ const MarkdownSource = memo(function MarkdownSource({
   useEffect(() => {
     if (shared && cache) render.remember(text, entry);
   }, [render, text, entry, shared, cache]);
-  const islandState = MARKDOWN_ISLANDS ? use(ChatMarkdownRendererContext) : null;
+  const islandState = use(ChatMarkdownRendererContext);
   return (
     <ChatMarkdownTextContext value={text}>
       {islandState
