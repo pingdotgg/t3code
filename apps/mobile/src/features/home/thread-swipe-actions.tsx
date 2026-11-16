@@ -848,6 +848,7 @@ function ThreadSwipeActions(props: {
         fullSwipeThreshold={props.fullSwipeThreshold}
         icon={props.primaryAction.icon}
         label={props.primaryAction.label}
+        menu={props.primaryAction.menu}
         onPress={props.primaryAction.onPress}
         rowHeight={props.rowHeight}
         stretchesOnFullSwipe={fullSwipeIsPrimary}
