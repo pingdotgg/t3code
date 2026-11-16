@@ -25,6 +25,15 @@ describe("untrackedScannedFolders", () => {
       ).map((folder) => folder.name),
     ).toEqual(["web", "docs"]);
   });
+
+  it("leaves out folders a rule already follows", () => {
+    expect(
+      untrackedScannedFolders(
+        [{ path: "/work/*", name: "work/*" }],
+        [scanned("api"), scanned("deep", "/work/src/deep"), scanned("lib", "/other/lib")],
+      ).map((folder) => folder.name),
+    ).toEqual(["deep", "lib"]);
+  });
 });
 
 describe("trackedFoldersFromSelection", () => {

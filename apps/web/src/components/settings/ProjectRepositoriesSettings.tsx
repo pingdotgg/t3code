@@ -7,6 +7,7 @@ import {
   ensureBrowseDirectoryPath,
   followedTrackedFolders,
   getBrowseParentPath,
+  isFollowedByRule,
 } from "@t3tools/client-runtime/state/projects";
 import {
   AuthOrchestrationOperateScope,
@@ -17,7 +18,6 @@ import {
   type WorkspaceScanFoldersResult,
   type WorkspaceScannedFolder,
   isTrackedFolderRule,
-  trackedFolderCovers,
 } from "@t3tools/contracts";
 import { FolderIcon, PlusIcon } from "lucide-react";
 import { useId, useState } from "react";
@@ -99,13 +99,12 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
     (listQuery.data?.folders ?? []).map((folder) => [folder.path, folder.state]),
   );
   // A rule's row counts the repositories it matches right now.
-  const matchCount = (rule: string) =>
+  const followedBy = (rule: ProjectTrackedFolder) =>
     (listQuery.data?.folders ?? []).filter(
       (folder) =>
-        trackedFolderCovers(rule, folder.path) &&
-        folder.path.split(/[\\/]/).length === rule.split(/[\\/]/).length &&
+        isFollowedByRule([rule], folder.path) &&
         !tracked.some((entry) => entry.path === folder.path),
-    ).length;
+    );
   const updateProject = useOrchestrationCommand(projectEnvironment.update, {
     reportFailure: false,
   });
@@ -147,17 +146,25 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
       reportProjectFailure("Failed to scan for repositories", result);
       return;
     }
-    if (result.value.folders.length === 0) {
+    // A folder a rule follows is tracked already; offering it again would track it twice.
+    const folders = result.value.folders.filter(
+      (folder) => !isFollowedByRule(tracked, folder.path),
+    );
+    if (folders.length === 0) {
+      const followed = result.value.folders.length;
       toastManager.add(
         stackedThreadToast({
           type: "info",
-          title: "No repositories found",
-          description: `Nothing to track inside ${member.workspaceRoot}.`,
+          title: followed === 0 ? "No repositories found" : "Nothing new found",
+          description:
+            followed === 0
+              ? `Nothing to track inside ${member.workspaceRoot}.`
+              : `This project already follows every repository in ${member.workspaceRoot}.`,
         }),
       );
       return;
     }
-    setRescan(result.value);
+    setRescan({ ...result.value, folders });
   };
 
   const saveRescan = async (
@@ -168,10 +175,10 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
     // Following replaces the scanned folders' own entries with the rules that cover them.
     const next = follow
       ? [
-          ...mergeScannedTrackedFolders({ tracked, scanned: scan.folders, checked: [] }).filter(
-            (folder) => !isTrackedFolderRule(folder.path),
+          ...mergeScannedTrackedFolders({ tracked, scanned: scan.folders, checked: [] }),
+          ...followedTrackedFolders({ scanned: checked }).filter(
+            (folder) => !tracked.some((entry) => entry.path === folder.path),
           ),
-          ...followedTrackedFolders({ scanned: checked }),
         ]
       : mergeScannedTrackedFolders({ tracked, scanned: scan.folders, checked });
     if (await save(next, "Failed to save repositories")) setRescan(null);
@@ -227,7 +234,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
                   <span className="min-w-0 truncate">{folder.name}</span>
                   {isTrackedFolderRule(folder.path) ? (
                     <Badge size="sm" variant="info">
-                      {matchCount(folder.path)} followed
+                      {followedBy(folder).length} followed
                     </Badge>
                   ) : state ? (
                     <Badge size="sm" variant={state === "missing" ? "warning" : "outline"}>
@@ -238,7 +245,18 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
               }
               description={
                 <code className="block max-w-full truncate font-mono">
-                  {trackedFolderDisplayPath(folder.path, member.workspaceRoot)}
+                  {[
+                    trackedFolderDisplayPath(folder.path, member.workspaceRoot),
+                    ...(isTrackedFolderRule(folder.path)
+                      ? [
+                          followedBy(folder)
+                            .map((followed) => followed.name)
+                            .join(", "),
+                        ]
+                      : []),
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </code>
               }
               control={

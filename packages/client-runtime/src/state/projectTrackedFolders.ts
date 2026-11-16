@@ -1,20 +1,36 @@
 import {
   isTrackedFolderRule,
   PROJECT_TRACKED_FOLDERS_MAX,
+  trackedFolderCovers,
   type ProjectTrackedFolder,
   type WorkspaceScannedFolder,
 } from "@t3tools/contracts";
 
 const TRACKED_FOLDER_NAME_MAX = 128;
 
-/** Scanned folders a project does not track yet, in scan order. */
+const depth = (folderPath: string) => folderPath.split(/[\\/]/).filter(Boolean).length;
+
+/** Whether a rule the project tracks already follows this folder. */
+export function isFollowedByRule(
+  tracked: ReadonlyArray<ProjectTrackedFolder>,
+  folderPath: string,
+): boolean {
+  return tracked.some(
+    (rule) =>
+      isTrackedFolderRule(rule.path) &&
+      depth(rule.path) === depth(folderPath) &&
+      trackedFolderCovers(rule.path, folderPath),
+  );
+}
+
+/** Scanned folders a project does not track yet, by name or by rule, in scan order. */
 export function untrackedScannedFolders(
   tracked: ReadonlyArray<ProjectTrackedFolder>,
   scanned: ReadonlyArray<WorkspaceScannedFolder>,
 ): ReadonlyArray<WorkspaceScannedFolder> {
   const seen = new Set(tracked.map((folder) => folder.path));
   return scanned.filter((folder) => {
-    if (seen.has(folder.path)) return false;
+    if (seen.has(folder.path) || isFollowedByRule(tracked, folder.path)) return false;
     seen.add(folder.path);
     return true;
   });
