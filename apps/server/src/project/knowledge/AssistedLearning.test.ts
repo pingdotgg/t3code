@@ -375,7 +375,7 @@ it.effect("sends a peer reply as that peer, not as the assistant", () => {
 });
 
 it.effect(
-  "saves no decision the user never cited, even when a seat's own thread repeats it",
+  "saves no peer words the user never cited, though the seat's own thread repeats them",
   () => {
     const decision = {
       kind: "decision" as const,
@@ -434,8 +434,38 @@ it.effect(
             creationSource: "provider",
           },
         });
-        if (replyThreadId === threadId)
+        if (replyThreadId === threadId) {
+          yield* projections.apply({
+            id: EventId.make(`run:${id}`),
+            type: "run.created",
+            threadId,
+            providerInstanceId,
+            occurredAt: at,
+            payload: {
+              id: replyRunId,
+              threadId,
+              ordinal: 2,
+              providerInstanceId,
+              modelSelection: { instanceId: providerInstanceId, model: "gpt-6-astra" },
+              providerThreadId: null,
+              userMessageId: MessageId.make(id),
+              rootNodeId: null,
+              activeAttemptId: null,
+              status: "completed",
+              requestedAt: at,
+              startedAt: at,
+              completedAt: at,
+              checkpointId: null,
+              contextHandoffId: null,
+              publication: {
+                type: "peer_reply",
+                seatThreadId: seatId,
+                seatRunId: RunId.make("peer-seat-run"),
+              },
+            },
+          });
           yield* speakAsPeer({ threadId, runId: replyRunId, messageId: id, text });
+        }
         yield* runner.enqueueRun({
           threadId: replyThreadId,
           runId: replyRunId,
@@ -444,13 +474,9 @@ it.effect(
       }
       yield* TestClock.adjust("31 minutes");
       yield* runner.drainDue;
-      assert.equal(model.calls.length, 1);
       const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
       const { facts } = yield* knowledge.list({ projectId, status: "saved" });
-      assert.deepEqual(
-        facts.map((fact) => fact.kind),
-        ["convention"],
-      );
+      assert.deepEqual(facts, []);
     }).pipe(Effect.provide(makeLayer(model.generate)));
   },
 );
