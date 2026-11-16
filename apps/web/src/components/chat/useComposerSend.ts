@@ -645,8 +645,8 @@ export function useComposerSend(input: ComposerSendInput) {
         );
         return;
       }
-      // Edit mode repurposes the composer: sending saves the queued message in place
-      // instead of dispatching a new turn. The steer shortcut also sends it into the turn.
+      // Edit mode repurposes the composer: sending saves the queued message
+      // in place instead of dispatching a new turn.
       await queuedRunEdit.saveEdit(
         {
           prompt: promptForSend,
@@ -660,7 +660,7 @@ export function useComposerSend(input: ComposerSendInput) {
           replyTo,
         },
         setThreadError,
-        { steer: submissionIntent === "alternate" && dispatchMode === "steer" },
+        { dispatchMode, submissionIntent },
       );
       return;
     }

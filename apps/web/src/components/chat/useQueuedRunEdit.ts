@@ -3,6 +3,7 @@ import {
   makeQueuedRunEditStore,
   makeQueuedRunsAtom,
 } from "@t3tools/client-runtime/queued-run-edit";
+import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import {
@@ -50,6 +51,7 @@ import {
 } from "../../lib/composerContextReferences";
 import { readFileAsDataUrl } from "../../lib/imageCompression";
 import type { TerminalContextDraft } from "../../lib/terminalContext";
+import type { ComposerSubmissionIntent } from "../../composer-logic";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../../state/server";
@@ -374,7 +376,10 @@ export function useQueuedRunEdit(input: {
   const saveEdit = async (
     content: QueuedRunEditContent,
     setThreadError: (threadId: ThreadId, error: string | null) => void,
-    options?: { readonly steer?: boolean },
+    submission?: {
+      readonly dispatchMode: ComposerDispatchMode;
+      readonly submissionIntent: ComposerSubmissionIntent;
+    },
   ) => {
     if (editing === null || isSaving) return;
     const newAttachments = [...content.images, ...content.files];
@@ -449,7 +454,11 @@ export function useQueuedRunEdit(input: {
     clearEditDraft(editing.runId);
     composerRef.current?.resetCursorState();
     focusComposerSoon();
-    if (options?.steer) await steerSavedRun(editing);
+    // A plain submit means "Update queued message"; only the opposite-action shortcut or
+    // modifier-click asks to steer, as it does for a new follow-up.
+    if (submission?.submissionIntent === "alternate" && submission.dispatchMode === "steer") {
+      await steerSavedRun(editing);
+    }
   };
 
   return {
