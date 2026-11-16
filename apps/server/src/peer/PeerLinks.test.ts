@@ -2,7 +2,8 @@
 import * as NodeFS from "node:fs";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - A peer with a certificate this machine does not trust.
 import * as NodeHttps from "node:https";
-import { NodeHttpServer } from "@effect/platform-node";
+import { NodeHttpClient, NodeHttpServer } from "@effect/platform-node";
+import * as Undici from "@effect/platform-node/Undici";
 import { type ExecutionEnvironmentDescriptor, OrchestratorMcpFailure } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -17,7 +18,10 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/http/HttpRouter";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Sink from "effect/Sink";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Tool, Toolkit } from "effect/ai";
 import {
@@ -89,8 +93,9 @@ const serveB = (descriptor: ExecutionEnvironmentDescriptor) =>
 const makeA = (
   descriptor: ExecutionEnvironmentDescriptor,
   secrets?: typeof ServerSecretStore.layer,
+  machine?: Layer.Layer<never>,
 ) =>
-  layerLinkingEnvironment(descriptor, secrets).pipe(
+  layerLinkingEnvironment(descriptor, secrets, undefined, machine).pipe(
     Layer.build,
     Effect.map((context) => ({
       links: Context.get(context, PeerLinks.PeerLinks),
@@ -331,6 +336,105 @@ const serveRaw = <E, R>(
       }).pipe(Effect.provideContext(server)),
     ),
   );
+
+/** `tailscale status --json` with `peerIps` as another machine on its tailnet. */
+const tailscaleStatus = (backendState: string, peerIps: ReadonlyArray<string>, tun = true) =>
+  JSON.stringify({
+    BackendState: backendState,
+    TUN: tun,
+    Self: { TailscaleIPs: ["100.101.0.1"] },
+    Peer: { "nodekey:box": { TailscaleIPs: peerIps } },
+  });
+
+/** A's `tailscale`, whose `status --json` prints what `status` holds at each run. */
+const layerTailscale = (status: Ref.Ref<string>) =>
+  Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make(() =>
+      Ref.get(status).pipe(
+        Effect.map((json) =>
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.make(new TextEncoder().encode(json)),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        ),
+      ),
+    ),
+  );
+
+/** Connections to `host` reach 127.0.0.1 instead, as a tailnet route would reach the peer. */
+const layerRouteHostToLoopback = (host: string) => {
+  const connect = Undici.buildConnector({});
+  return NodeHttpClient.layerUndiciOptions({
+    connect: (options, callback) =>
+      connect(
+        { ...options, hostname: options.hostname === host ? "127.0.0.1" : options.hostname },
+        callback,
+      ),
+  });
+};
+
+it.effect(
+  "links over plain http to a 100.64.0.0/10 address only while Tailscale routes to it as a peer",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const b = yield* serveB(box);
+        const port = new URL(b.url).port;
+        const status = yield* Ref.make(tailscaleStatus("Stopped", ["100.100.1.2"]));
+        const a = yield* makeA(
+          laptop,
+          undefined,
+          Layer.mergeAll(layerTailscale(status), layerRouteHostToLoopback("100.100.1.2")),
+        );
+        const linkTo = (url: string) =>
+          b.auth
+            .issuePairingCredential()
+            .pipe(
+              Effect.flatMap(({ credential }) =>
+                a.links.link({ url, pairingCode: credential, access: "auto" }),
+              ),
+            );
+
+        // Stopped or in userspace networking, Tailscale still lists its peers,
+        // but the OS would not send traffic to them through it.
+        for (const refused of [
+          tailscaleStatus("Stopped", ["100.100.1.2"]),
+          tailscaleStatus("Running", ["100.100.1.2"], false),
+          // WARP and carrier-grade NAT share the range: an address Tailscale does not list.
+          tailscaleStatus("Running", ["100.100.9.9"]),
+        ]) {
+          yield* Ref.set(status, refused);
+          const error = yield* linkTo(`http://100.100.1.2:${port}`).pipe(Effect.flip);
+          expect(error.message).toContain("plain http");
+        }
+        expect(yield* linkedSessions(b)).toEqual([]);
+
+        yield* Ref.set(status, tailscaleStatus("Running", ["100.100.1.2"]));
+        expect(yield* linkTo(`http://100.100.1.2:${port}/`)).toMatchObject({
+          environmentId: box.environmentId,
+          urls: [`http://100.100.1.2:${port}`],
+        });
+        yield* probe(a);
+        expect((yield* Ref.get(b.bearers)).length).toBeGreaterThan(0);
+
+        // Once Tailscale stops, the link's token stays here.
+        yield* Ref.set(status, tailscaleStatus("NeedsLogin", ["100.100.1.2"]));
+        yield* Ref.set(b.bearers, []);
+        yield* probe(a).pipe(Effect.flip);
+        expect(yield* Ref.get(b.bearers)).toEqual([]);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
 
 it.effect("never follows a peer's redirect with the pairing code", () =>
   Effect.scoped(

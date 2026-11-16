@@ -18,7 +18,6 @@ import * as NodeOS from "node:os";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   formatHostForUrl,
-  isSharedAddressSpaceHost,
   isTailnetHost,
   isWildcardHost,
 } from "@t3tools/shared/hostClassification";
@@ -52,15 +51,6 @@ const isTailscaleInterface = (
 ): boolean =>
   /^tailscale/i.test(name) ||
   entries.some((entry) => entry.family === "IPv6" && isTailnetHost(entry.address));
-
-// Peers advertise their Tailscale IPv4 as a tailnet endpoint, and Headscale nodes
-// may have no *.ts.net name or IPv6 address to reach them by instead.
-export const isOnTailnetIpv4 = (interfaces: NetworkInterfacesMap): boolean =>
-  Object.entries(interfaces).some(
-    ([name, entries = []]) =>
-      isTailscaleInterface(name, entries) &&
-      entries.some((entry) => entry.family === "IPv4" && isSharedAddressSpaceHost(entry.address)),
-  );
 
 // Windows adapter names are mutable; Linux bridges can inherit these MACs.
 const WINDOWS_HOST_ADAPTER_MAC = /^(0a:00:27|00:50:56:c0:00):/i;

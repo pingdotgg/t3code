@@ -40,10 +40,10 @@ import {
   isSharedAddressSpaceHost,
   isTailnetHost,
 } from "@t3tools/shared/hostClassification";
-import * as NodeOS from "node:os";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { readTailnetAddresses } from "@t3tools/tailscale";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { isOnTailnetIpv4 } from "../environment/DirectEndpoints.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
@@ -173,39 +173,6 @@ const failStorage = (cause: unknown) =>
     ),
   );
 
-/**
- * The base URL a peer is reached at, normalised to its origin. The pairing
- * code and then the link's token travel to it, so plain http is accepted only
- * where the network already encrypts: this machine, or a Tailscale address.
- * A 100.64.0.0/10 address counts only while this machine is on a tailnet too.
- */
-const peerOrigin = (url: string) => {
-  const parsed = URL.parse(url);
-  if (parsed === null || (parsed.protocol !== "https:" && parsed.protocol !== "http:")) {
-    return Effect.fail(
-      new PeerLinkError({
-        reason: "unreachable",
-        // Never the address as given: it may hold a username, password or query.
-        message: "That address is not an http or https address.",
-      }),
-    );
-  }
-  if (
-    parsed.protocol === "http:" &&
-    !isLocalLoopbackHost(parsed.hostname) &&
-    !isTailnetHost(parsed.hostname) &&
-    !(isSharedAddressSpaceHost(parsed.hostname) && isOnTailnetIpv4(NodeOS.networkInterfaces()))
-  ) {
-    return Effect.fail(
-      new PeerLinkError({
-        reason: "unreachable",
-        message: `${parsed.origin} is plain http, which would send the link's credentials unencrypted. Use its https address, or its Tailscale address.`,
-      }),
-    );
-  }
-  return Effect.succeed(parsed.origin);
-};
-
 /** The system error under a failed connection, such as ECONNREFUSED or ENOTFOUND. */
 const connectionCode = (cause: unknown) =>
   [cause, Predicate.hasProperty(cause, "cause") ? cause.cause : undefined]
@@ -257,10 +224,46 @@ const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const isOwnLoopback = yield* LoopbackHost;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const enabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
   );
+
+  const isTailnetAddress = (host: string) =>
+    readTailnetAddresses.pipe(
+      Effect.map((addresses) => addresses.has(host)),
+      Effect.orElseSucceed(() => false),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+
+  /**
+   * A peer's base URL as its origin. Its pairing code and token travel there, so
+   * plain http only where the network encrypts: this machine, or Tailscale. WARP
+   * and CGNAT share 100.64.0.0/10, so those count only where Tailscale lists them.
+   */
+  const peerOrigin = Effect.fn("PeerLinks.peerOrigin")(function* (url: string) {
+    const parsed = URL.parse(url);
+    if (parsed === null || (parsed.protocol !== "https:" && parsed.protocol !== "http:")) {
+      return yield* new PeerLinkError({
+        reason: "unreachable",
+        // Never the address as given: it may hold a username, password or query.
+        message: "That address is not an http or https address.",
+      });
+    }
+    if (
+      parsed.protocol === "http:" &&
+      !isLocalLoopbackHost(parsed.hostname) &&
+      !isTailnetHost(parsed.hostname) &&
+      !(isSharedAddressSpaceHost(parsed.hostname) && (yield* isTailnetAddress(parsed.hostname)))
+    ) {
+      return yield* new PeerLinkError({
+        reason: "unreachable",
+        message: `${parsed.origin} is plain http, which would send the link's credentials unencrypted. Use its https address, or its Tailscale address.`,
+      });
+    }
+    return parsed.origin;
+  });
 
   /** A fresh name for one link's token; the row records it. */
   const newSecretName = random.randomBytes(16).pipe(
@@ -718,7 +721,9 @@ const make = Effect.gen(function* () {
           ? Option.none()
           : yield* Effect.raceAll(
               link.urls.map((url) =>
-                answersAs(url, environmentId).pipe(
+                // A 100.x address is trusted only while Tailscale still lists it.
+                peerOrigin(url).pipe(
+                  Effect.flatMap((origin) => answersAs(origin, environmentId)),
                   Effect.flatMap(Effect.fromOption),
                   Effect.map((peer) => ({ url, peer })),
                 ),
