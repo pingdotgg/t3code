@@ -115,6 +115,7 @@ export interface ThreadActionMenuState {
   readonly isRunning: boolean;
   /** The server marks unread against the latest run's completion, so in-flight runs cannot be. */
   readonly hasCompletedRun: boolean;
+  readonly isWorking: boolean;
   readonly supports: {
     readonly settlement: boolean;
     readonly autoSettleOptOut: boolean;
@@ -189,7 +190,7 @@ export function buildThreadActionMenuItems(
             : { id: "pin" as const, label: resolve(msg("Pin thread")), icon: "pin" },
         ]
       : []),
-    ...(state.supports.settlement
+    ...(state.supports.settlement && (state.isSettled || !state.isWorking)
       ? [
           state.isSettled
             ? {
