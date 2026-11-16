@@ -1,7 +1,10 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { retainedModelWhileProviderLocked } from "./ProviderModelPicker.logic";
+import {
+  groupUpdateRequiredNotices,
+  retainedModelWhileProviderLocked,
+} from "./ProviderModelPicker.logic";
 
 const claude = ProviderDriverKind.make("claudeAgent");
 const opus = { slug: "claude-opus-5-5", name: "Claude Opus 5.5", shortName: "Opus 5.5" };
@@ -16,5 +19,22 @@ describe("retainedModelWhileProviderLocked", () => {
     expect(retained(false, true, [sonnet])).toEqual({ slug: opus.slug, name: opus.slug });
     expect(retained(true, true)).toBeUndefined();
     expect(retainedModelWhileProviderLocked(null, opus.slug)).toBeUndefined();
+  });
+});
+
+describe("groupUpdateRequiredNotices", () => {
+  it("shows a repeated notice once and names the instances it covers", () => {
+    const fable = "Update Claude Code to v2.1.321 or newer to use Claude Fable 5.2.";
+    const sol = "Update the Codex CLI to v0.150.0 or newer to use GPT-6.1 Sol.";
+    expect(
+      groupUpdateRequiredNotices([
+        { notice: fable, instanceName: "Work" },
+        { notice: sol },
+        { notice: fable, instanceName: "Personal" },
+      ]),
+    ).toEqual([
+      { notice: fable, instanceNames: ["Work", "Personal"] },
+      { notice: sol, instanceNames: [] },
+    ]);
   });
 });
