@@ -46,6 +46,7 @@ import * as Hex from "effect/encoding/Hex";
 import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Cause from "effect/Cause";
@@ -72,6 +73,28 @@ type RecallComposer = {
   readonly text: string;
   readonly records: ReadonlyArray<ComposerContextRecord>;
 };
+
+export type ProjectMemoryRecallGate =
+  | "hand_picked"
+  | "slash"
+  | "not_substantive"
+  | "allowance"
+  | "kernel_unavailable"
+  | "no_match"
+  | "resolve_failed"
+  | "delivered"
+  | "failed"
+  | "timeout";
+
+// The replay script sets this. Turn start does not, and recall's result is unchanged without it.
+export interface ProjectMemoryRecallCapture {
+  outcome: ProjectMemoryRecallGate;
+  top: Array<{
+    readonly factId: ProjectFactId;
+    readonly score: typeof KnowledgeScore.Type;
+    readonly passedGate: boolean;
+  }>;
+}
 const RECALL_CONTEXT_ID = ComposerContextId.make("recall");
 /** Recall sends memory in a shorter form than knowledge someone attached by hand. */
 export const isRecalledMemory = (record: { readonly contextId: string }) =>
@@ -155,6 +178,9 @@ export class ProjectKnowledge extends Context.Service<
       readonly knowledgeAllowance: number;
       /** The message being sent and the native conversation it targets. */
       readonly turn?: Omit<DeliveryStateInput, "projectId" | "threadId" | "scope">;
+      // Turn start keeps the 150ms limit. The replay passes a longer one so the tail is timed.
+      readonly timeout?: Duration.Input;
+      readonly capture?: ProjectMemoryRecallCapture;
     }) => Effect.Effect<RecallComposer | null>;
     readonly prepareContext: (
       input: ProjectKnowledgeContext,
@@ -904,7 +930,10 @@ const make = Effect.gen(function* () {
     // Recall keeps its best two matches after removing facts the thread has already seen.
     function* (
       request: ProjectKnowledgeSearchInput,
-      recallOptions?: { readonly skip: (fact: ProjectFact) => boolean },
+      recallOptions?: {
+        readonly skip: (fact: ProjectFact) => boolean;
+        readonly capture?: ProjectMemoryRecallCapture;
+      },
     ): Effect.fn.Return<ProjectKnowledgeSearchResult, ProjectKnowledgeError> {
       const skip = recallOptions?.skip;
       const {
@@ -1084,6 +1113,24 @@ const make = Effect.gen(function* () {
             (left.updatedAt < right.updatedAt ? 1 : left.updatedAt > right.updatedAt ? -1 : 0) ||
             (left.factId < right.factId ? -1 : left.factId > right.factId ? 1 : 0),
         );
+        if (recallOptions?.capture) {
+          const capture = recallOptions.capture;
+          capture.top = matches.slice(0, 5).flatMap((match) => {
+            const fact = snapshots.get(match.factId);
+            if (!fact) return [];
+            const passedGate =
+              selectProjectMemoryRecallMatches({
+                messages: { matches: [] },
+                facts: {
+                  state: "available",
+                  matches: [{ fact, score: match.score }],
+                  coverage: candidates.partial ? "partial" : "complete",
+                  nextCursor: null,
+                },
+              }).length > 0;
+            return [{ factId: match.factId, score: match.score, passedGate }];
+          });
+        }
         ranking = {
           matches: matches.map(({ factId, revision, score }) => ({ factId, revision, score })),
           coverage: candidates.partial ? "partial" : "complete",
@@ -1271,17 +1318,26 @@ const make = Effect.gen(function* () {
   });
   const recall: ProjectKnowledge["Service"]["recall"] = Effect.fn("ProjectKnowledge.recall")(
     function* (input) {
-      if (
-        input.composer.records.some((record) => record.kind === "project-knowledge") ||
-        input.query.trimStart().startsWith("/") ||
-        !isSubstantiveProjectMemoryQuery(input.query)
-      )
+      if (input.composer.records.some((record) => record.kind === "project-knowledge")) {
+        if (input.capture) input.capture.outcome = "hand_picked";
         return null;
+      }
+      if (input.query.trimStart().startsWith("/")) {
+        if (input.capture) input.capture.outcome = "slash";
+        return null;
+      }
+      if (!isSubstantiveProjectMemoryQuery(input.query)) {
+        if (input.capture) input.capture.outcome = "not_substantive";
+        return null;
+      }
       const factBytes = Math.min(
         RECALL_MAX_BYTES,
         Math.floor(input.knowledgeAllowance) - RECALL_ENVELOPE_BYTES,
       );
-      if (factBytes < RECALL_MIN_BYTES) return null;
+      if (factBytes < RECALL_MIN_BYTES) {
+        if (input.capture) input.capture.outcome = "allowance";
+        return null;
+      }
       const lookup = Effect.gen(function* () {
         const seen = yield* store
           .seenFactIds(input.projectId, input.threadId, input.turn)
@@ -1294,9 +1350,15 @@ const make = Effect.gen(function* () {
             recordRetrieval: false,
             minTrust: 0.5,
           },
-          { skip: (fact) => seen.has(fact.id) || cameFromThread(fact, input.threadId) },
+          {
+            skip: (fact) => seen.has(fact.id) || cameFromThread(fact, input.threadId),
+            ...(input.capture ? { capture: input.capture } : {}),
+          },
         );
-        if (result.facts.state !== "available") return null;
+        if (result.facts.state !== "available") {
+          if (input.capture) input.capture.outcome = "kernel_unavailable";
+          return null;
+        }
         const selections = result.facts.matches.map(({ fact }) => ({
           kind: "fact" as const,
           factId: fact.id,
@@ -1321,16 +1383,29 @@ const make = Effect.gen(function* () {
             { ...record.knowledge, maxBytes: factBytes },
             "recalled",
           ).pipe(Effect.option);
-          if (Option.isSome(resolved))
+          if (Option.isSome(resolved)) {
+            if (input.capture) input.capture.outcome = "delivered";
             return {
               text: `${input.composer.text}\n\n${formatComposerContextReference(record)}`,
               records: [...input.composer.records, record],
             };
+          }
         }
+        if (input.capture)
+          input.capture.outcome = selections.length === 0 ? "no_match" : "resolve_failed";
         return null;
       });
-      return yield* lookup.pipe(
-        Effect.timeoutOption(RECALL_TIMEOUT),
+      const timed = lookup.pipe(Effect.timeoutOption(input.timeout ?? RECALL_TIMEOUT));
+      const noted =
+        input.capture === undefined
+          ? timed
+          : timed.pipe(
+              Effect.tap((value) => {
+                if (Option.isNone(value) && input.capture) input.capture.outcome = "timeout";
+                return Effect.void;
+              }),
+            );
+      return yield* noted.pipe(
         Effect.map(Option.getOrNull),
         Effect.catchCause((cause) =>
           Cause.hasInterrupts(cause)
@@ -1338,7 +1413,13 @@ const make = Effect.gen(function* () {
             : Effect.logWarning("Project memory recall failed", {
                 projectId: input.projectId,
                 threadId: input.threadId,
-              }).pipe(Effect.as(null)),
+              }).pipe(
+                Effect.tap(() => {
+                  if (input.capture) input.capture.outcome = "failed";
+                  return Effect.void;
+                }),
+                Effect.as(null),
+              ),
         ),
       );
     },
