@@ -305,31 +305,32 @@ describe("sidebar drag projection", () => {
     expect(strategy({ ...args, index: lastIndex })).toEqual(stationary);
   });
 
-  it("keeps independent shelf headers fixed when the active list extends below them", () => {
+  it("keeps fixed panels still while Settled follows the active list", () => {
     const items = [
       pinnedHeader,
       divider,
       thread("a1", "active"),
       thread("a2", "active"),
-      marker("snoozed-header"),
-      thread("z", "snoozed"),
       settledHeader,
       thread("s", "settled"),
+      marker("input-header"),
+      thread("i", "input"),
+      marker("working-header"),
+      thread("w", "working"),
+      marker("snoozed-header"),
+      thread("z", "snoozed"),
     ];
     const args = layout(items, "a1", sidebarMarkerId("settled-header"));
-    args.rects[4] = { ...args.rects[4]!, top: 180, bottom: 212 };
-    args.rects[5] = { ...args.rects[5]!, top: 190, bottom: 226 };
-    args.rects[6] = { ...args.rects[6]!, top: 280, bottom: 312 };
-    args.rects[7] = { ...args.rects[7]!, top: 300, bottom: 336 };
     const strategy = createSidebarSortingStrategy({
       items,
       settledOrder: ["a1", "s"],
       settledExpanded: true,
       independentShelves: true,
     });
-    for (const index of [4, 6]) expect(strategy({ ...args, index })).toEqual(stationary);
-    expect(strategy({ ...args, index: 5 })).toEqual(stationary);
-    expect(strategy({ ...args, index: 7 })?.y).toBe(37);
+    for (const index of [6, 7, 8, 9, 10, 11])
+      expect(strategy({ ...args, index })).toEqual(stationary);
+    expect(strategy({ ...args, index: 4 })?.y).toBe(-83);
+    expect(strategy({ ...args, index: 5 })?.y).toBe(-46);
   });
 
   const pinned = [
