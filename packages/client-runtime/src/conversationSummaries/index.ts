@@ -49,6 +49,17 @@ export interface ConversationSummarySourceCursor {
   readonly textOffset: number;
 }
 
+/** Who wrote a message: the user, the thread's agent, or the peer seat that spoke it. */
+export function messageAuthorLabel(
+  role: "user" | "assistant",
+  speaker?: { readonly label: string; readonly model: string },
+): string {
+  if (role === "user") return "User";
+  if (speaker === undefined) return "Assistant";
+  // A seat without a label is named by its model.
+  return speaker.label === speaker.model ? speaker.label : `${speaker.label} (${speaker.model})`;
+}
+
 /** Who a source came from; a child summary is named by its id so it can be opened. */
 export function conversationSummarySourceLabel(
   ref: ConversationSummarySourceRef,
@@ -57,13 +68,8 @@ export function conversationSummarySourceLabel(
   if (result.state !== "available") return "Unavailable";
   switch (result.role) {
     case "user":
-      return "User";
     case "assistant":
-      if (result.speaker === undefined) return "Assistant";
-      // A seat without a label is named by its model.
-      return result.speaker.label === result.speaker.model
-        ? result.speaker.label
-        : `${result.speaker.label} (${result.speaker.model})`;
+      return messageAuthorLabel(result.role, result.speaker);
     case "tool":
       return "Tool";
     case "summary":
