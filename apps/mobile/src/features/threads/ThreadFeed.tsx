@@ -3186,7 +3186,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     reply?: MarkdownLinkReply,
     withGallery?: (source: FilePreviewSource) => FilePreviewSource,
   ) => {
-    const mention = exactGroupMention(href, props.group);
+    const mention = exactGroupMention(href, group);
     if (mention) {
       if (mention.member !== "primary") {
         openLinkedThread({
@@ -3308,7 +3308,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     onImagePress: (href, withGallery) => onMarkdownLinkPress(href, true, undefined, withGallery),
     resolveImageSource,
     fileContextMenu: (href) => {
-      const mention = exactGroupMention(href, props.group);
+      const mention = exactGroupMention(href, group);
       if (mention) {
         return {
           title: mention.label,
@@ -3350,7 +3350,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       return target ? fileChipMenu(target) : undefined;
     },
     onFileContextMenuAction: (href, actionId, reply) => {
-      const mention = exactGroupMention(href, props.group);
+      const mention = exactGroupMention(href, group);
       if (mention) {
         if (actionId === "open-member" && mention.member !== "primary") {
           openLinkedThread({
