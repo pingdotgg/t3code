@@ -68,7 +68,9 @@ export class ElectronApp extends Context.Service<
       args?: readonly string[],
     ) => Effect.Effect<boolean>;
     readonly setDesktopName: (desktopName: string) => Effect.Effect<void>;
-    readonly setDockIcon: (iconPath: string) => Effect.Effect<void>;
+    // Null restores the bundle's own icon.
+    readonly setDockIcon: (iconPath: string | null) => Effect.Effect<void>;
+    readonly setWindowIcons: (iconPath: string) => Effect.Effect<void>;
     readonly appendCommandLineSwitch: (switchName: string, value?: string) => Effect.Effect<void>;
     readonly onBeforeQuitForUpdate: (
       listener: () => void,
@@ -219,7 +221,18 @@ export const make = ElectronApp.of({
   }),
   setDockIcon: Effect.fn("ElectronApp.setDockIcon")(function (iconPath) {
     return Effect.sync(() => {
-      Electron.app.dock?.setIcon(iconPath);
+      // Electron's types omit null, which its Dock binding accepts as a reset.
+      const dock = Electron.app.dock as
+        | (Electron.Dock & { setIcon(image: string | null): void })
+        | undefined;
+      dock?.setIcon(iconPath);
+    });
+  }),
+  setWindowIcons: Effect.fn("ElectronApp.setWindowIcons")(function (iconPath) {
+    return Effect.sync(() => {
+      for (const window of Electron.BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.setIcon(iconPath);
+      }
     });
   }),
   appendCommandLineSwitch: Effect.fn("ElectronApp.appendCommandLineSwitch")(

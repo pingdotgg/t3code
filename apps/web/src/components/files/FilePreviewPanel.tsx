@@ -575,9 +575,27 @@ interface FileRevealState {
   cancelGuard: (() => void) | null;
   handledRequestId: number | null;
   latestRequestId: number | null;
+  /** The path's code view offset when it last unmounted, restored when it is shown again. */
+  scrollTop: number;
+  scrollContainer: HTMLElement | null;
+  restoreFrameId: number | null;
+}
+
+// A file pane tab unmounts while another tab of its pane shows, so its offset outlives the panel.
+const savedFileScrollTops = new Map<string, number>();
+const SAVED_FILE_SCROLL_TOPS_LIMIT = 200;
+
+function saveFileScrollTop(key: string, scrollTop: number) {
+  savedFileScrollTops.delete(key);
+  savedFileScrollTops.set(key, scrollTop);
+  if (savedFileScrollTops.size > SAVED_FILE_SCROLL_TOPS_LIMIT) {
+    const oldest = savedFileScrollTops.keys().next().value;
+    if (oldest !== undefined) savedFileScrollTops.delete(oldest);
+  }
 }
 
 function useFileLineReveal(
+  scrollScope: string,
   relativePath: string | null,
   revealLine: number | null,
   revealRequestId: number,
@@ -587,12 +605,16 @@ function useFileLineReveal(
   return (fileContainer, instance, phase) => {
     if (relativePath === null) return;
 
+    const scrollKey = `${scrollScope}\u0000${relativePath}`;
     const existingState = revealStatesByPath.get(relativePath);
     const state: FileRevealState = existingState ?? {
       frameId: null,
       cancelGuard: null,
       handledRequestId: null,
       latestRequestId: null,
+      scrollTop: savedFileScrollTops.get(scrollKey) ?? 0,
+      scrollContainer: null,
+      restoreFrameId: null,
     };
     if (!existingState) revealStatesByPath.set(relativePath, state);
 
@@ -602,10 +624,21 @@ function useFileLineReveal(
         state.frameId = null;
       }
       state.cancelGuard?.();
+      if (state.restoreFrameId !== null) {
+        cancelAnimationFrame(state.restoreFrameId);
+        state.restoreFrameId = null;
+      }
     };
 
+    const scrollContainer = fileContainer.closest<HTMLElement>(".file-preview-virtualizer");
+
     if (phase === "unmount") {
+      // A view torn down before its restore ran never showed the saved offset, so keep it.
+      const restorePending = state.restoreFrameId !== null;
       cancelPendingReveal();
+      if (scrollContainer && !restorePending) state.scrollTop = scrollContainer.scrollTop;
+      saveFileScrollTop(scrollKey, state.scrollTop);
+      state.scrollContainer = null;
       return;
     }
 
@@ -622,12 +655,37 @@ function useFileLineReveal(
       state.handledRequestId = null;
     }
 
+    if (scrollContainer && state.scrollContainer !== scrollContainer) {
+      state.scrollContainer = scrollContainer;
+      const savedScrollTop = state.scrollTop;
+      // A pending line reveal owns the scroll position.
+      if (
+        savedScrollTop > 0 &&
+        (revealLine === null || state.handledRequestId === revealRequestId)
+      ) {
+        const restoreScroll = (attempt: number) => {
+          state.restoreFrameId = requestAnimationFrame(() => {
+            state.restoreFrameId = null;
+            if (!scrollContainer.isConnected || scrollContainer.scrollTop !== 0) return;
+            // Wait for the virtualizer to size the file so the offset is not clamped.
+            const fits =
+              scrollContainer.scrollHeight - scrollContainer.clientHeight >= savedScrollTop;
+            if (fits || attempt >= REVEAL_MAX_ATTEMPTS) {
+              scrollContainer.scrollTop = savedScrollTop;
+              return;
+            }
+            restoreScroll(attempt + 1);
+          });
+        };
+        restoreScroll(0);
+      }
+    }
+
     if (revealLine === null) {
       fileContainer.style.minHeight = "";
       return;
     }
 
-    const scrollContainer = fileContainer.closest<HTMLElement>(".file-preview-virtualizer");
     if (!scrollContainer) return;
     fileContainer.style.minHeight = `${Math.ceil(
       Math.max(instance.height, scrollContainer.clientHeight),
@@ -1448,7 +1506,12 @@ export default function FilePreviewPanel({
   // Mentions resolve against the workspace, so only workspace files can be added.
   const canAddToChat =
     previewPath !== null && relativePath !== null && !isHostFile && composerRef !== null;
-  const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
+  const onFilePostRender = useFileLineReveal(
+    `${environmentId}\u0000${cwd}`,
+    relativePath,
+    revealLine,
+    revealRequestId,
+  );
   // Mounting the file read under the workspace mutation id refetches it after each mutation.
   useAtomMount(
     canReadFiles &&
