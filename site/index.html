@@ -1,0 +1,949 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Exploro</title>
+    <meta
+      name="description"
+      content="Exploro is an open-source agent harness for manual QA engineers. Give it a website and a testing goal; an agent explores the site in a real browser while you watch, take over, and keep the evidence."
+    />
+    <link rel="icon" href="mark.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Sora:wght@600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --primary: #00727d;
+        --primary-ink: #ffffff;
+        --amber: #fea92f;
+        --ink: #0c1e22;
+        --slate: #53676c;
+        --mist: #e1eef0;
+        --bg: #f6fbfc;
+        --surface: #ffffff;
+        --pass: #1d7d3e;
+        --fail: #c22826;
+        --blocked: #a75c00;
+        --inconclusive: #794db6;
+        --skipped: #5f6b74;
+        --shadow: 0 1px 2px rgb(12 30 34 / 6%), 0 8px 24px rgb(12 30 34 / 6%);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          --primary: #33c0c7;
+          --primary-ink: #061115;
+          --ink: #e4edee;
+          --slate: #9db0b4;
+          --mist: #1d3136;
+          --bg: #061115;
+          --surface: #0e1d21;
+          --pass: #67d283;
+          --fail: #f97770;
+          --blocked: #f7ac4d;
+          --inconclusive: #b897f0;
+          --skipped: #a0adb6;
+          --shadow: none;
+        }
+      }
+      :root[data-theme="dark"] {
+        --primary: #33c0c7;
+        --primary-ink: #061115;
+        --ink: #e4edee;
+        --slate: #9db0b4;
+        --mist: #1d3136;
+        --bg: #061115;
+        --surface: #0e1d21;
+        --pass: #67d283;
+        --fail: #f97770;
+        --blocked: #f7ac4d;
+        --inconclusive: #b897f0;
+        --skipped: #a0adb6;
+        --shadow: none;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        -webkit-text-size-adjust: 100%;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font:
+          400 17px/1.6 "IBM Plex Sans",
+          system-ui,
+          sans-serif;
+      }
+      a {
+        color: var(--primary);
+      }
+      a:focus-visible,
+      button:focus-visible {
+        outline: 3px solid var(--amber);
+        outline-offset: 2px;
+        border-radius: 6px;
+      }
+      h1,
+      h2,
+      h3 {
+        font-family: Sora, system-ui, sans-serif;
+        line-height: 1.15;
+        margin: 0;
+        letter-spacing: -0.01em;
+      }
+      code,
+      .mono {
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 0.88em;
+      }
+      .wrap {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 0 16px;
+      }
+
+      header.top {
+        border-bottom: 1px solid var(--mist);
+      }
+      .top .wrap {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 64px;
+        gap: 16px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        text-decoration: none;
+        color: var(--ink);
+        font:
+          700 20px Sora,
+          sans-serif;
+      }
+      .brand svg {
+        flex: none;
+      }
+      .brand small {
+        font:
+          500 12px "IBM Plex Sans",
+          sans-serif;
+        color: var(--slate);
+        border: 1px solid var(--mist);
+        padding: 1px 7px;
+        border-radius: 999px;
+      }
+      nav.links {
+        display: flex;
+        gap: 22px;
+        font-size: 15px;
+      }
+      nav.links a {
+        color: var(--slate);
+        text-decoration: none;
+      }
+      nav.links a:hover {
+        color: var(--ink);
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 20px;
+        border-radius: 10px;
+        font-weight: 600;
+        font-size: 16px;
+        text-decoration: none;
+        border: 1px solid transparent;
+        cursor: pointer;
+      }
+      .btn-primary {
+        background: var(--primary);
+        color: var(--primary-ink);
+      }
+      .btn-primary:hover {
+        filter: brightness(1.08);
+      }
+      .btn-ghost {
+        border-color: var(--mist);
+        color: var(--ink);
+        background: var(--surface);
+      }
+      .btn-ghost:hover {
+        border-color: var(--slate);
+      }
+
+      .hero {
+        padding: 80px 0 64px;
+      }
+      .hero .wrap {
+        display: grid;
+        grid-template-columns: 1.05fr 1fr;
+        gap: 48px;
+        align-items: center;
+      }
+      .eyebrow {
+        color: var(--primary);
+        font-weight: 600;
+        font-size: 14px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        margin: 0 0 14px;
+      }
+      .hero h1 {
+        font-size: clamp(36px, 5.4vw, 56px);
+      }
+      .hero p.lede {
+        font-size: 19px;
+        color: var(--slate);
+        margin: 20px 0 30px;
+        max-width: 34em;
+      }
+      .cta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+      .fineprint {
+        margin-top: 14px;
+        font-size: 14px;
+        color: var(--slate);
+      }
+
+      /* Run card mock */
+      .run {
+        background: var(--surface);
+        border: 1px solid var(--mist);
+        border-radius: 16px;
+        box-shadow: var(--shadow);
+        overflow: hidden;
+        font-size: 15px;
+      }
+      .run-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--mist);
+      }
+      .run-head .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--primary);
+      }
+      .run-head strong {
+        font-weight: 600;
+      }
+      .run-head span {
+        margin-left: auto;
+        color: var(--slate);
+        font-size: 13px;
+      }
+      .run-goal {
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--mist);
+        color: var(--slate);
+      }
+      .run-goal b {
+        color: var(--ink);
+        font-weight: 500;
+      }
+      .run ul {
+        list-style: none;
+        margin: 0;
+        padding: 6px 0;
+      }
+      .run li {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 9px 18px;
+      }
+      .run li .name {
+        flex: 1;
+        min-width: 0;
+      }
+      .run li .ev {
+        color: var(--slate);
+        font-size: 13px;
+        white-space: nowrap;
+      }
+      .chip {
+        font:
+          600 11px/1 "JetBrains Mono",
+          monospace;
+        letter-spacing: 0.04em;
+        padding: 5px 8px;
+        border-radius: 6px;
+        border: 1px solid currentColor;
+        white-space: nowrap;
+      }
+      .v-pass {
+        color: var(--pass);
+      }
+      .v-fail {
+        color: var(--fail);
+      }
+      .v-blocked {
+        color: var(--blocked);
+      }
+      .v-inconclusive {
+        color: var(--inconclusive);
+      }
+      .v-skipped {
+        color: var(--skipped);
+      }
+
+      section {
+        padding: 72px 0;
+      }
+      section.alt {
+        background: var(--surface);
+        border-top: 1px solid var(--mist);
+        border-bottom: 1px solid var(--mist);
+      }
+      .section-head {
+        max-width: 640px;
+        margin-bottom: 40px;
+      }
+      .section-head h2 {
+        font-size: clamp(28px, 3.6vw, 38px);
+      }
+      .section-head p {
+        color: var(--slate);
+        margin: 14px 0 0;
+      }
+
+      .steps {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 20px;
+        counter-reset: step;
+      }
+      .step {
+        border: 1px solid var(--mist);
+        border-radius: 14px;
+        padding: 22px;
+        background: var(--bg);
+      }
+      .step::before {
+        counter-increment: step;
+        content: counter(step);
+        display: grid;
+        place-items: center;
+        width: 30px;
+        height: 30px;
+        border-radius: 8px;
+        background: var(--primary);
+        color: var(--primary-ink);
+        font:
+          700 15px Sora,
+          sans-serif;
+        margin-bottom: 14px;
+      }
+      .step h3 {
+        font-size: 18px;
+        margin-bottom: 8px;
+      }
+      .step p {
+        margin: 0;
+        color: var(--slate);
+        font-size: 15px;
+      }
+
+      .features {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 28px 32px;
+      }
+      .feature h3 {
+        font-size: 18px;
+        margin-bottom: 8px;
+      }
+      .feature p {
+        margin: 0;
+        color: var(--slate);
+        font-size: 15.5px;
+      }
+
+      .verdicts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 8px;
+      }
+      .verdict-row {
+        display: grid;
+        grid-template-columns: 150px 1fr;
+        gap: 12px 18px;
+        align-items: baseline;
+        max-width: 760px;
+      }
+      .verdict-row p {
+        margin: 0;
+        color: var(--slate);
+        font-size: 15.5px;
+      }
+
+      .providers {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      .providers span {
+        border: 1px solid var(--mist);
+        background: var(--surface);
+        padding: 7px 14px;
+        border-radius: 999px;
+        font-size: 15px;
+      }
+
+      .downloads {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 20px;
+      }
+      .dl {
+        border: 1px solid var(--mist);
+        border-radius: 16px;
+        padding: 26px;
+        background: var(--bg);
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .dl-head {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .dl-head svg {
+        width: 36px;
+        height: 36px;
+        flex: none;
+        color: var(--ink);
+      }
+      .dl h3 {
+        font-size: 22px;
+      }
+      .dl .meta {
+        color: var(--slate);
+        font-size: 14px;
+      }
+      .dl .files {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .dl .files .btn {
+        justify-content: space-between;
+      }
+      .dl .files .size {
+        font-weight: 400;
+        opacity: 0.8;
+        font-size: 14px;
+      }
+      .dl .note {
+        font-size: 14px;
+        color: var(--slate);
+        margin: 0;
+      }
+      .dl pre {
+        margin: 0;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: var(--surface);
+        border: 1px solid var(--mist);
+        overflow-x: auto;
+        font-size: 13px;
+      }
+      .release-line {
+        margin: 22px 0 0;
+        color: var(--slate);
+        font-size: 15px;
+      }
+
+      .source pre {
+        background: var(--bg);
+        border: 1px solid var(--mist);
+        border-radius: 12px;
+        padding: 16px 18px;
+        overflow-x: auto;
+        margin: 0;
+        font-size: 14px;
+        line-height: 1.7;
+      }
+
+      footer {
+        padding: 40px 0 56px;
+        color: var(--slate);
+        font-size: 14px;
+      }
+      footer .wrap {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px 28px;
+        justify-content: space-between;
+      }
+
+      @media (max-width: 900px) {
+        .hero .wrap {
+          grid-template-columns: 1fr;
+        }
+        .steps {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .features {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+      @media (max-width: 640px) {
+        nav.links a:not(.keep) {
+          display: none;
+        }
+        .hero {
+          padding: 48px 0 40px;
+        }
+        section {
+          padding: 52px 0;
+        }
+        .steps,
+        .features,
+        .downloads {
+          grid-template-columns: 1fr;
+        }
+        .verdict-row {
+          grid-template-columns: 1fr;
+          gap: 4px;
+        }
+        .verdict-row p {
+          margin-bottom: 10px;
+        }
+        .run li .ev {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="top">
+      <div class="wrap">
+        <a class="brand" href="#"
+          ><svg width="30" height="30" viewBox="0 0 128 128" fill="none" aria-hidden="true">
+            <rect width="128" height="128" rx="30" fill="#00727D" />
+            <circle cx="56" cy="56" r="27" stroke="#FFFFFF" stroke-width="12" />
+            <path
+              d="M62 60V102L72.5 91.5L81 108L91 103L82.5 87H98Z"
+              fill="#FEA92F"
+              stroke="#00727D"
+              stroke-width="6"
+              stroke-linejoin="round"
+              paint-order="stroke"
+            />
+          </svg>
+          Exploro <small>Beta</small></a
+        >
+        <nav class="links">
+          <a href="#how">How it works</a>
+          <a href="#evidence">Evidence</a>
+          <a class="keep" href="#download">Download</a>
+          <a href="https://github.com/imavinashsingh/exploro">GitHub</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <div class="hero">
+        <div class="wrap">
+          <div>
+            <p class="eyebrow">Exploratory QA, with evidence</p>
+            <h1>Let an agent explore your site. Keep the proof.</h1>
+            <p class="lede">
+              Exploro is an open-source app for manual QA engineers. Give it a website and a testing
+              goal. An agent tests the site in a real browser while you watch, take over when you
+              want, and get a report with a verdict and screenshots for every scenario.
+            </p>
+            <div class="cta">
+              <a class="btn btn-primary" href="#download">Download for Windows or Linux</a>
+              <a class="btn btn-ghost" href="https://github.com/imavinashsingh/exploro"
+                >View source</a
+              >
+            </div>
+            <p class="fineprint">
+              Free and MIT licensed. Uses the AI agent subscription you already have.
+            </p>
+          </div>
+
+          <div class="run" aria-label="Example QA run">
+            <div class="run-head">
+              <span class="dot"></span><strong>Checkout flow</strong><span>shop.example.test</span>
+            </div>
+            <div class="run-goal">
+              Goal: <b>a signed-in customer can buy one item and see the order confirmation</b>
+            </div>
+            <ul>
+              <li>
+                <span class="chip v-pass">PASS</span><span class="name">Add item to cart</span
+                ><span class="ev">3 screenshots</span>
+              </li>
+              <li>
+                <span class="chip v-pass">PASS</span
+                ><span class="name">Cart total updates with quantity</span
+                ><span class="ev">2 screenshots</span>
+              </li>
+              <li>
+                <span class="chip v-fail">FAIL</span
+                ><span class="name">Coupon code SAVE10 is rejected</span
+                ><span class="ev">4 screenshots · console</span>
+              </li>
+              <li>
+                <span class="chip v-blocked">BLOCKED</span><span class="name">Pay with card</span
+                ><span class="ev">needs approval</span>
+              </li>
+              <li>
+                <span class="chip v-inconclusive">INCONCLUSIVE</span
+                ><span class="name">Confirmation email</span><span class="ev">not observable</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <section class="alt" id="how">
+        <div class="wrap">
+          <div class="section-head">
+            <h2>How it works</h2>
+            <p>
+              You stay the QA engineer. The agent does the clicking, and Exploro keeps a record of
+              everything it saw.
+            </p>
+          </div>
+          <div class="steps">
+            <div class="step">
+              <h3>Name the site and goal</h3>
+              <p>
+                Paste a URL and describe what to test, in plain words. Add test credentials if the
+                flow needs them.
+              </p>
+            </div>
+            <div class="step">
+              <h3>The agent explores</h3>
+              <p>
+                It opens the site in Exploro's built-in browser and works through the flow like a
+                careful tester, scenario by scenario.
+              </p>
+            </div>
+            <div class="step">
+              <h3>Watch or take over</h3>
+              <p>
+                The browser runs beside the chat. Step in at any point, and approve anything risky
+                before it happens.
+              </p>
+            </div>
+            <div class="step">
+              <h3>Keep the evidence</h3>
+              <p>
+                Each run ends with a report: a verdict per scenario, screenshots, and the console
+                and network errors behind them.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="wrap">
+          <div class="section-head">
+            <h2>Built for testers, not developers</h2>
+            <p>
+              Exploro is a QA-focused fork of T3 Code. The developer tools are out of the way; the
+              QA workflow is up front.
+            </p>
+          </div>
+          <div class="features">
+            <div class="feature">
+              <h3>A real browser</h3>
+              <p>
+                Tests run in a real Chromium browser with screenshots, console, and network capture,
+                not a simulated page.
+              </p>
+            </div>
+            <div class="feature">
+              <h3>Report only</h3>
+              <p>
+                The agent tests what is deployed. It never edits your code and treats text on the
+                page as data, not instructions.
+              </p>
+            </div>
+            <div class="feature">
+              <h3>Asks before it acts</h3>
+              <p>
+                Payments, deletions, sending messages, and other irreversible steps wait for your
+                approval.
+              </p>
+            </div>
+            <div class="feature">
+              <h3>Your agent, your account</h3>
+              <p>
+                Exploro drives the coding agents you are already signed in to. It does not resell
+                tokens.
+              </p>
+            </div>
+            <div class="feature">
+              <h3>Evidence on disk</h3>
+              <p>
+                Runs are saved locally as Markdown and a self-contained HTML report you can attach
+                to a bug ticket.
+              </p>
+            </div>
+            <div class="feature">
+              <h3>Open source</h3>
+              <p>MIT licensed and built in the open. Read the code, file an issue, or fork it.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="alt" id="evidence">
+        <div class="wrap">
+          <div class="section-head">
+            <h2>Verdicts you can trust</h2>
+            <p>
+              A wrong PASS is the worst result a tester can give. Every scenario ends with one of
+              five verdicts, and a verdict without a screenshot is stored as inconclusive, whatever
+              the agent claimed.
+            </p>
+          </div>
+          <div class="verdict-row">
+            <span><span class="chip v-pass">PASS</span></span>
+            <p>The expected behaviour was seen and captured.</p>
+            <span><span class="chip v-fail">FAIL</span></span>
+            <p>
+              The site did something different from what was expected, with the screenshot to show
+              it.
+            </p>
+            <span><span class="chip v-blocked">BLOCKED</span></span>
+            <p>
+              The agent could not continue: a login, a missing approval, or a broken step earlier in
+              the flow.
+            </p>
+            <span><span class="chip v-inconclusive">INCONCLUSIVE</span></span>
+            <p>There is not enough evidence to say either way.</p>
+            <span><span class="chip v-skipped">SKIPPED</span></span>
+            <p>Out of scope for this run, or you chose to leave it.</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="wrap">
+          <div class="section-head">
+            <h2>Works with the agent you already use</h2>
+            <p>If an agent is set up on your computer, Exploro can run your tests with it.</p>
+          </div>
+          <div class="providers">
+            <span>Claude Code</span><span>Codex</span><span>Cursor</span><span>OpenCode</span
+            ><span>Grok</span><span>Antigravity</span><span>Kiro</span><span>Pi</span
+            ><span>Any ACP agent</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="alt" id="download">
+        <div class="wrap">
+          <div class="section-head">
+            <h2>Download Exploro</h2>
+            <p>
+              Desktop builds for Windows and Linux (64-bit). Exploro is in beta: builds are not
+              code-signed yet.
+            </p>
+          </div>
+
+          <div class="downloads">
+            <div class="dl">
+              <div class="dl-head">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    fill="currentColor"
+                    d="M3 5.5 10.5 4.5v7H3zm0 13 7.5 1v-7H3zm8.5 1.1L21 21v-8.5h-9.5zm0-15.2V11.5H21V3z"
+                  />
+                </svg>
+                <div>
+                  <h3>Windows</h3>
+                  <div class="meta">Windows 10 and 11, x64</div>
+                </div>
+              </div>
+              <div class="files" id="dl-win">
+                <a
+                  class="btn btn-primary"
+                  href="https://github.com/imavinashsingh/exploro/releases/latest"
+                  >Get the installer (.exe)</a
+                >
+              </div>
+              <p class="note">
+                Windows may show a SmartScreen warning because the build is unsigned. Choose
+                <b>More info</b>, then <b>Run anyway</b>.
+              </p>
+            </div>
+
+            <div class="dl">
+              <div class="dl-head">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    fill="currentColor"
+                    d="M12 2c-2.2 0-3.6 1.9-3.6 4.6 0 1.3.3 2.3-.5 3.6-1 1.6-2.9 3.7-2.9 6.4 0 .8.2 1.5.5 2.1-.6.4-1.4.6-1.5 1.3 0 .9 1.5 1 2.6 1.2 1.1.2 2 .8 2.9.8.8 0 1.4-.4 1.9-.9h1.2c.5.5 1.1.9 1.9.9.9 0 1.8-.6 2.9-.8 1.1-.2 2.6-.3 2.6-1.2-.1-.7-.9-.9-1.5-1.3.3-.6.5-1.3.5-2.1 0-2.7-1.9-4.8-2.9-6.4-.8-1.3-.5-2.3-.5-3.6C15.6 3.9 14.2 2 12 2zm-1.6 4c.5 0 .8.6.8 1.2s-.3 1-.7 1c-.4 0-.8-.5-.8-1.1 0-.6.3-1.1.7-1.1zm3.2 0c.4 0 .7.5.7 1.1 0 .6-.4 1.1-.8 1.1s-.7-.4-.7-1 .3-1.2.8-1.2zM12 9c1 0 2.2.6 2.2 1 0 .5-1.3 1.3-2.2 1.3S9.8 10.5 9.8 10c0-.4 1.2-1 2.2-1z"
+                  />
+                </svg>
+                <div>
+                  <h3>Linux</h3>
+                  <div class="meta">AppImage, x64 (Ubuntu 22.04+, Fedora, Debian…)</div>
+                </div>
+              </div>
+              <div class="files" id="dl-linux">
+                <a
+                  class="btn btn-primary"
+                  href="https://github.com/imavinashsingh/exploro/releases/latest"
+                  >Get the AppImage</a
+                >
+              </div>
+              <p class="note">Make the file executable, then run it:</p>
+              <pre><code id="linux-cmd">chmod +x ./*.AppImage
+./*.AppImage</code></pre>
+            </div>
+          </div>
+
+          <p class="release-line" id="release-line">
+            All versions and release notes are on the
+            <a href="https://github.com/imavinashsingh/exploro/releases">releases page</a>.
+          </p>
+        </div>
+      </section>
+
+      <section class="source">
+        <div class="wrap">
+          <div class="section-head">
+            <h2>Build from source</h2>
+            <p>
+              Prefer to run it yourself? Exploro uses the Vite+ toolchain. See
+              <a href="https://github.com/imavinashsingh/exploro/blob/main/EXPLORO.md"
+                >EXPLORO.md</a
+              >
+              for the full setup.
+            </p>
+          </div>
+          <pre><code>git clone https://github.com/imavinashsingh/exploro.git
+cd exploro
+vp i
+vp run dev --home-dir ~/.exploro/dev</code></pre>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <span
+          >Exploro is a fork of <a href="https://github.com/pingdotgg/t3code">T3 Code</a>. MIT
+          licensed.</span
+        >
+        <span><a href="https://github.com/imavinashsingh/exploro/issues">Report an issue</a></span>
+      </div>
+    </footer>
+
+    <script>
+      (function () {
+        var REPO = "imavinashsingh/exploro";
+
+        function fmtSize(bytes) {
+          return (bytes / 1048576).toFixed(0) + " MB";
+        }
+
+        function button(asset, label) {
+          var a = document.createElement("a");
+          a.className = "btn btn-primary";
+          a.href = asset.browser_download_url;
+          var text = document.createElement("span");
+          text.textContent = label;
+          var size = document.createElement("span");
+          size.className = "size";
+          size.textContent = fmtSize(asset.size);
+          a.append(text, size);
+          return a;
+        }
+
+        function fill(id, assets, label) {
+          if (!assets.length) return;
+          var box = document.getElementById(id);
+          box.replaceChildren.apply(
+            box,
+            assets.map(function (asset) {
+              return button(asset, assets.length > 1 ? label + " · " + asset.name : label);
+            }),
+          );
+        }
+
+        // Asset names come from the release workflow; match by extension and arch so a rename does not break the page.
+        function pick(assets, ext) {
+          var matches = assets.filter(function (a) {
+            return a.name.toLowerCase().endsWith(ext);
+          });
+          var x64 = matches.filter(function (a) {
+            return !/arm64|aarch64/i.test(a.name);
+          });
+          return x64.length ? x64.slice(0, 1) : matches.slice(0, 1);
+        }
+
+        fetch("https://api.github.com/repos/" + REPO + "/releases/latest", {
+          headers: { Accept: "application/vnd.github+json" },
+        })
+          .then(function (r) {
+            if (!r.ok) throw new Error(r.status);
+            return r.json();
+          })
+          .then(function (release) {
+            var assets = release.assets || [];
+            fill("dl-win", pick(assets, ".exe"), "Download installer (.exe)");
+            var appImage = pick(assets, ".appimage");
+            fill("dl-linux", appImage, "Download AppImage");
+            if (appImage.length) {
+              var name = appImage[0].name;
+              document.getElementById("linux-cmd").textContent = "chmod +x " + name + "\n./" + name;
+            }
+            var line = document.getElementById("release-line");
+            var link = document.createElement("a");
+            link.href = release.html_url;
+            link.textContent = "release notes";
+            var date = new Date(release.published_at).toLocaleDateString(undefined, {
+              year: "numeric",
+              month: "short",
+              day: "numeric",
+            });
+            line.replaceChildren(
+              "Latest version " +
+                (release.name || release.tag_name) +
+                ", released " +
+                date +
+                ". Read the ",
+              link,
+              ", or see ",
+            );
+            var all = document.createElement("a");
+            all.href = "https://github.com/" + REPO + "/releases";
+            all.textContent = "all releases";
+            line.append(all, ".");
+          })
+          .catch(function () {
+            /* Static links to the releases page stay in place. */
+          });
+      })();
+    </script>
+  </body>
+</html>

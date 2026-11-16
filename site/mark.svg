@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" fill="none">
+  <title>Exploro</title>
+  <rect width="128" height="128" rx="30" fill="#00727D"/>
+  <circle cx="56" cy="56" r="27" stroke="#FFFFFF" stroke-width="12"/>
+  <path d="M62 60V102L72.5 91.5L81 108L91 103L82.5 87H98Z" fill="#FEA92F" stroke="#00727D" stroke-width="6" stroke-linejoin="round" paint-order="stroke"/>
+</svg>

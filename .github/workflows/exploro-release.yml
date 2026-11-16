@@ -1,0 +1,132 @@
+name: Exploro release
+
+# Unsigned Windows and Linux desktop builds on GitHub-hosted runners, published
+# as a GitHub release that the website's download buttons read. Upstream's
+# release.yml needs T3's paid runners and signing secrets, so Exploro uses this.
+# Start it by pushing a `v1.2.3` tag, or run it by hand with a version.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, for example 0.2.0 (tagged v0.2.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: exploro-release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          raw="${INPUT_VERSION:-${GITHUB_REF_NAME}}"
+          version="${raw#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Invalid version: $raw"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    name: Build ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x64
+            runner: ubuntu-24.04
+            platform: linux
+            target: AppImage
+            rust_target: x86_64-unknown-linux-gnu
+            files: release/*.AppImage
+          - label: Windows x64
+            runner: windows-2025
+            platform: win
+            target: nsis
+            rust_target: x86_64-pc-windows-msvc
+            files: release/*.exe
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/web... --filter=@t3tools/scripts...
+
+      - name: Install Linux build libraries
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config imagemagick
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Align package versions
+        shell: bash
+        run: node scripts/update-release-package-versions.ts "${{ needs.version.outputs.version }}"
+
+      - name: Build desktop app
+        shell: bash
+        run: >-
+          node scripts/build-desktop-artifact.ts
+          --platform ${{ matrix.platform }}
+          --target ${{ matrix.target }}
+          --arch x64
+          --build-version "${{ needs.version.outputs.version }}"
+          --output-dir release
+          --verbose
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.platform }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          ls -la dist
+          prerelease=()
+          if [[ "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
+          gh release create "v$VERSION" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Exploro $VERSION" \
+            --generate-notes \
+            "${prerelease[@]}"
