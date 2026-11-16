@@ -1578,13 +1578,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     fromPaste = false,
   ) => {
     refreshWorkspaceSnapshotOnTyping();
-    // A paste is not typing: a terminal copy ending in `/rc` must not open the menu, so its
-    // trigger starts dismissed, as after Escape.
+    // A paste is not typing: a terminal copy ending in `/rc` must not open the menu, so a
+    // trigger the paste brought in starts dismissed, as after Escape. Pasting into an open
+    // query (`@` then a path) keeps it open.
     const updateTrigger = () => {
       const candidate = cursorAdjacentToMention
         ? null
         : detectComposerTrigger(nextPrompt, expandedCursor);
-      if (fromPaste && candidate) dismissComposerTrigger(candidate);
+      const continuesOpenTrigger =
+        candidate !== null &&
+        composerTrigger?.kind === candidate.kind &&
+        composerTrigger.rangeStart === candidate.rangeStart;
+      if (fromPaste && candidate && !continuesOpenTrigger) dismissComposerTrigger(candidate);
       else setComposerTrigger(candidate);
     };
     if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {

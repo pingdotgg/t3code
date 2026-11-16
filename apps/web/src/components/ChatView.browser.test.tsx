@@ -688,12 +688,18 @@ it("pasted text ending in a slash word does not open the command menu", async ()
   await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
   const modelItem = page.getByText("Switch response model for this thread");
 
+  const paste = (text: string) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", text);
+    editor
+      .element()
+      .dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
+      );
+  };
+
   await userEvent.click(editor);
-  const clipboardData = new DataTransfer();
-  clipboardData.setData("text/plain", "Brewed for 1m 17s\nbypass permissions on\n/mo");
-  editor
-    .element()
-    .dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+  paste("Brewed for 1m 17s\nbypass permissions on\n/mo");
   await vi.waitFor(() => expect(editor.element().textContent).toContain("permissions on/mo"));
   expect(modelItem.query()).toBeNull();
 
@@ -704,5 +710,11 @@ it("pasted text ending in a slash word does not open the command menu", async ()
 
   // A slash word typed by hand still opens the menu.
   await userEvent.keyboard(" /mo");
+  await expect.element(modelItem).toBeVisible();
+
+  // Pasting into a slash word typed by hand keeps its menu open.
+  await userEvent.keyboard(" /");
+  paste("mo");
+  await vi.waitFor(() => expect(editor.element().textContent).toContain("/mo /mo"));
   await expect.element(modelItem).toBeVisible();
 });
