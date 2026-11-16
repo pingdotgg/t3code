@@ -77,73 +77,84 @@ function summarize(
     group.push(record);
     groups.set(key, group);
   }
-  return [...groups.values()].slice(0, GUIDANCE_LIMIT).map((group) => {
-    const first = group[0]!;
-    const scored = group.filter((record) => record.status === "scored");
-    const meanScores = {
-      taskCompletion: null,
-      correctness: null,
-      instructionFollowing: null,
-      verification: null,
-    } as ModelEvaluationGuidance["meanScores"];
-    const scoreCounts = {
-      taskCompletion: 0,
-      correctness: 0,
-      instructionFollowing: 0,
-      verification: 0,
-    };
-    for (const dimension of DIMENSIONS) {
-      const values = scored.flatMap((record) => record.verdict?.scores[dimension] ?? []);
-      scoreCounts[dimension] = values.length;
-      Object.assign(meanScores, {
-        [dimension]:
-          values.length === 0
-            ? null
-            : values.reduce((sum, value) => sum + value, 0) / values.length,
-      });
-    }
-    const prompts = scored.map((record) => record.promptChars).toSorted((a, b) => a - b);
-    const observations = (field: "strengths" | "weaknesses" | "promptAdvice") =>
-      [
-        ...new Set(
-          scored.flatMap(
-            (record) =>
-              record.verdict?.[field].map((observation) =>
-                observation.text.replace(/\s+/g, " ").trim().slice(0, 240),
-              ) ?? [],
+  return [...groups.values()]
+    .map((group) => {
+      const first = group[0]!;
+      const scored = group.filter((record) => record.status === "scored");
+      const meanScores = {
+        taskCompletion: null,
+        correctness: null,
+        instructionFollowing: null,
+        verification: null,
+      } as ModelEvaluationGuidance["meanScores"];
+      const scoreCounts = {
+        taskCompletion: 0,
+        correctness: 0,
+        instructionFollowing: 0,
+        verification: 0,
+      };
+      for (const dimension of DIMENSIONS) {
+        const values = scored.flatMap((record) => record.verdict?.scores[dimension] ?? []);
+        scoreCounts[dimension] = values.length;
+        Object.assign(meanScores, {
+          [dimension]:
+            values.length === 0
+              ? null
+              : values.reduce((sum, value) => sum + value, 0) / values.length,
+        });
+      }
+      const prompts = scored.map((record) => record.promptChars).toSorted((a, b) => a - b);
+      const observations = (field: "strengths" | "weaknesses" | "promptAdvice") =>
+        [
+          ...new Set(
+            scored.flatMap(
+              (record) =>
+                record.verdict?.[field].map((observation) =>
+                  observation.text.replace(/\s+/g, " ").trim().slice(0, 240),
+                ) ?? [],
+            ),
           ),
+        ].slice(0, 3);
+      return {
+        scope: first.scope,
+        modelSelection: first.modelSelection,
+        evaluatorSelection: first.evaluatorSelection,
+        rubricVersion: first.rubricVersion,
+        taskCategory: first.verdict!.taskCategory,
+        sampleCount: scored.length,
+        insufficientEvidenceCount: group.length - scored.length,
+        meanScores,
+        scoreCounts,
+        confidence:
+          scored.filter((record) => record.verdict?.confidence !== "low").length >= 5
+            ? "observed"
+            : "provisional",
+        promptChars: {
+          min: prompts[0] ?? 0,
+          median:
+            prompts.length === 0
+              ? 0
+              : ((prompts[Math.floor((prompts.length - 1) / 2)] ?? 0) +
+                  (prompts[Math.floor(prompts.length / 2)] ?? 0)) /
+                2,
+          max: prompts.at(-1) ?? 0,
+        },
+        strengths: observations("strengths"),
+        weaknesses: observations("weaknesses"),
+        promptAdvice: observations("promptAdvice"),
+        latestAt: group.reduce(
+          (latest, record) => (record.at > latest ? record.at : latest),
+          group[0]!.at,
         ),
-      ].slice(0, 3);
-    return {
-      scope: first.scope,
-      modelSelection: first.modelSelection,
-      evaluatorSelection: first.evaluatorSelection,
-      rubricVersion: first.rubricVersion,
-      taskCategory: first.verdict!.taskCategory,
-      sampleCount: scored.length,
-      insufficientEvidenceCount: group.length - scored.length,
-      meanScores,
-      scoreCounts,
-      confidence:
-        scored.filter((record) => record.verdict?.confidence !== "low").length >= 5
-          ? "observed"
-          : "provisional",
-      promptChars: {
-        min: prompts[0] ?? 0,
-        median:
-          prompts.length === 0
-            ? 0
-            : ((prompts[Math.floor((prompts.length - 1) / 2)] ?? 0) +
-                (prompts[Math.floor(prompts.length / 2)] ?? 0)) /
-              2,
-        max: prompts.at(-1) ?? 0,
-      },
-      strengths: observations("strengths"),
-      weaknesses: observations("weaknesses"),
-      promptAdvice: observations("promptAdvice"),
-      latestAt: first.at,
-    };
-  });
+      };
+    })
+    .filter((group) => group.sampleCount > 0)
+    .toSorted(
+      (left, right) =>
+        right.sampleCount - left.sampleCount ||
+        (left.latestAt < right.latestAt ? 1 : left.latestAt > right.latestAt ? -1 : 0),
+    )
+    .slice(0, GUIDANCE_LIMIT);
 }
 
 export class ModelEvaluationPassError extends Schema.TaggedError<ModelEvaluationPassError>()(
