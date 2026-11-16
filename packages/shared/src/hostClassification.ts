@@ -17,7 +17,7 @@ const parseIpv4MappedIpv6Address = (host: string): readonly number[] | null => {
   if (!normalized.startsWith("::ffff:")) return null;
   const suffix = normalized.slice("::ffff:".length);
   const dotted = parseIpv4Address(suffix);
-  if (dotted) return dotted;
+  if (dotted?.join(".") === suffix) return dotted;
   const hextets = suffix.split(":");
   if (hextets.length !== 2 || hextets.some((part) => !/^[\da-f]{1,4}$/u.test(part))) return null;
   const high = Number.parseInt(hextets[0]!, 16);

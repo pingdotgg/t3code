@@ -119,7 +119,16 @@ describe("isLocalLoopbackHost", () => {
     ]) {
       expect(isLocalLoopbackHost(host), host).toBe(true);
     }
-    for (const host of ["::ffff:192.168.1.10", "::7f00:1", "::ffff:0:7f00:1"]) {
+    for (const host of [
+      "::ffff:192.168.1.10",
+      "::7f00:1",
+      "::ffff:0:7f00:1",
+      "::ffff:127..0.1",
+      "::ffff:0x7f.0.0.1",
+      "::ffff:127.0x0.0.1",
+      "::ffff:127.0.0.1e0",
+      "::ffff:127.0.0.256",
+    ]) {
       expect(isLocalLoopbackHost(host), host).toBe(false);
     }
   });
