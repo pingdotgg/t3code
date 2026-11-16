@@ -81,6 +81,15 @@ index b4c280390b52434f63fbe7916d81b150d9006fb4..cb7fb89a22c8adac9ea951b8767b5fd4
  		}
  		if (this.#selections !== void 0 || this.#matches !== void 0 || this.#markerRenderer !== void 0) {
  			this.#updateSelections(this.#selections ?? []);
+@@ -3369,7 +3388,8 @@ var Editor = class {
+ 		});
+ 		this.#searchPanel = searchPanel;
+ 		this.#retainSearchPanelFocus = false;
+ 		searchPanel.mount();
++		searchPanel.getHostElement().dataset.searchPanelOverlay = "";
+ 	}
+ 	#searchWithNavigationTarget(textDocument, searchParams) {
+ 		const viewport = this.#getSearchViewportBounds();
 diff --git a/dist/editor/textMeasure.d.ts b/dist/editor/textMeasure.d.ts
 index 89e938d89eca77d351aeed65f3c5495383effd97..cde1d6ba89a97bbb1614754a48f8994388c186bd 100644
 --- a/dist/editor/textMeasure.d.ts
