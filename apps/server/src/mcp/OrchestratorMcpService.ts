@@ -3597,6 +3597,7 @@ const make = Effect.gen(function* () {
           ...(input.runId === undefined ? {} : { runId: input.runId }),
           timeoutMs: clampWaitTimeoutMs(input.timeoutMs),
           ...(input.untilDelegatedWorkSettled === true ? { untilDelegatedWorkSettled: true } : {}),
+          ...(input.untilBackgroundWorkEnds === true ? { untilBackgroundWorkEnds: true } : {}),
           untilQuestion: input.returnOnQuestion !== false,
         })
         .pipe(Effect.mapError(threadManagementFailure));
@@ -3642,6 +3643,9 @@ const make = Effect.gen(function* () {
               resultRun: { runId: result.resultRun.id, status: runOutcome(result.resultRun) },
             }),
         ...(result.workState === undefined ? {} : { workState: result.workState }),
+        ...(result.pendingBackgroundTaskCount === undefined
+          ? {}
+          : { pendingBackgroundTaskCount: result.pendingBackgroundTaskCount }),
       } satisfies OrchestratorMcpThreadWaitResult;
     }),
     interruptThread: Effect.fn("OrchestratorMcpService.interruptThread")(function* (scope, input) {

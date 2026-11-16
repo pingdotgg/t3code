@@ -236,6 +236,9 @@ const make = Effect.gen(function* () {
           ...(input.untilDelegatedWorkSettled === undefined
             ? {}
             : { untilDelegatedWorkSettled: input.untilDelegatedWorkSettled }),
+          ...(input.untilBackgroundWorkEnds === undefined
+            ? {}
+            : { untilBackgroundWorkEnds: input.untilBackgroundWorkEnds }),
           ...(input.returnOnQuestion === undefined
             ? {}
             : { returnOnQuestion: input.returnOnQuestion }),

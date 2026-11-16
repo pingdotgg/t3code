@@ -686,7 +686,13 @@ export const OrchestratorMcpThreadWaitInput = Schema.Struct({
   untilDelegatedWorkSettled: Schema.optional(
     Schema.Boolean.annotate({
       description:
-        "Also wait for its delegated and background tasks and their completions to settle. `resultRun` then names the run with its final answer.",
+        "Also wait for its delegated tasks, awaited background tasks and their completions to settle. `resultRun` then names the run with its final answer.",
+    }),
+  ),
+  untilBackgroundWorkEnds: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "After the run ends, also wait while any background task runs, until none is left or one wakes the thread.",
     }),
   ),
   returnOnQuestion: Schema.optional(
@@ -711,6 +717,12 @@ export const OrchestratorMcpThreadWaitResult = Schema.Struct({
     OrchestratorMcpWorkState.annotate({
       description:
         "With untilDelegatedWorkSettled, once the run ended. working: another run continues the thread; waiting_for_children: its tasks or awaited background work remain.",
+    }),
+  ),
+  pendingBackgroundTaskCount: Schema.optional(
+    NonNegativeInt.annotate({
+      description:
+        "With untilBackgroundWorkEnds: background tasks still running after the run ended.",
     }),
   ),
   unreachable: Schema.optional(

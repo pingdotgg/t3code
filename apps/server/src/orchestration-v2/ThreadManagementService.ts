@@ -49,6 +49,7 @@ import {
   type TurnItemId,
 } from "@t3tools/contracts";
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
+import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as Clock from "effect/Clock";
@@ -193,6 +194,11 @@ export interface ThreadManagementWaitInput {
    */
   readonly untilDelegatedWorkSettled?: boolean;
   /**
+   * Once the run ended, also wait while any background task runs, awaited or
+   * not, until none is left or one wakes the thread in a later run.
+   */
+  readonly untilBackgroundWorkEnds?: boolean;
+  /**
    * Also return while the thread is blocked on a live question or approval,
    * which no run end will follow.
    */
@@ -211,6 +217,8 @@ export interface ThreadManagementWaitResult {
    * awaited background work remain, `result_available` once settled.
    */
   readonly workState?: ReturnType<typeof delegatedTaskProgress>["state"];
+  /** With `untilBackgroundWorkEnds`, once the run ended: its background tasks still running. */
+  readonly pendingBackgroundTaskCount?: number;
   /** With `untilQuestion`: the live question the thread is blocked on. */
   readonly pendingQuestion?: RuntimeRequestId;
   /** With `untilQuestion`: the oldest live approval the thread is blocked on. */
@@ -1229,6 +1237,18 @@ const make = Effect.gen(function* () {
         ? { workState: "working" as const, resultRun: undefined }
         : { workState: progress.state, resultRun: progress.resultRun };
     });
+    const untilBackgroundWorkEnds = input.untilBackgroundWorkEnds === true;
+    // A later run is the wake a background task's end brings, so it ends the wait too.
+    const pendingBackgroundTaskCount = (
+      runs: ReadonlyArray<OrchestrationV2Run>,
+      run: OrchestrationV2Run,
+    ) =>
+      runs.some((candidate) => candidate.ordinal > run.ordinal)
+        ? Effect.succeed(0)
+        : orchestrator.getThreadShell(input.threadId).pipe(
+            Effect.mapError(loadError),
+            Effect.map((shell) => shell?.pendingBackgroundTasks?.length ?? 0),
+          );
     const untilQuestion = input.untilQuestion === true;
     const blockingRequests = getProjectThreadRecords(input, ["runtimeRequests"]).pipe(
       Effect.map(({ runtimeRequests }) => {
@@ -1264,17 +1284,21 @@ const make = Effect.gen(function* () {
               })),
             )
           : { ...outcomeNow, resultRun: undefined, workState: undefined };
+      const backgroundTasks =
+        untilBackgroundWorkEnds && isTerminalRunStatus(current.run.status)
+          ? yield* pendingBackgroundTaskCount(runs, current.run)
+          : 0;
+      const settled = current.settled && backgroundTasks === 0;
       const blocked =
-        current.settled || !untilQuestion
+        settled || !untilQuestion
           ? { pendingQuestion: undefined, pendingApproval: undefined }
           : yield* blockingRequests;
       return {
         ...current,
         ...blocked,
+        backgroundTasks,
         done:
-          current.settled ||
-          blocked.pendingQuestion !== undefined ||
-          blocked.pendingApproval !== undefined,
+          settled || blocked.pendingQuestion !== undefined || blocked.pendingApproval !== undefined,
       };
     });
     const settledResult = (current: Effect.Success<ReturnType<typeof evaluate>>) => ({
@@ -1283,6 +1307,9 @@ const make = Effect.gen(function* () {
       timedOut: !current.done,
       ...(current.resultRun === undefined ? {} : { resultRun: current.resultRun }),
       ...(current.workState === undefined ? {} : { workState: current.workState }),
+      ...(current.backgroundTasks === 0
+        ? {}
+        : { pendingBackgroundTaskCount: current.backgroundTasks }),
       ...(current.pendingQuestion === undefined
         ? {}
         : { pendingQuestion: current.pendingQuestion }),
@@ -1303,9 +1330,11 @@ const make = Effect.gen(function* () {
             "thread.deleted",
             // What delegated work reads besides runs: tasks and their
             // deliveries, and a provider thread's background tasks.
-            ...(untilDelegatedWorkSettled
+            ...(untilDelegatedWorkSettled || untilBackgroundWorkEnds
               ? (["subagent.updated", "provider-thread.updated"] as const)
               : []),
+            // Background commands some providers track only as turn items.
+            ...(untilBackgroundWorkEnds ? (["turn-item.updated"] as const) : []),
             ...(untilQuestion ? (["runtime-request.updated"] as const) : []),
           ] as const
         ).map((eventType) =>
@@ -1320,10 +1349,13 @@ const make = Effect.gen(function* () {
         Stream.mapError(loadError),
         Stream.filter(
           (stored) =>
-            untilDelegatedWorkSettled ||
-            stored.event.type !== "run.updated" ||
-            stored.event.payload.id === selectedRun.id ||
-            stored.event.payload.restartContinuationOfRunId !== undefined,
+            (stored.event.type !== "turn-item.updated" ||
+              turnItemUpdateCanEndBackgroundWork(stored.event.payload)) &&
+            (untilDelegatedWorkSettled ||
+              untilBackgroundWorkEnds ||
+              stored.event.type !== "run.updated" ||
+              stored.event.payload.id === selectedRun.id ||
+              stored.event.payload.restartContinuationOfRunId !== undefined),
         ),
       ),
       initial.pending

@@ -11,6 +11,7 @@ import {
   ProviderSessionId,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadShell,
   ProjectId,
   ProviderInstanceId,
   RunId,
@@ -612,6 +613,99 @@ it.effect("waitForThread can wait past an ended run for the thread's delegated w
       resultRun: { id: wakeRunId, status: "completed" },
       workState: "result_available",
     });
+  }),
+);
+
+it.effect("waitForThread can wait past an ended run for its background tasks", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:wait-background");
+    const threadId = ThreadId.make("thread:thread-management:wait-background");
+    const runId = RunId.make("run:thread-management:wait-background");
+    const wakeRunId = RunId.make("run:thread-management:wait-background:wake");
+    const subscribed = yield* Deferred.make<void>();
+    const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+    const run = (id: RunId, ordinal: number, status: OrchestrationV2Run["status"]) =>
+      ({ id, ordinal, status }) as unknown as OrchestrationV2Run;
+    // The run ended with a backgrounded command still running, which no agent marked awaited.
+    let runs = [run(runId, 1, "completed")];
+    let pendingBackgroundTasks = [{ taskId: "box-ci", kind: "command" }];
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadEventSequence: () => Effect.succeed(0),
+          restartContinuationPending: () => Effect.succeed(false),
+          streamStoredEventsFrom: (input) =>
+            input?.eventType === "provider-thread.updated"
+              ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+                  Stream.drain,
+                  Stream.concat(Stream.fromQueue(events)),
+                )
+              : Stream.never,
+          getThreadShell: () =>
+            Effect.sync(
+              () => ({ pendingBackgroundTasks }) as unknown as OrchestrationV2ThreadShell,
+            ),
+          getThreadRecords: () =>
+            Effect.sync(
+              () =>
+                ({
+                  thread: { id: threadId, projectId, deletedAt: null },
+                  runs,
+                }) as unknown as OrchestrationV2ThreadProjection,
+            ),
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(layerTest),
+    );
+    // Without the option the ended run is the answer, as before.
+    expect(
+      yield* service.waitForThread({ projectId, threadId, runId, timeoutMs: 60 * 60 * 1_000 }),
+    ).toMatchObject({ timedOut: false, run: { id: runId } });
+
+    // A wait that runs out says the run ended and why the thread is not done.
+    const waiting = yield* service
+      .waitForThread({
+        projectId,
+        threadId,
+        runId,
+        timeoutMs: 1_000,
+        untilBackgroundWorkEnds: true,
+      })
+      .pipe(Effect.forkChild);
+    yield* TestClock.adjust(Duration.millis(1_000));
+    expect(yield* Fiber.join(waiting)).toMatchObject({
+      timedOut: true,
+      run: { id: runId, status: "completed" },
+      pendingBackgroundTaskCount: 1,
+    });
+
+    const fiber = yield* service
+      .waitForThread({
+        projectId,
+        threadId,
+        runId,
+        timeoutMs: 60 * 60 * 1_000,
+        untilBackgroundWorkEnds: true,
+      })
+      .pipe(Effect.forkChild);
+    // A wait that returns early fails below instead of hanging here.
+    yield* Effect.raceFirst(Deferred.await(subscribed), Fiber.await(fiber));
+    // The command ends and its completion wakes the thread in a new run.
+    pendingBackgroundTasks = [];
+    runs = [...runs, run(wakeRunId, 2, "running")];
+    yield* Queue.offer(events, {
+      sequence: 1,
+      event: { threadId, type: "provider-thread.updated", payload: {} },
+    } as unknown as OrchestrationV2StoredEvent);
+    const result = yield* Fiber.join(fiber);
+    expect(result).toMatchObject({ timedOut: false, run: { id: runId, status: "completed" } });
+    expect(result).not.toHaveProperty("pendingBackgroundTaskCount");
   }),
 );
 
