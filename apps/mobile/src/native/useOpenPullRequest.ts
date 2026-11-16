@@ -1,9 +1,11 @@
 import { useNavigation, useRoute, StackActions } from "@react-navigation/native";
+import { AsyncResult } from "effect/reactivity";
 import { nativePullRequestDestination } from "../lib/pullRequestNavigation";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useProjects, useThreadShell } from "../state/entities";
 import { tryOpenExternalUrl } from "../lib/openExternalUrl";
 import { appAtomRegistry } from "../state/atom-registry";
+import { mobilePreferencesAtom } from "../state/preferences";
 import { environmentServerConfigsAtom } from "../state/server";
 import { withKnownPullRequestSummary } from "../state/use-thread-pr";
 
@@ -19,6 +21,10 @@ export function useNavigateToPullRequest(options?: { readonly replace?: boolean 
   const replace = options?.replace;
   return async (url: string, context: PullRequestContext | null) => {
     // Read at press time so a config push does not hand every link a new handler.
+    const preferences = appAtomRegistry.get(mobilePreferencesAtom);
+    if (AsyncResult.isSuccess(preferences) && preferences.value.openPullRequestsInGitHubApp) {
+      return tryOpenExternalUrl(url, "pull-request");
+    }
     const serverConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
     const destination = nativePullRequestDestination(url, context, projects, (environmentId) =>
       serverConfigs.has(environmentId),
