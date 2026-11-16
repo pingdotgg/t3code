@@ -1160,9 +1160,14 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
   useEffect(() => {
     if (!targetFile) loadMore();
   }, [targetFile, loadMore]);
+  const lastFileRowIndex = data.rows.findLastIndex((row) => row.kind === "file");
+  const lastFileId = data.rows[lastFileRowIndex]?.fileId;
+  const lastShownRowIndex =
+    lastFileId && collapsedIds.includes(lastFileId) ? lastFileRowIndex : data.rows.length - 1;
   const onDebug: NonNullable<NativeReviewDiffViewProps["onDebug"]> = (event) =>
     handlePullRequestDiffDebugEvent(event, {
       rowCount: data.rows.length,
+      lastShownRowIndex,
       targetFileId: targetFile?.id,
       focusIndex,
       isIos: Platform.OS === "ios",
