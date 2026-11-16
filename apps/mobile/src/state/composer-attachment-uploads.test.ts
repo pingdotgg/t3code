@@ -1,5 +1,7 @@
 import { CommandId, EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import { afterEach, beforeEach, vi } from "vite-plus/test";
 
 type UploadOptions = {
   signal: AbortSignal;
@@ -167,7 +169,7 @@ vi.mock("./use-thread-outbox", async () => {
   const { Atom } = await import("effect/reactivity");
   return {
     editingQueuedMessageIdsAtom: Atom.make<Record<string, boolean>>({}).pipe(Atom.keepAlive),
-    dispatchingQueuedMessageIdAtom: Atom.make<Record<string, string>>({}).pipe(Atom.keepAlive),
+    dispatchingQueuedMessageIdsAtom: Atom.make<Record<string, true>>({}).pipe(Atom.keepAlive),
     useThreadOutboxMessages: () =>
       appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
     retryingQueuedMessageIdsAtom: Atom.make({}).pipe(Atom.keepAlive),
@@ -296,29 +298,30 @@ function uploadState() {
   ];
 }
 
-it.each(["decode", "write"] as const)(
+it.effect.each(["decode", "write"] as const)(
   "keeps an accepted upload ready when the draft %s fails",
-  async (fault) => {
-    native.fault = fault;
-    if (fault === "decode")
-      native.files.set(draftsUri, Buffer.from('{"schemaVersion":1,"drafts":'));
-    drafts.resetComposerDraftsLoadState();
-    const queue = worker();
-    await queue.settled();
-    expect(uploadState()).toEqual({ status: "ready" });
-    expect(native.deleted).toEqual([]);
-    expect(composerAttachmentUploadBlockReason(sendInput())).toBeNull();
-    expect(composerAttachmentsStillUploading(sendInput())).toBe(false);
+  (fault) =>
+    Effect.gen(function* () {
+      native.fault = fault;
+      if (fault === "decode")
+        native.files.set(draftsUri, Buffer.from('{"schemaVersion":1,"drafts":'));
+      drafts.resetComposerDraftsLoadState();
+      const queue = worker();
+      yield* Effect.promise(() => queue.settled());
+      expect(uploadState()).toEqual({ status: "ready" });
+      expect(native.deleted).toEqual([]);
+      expect(composerAttachmentUploadBlockReason(sendInput())).toBeNull();
+      expect(composerAttachmentsStillUploading(sendInput())).toBe(false);
 
-    const message = queuedMessage();
-    expect(message.attachments[0]?.uploadedAttachmentId).toBe("pending-1");
-    await enqueueThreadOutboxMessage(message);
-    const prepared = await prepareQueuedMessageAttachments(message);
-    expect(prepared.status).toBe("ready");
-    if (prepared.status !== "ready") throw new Error("Outbox preparation abandoned");
-    expect(prepared.prepared.pendingAttachmentIds).toEqual(["pending-1"]);
-    expect(native.transfer).toHaveBeenCalledTimes(1);
-  },
+      const message = queuedMessage();
+      expect(message.attachments[0]?.uploadedAttachmentId).toBe("pending-1");
+      yield* Effect.promise(() => enqueueThreadOutboxMessage(message));
+      const prepared = yield* prepareQueuedMessageAttachments(message);
+      expect(prepared.status).toBe("ready");
+      if (prepared.status !== "ready") throw new Error("Outbox preparation abandoned");
+      expect(prepared.prepared.pendingAttachmentIds).toEqual(["pending-1"]);
+      expect(native.transfer).toHaveBeenCalledTimes(1);
+    }),
 );
 
 it("keeps an upload running when its message is sent mid-upload and records it on the message", async () => {
