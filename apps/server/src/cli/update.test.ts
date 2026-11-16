@@ -27,6 +27,7 @@ import {
 } from "../cloud/pinnedRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { hostShellWord } from "./invocation.ts";
 import {
   repointLauncher,
   resolveMirrorVersion,
@@ -714,7 +715,7 @@ it.layer(NodeServices.layer)("t3 update closing hint", (it) => {
           npmGlobal,
           platform === "win32"
             ? `${stillRuns} Update it to t3@9.9.9 with the package manager that installed it.`
-            : `${stillRuns} Run \`npm install --global --prefix ${realPrefix} t3@9.9.9\` to move to 9.9.9.`,
+            : `${stillRuns} Run \`npm install --global --prefix ${hostShellWord(platform, realPrefix)} t3@9.9.9\` to move to 9.9.9.`,
         ],
         [npx, `${stillRuns} Run \`npx t3@9.9.9\` to move to 9.9.9.`],
         [
