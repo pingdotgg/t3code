@@ -31,3 +31,13 @@ print(json.dumps({'url': p['base_url'].rstrip('/'), 'headers': h}))
       ),
     ),
   );
+
+/** Morph's Anthropic-compatible API, so a run never reaches a paid provider API. */
+export const morphProxyConfig = () => {
+  const key = process.env.MORPH_API_KEY;
+  if (!key) throw new Error("Set MORPH_API_KEY to run on a Morph model.");
+  return {
+    url: "https://api.morphllm.com/v1",
+    headers: { "x-api-key": key, Authorization: `Bearer ${key}` },
+  };
+};
