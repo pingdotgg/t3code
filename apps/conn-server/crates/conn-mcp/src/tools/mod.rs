@@ -17,6 +17,7 @@ mod annotations;
 pub(crate) mod attachments;
 mod background;
 mod create_threads;
+mod html;
 mod manage;
 mod message;
 mod panels;
@@ -76,6 +77,7 @@ pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError 
 pub(crate) const HANDLED: &[&str] = &[
     "tool_search",
     "t3_workflow_stop",
+    "html_render",
     "mcp_call",
     "mcp_connect",
     "create_threads",
@@ -155,6 +157,7 @@ pub(crate) async fn call(
                 serde_json::json!({"tools":crate::lock(&service.exposure).search(&caller.provider_session_id, args.get("query").and_then(Value::as_str).unwrap_or_default())}),
             )
         }
+        "html_render" => html::render(&cx, &args).await,
         "create_threads" => create_threads::create(&cx, &args).await,
         "t3_attachment_prepare_upload" => attachments::prepare(&cx, &args).await,
         "t3_attachment_discard" => attachments::discard(&cx, &args).await,

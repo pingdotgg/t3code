@@ -316,7 +316,7 @@ impl AttachmentStore {
     }
 
     /// The file for a relative name inside the store, or `None` when it would leave it.
-    fn path_for(&self, relative: &str) -> Option<PathBuf> {
+    pub(crate) fn path_for(&self, relative: &str) -> Option<PathBuf> {
         let ok = !relative.is_empty()
             && !relative.contains(['/', '\\', '\0'])
             && relative != "."

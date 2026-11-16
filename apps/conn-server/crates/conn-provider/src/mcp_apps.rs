@@ -64,115 +64,16 @@ pub fn claude_name(server: &str, tool: &str) -> String {
     format!("{}{}", claude_prefix(server), claude_name_part(tool))
 }
 
-const MAX_ENVELOPE_DEPTH: usize = 4;
-const MAX_ENVELOPE_NODES: usize = 128;
-const MAX_PARSED_BYTES: usize = 16_384;
-const MAX_CONTENT_BLOCKS: usize = 32;
-
-// Match toolOutput.ts's envelope budget before accepting a reference from provider output.
-#[derive(Default)]
-struct Envelope {
-    data: bool,
-    app: Option<Value>,
-}
-
-struct ReadBudget {
-    bytes: usize,
-    nodes: usize,
-    exceeded: bool,
-}
-
-fn read_envelope(value: &Value, budget: &mut ReadBudget, depth: usize) -> Envelope {
-    if depth > MAX_ENVELOPE_DEPTH || budget.nodes == 0 {
-        budget.exceeded = true;
-        return Envelope::default();
-    }
-    budget.nodes -= 1;
-    match value {
-        Value::String(text) => {
-            if text.len() > budget.bytes {
-                budget.exceeded = true;
-                return Envelope::default();
-            }
-            budget.bytes -= text.len();
-            serde_json::from_str::<Value>(text)
-                .ok()
-                .map(|parsed| read_envelope(&parsed, budget, depth + 1))
-                .unwrap_or_default()
-        }
-        Value::Array(blocks) => {
-            if blocks.len() > MAX_CONTENT_BLOCKS {
-                budget.exceeded = true;
-                return Envelope::default();
-            }
-            let mut result = Envelope::default();
-            for block in blocks {
-                let text = block.get("text").unwrap_or(&Value::Null);
-                let text = if text.is_object() || text.is_array() {
-                    text.get("text").unwrap_or(text)
-                } else {
-                    text
-                };
-                let nested = read_envelope(text, budget, depth + 1);
-                if !result.data {
-                    result = nested;
-                }
-                if budget.exceeded {
-                    break;
-                }
-            }
-            result
-        }
-        Value::Object(object) => {
-            if let Some(content) = object
-                .get("structuredContent")
-                .filter(|v| !v.is_null())
-                .or_else(|| object.get("content"))
-            {
-                read_envelope(content, budget, depth + 1)
-            } else {
-                Envelope {
-                    data: true,
-                    app: object.get("t3McpApp").and_then(read_reference),
-                }
-            }
-        }
-        _ => Envelope::default(),
-    }
-}
-
-fn read_reference(app: &Value) -> Option<Value> {
-    let bounded = |key| {
-        app.get(key)?
-            .as_str()
-            .filter(|s| !s.trim().is_empty() && s.encode_utf16().count() <= 256)
-    };
-    bounded("attachmentId")?;
-    bounded("server")?;
-    bounded("tool")?;
-    let uri = app.get("resourceUri")?.as_str()?;
-    (uri.starts_with("ui://") && uri.encode_utf16().count() <= 4096).then(|| app.clone())
-}
-
 pub fn output_app_reference(output: &Value) -> Option<Value> {
-    let mut budget = ReadBudget {
-        bytes: MAX_PARSED_BYTES,
-        nodes: MAX_ENVELOPE_NODES,
-        exceeded: false,
-    };
-    let result = read_envelope(output, &mut budget, 0);
-    if budget.exceeded { None } else { result.app }
+    crate::tool_output::compact_dynamic_tool_output(output)?
+        .remove(crate::tool_output::MCP_APP_OUTPUT_KEY)
 }
 
 pub fn app_reference(item: &Value) -> Option<Value> {
     if item.get("type")?.as_str()? != "dynamic_tool" {
         return None;
     }
-    let app = output_app_reference(item.get("output")?)?;
-    let server = app.get("server")?.as_str()?;
-    let tool = app.get("tool")?.as_str()?;
-    let name = item.get("toolName")?.as_str()?;
-    (name == format!("{server}.{tool}") || name == claude_name(server, tool)).then_some(app)
+    crate::tool_output::mcp_app_from_tool_item(item)
 }
 
 pub fn rules_cover(rules: &Value, behaviors: &[&str]) -> bool {
@@ -266,6 +167,26 @@ mod tests {
         ] {
             let item = json!({"type":"dynamic_tool","toolName":"mcp__weather__show","status":"failed","output":output});
             assert_eq!(app_reference(&item), Some(app.clone()), "{item}");
+        }
+        let mut untrusted = app.clone();
+        untrusted["private"] = json!("discard");
+        untrusted["csp"] =
+            json!({"connectDomains":["*", "https://example.com", "https://bad/path"]});
+        untrusted["permissions"] = json!({"camera":true, "microphone":{}});
+        let mut normalized = app.clone();
+        normalized["csp"] = json!({"connectDomains":["https://example.com"]});
+        normalized["permissions"] = json!({"microphone":{}});
+        for output in [
+            json!({"t3McpApp":untrusted}),
+            json!({"isError":true,"content":[{"text":json!({"t3McpApp":untrusted}).to_string()}]}),
+        ] {
+            assert_eq!(output_app_reference(&output), Some(normalized.clone()));
+            assert_eq!(
+                app_reference(
+                    &json!({"type":"dynamic_tool","toolName":"weather.show","output":output})
+                ),
+                Some(normalized.clone())
+            );
         }
         let item = json!({"type":"dynamic_tool","toolName":"mcp__weather__show","output":{"content":[{"text":"x".repeat(16385)},{"text":json!({"t3McpApp":app}).to_string()}]}});
         assert_eq!(

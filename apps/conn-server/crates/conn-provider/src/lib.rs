@@ -19,6 +19,7 @@
 
 pub mod mcp_apps;
 mod set;
+pub mod tool_output;
 
 use std::{future::Future, pin::Pin};
 

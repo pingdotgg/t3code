@@ -204,7 +204,7 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `mcp_connect` | not served | actsAsCaller | desktop client: panels (the MCP panel) | |
 | `mcp_call` | not served | actsAsCaller | desktop client: panels (the MCP panel) | |
 | `html_preview` | not served | readsAsCaller | server: HTML renders (`HtmlRender`) | O |
-| `html_render` | not served | actsAsCaller | server: HTML renders (`HtmlRender`) | O |
+| `html_render` | served | actsAsCaller | `conn-files::html` publication | O |
 | `annotations_list` | served | readsAsCaller | | |
 | `annotations_claim` | served | actsAsCaller | | |
 | `annotations_complete` | served | actsAsCaller | | |
@@ -328,6 +328,15 @@ subagent })` returns an `McpServerEntry { url, authorization, .. }` for one prov
 `crates/conn-server/examples/mcp_agent.rs` proves it: it serves one thread and writes that
 thread's `--mcp-config`, and `claude -p --model claude-haiku-5-5 --strict-mcp-config
 --mcp-config <file>` listed threads, launched one and waited for it.
+
+
+## HTML rendering
+
+`html_render` publishes a finished page to the calling thread. It is hidden from outside
+clients and checks that the caller still owns a live run. Plan mode may pass inline HTML;
+only full-access threads may pass a file path. The files service prepares the page and saves
+its attachment. The result is the normal client render reference and T3's success message.
+No preview capability is advertised. `html_preview` and the browser tools remain unserved.
 
 ## Secret requests and panels
 

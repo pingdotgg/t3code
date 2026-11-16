@@ -1137,6 +1137,67 @@ impl Tx<'_> {
         Ok(rows)
     }
 
+    pub(crate) fn html_cleanup_items(
+        &self,
+        thread_id: &str,
+        mut visit: impl FnMut(String, Value, bool),
+    ) -> StoreResult<()> {
+        let mut stmt = self
+            .tx
+            .prepare(
+                "WITH RECURSIVE sources(id) AS (
+              SELECT ?1
+              UNION
+              SELECT json_extract(t.thread, '$.forkedFrom.threadId')
+              FROM sources JOIN threads t USING(id)
+              WHERE t.deleted = 1 AND json_extract(t.thread, '$.forkedFrom.type') = 'run'
+                AND json_extract(t.thread, '$.lineage.sideChat') IS NOT 1
+            ), showing(source, id, through) AS (
+              SELECT sources.id, fork.id, run.ordinal
+              FROM sources JOIN threads fork
+                ON json_extract(fork.thread, '$.forkedFrom.threadId') = sources.id
+              JOIN entities run ON run.thread_id = sources.id AND run.kind = 'runs'
+                AND run.id = json_extract(fork.thread, '$.forkedFrom.runId')
+              WHERE json_extract(fork.thread, '$.forkedFrom.type') = 'run'
+                AND json_extract(fork.thread, '$.lineage.sideChat') IS NOT 1
+                AND EXISTS (SELECT 1 FROM entities transfer WHERE transfer.thread_id = fork.id
+                  AND transfer.kind = 'contextTransfers' AND json_extract(transfer.body, '$.type') = 'fork'
+                  AND json_extract(transfer.body, '$.sourceThreadId') = sources.id
+                  AND json_extract(transfer.body, '$.targetThreadId') = fork.id)
+              UNION
+              SELECT showing.source, child.id, showing.through
+              FROM showing JOIN threads child
+                ON json_extract(child.thread, '$.forkedFrom.threadId') = showing.id
+              WHERE json_extract(child.thread, '$.forkedFrom.type') = 'run'
+                AND json_extract(child.thread, '$.lineage.sideChat') IS NOT 1
+                AND EXISTS (SELECT 1 FROM entities transfer WHERE transfer.thread_id = child.id
+                  AND transfer.kind = 'contextTransfers' AND json_extract(transfer.body, '$.type') = 'fork'
+                  AND json_extract(transfer.body, '$.sourceThreadId') = showing.id
+                  AND json_extract(transfer.body, '$.targetThreadId') = child.id)
+            ), retained(source, through) AS (
+              SELECT showing.source, MAX(showing.through)
+              FROM showing JOIN threads t ON t.id = showing.id
+              WHERE t.deleted = 0 GROUP BY showing.source
+            )
+            SELECT t.id, item.body, COALESCE(run.ordinal, -1) <= retained.through
+            FROM sources JOIN threads t USING(id)
+            JOIN entities item ON item.thread_id = t.id AND item.kind = 'turnItems'
+            LEFT JOIN entities run ON run.thread_id = t.id AND run.kind = 'runs'
+              AND run.id = json_extract(item.body, '$.runId')
+            LEFT JOIN retained ON retained.source = t.id
+            WHERE t.deleted = 1 AND json_extract(item.body, '$.type') = 'dynamic_tool'",
+            )
+            .map_err(err)?;
+        let mut rows = stmt.query([thread_id]).map_err(err)?;
+        while let Some(row) = rows.next().map_err(err)? {
+            let owner: String = row.get(0).map_err(err)?;
+            let item = parse(row.get(1).map_err(err)?)?;
+            let retained = row.get::<_, Option<bool>>(2).map_err(err)?.unwrap_or(false);
+            visit(owner, item, retained);
+        }
+        Ok(())
+    }
+
     /// Adds a project for `workspace_root` unless a row (even a deleted one) has it, so a
     /// project a client removed stays removed after a restart. Returns its id.
     pub(crate) fn ensure_project(

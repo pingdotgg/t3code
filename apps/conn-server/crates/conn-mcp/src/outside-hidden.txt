@@ -8,6 +8,7 @@ annotations_complete
 annotations_release
 t3_background_wait
 tool_search
+html_render
 request_secret
 save_test_login
 request_credentials

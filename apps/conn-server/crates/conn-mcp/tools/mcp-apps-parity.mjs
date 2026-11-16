@@ -77,6 +77,11 @@ export async function checkMcpApps(binary) {
     const item={type:"dynamic_tool",toolName:"mcp__weather__get_weather",status:"failed",output};
     add({kind:"reference",item},mcpAppFromToolItem(item));
   }
+  const untrusted = {...reference,private:"discard",csp:{connectDomains:["*","https://example.com","https://bad/path"]},permissions:{camera:true,microphone:{}}};
+  for (const output of [{t3McpApp:untrusted},{isError:true,content:[{text:JSON.stringify({t3McpApp:untrusted})}]}]) {
+    const item={type:"dynamic_tool",toolName:"weather.get.weather",output};
+    add({kind:"reference",item},mcpAppFromToolItem(item));
+  }
   for (const rules of [null,[],[{behavior:"ask",rule:"mcp__other__tool"}],[{behavior:"deny",rule:"*"}],[{behavior:"deny",rule:"mcp__alias(*)",notInEffect:true}]]) {
     const tool = {name:"refresh",description:"Refresh",_meta:{ui:{visibility:["app"]}},annotations:{readOnly:true,destructive:false,openWorld:true}};
     add({kind:"tool",tool,rules},upstream.claudeMcpToolForApps(tool,rules));

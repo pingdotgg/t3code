@@ -774,6 +774,11 @@ impl Inner {
                 thread_id,
                 selection,
             } => self.apply_model_selection(&thread_id, selection).await,
+            Effect::CleanupHtmlAttachments { ids, .. } => {
+                if let Some(host) = &self.host {
+                    host.cleanup_html_attachments(ids).await;
+                }
+            }
             Effect::ThreadClosed { thread_id, reason } => {
                 if let Some(host) = &self.host {
                     host.thread_closed(&thread_id, reason);
