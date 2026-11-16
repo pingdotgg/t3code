@@ -29,6 +29,7 @@ use crate::{
 pub const CONTRACT_SERVER_VERSION: &str = conn_contract::T3_SERVER_VERSION;
 
 pub struct Environment {
+    pub restart: Arc<crate::restart::Restart>,
     /// `ExecutionEnvironmentDescriptor`, served at `/.well-known/t3/environment` and inside
     /// the server config.
     pub descriptor: Value,
@@ -65,6 +66,7 @@ impl Environment {
             .filter(|l| !l.trim().is_empty())
             .unwrap_or_else(|| "conn-server".into());
         Ok(Self {
+            restart: Arc::new(crate::restart::Restart::default()),
             descriptor: descriptor(&environment_id, label.trim()),
             cwd,
             state_dir: state_dir.to_owned(),

@@ -171,6 +171,7 @@ pub(crate) struct Inner {
     pub(crate) effect_lanes: Mutex<HashMap<String, (u64, oneshot::Receiver<()>)>>,
     /// Numbers the effects, so a lane's last effect knows it is still the last.
     pub(crate) effect_seq: std::sync::atomic::AtomicU64,
+    thread_gates: [tokio::sync::Mutex<()>; 64],
 }
 
 /// An effect with its place in its thread's lane. Dropped without [`Self::start`] (its commit
@@ -282,6 +283,7 @@ impl SqliteEngine {
                     .provider_set
                     .unwrap_or_else(|| config.providers.into()),
                 live: Mutex::new(HashMap::new()),
+                thread_gates: std::array::from_fn(|_| tokio::sync::Mutex::new(())),
                 command_output: crate::output::CommandOutputHub::default(),
                 shutting_down: std::sync::atomic::AtomicBool::new(false),
                 home,
@@ -422,7 +424,19 @@ pub(crate) enum DispatchError {
 }
 
 impl Inner {
-    /// Runs `f` on the store on the blocking pool, so SQLite never stalls the event loop.
+    /// Fixed stripes keep workflow Stop and thread commands serialized without a growing lock table.
+    pub(crate) async fn lock_thread(
+        &self,
+        thread_id: &str,
+    ) -> Option<tokio::sync::MutexGuard<'_, ()>> {
+        use std::hash::{Hash, Hasher};
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        thread_id.hash(&mut hash);
+        let index = usize::try_from(hash.finish() % 64).ok()?;
+        Some(self.thread_gates.get(index)?.lock().await)
+    }
+
+    /// Runs `f` on the blocking pool, so SQLite never stalls the event loop.
     pub(crate) async fn db<T: Send + 'static>(
         &self,
         f: impl FnOnce(&mut Store) -> T + Send + 'static,
@@ -617,6 +631,9 @@ impl Inner {
         self: &Arc<Self>,
         command: Value,
     ) -> Result<(u64, bool), DispatchError> {
+        let _gate = self
+            .lock_thread(command["threadId"].as_str().unwrap_or_default())
+            .await;
         let command_type = command["type"].as_str().unwrap_or_default().to_owned();
         let Some(command_id) = command["commandId"].as_str().map(str::to_owned) else {
             return Err(DispatchError::Rejected(

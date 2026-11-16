@@ -984,13 +984,13 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `orchestration.getThreadTitles` | yes | N | N |  | thread view, composer, diffs |
 | `orchestration.getTurnDiff` | yes | N | N |  | thread view, composer, diffs |
 | `orchestration.getTurnItem` | yes | N | N |  | thread view, composer, diffs |
-| `orchestration.getWorkflowScript` | no | U | U | S | Claude workflow runs |
+| `orchestration.getWorkflowScript` | yes | U | U | S | Claude workflow runs |
 | `orchestration.getWorktreeThreadIds` | yes | N | N |  | thread view, composer, diffs |
 | `orchestration.launchThread` | yes | N | N |  | thread view, composer, diffs |
 | `orchestration.searchThread` | yes | U | N |  | thread search |
 | `orchestration.searchThreadStream` | yes | U | N |  | thread search |
 | `orchestration.searchThreads` | yes | U | N |  | thread search |
-| `orchestration.stopWorkflow` | no | U | U | S | Claude workflow runs |
+| `orchestration.stopWorkflow` | yes | U | U | S | Claude workflow runs |
 | `orchestration.subscribeCommandOutput` | yes | N | N |  | thread view, composer, diffs |
 | `orchestration.subscribePromptSuggestion` | yes | N | N |  | thread view, composer, diffs |
 | `orchestration.subscribeShell` | yes | N | N |  | thread view, composer, diffs |
@@ -1119,7 +1119,7 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `server.refreshUsageRates` | no | X | U | M | usage; the AI router accounts in a container |
 | `server.removeKeybinding` | yes | U | N |  | keybindings |
 | `server.reportClientActivity` | yes | N | N |  | connection and settings |
-| `server.restart` | no | U | N | S | restart under a supervisor |
+| `server.restart` | yes | U | N | S | restart under a supervisor |
 | `server.retryResourceTelemetry` | no | X | U | M | resource telemetry |
 | `server.runStorageCleanup` | no | X | U | M | storage cleanup; containers are disposable |
 | `server.searchAcpRegistry` | no | X | X | L | ACP registry download and install: Nick ruled it out |
@@ -1255,13 +1255,13 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `t3_thread_transfer` | no | X | U | L | move a thread between machines |
 | `t3_thread_update` | yes | N | N |  | core orchestration; Swamp's service calls |
 | `t3_thread_wait` | yes | N | N |  | core orchestration; Swamp's service calls |
-| `t3_workflow_stop` | no | U | U | S |  |
+| `t3_workflow_stop` | yes | U | U | S |  |
 | `t3_worktree_handoff` | no | U | N | M | worktree hand-off |
 | `t3_worktree_list` | no | U | N | M | worktree hand-off |
 | `t3_worktree_status` | no | U | N | M | worktree hand-off |
 | `task_cancel` | yes | N | N |  | core orchestration |
 | `task_status` | yes | N | N |  | core orchestration |
-| `tool_search` | no | U | U | S |  |
+| `tool_search` | yes | U | U | S |  |
 | `unlink_pull_request` | yes | U | N |  | PR links on a thread; Swamp could link the PR it opens |
 | `unlink_pull_requests` | yes | U | N |  | PR links on a thread; Swamp could link the PR it opens |
 | `unwatch_pull_request` | no | O | N | M | PR babysitting; Orbit's review-and-merge does it in a container |

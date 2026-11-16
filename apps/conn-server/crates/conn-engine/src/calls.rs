@@ -24,6 +24,7 @@ pub(crate) const METHODS: &[&str] = &[
     "orchestration.searchThread",
     "orchestration.searchThreads",
     "orchestration.forceStopThread",
+    "orchestration.stopWorkflow",
     "orchestration.searchThreadStream",
     "orchestration.subscribeCommandOutput",
     "orchestration.subscribePromptSuggestion",
@@ -169,6 +170,7 @@ pub(crate) async fn call(inner: Arc<Inner>, method: String, input: Value) -> Cal
             })
             .await
         }
+        "orchestration.stopWorkflow" => inner.stop_workflow(input).await,
         "orchestration.forceStopThread" => inner.force_stop(input).await,
         "projects.mutate" => {
             let command_id = input["commandId"].clone();

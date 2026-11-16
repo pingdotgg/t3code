@@ -262,7 +262,40 @@ const outsideHiddenOut = NodePath.join(here, "..", "src", "outside-hidden.txt");
 // Every tool apps/server registers, whoever may see it: the tests check the agent texts by it.
 const allNamesOut = NodePath.join(here, "..", "fixtures", "t3-tool-names.txt");
 const allNames = tools.map((tool) => `${tool.name}\n`).join("");
+// Pin catalog search ordering and deferred visibility to T3's implementation.
+const { make: makeExposure } = await src("mcp/McpToolExposure.ts");
+const searchTools = tools.filter((tool) => implemented.includes(tool.name)).map(({ name, description }) => ({
+  name,
+  description: description ?? "",
+}));
+const exposure = makeExposure(() => searchTools, () => Effect.void);
+const initiallyListed = searchTools
+  .filter((tool) => exposure.isListed("search-test", tool.name))
+  .map((tool) => tool.name);
+const searchCases = [];
+for (const query of [
+  "T3_WORKFLOW_STOP",
+  "thread",
+  "project",
+  "thread thread",
+  "t3_thread_read",
+  "@!!",
+  "tool_search",
+  "environment, schedule",
+]) {
+  const found = await Effect.runPromise(exposure.search("search-test", query));
+  searchCases.push({ query, names: found.map((tool) => tool.name) });
+}
+const searchOut = NodePath.join(here, "..", "fixtures", "tool-search.json");
+for (let index = 0; index < 300; index++) {
+  await Effect.runPromise(exposure.search(`session-${index}`, "t3_workflow_stop"));
+}
+const retainedSessions = Array.from({ length: 300 }, (_, index) => index).filter((index) =>
+  exposure.isListed(`session-${index}`, "t3_workflow_stop"),
+).length;
+const searchText = JSON.stringify({ initiallyListed, retainedSessions, cases: searchCases }, null, 2) + "\n";
 const outputs = [
+  [searchOut, searchText, "tool search cases"],
   [out, text, `${catalog.length} tools`],
   [outsideHiddenOut, outsideHidden.join(""), `${outsideHidden.length} tools hidden from outside clients`],
   [allNamesOut, allNames, `${tools.length} tool names`],

@@ -33,9 +33,13 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     case "input":
       log("input");
       reply(cmd.id, null);
+      if (cmd.message.message.content === "workflow") {
+        write({ch:"sdk", t:"msg", ...sessions.get(cmd.sessionId), m:{type:"system",subtype:"task_started",task_id:"wf1",tool_use_id:"run1",task_type:"local_workflow",workflow_name:"Review",description:"Review",prompt:"workflow()"}});
+      }
       break;
     case "call":
       log(`call ${cmd.method}`);
+      if (cmd.method === "stopTask") log(`stop ${JSON.stringify(cmd.args)}`);
       // A CLI still booting: `initializationResult` does not answer.
       if (!(HANG_INIT && cmd.method === "initializationResult")) reply(cmd.id, null);
       break;
@@ -434,4 +438,39 @@ async fn an_abandoned_start_aborts_the_booting_query() {
     );
     assert!(session.live_query().is_none());
     session.close().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn workflow_stop_calls_the_sdk_without_interrupting_the_turn() {
+    use conn_provider::StopTaskInput;
+    if !node_available() {
+        return;
+    }
+    let dir = Scratch::new("workflow-stop");
+    let (helper, log) = fake_host(&dir.0, true);
+    let (session, mut events) = session(&helper);
+    let cwd = dir.cwd();
+    let thread = new_thread(&session, "full-access", &cwd).await;
+    let input = turn(1, &thread, "workflow", "full-access", &cwd);
+    session.start_turn(input).await.unwrap();
+    let _ = until(&mut events, |e| e["type"] == "subagent.updated").await;
+    session
+        .stop_task(StopTaskInput {
+            provider_thread: thread.clone(),
+            task_id: "unknown".into(),
+        })
+        .await
+        .unwrap_err();
+    session
+        .stop_task(StopTaskInput {
+            provider_thread: thread,
+            task_id: "wf1".into(),
+        })
+        .await
+        .unwrap();
+    let text = std::fs::read_to_string(log).unwrap();
+    assert!(text.contains("stop [\"wf1\"]"), "{text}");
+    assert!(!text.contains("call interrupt"), "{text}");
+    session.close().await;
+    helper.stop_if_idle().await;
 }

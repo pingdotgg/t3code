@@ -1,8 +1,16 @@
-//! Recorded CLI traffic (`testdata/cli`, from the stdio probe, CLI 2.1.322) and the events the
-//! TypeScript adapter emitted for the same input (`testdata/ts`).
+//! CLI recordings and constructed workflow transcripts (`testdata/cli`), compared with the
+//! TypeScript adapter's events for the same input (`testdata/ts`).
 
-pub(crate) fn cli_transcripts() -> [(&'static str, &'static str); 12] {
+pub(crate) fn cli_transcripts() -> [(&'static str, &'static str); 14] {
     [
+        (
+            "e17_workflow_idle",
+            include_str!("../testdata/cli/e17_workflow_idle.ndjson"),
+        ),
+        (
+            "e16_workflow",
+            include_str!("../testdata/cli/e16_workflow.ndjson"),
+        ),
         ("e01_turn", include_str!("../testdata/cli/e01_turn.ndjson")),
         (
             "e02_second_turn",
@@ -58,6 +66,8 @@ pub(crate) fn cli(name: &str) -> &'static str {
 
 pub(crate) fn ts_events(name: &str) -> &'static str {
     match name {
+        "e17_workflow_idle" => include_str!("../testdata/ts/e17_workflow_idle.json"),
+        "e16_workflow" => include_str!("../testdata/ts/e16_workflow.json"),
         "e01_turn" => include_str!("../testdata/ts/e01_turn.json"),
         "e02_second_turn" => include_str!("../testdata/ts/e02_second_turn.json"),
         "e03_interrupt" => include_str!("../testdata/ts/e03_interrupt.json"),

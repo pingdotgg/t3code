@@ -13,6 +13,7 @@ pub mod keybindings;
 pub mod limits;
 pub mod methods;
 pub mod model_manifest;
+pub mod restart;
 pub mod routes;
 pub mod scopes;
 pub mod serve;
@@ -36,3 +37,5 @@ pub fn method_table(deps: &methods::Deps) -> MethodTable {
 pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().expect("conn-server lock poisoned")
 }
+
+mod workflow_script;

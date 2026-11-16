@@ -160,3 +160,8 @@ apps/server/src/wsFork.ts
 packages/contracts/src/scheduledTask.ts
 packages/contracts/src/annotations.ts
 packages/contracts/src/orchestratorMcp.ts
+
+[crates/conn-server]
+apps/server/src/orchestration-v2/workflowScriptQuery.ts
+apps/server/src/orchestration-v2/workflowFileRead.ts
+apps/server/src/serverRestart.ts

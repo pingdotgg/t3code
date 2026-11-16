@@ -802,3 +802,19 @@ fn a_scheduled_wakeup_is_listed_until_cancelled() {
     assert_eq!(last_roster(&outs), Some(json!([])));
     assert!(!mapper.has_pending_background_work());
 }
+
+#[test]
+fn workflow_run_matches_the_ts_adapter() {
+    let replay = assert_same("e16_workflow", "full-access");
+    assert!(
+        replay
+            .events
+            .iter()
+            .any(|e| e["subagent"]["workflow"]["name"] == "Audit")
+    );
+}
+
+#[test]
+fn workflow_progress_after_the_root_turn_matches_the_ts_adapter() {
+    assert_same("e17_workflow_idle", "full-access");
+}

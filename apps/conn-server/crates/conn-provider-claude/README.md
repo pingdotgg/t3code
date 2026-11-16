@@ -242,11 +242,15 @@ Normalized in the comparison:
   the query is open lets the prompt go and the engine interrupts the turn, as T3 does for a
   turn that starts after Stop. Proven by `an_abandoned_start_aborts_the_booting_query` and
   the conformance scenarios `stop_during_boot` and `stop_during_mcp_registration`.
-- **Subagents:** no workflow subagents (`local_workflow`), no recovery of running subagents
-  after a restart (`getSubagentMessages` is offered by the helper but not used), `stopSubagent`
-  and `stop_task` / `background_tasks` not sent.
-- **Background work:** not built: workflow tasks, so `stopTask` (T3 stops only workflow
-  tasks) stays unsupported; the re-emit when a new process clears a roster; the stale-latch
+- **Workflows:** `local_workflow` snapshots, phases, member child threads, retries, usage and
+  launch handles follow T3 (`e16_workflow` and `e17_workflow_idle` replay its adapter events).
+  Coordinator prompts carry `workflowScript`; member progress excerpts are labelled partial
+  answers. `stopTask` calls the SDK for the running coordinator without interrupting its turn.
+  At most 256 phases and members are kept per workflow. Member transcript files and their
+  effort/speed metadata are not read yet; only progress excerpts appear in member threads.
+- **Subagents:** no recovery of running subagents after a restart (`getSubagentMessages` is
+  offered by the helper but not used); `stopSubagent` and `background_tasks` are not sent.
+- **Background work:** not built: the re-emit when a new process clears a roster; the stale-latch
   rules of `retireOfferedWake` (a continuation that never starts); held frames for tool calls
   that a held root frame owns.
 - **Live command output:** a relative `CLAUDE_CODE_TMPDIR` resolves against the cwd as given;

@@ -1,8 +1,7 @@
 //! Streamable HTTP, protocol 2025-06-18, single endpoint, as Effect's `McpServer.layerHttp`
-//! serves it for T3. Every reply is one JSON body, never SSE: T3 sends no request-scoped
-//! notifications, so a reply never holds more than its result. `GET` (the server-to-client
-//! SSE stream) is 405, as in TS. Statuses and error bodies follow a live TS server
-//! (`README.md`, "Transport").
+//! serves it for T3. Search results with matches send a list-changed notification and result
+//! over SSE; other replies use JSON. `GET` (the server-to-client SSE stream) is 405, as in TS.
+//! Statuses and error bodies follow a live TS server (`README.md`, "Transport").
 
 use std::sync::Arc;
 
@@ -178,23 +177,60 @@ pub(crate) async fn handle(
         return Reply::empty(StatusCode::ACCEPTED).with(PROTOCOL_HEADER, PROTOCOL_VERSION.into());
     }
 
+    let mut changed = false;
     let body = match method_name {
         "ping" | "logging/setLevel" => {
             json!({"jsonrpc": "2.0", "id": rpc_id, "result": {}}).to_string()
         }
         "tools/list" => format!(
             "{{\"jsonrpc\":\"2.0\",\"id\":{rpc_id},\"result\":{}}}",
-            catalog::list_result(matches!(caller, Caller::Client(_)))
+            match &caller {
+                Caller::Thread(thread)
+                    if header(headers, "t3-tool-exposure") == Some("deferred") =>
+                {
+                    let exposure = crate::lock(&service.exposure);
+                    catalog::list_filtered(|name| {
+                        exposure.listed(&thread.provider_session_id, name)
+                    })
+                }
+                _ => catalog::list_result(matches!(caller, Caller::Client(_))),
+            }
         ),
         "tools/call" => {
             let params = message
                 .get_mut("params")
                 .map(Value::take)
                 .unwrap_or_default();
-            call(service, &caller, &rpc_id, params).await
+            let search = params["name"] == "tool_search";
+            let result = call(service, &caller, &rpc_id, params).await;
+            if search {
+                changed = serde_json::from_str::<Value>(&result)
+                    .ok()
+                    .and_then(|v| {
+                        v["result"]["structuredContent"]["tools"]
+                            .as_array()
+                            .map(|t| !t.is_empty())
+                    })
+                    .unwrap_or(false);
+            }
+            result
         }
         other => rpc_error(&rpc_id, -32601, &format!("Method not found: {other}")),
     };
+    if changed {
+        let notification =
+            json!({"jsonrpc":"2.0","method":"notifications/tools/list_changed","params":{}});
+        return Reply {
+            status: StatusCode::OK,
+            headers: vec![
+                ("content-type", "text/event-stream".into()),
+                (PROTOCOL_HEADER, PROTOCOL_VERSION.into()),
+            ],
+            body: Some(format!(
+                "event: message\ndata: {notification}\n\nevent: message\ndata: {body}\n\n"
+            )),
+        };
+    }
     Reply::json(StatusCode::OK, format!("{body}\n")).with(PROTOCOL_HEADER, PROTOCOL_VERSION.into())
 }
 

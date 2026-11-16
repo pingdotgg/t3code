@@ -217,7 +217,7 @@ function outcome(reply) {
     const text = reply.result.content?.[0]?.text ?? "";
     try {
       const failure = JSON.parse(text);
-      return { kind: "failure", code: failure.code };
+      return { kind: "failure", code: failure.code, message: failure.message };
     } catch {
       return { kind: "failure", code: text };
     }
@@ -282,6 +282,8 @@ const searchOrder = (value) => value.matches.map((match) => [match.title, match.
 // Per-server state the calls refer to: project and thread ids differ.
 const context = [{}, {}];
 const steps = [
+  ["t3_workflow_stop", () => ({ threadId: "thread:none", subagentId: "workflow:none" })],
+  ["tool_search", () => ({ query: "t3_workflow_stop" })],
   [
     "t3_project_list",
     () => ({}),
@@ -314,6 +316,12 @@ const steps = [
       clientRequestId: "parity-worktree",
     }),
     (c, v) => (c.idleThreadId = v.threadId),
+    { noTurn: true },
+  ],
+  [
+    "t3_workflow_stop",
+    (c) => ({ threadId: c.idleThreadId, subagentId: "workflow:none" }),
+    undefined,
     { noTurn: true },
   ],
   // t3_thread_organize on the idle worktree thread: every action, then the refusals.
@@ -581,7 +589,10 @@ for (const [tool, input, after, options] of run) {
     continue;
   }
   if (ts.kind === "failure") {
-    report(`${label}: both fail with ${ts.code}`, true);
+    report(
+      `${label}: both fail with ${ts.code}`,
+      tool !== "t3_workflow_stop" || ts.message === rust.message,
+    );
     continue;
   }
   const view = options?.view ?? ((value) => value);

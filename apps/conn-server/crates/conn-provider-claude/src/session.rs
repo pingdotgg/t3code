@@ -18,7 +18,7 @@ use conn_contract::{ProviderSessionId, ProviderThread, from_json, to_json};
 use conn_provider::{
     AwaitBackgroundTasksInput, BoxFuture, EnsureThreadInput, ForkThreadInput, InterruptInput,
     McpServer, ProviderError, ProviderEvent, ProviderResult, ResumeThreadInput, RollbackTarget,
-    RollbackThreadInput, RuntimePolicy, RuntimeRequestResponse, Session, SteerInput,
+    RollbackThreadInput, RuntimePolicy, RuntimeRequestResponse, Session, SteerInput, StopTaskInput,
     ThreadSnapshot, TurnInput,
 };
 use serde_json::{Map, Value, json};
@@ -114,6 +114,24 @@ struct State {
     logged_skips: HashSet<String>,
     /// Live output tails per Bash call (`taskOutputTails`); the mapper caps them per turn.
     tails: HashMap<String, crate::tail::Tail>,
+}
+
+struct WorkflowStopGuard {
+    inner: Arc<Inner>,
+    thread: Value,
+    task_id: String,
+    accepted: bool,
+}
+
+impl Drop for WorkflowStopGuard {
+    fn drop(&mut self) {
+        if !self.accepted {
+            self.inner
+                .lock()
+                .mapper
+                .workflow_stop(&self.thread, &self.task_id, false);
+        }
+    }
 }
 
 struct Live {
@@ -1953,6 +1971,49 @@ impl Session for ClaudeSession {
                 Value::Null,
             );
             from_json(thread).map_err(|e| failed_err("fork_thread", e.to_string()))
+        })
+    }
+
+    fn stop_task(&self, input: StopTaskInput) -> BoxFuture<'_, ProviderResult<()>> {
+        Box::pin(async move {
+            let row = to_json(&input.provider_thread);
+            let query = {
+                let mut state = self.inner.lock();
+                let native = native_thread_id(&input.provider_thread);
+                let live = state
+                    .live
+                    .as_ref()
+                    .filter(|l| {
+                        !*l.ended.borrow() && native.as_deref() == Some(l.native_thread_id.as_str())
+                    })
+                    .map(|l| l.query.clone());
+                let valid =
+                    live.is_some() && state.mapper.workflow_stop(&row, &input.task_id, true);
+                if !valid {
+                    return Err(failed_err(
+                        "stop_task",
+                        "No running workflow task belongs to this provider thread",
+                    ));
+                }
+                live.ok_or(ProviderError::SessionStopped)?
+            };
+            let mut guard = WorkflowStopGuard {
+                inner: self.inner.clone(),
+                thread: row,
+                task_id: input.task_id.clone(),
+                accepted: false,
+            };
+            if let Err(error) = query
+                .call("stopTask", json!([input.task_id]), Duration::from_secs(15))
+                .await
+            {
+                return Err(failed_err(
+                    "stop_task",
+                    format!("Workflow stop request failed: {error}"),
+                ));
+            }
+            guard.accepted = true;
+            Ok(())
         })
     }
 

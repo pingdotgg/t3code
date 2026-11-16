@@ -156,10 +156,15 @@ pub async fn serve_with_instances(
             workspace_root: root.to_string_lossy().into_owned(),
         })
         .collect();
-    let environment = Arc::new(or_exit(
+    let mut environment = or_exit(
         Environment::load(&state_dir, label, cwd),
         "cannot load the state directory",
-    ));
+    );
+    environment.restart = Arc::new(crate::restart::Restart::detect(desktop.is_some()).await);
+    environment.descriptor["capabilities"]["serverRestart"] =
+        serde_json::json!(environment.restart.available());
+    let environment = Arc::new(environment);
+    let restart = environment.restart.clone();
     let auth = environment.auth.clone();
     let providers = conn_provider::ProviderSet::from(providers);
     if let Some(instances) = &instances {
@@ -304,7 +309,9 @@ pub async fn serve_with_instances(
                 eprintln!("conn-server: {error}");
             }
         }
-        signal = shutdown_signal(is_desktop) => {
+        signal = async {
+            tokio::select! {signal=shutdown_signal(is_desktop)=>signal, ()=restart.wait()=>"restart requested"}
+        } => {
             eprintln!("conn-server: {signal}, stopping");
             // At once, not after the drain below: systemd sends the same SIGTERM to the
             // provider processes, which exit within it. A run they leave stays for the next start.
@@ -319,6 +326,10 @@ pub async fn serve_with_instances(
     terminals.shutdown().await;
     engine.shutdown().await;
     let _ = tokio::task::spawn_blocking(move || runtime.clear(&state_dir)).await;
+    if restart.requested() {
+        // A failure exit also restarts units with Restart=on-failure.
+        std::process::exit(1);
+    }
 }
 
 /// A start-up step that failed: print why and exit with status 1 instead of a panic.

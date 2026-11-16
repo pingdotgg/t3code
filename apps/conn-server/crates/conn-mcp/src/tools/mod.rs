@@ -20,6 +20,7 @@ mod pull_requests;
 mod scheduled;
 mod tasks;
 mod threads;
+mod workflows;
 
 pub(crate) type Args = Map<String, Value>;
 
@@ -48,7 +49,9 @@ pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError 
 
 /// Every name in `tools.implemented` has an arm here; a test checks both ways.
 #[cfg(test)]
-pub(crate) const HANDLED: [&str; 34] = [
+pub(crate) const HANDLED: [&str; 36] = [
+    "tool_search",
+    "t3_workflow_stop",
     "t3_background_wait",
     "link_pull_request",
     "link_pull_requests",
@@ -102,6 +105,13 @@ pub(crate) async fn call(
     }
     let cx = Cx { service, caller };
     match name {
+        "t3_workflow_stop" => workflows::stop(&cx, &args).await,
+        "tool_search" => {
+            let caller = cx.require_thread("tool_search")?;
+            Ok(
+                serde_json::json!({"tools":crate::lock(&service.exposure).search(&caller.provider_session_id, args.get("query").and_then(Value::as_str).unwrap_or_default())}),
+            )
+        }
         "orchestrator_capabilities" => projects::capabilities(&cx, &args).await,
         "t3_project_list" => projects::list(&cx, &args).await,
         "t3_project_read" => projects::read(&cx, &args).await,

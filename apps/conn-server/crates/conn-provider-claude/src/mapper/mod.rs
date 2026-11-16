@@ -10,6 +10,7 @@ mod presentation;
 mod roster;
 mod subagents;
 mod wakes;
+mod workflows;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 

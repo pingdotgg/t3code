@@ -468,6 +468,8 @@ const NAMES = [
   "e13_subagent_fg",
   "e14_steer",
   "e15_image",
+  "e16_workflow",
+  "e17_workflow_idle",
 ];
 const RUNTIME_MODE: Record<string, "full-access" | "approval-required"> = {
   e06_permissions: "approval-required",

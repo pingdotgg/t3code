@@ -48,10 +48,14 @@ NodeFS.writeFileSync(
   NodePath.join(stateDir, "settings.json"),
   JSON.stringify({ providerInstances: { codex: { driver: "codex", enabled: false } } }),
 );
+const serverEnv = { ...sealedEnv(stateDir), CONN_CODEX_STATUS_PROBE: "on" };
+const workflowScript = NodePath.join(serverEnv.HOME, ".claude", "projects", "effect-client.js");
+NodeFS.mkdirSync(NodePath.dirname(workflowScript), { recursive: true });
+NodeFS.writeFileSync(workflowScript, "// workflow script fixture\n");
 const server = NodeChildProcess.spawn(
   binary,
   fixture ? [stateDir] : ["--listen", "127.0.0.1:0", "--state-dir", stateDir],
-  { stdio: ["ignore", "pipe", "pipe"], env: { ...sealedEnv(stateDir), CONN_CODEX_STATUS_PROBE: "on" } },
+  { stdio: ["ignore", "pipe", "pipe"], env: serverEnv },
 );
 const stderr = [];
 server.stderr.on("data", (data) => stderr.push(String(data)));
@@ -427,6 +431,11 @@ const decodeEach = (client) =>
     yield* call("filesystem.getMetadata", { paths: [repo] });
     yield* call("assets.persistChatAttachments", { threadId: none, messageId: none, attachments: [] });
     yield* call("attachments.delete", { attachmentId: none });
+    yield* call("server.restart", {});
+    yield* call("orchestration.getWorkflowScript", { threadId: none, scriptPath: "relative.js" });
+    const script = yield* call("orchestration.getWorkflowScript", { threadId: none, scriptPath: workflowScript });
+    check("workflow script contents", Exit.isSuccess(script) && script.value.contents === "// workflow script fixture\n" && script.value.truncated === false);
+    yield* call("orchestration.stopWorkflow", { threadId: none, subagentId: none });
     yield* call("orchestration.forceStopThread", { threadId: none });
     yield* call("orchestration.getNativeChildWork", { threadId: none });
     yield* call("orchestration.getThreadFamily", { threadId: none });

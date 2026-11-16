@@ -30,13 +30,14 @@ Measured on a live T3 server at the pinned commit (`tools/mcp-client.mjs` drives
   as the T3 server answers. The T3 server also serves sessionless 2026-07-28; no T3 caller uses it.
 - **Sessions:** `initialize` returns `Mcp-Session-Id`. Every later request names it: missing →
   400 with JSON-RPC `-32600` (`MCP-Session-Id header is required…`), unknown → 404, `DELETE` → 204. Ours are bound to the credential that opened them, capped at 256, idle after 24 h.
-- **No SSE.** Replies are one JSON body with `content-type: application/json` and a
-  `mcp-protocol-version` header; notifications get 202. `GET` is 405 (`allow: POST, DELETE`).
+- Replies use JSON and a `mcp-protocol-version` header. A successful `tool_search` with
+  matches sends SSE: `notifications/tools/list_changed` before the result. Notifications get
+  202. `GET` is 405 (`allow: POST, DELETE`).
 - Checks in the T3 order: auth 401, an `Origin` header 403, a content type other than JSON 415,
   an `Accept` without both `application/json` and `text/event-stream` 406, a bad body `-32700`,
   a JSON-RPC batch 400, an unknown `mcp-protocol-version` 400 (`-32022`).
 - Methods: `initialize`, `ping`, `tools/list`, `tools/call`, `logging/setLevel`; others `-32601`.
-  `tools/list` is not paged and never changes, so no `list_changed` is sent.
+  `tools/list` is not paged. A deferred client lists four direct tools plus its search results.
 - `tools/call`: success is `{content: [text JSON], structuredContent, isError: false}`; a tool
   failure is `{content: [text OrchestratorMcpFailure JSON], isError: true}`; an unknown tool,
   an undeclared argument, a missing key, or a wrong type is JSON-RPC `-32602`
@@ -85,7 +86,7 @@ hidden while linked environments are off; `watch_pull_request`/`unwatch_pull_req
 from delegated children. Preview, device and panel tools are listed to everyone and fail without
 the capability.
 
-**Served: 34 of 87.** Definitions come byte for byte from `apps/server`. Each served tool has
+**Served: 36 of 87.** Definitions come byte for byte from `apps/server`. Each served tool has
 a unit test and `parity.mjs` steps.
 
 Where they differ, because the engine does not do it yet:
@@ -170,10 +171,10 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `t3_attachment_discard` | not served | writes | nothing new: as above | |
 | `t3_thread_send_attachments` | not served | writesThreads | nothing new: as above, then `message.dispatch` with attachments | |
 | `t3_environment_preferences_update` | not served | writesEnvironment | nothing new: the server's settings store (`settings.rs`); `/mcp` reads defaults today | |
-| `tool_search` | not served | readsAsCaller | nothing new: a search of the catalog; listed only to `t3-tool-exposure: deferred` clients | |
+| `tool_search` | served | readsAsCaller | lists the four direct tools plus searched tools to deferred clients; at most 10 matches and 256 provider sessions | |
 | `t3_thread_transfer` | not served | either(reads, writesThreads) | engine: `thread.fork`, `thread.merge_back`, context transfers | |
 | `t3_worktree_handoff` | not served | actsAsCaller | engine: bind a new worktree to a live thread and end its session; server: setup scripts the T3 way | |
-| `t3_workflow_stop` | not served | writesThreads | engine and provider: `stopWorkflow` (a provider's workflow stop) | |
+| `t3_workflow_stop` | served | writesThreads | same workflow Stop as the client RPC | |
 | `t3_background_wait` | served (new) | actsAsCaller | | C |
 | `link_pull_request` | served (part 4) | writesWithCapability | | P |
 | `link_pull_requests` | served (part 4) | writesWithCapability | | P |

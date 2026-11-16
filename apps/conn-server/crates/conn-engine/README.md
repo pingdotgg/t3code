@@ -60,9 +60,14 @@ The T3 sources are under `apps/server/src/orchestration-v2/` unless a path says 
 
 `orchestration.getTurnDiff` and `orchestration.getFullThreadDiff` were the two unserved
 `orchestration.*` methods (`checkpointing/CheckpointDiffQuery.ts`); both are served now, so
-all 23 are.
+all 25 are.
 
 ## Behaviour worth knowing
+
+- **Workflow Stop** (`workflows.rs`): resolves the coordinator's native task through its run
+  and provider session, checks it is a running Claude workflow, and gives `stop_task` 15 s.
+  It never interrupts the thread. Thread commands share fixed lock stripes with this call;
+  MCP mode limits are checked again under that lock.
 
 - **Checkpoints** (`src/checkpoint.rs`, on with `EngineConfig::checkpoints`). A thread has one
   root scope in its run's folder. Before the provider gets a message the workspace is captured

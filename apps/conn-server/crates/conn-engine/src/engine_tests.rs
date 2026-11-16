@@ -4117,3 +4117,53 @@ async fn work_queued_behind_an_abandoned_start_runs_after_it() {
     let next_start = calls.iter().position(|c| c == "start run:t1:3");
     assert!(abandoned.is_some() && abandoned < next_start, "{calls:?}");
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn workflow_stop_uses_the_run_session_and_keeps_the_thread_running() {
+    let db = TempDb::new("workflow-stop");
+    let (engine, provider) = open(&db);
+    dispatch(&engine, create("t1", "create-workflow")).await;
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId":"t1"})).unwrap())
+        .await
+        .unwrap();
+    let _ = next(&mut stream).await;
+    dispatch(&engine, message("t1", "start-workflow", "workflow")).await;
+    loop {
+        let item = next(&mut stream).await;
+        if item["event"]["type"] == "subagent.updated" {
+            break;
+        }
+    }
+    let request = json!({"threadId":"t1","subagentId":"workflow-coordinator"});
+    let mut limited = request.clone();
+    limited["modeLimit"] = json!({"runtimeMode":"auto-accept-edits","interactionMode":"default"});
+    let Err(EngineError::Rejected(error)) =
+        engine.call("orchestration.stopWorkflow", limited).await
+    else {
+        panic!("a narrower caller stopped the workflow");
+    };
+    assert_eq!(error["code"], "runtime_mode_escalation_denied");
+    assert!(
+        !crate::lock(&provider.calls)
+            .iter()
+            .any(|c| c.starts_with("stop workflow"))
+    );
+    assert_eq!(
+        engine
+            .call("orchestration.stopWorkflow", request.clone())
+            .await
+            .unwrap(),
+        Value::Null
+    );
+    assert!(crate::lock(&provider.calls).contains(&"stop workflow wf1".to_owned()));
+    let projection = engine.get_thread_projection("t1".into()).await.unwrap();
+    assert_eq!(projection["runs"][0]["status"], "running");
+    engine.shutdown().await;
+    let Err(EngineError::Rejected(error)) =
+        engine.call("orchestration.stopWorkflow", request).await
+    else {
+        panic!("stopped a released session");
+    };
+    assert_eq!(error["reason"], "unavailable");
+}

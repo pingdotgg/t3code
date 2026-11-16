@@ -20,6 +20,7 @@ use serde_json::Value;
 
 mod catalog;
 mod credentials;
+mod exposure;
 mod links;
 mod sessions;
 mod time;
@@ -159,6 +160,7 @@ pub struct McpService {
     config: McpConfig,
     credentials: Mutex<credentials::Credentials>,
     sessions: Mutex<sessions::Sessions>,
+    exposure: Mutex<exposure::Exposure>,
     /// Threads whose own agent asked to settle them when the active run completes.
     settling: Mutex<std::collections::HashSet<String>>,
     endpoint: OnceLock<String>,
@@ -180,6 +182,7 @@ impl McpService {
             config,
             credentials: Mutex::new(credentials::Credentials::default()),
             sessions: Mutex::new(sessions::Sessions::default()),
+            exposure: Mutex::new(exposure::Exposure::default()),
             settling: Mutex::new(std::collections::HashSet::new()),
             endpoint: OnceLock::new(),
         })
