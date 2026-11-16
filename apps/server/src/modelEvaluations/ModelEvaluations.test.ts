@@ -806,3 +806,74 @@ it.effect(
     );
   },
 );
+
+it.effect("ranks scored guidance ahead of newer single samples and drops unscored groups", () => {
+  let calls = 0;
+  return Effect.gen(function* () {
+    const service = yield* ModelEvaluations.ModelEvaluations;
+    const rich = { instanceId, model: "rich-model" };
+    for (let index = 0; index < 5; index++) {
+      const thread = ThreadId.make(`rich-thread-${index}`);
+      const id = RunId.make(`rich-run-${index}`);
+      yield* seed({ thread, run: id, model: rich });
+      yield* service.evaluateRun({ threadId: thread, runId: id, runOutcome: "completed" });
+      yield* TestClock.adjust("1 second");
+    }
+    for (let index = 0; index < 20; index++) {
+      const thread = ThreadId.make(`thin-thread-${index}`);
+      const id = RunId.make(`thin-run-${index}`);
+      yield* seed({
+        thread,
+        run: id,
+        model: { instanceId, model: `thin-model-${index}` },
+      });
+      yield* service.evaluateRun({ threadId: thread, runId: id, runOutcome: "completed" });
+      yield* TestClock.adjust("1 second");
+    }
+    const emptyRun = RunId.make("empty-run");
+    yield* seed({
+      thread: ThreadId.make("empty-thread"),
+      run: emptyRun,
+      model: { instanceId, model: "empty-model" },
+    });
+    yield* service.evaluateRun({
+      threadId: ThreadId.make("empty-thread"),
+      runId: emptyRun,
+      runOutcome: "completed",
+    });
+    const report = yield* service.list(scope);
+    assert.equal(
+      report.records.find((record) => record.runId === emptyRun)?.status,
+      "insufficient_evidence",
+    );
+    assert.equal(report.guidance[0]?.modelSelection.model, "rich-model");
+    assert.equal(report.guidance[0]?.sampleCount, 5);
+    assert.equal(report.guidance[1]?.modelSelection.model, "thin-model-19");
+    assert.equal(report.guidance.length, 20);
+    assert.isFalse(report.guidance.some((group) => group.sampleCount === 0));
+    assert.isFalse(report.guidance.some((group) => group.modelSelection.model === "empty-model"));
+    assert.isFalse(report.guidance.some((group) => group.modelSelection.model === "thin-model-0"));
+  }).pipe(
+    Effect.provide(
+      makeLayer((request) => {
+        calls += 1;
+        if (calls < 26) return Effect.succeed(verdict(request.packet));
+        const output = verdict(request.packet);
+        return Effect.succeed({
+          ...output,
+          outcome: "insufficient_evidence",
+          confidence: "low",
+          scores: {
+            taskCompletion: null,
+            correctness: null,
+            instructionFollowing: null,
+            verification: null,
+          },
+          strengths: [],
+          weaknesses: [],
+          promptAdvice: [],
+        });
+      }),
+    ),
+  );
+});
