@@ -3393,6 +3393,9 @@ describe("AcpAdapterV2", () => {
       yield* replay("agent_message_chunk", "a2", "done");
       yield* replay("user_message_chunk", "u2", "\n");
       yield* replay("user_message_chunk", "u2", "\tone");
+      yield* replay("user_message_chunk", "u3", "Explain <monitor-event>");
+      yield* replay("user_message_chunk", "u3", " XML");
+      yield* replay("agent_message_chunk", "a5", "Use <monitor-event> tags.");
       const second = yield* runtime.readThreadSnapshot({ providerThread });
 
       const texts = (snapshot: typeof first) =>
@@ -3409,6 +3412,8 @@ describe("AcpAdapterV2", () => {
         "user:next\n\tone",
         "assistant:\tcode",
         "assistant:done",
+        "user:Explain <monitor-event> XML",
+        "assistant:Use <monitor-event> tags.",
       ]);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
@@ -11173,5 +11178,16 @@ describe("acpPostSettleContinuationOfferEvidence", () => {
         normalizeToolCall: normalizeXAiAcpToolCallState,
       }),
     );
+  });
+
+  it("offers on an assistant reply that quotes monitor markup", () => {
+    const reply = {
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "Use <monitor-event> tags for monitor output." },
+      },
+    } as const;
+    assert.isTrue(acpPostSettleContinuationOfferEvidence(reply));
   });
 });
