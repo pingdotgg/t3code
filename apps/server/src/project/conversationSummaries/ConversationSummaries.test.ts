@@ -669,54 +669,97 @@ it.effect("records an unavailable model as a failed pass without publishing a su
   }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
 });
 
-it.effect.each([
-  { kind: "empty", detail: "Router returned no text." },
-  { kind: "invalid-output", detail: "Router returned a reply T3 Code couldn't read." },
-] as const)("summarizes the next stretch after $kind output", ({ kind, detail }) => {
+const failingStretch = (kind: "empty" | "invalid-output") =>
+  new TextGenerationError({
+    operation: "generateConversationSummary",
+    detail:
+      kind === "empty"
+        ? "Router returned no text."
+        : "Router returned a reply T3 Code couldn't read.",
+    kind,
+  });
+
+it.effect.each(["empty", "invalid-output"] as const)(
+  "skips a stretch whose summary is always %s while other stretches summarize, and rolls up past it",
+  (kind) => {
+    const model = scripted((input) =>
+      input.messages[0]?.text === rawText(0)
+        ? Effect.fail(failingStretch(kind))
+        : Effect.succeed({
+            statements: [{ text: "A later stretch.", citations: [input.messages[0]!.ref] }],
+          }),
+    );
+    const firstStretchCalls = () =>
+      model.calls.filter((call) => call.messages[0]?.text === rawText(0)).length;
+    return Effect.gen(function* () {
+      // Five full leaves of 24 settled messages.
+      yield* seedThread(5 * 24 + 6);
+      yield* summarize;
+      yield* summarize;
+      assert.equal(firstStretchCalls(), 2);
+      const skipped = (yield* list).lastPass;
+      assert.include(skipped?.reason ?? "", "Skipped a stretch");
+      assert.notProperty(skipped, "chunkFailures");
+
+      yield* summarize;
+      assert.equal(firstStretchCalls(), 2);
+      assert.isTrue(isRollup(model.calls.at(-1)!));
+      const service = yield* ConversationSummaries.ConversationSummaries;
+      const offered = yield* service.forHandoff({
+        projectId,
+        handoffs: [yield* prepareHandoff(5 * 24 + 6)],
+        itemIds: new Set(Array.from({ length: 5 * 24 }, (_, index) => itemId(index))),
+      });
+      const offeredIds = offered.flatMap((offer) => offer.coveredItemIds);
+      assert.notInclude(offeredIds, itemId(0));
+      assert.include(offeredIds, itemId(24));
+
+      const settings = yield* ServerSettings.ServerSettingsService;
+      yield* settings.updateSettings({
+        projectSettingsOverrides: { [projectId]: { enableConversationSummaries: false } },
+      });
+      yield* summarize;
+      yield* settings.updateSettings(optedIn);
+      yield* summarize;
+      assert.equal(firstStretchCalls(), 2);
+
+      yield* settings.updateSettings({
+        textGenerationModelSelection: { instanceId, model: "gpt-5-mini" },
+      });
+      yield* summarize;
+      assert.equal(firstStretchCalls(), 3);
+    }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+  },
+);
+
+it.effect("skips nothing while every summary comes back empty", () => {
+  let down = true;
   const model = scripted((input) =>
-    input.messages[0]?.text === rawText(0)
-      ? Effect.fail(
-          new TextGenerationError({ operation: "generateConversationSummary", detail, kind }),
-        )
+    down
+      ? Effect.fail(failingStretch("empty"))
       : Effect.succeed({
-          statements: [{ text: "The later stretch.", citations: [input.messages[0]!.ref] }],
+          statements: [{ text: "Recovered.", citations: [input.messages[0]!.ref] }],
         }),
   );
   return Effect.gen(function* () {
-    // 32 settled messages: one full leaf, then a second leaf of eight.
-    yield* seedThread(38);
-    const first = yield* summarize;
-    assert.isTrue(first.hasMore);
-    assert.equal(model.calls.filter((call) => call.messages[0]?.text === rawText(0)).length, 1);
-    assert.equal(model.calls.filter((call) => call.messages[0]?.text === rawText(24)).length, 1);
-    const covered = (yield* list).summaries.flatMap((read) =>
-      read.state === "available"
-        ? read.summary.sources.flatMap((source) =>
-            source.kind === "message" ? [source.messageId] : [],
-          )
-        : [],
+    yield* seedThread(5 * 24 + 6);
+    for (let pass = 0; pass < 3; pass++) assert.isFalse((yield* summarize).hasMore);
+    assert.deepEqual((yield* list).summaries, []);
+
+    down = false;
+    const before = model.calls.length;
+    yield* summarize;
+    assert.equal(model.calls[before]?.messages[0]?.text, rawText(0));
+    assert.include(
+      (yield* list).summaries.flatMap((read) =>
+        read.state === "available"
+          ? read.summary.sources.flatMap((source) =>
+              source.kind === "message" ? [source.messageId] : [],
+            )
+          : [],
+      ),
+      messageId(0),
     );
-    assert.notInclude(covered, messageId(0));
-    assert.include(covered, messageId(24));
-
-    const second = yield* summarize;
-    assert.isFalse(second.hasMore);
-    assert.equal(model.calls.filter((call) => call.messages[0]?.text === rawText(0)).length, 2);
-    assert.include((yield* list).lastPass?.reason ?? "", detail);
-
-    const calls = model.calls.length;
-    const third = yield* summarize;
-    assert.isFalse(third.hasMore);
-    assert.equal(model.calls.length, calls);
-    const service = yield* ConversationSummaries.ConversationSummaries;
-    const offered = yield* service.forHandoff({
-      projectId,
-      handoffs: [yield* prepareHandoff(38)],
-      itemIds: new Set(Array.from({ length: 32 }, (_, index) => itemId(index))),
-    });
-    const offeredIds = offered.flatMap((offer) => offer.coveredItemIds);
-    assert.notInclude(offeredIds, itemId(0));
-    assert.include(offeredIds, itemId(24));
   }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
 });
 
