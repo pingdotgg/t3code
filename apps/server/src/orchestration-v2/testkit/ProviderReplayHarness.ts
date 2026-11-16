@@ -6,7 +6,6 @@ import type {
   ManagedPolicyDocument,
   ProviderDriverKind,
   ProviderReplayTranscript,
-  ResponseStreamingMode,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -59,7 +58,6 @@ import * as ProviderTurnStartService from "../ProviderTurnStartService.ts";
 import * as ProviderTurnStartServiceTestkit from "../ProviderTurnStartService.testkit.ts";
 import * as McpAppModelContext from "../../mcpApps/McpAppModelContext.ts";
 import * as PreviewAgentActivity from "../../preview/PreviewAgentActivity.ts";
-import * as HeldAssistantText from "../HeldAssistantText.ts";
 import * as RunExecutionService from "../RunExecutionService.ts";
 import * as RunFinalizationService from "../RunFinalizationService.ts";
 import * as ThreadTitleRegenerationService from "../ThreadTitleRegenerationService.ts";
@@ -285,7 +283,6 @@ export function layerWithRegistry<Error>(
     readonly runContinuationWorker?: boolean;
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
-    readonly responseStreamingMode?: ResponseStreamingMode;
     /** Lets a test hold a projection read open to order concurrent dispatches. */
     readonly wrapProjectionStore?: (
       store: ProjectionStore.ProjectionStoreV2Shape,
@@ -323,7 +320,7 @@ export function layerWithRegistry<Error>(
     Effect.map(ManagedPolicy.fromDocument("/test/policy.json", options.managedPolicy), (policy) =>
       ServerSettings.layerTest(
         {
-          responseStreamingMode: options.responseStreamingMode ?? "turn",
+          responseStreamingMode: "turn",
           ...(options.continueThreadsAfterServerUpdate === undefined
             ? {}
             : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),
@@ -434,7 +431,6 @@ export function layerWithRegistry<Error>(
         layerServerSettings,
         layerStores,
         ThreadCommandExecutor.layer,
-        HeldAssistantText.layer,
       ),
     ),
   );
@@ -515,7 +511,6 @@ export function layerWithRegistry<Error>(
         layerRunExecutionServiceProvided,
         layerServerSettings,
         ThreadForkService.layer,
-        HeldAssistantText.layer,
       ),
     ),
   );

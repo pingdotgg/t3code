@@ -1,7 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as TestClock from "effect/testing/TestClock";
 import {
-  type ResponseStreamingMode,
   ChatAttachmentId,
   CommandId,
   EnvironmentId,
@@ -515,7 +514,6 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
     turn: ProviderAdapter.ProviderAdapterV2SteerInput,
   ) => Effect.Effect<void, ProviderAdapter.ProviderAdapterV2Error> = () => Effect.void,
   extraAdapters: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]> = [],
-  responseStreamingMode: ResponseStreamingMode = "turn",
 ) {
   const driver = ProviderDriverKind.make(nativeGoals === undefined ? "codex" : "opencode");
   const cwd = yield* checkpointWorkspace(name);
@@ -653,7 +651,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   const layer = ProviderReplayHarness.layerWithRegistry(
     { name },
     ProviderAdapterRegistry.layerFromAdapters([adapter, ...extraAdapters]),
-    { runEffectWorker: false, responseStreamingMode },
+    { runEffectWorker: false },
   );
   const startFirstTurn = Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -2087,19 +2085,10 @@ it.effect(
 );
 
 // Codex flushes held drafts after the final answer; reserve their pre-steer position before turn end.
-it.effect("keeps a held commentary draft before the steer when turn end flushes it", () =>
+it.effect("places a held commentary draft after the steer and before the answer", () =>
   Effect.gen(function* () {
-    const { events, started, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
-      "steering-held-draft",
-      false,
-      true,
-      Effect.void,
-      true,
-      undefined,
-      () => Effect.void,
-      [],
-      "paragraph",
-    );
+    const { events, started, layer, startFirstTurn } =
+      yield* nextTurnSelectionHarness("steering-held-draft");
     yield* Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
@@ -2158,13 +2147,6 @@ it.effect("keeps a held commentary draft before the steer when turn end flushes 
         createdBy: "user",
         creationSource: "web",
       });
-      const draftAtSteer = (yield* orchestrator.getThreadProjection(threadId)).turnItems.find(
-        (item) => item.id === "draft",
-      );
-      assert.equal(
-        draftAtSteer?.type === "assistant_message" ? draftAtSteer.text : undefined,
-        "Let me look at the",
-      );
       yield* worker.drain();
 
       const settled = yield* watch(
@@ -2202,7 +2184,7 @@ it.effect("keeps a held commentary draft before the steer when turn end flushes 
               ? [String(item.id)]
               : [],
         );
-      assert.deepEqual(items, ["message:first", "draft", "commentary", "message:steer", "answer"]);
+      assert.deepEqual(items, ["message:first", "commentary", "message:steer", "draft", "answer"]);
     }).pipe(Effect.provide(layer));
   }),
 );

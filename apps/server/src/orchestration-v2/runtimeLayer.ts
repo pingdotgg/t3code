@@ -48,7 +48,6 @@ import * as ProviderSwitchService from "./ProviderSwitchService.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import { layerThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
-import * as HeldAssistantText from "./HeldAssistantText.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
@@ -163,7 +162,6 @@ const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
       layerProviderEventIngestorProvided,
       TurnItemPositionStore.layer,
       ThreadCommandExecutor.layer,
-      HeldAssistantText.layer,
     ),
   ),
 );
@@ -240,7 +238,6 @@ const layerOrchestratorProvided = Orchestrator.layer.pipe(
       layerProviderSwitchServiceProvided,
       layerRunExecutionServiceProvided,
       ThreadForkService.layer,
-      HeldAssistantText.layer,
     ),
   ),
 );

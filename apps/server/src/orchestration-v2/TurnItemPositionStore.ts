@@ -137,18 +137,70 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
           ),
       );
 
+    // Clients show a steer as soon as it is sent. Items its run reserved but has not written yet,
+    // such as held streaming text, move after it so they never appear above a visible steer.
+    const moveUnwrittenAfterSteer =
+      /* Runs inside per-event normalization, which shares the enclosing orchestration span. */
+      Effect.fnUntraced(function* (threadId: ThreadId, steerOrdinal: number) {
+        const lowerBound = Math.floor(steerOrdinal / 1_000_000) * 1_000_000;
+        const upperBound = lowerBound + 999_999;
+        const unwritten = yield* sql<{ readonly turnItemId: string }>`
+          SELECT position.turn_item_id AS "turnItemId"
+          FROM orchestration_v2_turn_item_positions AS position
+          WHERE position.thread_id = ${threadId}
+            AND position.ordinal >= ${lowerBound}
+            AND position.ordinal < ${steerOrdinal}
+            AND NOT EXISTS (
+              SELECT 1 FROM orchestration_v2_projection_turn_items AS item
+              WHERE item.turn_item_id = position.turn_item_id
+            )
+          ORDER BY position.ordinal
+        `;
+        for (const { turnItemId } of unwritten) {
+          yield* sql`
+            UPDATE orchestration_v2_turn_item_positions
+            SET ordinal = (
+              SELECT MAX(ordinal) + 1
+              FROM orchestration_v2_turn_item_positions
+              WHERE thread_id = ${threadId}
+                AND ordinal >= ${lowerBound}
+                AND ordinal <= ${upperBound}
+            )
+            WHERE thread_id = ${threadId} AND turn_item_id = ${turnItemId}
+          `;
+        }
+      });
+
     return TurnItemPositionStoreV2.of({
       allocate,
       // Per-event normalization shares the enclosing orchestration span.
       normalize: Effect.fnUntraced(function* (item, runOrdinal) {
-        return yield* allocate({
+        const ordinal = yield* allocate({
           threadId: item.threadId,
           turnItemId: item.id,
           runId: item.runId,
           // Queued steers keep their submission order until their run starts (see Orchestrator).
           keepExisting: item.status === "pending",
           ...(runOrdinal === undefined ? {} : { runOrdinal }),
-        }).pipe(Effect.map((ordinal) => (item.ordinal === ordinal ? item : { ...item, ordinal })));
+        });
+        if (
+          item.type === "user_message" &&
+          item.status !== "pending" &&
+          item.runId !== null &&
+          (item.inputIntent === "steer" || item.inputIntent === "promoted_queued_to_steer")
+        ) {
+          yield* moveUnwrittenAfterSteer(item.threadId, ordinal).pipe(
+            Effect.mapError(
+              (cause) =>
+                new TurnItemPositionStoreError({
+                  threadId: item.threadId,
+                  turnItemId: item.id,
+                  cause,
+                }),
+            ),
+          );
+        }
+        return item.ordinal === ordinal ? item : { ...item, ordinal };
       }),
     });
   }),
