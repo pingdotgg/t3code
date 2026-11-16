@@ -28,6 +28,7 @@ import {
   resolvePullRequestState,
 } from "./pullRequestPresentation";
 import { pullRequestPanelReference } from "./usePullRequestDetail";
+import { usePullRequestPanelReads } from "./usePullRequestIntentPrefetch";
 
 interface PullRequestLinkPreviewTarget {
   readonly environmentId: EnvironmentId;
@@ -102,22 +103,7 @@ export function PullRequestLinkPreview({
           number: linked.number,
           host: linked.authority ?? linked.host,
         });
-  useEnvironmentQuery(
-    panelReference === null
-      ? null
-      : pullRequestEnvironment.detail({
-          environmentId: target.environmentId,
-          input: { ...panelReference, allowStale: false },
-        }),
-  );
-  useEnvironmentQuery(
-    panelReference === null
-      ? null
-      : pullRequestEnvironment.activity({
-          environmentId: target.environmentId,
-          input: panelReference,
-        }),
-  );
+  usePullRequestPanelReads(target.environmentId, panelReference);
   const readPreview = useAtomQueryRunner(pullRequestEnvironment.preview, {
     reportFailure: false,
     reportDefect: false,

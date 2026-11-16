@@ -1,5 +1,5 @@
 import { ArrowLeftIcon, FileDiffIcon } from "lucide-react";
-import { useRef, type ComponentProps, type ReactNode } from "react";
+import { useEffect, useRef, type ComponentProps, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -79,6 +79,8 @@ export function PullRequestDetailTabBar<Tab extends string>({
 }) {
   // A pointer passing over a tab is not intent; it must rest like a list row does.
   const pointerIntent = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- A rest timer still pending when the bar unmounts must not read for a closed panel.
+  useEffect(() => () => clearTimeout(pointerIntent.current), []);
   return (
     <nav
       className="col-span-2 flex min-w-0 flex-wrap items-center gap-2 border-t border-border/60 px-4 py-2"
