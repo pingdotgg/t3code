@@ -2253,6 +2253,31 @@ it.effect("recall attaches two unseen facts when the thread was shown the best m
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("recall keeps the most trusted fact when more than the bound match equally", () =>
+  Effect.gen(function* () {
+    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+    const sql = yield* SqlClient.SqlClient;
+    const projectId = ProjectId.make("recall-trust-tie");
+    yield* createProject(projectId);
+    const ids = Array.from({ length: 41 }, (_, index) =>
+      ProjectFactId.make(`tie-${index.toString().padStart(2, "0")}`),
+    );
+    for (const factId of ids)
+      yield* knowledge.mutate(createFact(projectId, factId), { kind: "user" });
+    yield* sql`UPDATE project_knowledge_facts SET trust = 1 WHERE id = ${ids[40]!}`;
+    const query = "Change cache keys to include tenant IDs.";
+    const outcome = yield* knowledge.recall({
+      projectId,
+      threadId: ThreadId.make("recall-trust-tie"),
+      requestId: CommandId.make("recall-trust-tie"),
+      query,
+      composer: { text: query, records: [] },
+      knowledgeAllowance: 48000,
+    });
+    assert.equal(attachedFactIds(outcome)[0], ids[40]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect(
   "recall attaches an older fact when closer matches were shown or came from this thread",
   () =>
