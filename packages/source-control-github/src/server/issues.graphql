@@ -99,6 +99,10 @@ query IssueDetail($owner: String!, $name: String!, $number: Int!) {
         }
       }
       closedByPullRequestsReferences(first: 20, includeClosedPrs: true) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
         nodes {
           number
           title
@@ -363,6 +367,7 @@ query IssueCollections(
   $number: Int!
   $labelsCursor: String
   $assigneesCursor: String
+  $closingPullRequestsCursor: String
 ) {
   repository(owner: $owner, name: $name) {
     issue(number: $number) {
@@ -385,6 +390,26 @@ query IssueCollections(
           login
           name
           avatarUrl
+        }
+      }
+      closedByPullRequestsReferences(
+        first: 100
+        after: $closingPullRequestsCursor
+        includeClosedPrs: true
+      ) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          number
+          title
+          url
+          state
+          isDraft
+          repository {
+            nameWithOwner
+          }
         }
       }
     }

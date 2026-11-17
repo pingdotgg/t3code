@@ -4,7 +4,9 @@ import { GraphQLClient, GraphQLClientError, GraphQLGroup } from "effect/graphql"
 import {
   IssueTrackerKind,
   type IssueCapabilities,
+  type IssueActor,
   type IssueInvolvement,
+  type IssueLabel,
   type IssueListSort,
 } from "@t3tools/contracts";
 import {
@@ -227,34 +229,52 @@ export const make = Effect.gen(function* () {
       const result = yield* client
         .IssueDetail({ owner, name, number })
         .pipe(graphql(input.host, "getIssue"));
-      const detail = toIssueDetail(result);
-      const raw = result.repository?.issue;
-      if (detail === null || raw == null) return yield* notFound("getIssue");
-      // Editing replaces these sets. Finish their pages before handing them to a client.
+      const repository = result.repository;
+      const raw = repository?.issue;
+      if (repository == null || raw == null) return yield* notFound("getIssue");
+      // Editing replaces labels and assignees, and a closing reference can sit past the first
+      // page. Finish their pages before handing the issue to a client.
       let labels = raw.labels;
       let assignees = raw.assignees;
+      let closing = raw.closedByPullRequestsReferences;
       const seen = new Set<string>();
-      const allLabels = [...detail.labels];
-      const allAssignees = [...detail.assignees];
-      while (labels?.pageInfo.hasNextPage === true || assignees.pageInfo.hasNextPage) {
+      const moreLabels: IssueLabel[] = [];
+      const moreAssignees: IssueActor[] = [];
+      const allClosing = [...(closing?.nodes ?? [])];
+      while (
+        labels?.pageInfo.hasNextPage === true ||
+        assignees.pageInfo.hasNextPage ||
+        closing?.pageInfo.hasNextPage === true
+      ) {
         const labelsCursor = labels?.pageInfo.hasNextPage ? labels.pageInfo.endCursor : null;
         const assigneesCursor = assignees.pageInfo.hasNextPage
           ? assignees.pageInfo.endCursor
           : null;
-        const key = `${labelsCursor ?? ""} ${assigneesCursor ?? ""}`;
+        const closingPullRequestsCursor = closing?.pageInfo.hasNextPage
+          ? closing.pageInfo.endCursor
+          : null;
+        const key = `${labelsCursor ?? ""} ${assigneesCursor ?? ""} ${closingPullRequestsCursor ?? ""}`;
         if (
           (labels?.pageInfo.hasNextPage && labelsCursor === null) ||
           (assignees.pageInfo.hasNextPage && assigneesCursor === null) ||
+          (closing?.pageInfo.hasNextPage && closingPullRequestsCursor === null) ||
           seen.has(key)
         ) {
           return yield* invalid(
             "getIssue",
-            "GitHub did not return complete issue labels or assignees.",
+            "GitHub did not return complete issue labels, assignees or linked pull requests.",
           );
         }
         seen.add(key);
         const page = yield* client
-          .IssueCollections({ owner, name, number, labelsCursor, assigneesCursor })
+          .IssueCollections({
+            owner,
+            name,
+            number,
+            labelsCursor,
+            assigneesCursor,
+            closingPullRequestsCursor,
+          })
           .pipe(graphql(input.host, "getIssue"));
         const next = page.repository?.issue;
         if (next == null) return yield* notFound("getIssue");
@@ -263,7 +283,7 @@ export const make = Effect.gen(function* () {
           if (next.labels === null) {
             return yield* invalid("getIssue", "GitHub did not return complete issue labels.");
           }
-          allLabels.push(
+          moreLabels.push(
             ...(next.labels.nodes ?? []).flatMap((node) =>
               node === null ? [] : [{ name: node.name, color: node.color }],
             ),
@@ -271,7 +291,7 @@ export const make = Effect.gen(function* () {
         }
         if (assignees.pageInfo.hasNextPage) {
           assignees = next.assignees;
-          allAssignees.push(
+          moreAssignees.push(
             ...(next.assignees.nodes ?? []).flatMap((node) =>
               node === null
                 ? []
@@ -279,8 +299,36 @@ export const make = Effect.gen(function* () {
             ),
           );
         }
+        if (closing?.pageInfo.hasNextPage) {
+          closing = next.closedByPullRequestsReferences;
+          if (closing === null) {
+            return yield* invalid(
+              "getIssue",
+              "GitHub did not return complete linked pull requests.",
+            );
+          }
+          allClosing.push(...(closing.nodes ?? []));
+        }
       }
-      return { ...detail, labels: allLabels, assignees: allAssignees };
+      const detail = toIssueDetail({
+        ...result,
+        repository: {
+          ...repository,
+          issue: {
+            ...raw,
+            closedByPullRequestsReferences:
+              raw.closedByPullRequestsReferences === null
+                ? null
+                : { ...raw.closedByPullRequestsReferences, nodes: allClosing },
+          },
+        },
+      });
+      if (detail === null) return yield* notFound("getIssue");
+      return {
+        ...detail,
+        labels: [...detail.labels, ...moreLabels],
+        assignees: [...detail.assignees, ...moreAssignees],
+      };
     }),
 
     getComments: (input) =>
