@@ -24,6 +24,7 @@ const RIGHT_PANEL_KINDS = [
   "api",
   "database",
   "mcp",
+  "tasks",
   "side-chat",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
@@ -88,7 +89,9 @@ export type RightPanelSurface =
   /** nckrtl fork: the Database panel (Orbit database connections), one per thread. */
   | { id: "database"; kind: "database" }
   /** nckrtl fork: the MCP panel (an MCP Inspector), one per thread. */
-  | { id: "mcp"; kind: "mcp" };
+  | { id: "mcp"; kind: "mcp" }
+  /** Conn: the Orbit Tasks app, one per thread; its navigation lives in tasksPanelStore. */
+  | { id: "tasks"; kind: "tasks" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 const RIGHT_PANEL_STORAGE_VERSION = 14;
@@ -241,6 +244,8 @@ const singletonSurface = (
       return { id: "database", kind };
     case "mcp":
       return { id: "mcp", kind };
+    case "tasks":
+      return { id: "tasks", kind };
   }
 };
 

@@ -1,0 +1,238 @@
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+
+import type {
+  OrbitSubtask,
+  OrbitTaskAgent,
+  OrbitTaskAttention,
+  OrbitTaskDetail,
+  OrbitTaskMetrics,
+  OrbitTasksPage,
+  OrbitTaskSummary,
+} from "./tasks.ts";
+
+// The snake_case wire shapes of `GET /conn/tasks` and `GET /conn/tasks/{task}`, decoded here
+// and only here, then mapped to the camelCase domain types in `tasks.ts`.
+
+const Attention = Schema.NullOr(
+  Schema.Struct({
+    kind: Schema.Literals(["question", "failure", "direction", "observation", "removal_failure"]),
+    question: Schema.NullOr(Schema.String),
+    reason: Schema.NullOr(Schema.String),
+  }),
+);
+
+const Metrics = Schema.Struct({
+  duration_ms: Schema.NullOr(Schema.Number),
+  tokens: Schema.NullOr(Schema.Number),
+  lines_added: Schema.NullOr(Schema.Number),
+  lines_deleted: Schema.NullOr(Schema.Number),
+});
+
+const ListRow = Schema.Struct({
+  id: Schema.Int,
+  title: Schema.String,
+  status: Schema.Literals([
+    "backlog",
+    "todo",
+    "reserved",
+    "running",
+    "reviewing",
+    "settling",
+    "waiting_for_review",
+    "completed",
+    "failed",
+    "cancelled",
+  ]),
+  attention: Attention,
+  project: Schema.Struct({
+    id: Schema.Int,
+    slug: Schema.String,
+    name: Schema.String,
+    code: Schema.NullOr(Schema.String),
+  }),
+  workspace: Schema.NullOr(
+    Schema.Struct({
+      instance_id: Schema.Int,
+      name: Schema.String,
+      status: Schema.String,
+      power_state: Schema.NullOr(Schema.Literals(["running", "stopped"])),
+      node: Schema.NullOr(Schema.Struct({ id: Schema.Int, name: Schema.String })),
+      branch: Schema.NullOr(Schema.String),
+      conn_environment_id: Schema.NullOr(EnvironmentId),
+    }),
+  ),
+  pull_request: Schema.NullOr(
+    Schema.Struct({
+      number: Schema.Int,
+      url: Schema.String,
+      state: Schema.NullOr(Schema.Literals(["open", "merged", "closed"])),
+    }),
+  ),
+  subtask_counts: Schema.Struct({
+    total: Schema.Int,
+    todo: Schema.Int,
+    running: Schema.Int,
+    completed: Schema.Int,
+    failed: Schema.Int,
+    cancelled: Schema.Int,
+  }),
+  created_at: Schema.String,
+  updated_at: Schema.String,
+  last_activity_at: Schema.NullOr(Schema.String),
+});
+
+const Subtask = Schema.Struct({
+  id: Schema.Int,
+  position: Schema.Int,
+  title: Schema.String,
+  brief: Schema.String,
+  deliverables: Schema.Array(
+    Schema.Struct({ id: Schema.String, type: Schema.String, description: Schema.String }),
+  ),
+  status: Schema.Literals([
+    "todo",
+    "reserved",
+    "running",
+    "reviewing",
+    "completed",
+    "failed",
+    "cancelled",
+  ]),
+  attention: Attention,
+  current_implementer_agent_id: Schema.NullOr(Schema.Int),
+  metrics: Metrics,
+});
+
+const Agent = Schema.Struct({
+  id: Schema.Int,
+  role: Schema.Literals(["implementer", "reviewer"]),
+  subtask_ids: Schema.Array(Schema.Int),
+  current: Schema.Boolean,
+  attempt: Schema.Int,
+  provider: Schema.NullOr(Schema.String),
+  model: Schema.NullOr(Schema.String),
+  effort: Schema.NullOr(Schema.String),
+  state: Schema.NullOr(Schema.Literals(["idle", "working", "asking_for_input", "done", "failed"])),
+  needs_input: Schema.Boolean,
+  created_at: Schema.String,
+  observed_at: Schema.NullOr(Schema.String),
+  conn: Schema.NullOr(Schema.Struct({ environment_id: EnvironmentId, thread_id: ThreadId })),
+});
+
+const Detail = Schema.Struct({
+  ...ListRow.fields,
+  brief: Schema.String,
+  execution: Schema.Struct({ implementer_mode: Schema.Literals(["per_subtask", "shared"]) }),
+  metrics: Metrics,
+  subtasks: Schema.Array(Subtask),
+  agents: Schema.Array(Agent),
+});
+
+const ListEnvelope = Schema.Struct({
+  data: Schema.Array(ListRow),
+  meta: Schema.optionalKey(
+    Schema.Struct({ next_cursor: Schema.optionalKey(Schema.NullOr(Schema.Int)) }),
+  ),
+});
+
+const DetailEnvelope = Schema.Struct({ data: Detail });
+
+/** The Gateway's error envelope, loosely: only the code and message matter here. */
+export const decodeOrbitTasksErrorEnvelope = Schema.decodeUnknownOption(
+  Schema.Struct({ error: Schema.Struct({ code: Schema.String, message: Schema.String }) }),
+);
+
+const attention = (value: typeof Attention.Type): OrbitTaskAttention | null => value;
+
+const metrics = (value: typeof Metrics.Type): OrbitTaskMetrics => ({
+  durationMs: value.duration_ms,
+  tokens: value.tokens,
+  linesAdded: value.lines_added,
+  linesDeleted: value.lines_deleted,
+});
+
+const summary = (row: typeof ListRow.Type): OrbitTaskSummary => ({
+  id: row.id,
+  title: row.title,
+  status: row.status,
+  attention: attention(row.attention),
+  project: row.project,
+  workspace:
+    row.workspace === null
+      ? null
+      : {
+          instanceId: row.workspace.instance_id,
+          name: row.workspace.name,
+          status: row.workspace.status,
+          powerState: row.workspace.power_state,
+          node: row.workspace.node,
+          branch: row.workspace.branch,
+          connEnvironmentId: row.workspace.conn_environment_id,
+        },
+  pullRequest: row.pull_request,
+  subtaskCounts: row.subtask_counts,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+  lastActivityAt: row.last_activity_at,
+});
+
+const subtask = (value: typeof Subtask.Type): OrbitSubtask => ({
+  id: value.id,
+  position: value.position,
+  title: value.title,
+  brief: value.brief,
+  deliverables: value.deliverables,
+  status: value.status,
+  attention: attention(value.attention),
+  currentImplementerAgentId: value.current_implementer_agent_id,
+  // Orbit records no per-subtask line delta; never derive one from the task's branch snapshot.
+  metrics: { ...metrics(value.metrics), linesAdded: null, linesDeleted: null },
+});
+
+const agent = (value: typeof Agent.Type): OrbitTaskAgent => ({
+  id: value.id,
+  role: value.role,
+  subtaskIds: value.subtask_ids,
+  current: value.current,
+  attempt: value.attempt,
+  provider: value.provider,
+  model: value.model,
+  effort: value.effort,
+  state: value.state,
+  needsInput: value.needs_input,
+  createdAt: value.created_at,
+  observedAt: value.observed_at,
+  conversation:
+    value.conn === null
+      ? null
+      : { environmentId: value.conn.environment_id, threadId: value.conn.thread_id },
+});
+
+const decodeList = Schema.decodeUnknownOption(ListEnvelope);
+const decodeDetail = Schema.decodeUnknownOption(DetailEnvelope);
+
+export function decodeOrbitTasksPage(json: unknown): OrbitTasksPage | null {
+  return Option.match(decodeList(json), {
+    onNone: () => null,
+    onSome: (envelope) => ({
+      tasks: envelope.data.map(summary),
+      nextCursor: envelope.meta?.next_cursor ?? null,
+    }),
+  });
+}
+
+export function decodeOrbitTaskDetail(json: unknown): OrbitTaskDetail | null {
+  return Option.match(decodeDetail(json), {
+    onNone: () => null,
+    onSome: ({ data }) => ({
+      ...summary(data),
+      brief: data.brief,
+      implementerMode: data.execution.implementer_mode,
+      metrics: metrics(data.metrics),
+      subtasks: [...data.subtasks].sort((a, b) => a.position - b.position).map(subtask),
+      agents: data.agents.map(agent),
+    }),
+  });
+}

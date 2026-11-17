@@ -16,6 +16,7 @@ import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore"
 import { DatabasePanel } from "../../database/DatabasePanel";
 import type { ShortcutMatchContext } from "../../keybindings";
 import { McpPanel } from "../../mcp/McpPanel";
+import { TasksPanel } from "../../orbit/tasks/TasksPanel";
 import type { SideChatParentPanel } from "../../lib/sideChatPane";
 import { type RightPanelSurface, useRightPanelStore } from "../../rightPanelStore";
 import {
@@ -62,8 +63,10 @@ interface RightPanelFileProps {
   readonly onPendingChange: (relativePath: string, pending: boolean) => void;
 }
 
-/** Conn: the project the API, Database and MCP panels belong to. */
+/** Conn: the project the API, Database, MCP and Tasks panels belong to. */
 export interface RightPanelConnProjectProps {
+  /** The Orbit Project of the Instance this thread's server runs in, if any. */
+  readonly orbitProjectId: number | null;
   readonly projectKey: string | null;
   readonly environmentId: EnvironmentId | null;
   readonly workspaceRoot: string | null;
@@ -223,6 +226,13 @@ export function RightPanelSurfaceContent(props: {
         />
       );
     }
+    case "tasks":
+      return (
+        <TasksPanel
+          threadKey={scopedThreadKey(threadRef)}
+          orbitProjectId={props.connProject.orbitProjectId}
+        />
+      );
     case "side-chat":
       // Not lazy: revealing a suspended tiptap editor tears down its view and crashes the composer.
       return (

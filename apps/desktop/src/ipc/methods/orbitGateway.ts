@@ -92,6 +92,8 @@ export function resolveRootUrl(
 /** Orbit's Instance name rule allows at most 63 characters; anything longer is no name to check. */
 const isNameCheckValue = (value: string) => /^[a-z0-9-]{1,63}$/.test(value);
 
+const isOrbitId = (value: string) => /^[1-9][0-9]{0,15}$/.test(value);
+
 /** A branch search: a bounded, printable substring; Orbit itself answers an invalid ref with 502. */
 const ORBIT_BRANCH_QUERY_MAX_LENGTH = 200;
 const isBranchQueryValue = (value: string) =>
@@ -107,6 +109,8 @@ const CONN_QUERIES: ReadonlyArray<{
   readonly method: "GET";
   readonly pattern: RegExp;
   readonly query: Readonly<Record<string, (value: string) => boolean>>;
+  /** Any subset of the keys may be sent, instead of all of them. */
+  readonly optional?: true;
 }> = [
   // The palette's Project list, with the Projects in which threads cannot start yet.
   { method: "GET", pattern: /^\/projects$/, query: { include_unavailable: (v) => v === "1" } },
@@ -122,6 +126,19 @@ const CONN_QUERIES: ReadonlyArray<{
     pattern: /^\/projects\/[1-9][0-9]{0,15}\/branches$/,
     query: { query: isBranchQueryValue },
   },
+  // The Tasks panel's list: optional filters and paging.
+  {
+    method: "GET",
+    pattern: /^\/tasks$/,
+    query: {
+      project: isOrbitId,
+      instance: isOrbitId,
+      status: (v) => /^[a-z_]{1,32}$/.test(v),
+      limit: (v) => /^[1-9][0-9]?$|^100$/.test(v),
+      cursor: isOrbitId,
+    },
+    optional: true,
+  },
 ];
 
 /** Whether the request's query may go to the Gateway; no query always may. */
@@ -135,8 +152,9 @@ export function isAllowedConnQuery(
   );
   if (spec === undefined) return false;
   const wanted = Object.keys(spec.query);
-  if (keys.length !== wanted.length || !keys.every((key) => wanted.includes(key))) return false;
-  return wanted.every((key) => spec.query[key]!(request.query![key]!));
+  if (!keys.every((key) => wanted.includes(key))) return false;
+  if (spec.optional !== true && keys.length !== wanted.length) return false;
+  return keys.every((key) => spec.query[key]!(request.query![key]!));
 }
 
 async function send(

@@ -45,6 +45,7 @@ import {
   FileDiff,
   Files,
   Globe2,
+  ListTodo,
   MessagesSquare,
   Plus,
   TerminalSquare,
@@ -155,6 +156,10 @@ export interface RightPanelTabsProps {
   /** nckrtl fork: the MCP panel; absent where it is not offered. */
   onAddMcp?: (() => void) | undefined;
   mcpAvailable?: boolean | undefined;
+  /** Conn: the Orbit Tasks app; absent outside a project thread. */
+  onAddTasks?: (() => void) | undefined;
+  /** Why Tasks cannot work here (the web app), or null. */
+  tasksUnavailableReason?: string | null | undefined;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
   browserAvailable: boolean;
@@ -351,6 +356,10 @@ function RightPanelEmptyState(props: {
   /** nckrtl fork: the MCP panel; absent where it is not offered. */
   onAddMcp?: (() => void) | undefined;
   mcpAvailable?: boolean | undefined;
+  /** Conn: the Orbit Tasks app; absent outside a project thread. */
+  onAddTasks?: (() => void) | undefined;
+  /** Why Tasks cannot work here (the web app), or null. */
+  tasksUnavailableReason?: string | null | undefined;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
   browserAvailable: boolean;
@@ -404,6 +413,20 @@ function RightPanelEmptyState(props: {
       onClick: props.onAddMcp ?? (() => undefined),
       badgeCount: 0,
     },
+    ...(props.onAddTasks
+      ? [
+          {
+            label: "Tasks",
+            description: "Follow the tasks Orbit runs for this project.",
+            icon: ListTodo,
+            shortcut: "K",
+            available: !props.tasksUnavailableReason,
+            disabledReason: props.tasksUnavailableReason ?? "",
+            onClick: props.onAddTasks,
+            badgeCount: 0,
+          },
+        ]
+      : []),
     {
       label: "Terminal",
       icon: TerminalSquare,
@@ -655,6 +678,8 @@ function surfaceTitle(
       return "Database";
     case "mcp":
       return "MCP";
+    case "tasks":
+      return "Tasks";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "side-chat":
@@ -755,6 +780,8 @@ function SurfaceIcon({
       return <Database className="size-4 shrink-0" />;
     case "mcp":
       return <McpIcon className="size-4 shrink-0" />;
+    case "tasks":
+      return <ListTodo className="size-4 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-4 shrink-0" />
@@ -1194,6 +1221,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: SURFACE_DISABLED_REASONS.mcp,
       onClick: props.onAddMcp ?? (() => undefined),
     },
+    ...(props.onAddTasks
+      ? [
+          {
+            label: "Tasks",
+            icon: ListTodo,
+            shortcut: "K",
+            available: !props.tasksUnavailableReason,
+            disabledReason: props.tasksUnavailableReason ?? "",
+            onClick: props.onAddTasks,
+          },
+        ]
+      : []),
     {
       label: "Terminal",
       icon: TerminalSquare,
@@ -1662,6 +1701,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             databaseAvailable={props.databaseAvailable}
             onAddMcp={props.onAddMcp}
             mcpAvailable={props.mcpAvailable}
+            onAddTasks={props.onAddTasks}
+            tasksUnavailableReason={props.tasksUnavailableReason}
             onAddSideChat={props.onAddSideChat}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}

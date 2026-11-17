@@ -3,7 +3,6 @@ import {
   createOrbitGatewayClient,
   createProfileSync,
   type OrbitGatewayClient,
-  type OrbitGatewayTransport,
   type OrbitGatewayWorkspace,
   type ProfileSectionName,
 } from "@t3tools/client-runtime/orbit-gateway";
@@ -23,6 +22,7 @@ import {
   watchAttachedServersRecord,
 } from "./attachedServers";
 import { pruneWorkspaceCloneRefs } from "./cloneWorkspaceRefs";
+import { desktopOrbitGatewayTransport } from "./desktopOrbitGateway";
 import { OrbitAppearanceSync } from "./OrbitAppearanceSync";
 import { getProfileSyncChannels, onLocalProfileChange } from "./profileSyncRegistry";
 import {
@@ -89,22 +89,8 @@ watchAttachedServersRecord();
 
 /** The Gateway client over the desktop main process, or null outside the desktop app. */
 export function desktopOrbitGatewayClient(): OrbitGatewayClient | null {
-  const send = window.desktopBridge?.orbitGatewaySend;
-  if (!send) return null;
-  const transport: OrbitGatewayTransport = async (request) => {
-    const response = await send({
-      method: request.method,
-      path: request.path,
-      body: request.body === undefined ? null : JSON.stringify(request.body),
-      ...(request.query === undefined ? {} : { query: request.query }),
-      ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
-      ...(request.idempotencyKey === undefined ? {} : { idempotencyKey: request.idempotencyKey }),
-      ...(request.root === true ? { root: true as const } : {}),
-    });
-    if (response.error !== null) throw new Error(response.error);
-    return { status: response.status, body: response.body };
-  };
-  return createOrbitGatewayClient(transport);
+  const transport = desktopOrbitGatewayTransport();
+  return transport ? createOrbitGatewayClient(transport) : null;
 }
 
 function toGateway(workspace: Workspace): OrbitGatewayWorkspace {

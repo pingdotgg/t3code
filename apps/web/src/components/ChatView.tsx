@@ -255,6 +255,7 @@ import { useEnvironmentQueryRefresh } from "../state/query";
 import { useEnvironmentScope } from "~/state/session";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
 import { useOrbitInstance, useOrbitThreadsAvailable } from "../orbit/environmentProvider";
+import { orbitTasksAvailability } from "../orbit/tasks/orbitTasksClient";
 import { hostEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { threadEnvironment } from "../state/threads";
 import {
@@ -2499,7 +2500,8 @@ export default function ChatView(props: ChatViewProps) {
     useRightPanelStore.getState().open(activeThreadRef, "api");
   };
   // Conn: on a server in an Orbit Instance container, the API panel starts at that Instance's URL.
-  const orbitInstanceUrl = useOrbitInstance(activeThreadRef?.environmentId ?? null)?.url ?? null;
+  const orbitInstance = useOrbitInstance(activeThreadRef?.environmentId ?? null);
+  const orbitInstanceUrl = orbitInstance?.url ?? null;
   const apiBaseUrl = orbitInstanceUrl ?? configuredPreviewUrls[0] ?? null;
   // nckrtl fork: the Database panel connects from the desktop shell.
   const databaseAvailable =
@@ -2521,6 +2523,16 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef || !activeProject || !mcpAvailable) return;
     useRightPanelStore.getState().open(activeThreadRef, "mcp");
   };
+  // Conn: Orbit Tasks reads the Gateway through the desktop app only; web says why it cannot.
+  const tasksAvailability = orbitTasksAvailability();
+  const addTasksSurface =
+    activeThreadRef !== null && activeProject !== null
+      ? () => {
+          if (tasksAvailability.available) {
+            useRightPanelStore.getState().open(activeThreadRef, "tasks");
+          }
+        }
+      : undefined;
   const pullRequestSurfaceAvailable = supportsPullRequests && pullRequestPanelTarget !== null;
   const {
     acknowledgeActiveThreadWoke,
@@ -3381,6 +3393,7 @@ export default function ChatView(props: ChatViewProps) {
         onPendingChange: handleFilePendingChangeStable,
       }}
       connProject={{
+        orbitProjectId: orbitInstance?.projectId ?? null,
         projectKey: activeProjectKey,
         environmentId: activeProject?.environmentId ?? null,
         workspaceRoot: activeProject?.workspaceRoot ?? null,
@@ -4189,6 +4202,8 @@ export default function ChatView(props: ChatViewProps) {
           databaseAvailable={databaseAvailable}
           onAddMcp={addMcpSurface}
           mcpAvailable={mcpAvailable}
+          onAddTasks={addTasksSurface}
+          tasksUnavailableReason={tasksAvailability.available ? null : tasksAvailability.reason}
           onAddSideChat={sideChatsOffered ? openSideChatStable : undefined}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}

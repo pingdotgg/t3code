@@ -20,3 +20,5 @@ export * from "./instanceRemoval.ts";
 export * from "./instanceWake.ts";
 export * from "./attachedThreads.ts";
 export * from "./threadIndex.ts";
+export * from "./tasks.ts";
+export * from "./tasksClient.ts";

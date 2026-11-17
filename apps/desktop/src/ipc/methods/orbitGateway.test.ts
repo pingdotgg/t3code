@@ -58,6 +58,17 @@ describe("isAllowedConnQuery", () => {
     expect(isAllowedConnQuery(get("/projects/66/branches", { query: "feature/Login" }))).toBe(true);
     expect(isAllowedConnQuery(get("/projects/66/branches", { query: "a".repeat(200) }))).toBe(true);
     expect(isAllowedConnQuery(get("/projects/66/branches"))).toBe(true);
+    expect(isAllowedConnQuery(get("/tasks", { project: "78", limit: "100" }))).toBe(true);
+    expect(
+      isAllowedConnQuery(
+        get("/tasks", {
+          project: "78",
+          instance: "3599",
+          status: "waiting_for_review",
+          cursor: "5700",
+        }),
+      ),
+    ).toBe(true);
   });
 
   it.each([
@@ -83,6 +94,10 @@ describe("isAllowedConnQuery", () => {
     ["another key on branches", get("/projects/66/branches", { name: "main" })],
     ["an extra key on branches", get("/projects/66/branches", { query: "a", limit: "5" })],
     ["branches of a non-numeric project", get("/projects/x/branches", { query: "a" })],
+    ["another key on tasks", get("/tasks", { project: "78", search: "a" })],
+    ["a task list limit over 100", get("/tasks", { limit: "101" })],
+    ["a non-numeric task cursor", get("/tasks", { cursor: "abc" })],
+    ["a query on one task", get("/tasks/5753", { project: "78" })],
     ["a POST", { method: "POST" as const, path: "/projects", query: { include_unavailable: "1" } }],
   ])("refuses %s", (_label, request) => {
     expect(isAllowedConnQuery(request)).toBe(false);
