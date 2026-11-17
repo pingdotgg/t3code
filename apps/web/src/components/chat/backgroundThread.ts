@@ -8,6 +8,6 @@ export const BackgroundThreadContext = createContext(false);
 
 /**
  * True for a thread kept mounted out of sight: under Settings or Usage, or as a pane tab
- * that is off screen.
+ * that is off screen or scrolled out of the window.
  */
 export const HiddenThreadContext = createContext(false);
