@@ -1,11 +1,13 @@
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ThreadContextRecord, ProjectId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { MessagesSquareIcon } from "lucide-react";
+import type { MouseEventHandler } from "react";
 
 import { useProject, useThreadShell } from "~/state/entities";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { useEnvironmentQuery } from "~/state/query";
+import { beginLayoutContentDrag } from "~/layout/layoutDrag";
 import { ContextChip, ContextChipLabel } from "./ContextChip";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -15,6 +17,8 @@ export function ThreadContextChip(props: {
   projectId?: ProjectId | null;
   copyMarkdown?: string;
   unreadable?: boolean;
+  onClick?: MouseEventHandler<HTMLAnchorElement>;
+  inPromptEditor?: boolean;
 }) {
   const { environmentId, threadId } = props.record;
   const shell = useThreadShell({ environmentId, threadId });
@@ -30,6 +34,11 @@ export function ThreadContextChip(props: {
   const projectId = shell?.projectId ?? props.projectId ?? metadata?.projectId;
   const project = useProject(projectId ? scopeProjectRef(environmentId, projectId) : null);
   const title = shell?.title?.trim() || metadata?.title.trim() || props.record.title;
+  const icon = project ? (
+    <ProjectFavicon project={project} className="size-[1em] self-center" />
+  ) : (
+    <MessagesSquareIcon />
+  );
   return (
     <Tooltip>
       <TooltipTrigger
@@ -42,17 +51,21 @@ export function ThreadContextChip(props: {
                 to="/$environmentId/$threadId"
                 params={{ environmentId, threadId }}
                 draggable={false}
+                onClick={props.onClick}
               />
             }
             aria-label={`Thread, ${title}`}
+            onPointerDown={(event) => {
+              if (props.inPromptEditor) return;
+              beginLayoutContentDrag(event, {
+                kind: "thread",
+                threadRef: scopeThreadRef(environmentId, threadId),
+              });
+            }}
             data-markdown-copy={props.copyMarkdown}
             className="no-underline"
           >
-            {project ? (
-              <ProjectFavicon project={project} className="size-[1em] self-center" />
-            ) : (
-              <MessagesSquareIcon />
-            )}
+            {icon}
             <ContextChipLabel>{title}</ContextChipLabel>
           </ContextChip>
         }

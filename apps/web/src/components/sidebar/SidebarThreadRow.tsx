@@ -4,6 +4,7 @@ import { formatModelSlugName } from "@t3tools/shared/model";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
+import { contextMenuSourceOf } from "../../contextMenuSource";
 import { requestCustomSnooze } from "../CustomSnoozeDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { useDeadlinePassed } from "~/hooks/useDeadline";
@@ -30,6 +31,7 @@ import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environ
 import { toServerClock } from "@t3tools/client-runtime/clock";
 import {
   AuthOrchestrationOperateScope,
+  type ContextMenuSource,
   type EnvironmentId,
   type EnvironmentMachineKind,
   type ScopedThreadRef,
@@ -68,7 +70,8 @@ import {
 } from "react";
 
 import { useRightPanelStore } from "../../rightPanelStore";
-import { useOpenPrLink } from "../../lib/openPullRequestLink";
+import { beginLayoutContentDrag } from "../../layout/layoutDrag";
+import { readThreadPullRequestSurface, useOpenPrLink } from "../../lib/openPullRequestLink";
 import { useUiStateStore } from "../../uiStateStore";
 import { useThreadSelectionStore } from "../../threadSelectionStore";
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -659,13 +662,19 @@ type SidebarThreadRowProps = {
   timestampFormat: TimestampFormat;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
+  onThreadOpen: (threadRef: ScopedThreadRef) => void;
+  onThreadDoubleClick: (threadRef: ScopedThreadRef, title: string) => void;
   onStartRename: (threadRef: ScopedThreadRef, title: string) => void;
   onRenameTitleChange: (title: string) => void;
   onCommitRename: (threadRef: ScopedThreadRef, title: string) => void;
   onCancelRename: () => void;
   isRenaming: boolean;
   renamingTitle: string;
-  onContextMenu: (threadRef: ScopedThreadRef, position: { x: number; y: number }) => void;
+  onContextMenu: (
+    threadRef: ScopedThreadRef,
+    position: { x: number; y: number },
+    source: ContextMenuSource,
+  ) => void;
   onSettle: (threadRef: ScopedThreadRef) => void;
   onActionSweepStart: (
     threadRef: ScopedThreadRef,
@@ -736,6 +745,8 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     onStartRename,
     onThreadActivate,
     onThreadClick,
+    onThreadDoubleClick,
+    onThreadOpen,
     onUnsettle,
     onUnsnooze,
     onUnpin,
@@ -906,7 +917,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   };
   const handleContextMenu = (event: ReactMouseEvent) => {
     event.preventDefault();
-    onContextMenu(threadRef, { x: event.clientX, y: event.clientY });
+    onContextMenu(threadRef, { x: event.clientX, y: event.clientY }, contextMenuSourceOf(event));
   };
   const handleKeyDown = (event: ReactKeyboardEvent) => {
     if (event.target !== event.currentTarget) return;
@@ -921,22 +932,13 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     }
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
-    onThreadActivate(threadRef);
+    onThreadOpen(threadRef);
   };
   const handleDoubleClick = (event: ReactMouseEvent) => {
-    if (
-      !readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope) ||
-      isRenaming ||
-      event.metaKey ||
-      event.ctrlKey ||
-      event.shiftKey ||
-      event.altKey
-    ) {
-      return;
-    }
+    if (isRenaming || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     if ((event.target as HTMLElement).closest("button, a, input")) return;
     event.preventDefault();
-    onStartRename(threadRef, thread.title);
+    onThreadDoubleClick(threadRef, thread.title);
   };
   const [isFileDragOver, setIsFileDragOver] = useState(false);
   const fileDropHandlers = onFileDropThreads
@@ -1125,6 +1127,19 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     useRightPanelStore.getState().open(threadRef, "pull-requests");
     if (!props.isRouteThread) onThreadActivate(threadRef);
   };
+  const handlePrLinkPress = (event: ReactPointerEvent<HTMLElement>, url: string) => {
+    const surface = readThreadPullRequestSurface(threadRef, url);
+    if (surface) beginLayoutContentDrag(event, { kind: "surface", threadRef, surface });
+  };
+  const handlePrPress = (event: ReactPointerEvent<HTMLElement>, opensList: boolean) => {
+    const url = pr?.url ?? currentLinkedPr?.url;
+    const surface = opensList
+      ? ({ id: "pull-requests", kind: "pull-requests" } as const)
+      : url
+        ? readThreadPullRequestSurface(threadRef, url)
+        : null;
+    if (surface) beginLayoutContentDrag(event, { kind: "surface", threadRef, surface });
+  };
   const prBadge =
     prBadgeShape?.kind === "stack" || pr || currentLinkedPr ? (
       <ThreadPullRequestBadgeControl
@@ -1143,6 +1158,8 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         status={prStatus}
         onOpenList={handlePrListClick}
         onOpenPullRequest={handlePrClick}
+        onPress={handlePrPress}
+        onPressPullRequest={handlePrLinkPress}
       />
     ) : null;
   const terminalStatusIcon = (

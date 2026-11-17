@@ -6,6 +6,7 @@ import {
   workspaceSelectionsIn,
   workspaceTabColumns,
   workspaceTabNavigationState,
+  workspaceTabPage,
 } from "./workspace-tab-navigation";
 
 const home = { key: "home", name: "Home" };
@@ -118,6 +119,12 @@ describe("opening a workspace tab", () => {
         workspaceTabNavigationState(state, "settings", { settings: "SettingsMicrophone" }, columns),
       ),
     ).toEqual(["Home", "Settings", "SettingsVoice"]);
+    // A hidden tab renders its page under the key that opening the tab later uses.
+    for (const tab of ["pullRequests", "settings"] as const) {
+      expect(workspaceTabNavigationState(state, tab, selections, columns).routes.at(-1)?.key).toBe(
+        workspaceTabPage(state, tab, selections, columns)?.key,
+      );
+    }
   });
 
   it("keeps the route that is already open, so re-selecting a tab doesn't rebuild it", () => {
