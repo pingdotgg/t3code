@@ -6,7 +6,10 @@ import { linkRequestTargetName } from "@t3tools/client-runtime/link-request";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
-import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
+import {
+  isLiveSubagentTurnItem,
+  waitingOnSubagentsLabel,
+} from "@t3tools/client-runtime/state/subagentRuntime";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import {
   turnItemDetailRevision,
@@ -73,6 +76,7 @@ import type { McpAppReference } from "@t3tools/shared/mcpApp";
 import {
   compactDynamicToolOutput,
   htmlRenderFromToolItem,
+  sentMessageFromToolItem,
   mcpAppFromToolItem,
 } from "@t3tools/shared/toolOutput";
 import * as DateTime from "effect/DateTime";
@@ -183,6 +187,13 @@ type RawThreadFeedEntry =
       readonly render: HtmlRenderReference;
     }
   | {
+      readonly type: "sent-message";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly runId: RunId | null;
+      readonly text: string;
+    }
+  | {
       readonly type: "mcp-app";
       readonly id: string;
       readonly createdAt: string;
@@ -200,7 +211,7 @@ export type ThreadFeedEntry = ThreadFeedEntryContent & {
 };
 
 type ThreadFeedEntryContent =
-  | Extract<RawThreadFeedEntry, { type: "message" | "html-render" | "mcp-app" }>
+  | Extract<RawThreadFeedEntry, { type: "message" | "html-render" | "sent-message" | "mcp-app" }>
   | {
       readonly type: "activity-group";
       readonly id: string;
@@ -237,6 +248,8 @@ type ThreadFeedEntryContent =
   | {
       readonly type: "run-fold";
       readonly deferredWorkItemIds?: ReadonlyArray<string>;
+      /** Set while the run works: the row shows a live timer and does not toggle. */
+      readonly workingSince?: string;
       readonly id: string;
       readonly createdAt: string;
       readonly runId: RunId;
@@ -554,11 +567,11 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
       return isJavaScriptReplTool(item.toolName) ? "code" : "wrench";
     case "subagent":
       return "hammer";
+    case "system_notice":
+      return item.level === "info" ? "zap" : "warning";
     case "run_interrupt_request":
     case "run_interrupt_result":
       return "stop";
-    case "system_notice":
-      return "warning";
     case "error":
       return item.failure.class === "usage_limit"
         ? item.status === "completed"
@@ -750,7 +763,9 @@ function toWorkLogEntry(
     case "file_change":
       return {
         ...common,
-        changedFiles: item.changes?.map((change) => change.path) ?? [item.fileName],
+        changedFiles: item.changes?.length
+          ? item.changes.map((change) => change.path)
+          : [item.fileName],
         toolTitle: title ?? "File change",
         toolData: item,
       };
@@ -1098,7 +1113,10 @@ function feedEntryFoldRunId(entry: ThreadFeedEntry, runlessKey: RunId | null): R
   if (entry.type === "message") {
     return entry.message.role === "assistant" ? (entry.message.runId ?? runlessKey) : null;
   }
-  return entry.type === "activity-group" || entry.type === "html-render" || entry.type === "mcp-app"
+  return entry.type === "activity-group" ||
+    entry.type === "html-render" ||
+    entry.type === "sent-message" ||
+    entry.type === "mcp-app"
     ? (entry.runId ?? runlessKey)
     : null;
 }
@@ -1226,22 +1244,8 @@ function deriveThreadFeedRunFolds(
           (entry) =>
             entry.id !== terminalAssistantId &&
             !(entry.type === "message" && retainedAnswerIds.has(entry.message.id)) &&
-            entry.type !== "html-render" &&
-            entry.type !== "mcp-app" &&
             entry.id !== visibleCompactionId &&
-            !(
-              entry.type === "activity-group" &&
-              entry.activities.some(
-                (activity) =>
-                  activity.prominent ||
-                  activity.workEntry.questionAnswer !== undefined ||
-                  activity.projectedItem.item.type === "notification" ||
-                  activity.projectedItem.item.type === "handoff" ||
-                  // A child still working outlives its settled launching run;
-                  // its group stays visible while any member is live.
-                  isLiveSubagentTurnItem(activity.projectedItem.item),
-              )
-            ),
+            !staysOutOfFold(entry),
         )
         .map((entry) => entry.id),
     );
@@ -1406,6 +1410,26 @@ function latestRunsEqual(left: ThreadFeedLatestRun | null, right: ThreadFeedLate
       left.completedAt === right.completedAt &&
       left.turnEnded === right.turnEnded &&
       left.providerStartingLabel === right.providerStartingLabel)
+  );
+}
+
+/** Rows a fold leaves in view; the live fold skips them too, so settling keeps its place. */
+function staysOutOfFold(entry: ThreadFeedEntry): boolean {
+  return (
+    entry.type === "html-render" ||
+    entry.type === "sent-message" ||
+    entry.type === "mcp-app" ||
+    (entry.type === "activity-group" &&
+      entry.activities.some(
+        (activity) =>
+          activity.prominent ||
+          activity.workEntry.questionAnswer !== undefined ||
+          activity.projectedItem.item.type === "notification" ||
+          activity.projectedItem.item.type === "handoff" ||
+          // A child still working outlives its settled launching run;
+          // its group stays visible while any member is live.
+          isLiveSubagentTurnItem(activity.projectedItem.item),
+      ))
   );
 }
 
@@ -1708,9 +1732,44 @@ export function deriveThreadFeedPresentation(
       for (const entryId of fold.hiddenEntryIds) collapsedEntryIds.add(entryId);
     }
   }
+  // The working run's fold row shows its live timer where "Worked for" lands once it settles.
+  // Zen never folds, so it keeps only the Thinking row.
+  // Runless work folds under its prompt's key once it settles, so the live row takes that key.
+  const runlessPrompt =
+    activeRunId === null && runlessWorkActive
+      ? sourceFeed.findLast((entry) => isUserMessageEntry(entry) && feedEntryRunId(entry) === null)
+      : undefined;
+  const liveRunId =
+    activeRunId ?? (runlessPrompt ? RunId.make(`runless:${runlessPrompt.id}`) : null);
+  const liveFold =
+    !zen &&
+    isWorking &&
+    activeWorkStartedAt !== null &&
+    liveRunId !== null &&
+    !compactionCommandRunIds.has(liveRunId)
+      ? liveRunFoldRow(liveRunId, activeWorkStartedAt)
+      : null;
+  let liveFoldPlaced = false;
+  // Earlier turns can hold the run's own items (a subagent it continued), so wait for its prompt.
+  let liveFoldReady =
+    liveFold !== null &&
+    activeRunId !== null &&
+    !sourceFeed.some((entry) => isUserMessageEntry(entry) && feedEntryRunId(entry) === activeRunId);
   for (let sourceIndex = 0; sourceIndex < sourceFeed.length; sourceIndex += 1) {
     const entry = sourceFeed[sourceIndex]!;
     const feedIndex = retainedFeedIndices[sourceIndex]!;
+    if (liveFold !== null && !liveFoldPlaced && feedEntryRunId(entry) === activeRunId) {
+      if (isUserMessageEntry(entry)) {
+        liveFoldReady = activeRunId !== null || entry === runlessPrompt;
+      } else if (
+        liveFoldReady &&
+        !staysOutOfFold(entry) &&
+        !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry))
+      ) {
+        result.push(liveFold);
+        liveFoldPlaced = true;
+      }
+    }
     if (isUserMessageEntry(entry)) {
       restarts.push({ entry: feedIndex, rowsLength: result.length });
     }
@@ -1791,6 +1850,7 @@ export function deriveThreadFeedPresentation(
       );
     }
   }
+  if (liveFold !== null && !liveFoldPlaced) result.push(liveFold);
   if (
     isWorking &&
     activeWorkStartedAt !== null &&
@@ -1805,11 +1865,12 @@ export function deriveThreadFeedPresentation(
           row.activities[0]?.projectedItem.item.status === "running"),
     )
   ) {
+    const waitingOn = activeRunId === null ? 0 : runningSubagentsAtRunTail(feed, activeRunId);
     result.push(
       thinkingRow(
         activeWorkStartedAt,
         activeRunId,
-        zen ? liveAnswerPreview(feed) : null,
+        waitingOn > 0 ? waitingOnSubagentsLabel(waitingOn) : zen ? liveAnswerPreview(feed) : null,
         latestRun?.providerStartingLabel,
       ),
     );
@@ -1914,7 +1975,37 @@ function isWorkLogFeedRow(row: ThreadFeedEntry | undefined): boolean {
   );
 }
 
-const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
+export const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
+
+/** Reads the feed before tool visibility filters it, so hidden newer parent work still counts. */
+function runningSubagentsAtRunTail(feed: ReadonlyArray<ThreadFeedEntry>, runId: RunId): number {
+  let running = 0;
+  for (let index = feed.length - 1; index >= 0; index -= 1) {
+    const entry = feed[index]!;
+    if (entry.type !== "activity-group" || entry.runId !== runId) break;
+    const items = entry.activities.map((activity) => activity.projectedItem.item);
+    if (items.some((item) => item.type !== "subagent")) break;
+    running += items.filter(isLiveSubagentTurnItem).length;
+  }
+  return running;
+}
+
+let cachedLiveRunFoldRow: Extract<ThreadFeedEntry, { readonly type: "run-fold" }> | null = null;
+
+function liveRunFoldRow(runId: RunId, startedAt: string) {
+  if (cachedLiveRunFoldRow?.runId !== runId || cachedLiveRunFoldRow.workingSince !== startedAt) {
+    cachedLiveRunFoldRow = {
+      type: "run-fold",
+      id: `run-fold:${runId}`,
+      createdAt: startedAt,
+      runId,
+      label: "Working",
+      expanded: false,
+      workingSince: startedAt,
+    };
+  }
+  return cachedLiveRunFoldRow;
+}
 
 function thinkingRow(
   createdAt: string,
@@ -2423,6 +2514,23 @@ export function buildThreadFeed(
         createdAt,
         runId: item.runId,
         render,
+      };
+      projectedEntriesCache.set(row, { attemptId, entries: [entry] });
+      entries.push(entry);
+      entryRows.push(index);
+      continue;
+    }
+    const sentMessage =
+      item.type === "dynamic_tool" && item.status === "completed"
+        ? sentMessageFromToolItem(item)
+        : undefined;
+    if (sentMessage !== undefined) {
+      const entry: RawThreadFeedEntry = {
+        type: "sent-message",
+        id: `sent-message:${row.visibility}:${row.sourceThreadId}:${row.sourceItemId}`,
+        createdAt,
+        runId: item.runId,
+        text: sentMessage,
       };
       projectedEntriesCache.set(row, { attemptId, entries: [entry] });
       entries.push(entry);

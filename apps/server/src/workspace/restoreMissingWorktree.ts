@@ -7,7 +7,9 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import * as ServerConfig from "../config.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import { scratchFolderRoot } from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import { isWithinRoot } from "./KnownWorkspaces.ts";
@@ -52,6 +54,28 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
   const projects = yield* ProjectService.ProjectService;
   const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+  const serverConfig = yield* ServerConfig.ServerConfig;
+
+  // Storage cleanup prunes idle No project folders, which have no branch to restore from.
+  // An empty folder, only directly inside the No project's own root, lets the thread run again.
+  const recreateScratchFolder = Effect.fn("restoreMissingWorktree.recreateScratchFolder")(
+    function* (thread: WorktreeThread, folder: string) {
+      if (path.resolve(folder) !== folder || (yield* fileSystem.exists(folder))) return;
+      const project = Option.getOrUndefined(yield* projects.getById(thread.projectId));
+      if (project === undefined || path.dirname(folder) !== path.resolve(project.workspaceRoot))
+        return;
+      const root = scratchFolderRoot(serverConfig.baseDir, path);
+      const realRoot = yield* fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root));
+      if (path.dirname(folder) !== root && path.dirname(folder) !== realRoot) return;
+      yield* Effect.logWarning("recreating missing scratch folder", {
+        threadId: thread.id,
+        folder,
+      });
+      yield* fileSystem.makeDirectory(folder, { recursive: true });
+    },
+    // Turn start reports a folder that is still missing.
+    Effect.orElseSucceed(() => undefined),
+  );
 
   // Only folders holding nothing but leftovers are cleared, never user files.
   const isLeftoverFolder = (worktreePath: string) =>
@@ -143,7 +167,8 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
 
   return Effect.fn("restoreMissingWorktree")(function* (thread: WorktreeThread) {
     const { worktreePath, branch } = thread;
-    if (worktreePath === null || branch === null) return;
+    if (worktreePath === null) return;
+    if (branch === null) return yield* recreateScratchFolder(thread, worktreePath);
     const exists = yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => true));
     const leftover = exists && (yield* isLeftoverFolder(worktreePath));
     if ((exists && !leftover) || !(yield* isManagedWorktreePath(worktreePath))) return;
