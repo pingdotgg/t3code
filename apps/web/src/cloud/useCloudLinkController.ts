@@ -17,7 +17,7 @@ import { m } from "../i18n/messages";
 import { stackedThreadToast } from "../components/ui/toastHelpers";
 import { relayFailureReason } from "./relayFailureReason";
 import { relayEnvironmentDiscovery } from "../state/relay";
-import { readEnvironmentScope } from "../state/session";
+import { readEnvironmentCanConfigureRelay, readEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 import { isCloudEnvironmentLinkError } from "./linkEnvironment";
 import { refreshManagedTunnelUsage } from "./managedRelayState";
@@ -187,6 +187,12 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
         currentLinkState.linkRevoked === true ||
         currentManagedTunnel !== desired.managedTunnel
       ) {
+        if (!readEnvironmentCanConfigureRelay(environmentId)) {
+          reportUpdateFailure(
+            new Error("This connection needs full access to configure T3 Connect."),
+          );
+          return false;
+        }
         const linkResult = await linkEnvironment({
           target,
           clerkToken,

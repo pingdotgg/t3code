@@ -2,7 +2,7 @@ import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useGT, useMessages } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
-import { AuthRelayWriteScope, type EnvironmentId } from "@t3tools/contracts";
+import { AuthStandardClientScopes, type EnvironmentId } from "@t3tools/contracts";
 import { readEnvironmentScope } from "../../state/session";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
@@ -60,7 +60,7 @@ function canLinkEnvironmentToConnect(environmentId: EnvironmentId) {
     serverEnvironment.configValueAtom(environmentId),
   )?.managedPolicy;
   return (
-    readEnvironmentScope(environmentId, AuthRelayWriteScope) &&
+    AuthStandardClientScopes.every((scope) => readEnvironmentScope(environmentId, scope)) &&
     managedCapabilityDenial(policy, "connect") === undefined
   );
 }

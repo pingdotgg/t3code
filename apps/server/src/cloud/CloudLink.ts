@@ -38,7 +38,7 @@ import {
   RELAY_MINT_RESPONSE_TYP,
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
-import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
+import { isSecureRelayUrl, normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Signature from "effect/crypto/Signature";
@@ -46,6 +46,7 @@ import * as Jwk from "effect/jose/Jwk";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -1232,22 +1233,27 @@ const make = Effect.gen(function* () {
       yield* Effect.logInfo("Keeping the managed tunnel across the update restart");
       return false;
     }
-    const token = yield* cliTokenManager.getExisting;
-    if (Option.isNone(token)) {
+    const relayUrl = yield* requireRelayUrl.pipe(Effect.option);
+    const installedRelayUrl = yield* secrets.get(RELAY_URL_SECRET);
+    if (
+      Option.isNone(relayUrl) ||
+      Option.isNone(installedRelayUrl) ||
+      normalizeSecureRelayUrl(bytesToString(installedRelayUrl.value)) !== relayUrl.value
+    ) {
       return false;
     }
-    // Use the persisted relay URL; T3CODE_RELAY_URL may have changed since linking.
-    const relayUrl = yield* secrets.get(RELAY_URL_SECRET);
-    if (Option.isNone(relayUrl)) {
+    const token = yield* cliTokenManager.getExisting;
+    if (Option.isNone(token)) {
       return false;
     }
     const environmentId = yield* environment.getEnvironmentId;
     yield* endpointRuntime.applyConfig(null);
     const response = yield* HttpClientRequest.delete(
-      `${bytesToString(relayUrl.value)}/v1/client/environment-links/${encodeURIComponent(environmentId)}/tunnel`,
+      `${relayUrl.value}/v1/client/environment-links/${encodeURIComponent(environmentId)}/tunnel`,
     ).pipe(
       HttpClientRequest.bearerToken(token.value.accessToken),
       httpClient.execute,
+      Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
       Effect.flatMap(filterRelayResponse),
       Effect.flatMap(HttpClientResponse.schemaBodyJson(RelayOkResponse)),
       withRelayClientTracing,

@@ -299,6 +299,26 @@ describe("link proof over a non-loopback desktop transport", () => {
     }),
   );
 
+  it.effect("requires the scopes that relay configuration can delegate", () =>
+    Effect.gen(function* () {
+      const { post, exchange } = yield* linkProofClient;
+      const token = yield* exchange(DESKTOP_BOOTSTRAP_TOKEN, "relay:write");
+      const response = yield* post(
+        "/api/connect/relay-config",
+        {
+          relayUrl: "https://relay.example.test",
+          cloudUserId: "test-link-owner",
+          environmentCredential: "test-environment-credential",
+          cloudMintPublicKey: "test-public-key",
+          endpointRuntime: null,
+        },
+        { authorization: `Bearer ${token}` },
+      );
+      expect(response.status).toBe(403);
+      expect(yield* responseJson(response)).toMatchObject({ code: "insufficient_scope" });
+    }),
+  );
+
   it.effect("rejects unauthenticated requests", () =>
     Effect.gen(function* () {
       const { post } = yield* linkProofClient;
