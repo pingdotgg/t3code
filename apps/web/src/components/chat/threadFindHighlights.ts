@@ -2,6 +2,8 @@ import { findThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import { useEffect, useEffectEvent, useRef } from "react";
 import { THREAD_FIND_BLOCK_TAGS } from "@t3tools/shared/threadFindText";
 
+import { observeResize } from "~/lib/observeResize";
+
 const THREAD_FIND_HIGHLIGHT_NAME = "t3-thread-find";
 const THREAD_FIND_ACTIVE_HIGHLIGHT_NAME = "t3-thread-find-active";
 
@@ -160,9 +162,19 @@ export function useThreadFindHighlights(input: {
       }
       for (const row of cache.keys()) if (!rows.has(row)) cache.delete(row);
       rangesRef.current = ranges;
-      paint(ranges, readSelection());
+      paint.update(cache, ranges, readSelection());
     };
     let frame: number | null = null;
+    let dirty = false;
+    const schedule = () => {
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        if (dirty) repaint();
+        else paint.place(cache);
+        dirty = false;
+      });
+    };
     const observer = new MutationObserver((mutations) => {
       // Ignore timer and status mutations outside searchable text and folds.
       const relevant = mutations.filter(affectsSearchableText);
@@ -175,11 +187,8 @@ export function useThreadFindHighlights(input: {
         const row = target?.closest("[data-timeline-row-id]");
         if (row) cache.delete(row);
       }
-      if (frame !== null) return;
-      frame = requestAnimationFrame(() => {
-        frame = null;
-        repaint();
-      });
+      dirty = true;
+      schedule();
     });
     observer.observe(container, {
       subtree: true,
@@ -195,10 +204,14 @@ export function useThreadFindHighlights(input: {
         "data-thread-find-ignore",
       ],
     });
+    container.addEventListener("scroll", schedule, { passive: true });
+    const stopResize = observeResize(container, schedule);
     // Revealing the first match can synchronously mount or recycle list rows.
     repaint();
     return () => {
       observer.disconnect();
+      stopResize();
+      container.removeEventListener("scroll", schedule);
       if (frame !== null) cancelAnimationFrame(frame);
       cache.clear();
       paintRef.current = null;
@@ -211,7 +224,7 @@ export function useThreadFindHighlights(input: {
   // layout inputs, and repainting the active highlight for those is wasted work.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- repaints the active CSS Highlight range when the selected match changes
   useEffect(() => {
-    paintRef.current?.(rangesRef.current, {
+    paintRef.current?.select({
       activeRowId,
       activeOccurrence,
       onActiveRange: readSelection().onActiveRange,
@@ -219,47 +232,129 @@ export function useThreadFindHighlights(input: {
   }, [activeOccurrence, activeRowId]);
 }
 
-function makeThreadFindHighlightPainter(container: HTMLElement) {
-  let previousRanges: readonly ThreadFindRange[] | null = null;
-  const rangesByRow = new Map<string, Range[]>();
-  const inactive = new Highlight();
-  const active = new Highlight();
-  let previousActive: Range | null = null;
-  CSS.highlights.set(THREAD_FIND_HIGHLIGHT_NAME, inactive);
-  CSS.highlights.set(THREAD_FIND_ACTIVE_HIGHLIGHT_NAME, active);
-  return (
-    ranges: readonly ThreadFindRange[],
-    selection: Pick<
-      Parameters<typeof useThreadFindHighlights>[0],
-      "activeRowId" | "activeOccurrence" | "onActiveRange"
-    >,
-  ) => {
-    if (previousRanges !== ranges) {
-      previousRanges = ranges;
-      previousActive = null;
-      rangesByRow.clear();
-      inactive.clear();
-      for (const match of ranges) {
-        const row = rangesByRow.get(match.rowId) ?? [];
-        row[match.occurrence] = match.range;
-        rangesByRow.set(match.rowId, row);
-        if (foldsHiding(match.range, container).length === 0) inactive.add(match.range);
+type ThreadFindSelection = Pick<
+  Parameters<typeof useThreadFindHighlights>[0],
+  "activeRowId" | "activeOccurrence" | "onActiveRange"
+>;
+
+// Blink rebuilds every registered highlight Range on any DOM or style change, so
+// only matches within a screen of the viewport are painted; the active one always is.
+function matchesInZone(
+  container: HTMLElement,
+  row: Element,
+  matches: readonly ThreadFindRange[],
+  zone: { top: number; bottom: number },
+): [number, number] {
+  const box = row.getBoundingClientRect();
+  if (matches.length === 0 || box.bottom < zone.top || box.top > zone.bottom) return [0, 0];
+  // Matches run top to bottom once folded ones are skipped, a whole fold at a time.
+  const firstShown = (index: number, high: number): [number, DOMRect | null] => {
+    while (index < high) {
+      const range = matches[index]!.range;
+      const fold = foldsHiding(range, container).at(-1);
+      if (!fold) {
+        const rect = range.getBoundingClientRect();
+        if (rect.height > 0) return [index, rect];
+        index++;
+        continue;
+      }
+      let after = high;
+      while (index < after) {
+        const mid = (index + after) >>> 1;
+        if (fold.contains(matches[mid]!.range.startContainer)) index = mid + 1;
+        else after = mid;
       }
     }
-    if (previousActive && foldsHiding(previousActive, container).length === 0)
-      inactive.add(previousActive);
-    const selected =
+    return [high, null];
+  };
+  const firstWhere = (isPast: (rect: DOMRect) => boolean) => {
+    let low = 0;
+    let high = matches.length;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      const [probe, rect] = firstShown(mid, high);
+      if (!rect || isPast(rect)) high = mid;
+      else low = probe + 1;
+    }
+    return low;
+  };
+  return [
+    firstWhere((rect) => rect.bottom >= zone.top),
+    firstWhere((rect) => rect.top > zone.bottom),
+  ];
+}
+
+function makeThreadFindHighlightPainter(container: HTMLElement) {
+  const inactive = new Highlight();
+  const active = new Highlight();
+  const zoned = new Set<Range>();
+  const windows = new Map<
+    Element,
+    { matches: readonly ThreadFindRange[]; start: number; end: number }
+  >();
+  const rangesByRow = new Map<string, Range[]>();
+  let selected: Range | null = null;
+  CSS.highlights.set(THREAD_FIND_HIGHLIGHT_NAME, inactive);
+  CSS.highlights.set(THREAD_FIND_ACTIVE_HIGHLIGHT_NAME, active);
+  const show = (range: Range) => {
+    zoned.add(range);
+    if (range !== selected && foldsHiding(range, container).length === 0) inactive.add(range);
+  };
+  const hide = (range: Range) => {
+    zoned.delete(range);
+    inactive.delete(range);
+  };
+  const place = (rows: ReadonlyMap<Element, readonly ThreadFindRange[]>) => {
+    const viewport = container.getBoundingClientRect();
+    const zone = { top: viewport.top - viewport.height, bottom: viewport.bottom + viewport.height };
+    for (const [row, previous] of windows) {
+      if (rows.has(row)) continue;
+      for (let i = previous.start; i < previous.end; i++) hide(previous.matches[i]!.range);
+      windows.delete(row);
+    }
+    for (const [row, matches] of rows) {
+      const [start, end] = matchesInZone(container, row, matches, zone);
+      const previous = windows.get(row);
+      const kept = previous?.matches === matches ? previous : null;
+      if (previous)
+        for (let i = previous.start; i < previous.end; i++)
+          if (!kept || i < start || i >= end) hide(previous.matches[i]!.range);
+      for (let i = start; i < end; i++)
+        if (!kept || i < kept.start || i >= kept.end) show(matches[i]!.range);
+      windows.set(row, { matches, start, end });
+    }
+  };
+  const select = (selection: ThreadFindSelection) => {
+    const next =
       selection.activeRowId === null
         ? null
         : (rangesByRow.get(selection.activeRowId)?.[selection.activeOccurrence] ?? null);
+    if (selected && selected !== next && zoned.has(selected)) {
+      if (foldsHiding(selected, container).length === 0) inactive.add(selected);
+    }
+    selected = next;
     active.clear();
-    if (selected) inactive.delete(selected);
-    previousActive = selected;
-    if (selected && revealFolded(selected, container)) {
+    if (next) inactive.delete(next);
+    if (next && revealFolded(next, container)) {
       selection.onActiveRange(null);
     } else {
-      if (selected) active.add(selected);
-      selection.onActiveRange(selected);
+      if (next) active.add(next);
+      selection.onActiveRange(next);
     }
   };
+  const update = (
+    rows: ReadonlyMap<Element, readonly ThreadFindRange[]>,
+    ranges: readonly ThreadFindRange[],
+    selection: ThreadFindSelection,
+  ) => {
+    rangesByRow.clear();
+    for (const match of ranges) {
+      const row = rangesByRow.get(match.rowId) ?? [];
+      row[match.occurrence] = match.range;
+      rangesByRow.set(match.rowId, row);
+    }
+    place(rows);
+    select(selection);
+  };
+  return { update, place, select };
 }
