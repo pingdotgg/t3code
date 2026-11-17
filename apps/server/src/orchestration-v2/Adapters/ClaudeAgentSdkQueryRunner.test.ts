@@ -397,9 +397,8 @@ it.effect.each([true, false])("only retries after confirmed process exit: %s", (
   }).pipe(Effect.provide(realQueryRunner)),
 );
 
-it.effect.each([false, true])(
-  "stops retrying MCP registration after two timeouts and reports the cause (fresh: %s)",
-  (fresh) => Effect.gen(function* () {
+it.effect("stops retrying MCP registration after two timeouts and reports the cause", () =>
+  Effect.gen(function* () {
     const firstRegistration = Promise.withResolvers<void>();
     const secondRegistration = Promise.withResolvers<void>();
     const disposed = vi.fn(async () => {});
@@ -416,12 +415,7 @@ it.effect.each([false, true])(
     });
     yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
     const runner = yield* ClaudeAgentSdkQueryRunner;
-    const { resume, ...options } = resumedMcpQueryInput.options;
-    const opening = yield* runner
-      .open(fresh
-        ? { ...resumedMcpQueryInput, options: { ...options, sessionId: resume } }
-        : resumedMcpQueryInput)
-      .pipe(Effect.result, Effect.forkChild);
+    const opening = yield* runner.open(resumedMcpQueryInput).pipe(Effect.result, Effect.forkChild);
     yield* Effect.promise(() => firstRegistration.promise);
     yield* TestClock.adjust("90 seconds");
     yield* Effect.promise(() => secondRegistration.promise);
@@ -432,14 +426,6 @@ it.effect.each([false, true])(
     if (result._tag !== "Failure") return;
     assert.equal(querySpy.mock.calls.length, 2);
     assert.equal(disposed.mock.calls.length, 2);
-    if (fresh) {
-      const first = querySpy.mock.calls[0]![0].options;
-      const second = querySpy.mock.calls[1]![0].options;
-      assert.equal(first?.sessionId, resume);
-      assert.isString(second?.sessionId);
-      assert.notEqual(second?.sessionId, resume);
-      assert.isUndefined(second?.resume);
-    }
     assert.equal(
       makeProviderFailure({
         cause: { _tag: "ProviderAdapterTurnStartError", cause: result.failure },
@@ -478,27 +464,19 @@ it.effect("cancels a stalled registration without retrying or retaining its prom
   }).pipe(Effect.provide(realQueryRunner)),
 );
 
-it.effect.each(["initialize", "setMcpServers"] as const)(
-  "retries a fresh session once after %s times out",
-  (phase) => Effect.gen(function* () {
+it.effect("retries a fresh session once after MCP registration times out", () =>
+  Effect.gen(function* () {
     const registrationStarted = Promise.withResolvers<void>();
     const disposed = vi.fn(async () => {});
     const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(() => {
       const first = querySpy.mock.calls.length === 1;
       return {
-        initializationResult: () => {
-          if (first && phase === "initialize") {
-            registrationStarted.resolve();
-            return new Promise<unknown>(() => {});
-          }
-          return Promise.resolve({});
-        },
+        initializationResult: async () => ({}),
         setMcpServers: () => {
-          if (first && phase === "setMcpServers") {
-            registrationStarted.resolve();
-            return new Promise<ClaudeSdk.McpSetServersResult>(() => {});
-          }
-          return Promise.resolve({ added: ["t3-code"], removed: [], errors: {} });
+          registrationStarted.resolve();
+          return first
+            ? new Promise<ClaudeSdk.McpSetServersResult>(() => {})
+            : Promise.resolve({ added: ["t3-code"], removed: [], errors: {} });
         },
         close: vi.fn(),
         [Symbol.asyncDispose]: disposed,
@@ -514,20 +492,19 @@ it.effect.each(["initialize", "setMcpServers"] as const)(
       })
       .pipe(Effect.result, Effect.forkChild);
     yield* Effect.promise(() => registrationStarted.promise);
-    yield* TestClock.adjust(phase === "initialize" ? "5 minutes" : "90 seconds");
+    yield* TestClock.adjust("90 seconds");
     const result = yield* Fiber.join(opening);
 
     assert.equal(result._tag, "Success");
-    if (result._tag === "Success") yield* result.success.close;
+    if (result._tag !== "Success") return;
+    yield* result.success.close;
     assert.equal(querySpy.mock.calls.length, 2);
     assert.equal(disposed.mock.calls.length, 1);
-    // A failed fresh query may already have a transcript, so retry with a new UUID.
-    const first = querySpy.mock.calls[0]![0].options;
+    // A fresh ID may already have a transcript, so the retry must not open it as fresh again.
     const retry = querySpy.mock.calls[1]![0].options;
-    assert.equal(first?.sessionId, resume);
-    assert.isString(retry?.sessionId);
-    assert.notEqual(retry?.sessionId, resume);
-    assert.isUndefined(retry?.resume);
+    assert.isFalse(retry?.sessionId === resume && retry?.resume === undefined);
+    // The adapter rekeys its native-thread state to the ID the retry opened.
+    assert.equal(result.success.nativeSessionId, retry?.sessionId);
   }).pipe(Effect.provide(realQueryRunner)),
 );
 

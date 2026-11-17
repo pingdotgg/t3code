@@ -4247,66 +4247,64 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect(
-    "reuses a fresh retry's native session with background work on the next turn",
-    () =>
-      Effect.gen(function* () {
-        const recoveredId = "native-session-after-retry";
-        const harness = yield* makeWakeHarnessWithOptions({
-          openedNativeSessionId: recoveredId,
-          freshQueueOnReopen: true,
-          backgroundTasks: () => Effect.succeed(true),
-          close: (queue) => Queue.shutdown(queue),
+  it.effect("reuses a fresh retry's native session with background work on the next turn", () =>
+    Effect.gen(function* () {
+      const recoveredId = "native-session-after-retry";
+      const harness = yield* makeWakeHarnessWithOptions({
+        openedNativeSessionId: recoveredId,
+        freshQueueOnReopen: true,
+        backgroundTasks: () => Effect.succeed(true),
+        close: (queue) => Queue.shutdown(queue),
+      });
+      const turn = (ordinal: number, providerThread: OrchestrationV2ProviderThread) =>
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread,
+          now: DateTime.makeUnsafe(0),
+          attemptId: RunAttemptId.make(`fresh-retry-${ordinal}`),
+          text: ordinal === 1 ? "Start a background build" : "Check the build status",
+          attachments: [],
+          providerTurnOrdinal: ordinal,
         });
-        const turn = (ordinal: number, providerThread: OrchestrationV2ProviderThread) =>
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread,
-            now: DateTime.makeUnsafe(0),
-            attemptId: RunAttemptId.make(`fresh-retry-${ordinal}`),
-            text: ordinal === 1 ? "Start a background build" : "Check the build status",
-            attachments: [],
-            providerTurnOrdinal: ordinal,
-          });
 
-        yield* harness.runtime.startTurn(turn(1, harness.providerThread));
-        yield* harness.offerAndWait(
-          claudeSdkFrame({
-            type: "system",
-            subtype: "init",
-            session_id: recoveredId,
-            uuid: "00000000-0000-4000-8000-000000000541",
-          }),
-        );
-        yield* harness.offerAndWait({ ...wakeTaskStarted, session_id: recoveredId });
-        yield* harness.offerAndWait({ ...turnOneResult, session_id: recoveredId });
-        yield* Queue.take(harness.terminalReceipts);
-        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+      yield* harness.runtime.startTurn(turn(1, harness.providerThread));
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          session_id: recoveredId,
+          uuid: "00000000-0000-4000-8000-000000000541",
+        }),
+      );
+      yield* harness.offerAndWait({ ...wakeTaskStarted, session_id: recoveredId });
+      yield* harness.offerAndWait({ ...turnOneResult, session_id: recoveredId });
+      yield* Queue.take(harness.terminalReceipts);
+      assert.isTrue(yield* harness.hasPendingBackgroundWork);
 
-        const providerUpdate = harness.events.findLast(
-          (event) => event.type === "provider_thread.updated",
-        );
-        assert.isDefined(providerUpdate);
-        if (providerUpdate?.type !== "provider_thread.updated") return;
-        const updatedThread = providerUpdate.providerThread;
-        assert.equal(updatedThread.nativeThreadRef?.nativeId, recoveredId);
+      const providerUpdate = harness.events.findLast(
+        (event) => event.type === "provider_thread.updated",
+      );
+      assert.isDefined(providerUpdate);
+      if (providerUpdate?.type !== "provider_thread.updated") return;
+      const updatedThread = providerUpdate.providerThread;
+      assert.equal(updatedThread.nativeThreadRef?.nativeId, recoveredId);
 
-        // If the live query still uses the abandoned ID, the replacement guard
-        // rejects this turn because the original CLI is running background work.
-        yield* harness.runtime.startTurn(turn(2, updatedThread));
-        assert.equal(harness.processQueues.length, 1);
-        assert.equal(harness.offeredMessages.length, 2);
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-          ),
+      // If the live query still uses the abandoned ID, the replacement guard
+      // rejects this turn because the original CLI is running background work.
+      yield* harness.runtime.startTurn(turn(2, updatedThread));
+      assert.equal(harness.processQueues.length, 1);
+      assert.equal(harness.offeredMessages.length, 2);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
         ),
       ),
+    ),
   );
 
   it.effect("resumes the session a /clear selected after the Claude process is replaced", () =>
