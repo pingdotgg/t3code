@@ -72,6 +72,7 @@ import {
   ListFilterIcon,
   PlusIcon,
   SettingsIcon,
+  XIcon,
 } from "lucide-react";
 import {
   useEffect,
@@ -3196,6 +3197,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               activeSearchResultIndex={activeSearchResultIndex}
               onClearSearch={clearThreadSearch}
             />
+            {scopedProjectGroups.length > 0 ? (
+              <div className="mt-1.5 flex h-7 min-w-0 items-center gap-2 rounded-md bg-sidebar-row-selected px-2 text-xs text-sidebar-foreground">
+                <span className="min-w-0 flex-1 truncate">
+                  Showing: {scopedProjectGroups.map((project) => project.displayName).join(", ")}
+                </span>
+                <button
+                  type="button"
+                  className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-sm px-1 text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                  onClick={() => setProjectScopeKeys([])}
+                >
+                  <XIcon className="size-3" />
+                  Clear
+                </button>
+              </div>
+            ) : null}
           </SidebarGroup>
         }
       >
