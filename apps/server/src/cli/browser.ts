@@ -141,8 +141,19 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
         : [];
       const needsFonts = !(yield* fontAvailable);
       const hasApt = yield* fs.exists("/usr/bin/apt-get").pipe(Effect.orElseSucceed(() => false));
+      const sandboxStillBlocked =
+        restricted && Option.isSome(browser) && rootWarning === undefined
+          ? PreviewBrowserHost.sandboxFailsToStart(
+              browser.value,
+              isRoot ? env.SUDO_USER : undefined,
+            )
+          : Effect.succeed(false);
+      const stillBlockedMessage = `Chrome's sandbox still cannot start, although the AppArmor profile at ${PreviewBrowserHost.APPARMOR_PROFILE_PATH} is ${isRoot ? "loaded" : "on disk"}. In a container (LXC, Incus, LXD), the container's host restricts user namespaces too: copy that profile to the container's host and load it there with \`apparmor_parser -r ${PreviewBrowserHost.APPARMOR_PROFILE_PATH}\`. Otherwise set \`T3CODE_SERVER_BROWSER_SANDBOX=0\` in the T3 server's environment and restart the server; this disables Chrome's sandbox.`;
 
       if (!needsProfile && missing.length === 0 && !needsFonts) {
+        if (yield* sandboxStillBlocked) {
+          return yield* Console.log(stillBlockedMessage + reloadHint);
+        }
         return yield* Console.log(
           rootWarning ??
             (Option.isSome(browser)
@@ -248,6 +259,7 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
         );
       }
 
+      if (yield* sandboxStillBlocked) return yield* Console.log(stillBlockedMessage);
       yield* Console.log(rootWarning ?? "This host is ready for T3's browser.");
     }),
   ),

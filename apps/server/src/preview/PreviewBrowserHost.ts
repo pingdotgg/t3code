@@ -126,6 +126,27 @@ export const missingLibraries = Effect.fn("PreviewBrowserHost.missingLibraries")
   return listed.length > 0 ? listed : [loaderError];
 });
 
+/**
+ * A loaded profile does nothing in a container whose host also restricts userns; only a launch
+ * shows that. Chrome will not sandbox as root, so root launches it as `user`.
+ */
+export const sandboxFailsToStart = Effect.fn("PreviewBrowserHost.sandboxFailsToStart")(function* (
+  executable: string,
+  user: string | undefined,
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const launch = [executable, "--headless", "--dump-dom", "about:blank"];
+  const command =
+    user === undefined
+      ? ChildProcess.make(launch[0]!, launch.slice(1), { stdin: "ignore" })
+      : ChildProcess.make("runuser", ["-u", user, "--", ...launch], { stdin: "ignore" });
+  const output = yield* spawner.string(command, { includeStderr: true }).pipe(
+    Effect.timeout("15 seconds"),
+    Effect.orElseSucceed(() => ""),
+  );
+  return output.includes(NO_SANDBOX_SIGNATURE);
+});
+
 export const usernsRestricted = Effect.gen(function* () {
   if ((yield* HostProcess.Platform) !== "linux") return false;
   const fs = yield* FileSystem.FileSystem;
