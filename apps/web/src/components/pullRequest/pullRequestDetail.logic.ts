@@ -736,25 +736,26 @@ function visibleTextFirst(body: string): string {
   const sections: boolean[] = [];
   for (const [index, line] of body.split("\n").entries()) {
     const inCode = codeLines.has(index + 1);
-    const opener = inCode ? null : /^\s*<details(?=[\s>])([^>]*)/iu.exec(line);
-    // Quoted values are dropped first so `title="open logs"` does not read as the attribute.
-    const attributes = opener?.[1]?.replace(/"[^"]*"|'[^']*'/gu, "") ?? "";
-    if (opener) sections.push(!/(?:^|\s)open(?:[\s=/]|$)/iu.test(attributes));
-    // Each closing tag ends a section; text after it goes with what follows.
-    let rest = line;
-    let closer = inCode ? null : /<\/details>/iu.exec(rest);
-    if (sections.length === 0 || closer === null) {
-      (sections.includes(true) ? folded : shown).push(line);
-      continue;
+    // Only a line that starts as a details block opens sections; a tag named in prose does not.
+    const opens = !inCode && /^\s*<details(?=[\s>])/iu.test(line);
+    let from = 0;
+    for (const tag of inCode ? [] : line.matchAll(/<details(?=[\s>])([^>]*)>?|<\/details>/giu)) {
+      if (tag[0].startsWith("</")) {
+        if (sections.length === 0) continue;
+        // Text after a closing tag is outside the section, so it goes with what follows.
+        const end = tag.index + tag[0].length;
+        const segment = line.slice(from, end);
+        (sections.includes(true) ? folded : shown).push(from === 0 ? segment : segment.trim());
+        sections.pop();
+        from = end;
+      } else if (opens) {
+        // Quoted values are dropped first so `title="open logs"` does not read as the attribute.
+        const attributes = (tag[1] ?? "").replace(/"[^"]*"|'[^']*'/gu, "");
+        sections.push(!/(?:^|\s)open(?:[\s=/]|$)/iu.test(attributes));
+      }
     }
-    while (sections.length > 0 && closer !== null) {
-      const end = closer.index + closer[0].length;
-      (sections.includes(true) ? folded : shown).push(rest.slice(0, end));
-      sections.pop();
-      rest = rest.slice(end);
-      closer = /<\/details>/iu.exec(rest);
-    }
-    if (rest.trim() !== "") (sections.includes(true) ? folded : shown).push(rest.trim());
+    const rest = from === 0 ? line : line.slice(from).trim();
+    if (from === 0 || rest !== "") (sections.includes(true) ? folded : shown).push(rest);
   }
   return folded.length === 0 ? body : [...shown, "", ...folded].join("\n").trim();
 }

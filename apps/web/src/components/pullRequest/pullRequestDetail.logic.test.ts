@@ -1406,7 +1406,7 @@ describe("adding a remark to the chat", () => {
       kind: "comment",
       comment: remark(
         "c2",
-        `<details>\n<details>\n${"script ".repeat(400)}</details></details>\nFinding.`,
+        `<details><details>\n<details>\n${"script ".repeat(400)}</details></details>\n${"more ".repeat(400)}\n</details>\nFinding.`,
       ),
     });
 
