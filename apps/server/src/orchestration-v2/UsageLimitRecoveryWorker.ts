@@ -19,7 +19,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
-const MAX_OVERDUE_ARM_MS = 24 * 60 * 60 * 1000;
+export const MAX_OVERDUE_ARM_MS = 24 * 60 * 60 * 1000;
 
 /** The one place a limited thread's recovery policy is resolved. */
 export function resolveLimitRecoveryPolicy(

@@ -21,7 +21,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ServerConfig from "../config.ts";
 
-const ICON_SIZE = 64;
+const ICON_SIZE = 128;
 const COMMAND_TIMEOUT = "5 seconds";
 const RESOLUTION_CACHE_TTL = Duration.hours(1);
 const RESOLUTION_CACHE_MAX_ENTRIES = 256;
@@ -189,7 +189,7 @@ const resolveNativeAppIconUncached = Effect.fn("NativeAppIconResolver.resolveUnc
     )
     .pipe(Effect.map(Hex.encode), Effect.orDie);
   const cacheDirectory = path.join(config.providerStatusCacheDir, "native-app-icons");
-  const cachePath = path.join(cacheDirectory, `${cacheKey}.png`);
+  const cachePath = path.join(cacheDirectory, `${cacheKey}-${ICON_SIZE}.png`);
   if (yield* existingFile(cachePath)) return cachePath;
 
   yield* fileSystem.makeDirectory(cacheDirectory, { recursive: true });
