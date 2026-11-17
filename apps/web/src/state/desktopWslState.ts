@@ -5,8 +5,6 @@ import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
-const DESKTOP_WSL_STATE_STALE_TIME_MS = 30_000;
-
 type DesktopWslStateBridge = Pick<DesktopBridge, "getWslState">;
 
 class DesktopWslStateUnavailableError extends Schema.TaggedError<DesktopWslStateUnavailableError>()(
@@ -43,14 +41,8 @@ function createDesktopWslStateAtom(getBridge: () => DesktopWslStateBridge | unde
     });
   });
 
-  return Atom.make(loadDesktopWslState()).pipe(
-    Atom.swr({
-      staleTime: DESKTOP_WSL_STATE_STALE_TIME_MS,
-      revalidateOnMount: true,
-    }),
-    Atom.keepAlive,
-    Atom.withLabel("desktop:wsl-state:load"),
-  );
+  // Not kept alive: each Settings mount reads WSL again, so newly installed distros appear.
+  return Atom.make(loadDesktopWslState()).pipe(Atom.withLabel("desktop:wsl-state:load"));
 }
 
 export const desktopWslStateAtom = createDesktopWslStateAtom(getDesktopWslStateBridge);
