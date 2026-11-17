@@ -122,10 +122,9 @@ function resolveEffort(
 ): { readonly value: string; readonly label: string } | undefined {
   const model = models?.find((candidate) => candidate.slug === selection.model);
   if (model === undefined) {
-    // Pi states its effort as `thinking`; the catalog would otherwise mark it a reasoning control.
-    const value = [...REASONING_EFFORT_OPTION_IDS, "thinking"]
-      .map((id) => getModelSelectionStringOptionValue(selection, id))
-      .find((candidate) => candidate !== undefined);
+    const value = REASONING_EFFORT_OPTION_IDS.map((id) =>
+      getModelSelectionStringOptionValue(selection, id),
+    ).find((candidate) => candidate !== undefined);
     return value === undefined ? undefined : { value, label: value };
   }
   const descriptor = model.capabilities?.optionDescriptors?.find(isReasoningSelect);

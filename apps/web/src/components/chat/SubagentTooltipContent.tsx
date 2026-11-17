@@ -11,8 +11,9 @@ import {
   resolveSubagentMetadata,
   subagentDetailPreview,
 } from "@t3tools/client-runtime/state/subagent-display";
-import { REASONING_EFFORT_OPTION_IDS } from "@t3tools/client-runtime/state/thread-execution";
-import { getModelSelectionStringOptionValue, resolveSelectableModel } from "@t3tools/shared/model";
+import { subagentModelSelection } from "@t3tools/client-runtime/state/subagentRuntime";
+import { formatSubagentEffort } from "@t3tools/client-runtime/state/thread-execution";
+import { resolveSelectableModel } from "@t3tools/shared/model";
 import { getTraitsSpeedDisplay, TraitsSpeedIcon } from "./TraitsSpeed";
 import type { ReactNode } from "react";
 import {
@@ -50,9 +51,7 @@ export function SubagentTooltipContent(props: {
   result?: string | null | undefined;
   progress?: string | null | undefined;
 }) {
-  const childSelection =
-    props.modelSelection ??
-    (props.origin === "app_owned" ? props.childThread?.modelSelection : undefined);
+  const childSelection = subagentModelSelection(props, props.childThread);
   const {
     modelLabel,
     modelSlug,
@@ -68,13 +67,8 @@ export function SubagentTooltipContent(props: {
       ) ?? childSelection?.model.trim())
     : childSelection?.model.trim();
   const provider = props.provider;
-  const matchingSelection =
-    childModel === modelSlug && childSelection?.instanceId === props.providerInstanceId
-      ? childSelection
-      : undefined;
-  const effort = REASONING_EFFORT_OPTION_IDS.map((id) =>
-    getModelSelectionStringOptionValue(matchingSelection, id),
-  ).find(Boolean);
+  const matchingSelection = childModel === modelSlug ? childSelection : undefined;
+  const effort = formatSubagentEffort({ modelSlug, modelSelection: childSelection, provider });
   const speed = provider
     ? providerModel?.capabilities?.optionDescriptors
         ?.map((descriptor) => {

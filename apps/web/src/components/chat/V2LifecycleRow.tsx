@@ -1,6 +1,9 @@
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { AgentElapsed } from "./AgentElapsed";
-import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
+import {
+  projectedSubagentsToRuntime,
+  statedSubagentEffort,
+} from "@t3tools/client-runtime/state/subagentRuntime";
 import type { ReactNode } from "react";
 import { useThreadShell, useProject } from "../../state/entities";
 import { useEnvironment } from "../../state/environments";
@@ -443,6 +446,7 @@ function SubagentTimelineLink(props: {
   const rawDetail = settled ? result || progress : progress || result;
   const detail = subagentCardDetail(rawDetail);
   const failed = status === "failed";
+  const effort = agent ? statedSubagentEffort(agent) : null;
   const timing = {
     status: liveStatus,
     startedAt: isoOrNull(agent?.startedAt ?? props.startedAt),
@@ -464,6 +468,9 @@ function SubagentTimelineLink(props: {
           </span>
           {remote !== undefined ? (
             <span className="shrink-0 text-xs text-muted-foreground">on {remote.label}</span>
+          ) : null}
+          {effort !== null ? (
+            <span className="shrink-0 text-xs text-muted-foreground">{effort}</span>
           ) : null}
         </span>
         <span

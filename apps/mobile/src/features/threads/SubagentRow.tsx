@@ -8,6 +8,7 @@ import {
   resolveSubagentMetadata,
   subagentCardDetail,
 } from "@t3tools/client-runtime/state/subagent-display";
+import { subagentModelSelection } from "@t3tools/client-runtime/state/subagentRuntime";
 import { formatSubagentEffort } from "@t3tools/client-runtime/state/thread-execution";
 import type { EnvironmentId, OrchestrationV2Subagent } from "@t3tools/contracts";
 import type { ReactNode } from "react";
@@ -27,6 +28,7 @@ type SubagentRowSubagent = Pick<
   | "childThreadId"
   | "model"
   | "modelSelection"
+  | "origin"
   | "driver"
   | "providerInstanceId"
   | "title"
@@ -139,7 +141,7 @@ function SubagentMetadata(props: {
     parent ? scopeProjectRef(environmentId, parent.projectId) : null,
   );
   const childProject = useProject(child ? scopeProjectRef(environmentId, child.projectId) : null);
-  const selection = subagent.modelSelection;
+  const selection = subagentModelSelection(subagent, child);
   const { modelLabel, modelSlug, workspace } = resolveSubagentMetadata({
     model: subagent.model,
     modelSelection: selection,

@@ -217,6 +217,7 @@ export function deriveReportedModelSelection(projection: ThreadStructure): Model
   return providerThread?.nativeMetadata?.modelSelection ?? null;
 }
 
+/** Label consumers check select descriptors and string values: Pi's `thinking` counts, Claude's boolean does not. */
 export const REASONING_EFFORT_OPTION_IDS: ReadonlyArray<string> = [
   "reasoningEffort",
   "effort",
@@ -224,6 +225,7 @@ export const REASONING_EFFORT_OPTION_IDS: ReadonlyArray<string> = [
   "variant",
   "reasoning_effort",
   "thinking_level",
+  "thinking",
 ];
 
 export function formatModelSelectionEffort(
@@ -252,26 +254,27 @@ export function formatModelSelectionEffort(
   return null;
 }
 
-/** A reported model the picker catalog does not know, such as `claude-opus-5[1m]`, keeps its raw effort. */
+/** A model the provider catalog does not describe, such as `claude-opus-5[1m]`, or one read before the catalog loads, keeps its raw effort. */
 export function formatSubagentEffort(input: {
   readonly modelSlug: string | null;
   readonly modelSelection: ModelSelection | undefined;
   readonly provider: Pick<ServerProvider, "driver" | "models"> | undefined;
 }): string | null {
   const { modelSlug, modelSelection: selection, provider } = input;
-  if (!provider || !selection || !modelSlug) return null;
+  if (!selection || !modelSlug) return null;
   const selectionSlug =
-    resolveSelectableModel(provider.driver, selection.model, provider.models) ??
+    (provider && resolveSelectableModel(provider.driver, selection.model, provider.models)) ??
     selection.model.trim();
   if (selectionSlug !== modelSlug) return null;
-  if (provider.models.some((model) => model.slug === modelSlug)) {
-    return formatModelSelectionEffort({ ...selection, model: modelSlug }, provider.models);
+  const statedEffort = REASONING_EFFORT_OPTION_IDS.map((id) =>
+    getModelSelectionStringOptionValue(selection, id),
+  ).find(Boolean);
+  if (!statedEffort) return null;
+  if (provider?.models.some((model) => model.slug === modelSlug && model.capabilities)) {
+    const label = formatModelSelectionEffort({ ...selection, model: modelSlug }, provider.models);
+    return label && label !== "Unknown" ? label : statedEffort;
   }
-  return (
-    REASONING_EFFORT_OPTION_IDS.map((id) => getModelSelectionStringOptionValue(selection, id)).find(
-      Boolean,
-    ) ?? null
-  );
+  return statedEffort;
 }
 
 const SUBAGENT_STATUS_LABELS: Record<OrchestrationV2ExecutionNode["status"], string> = {
