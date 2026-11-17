@@ -16,7 +16,7 @@ const limitsRefreshFailedAtom = Atom.family((environmentId: EnvironmentId) =>
 export async function refreshEnvironmentLimits(
   registry: AtomRegistry.AtomRegistry,
   environmentId: EnvironmentId,
-  options: { readonly automatic?: boolean; readonly afterPending?: boolean } = {},
+  options: { readonly automatic?: boolean } = {},
 ): Promise<void> {
   // One refresh runs per environment at a time, so results land in the order
   // they were started and the newest outcome always wins.
@@ -30,7 +30,6 @@ export async function refreshEnvironmentLimits(
         { reportFailure: false },
       ),
     options.automatic,
-    options.afterPending,
   );
   if (result === undefined) return;
   registry.set(limitsRefreshFailedAtom(environmentId), result._tag === "Failure");
