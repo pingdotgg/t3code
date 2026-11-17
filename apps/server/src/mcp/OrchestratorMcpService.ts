@@ -981,6 +981,13 @@ function threadDetail(
 ): OrchestratorMcpThreadDetail {
   const latest = ThreadManagementService.latestRun(projection);
   const active = ThreadManagementService.latestActiveRun(projection);
+  const live = projection.runtimeRequests
+    .filter((request) => request.status === "pending" && request.responseCapability.type === "live")
+    .toSorted((a, b) => DateTime.toEpochMillis(a.createdAt) - DateTime.toEpochMillis(b.createdAt));
+  const question = live.find((request) => request.kind === "user_input");
+  const approval = live.flatMap((request) =>
+    isApprovalRequestKind(request.kind) ? [{ requestId: request.id, kind: request.kind }] : [],
+  )[0];
   return {
     threadId: projection.thread.id,
     projectId: projection.thread.projectId,
@@ -1024,6 +1031,8 @@ function threadDetail(
     pendingRequestCount: projection.runtimeRequests.filter(
       (request) => request.status === "pending",
     ).length,
+    pendingQuestionId: question?.id ?? null,
+    pendingApproval: approval ?? null,
     archived: projection.thread.archivedAt !== null,
     ...threadSettlement(projection.thread),
     ...threadSnooze(shell, nowMs),
@@ -1982,9 +1991,10 @@ const make = Effect.gen(function* () {
     waitTimedOut: boolean,
     acknowledgeTerminal: boolean,
   ): Effect.fn.Return<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure> {
+    const there = task.result === null ? yield* remoteDelegation.remoteState(scope, task) : null;
     const status: OrchestratorMcpDelegateTaskResult["status"] =
-      task.result === null
-        ? (yield* remoteDelegation.runStatus(scope, task)) === "starting"
+      there !== null
+        ? there.status === "starting"
           ? "starting"
           : "running"
         : task.status === "completed" ||
@@ -2052,9 +2062,11 @@ const make = Effect.gen(function* () {
         : null,
       latestTerminalSummary: terminal ? task.result : null,
       latestTerminalResultContextTransferId: null,
-      // Its questions and approvals are answered in the environment it runs in.
-      hasPendingQuestion: false,
-      pendingApproval: null,
+      hasPendingQuestion: !terminal && there?.pendingQuestionId != null,
+      pendingApproval:
+        terminal || task.completionDelivery?.state === "disposed"
+          ? null
+          : (there?.pendingApproval ?? null),
       waitTimedOut,
     } satisfies OrchestratorMcpDelegateTaskResult;
   });
@@ -2081,7 +2093,7 @@ const make = Effect.gen(function* () {
         childThreadId === null
           ? TASK_WAKE_EVENTS.filter(({ thread }) => thread === "parent")
           : TASK_WAKE_EVENTS;
-      return yield* Stream.mergeAll(
+      const events = Stream.mergeAll(
         wakeEvents.map(({ thread, eventType }) =>
           threadManagement
             .streamStoredEventsFrom({
@@ -2102,8 +2114,11 @@ const make = Effect.gen(function* () {
             ),
         ),
         { concurrency: "unbounded" },
+      ).pipe(Stream.mapError(streamError));
+      // A remote task's questions and approvals arrive through its follower.
+      return yield* (
+        childThreadId === null ? Stream.merge(events, remoteDelegation.blocked(taskId)) : events
       ).pipe(
-        Stream.mapError(streamError),
         Stream.mapEffect(() => readTask(scope, taskId, false, true)),
         Stream.filter(endsTaskWait),
         Stream.runHead,

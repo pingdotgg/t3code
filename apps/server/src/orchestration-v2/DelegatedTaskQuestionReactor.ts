@@ -1,6 +1,8 @@
 import {
   CommandId,
+  type EnvironmentId,
   MessageId,
+  type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
@@ -28,6 +30,46 @@ export class DelegatedTaskQuestionReactor extends Context.Service<
   }
 >()("t3/orchestration-v2/DelegatedTaskQuestionReactor") {}
 
+/**
+ * Tells a delegated task's parent that its child asked `request`. A child in a
+ * linked environment names that environment, where the question is answered.
+ */
+export const questionWakeCommand = (
+  task: OrchestrationV2Subagent,
+  request: { readonly id: RuntimeRequestId; readonly blocking: boolean },
+  child: { readonly threadId: ThreadId; readonly environmentId?: EnvironmentId },
+) => {
+  const key = `${task.threadId}:${request.id}`;
+  const label = reportLabel(task.title?.trim() || task.prompt);
+  const situation = request.blocking
+    ? `Delegated task ${task.id} is blocked on a question and cannot continue until it is answered.`
+    : `Delegated task ${task.id} asked a question and is still working.`;
+  const where =
+    child.environmentId === undefined
+      ? `threadId ${child.threadId}`
+      : `environmentId ${child.environmentId}, threadId ${child.threadId}`;
+  return {
+    type: "message.dispatch",
+    commandId: CommandId.make(`server:delegated-task-question:${key}`),
+    threadId: task.threadId,
+    messageId: MessageId.make(`message:delegated-task-question:${key}`),
+    text: `${situation} Read it with t3_pending_request action read, ${where}, and requestId ${request.id}. Answer it with action respond when the answer follows from the task or the user's instructions; otherwise ask the user, then answer it. If it is no longer pending, it was answered or dismissed.`,
+    notification: {
+      source: {
+        kind: "delegated_task",
+        taskIds: [task.id],
+        ...(child.environmentId === undefined ? { childThreadId: child.threadId } : {}),
+      },
+      outcome: "updated",
+      summary: `Delegated task${label === undefined ? "" : ` "${label}"`} has a question`,
+    },
+    attachments: [],
+    dispatchMode: { type: "queue_after_active" },
+    createdBy: "agent",
+    creationSource: "server",
+  } satisfies OrchestrationV2Command;
+};
+
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -37,28 +79,13 @@ const make = Effect.gen(function* () {
     request: OrchestrationV2RuntimeRequest,
   ) {
     if (task.childThreadId === null) return;
-    const key = `${task.threadId}:${request.id}`;
-    const label = reportLabel(task.title?.trim() || task.prompt);
-    const situation =
-      request.responseCapability.type === "message"
-        ? `Delegated task ${task.id} asked a question and is still working.`
-        : `Delegated task ${task.id} is blocked on a question and cannot continue until it is answered.`;
-    yield* engine.dispatch({
-      type: "message.dispatch",
-      commandId: CommandId.make(`server:delegated-task-question:${key}`),
-      threadId: task.threadId,
-      messageId: MessageId.make(`message:delegated-task-question:${key}`),
-      text: `${situation} Read it with t3_pending_request action read, threadId ${task.childThreadId}, and requestId ${request.id}. Answer it with action respond when the answer follows from the task or the user's instructions; otherwise ask the user, then answer it. If it is no longer pending, it was answered or dismissed.`,
-      notification: {
-        source: { kind: "delegated_task", taskIds: [task.id], childThreadId: task.childThreadId },
-        outcome: "updated",
-        summary: `Delegated task${label === undefined ? "" : ` "${label}"`} has a question`,
-      },
-      attachments: [],
-      dispatchMode: { type: "queue_after_active" },
-      createdBy: "agent",
-      creationSource: "server",
-    });
+    yield* engine.dispatch(
+      questionWakeCommand(
+        task,
+        { id: request.id, blocking: request.responseCapability.type !== "message" },
+        { threadId: task.childThreadId },
+      ),
+    );
   });
 
   const cancelQueuedWakes = Effect.fnUntraced(function* (

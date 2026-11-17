@@ -486,6 +486,12 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   runCount: NonNegativeInt,
   itemCount: NonNegativeInt,
   pendingRequestCount: NonNegativeInt,
+  /** Oldest live question, or null. Absent from linked environments that predate it. */
+  pendingQuestionId: Schema.optional(Schema.NullOr(RuntimeRequestId)),
+  /** Oldest live approval, or null. Absent from linked environments that predate it. */
+  pendingApproval: Schema.optional(
+    Schema.NullOr(Schema.Struct({ requestId: RuntimeRequestId, kind: ProviderRequestKind })),
+  ),
   archived: Schema.Boolean,
   settled: Schema.Boolean,
   settledAt: Schema.NullOr(IsoDateTime),

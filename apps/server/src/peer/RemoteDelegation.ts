@@ -6,6 +6,7 @@ import {
   OrchestratorMcpCapabilitiesResult,
   OrchestratorMcpFailure,
   type OrchestratorMcpDelegateTaskInput,
+  type OrchestratorMcpDelegateTaskResult,
   type OrchestratorMcpTaskCancelResult,
   type OrchestratorMcpThreadRun,
   type OrchestratorMcpThreadSendInput,
@@ -17,6 +18,7 @@ import {
   type ProviderInstanceId,
   ProviderDriverKind,
   type RunId,
+  type RuntimeRequestId,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -27,6 +29,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -41,6 +44,7 @@ import {
   taskPrompt,
 } from "../mcp/delegatedTaskModes.ts";
 import { followUpOwnerRun } from "../orchestration-v2/CommandPolicy.ts";
+import { questionWakeCommand } from "../orchestration-v2/DelegatedTaskQuestionReactor.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -70,6 +74,18 @@ export const FollowRetrySchedule = Context.Reference<Schedule.Schedule<unknown>>
 );
 
 type ThreadScope = McpInvocationContext.McpThreadInvocationScope;
+
+export interface RemoteTaskState {
+  readonly status: OrchestratorMcpThreadRun["status"] | null;
+  readonly pendingQuestionId: RuntimeRequestId | null;
+  readonly pendingApproval: OrchestratorMcpDelegateTaskResult["pendingApproval"];
+}
+
+const UNKNOWN_STATE: RemoteTaskState = {
+  status: null,
+  pendingQuestionId: null,
+  pendingApproval: null,
+};
 
 /** `orchestrator_capabilities` there. Its toolkit imports this module, so it is described here. */
 const RemoteCapabilitiesTool = Tool.make("orchestrator_capabilities", {
@@ -122,13 +138,16 @@ export class RemoteDelegation extends Context.Service<
       },
     ) => Effect.Effect<OrchestratorMcpTaskCancelResult, OrchestratorMcpFailure>;
     /**
-     * The status of the task's run there, or null when it cannot be read: an
-     * unreachable machine reads as no news rather than failing the read here.
+     * The status of the task's run there and what it waits on, all null when
+     * it cannot be read: an unreachable machine reads as no news rather than
+     * failing the read here.
      */
-    readonly runStatus: (
+    readonly remoteState: (
       scope: ThreadScope,
       task: OrchestrationV2Subagent,
-    ) => Effect.Effect<OrchestratorMcpThreadRun["status"] | null>;
+    ) => Effect.Effect<RemoteTaskState>;
+    /** A task's id each time its follower finds it waiting on a question or an approval there. */
+    readonly blocked: (taskId: NodeId) => Stream.Stream<NodeId>;
     /**
      * Follows every open remote task until it ends, including after a
      * restart, and a finished one again when a Stop here owes it a stop there.
@@ -821,7 +840,10 @@ const make = Effect.gen(function* () {
       .pipe(Effect.raceFirst(endedHere));
     // The next look reads the result and stops it there.
     if ("endedHere" in waited) return false;
-    if (waited.timedOut) return false;
+    if (waited.timedOut) {
+      yield* reportBlocked(scope, task);
+      return false;
+    }
     // A task recorded without its run waits on the thread's latest; a
     // thread there with none has nothing left to wait for.
     if (waited.runId === null) {
@@ -835,7 +857,10 @@ const make = Effect.gen(function* () {
       );
       return yield* settled(parentThreadId, taskId);
     }
-    if (!isTerminal(waited.status)) return false;
+    if (!isTerminal(waited.status)) {
+      yield* reportBlocked(scope, task);
+      return false;
+    }
     // A later run's answer there may be another open follow-up's, or its restart, which no run id
     // here names; concurrent sends may record here out of their order there. Then this task's
     // answer is its own run's latest restart, the one waited on.
@@ -916,6 +941,7 @@ const make = Effect.gen(function* () {
         Effect.ensuring(
           Effect.sync(() => {
             if (following.get(taskId) === state) following.delete(taskId);
+            askedParent.delete(taskId);
           }),
         ),
       );
@@ -994,18 +1020,76 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const runStatus = Effect.fn("RemoteDelegation.runStatus")(
+  const remoteState = Effect.fn("RemoteDelegation.remoteState")(
     function* (scope: ThreadScope, task: OrchestrationV2Subagent) {
       const remote = task.remoteChild;
-      if (remote?.runId === undefined) return null;
+      if (remote === undefined) return UNKNOWN_STATE;
       const read = yield* forwarding.readThread(
         followScope(scope.thread, remote),
         remote.environmentId,
         { threadId: remote.threadId, limit: 1, runLimit: 50 },
       );
-      return read.recentRuns.find((run) => run.runId === remote.runId)?.status ?? null;
+      const approval = read.thread.pendingApproval ?? null;
+      const approvalRunId = read.thread.activeRunId ?? remote.runId;
+      return {
+        status:
+          remote.runId === undefined
+            ? null
+            : (read.recentRuns.find((run) => run.runId === remote.runId)?.status ?? null),
+        pendingQuestionId: read.thread.pendingQuestionId ?? null,
+        pendingApproval:
+          approval === null || approvalRunId === undefined || approvalRunId === null
+            ? null
+            : { ...approval, runId: approvalRunId },
+      } satisfies RemoteTaskState;
     },
-    Effect.orElseSucceed(() => null),
+    Effect.orElseSucceed(() => UNKNOWN_STATE),
+  );
+
+  const blockedTasks = yield* PubSub.unbounded<NodeId>();
+  const blocked: RemoteDelegation["Service"]["blocked"] = (taskId) =>
+    Stream.fromPubSub(blockedTasks).pipe(Stream.filter((id) => id === taskId));
+
+  // The question each follower last told its parent about, so it tells it once.
+  const askedParent = new Map<NodeId, RuntimeRequestId>();
+
+  /**
+   * What a task still running there waits on, reported here as a local child's is:
+   * a blocking wait ends, and otherwise the parent hears of its question.
+   */
+  const reportBlocked = Effect.fn("RemoteDelegation.reportBlocked")(
+    function* (scope: ThreadScope, task: OrchestrationV2Subagent) {
+      const remote = task.remoteChild;
+      if (remote === undefined) return;
+      const state = yield* remoteState(scope, task);
+      if (state.pendingQuestionId === null && state.pendingApproval === null) return;
+      yield* PubSub.publish(blockedTasks, task.id);
+      const requestId = state.pendingQuestionId;
+      if (requestId === null || askedParent.get(task.id) === requestId) return;
+      // A blocking delegate_task wait delivers the question itself; once it ends, the parent hears.
+      const { runs } = yield* threads.getThreadRecords(task.threadId, ["runs"]);
+      if (
+        task.completionWake === "settled_only" &&
+        runs.some(
+          (run) =>
+            run.id === task.runId &&
+            (run.status === "preparing" || run.status === "starting" || run.status === "running"),
+        )
+      ) {
+        return;
+      }
+      askedParent.set(task.id, requestId);
+      yield* threads.dispatch(
+        questionWakeCommand(
+          task,
+          { id: requestId, blocking: true },
+          { environmentId: remote.environmentId, threadId: remote.threadId },
+        ),
+      );
+    },
+    Effect.catchCause((cause) =>
+      Effect.logWarning("remote-delegation.question-wake-failed", { cause }),
+    ),
   );
 
   const start: RemoteDelegation["Service"]["start"] = () =>
@@ -1034,7 +1118,7 @@ const make = Effect.gen(function* () {
       }).pipe(Effect.ignoreCause({ log: true })),
     );
 
-  return RemoteDelegation.of({ delegate, followUp, cancel, runStatus, start });
+  return RemoteDelegation.of({ delegate, followUp, cancel, remoteState, blocked, start });
 });
 
 /** A defect, logged, as a failure, so a retry covers it. */

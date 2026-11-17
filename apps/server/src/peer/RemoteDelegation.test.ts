@@ -9,13 +9,16 @@ import {
   type ModelSelection,
   NodeId,
   type OrchestrationV2Run,
+  type OrchestrationV2RuntimeRequest,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ProviderThreadId,
   type Project,
   type RepositoryIdentity,
   RunId,
+  RuntimeRequestId,
   type ServerProvider,
   ThreadId,
   TurnItemId,
@@ -141,6 +144,8 @@ interface BoxThread {
   readonly sent: Ref.Ref<ReadonlyArray<string>>;
   /** Runs as the launch there is answered, before the laptop hears back. */
   readonly afterLaunch: Ref.Ref<Effect.Effect<void>>;
+  /** What the thread there asks. One pending ends a wait there, as its timeout would. */
+  readonly requests: SubscriptionRef.SubscriptionRef<ReadonlyArray<OrchestrationV2RuntimeRequest>>;
 }
 
 const makeBoxThread = Effect.gen(function* () {
@@ -179,6 +184,7 @@ const makeBoxThread = Effect.gen(function* () {
     releaseStop: yield* Deferred.make<void>(),
     sent: yield* Ref.make<ReadonlyArray<string>>([]),
     afterLaunch: yield* Ref.make<Effect.Effect<void>>(Effect.void),
+    requests: yield* SubscriptionRef.make<ReadonlyArray<OrchestrationV2RuntimeRequest>>([]),
   } satisfies BoxThread;
 });
 
@@ -224,6 +230,24 @@ const boxLaterRunId = RunId.make("run:box-later");
 const boxQueuedRunId = RunId.make("run:box-queued");
 const continuationOf = (runId: RunId) => RunId.make(`${runId}:restarted`);
 
+const boxRequest = (
+  id: string,
+  kind: OrchestrationV2RuntimeRequest["kind"],
+  createdAt: number,
+): OrchestrationV2RuntimeRequest => ({
+  id: RuntimeRequestId.make(id),
+  nodeId: NodeId.make("node:box"),
+  providerTurnId: null,
+  nativeRequestRef: null,
+  kind,
+  status: "pending",
+  responseCapability: { type: "live", providerSessionId: ProviderSessionId.make("session:box") },
+  createdAt: DateTime.makeUnsafe(createdAt),
+  resolvedAt: null,
+});
+const boxQuestion = boxRequest("request:box-question", "user_input", 1);
+const boxApproval = boxRequest("request:box-approval", "command", 2);
+
 const boxToolkitLayer = (thread: BoxThread) => {
   const runId = boxRunId;
   const interrupts = new Set<string>();
@@ -255,11 +279,13 @@ const boxToolkitLayer = (thread: BoxThread) => {
       const status = yield* Ref.get(thread.status);
       const runless = yield* Ref.get(thread.runless);
       const model = yield* Ref.get(thread.executedModel);
+      const runtimeRequests = yield* SubscriptionRef.get(thread.requests);
       return shell === null
         ? (null as never)
         : {
             ...idleThreadProjection(shell),
             runs: runless ? [] : [runOf(status)],
+            runtimeRequests,
             providerTurns: (model === null
               ? []
               : [{ runAttemptId: "attempt:box", ordinal: 1, model }]) as never,
@@ -326,8 +352,14 @@ const boxToolkitLayer = (thread: BoxThread) => {
               : {}),
           };
         }
+        const asked = SubscriptionRef.changes(thread.requests).pipe(
+          Stream.filter((requests) => requests.some((request) => request.status === "pending")),
+          Stream.runHead,
+          Effect.andThen(Effect.succeedNone),
+        );
         const done = yield* Deferred.await(thread.finished).pipe(
           Effect.timeoutOption(input.timeoutMs),
+          Effect.raceFirst(asked),
         );
         // Only a waiter that asks waits past the run for the thread's own task.
         if (
@@ -999,6 +1031,38 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
       // A running task there needs its local row, not the parent's run or transfer history.
       expect(historyReads).toEqual([]);
 
+      // Blocked there, it reports what it waits on, and its question wakes the parent here.
+      yield* SubscriptionRef.set(thread.requests, [boxQuestion, boxApproval]);
+      const blocked = yield* a.call("task_status", { taskId: delegated.taskId });
+      expect(blocked.structuredContent).toMatchObject({
+        status: "running",
+        hasPendingQuestion: true,
+        pendingApproval: { requestId: boxApproval.id, kind: "command", runId: boxRunId },
+      });
+      const woken = yield* a.orchestrator
+        .streamStoredEventsFrom({
+          threadId: parentThreadId,
+          afterSequence: 0,
+          eventType: "message.updated",
+        })
+        .pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "message.updated" &&
+              stored.event.payload.id ===
+                `message:delegated-task-question:${parentThreadId}:${boxQuestion.id}`,
+          ),
+          Stream.runHead,
+        );
+      expect(
+        Option.isSome(woken) && woken.value.event.type === "message.updated"
+          ? woken.value.event.payload.text
+          : undefined,
+      ).toContain(
+        `environmentId ${box.environmentId}, threadId ${delegated.remoteChild.threadId}, and requestId ${boxQuestion.id}`,
+      );
+      yield* SubscriptionRef.set(thread.requests, []);
+
       yield* Ref.set(thread.reply, "All 412 tests pass on the box.");
       yield* Ref.set(thread.status, "completed");
       yield* Deferred.succeed(thread.finished, undefined);
@@ -1050,6 +1114,48 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
       expect(acknowledged.subagents[0]?.completionDelivery).toEqual({
         state: "acknowledged",
         observedByRunId: parentRunId,
+      });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("a wait on a task delegated to the box ends when it asks a question there", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+
+      // The wait's first look there finds nothing asked yet.
+      yield* Ref.set(thread.holdRead, true);
+      const waiting = yield* a
+        .call("delegate_task", {
+          task: "Ask which colour to use, then paint the box.",
+          target: {
+            environmentId: box.environmentId,
+            providerInstanceId: instanceId,
+            model: "gpt-5.4",
+          },
+          mode: "wait",
+          clientRequestId: "paint-on-box",
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(thread.readStarted);
+      yield* Deferred.succeed(thread.releaseRead, undefined);
+      yield* SubscriptionRef.set(thread.requests, [boxQuestion]);
+      const waited = yield* Fiber.join(waiting);
+      yield* SubscriptionRef.set(thread.requests, []);
+      expect(waited.structuredContent).toMatchObject({
+        status: "running",
+        hasPendingQuestion: true,
+        pendingApproval: null,
+        waitTimedOut: false,
       });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
