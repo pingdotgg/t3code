@@ -3,6 +3,7 @@ import {
   WorkspacePresentationHostContext,
 } from "./workspace-presentation-context";
 import { useAndroidFloatingTabs } from "../settings/appearance/AppearancePreferencesProvider";
+import { useKeyboardState } from "react-native-keyboard-controller";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   AdaptiveWorkspaceContext,
@@ -115,15 +116,52 @@ import {
   workspaceTabColumns,
   workspaceTabNavigationState,
 } from "./workspace/workspace-tab-navigation";
-import { workspaceTabOf, type WorkspaceTab } from "./workspace/workspace-tabs-state";
+import {
+  workspaceDockBottomClearance,
+  workspaceTabOf,
+  type WorkspaceTab,
+} from "./workspace/workspace-tabs-state";
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
 import { SettingsWorkspaceLayout } from "../settings/SettingsWorkspaceLayout";
 import { WorkspaceThreadSidebar } from "./workspace/WorkspaceThreadSidebar";
 import { WorkspaceSidebarTabs } from "./workspace/WorkspaceSidebarTabs";
 import { WorkspaceTabsContext } from "./workspace/WorkspaceTabsContext";
-import { useSidebarTabs } from "./workspace/sidebar-tabs-bridge";
+import { useSidebarTabs, type SidebarTabs } from "./workspace/sidebar-tabs-bridge";
 
 export { useAdaptiveWorkspaceLayout, useWorkspacePaneState };
+
+/** Before iPadOS 26, draws the workspace tabs at the foot of the JS sidebar and clears its content above them. */
+function JsSidebarTabs(props: { readonly tabs: SidebarTabs | null; readonly children: ReactNode }) {
+  const outer = use(WorkspaceTabsContext);
+  const insets = useSafeAreaInsets();
+  const keyboardHeight = useKeyboardState((keyboard) => keyboard.height);
+  const tabs = props.tabs;
+  return (
+    <WorkspaceTabsContext
+      value={
+        tabs
+          ? {
+              ...tabs,
+              bottomClearance: workspaceDockBottomClearance({
+                bottomInset: insets.bottom,
+                keyboardHeight,
+              }),
+            }
+          : outer
+      }
+    >
+      {props.children}
+      {tabs ? (
+        <View
+          pointerEvents="box-none"
+          style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 128 }}
+        >
+          <WorkspaceSidebarTabs />
+        </View>
+      ) : null}
+    </WorkspaceTabsContext>
+  );
+}
 
 /**
  * Shows these panes in the workspace's inspector while this screen is focused. Register on focus
@@ -1041,18 +1079,10 @@ function AdaptiveWorkspaceLayoutContent(
                 )}
               >
                 {/* Without a sidebar route (iPadOS before 26) the columns draw the thread list. */}
-                {sidebar ?? <WorkspaceThreadSidebar />}
+                <JsSidebarTabs tabs={workspacePage ? null : sidebarTabs}>
+                  {sidebar ?? <WorkspaceThreadSidebar />}
+                </JsSidebarTabs>
               </RenderErrorBoundary>
-              {sidebarTabs && !workspacePage ? (
-                <WorkspaceTabsContext value={sidebarTabs}>
-                  <View
-                    pointerEvents="box-none"
-                    style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 128 }}
-                  >
-                    <WorkspaceSidebarTabs />
-                  </View>
-                </WorkspaceTabsContext>
-              ) : null}
             </PaneContext>
             {/* Keep the pill under the content throughout the sidebar's clipping animation. */}
             {floatingTabsEnabled && !workspacePage ? (
