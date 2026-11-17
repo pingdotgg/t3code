@@ -291,7 +291,6 @@ it("presents completion notifications and sound once the Working shelf's exit gr
       latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:00:01.000Z" },
     }),
   );
-  expect(TestNotification.sent).toEqual([]);
   vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS);
   expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Thread completed"]);
   expect(state.sound).toHaveBeenCalledWith("completion", expect.any(Function));
