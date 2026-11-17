@@ -45,6 +45,20 @@ describe("KiroDriver", () => {
     assert.deepEqual(kiroAuthFromWhoami({ code: 1, stdout: '{"account":null}\n' }, {}), {
       status: "unauthenticated",
     });
+    for (const stdout of ['{"account": null}\n', '{\n  "account": null\n}\n']) {
+      assert.deepEqual(kiroAuthFromWhoami({ code: 1, stdout }, {}), {
+        status: "unauthenticated",
+      });
+    }
+    for (const stdout of [
+      "",
+      "not-json",
+      "{}",
+      '{"email":"dev@example.com"}',
+      '{"accountType":""}',
+    ]) {
+      assert.deepEqual(kiroAuthFromWhoami({ code: 0, stdout }, {}), { status: "unknown" });
+    }
     assert.deepEqual(
       kiroAuthFromWhoami({ code: 0, stdout: '{"accountType":"ApiKey","email":null}\n' }, {}),
       { status: "authenticated", type: "api_key", label: "Kiro API key" },

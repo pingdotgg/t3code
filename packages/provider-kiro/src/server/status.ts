@@ -127,37 +127,39 @@ const runKiroCli = Effect.fn("KiroProvider.runKiroCli")(function* (
 });
 
 const KiroWhoami = Schema.fromJsonString(
-  Schema.Struct({
-    accountType: Schema.optional(Schema.NullOr(Schema.String)),
-    email: Schema.optional(Schema.NullOr(Schema.String)),
-  }),
+  Schema.Union([
+    Schema.Struct({ account: Schema.Null }),
+    Schema.Struct({
+      accountType: Schema.String,
+      email: Schema.optional(Schema.NullOr(Schema.String)),
+    }),
+  ]),
 );
 const decodeKiroWhoami = Schema.decodeUnknownOption(KiroWhoami);
 
 /**
  * Reads `kiro-cli whoami --format json`: `{"account":null}` with exit 1 means
- * signed out. Only the first line is decoded, since an Identity Center login
- * follows it with a plain-text `Profile:` block.
+ * signed out. Identity Center follows its first JSON line with a `Profile:` block.
  */
 export function kiroAuthFromWhoami(
   output: { readonly code: number; readonly stdout: string } | undefined,
   environment: NodeJS.ProcessEnv,
 ): ServerProviderAuth {
   if (output === undefined) return { status: "unknown" };
-  if (output.code !== 0) {
-    return output.stdout.includes('"account":null')
-      ? { status: "unauthenticated" }
-      : { status: "unknown" };
-  }
   const firstLine = output.stdout.trimStart().split("\n", 1)[0] ?? "";
-  const account = Option.getOrUndefined(decodeKiroWhoami(firstLine.trim()));
-  if (account?.accountType === "ApiKey" || environment[KIRO_API_KEY_ENV]?.trim()) {
+  const account =
+    Option.getOrUndefined(decodeKiroWhoami(output.stdout)) ??
+    Option.getOrUndefined(decodeKiroWhoami(firstLine.trim()));
+  if (account === undefined) return { status: "unknown" };
+  if ("account" in account) return { status: "unauthenticated" };
+  if (output.code !== 0 || !account.accountType.trim()) return { status: "unknown" };
+  if (account.accountType === "ApiKey" || environment[KIRO_API_KEY_ENV]?.trim()) {
     return { status: "authenticated", type: "api_key", label: "Kiro API key" };
   }
   return {
     status: "authenticated",
     label: "Kiro account",
-    ...(account?.email ? { email: account.email } : {}),
+    ...(account.email ? { email: account.email } : {}),
   };
 }
 
