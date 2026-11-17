@@ -26,6 +26,7 @@ import { selectThreadDiffPanelSelection, useDiffPanelStore } from "~/diffPanelSt
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { environmentContextRecord } from "~/lib/composerContextRecords";
 import { startWorkspaceFocus } from "~/lib/workspaceFocus";
+import * as keybindingCommands from "~/keybindings";
 import { usePromptStashStore } from "~/promptStashStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
@@ -47,6 +48,8 @@ import {
   type FakeDriver,
 } from "../../test/fakeEnvironment";
 import { act, fakeTimers, render } from "../../test/render";
+
+vi.mock(import("~/keybindings"), { spy: true });
 
 const PNG = Uint8Array.from(
   atob(
@@ -583,11 +586,7 @@ it("a mounted thread view lets go of the thread structures it has replaced", asy
 
 it("thread title shortcuts ignore closed dialogs but stop for open dialogs and confirmations", async () => {
   const thread = threadWithHistory("thread-title-dialog-guard", 1);
-  using _environment = installFakeEnvironment([thread], {
-    keybindings: mergeWithDefaultKeybindings(
-      compileResolvedKeybindingsConfig([{ key: "ctrl+shift+r", command: "thread.rename" }]),
-    ),
-  });
+  using _environment = installFakeEnvironment([thread]);
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
@@ -600,6 +599,13 @@ it("thread title shortcuts ignore closed dialogs but stop for open dialogs and c
     // AppRoot brings its own router.
     router: false,
   });
+  using _command = vi
+    .spyOn(keybindingCommands, "resolveChatShortcutCommand")
+    .mockImplementation((...args) =>
+      args[0].ctrlKey && args[0].shiftKey && args[0].key.toLowerCase() === "r"
+        ? "thread.rename"
+        : null,
+    );
   using overlays = new DisposableStack();
   const dialog = document.createElement("div");
   document.body.append(dialog);
