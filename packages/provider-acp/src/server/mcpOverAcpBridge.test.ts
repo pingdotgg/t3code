@@ -219,6 +219,65 @@ describe("AcpMcpOverAcpBridge", () => {
     }),
   );
 
+  it.effect("closes all MCP sessions within one disconnect timeout during runtime cleanup", () =>
+    Effect.gen(function* () {
+      const deleteStarted = Promise.withResolvers<void>();
+      const deleteResponse = Promise.withResolvers<Response>();
+      const deleteSignals: AbortSignal[] = [];
+      let nextConnectionId = 0;
+      const bridge = yield* makeAcpMcpOverAcpBridge({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        allocateConnectionId: Effect.sync(() => `connection-${++nextConnectionId}`),
+        fetchImplementation: (_url, init) => {
+          if (init?.method === "DELETE") {
+            if (!init.signal) throw new Error("Missing cancellation signal");
+            deleteSignals.push(init.signal);
+            deleteStarted.resolve();
+            return deleteResponse.promise;
+          }
+          const request = JSON.parse(String(init?.body)) as { readonly id: number };
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: request.id,
+                result: { protocolVersion: "2025-06-18" },
+              }),
+              {
+                headers: {
+                  "content-type": "application/json",
+                  "mcp-session-id": `session-${nextConnectionId}`,
+                },
+              },
+            ),
+          );
+        },
+      });
+      for (let index = 0; index < 16; index++) {
+        const { connectionId } = yield* bridge.connect({ serverId: "t3-code" });
+        yield* bridge.message({ connectionId, method: "initialize" });
+      }
+      const scope = yield* Scope.make();
+      yield* Scope.addFinalizer(scope, bridge.dispose);
+      const closing = yield* Scope.close(scope, Exit.void).pipe(Effect.forkChild);
+      yield* Effect.gen(function* () {
+        yield* Effect.promise(() => deleteStarted.promise);
+        yield* TestClock.adjust("5 seconds");
+        expect(closing.pollUnsafe(), "All sessions must close within one timeout").toBeDefined();
+        expect(deleteSignals).toHaveLength(16);
+        expect(deleteSignals.every((signal) => signal.aborted)).toBe(true);
+      }).pipe(
+        Effect.ensuring(
+          Effect.gen(function* () {
+            deleteResponse.resolve(new Response(null, { status: 204 }));
+            yield* Fiber.join(closing);
+          }),
+        ),
+      );
+    }),
+  );
+
   it.effect("rejects unknown servers, connections, and oversized messages", () =>
     Effect.gen(function* () {
       const bridge = yield* makeAcpMcpOverAcpBridge({

@@ -283,7 +283,7 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
       Effect.forEach(
         [...connections.keys()],
         (connectionId) => disconnect({ connectionId }).pipe(Effect.ignore),
-        { discard: true },
+        { concurrency: "unbounded", discard: true },
       ),
     ),
   };
