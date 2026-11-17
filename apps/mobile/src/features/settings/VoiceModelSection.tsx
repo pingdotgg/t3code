@@ -118,7 +118,7 @@ const languageNames =
   typeof Intl.DisplayNames === "function"
     ? new Intl.DisplayNames(undefined, { type: "language" })
     : null;
-const languageLabel = (code: string) => languageNames?.of(code) ?? code.toUpperCase();
+export const languageLabel = (code: string) => languageNames?.of(code) ?? code.toUpperCase();
 
 function ModelStats(props: { readonly model: EnvironmentSpeechModel; readonly language: string }) {
   const { model, language } = props;

@@ -26,6 +26,7 @@ import { requireOptionalNativeModule } from "expo";
 import { fetch as expoFetch } from "expo/fetch";
 
 import { appAtomRegistry } from "../../state/atom-registry";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import { environmentPresentations } from "../../state/presentation";
 import { environmentSession, sessionHasScope } from "../../state/session";
 import { connectionAtomRuntime } from "../../connection/runtime";
@@ -138,6 +139,7 @@ export function runSpeech<A, E>(
 function environmentTranscriber(
   prepared: PreparedConnection,
   canSend: () => boolean,
+  speechLanguage: string,
   cloud?: CloudDestination,
 ) {
   const provider = cloud?.provider;
@@ -147,7 +149,7 @@ function environmentTranscriber(
     prepare: async (signal) => {
       if (provider) {
         await runSpeech(requireCloudSpeechKey(prepared, provider), signal, canSend);
-        return "auto";
+        return speechLanguage;
       }
       const status = await runSpeech(getEnvironmentSpeechStatus(prepared), signal, canSend);
       if (!status.supported)
@@ -164,9 +166,9 @@ function environmentTranscriber(
               languages: status.languages,
               supportsLanguageDetection: status.supportsLanguageDetection ?? false,
             },
-            "auto",
+            speechLanguage,
           )
-        : "auto";
+        : speechLanguage;
     },
     decode: (uri) => {
       if (!native?.decodeRecording)
@@ -184,14 +186,14 @@ function environmentTranscriber(
                 prepared,
                 provider,
                 pcm,
-                DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+                { ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, speechLanguage },
                 canSend,
                 model,
               )
             : transcribeEnvironmentPcm(
                 prepared,
                 pcm,
-                DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+                { ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, speechLanguage },
                 canSend,
               ),
           signal,
@@ -239,6 +241,11 @@ export const voiceSpeechBenchmarksAtom = Atom.family((id: EnvironmentId) =>
   speechAtom(id, (prepared) => getEnvironmentSpeechModels(prepared, true)),
 );
 
+const speechLanguageAtom = Atom.make((get) => {
+  const preferences = get(mobilePreferencesAtom);
+  return AsyncResult.isSuccess(preferences) ? (preferences.value.speechLanguage ?? "auto") : "auto";
+});
+
 // null selects on-device; a grant with no usable transcriber must never fall back.
 export const voiceRouteAtom = Atom.make((get) => {
   const grant = get(voiceGrantAtom);
@@ -248,6 +255,7 @@ export const voiceRouteAtom = Atom.make((get) => {
     grant.destination.environmentId,
   );
   const connection = get(connectionAtom);
+  const speechLanguage = get(speechLanguageAtom);
   const registry = get.registry;
   return {
     transcriber:
@@ -255,6 +263,7 @@ export const voiceRouteAtom = Atom.make((get) => {
       environmentTranscriber(
         connection,
         () => registry.get(voiceGrantAtom) === grant && registry.get(connectionAtom) === connection,
+        speechLanguage,
         cloud,
       ),
   };
