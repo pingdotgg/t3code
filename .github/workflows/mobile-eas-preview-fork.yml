@@ -362,7 +362,7 @@ jobs:
   ios-build:
     name: iOS preview client
     needs: preview
-    if: needs.preview.outputs.ios_build == 'true'
+    if: ${{ github.repository == 'pingdotgg/t3code' && (needs.preview.outputs.ios_build == 'true') }}
     runs-on: blacksmith-12vcpu-macos-27
     timeout-minutes: 60
     permissions:
@@ -499,7 +499,7 @@ jobs:
   comment:
     name: Mobile preview comment
     needs: [preview, android-build, ios-build]
-    if: always() && !cancelled() && needs.preview.result == 'success'
+    if: ${{ github.repository == 'pingdotgg/t3code' && (always() && !cancelled() && needs.preview.result == 'success') }}
     runs-on: blacksmith-2vcpu-ubuntu-2404
     concurrency:
       group: mobile-preview-comment-${{ github.event.pull_request.number }}
