@@ -239,7 +239,7 @@ describe("parallel decision rule", () => {
 });
 
 describe("production prompt and policy simulation", () => {
-  it("uses the real initial fanout and exposes only serial reactions to the next seat", async () => {
+  it("starts with the lead, so the seat's first turn already reads the lead's reply", async () => {
     for (const parallel of [true, false]) {
       const result = await simulateDiscussion(
         "Design approvals.",
@@ -250,30 +250,27 @@ describe("production prompt and policy simulation", () => {
         }),
       );
       expect(result.entries).toHaveLength(5);
-      expect(result.trace.map((wave) => wave.start)).toEqual(
-        parallel
-          ? [
-              ["primary", peerId],
-              ["primary", peerId],
-            ]
-          : [["primary", peerId], ["primary"], [peerId]],
-      );
+      expect(result.trace.map((wave) => wave.start)).toEqual([
+        ["primary"],
+        [peerId],
+        ["primary"],
+        [peerId],
+      ]);
       const history = result.histories.find(([member]) => member === peerId)![1];
-      expect(history[0]!.text).not.toContain("Rowan reply 1.");
-      expect(history[2]!.text).toContain("Rowan reply 1.");
-      expect(history[2]!.text.includes("Rowan reply 2.")).toBe(!parallel);
+      expect(history[0]!.text).toContain("Rowan reply 1.");
+      expect(history[2]!.text).toContain("Rowan reply 2.");
       expect(result.close).toBe("budget");
     }
   });
 
-  it("does not invent reaction turns after PASS or an address to the user", async () => {
+  it("tries an unanswered PASS once per member and honors an address to the user", async () => {
     for (const text of ["PASS", "The decision is settled.\n@user"]) {
       for (const parallel of [true, false]) {
         const result = await simulateDiscussion("Design approvals.", parallel, async () => ({
           role: "assistant",
           text,
         }));
-        expect(result.entries).toHaveLength(3);
+        expect(result.entries).toHaveLength(text === "PASS" ? 3 : 2);
         expect(result.close).toBe("settled");
       }
     }

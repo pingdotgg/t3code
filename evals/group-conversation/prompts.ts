@@ -107,6 +107,19 @@ export function behaviorMessages(fixture: BehaviorCase) {
       );
       break;
     }
+    case "seat-after-lead":
+      user(
+        [
+          digest([], true),
+          renderSeatFirstPrompt({
+            self: peer,
+            others: [primary],
+            reaction: true,
+            delta: delta([{ label: "User", text: fixture.request }, ...fixture.prior]),
+          }),
+        ].join("\n\n"),
+      );
+      break;
     case "primary-first":
       user(
         [
@@ -115,6 +128,19 @@ export function behaviorMessages(fixture: BehaviorCase) {
         ].join("\n\n"),
       );
       break;
+    case "primary-wake": {
+      const [own, ...others] = fixture.prior;
+      if (own?.label !== "Rowan") throw new Error(`${fixture.id} needs Rowan's reply first.`);
+      user(
+        [
+          renderPrimaryGroupNote({ self: primary, others: [peer], everyoneAddressed: true }),
+          fixture.request,
+        ].join("\n\n"),
+      );
+      messages.push({ role: "assistant", text: own.text });
+      user(wake(others));
+      break;
+    }
     case "primary-return":
       user(publicHistory(fixture.prior));
       user(fixture.request);
