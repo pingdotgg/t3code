@@ -362,6 +362,9 @@ const CLAUDE_SCRIPT_EXTENSIONS = [".js", ".mjs", ".tsx", ".ts", ".jsx"];
 // The SDK has no control-request deadline; the CLI waits up to 30 s per MCP server.
 const CLAUDE_MCP_REGISTRATION_TIMEOUT = "90 seconds";
 const CLAUDE_BOOT_TIMEOUT = "5 minutes";
+const CLAUDE_FRESH_START_RETRY_DELAY = "5 seconds";
+// An internal marker prevents recursively retrying failed fresh launches.
+const CLAUDE_FRESH_START_RETRIED = Symbol("claudeFreshStartRetried");
 // Claude can consume a subagent result before the launching turn ends, leaving
 // its notification with no native wake turn to answer the continuation.
 const CLAUDE_WAKE_TURN_START_DEADLINE = "2 minutes";
@@ -1453,7 +1456,7 @@ export const layerQueryRunner: Layer.Layer<
       return { refresh: refresh(true).pipe(Effect.asVoid), stop };
     };
 
-    return ClaudeAgentSdkQueryRunner.of({
+    const runner: ClaudeAgentSdkQueryRunnerShape = ClaudeAgentSdkQueryRunner.of({
       allocateSessionId: random.uuidV4(),
       open: Effect.fn("ClaudeAgentSdkQueryRunner.open")(
         function* (input: ClaudeAgentSdkQueryOpenInput) {
@@ -1926,7 +1929,8 @@ export const layerQueryRunner: Layer.Layer<
             ),
           } satisfies ClaudeAgentSdkQuerySession;
         },
-        // Fresh IDs may already have a metadata-only transcript; only resumed opens can reuse their ID.
+        // A failed fresh open can leave a metadata-only transcript behind, so the
+        // retry must start under a new native session ID. Resumes keep their ID.
         (effect, input) =>
           effect.pipe(
             Effect.retry({
@@ -1935,6 +1939,23 @@ export const layerQueryRunner: Layer.Layer<
                 input.options.resume !== undefined &&
                 isClaudeMcpRegistrationTimeoutError(error.cause),
             }),
+            Effect.catchAll((error) =>
+              input.options.sessionId !== undefined &&
+              !(CLAUDE_FRESH_START_RETRIED in input) &&
+              isClaudeMcpRegistrationTimeoutError(error.cause)
+                ? random.uuidV4().pipe(
+                    Effect.flatMap((sessionId) =>
+                      runner.open({
+                        ...input,
+                        [CLAUDE_FRESH_START_RETRIED]: true,
+                        options: { ...input.options, sessionId },
+                      }),
+                    ),
+                    // Do not immediately restart a burst of memory-throttled agents.
+                    Effect.delay(CLAUDE_FRESH_START_RETRY_DELAY),
+                  )
+                : Effect.fail(error),
+            ),
           ),
       ),
       forkSession: Effect.fn("ClaudeAgentSdkQueryRunner.forkSession")(function* (
@@ -2059,6 +2080,7 @@ export const layerQueryRunner: Layer.Layer<
       }),
       assertComplete: Effect.void,
     });
+    return runner;
   }),
 );
 
