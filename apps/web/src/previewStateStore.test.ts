@@ -248,6 +248,7 @@ describe("previewStateStore (single-tab)", () => {
     applyPreviewServerSnapshot(ref, silent);
     const overlay = {
       hasWebContents: true,
+      navStatus: { _tag: "Idle" as const },
       canGoBack: false,
       canGoForward: false,
       loading: false,
