@@ -1,6 +1,7 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { Certificate, Session, WebContents } from "electron";
 import { BrowserWindow, session } from "electron";
+import { msg } from "gt-i18n";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Digest from "effect/crypto/Digest";
@@ -17,6 +18,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
+import { m } from "../i18n/messages.ts";
 
 const PREVIEW_PARTITION_PREFIX = "persist:t3code-preview-";
 /** Ephemeral partitions omit persist: but retain a product prefix so the webview gate recognizes them. */
@@ -85,9 +87,9 @@ const permissionOrigin = (rawUrl: string | undefined): string | null => {
  * prompt shows. Every other error keeps Electron's denial.
  */
 const OVERRIDABLE_CERTIFICATE_ERRORS: ReadonlyMap<string, string> = new Map([
-  ["net::ERR_CERT_AUTHORITY_INVALID", "No trusted authority issued this certificate."],
-  ["net::ERR_CERT_COMMON_NAME_INVALID", "This certificate is not for this address."],
-  ["net::ERR_CERT_DATE_INVALID", "This certificate has expired or is not valid yet."],
+  ["net::ERR_CERT_AUTHORITY_INVALID", msg("No trusted authority issued this certificate.")],
+  ["net::ERR_CERT_COMMON_NAME_INVALID", msg("This certificate is not for this address.")],
+  ["net::ERR_CERT_DATE_INVALID", msg("This certificate has expired or is not valid yet.")],
 ]);
 
 /**
@@ -323,9 +325,16 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     promptPermission(
       requester,
       {
-        buttons: ["Open", "Cancel"],
-        message: `Open this ${new URL(url).protocol.slice(0, -1)} link?`,
-        detail: `A page in the browser wants to open another application:\n\n${truncateForPrompt(url)}`,
+        buttons: [
+          m(msg("Open", { $context: "button, opens a link in another app" })),
+          m(msg("Cancel")),
+        ],
+        message: m(msg("Open this {protocol} link?"), {
+          protocol: new URL(url).protocol.slice(0, -1),
+        }),
+        detail: m(msg("A page in the browser wants to open another application:\n\n{url}"), {
+          url: truncateForPrompt(url),
+        }),
       },
       (answer) => callback(answer === true),
     );
@@ -454,20 +463,29 @@ export const make = Effect.gen(function* BrowserSessionMake() {
         .showMessageBox(
           {
             type: "warning",
-            buttons: ["Trust and Remember", "Cancel"],
+            buttons: [m(msg("Trust and Remember")), m(msg("Cancel"))],
             defaultId: 1,
             cancelId: 1,
             signal: dismiss.signal,
-            message: `${host} has an untrusted certificate`,
+            message: m(msg("{host} has an untrusted certificate"), { host }),
             detail: [
-              reason,
+              m(reason),
               "",
-              `Issued to: ${promptCertificateName(certificate.subjectName)}`,
-              `Issued by: ${promptCertificateName(certificate.issuerName)}`,
-              `Valid: ${promptCertificateDate(certificate.validStart)} – ${promptCertificateDate(certificate.validExpiry)}`,
-              `Fingerprint: ${approval.fingerprint}`,
+              m(msg("Issued to: {name}"), {
+                name: promptCertificateName(certificate.subjectName),
+              }),
+              m(msg("Issued by: {name}"), { name: promptCertificateName(certificate.issuerName) }),
+              m(msg("Valid: {start} – {end}"), {
+                start: promptCertificateDate(certificate.validStart),
+                end: promptCertificateDate(certificate.validExpiry),
+              }),
+              m(msg("Fingerprint: {fingerprint}"), { fingerprint: approval.fingerprint }),
               "",
-              "Trust it only if you know this certificate belongs to the site. Clearing this browser profile's cookies forgets it.",
+              m(
+                msg(
+                  "Trust it only if you know this certificate belongs to the site. Clearing this browser profile's cookies forgets it.",
+                ),
+              ),
             ].join("\n"),
           },
           // In the reporter's Windows test, a box owned by the host window
@@ -482,8 +500,12 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                     Effect.logWarning("Failed to save a certificate approval.", { cause }).pipe(
                       Effect.andThen(
                         electronDialog.showErrorBox(
-                          `Could not trust the certificate for ${host}`,
-                          "T3 Code could not save this approval, so the page stays blocked. Check that the disk is not full and its data folder is writable, then try again.",
+                          m(msg("Could not trust the certificate for {host}"), { host }),
+                          m(
+                            msg(
+                              "T3 Code could not save this approval, so the page stays blocked. Check that the disk is not full and its data folder is writable, then try again.",
+                            ),
+                          ),
                         ),
                       ),
                       Effect.as(false),
@@ -605,8 +627,13 @@ export const make = Effect.gen(function* BrowserSessionMake() {
             promptPermission(
               requester,
               {
-                buttons: ["Allow", "Block"],
-                message: `${truncateForPrompt(origin)} wants to see text and images copied to the clipboard`,
+                buttons: [
+                  m(msg("Allow", { $context: "button, grants a site permission" })),
+                  m(msg("Block", { $context: "button, denies a site permission" })),
+                ],
+                message: m(msg("{origin} wants to see text and images copied to the clipboard"), {
+                  origin: truncateForPrompt(origin),
+                }),
               },
               (answer) => {
                 if (answer !== undefined) clipboardReadDecisions.set(origin, answer);
