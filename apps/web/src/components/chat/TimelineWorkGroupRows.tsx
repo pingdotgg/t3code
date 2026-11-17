@@ -951,6 +951,12 @@ const WorkingWindowItemView = memo(function WorkingWindowItemView({
     return <V2SubagentGroup row={item.row} />;
   }
   const { entry } = item;
+  // Zen shows no tool rows, so its thoughts read in full, streaming included.
+  if (ctx.zen && entry.itemType === "reasoning" && entry.detail?.trim()) {
+    return (
+      <SimpleWorkEntryRow workEntry={entry} workspaceRoot={ctx.workspaceRoot} initiallyExpanded />
+    );
+  }
   if (entry.toolLifecycleStatus === "inProgress") {
     if (entry.itemType === "approval_request" || entry.itemType === "user_input_request") {
       return <WorkingRequestRow entry={entry} />;

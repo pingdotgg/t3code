@@ -3416,11 +3416,14 @@ describe("v2 run and attempt history", () => {
       "working-indicator-row",
       "steer",
       "answer",
+      "step",
       "live-activity-row",
     ]);
+    // Progress stays while the response runs; the tool call does not.
     expect(rows([user, step, passed], "zen", running)).toEqual([
       "user",
       "working-indicator-row",
+      "step",
       "live-activity-row",
     ]);
     expect(liveAnswerPreview([user, step, passed])).toBe("step");
@@ -3431,6 +3434,23 @@ describe("v2 run and attempt history", () => {
       "final",
       "follow-up",
       "working-indicator-row",
+    ]);
+    // A new response shows only its own progress, not the earlier turn's.
+    const earlierRunId = RunId.make("turn-0");
+    const earlierTurn = turn.map((entry) =>
+      entry.kind === "message" && entry.message.role === "assistant"
+        ? { ...entry, message: { ...entry.message, runId: earlierRunId } }
+        : entry,
+    );
+    expect(
+      rows([...earlierTurn, followUp, message("next-step", "assistant", 31)], "zen", running),
+    ).toEqual([
+      "user",
+      "final",
+      "follow-up",
+      "working-indicator-row",
+      "next-step",
+      "live-activity-row",
     ]);
     const wake: TimelineEntry = {
       id: "wake",
@@ -5774,8 +5794,23 @@ describe("working window", () => {
             .filter((row) => row.kind === "message")
             .map((row) => row.id),
         ).toEqual(["prompt", "final"]);
-        const legacy = { ...input, turnWorkFold: false };
-        expect(deriveMessagesTimelineRows(legacy).some((row) => row.id === "progress")).toBe(false);
+        // Zen keeps the same live progress with folding off.
+        const unfolded = { ...input, turnWorkFold: false };
+        const unfoldedRows = applyWorkingWindow(deriveMessagesTimelineRows(unfolded), unfolded);
+        const unfoldedItemIds = workingRow(unfoldedRows)?.window?.items.map((item) => item.id);
+        expect(unfoldedItemIds).toContain("thought");
+        expect(unfoldedItemIds).not.toContain("command");
+        expect(
+          unfoldedRows.some((row) => row.id === "progress") ||
+            unfoldedItemIds?.includes("progress"),
+        ).toBe(true);
+        for (const settledInput of [ended, checkpointing]) {
+          expect(
+            deriveMessagesTimelineRows({ ...settledInput, turnWorkFold: false })
+              .filter((row) => row.kind === "message")
+              .map((row) => row.id),
+          ).toEqual(["prompt", "final"]);
+        }
       }
     }
   });

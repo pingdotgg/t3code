@@ -1321,6 +1321,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onRevertToTurnCount,
     onRunShellCommand,
     findActive,
+    zen: toolCallVisibility === "zen",
     onImageExpand,
     onFileOpen,
     onUseArtifactTemplate,

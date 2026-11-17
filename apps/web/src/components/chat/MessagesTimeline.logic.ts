@@ -2020,7 +2020,6 @@ function runningSubagentsAtRunTail(entries: ReadonlyArray<TimelineEntry>, runId:
 
 type RowEntriesInput = Pick<
   MessagesTimelineRowsInput,
-  | "turnWorkFold"
   | "timelineEntries"
   | "toolCallVisibility"
   | "revealedMessageId"
@@ -2043,7 +2042,6 @@ function timelineRowEntries(input: RowEntriesInput) {
     (cached.input.toolCallVisibility ?? "showAll") === (input.toolCallVisibility ?? "showAll") &&
     (cached.input.revealedMessageId ?? null) === (input.revealedMessageId ?? null) &&
     cached.input.isWorking === input.isWorking &&
-    cached.input.turnWorkFold === input.turnWorkFold &&
     shallow(cached.input.latestRun ?? null, input.latestRun ?? null) &&
     (cached.input.runningRunId ?? null) === (input.runningRunId ?? null) &&
     shallow(cached.input.pendingApprovalRequestIds, input.pendingApprovalRequestIds)
@@ -2069,8 +2067,8 @@ function filterRowEntries(input: RowEntriesInput) {
     const steerAnswerIds = deriveInFlightSteerAnswerIds(entries);
     const retainedReplyIds = retainedAssistantReplyEntryIds(entries);
     shown = entries.filter((entry, index) => {
-      // The redesign keeps progress live; Zen hides it when the response ends.
-      const liveProgress = input.turnWorkFold === true && answering && index >= answeringFrom;
+      // Zen keeps progress live and hides it when the response ends.
+      const liveProgress = answering && index >= answeringFrom;
       if (entry.kind !== "message") {
         if (liveProgress && entry.kind === "work" && entry.entry.itemType === "reasoning")
           return true;
@@ -3336,7 +3334,6 @@ export function applyWorkingWindow(
   rows: ReadonlyArray<MessagesTimelineRow>,
   input: Pick<
     MessagesTimelineRowsInput,
-    | "turnWorkFold"
     | "timelineEntries"
     | "latestRun"
     | "runningRunId"

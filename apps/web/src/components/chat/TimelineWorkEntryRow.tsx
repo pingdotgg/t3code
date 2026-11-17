@@ -148,6 +148,8 @@ type WorkEntryRowProps = {
   onContentReady?: (() => void) | undefined;
   /** A failed test run reads in the error tone, keeping its own tool icon. */
   severeFailure?: boolean | undefined;
+  /** Starts open each time it mounts; the user can still close it. */
+  initiallyExpanded?: boolean | undefined;
 };
 
 export const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowProps) {
@@ -194,7 +196,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       : undefined;
   const groupView = use(WorkGroupViewCtx);
   const [expanded, setExpanded] = useState(
-    () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
+    () =>
+      props.initiallyExpanded === true ||
+      (groupView?.state.expandedEntries.has(workEntry.id) ?? false),
   );
   const onInitialOutputReady = () => {
     if (groupView) groupView.onContentReady?.(workEntry.id);
