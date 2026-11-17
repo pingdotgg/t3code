@@ -33,6 +33,11 @@ interface BufferedProviderText {
   readonly dirty: boolean;
 }
 
+// Every flush resends the whole text, so the delay grows with it past this length; per item,
+// snapshot traffic then stays near this many characters per interval instead of growing
+// quadratically with the reply.
+const FULL_RATE_TEXT_LENGTH = 1024;
+
 function providerTextBufferKey(turnId: string, itemId: string): string {
   return `${turnId}\u0000${itemId}`;
 }
@@ -102,25 +107,27 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
           ? Effect.void
           : Effect.uninterruptible(
               Effect.gen(function* () {
-                const shouldSchedule = yield* flushLock.withPermit(
+                const { shouldSchedule, textLength } = yield* flushLock.withPermit(
                   Effect.gen(function* () {
-                    yield* Ref.update(buffered, (current) => {
+                    const textLength = yield* Ref.modify(buffered, (current) => {
                       const key = providerTextBufferKey(turnId, itemId);
-                      const existing = current.get(key);
+                      const text = `${current.get(key)?.text ?? ""}${delta}`;
                       const next = new Map(current);
-                      next.set(key, {
-                        turnId,
-                        itemId,
-                        text: `${existing?.text ?? ""}${delta}`,
-                        dirty: true,
-                      });
-                      return next;
+                      next.set(key, { turnId, itemId, text, dirty: true });
+                      return [text.length, next];
                     });
-                    return yield* Ref.modify(flushScheduled, (scheduled) => [!scheduled, true]);
+                    const shouldSchedule = yield* Ref.modify(flushScheduled, (scheduled) => [
+                      !scheduled,
+                      true,
+                    ]);
+                    return { shouldSchedule, textLength };
                   }),
                 );
                 if (shouldSchedule) {
-                  yield* Effect.sleep(Duration.millis(Math.max(1, input.flushIntervalMs))).pipe(
+                  const delayMs =
+                    Math.max(1, input.flushIntervalMs) *
+                    Math.max(1, textLength / FULL_RATE_TEXT_LENGTH);
+                  yield* Effect.sleep(Duration.millis(delayMs)).pipe(
                     Effect.andThen(flushDirty),
                     Effect.interruptible,
                     Effect.forkIn(coalescerScope),
