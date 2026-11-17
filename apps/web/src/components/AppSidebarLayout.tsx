@@ -388,7 +388,7 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
     <div
       ref={appShellCommandsRef}
       className={cn(
-        "pointer-events-none fixed start-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ms-px flex h-[var(--workspace-topbar-height)] items-center",
+        "pointer-events-none fixed start-[var(--workspace-controls-start)] top-[var(--workspace-controls-top)] z-50 ms-px flex h-[var(--workspace-topbar-height)] items-center",
         mobileSidebarSheetMounted && "hidden",
       )}
       data-sidebar-control=""

@@ -158,7 +158,7 @@ export function ThreadDetailsCard({
             topInset > 0 && "transition-[top] duration-150 ease-out motion-reduce:transition-none",
           )}
           style={{
-            right: placement.right,
+            insetInlineEnd: placement.right,
             top: placement.y,
             width: placement.width,
             maxHeight: height,
