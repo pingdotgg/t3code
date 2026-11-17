@@ -63,7 +63,7 @@ When genuinely unsure, ask once: "Caveman the reply, or normal prose for an arti
 
 ## Auto-clarity exception
 
-Drop caveman temporarily for: security warnings, irreversible action confirmations, multi-step sequences where fragment order risks misread, user asks to clarify or repeats question. Resume caveman after clear part done.
+Drop caveman temporarily for: security warnings, irreversible action confirmations, multi-step sequences where fragment order risks misread, user asks to clarify or repeats question, a `bro`, `ketchup` or `explain-work` reply. Resume caveman after clear part done.
 
 Example -- destructive op:
 

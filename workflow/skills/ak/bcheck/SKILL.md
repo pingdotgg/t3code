@@ -19,12 +19,8 @@ If the user gave an issue ID, use it:
 gh issue view <id>
 ```
 
-If no argument provided, find the next issue on the frontier: open, specified for an agent, no
-open blocker, and not claimed:
-
-```bash
-gh issue list --label ready-for-agent --state open --search "-is:blocked -label:in-progress -label:needs-help -label:ready-for-human sort:created-asc"
-```
+If no argument provided, find the next issue on the frontier (open, specified for an agent, no
+open blocker, not claimed) with the query from `maestro` Dispatcher step 3.
 
 Pick the first (oldest, highest priority) issue from the list. Run `gh issue view <id>` on it.
 
@@ -46,6 +42,8 @@ Then **explore the codebase** to understand the current state:
 - Understand the patterns already in use
 - Check if related work has been done (look at recent commits, related files)
 - Identify any technical constraints the issue description might not mention
+
+When the subsystem is unfamiliar or "Where" is unclear, run the `how` skill on it before asking the user.
 
 ## Step 3: context sufficiency assessment
 
@@ -98,7 +96,7 @@ gh issue edit <id> --add-label in-progress
 **Files:** [list of files you'll touch]
 ```
 
-3. **Start implementing immediately.** No planning round, no ceremony. Just code, then ship it with the `full-send` skill; its merge closes the issue.
+3. **Start implementing immediately.** No planning round, no ceremony. Just code, then ship it with the `full-send` skill; its merge closes the issue. If the issue is a bug and does not name the cause, find it with the `diagnosing-bugs` skill and write the failing test first with `tdd`, as `full-send` step 1 says.
 
 ## Step 4B: needs planning, plan first
 
@@ -120,9 +118,11 @@ gh issue edit <id> --add-label in-progress
 **What's unclear:** [bullet list of gaps/questions]
 ```
 
+If scope alone triggered planning, split the issue into sub-issues with the `to-tickets` skill instead of planning one big change.
+
 3. Plan before you touch code:
    - Ask the user about each unclear dimension (as a structured question if your harness offers
-     one), always leading with your best guess
+     one), always leading with your best guess. When two or more unclear dimensions depend on each other, ask them as `grilling` rounds
    - Explore the codebase further as answers come in
    - Build a concrete implementation plan and write it down
 
@@ -130,7 +130,7 @@ gh issue edit <id> --add-label in-progress
 
 5. Get the user's approval of the audited plan, then implement it and ship it with the `full-send` skill.
 
-Whichever path you took: after the merge, if the issue's parent `epic` has no open sub-issues left, close it: `gh issue close <epic> --comment "every sub-issue is closed."`
+Whichever path you took: after the merge, if the issue's parent `epic` has no open sub-issues left, close it as `maestro` Dispatcher step 4 does.
 
 ## Rules
 

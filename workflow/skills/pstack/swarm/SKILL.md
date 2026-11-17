@@ -17,7 +17,7 @@ Open a todolist with one entry per phase before launching anything.
 ## Phase A: Frame
 
 1. State the done predicate and the artifact or report the swarm must return.
-2. Choose the shape. Partition into slices, race N workers on identical briefs, or mix both. For a race or mixed shape, declare `first pass`, `rank all`, or `best-of` before spawning.
+2. Choose the shape. Partition into slices, race N workers on identical briefs, or mix both. For a race or mixed shape, declare `first pass`, `rank all`, or `best-of` before spawning. If workers must ship code, don't swarm them: file tickets with `to-tickets` and run `implement-spec` (this session) or `maestro` (parallel). If the race arms are competing attempts at one artifact and you want the best one improved with the others' best parts, use `arena`, not a race.
 3. Set N from the user or derive it from the shape. N is total workers.
 4. Pick the worker model. Default to a mid-tier model, a fast, cheap one for mechanical slices, and your strongest for slices needing judgment. For a race, name each arm's model up front.
 5. Cap N. Twelve workers is the ceiling unless the user asks for more, and anything above that gets stated in the report along with what it costs. A swarm that silently spawns fifty agents is a bill, not a strategy.

@@ -10,7 +10,7 @@ Two-axis review of the diff between `HEAD` and a fixed point the user supplies:
 
 Both axes run as **parallel sub-agents** so they don't pollute each other's context, then this skill aggregates their findings. Start every sub-agent with a fresh context window (in T3 Code: `delegate_task`, which starts each child with only its brief).
 
-The issue tracker should have been provided to you. If not, tell the user to run `/setup-matt-pocock-skills`.
+The issue tracker should have been provided to you. If not, use the `setup-matt-pocock-skills` skill (it confirms before writing).
 
 ## Process
 
@@ -63,7 +63,7 @@ Issue both sub-agent calls together (in T3 Code: two `delegate_task` calls in th
 
 - The full diff command and commit list.
 - The list of standards-source files you found in step 3, **plus the smell baseline from step 3** pasted in full (the sub-agent has no other access to it).
-- These principles to judge the diff by: the `principle-test-behavior-not-implementation` skill, `~/.agents/skills/principle-minimize-reader-load/SKILL.md` and `~/.agents/skills/principle-boundary-discipline/SKILL.md`.
+- These principles to judge the diff by: the `principle-test-behavior-not-implementation` skill, `~/.agents/skills/principle-minimize-reader-load/SKILL.md` and `~/.agents/skills/principle-boundary-discipline/SKILL.md`, plus the `typescript-best-practices` skill when the diff has `.ts` or `.tsx` files.
 - The brief: "Report, per file/hunk where relevant, (a) every place the diff violates a documented standard: cite the standard (file + the rule); and (b) any baseline smell you spot: name it and quote the hunk. Distinguish hard violations from judgement calls: documented-standard breaches can be hard, but baseline smells are always judgement calls, and a documented repo standard overrides the baseline. Skip anything tooling enforces. Under 400 words."
 
 **Spec sub-agent prompt** should include:

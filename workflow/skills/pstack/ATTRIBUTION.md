@@ -7,7 +7,7 @@ full license text is kept alongside this file as `LICENSE.pstack`.
 
 ## What was taken
 
-Twenty-one `principle-*` skills (twenty-three upstream, two removed after review; see below), plus `architect`, `arena`, `automate-me`, `benchmark-checklist`,
+Twenty `principle-*` skills (twenty-three upstream, three removed after review; see below), plus `architect`, `arena`, `automate-me`, `benchmark-checklist`,
 `blast-radius`, `bro`, `correct`, `create-verification-skill`, `explain-work`, `figure-it-out`, `how`, `interrogate`,
 `maintain-verification-skill`, `no-comments`, `recall`, `reflect`, `show-me-your-work`, `swarm`,
 `technical-writing`, `typescript-best-practices`, `unslop`, `why`, `in-your-own-words`, `sharpen`,
@@ -90,7 +90,7 @@ is all this plugin has. Beyond that:
 
 - The principles were reviewed after the migration. Four stay visible so the agent reaches for
   them on its own: `test-behavior-not-implementation`, `prove-it-works`, `fix-root-causes`, and
-  `laziness-protocol`. The other seventeen keep upstream's `disable-model-invocation: true`, so they
+  `laziness-protocol`. The other sixteen keep upstream's `disable-model-invocation: true`, so they
   cost nothing in every session's skill list. Skills read them as files instead: every
   "the **x** principle skill" citation of a hidden principle reads "the **x** principle
   (`~/.agents/skills/principle-x/SKILL.md`)", a path every provider can open, subagents included.
@@ -101,6 +101,10 @@ is all this plugin has. Beyond that:
   `architect`, and `codebase-design/DESIGN-IT-TWICE.md` carry the procedure. `architect` now says
   "design-it-twice". `principle-migrate-callers-then-delete-legacy-apis` was deleted and its one
   rule folded into `principle-outcome-oriented-execution` as a guardrail. Skip both when syncing.
+- The subtract-before-you-add principle skill was deleted and its one line not already in
+  `principle-laziness-protocol` (add no speculative validators or guards beyond the spec) moved
+  there as a "Subtract before you add" bullet. `validate-change` and `architect` cite
+  `laziness-protocol` instead. Skip it when syncing.
 - Every other vendored skill had `disable-model-invocation` removed. Upstream ships most of them as
   user-invoked only. Here the agent should reach for them on its own: a skill helps when the
   situation it describes comes up, not when someone remembers to type its name, and the decision
@@ -127,6 +131,22 @@ is all this plugin has. Beyond that:
   existed only to map it onto those playbooks and was dropped.
 - `architect`'s runner prompt told each runner it ran on a different model. The runners here share
   one vendor, so it now tells each runner it holds a different starting constraint.
+
+- Related skills now call each other under a clear condition, each a sentence or two:
+  - `architect` judges depth with `codebase-design`'s terms and deletion test, and
+    `principle-minimize-reader-load` points its layer bullets there. `blast-radius` hands a big and
+    wide change to `interrogate`. `figure-it-out` points at `swarm`, `to-tickets`, `maestro`, and
+    `wayfinder` when it fans out, and at `validate-change` and `full-send` for code to merge.
+    `swarm` sends shipping code to `to-tickets` and competing attempts to `arena`.
+  - `recall`, `reflect`, `automate-me`, and `show-me-your-work` share one history-scope rule from
+    `recall`. `recall` routes a single chat to `takeover`, this chat to `ketchup`, and counts a
+    `handoff` document as a state capsule; its description now says "across chats". `automate-me`
+    leaves prose style to `writing-for-agents`. `show-me-your-work` briefs its reviewer as
+    `second-opinion` does.
+  - `explain-work` drops the sentence rules `unslop` already owns, and its heading no longer says
+    "Teach". `technical-writing` drops the short-word rule and the passive-voice clause that
+    `unslop` already covers.
+  - `correct` judges tests by `principle-test-behavior-not-implementation`.
 
 ### `statechart`
 

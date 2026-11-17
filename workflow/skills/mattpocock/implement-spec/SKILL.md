@@ -5,7 +5,7 @@ description: "Implement the result of /to-spec and /to-tickets in code."
 
 You have been provided a spec. This spec should have tickets associated with it, describing how to implement the spec.
 
-The issue tracker should have been provided to you. If not, tell the user to run `/setup-matt-pocock-skills`.
+The issue tracker should have been provided to you. If not, use the `setup-matt-pocock-skills` skill (it confirms before writing).
 
 The goal is the entire spec implemented on a single **integration branch**, with every ticket resolved the way the issue tracker closes work.
 
@@ -27,7 +27,7 @@ Communication to and from subagents should be sparse. Communicate primarily thro
 
 4. Use a fresh **implementer subagent** for each ticket, each in its own worktree on its own branch (in T3 Code: `delegate_task` with `isolation: "worktree"`, which checks out the parent's current commit, so commit the integration branch tip first; uncommitted edits stay behind). Each implementer subagent:
    - confirms its worktree is based on the integration branch before starting, and resets onto it if not;
-   - uses the `tdd` skill to build the ticket;
+   - builds the ticket with the `implement` skill, minus its final `validate-change`, which step 7 runs once on the branch;
    - merges the integration branch tip into its own branch before reporting done
 
 5. Once an **implementer subagent** completes, merge its work to the integration branch with a **merger subagent**.

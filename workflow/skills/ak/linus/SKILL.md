@@ -42,7 +42,8 @@ threading) are the ones worth hunting for, because a reviewer who does not know 
 miss every one.
 
 If the repo documents no conventions, say so once in the review and fall back to the
-consistency test: does this change match the patterns already in the surrounding code?
+smell baseline in `diff-review` step 3 and the consistency test: does this change match
+the patterns already in the surrounding code?
 
 ## Phase 2: deep investigation (sub-agents)
 

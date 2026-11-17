@@ -41,7 +41,7 @@ Design it twice. Require at least two structurally distinct candidates before sy
 
 Screen every candidate against [`references/design-red-flags.md`](references/design-red-flags.md) before synthesis. Assume the next contributor is an agent that sees only the files it opened, copies the nearest example, and takes the shortest path that compiles. Prefer the design where a change that looks right from one file is right for the whole repo.
 
-Compare viable candidates on interface depth. Prefer the design that hides more complexity behind a smaller, simpler public surface. A rich interface can keep call chains short by concentrating capability instead of scattering it across layers.
+Compare viable candidates on interface depth, judged with the `codebase-design` skill's terms and its deletion test. Prefer the design that hides more complexity behind a smaller, simpler public surface. A rich interface can keep call chains short by concentrating capability instead of scattering it across layers.
 
 Read every candidate end to end before picking; skimming surfaces the one whose surface looks most familiar, not the best one. Pick the strongest as the base, graft the best ideas from the others into it, and record what you took from where. That record populates the rationale's "Synthesis decision" section. Candidates converging on one shape is a strong agreement signal, so ship the consensus and note it. Candidates diverging wildly means Phase A was under-specified, so reframe and re-run rather than averaging.
 
@@ -78,7 +78,7 @@ When you scrap:
 
 1. Trace what's been built.
 2. Redesign as if the new constraints had been day-one assumptions, per redesign-from-first-principles.
-3. Subtract before adding, per the **subtract-before-you-add** principle (`~/.agents/skills/principle-subtract-before-you-add/SKILL.md`). The new sketch should be smaller than the old one before it grows.
+3. Subtract before adding, per the **laziness-protocol** principle skill. The new sketch should be smaller than the old one before it grows.
 4. Return to Phase B and re-run the design runners.
 
 ## Outputs

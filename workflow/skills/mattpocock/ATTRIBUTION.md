@@ -82,6 +82,26 @@ and `writing-for-agents`.
   to `prototype`.
 - `wayfinder` ends a finished map by filing implementation tickets with `to-tickets` and handing them
   to `maestro`, so charting runs straight into dispatch. One added step under "Work through the map".
+- Related skills now call each other under a clear condition, each a sentence or two:
+  - `grilling` also uses `domain-modeling` when the plan coins a domain term or the repo keeps a
+    glossary, so `wayfinder`, `triage-issues`, and `improve-codebase-architecture` name only
+    `grilling` where they named both. It also parks a branch on `to-questionnaire` when the answer
+    belongs to someone else. `grill-me` and `grill-with-docs` stay as aliases.
+  - `to-spec`, `to-tickets`, `wayfinder`, `implement-spec`, `triage-issues`, and `diff-review` say
+    to use `setup-matt-pocock-skills` where they said to tell the user to run it.
+    `setup-matt-pocock-skills` says `triage-issues` where it meant `triage`, and records a glossary
+    the repo already keeps elsewhere instead of creating a root `GLOSSARY.md`.
+  - `to-spec` and `to-tickets` run `replan` on the draft. `wayfinder` publishes a spec destination with
+    `to-spec` first and hands human-only credential or dashboard tasks a `wizard` script.
+  - `implement-spec` builds each ticket with `implement`, minus its final `validate-change`, which
+    runs once on the branch. `implement` offers `verify` after a UI change. `diff-review`'s Standards
+    prompt adds `typescript-best-practices` for `.ts` and `.tsx` diffs.
+  - `diagnosing-bugs` vets measurements with `benchmark-checklist`, runs `why` on a suspect that
+    looks deliberate or a regression, and offers `improve-codebase-architecture` when no correct
+    seam exists. `improve-codebase-architecture` shows its report with `html_preview` and
+    `html_render` in T3 Code.
+  - `handoff` names a `show-me-your-work` log, `retro` offers `/correct` when a mistake class recurs,
+    `teach` fills `RESOURCES.md` with `research`, and `writing-for-agents` ends by running `unslop`.
 
 ## Upstream sync
 

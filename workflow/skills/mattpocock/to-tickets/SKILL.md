@@ -7,7 +7,7 @@ description: Break a plan, spec, or the current conversation into a set of trace
 
 Break a plan, spec, or conversation into a set of **tickets**: tracer-bullet vertical slices, each declaring the tickets that **block** it.
 
-The issue tracker and triage label vocabulary should have been provided to you. If not, tell the user to run `/setup-matt-pocock-skills`.
+The issue tracker and triage label vocabulary should have been provided to you. If not, use the `setup-matt-pocock-skills` skill (it confirms before writing).
 
 ## Process
 
@@ -39,6 +39,8 @@ Give each ticket its **blocking edges**: the other tickets that must complete be
 **Wide refactors are the exception to vertical slicing.** A **wide refactor** is one mechanical change (rename a column, retype a shared symbol) whose **blast radius** fans across the whole codebase, so a single edit breaks thousands of call sites at once and no vertical slice can land green. Don't force it into a tracer bullet; sequence it as **expand–contract**. First expand: add the new form beside the old so nothing breaks. Then migrate the call sites over in batches sized by blast radius (per package, per directory), each batch its own ticket blocked by the expand, keeping CI green batch to batch because the old form still exists. Finally contract: delete the old form once no caller remains, in a ticket blocked by every migrate batch. When even the batches can't stay green alone, keep the sequence but let them share an integration branch that all block a final integrate-and-verify ticket; green is promised only there.
 
 ### 4. Quiz the user
+
+When the source is the conversation or a plan, not a spec issue, run `replan` on the draft breakdown first so every stated requirement has a ticket.
 
 Present the proposed breakdown as a numbered list. For each ticket, show:
 

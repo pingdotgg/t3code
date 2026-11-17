@@ -89,7 +89,7 @@ Do not proceed until you have reproduced **and** minimised.
 
 Generate **3–5 ranked hypotheses** before testing any of them. Single-hypothesis generation anchors on the first plausible idea.
 
-Each hypothesis must be **falsifiable**: state the prediction it makes. When two fixes on the same premise have already failed, test the premise first (`~/.agents/skills/principle-attack-the-premise/SKILL.md`).
+Each hypothesis must be **falsifiable**: state the prediction it makes. If the suspect looks deliberate, or the bug is a regression, run the `why` skill on that code before ranking. When two fixes on the same premise have already failed, test the premise first (`~/.agents/skills/principle-attack-the-premise/SKILL.md`).
 
 > Format: "If <X> is the cause, then <changing Y> will make the bug disappear / <changing Z> will make it worse."
 
@@ -109,7 +109,7 @@ Tool preference:
 
 **Tag every debug log** with a unique prefix, e.g. `[DEBUG-a4f2]`. Cleanup at the end becomes a single grep. Untagged logs survive; tagged logs die.
 
-**Perf branch.** For performance regressions, logs are usually wrong. Instead: establish a baseline measurement (timing harness, `performance.now()`, profiler, query plan), then bisect. Measure first, fix second.
+**Perf branch.** For performance regressions, logs are usually wrong. Instead: establish a baseline measurement (timing harness, `performance.now()`, profiler, query plan), then bisect. Measure first, fix second. Vet each measurement with the `benchmark-checklist` skill before acting on it.
 
 ## Phase 5: Fix + regression test
 
@@ -119,7 +119,7 @@ Write the regression test **before the fix**, but only if there is a **correct s
 
 A correct seam is one where the test exercises the **real bug pattern** as it occurs at the call site. If the only available seam is too shallow (single-caller test when the bug needs multiple callers, unit test that can't replicate the chain that triggered the bug), a regression test there gives false confidence.
 
-**If no correct seam exists, that itself is the finding.** Note it. The codebase architecture is preventing the bug from being locked down. Flag this for the next phase.
+**If no correct seam exists, that itself is the finding.** Note it. The codebase architecture is preventing the bug from being locked down. Flag this for the next phase, and name the module in your report and offer `improve-codebase-architecture` scoped to it.
 
 If a correct seam exists:
 

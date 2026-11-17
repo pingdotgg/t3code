@@ -82,7 +82,8 @@ For a `MODERNIZE` disposition:
    and inspect the final diff. Confirm that no intentional behavior disappeared
    and no already-landed behavior was reintroduced.
 5. Run the repository's focused checks for the touched area. Distinguish real
-   failures from pre-existing or infrastructure failures.
+   failures from pre-existing or infrastructure failures. If a conflict
+   resolution changed logic, run `validate-change` before pushing.
 6. Push with `--force-with-lease` tied to the previously observed remote head.
    If the lease fails, fetch and reassess rather than overwriting new work.
 

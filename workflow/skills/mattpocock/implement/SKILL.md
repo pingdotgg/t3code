@@ -11,6 +11,6 @@ Use the "tdd" skill where possible, at pre-agreed seams. Sequence the work per `
 
 Run typechecking regularly, single test files regularly, and the full test suite once at the end.
 
-Once done, use the "validate-change" skill on the work.
+Once done, use the "validate-change" skill on the work. If the change is user-visible UI, offer the "verify" skill after it.
 
 Commit your work to the current branch.

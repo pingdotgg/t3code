@@ -7,15 +7,14 @@ description: "Layered technical-writing standard: Diátaxis structure, Google de
 
 Write so a tired engineer understands on the first read. Apply all four layers.
 
-Three rules sit above the layers:
+Two rules sit above the layers:
 
 - **Cut every word that does no work.** If the sentence survives without a word, the word goes. "In order to" is "to". "It is important to note that" is nothing.
-- **Use the short, everyday word.** "Use", not "utilize". "Help", not "facilitate". "Do", not "perform". A long word has to buy its length with precision.
 - **When a rule makes a sentence worse, fix the sentence another way or leave it alone.** A sentence that follows every rule and sounds like a machine wrote it has failed.
 
 The codebase is the word list. Write the real symbol, file, flag, or command name, not a synonym or a description of it.
 
-Don't invent jargon. Use the words a developer would say out loud: "move", "delete", "a budget that only decreases", not "evacuate", "ratchet", or "endgame". A named pattern is fine when the doc says what it means the first time. Propose a new offender and its replacement as an addition to `unslop`'s abstract-metaphor rule in your reply, with the diff. Don't edit that skill.
+Don't invent jargon; `unslop` rule 26 lists offenders. A named pattern is fine when the doc says what it means the first time. Propose a new offender and its replacement as an addition to that rule in your reply, with the diff. Don't edit that skill.
 
 ## Vary the rhythm
 
@@ -69,7 +68,7 @@ Don't mix modes: no reference tables inside a tutorial, no tutorial hand-holding
 - Keep "the" and "a": "Remove backup file" reads two ways. "Remove the backup file" reads one.
 - Give each word one meaning and one job, then keep it. If "check" means inspect, don't also use it for restrain.
 - Pick one word per action and stick to it: "start", not "start" here and "initiate" there.
-- Write procedures as direct commands, never as narration and never in the passive: "Install the component", not "the component must be installed".
+- Write procedures as direct commands, never as narration: "Install the component", not "the component must be installed".
 - Avoid "-ing" words where you can.
 
 ## Leave no sentence open to two readings (Global English)

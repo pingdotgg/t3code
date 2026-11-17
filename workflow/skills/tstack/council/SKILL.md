@@ -23,8 +23,9 @@ closest strong model from a provider the council does not already have, from
 `orchestrator_capabilities`, and say which one stood in. If you still cannot
 reach three providers, report it.
 
-Give each delegate the request and relevant context. For review or feedback,
-keep their work read-only. Collect their responses and summarize the useful
+Give each delegate the request and relevant context. For a question or design,
+brief them as `second-opinion` step 2 does, without your own conclusion. For
+review or feedback, keep their work read-only. Collect their responses and summarize the useful
 findings, disagreements, and recommended next steps.
 
 Do not wait idle. When a result arrives, check its findings against the code

@@ -11,7 +11,7 @@ Invoke when the user says "reflect" or "/reflect". Skip when the conversation is
 
 ## 1. Locate the active transcript
 
-The parent finds this session's own thread before fanning out, through T3 Code's thread tools, which cover every provider. Search the active project with `t3_thread_search` for the conversation's opening user prompt, or list its newest threads with `t3_thread_list`. Read each candidate's first message with `t3_thread_read` (`afterPosition: -1`) and take the thread whose first message is the opening user prompt. Stay in the active project. Do not search across all projects. That crosses project boundaries and reads private chats from unrelated work. If no thread matches, pass a tight digest of the session instead.
+The parent finds this session's own thread before fanning out, through T3 Code's thread tools, which cover every provider. Search the active project with `t3_thread_search` for the conversation's opening user prompt, or list its newest threads with `t3_thread_list`. Read each candidate's first message with `t3_thread_read` (`afterPosition: -1`) and take the thread whose first message is the opening user prompt. Stay in the active project, as in `recall` step 2. If no thread matches, pass a tight digest of the session instead.
 
 ## 2. Spawn three reviewers in parallel
 

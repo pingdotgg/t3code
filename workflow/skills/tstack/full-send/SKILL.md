@@ -44,7 +44,10 @@ one appears.
 
 1. **Finish the change.** Complete the goal from the user's request with the
    smallest change that works. Fix the case that happened, not every case
-   that could. If you are on the default branch, create a branch first.
+   that could. If you are on the default branch, create a branch first. If the
+   request is a bug, find its cause with the `diagnosing-bugs` skill first. For
+   new behavior the repo's tests can reach, build it test-first with the `tdd`
+   skill.
 2. **Prove it.** Get proof for every change you made. See "Proof".
    Then run the `validate-change` skill.
 3. **Get feedback.** Use the `sol-loop` skill to verify changes.
@@ -55,7 +58,8 @@ one appears.
    failures. Get proof for each fix before you push it.
 6. **Merge** when the merge gate passes.
 7. **Report** in your final message: the PR link, the merge commit, your proof,
-   and each decision you made for the user.
+   and each decision you made for the user. On a multi-phase run, keep those
+   decisions with the `show-me-your-work` skill and report its Attention section.
 
 Stay active from step 1 to step 7. If you end your turn while checks or bots are
 pending, the work stops, because nobody will prompt you again. Wait with the
@@ -73,9 +77,11 @@ reproduction, a screenshot. Use the most direct proof the change allows:
 - Run the checks that the repo's CI runs (typecheck, lint, tests).
 - Add one focused test that fails without the fix, when the behavior has none
   and the repo has a test setup.
-- For UI and runtime behavior, run the app and look at the change. Green mocked
-  tests do not prove that the user experience works. Attach screenshots to the
-  PR when they help and you have a way to upload them.
+- For UI and runtime behavior, run the app and look at the change, using the
+  repo's verification skill, or `verify` with its checklist approved by you.
+  Green mocked tests do not prove that the user experience works. Attach
+  screenshots to the PR when they help and you have a way to upload them.
+- For a performance claim, measure it per the `benchmark-checklist` skill.
 
 When you cannot find a way to prove a change, you do not have full confidence.
 Ask the user.
@@ -117,7 +123,9 @@ Ask only when you cannot continue alone:
 - Another PR makes this one obsolete.
 
 Decide everything else yourself with sensible defaults, and list those decisions
-in the report.
+in the report. Skills that pause for approval of a plan or draft (`tdd`'s
+seams, `verify`'s checklist, `frontend-design`'s draft) are not on this list:
+approve them yourself and list the decision in the report.
 
 If no question tool is available, or the tool returns no answer, take the safe
 path: leave the PR open and unmerged, and start your final message with the

@@ -5,7 +5,7 @@ description: "Turn the current conversation into a spec and publish it to the pr
 
 This skill takes the current conversation context and codebase understanding and produces a spec. Do NOT interview the user; just synthesize what you already know.
 
-The issue tracker and triage label vocabulary should have been provided to you. If not, tell the user to run `/setup-matt-pocock-skills`.
+The issue tracker and triage label vocabulary should have been provided to you. If not, use the `setup-matt-pocock-skills` skill (it confirms before writing).
 
 ## Process
 
@@ -15,7 +15,7 @@ The issue tracker and triage label vocabulary should have been provided to you. 
 
 Check with the user that these seams match their expectations.
 
-3. Write the spec using the template below, then publish it to the project issue tracker. Apply the `epic` label, not `ready-for-agent`: the spec is a parent for tickets, never one agent's task.
+3. Write the spec using the template below, then publish it to the project issue tracker. Apply the `epic` label, not `ready-for-agent`: the spec is a parent for tickets, never one agent's task. Before publishing, run `replan` (plan mode) on the draft so no settled decision is dropped.
 
 <spec-template>
 

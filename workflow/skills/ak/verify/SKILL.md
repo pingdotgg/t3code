@@ -70,6 +70,8 @@ Adjust the checklist based on feedback before proceeding.
 
 ## Phase 3: execute tests
 
+If the repo has a verification skill (`verify-*`, `test-*`), follow its Launch, Doctor and Drive sections and take Related areas from its feature map. If the app has none and no documented launch, offer `create-verification-skill` once. If the run shows the map is wrong, offer `maintain-verification-skill`.
+
 Open one tab for the run (`preview_open`, with the dev server's port as its target) and keep
 using its `tabId`. Then for each checklist item:
 

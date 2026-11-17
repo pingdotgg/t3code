@@ -25,9 +25,7 @@ Update mode changes the rest of the flow:
 
 ### 1. Mine their history
 
-Read this project's chat history through T3 Code's thread tools, which cover every provider: `t3_thread_list` lists the active project's threads newest first, `t3_thread_search` finds threads by title, branch, PR, or message text, and `t3_thread_read` reads one. Stay in the active project. Don't search across all projects. That crosses project boundaries and reads private chats from unrelated work.
-
-Survey recent agent conversations within that scope for recurring patterns. Delegate to three parallel read-only subagents (in T3 Code: `delegate_task`) on a fast, cheap model across slices of history (last 2-4 weeks, split so each slice has enough material). Mining chat logs is grunt work and the raw transcripts should stay in the subagents; the main thread gets their findings, not the payloads, per the **guard-the-context-window** principle (`~/.agents/skills/principle-guard-the-context-window/SKILL.md`). Each slice miner reads the threads the parent assigns it with `t3_thread_read`, looks for the signals below, and returns a short structured list of patterns it saw with evidence pointers. Default signals worth hunting:
+Mine this project's history as `recall` step 3 does (active project only, a cheap model per slice, the raw transcripts stay in the subagents), across three parallel read-only subagents on slices of the last 2-4 weeks (in T3 Code: `delegate_task`). Each returns a short structured list of patterns with evidence pointers, hunting these signals:
 
 - Response preferences (length, tone, format, "dumb it down" corrections)
 - Delegation habits (subagents, models, specialized workflows, parallelism)
@@ -73,7 +71,7 @@ Use the **writing-for-agents** skill to author the skill. Placement:
 
 ### 5. Iterate on prose
 
-Apply the **unslop** skill and **writing-for-agents** to every line. Both apply to any agent-read prose, not just skills.
+Apply the `writing-for-agents` skill to every line.
 
 Show the draft to the user and take feedback. Expect multiple iterations. Cut ruthlessly. A mode skill is not a manual.
 
