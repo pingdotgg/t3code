@@ -11,6 +11,10 @@
       "types": "./src/server/driver.ts",
       "import": "./src/server/driver.ts"
     },
+    "./server/SecretProviderConfigChoices": {
+      "types": "./src/server/SecretProviderConfigChoices.ts",
+      "import": "./src/server/SecretProviderConfigChoices.ts"
+    },
     "./server/SecretResolver": {
       "types": "./src/server/SecretResolver.ts",
       "import": "./src/server/SecretResolver.ts"

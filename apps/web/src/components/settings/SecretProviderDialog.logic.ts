@@ -12,6 +12,8 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+export const DRAFT_SECRET_PROVIDER_KIND = SecretProviderKind.make("one_password");
+
 const decodeSecretProviderId = Schema.decodeOption(SecretProviderId);
 const decodeOnePasswordConfig = Schema.decodeUnknownOption(OnePasswordSecretProviderConfig);
 
@@ -111,7 +113,7 @@ export function secretProviderFromDraft(
   return Result.succeed({
     id,
     config: {
-      kind: SecretProviderKind.make("one_password"),
+      kind: DRAFT_SECRET_PROVIDER_KIND,
       label: label.success,
       config: { account: account.success },
     },
