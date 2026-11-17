@@ -10,7 +10,6 @@ import {
 } from "./baseSchemas.ts";
 import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceControl.ts";
 import { VcsDriverKind } from "./vcs.ts";
-import { PullRequestChangeBreakdown } from "./pullRequest.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const GitFilePath = Schema.String.check(Schema.isNonEmpty());
@@ -111,6 +110,13 @@ export const VcsStatusInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
 });
 export type VcsStatusInput = typeof VcsStatusInput.Type;
+
+export const VcsBranchStatus = Schema.Struct({
+  refName: Schema.NullOr(Schema.String),
+  /** Absent from older servers, where a removed checkout looks like a detached HEAD. */
+  isRepo: Schema.optional(Schema.Boolean),
+});
+export type VcsBranchStatus = typeof VcsBranchStatus.Type;
 
 export const VcsStatusSubscriptionInput = Schema.Struct({
   ...VcsStatusInput.fields,
@@ -240,7 +246,6 @@ const VcsStatusLocalShape = {
       baseRef: Schema.NullOr(TrimmedNonEmptyStringSchema),
       insertions: NonNegativeInt,
       deletions: NonNegativeInt,
-      breakdown: Schema.optional(PullRequestChangeBreakdown),
     }),
   ),
 };
@@ -362,6 +367,7 @@ export const GitCommandFailureReason = Schema.Literals([
   "path_already_exists",
   "push_rejected_by_remote",
   "push_rejected_non_fast_forward",
+  "ref_name_conflict",
   "ref_not_found",
   "remote_unreachable",
   "tag_would_be_clobbered",

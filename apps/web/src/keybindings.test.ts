@@ -21,6 +21,7 @@ import {
   resolveShortcutCommand,
   shouldShowThreadJumpHintsForModifiers,
   shortcutLabelForCommand,
+  terminalNavigationShortcutData,
   type ShortcutEventLike,
 } from "./keybindings";
 
@@ -34,6 +35,31 @@ function event(overrides: Partial<ShortcutEventLike> = {}): ShortcutEventLike {
     ...overrides,
   };
 }
+
+describe("terminal word navigation", () => {
+  it.each(["Win32", "Linux x86_64"])(
+    "leaves Ctrl+Arrow to the terminal encoder on %s",
+    (platform) => {
+      for (const key of ["ArrowLeft", "ArrowRight"]) {
+        assert.equal(terminalNavigationShortcutData(event({ key, ctrlKey: true }), platform), null);
+      }
+    },
+  );
+
+  it.each(["Win32", "Linux x86_64", "MacIntel"])(
+    "preserves Alt+Arrow word navigation on %s",
+    (platform) => {
+      assert.equal(
+        terminalNavigationShortcutData(event({ key: "ArrowLeft", altKey: true }), platform),
+        "\u001bb",
+      );
+      assert.equal(
+        terminalNavigationShortcutData(event({ key: "ArrowRight", altKey: true }), platform),
+        "\u001bf",
+      );
+    },
+  );
+});
 
 function modShortcut(
   key: string,
@@ -659,6 +685,53 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
+  it('matches Ctrl+layout "+" as itself unless Shift, Alt or the number row is involved', () => {
+    assert.isNull(
+      resolveShortcutCommand(
+        event({ key: "+", code: "BracketRight", ctrlKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        { platform: "Linux", context: { terminalFocus: false } },
+      ),
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "+", code: "Minus", ctrlKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        { platform: "Linux", context: { previewFocus: true } },
+      ),
+      "preview.zoomIn",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "+", code: "Digit1", ctrlKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        { platform: "Linux", context: { isDesktop: true } },
+      ),
+      "thread.jump.1",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "+", code: "BracketRight", altKey: true }),
+        compile([
+          {
+            shortcut: modShortcut("]", { modKey: false, altKey: true }),
+            command: "terminal.toggle",
+          },
+        ]),
+        { platform: "Linux" },
+      ),
+      "terminal.toggle",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "+", code: "Equal", ctrlKey: true, shiftKey: true }),
+        compile([{ shortcut: modShortcut("=", { shiftKey: true }), command: "terminal.toggle" }]),
+        { platform: "Linux" },
+      ),
+      "terminal.toggle",
+    );
+  });
+
   it("does not let a punctuation position shadow a Latin layout key", () => {
     const keybindings = compile([
       { shortcut: modShortcut("m"), command: "diff.toggle" },
@@ -741,6 +814,23 @@ describe("isRichTextBoldShortcut", () => {
 });
 
 describe("composer and pull request shortcuts", () => {
+  it("uses the dictation chord outside the terminal and preserves terminal split", () => {
+    const chord = event({ key: "d", ctrlKey: true, shiftKey: true });
+    assert.strictEqual(
+      resolveShortcutCommand(chord, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "composer.dictation",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(chord, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+      "terminal.splitVertical",
+    );
+  });
   it("fills missing number shortcuts without replacing the saved URL binding", () => {
     const olderServerBindings = DEFAULT_RESOLVED_KEYBINDINGS.filter(
       (binding) =>
@@ -768,21 +858,12 @@ describe("composer and pull request shortcuts", () => {
   });
 
   it.each(["MacIntel", "Win32", "Linux"])(
-    "resolves composer toggle and alternate send chords in their contexts on %s",
+    "reserves the alternate send chord for the focused composer on %s",
     (platform) => {
       const modifier = {
         metaKey: platform === "MacIntel",
         ctrlKey: platform !== "MacIntel",
       };
-      for (const terminalFocus of [false, true]) {
-        assert.strictEqual(
-          resolveShortcutCommand(event({ key: "/", ...modifier }), DEFAULT_RESOLVED_KEYBINDINGS, {
-            platform,
-            context: { terminalFocus },
-          }),
-          terminalFocus ? null : "composer.toggleRichText",
-        );
-      }
       const shiftedEnter = event({ key: "Enter", shiftKey: true, ...modifier });
       for (const composerRequiresModifier of [false, true]) {
         const context = {

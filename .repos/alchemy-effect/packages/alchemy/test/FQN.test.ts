@@ -1,4 +1,4 @@
-import { describe, expect, test } from "alchemy-test";
+import { describe, expect, test } from "@alchemy.run/test";
 import { fromPath, FQN_SEPARATOR, parseFqn, toFqn, toPath } from "../src/FQN";
 import type { NamespaceNode } from "../src/Namespace";
 
@@ -40,9 +40,7 @@ describe("FQN", { tags: ["unit", "local"] }, () => {
         Id: "Child",
         Parent: { Id: "Parent" },
       };
-      expect(toFqn(ns, "MyResource")).toBe(
-        `Parent${FQN_SEPARATOR}Child${FQN_SEPARATOR}MyResource`,
-      );
+      expect(toFqn(ns, "MyResource")).toBe(`Parent${FQN_SEPARATOR}Child${FQN_SEPARATOR}MyResource`);
     });
   });
 

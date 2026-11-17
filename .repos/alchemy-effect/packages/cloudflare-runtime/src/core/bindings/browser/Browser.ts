@@ -1,9 +1,8 @@
-import { loadInternalWorker } from "../../internal/internal-worker.ts";
-import type {
-  InstalledBrowser,
-  InstallOptions,
-  Process,
-} from "@puppeteer/browsers";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFs from "node:fs";
+import * as NodeOs from "node:os";
+import * as NodePath from "node:path";
+import type { InstalledBrowser, InstallOptions, Process } from "@puppeteer/browsers";
 import {
   Browser as ChromeBrowser,
   Cache,
@@ -15,24 +14,19 @@ import {
 } from "@puppeteer/browsers";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as NodeChildProcess from "node:child_process";
-import * as NodeFs from "node:fs";
-import * as NodeOs from "node:os";
-import * as NodePath from "node:path";
+import { loadInternalWorker } from "../../internal/internal-worker.ts";
 const BrowserWorker = {
   worker: () =>
-    loadInternalWorker(
-      "#cloudflare-runtime-core-worker/bindings/browser/Browser.worker",
-    ),
+    loadInternalWorker("#cloudflare-runtime-core-worker/bindings/browser/Browser.worker"),
 };
 import * as Loopback from "../../globals/Loopback.ts";
 import type * as LoopbackServer from "../../globals/LoopbackServer.ts";
+import { DEFAULT_COMPATIBILITY_DATE } from "../../internal/constants.ts";
 import { formatInternalWorkerModules } from "../../internal/internal-modules.ts";
 import * as Plugin from "../../Plugin.ts";
 import type { BindingHook, PluginContext } from "../../PluginContext.ts";
 import { makeRemoteBinding } from "../../remote-bindings/RemoteBindings.ts";
 import type { ConfigError } from "../../RuntimeError.shared.ts";
-import { DEFAULT_COMPATIBILITY_DATE } from "../../internal/constants.ts";
 import { kVoid } from "../../workerd/Config.ts";
 import type * as WorkerdConfig from "../../workerd/Config.ts";
 import type { BrowserProps } from "./BrowserOptions.shared.ts";
@@ -78,9 +72,7 @@ export const BrowserLive = Layer.effect(
       Effect.promise(async () => {
         const processes = [...browserProcesses.values()];
         browserProcesses.clear();
-        await Promise.all(
-          processes.map((process) => closeBrowserProcess(process)),
-        );
+        await Promise.all(processes.map((process) => closeBrowserProcess(process)));
       }),
     );
 
@@ -101,17 +93,14 @@ export const BrowserLive = Layer.effect(
         if (body === undefined) {
           res.writeHead(status).end();
         } else {
-          res
-            .writeHead(status, { "content-type": "application/json" })
-            .end(JSON.stringify(body));
+          res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
         }
       };
       switch (url.pathname) {
         case "/browser/launch": {
-          const { sessionId, browserProcess, startTime, wsEndpoint } =
-            await launchBrowser({
-              headful,
-            });
+          const { sessionId, browserProcess, startTime, wsEndpoint } = await launchBrowser({
+            headful,
+          });
           browserProcess.nodeProcess.on("exit", () => {
             browserProcesses.delete(sessionId);
           });
@@ -159,15 +148,12 @@ export const BrowserLive = Layer.effect(
           api: {
             register: (props: { readonly headful?: boolean }) =>
               Plugin.use(Loopback.Loopback, (loopback) =>
-                Effect.map(
-                  loopback.api.route(LOOPBACK_TARGET_BROWSER, handler),
-                  (service) => {
-                    used = true;
-                    headful = headful || (props.headful ?? false);
-                    loopbackService = service;
-                    return { name: SERVICE_BROWSER };
-                  },
-                ),
+                Effect.map(loopback.api.route(LOOPBACK_TARGET_BROWSER, handler), (service) => {
+                  used = true;
+                  headful = headful || (props.headful ?? false);
+                  loopbackService = service;
+                  return { name: SERVICE_BROWSER };
+                }),
               ),
           },
           defer: Effect.gen(function* () {
@@ -183,9 +169,7 @@ export const BrowserLive = Layer.effect(
                 // from delivering binary frames to the proxy.
                 compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
                 compatibilityFlags: ["no_websocket_standard_binary_type"],
-                modules: formatInternalWorkerModules(
-                  yield* Effect.promise(BrowserWorker.worker),
-                ),
+                modules: formatInternalWorkerModules(yield* Effect.promise(BrowserWorker.worker)),
                 bindings: [
                   {
                     name: BINDING_BROWSER_LOOPBACK,
@@ -230,9 +214,7 @@ export const BrowserLive = Layer.effect(
  * endpoint — `@cloudflare/puppeteer` works unchanged. Opt into the real,
  * remote binding with `dev: { remote: true }`.
  */
-export const local = (
-  props: BrowserProps,
-): BindingHook<Browser | Loopback.Loopback> =>
+export const local = (props: BrowserProps): BindingHook<Browser | Loopback.Loopback> =>
   Plugin.use(Browser, (browser) =>
     Effect.map(
       browser.api.register({ headful: props.headful }),
@@ -256,11 +238,7 @@ export const remote = (binding: string) =>
 
 let installedBrowser: Promise<InstalledBrowser> | undefined;
 
-export async function launchBrowser({
-  headful,
-}: {
-  headful?: boolean;
-}): Promise<{
+export async function launchBrowser({ headful }: { headful?: boolean }): Promise<{
   sessionId: string;
   browserProcess: Process;
   startTime: number;
@@ -408,24 +386,16 @@ export async function launchBrowser({
  * runs after Chrome released its file locks, so the temp profile actually
  * gets deleted on Windows.
  */
-export async function closeBrowserProcess(
-  browserProcess: Process,
-): Promise<void> {
+export async function closeBrowserProcess(browserProcess: Process): Promise<void> {
   const nodeProcess = browserProcess.nodeProcess;
   const pid = nodeProcess.pid;
   // Guard on "our child has not exited yet" (not just pid liveness) so a
   // recycled pid can never make us taskkill an innocent process tree.
   const alive =
-    pid !== undefined &&
-    nodeProcess.exitCode === null &&
-    nodeProcess.signalCode === null;
+    pid !== undefined && nodeProcess.exitCode === null && nodeProcess.signalCode === null;
   if (process.platform === "win32" && alive) {
     await new Promise<void>((resolve) => {
-      NodeChildProcess.execFile(
-        "taskkill",
-        ["/pid", String(pid), "/T", "/F"],
-        () => resolve(),
-      );
+      NodeChildProcess.execFile("taskkill", ["/pid", String(pid), "/T", "/F"], () => resolve());
     });
   }
   // Runs the onExit hook (profile cleanup), kills if still alive (second pass
@@ -438,10 +408,7 @@ export async function closeBrowserProcess(
  * Log Chrome download progress to stderr (there is no interactive spinner in
  * this runtime); logs at most once per percentage point.
  */
-function makeDownloadProgressLogger(): (
-  downloadedBytes: number,
-  totalBytes: number,
-) => void {
+function makeDownloadProgressLogger(): (downloadedBytes: number, totalBytes: number) => void {
   let lastProgress = -1;
   return (downloadedBytes, totalBytes) => {
     const progress = Math.round((downloadedBytes / totalBytes) * 100);
@@ -481,20 +448,13 @@ async function clearUnrunnableDarwinCache(
   try {
     await NodeFs.promises.access(executablePath, NodeFs.constants.X_OK);
     await new Promise<void>((resolve, reject) => {
-      NodeChildProcess.execFile(
-        executablePath,
-        ["--version"],
-        { timeout: 10_000 },
-        (error) => (error ? reject(error) : resolve()),
+      NodeChildProcess.execFile(executablePath, ["--version"], { timeout: 10_000 }, (error) =>
+        error ? reject(error) : resolve(),
       );
     });
   } catch {
     await removeDir(
-      cache.installationDir(
-        installOptions.browser,
-        platform,
-        installOptions.buildId,
-      ),
+      cache.installationDir(installOptions.browser, platform, installOptions.buildId),
     );
   }
 }
@@ -519,9 +479,7 @@ async function installWithCorruptedCacheRecovery(
       throw e;
     }
     const corruptedPath = match[1];
-    console.error(
-      `Detected corrupted Chrome cache at ${corruptedPath}; clearing and retrying.`,
-    );
+    console.error(`Detected corrupted Chrome cache at ${corruptedPath}; clearing and retrying.`);
     try {
       await removeDir(corruptedPath);
     } catch (cleanupError) {
@@ -565,9 +523,7 @@ async function waitForBrowserReady(wsEndpoint: string): Promise<void> {
       if (response.ok) {
         return;
       }
-      lastError = new Error(
-        `Chrome readiness probe got status ${response.status}`,
-      );
+      lastError = new Error(`Chrome readiness probe got status ${response.status}`);
     } catch (e) {
       lastError = e;
     }
@@ -575,12 +531,9 @@ async function waitForBrowserReady(wsEndpoint: string): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, delay));
     attempt++;
   }
-  throw new Error(
-    `Chrome readiness probe at ${probeUrl} timed out after ${timeoutMs}ms`,
-    {
-      cause: lastError,
-    },
-  );
+  throw new Error(`Chrome readiness probe at ${probeUrl} timed out after ${timeoutMs}ms`, {
+    cause: lastError,
+  });
 }
 
 const removeDir = (dir: string) =>
@@ -600,16 +553,11 @@ export function getGlobalWranglerCachePath(): string {
 function xdgCacheDir(): string {
   const home = NodeOs.homedir() || NodeOs.tmpdir();
   if (process.platform === "darwin") {
-    return (
-      process.env.XDG_CACHE_HOME || NodePath.join(home, "Library", "Caches")
-    );
+    return process.env.XDG_CACHE_HOME || NodePath.join(home, "Library", "Caches");
   }
   if (process.platform === "win32") {
-    const localAppData =
-      process.env.LOCALAPPDATA || NodePath.join(home, "AppData", "Local");
-    return (
-      process.env.XDG_CACHE_HOME || NodePath.join(localAppData, "xdg.cache")
-    );
+    const localAppData = process.env.LOCALAPPDATA || NodePath.join(home, "AppData", "Local");
+    return process.env.XDG_CACHE_HOME || NodePath.join(localAppData, "xdg.cache");
   }
   return process.env.XDG_CACHE_HOME || NodePath.join(home, ".cache");
 }
