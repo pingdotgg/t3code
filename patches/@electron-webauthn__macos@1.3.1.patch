@@ -1,0 +1,22 @@
+diff --git a/dist/index.js b/dist/index.js
+index b86cce0..0893730 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -291,6 +291,7 @@ var ASAuthorizationPublicKeyCredentialPRFAssertionInputValues = /* @__PURE__ */
+ var ASAuthorizationPublicKeyCredentialPRFRegistrationInput = /* @__PURE__ */ _bindClass(AuthenticationServices, "ASAuthorizationPublicKeyCredentialPRFRegistrationInput");
+ var ASAuthorizationPublicKeyCredentialParameters = /* @__PURE__ */ _bindClass(AuthenticationServices, "ASAuthorizationPublicKeyCredentialParameters");
+ var ASAuthorizationSecurityKeyPublicKeyCredentialAssertion = /* @__PURE__ */ _bindClass(AuthenticationServices, "ASAuthorizationSecurityKeyPublicKeyCredentialAssertion");
++var ASAuthorizationSecurityKeyPublicKeyCredentialDescriptor = /* @__PURE__ */ _bindClass(AuthenticationServices, "ASAuthorizationSecurityKeyPublicKeyCredentialDescriptor");
+ var ASAuthorizationSecurityKeyPublicKeyCredentialProvider = /* @__PURE__ */ _bindClass(AuthenticationServices, "ASAuthorizationSecurityKeyPublicKeyCredentialProvider");
+ var ASAuthorizationSecurityKeyPublicKeyCredentialRegistration = /* @__PURE__ */ _bindClass(AuthenticationServices, "ASAuthorizationSecurityKeyPublicKeyCredentialRegistration");
+ var ASAuthorizationWebBrowserPublicKeyCredentialManager = /* @__PURE__ */ _bindClass(AuthenticationServices, "ASAuthorizationWebBrowserPublicKeyCredentialManager");
+@@ -540,6 +541,9 @@ function getCredentialInternal(rpid, challenge, nativeWindowHandle, origin, time
+   if (allowedCredentialIds.length > 0) {
+     const allowedCredentials = NSArrayFromObjects(allowedCredentialIds.map((id) => ASAuthorizationPlatformPublicKeyCredentialDescriptor.alloc().initWithCredentialID$(NSDataFromBuffer(id))));
+     platformKeyRequest.setAllowedCredentials$(allowedCredentials);
++    const securityKeyTransports = NSArrayFromObjects(["usb", "nfc", "ble"].map((transport) => NSStringFromString(transport)));
++    const allowedSecurityKeyCredentials = NSArrayFromObjects(allowedCredentialIds.map((id) => ASAuthorizationSecurityKeyPublicKeyCredentialDescriptor.alloc().initWithCredentialID$transports$(NSDataFromBuffer(id), securityKeyTransports)));
++    securityKeyRequest.setAllowedCredentials$(allowedSecurityKeyCredentials);
+   }
+   const delegate = createDelegate("ASAuthorizationControllerDelegate", {
+     authorizationController$didCompleteWithAuthorization$: (_, authorization) => {

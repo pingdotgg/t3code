@@ -131,6 +131,7 @@ overrides:
   app-builder-lib: 26.16.1
   electron-updater: 6.8.9
   expo-modules-core: 58.0.30
+  "@electron-webauthn/macos": 1.3.1
   # Keep jsdom's optional peer consistent so Vite+ has one test-runner instance.
   "@exodus/bytes>@noble/hashes": "1.8.0"
   # Earlier React Navigation declarations create a circular type alias in TypeScript 7.
@@ -278,6 +279,9 @@ patchedDependencies:
   # shell output while it runs, expose agent.resume() (the protocol's ResumeAction), and offer
   # background shells to the host so they can outlive the run.
   "@cursor/sdk@1.4.2": patches/@cursor__sdk@1.4.2.patch
+  # macOS: a passkey sign-in sends its allow list to security keys too, so non-discoverable
+  # security-key credentials can sign in.
+  "@electron-webauthn/macos@1.3.1": patches/@electron-webauthn__macos@1.3.1.patch
   # A failed Artifacts.cached effect hangs every later caller: https://github.com/alchemy-run/alchemy/issues/2981
   alchemy@2.0.0-beta.85: patches/alchemy@2.0.0-beta.85.patch
   # Android: a marker orient other than "auto" or a number (auto-start-reverse) no longer throws.
