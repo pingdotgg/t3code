@@ -20,7 +20,8 @@ import {
   useState,
   type Ref,
 } from "react";
-import { FlatList, Platform, Pressable, TextInput, View } from "react-native";
+import { Platform, Pressable, TextInput, View } from "react-native";
+import { LegendList } from "@legendapp/list/react-native";
 import { WebView } from "react-native-webview";
 import * as Clipboard from "expo-clipboard";
 
@@ -460,14 +461,17 @@ function PreviewStreamDocumentView({
             setSelectMenu((current) => (current?.id === selectMenu.id ? null : current))
           }
         >
-          <FlatList
+          {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- Sheet content; the sheet keeps its own header handling. */}
+          <LegendList
             data={selectMenu.options}
             // The page answers by option index.
             keyExtractor={(_, index) => String(index)}
+            extraData={selectMenu}
+            estimatedItemSize={48}
             className="flex-1"
             nestedScrollEnabled
             contentInsetAdjustmentBehavior="automatic"
-            contentContainerClassName="p-4"
+            contentContainerStyle={{ padding: 16 }}
             renderItem={({ item, index }) => (
               <ListChoiceRow
                 label={item.label}
