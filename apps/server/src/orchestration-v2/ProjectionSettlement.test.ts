@@ -238,10 +238,30 @@ it.effect("sql: a failed latest run blocks merge settlement until a successful f
       });
     });
     assert.isNull(yield* resolve);
-    yield* createRun(threadId, "queued", 2, now, true);
+    const queuedRunId = yield* createRun(threadId, "queued", 2, now, true);
     const [heldCandidate] = yield* store.getSettlementCandidates(threadId);
     assert.equal(heldCandidate?.latestRunId, failedRunId);
     assert.equal(heldCandidate?.status, "failed");
+    assert.isNull(yield* resolve);
+    const queuedRun = yield* store.getRun(threadId, queuedRunId);
+    assert.isDefined(queuedRun);
+    const cancelledAt = DateTime.subtract(now, { minutes: 1 });
+    yield* store.apply({
+      id: EventId.make("event:failed-after-merge:queued-cancelled"),
+      type: "run.updated",
+      threadId,
+      occurredAt: cancelledAt,
+      payload: {
+        ...queuedRun!,
+        status: "cancelled",
+        queueHeld: false,
+        requestedAt: DateTime.subtract(cancelledAt, { minutes: 1 }),
+        completedAt: cancelledAt,
+      },
+    });
+    const [cancelledCandidate] = yield* store.getSettlementCandidates(threadId);
+    assert.equal(cancelledCandidate?.latestRunId, failedRunId);
+    assert.equal(cancelledCandidate?.status, "failed");
     assert.isNull(yield* resolve);
     yield* createRun(threadId, "completed", 3, now);
     assert.deepEqual(yield* resolve, now);
