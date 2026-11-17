@@ -1,4 +1,8 @@
-import type { IssueRef } from "@t3tools/contracts";
+import {
+  IssueTrackerKind,
+  type IssueRef,
+  type SourceControlProviderKind,
+} from "@t3tools/contracts";
 
 import { sourceControlClients } from "./sourceControlClients.ts";
 import type { EnvironmentProject } from "./state/shell.ts";
@@ -7,7 +11,7 @@ type LinkProject = Pick<EnvironmentProject, "id" | "environmentId" | "repository
 
 /** The host and scope a project's git-host tracker is bound to, the way the server resolves it. */
 function projectIssueBinding(project: LinkProject): {
-  readonly tracker: string;
+  readonly tracker: SourceControlProviderKind;
   readonly host: string;
   readonly scope: string;
 } | null {
@@ -22,9 +26,10 @@ function projectIssueBinding(project: LinkProject): {
   };
 }
 
-function linkAuthority(url: string): string | null {
+function linkHost(url: string): { readonly hostname: string; readonly authority: string } | null {
   try {
-    return new URL(url).host.toLowerCase();
+    const { hostname, host } = new URL(url);
+    return { hostname: hostname.toLowerCase(), authority: host.toLowerCase() };
   } catch {
     return null;
   }
@@ -42,19 +47,28 @@ export function resolveIssueLinkTarget<Project extends LinkProject>(input: {
   readonly projects: ReadonlyArray<Project>;
   readonly preferredProjectId?: string | undefined;
 }): { readonly project: Project; readonly ref: IssueRef } | null {
-  const parsed = sourceControlClients.parseIssueUrl(input.url);
-  if (parsed === null) return null;
-  const { definition, link } = parsed;
-  // A link names its server's port; a binding does only when its remote or web URL did.
-  const authority = linkAuthority(input.url);
-  const onHost = input.projects.flatMap((project) => {
+  const bindings = input.projects.flatMap((project) => {
     const binding = projectIssueBinding(project);
-    return binding === null ||
-      binding.tracker !== definition.kind ||
-      (binding.host !== link.host && binding.host !== authority)
-      ? []
-      : [{ project, binding }];
+    return binding === null ? [] : [{ project, binding }];
   });
+  // A link names its server's port; a binding does only when its remote or web URL did.
+  const url = linkHost(input.url);
+  if (url === null) return null;
+  const { hostname, authority } = url;
+  // A self-hosted server can have any hostname, so a host a project is bound to names its tracker.
+  const parsed =
+    sourceControlClients.parseIssueUrl(input.url) ??
+    bindings
+      .filter(({ binding }) => binding.host === hostname || binding.host === authority)
+      .map(({ binding }) => sourceControlClients.parseIssueUrl(input.url, binding.tracker))
+      .find((candidate) => candidate !== null);
+  if (parsed == null) return null;
+  const { definition, link } = parsed;
+  const onHost = bindings.filter(
+    ({ binding }) =>
+      binding.tracker === definition.kind &&
+      (binding.host === link.host || binding.host === authority),
+  );
   const onAuthority = onHost.filter((candidate) => candidate.binding.host === authority);
   const bound = onAuthority.length > 0 ? onAuthority : onHost;
   const preferFirst = (candidates: typeof bound) =>
@@ -67,7 +81,7 @@ export function resolveIssueLinkTarget<Project extends LinkProject>(input: {
     project: lender.project,
     ref: {
       projectId: lender.project.id,
-      tracker: lender.binding.tracker as IssueRef["tracker"],
+      tracker: IssueTrackerKind.make(lender.binding.tracker),
       host: lender.binding.host,
       scope: own === undefined ? link.scope : lender.binding.scope,
       key: link.key,
