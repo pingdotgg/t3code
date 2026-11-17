@@ -42,6 +42,10 @@ vi.mock("./QuestionAttachments", () => ({ QuestionAttachments: () => null }));
 vi.mock("../files/FileMarkdownPreview", () => ({
   useMarkdownPreviewStyles: () => ({ nativeTextStyle: {} }),
 }));
+vi.mock("../settings/appearance/AppearancePreferencesProvider", () => ({
+  useAppearancePreferences: () => ({ mathRenderingEnabled: false, themeVariables: {} }),
+}));
+vi.mock("../../native/FormulaText", () => ({ FormulaText: () => null }));
 vi.mock("../../native/SelectableMarkdownText", () => ({
   SelectableMarkdownText: (props: { markdown: string; onLinkPress?: (href: string) => void }) => (
     <p>
