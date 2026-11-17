@@ -6908,9 +6908,28 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* harness.runtime.startTurn(turn(2, "claude-sonnet-6"));
         assert.deepEqual(harness.liveSelectionChanges[0], { model: "sonnet" });
         yield* harness.offerAndWait(
-          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000b02", result: "Two." }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000b02",
+            result: "Two.",
+            modelUsage: {
+              "global.anthropic.claude-sonnet-6": {
+                inputTokens: 1,
+                outputTokens: 1,
+                cacheReadInputTokens: 0,
+                cacheCreationInputTokens: 0,
+                webSearchRequests: 0,
+                costUSD: 0,
+                contextWindow: 200_000,
+                maxOutputTokens: 32_000,
+              },
+            },
+          }),
         );
         yield* Queue.take(harness.terminalReceipts);
+        assert.strictEqual(
+          harness.runtime.getModelContextWindow?.(turn(2, "claude-sonnet-6").modelSelection),
+          200_000,
+        );
 
         // Custom models named like an alias pin it, so a change of pin reopens Claude Code.
         yield* harness.runtime.startTurn(turn(3, "haiku"));
