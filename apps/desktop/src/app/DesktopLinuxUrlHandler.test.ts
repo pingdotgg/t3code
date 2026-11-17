@@ -252,6 +252,7 @@ describe("DesktopLinuxUrlHandler", () => {
           "Exec=/home/alice/Applications/T3-Code.AppImage %U",
         );
         assert.include(recorded.files[0]?.content, "MimeType=x-scheme-handler/t3code;");
+        assert.include(recorded.files[0]?.content, "NoDisplay=false");
         assert.include(recorded.files[0]?.content, "StartupWMClass=com.t3tools.T3Code");
         assert.deepEqual(recorded.commands, [
           {
