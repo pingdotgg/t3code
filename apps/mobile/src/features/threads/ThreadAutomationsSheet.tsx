@@ -160,6 +160,11 @@ function AutomationRow(props: {
                 ? ` · ${formatNextScheduledTaskRun(task.nextRunAt, props.now)}`
                 : ""}
         </Text>
+        {task.blockedByPolicy ? (
+          <Text className="text-xs text-foreground-muted" numberOfLines={2}>
+            {task.blockedByPolicy}
+          </Text>
+        ) : null}
         {task.lastRunError ? (
           <Text className="text-xs text-danger-foreground" numberOfLines={2}>
             Last run failed: {task.lastRunError}
