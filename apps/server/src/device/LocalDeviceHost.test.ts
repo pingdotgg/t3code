@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NodeNet from "node:net";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -16,6 +17,7 @@ import * as Stream from "effect/Stream";
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as CommandLine from "effect/process/CommandLine";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as NetService from "@t3tools/shared/Net";
 import * as ServerConfig from "../config.ts";
@@ -44,6 +46,11 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   avdOutput: ProcessRunner.ProcessRunOutput = processOutput(0),
   previousDaemon?: typeof LocalDeviceHost.__testing.AgentDeviceDaemonFile.Type,
   environment?: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = "darwin",
+  onSpawn?: (spawned: {
+    command: string;
+    args: ReadonlyArray<CommandLine.Word>;
+  }) => Effect.Effect<void>,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -61,6 +68,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   const stateDir = agentDeviceStateDir(path, path.join(baseDir, "userdata"));
   const daemonHealthy = yield* Ref.make(true);
   const runs: Array<ProcessRunner.ProcessRunInput> = [];
+  const spawns: Array<{ command: string; args: ReadonlyArray<CommandLine.Word> }> = [];
   for (const [name, version, entry] of [
     ["expo-device-hub", DEVICE_HUB_VERSION, "dist/server/cli.mjs"],
     ["agent-device", AGENT_DEVICE_VERSION, "bin/agent-device.mjs"],
@@ -79,51 +87,60 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
     Effect.provideService(HostProcess.Environment, environment ?? { HOME: baseDir, PATH: "" }),
     Effect.provideService(HostProcess.IsExecutable, false),
-    Effect.provideService(HostProcess.Platform, "darwin"),
+    Effect.provideService(HostProcess.Platform, platform),
     Effect.provideService(
       ChildProcessSpawner.ChildProcessSpawner,
-      ChildProcessSpawner.make((command) =>
-        hub.spawnFails
-          ? Effect.fail(
-              PlatformError.systemError({
-                _tag: "NotFound",
-                module: "ChildProcess",
-                method: "spawn",
-                description: "Hub entry missing",
-              }),
-            )
-          : Effect.addFinalizer(() => hub.cleanup).pipe(
-              Effect.tap(() =>
-                Effect.sync(() => {
-                  if (command._tag === "StandardCommand") hub.spawnedArgs.push(command.args);
-                  return hub.spawnedEnvironments.push(
-                    (
-                      command as unknown as {
-                        readonly options: { readonly env?: NodeJS.ProcessEnv };
-                      }
-                    ).options.env,
-                  );
+      ChildProcessSpawner.make((command) => {
+        const summary =
+          command._tag === "StandardCommand"
+            ? { command: command.command, args: command.args }
+            : null;
+        if (summary) spawns.push(summary);
+        const hook = summary ? onSpawn?.(summary) : undefined;
+        return Effect.andThen(
+          hook ?? Effect.void,
+          hub.spawnFails
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "ChildProcess",
+                  method: "spawn",
+                  description: "Hub entry missing",
                 }),
+              )
+            : Effect.addFinalizer(() => hub.cleanup).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    if (command._tag === "StandardCommand") hub.spawnedArgs.push(command.args);
+                    return hub.spawnedEnvironments.push(
+                      (
+                        command as unknown as {
+                          readonly options: { readonly env?: NodeJS.ProcessEnv };
+                        }
+                      ).options.env,
+                    );
+                  }),
+                ),
+                Effect.as(
+                  ChildProcessSpawner.makeHandle({
+                    pid: ChildProcessSpawner.ProcessId(123),
+                    stdout: Stream.empty,
+                    stderr: Stream.empty,
+                    all: Stream.encodeText(
+                      Stream.make("  Local:   http://localhost:1/?token=hub-token\n"),
+                    ),
+                    exitCode: Effect.never,
+                    isRunning: Effect.sync(() => hub.running),
+                    kill: () => Effect.void,
+                    stdin: Sink.drain,
+                    getInputFd: () => Sink.drain,
+                    getOutputFd: () => Stream.empty,
+                    unref: Effect.succeed(Effect.void),
+                  }),
+                ),
               ),
-              Effect.as(
-                ChildProcessSpawner.makeHandle({
-                  pid: ChildProcessSpawner.ProcessId(123),
-                  stdout: Stream.empty,
-                  stderr: Stream.empty,
-                  all: Stream.encodeText(
-                    Stream.make("  Local:   http://localhost:1/?token=hub-token\n"),
-                  ),
-                  exitCode: Effect.never,
-                  isRunning: Effect.sync(() => hub.running),
-                  kill: () => Effect.void,
-                  stdin: Sink.drain,
-                  getInputFd: () => Sink.drain,
-                  getOutputFd: () => Stream.empty,
-                  unref: Effect.succeed(Effect.void),
-                }),
-              ),
-            ),
-      ),
+        );
+      }),
     ),
     Effect.provideService(ProcessRunner.ProcessRunner, {
       run: (input) => {
@@ -158,7 +175,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     ),
   );
   yield* host.ensureReady(() => Effect.void);
-  return { host, fs, baseDir, stateDir, hub, daemonHealthy, daemonStopRequested, runs };
+  return { host, fs, baseDir, stateDir, hub, daemonHealthy, daemonStopRequested, runs, spawns };
 });
 
 describe("AgentDevice startup", () => {
@@ -591,6 +608,93 @@ describe("AgentDevice startup", () => {
       yield* Deferred.succeed(hubExited, undefined);
       yield* Fiber.join(stopping);
       expect(yield* fs.exists(`${stateDir}/hub.json`)).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
+// regression: #37867 adb's connect-then-fork probe hangs under WSL mirrored networking
+describe("adb server prewarm", () => {
+  const withSdk = Effect.fn("withSdk")(function* (
+    platform: NodeJS.Platform,
+    onSpawn?: (spawned: {
+      command: string;
+      args: ReadonlyArray<CommandLine.Word>;
+    }) => Effect.Effect<void>,
+  ) {
+    const fs = yield* FileSystem.FileSystem;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-adb-prewarm-" });
+    for (const tool of ["platform-tools/adb", "emulator/emulator"]) {
+      yield* fs.makeDirectory(`${home}/Android/Sdk/${tool.split("/")[0]}`, { recursive: true });
+      yield* fs.writeFileString(`${home}/Android/Sdk/${tool}`, "");
+    }
+    return {
+      home,
+      ...(yield* agentFixture(
+        () => Effect.die("Starting the hub must not start the agent daemon"),
+        processOutput(0),
+        undefined,
+        { HOME: home, PATH: "" },
+        platform,
+        onSpawn,
+      )),
+    };
+  });
+
+  // The test clock never advances `Effect.sleep`, so the fixture's spawned "adb server"
+  // really listens on 5037: the prewarm's poll then sees the port taken on its first
+  // round instead of waiting for its deadline.
+  const listenWhenSpawned = Effect.fn("listenWhenSpawned")(function* () {
+    let server: NodeNet.Server | null = null;
+    return {
+      onSpawn: (spawned: { command: string; args: ReadonlyArray<CommandLine.Word> }) =>
+        Effect.sync(() => {
+          if (spawned.args.includes("nodaemon")) {
+            server = NodeNet.createServer().listen(5037, "127.0.0.1");
+          }
+        }),
+      closeListener: Effect.sync(() => server?.close()),
+    };
+  });
+
+  it.effect("starts the adb server before the hub on Linux", () =>
+    Effect.gen(function* () {
+      const { home, closeListener, host, spawns } = yield* listenWhenSpawned().pipe(
+        Effect.flatMap(({ onSpawn, closeListener }) =>
+          Effect.map(withSdk("linux", onSpawn), (fixture) => ({ ...fixture, closeListener })),
+        ),
+      );
+      yield* Effect.addFinalizer(() => closeListener);
+      const path = yield* Path.Path;
+      expect(spawns.length).toBeGreaterThan(1);
+      expect(spawns[0]).toMatchObject({
+        command: path.join(home, "Android", "Sdk", "platform-tools", "adb"),
+        args: ["nodaemon", "server"],
+      });
+      expect(yield* host.current).not.toBeNull();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("leaves the port alone when something already listens on it", () =>
+    Effect.gen(function* () {
+      yield* Effect.acquireRelease(
+        Effect.callback<NodeNet.Server>((resume) => {
+          const server = NodeNet.createServer();
+          server.once("error", (cause) => resume(Effect.die(cause)));
+          server.listen(5037, "127.0.0.1", () => resume(Effect.succeed(server)));
+        }),
+        (server) => Effect.sync(() => server.close()),
+      );
+      const { spawns } = yield* withSdk("linux");
+      expect(spawns.some((spawn) => spawn.args.includes("nodaemon"))).toBe(false);
+      expect(spawns.length).toBeGreaterThan(0);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not run on macOS", () =>
+    Effect.gen(function* () {
+      const { spawns } = yield* withSdk("darwin");
+      expect(spawns.some((spawn) => spawn.args.includes("nodaemon"))).toBe(false);
+      expect(spawns.length).toBeGreaterThan(0);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
