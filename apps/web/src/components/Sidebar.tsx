@@ -918,7 +918,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   } = useSidebarLookups();
   const delegatedUnderParent = useDelegatedUnderParent();
   const router = useRouter();
-  const { isMobile, open: sidebarOpen, setOpen: setSidebarOpen, setOpenMobile } = useSidebar();
+  const {
+    isMobile,
+    open: sidebarOpen,
+    openMobile,
+    setOpen: setSidebarOpen,
+    setOpenMobile,
+  } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
@@ -2974,8 +2980,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     event.preventDefault();
     event.stopPropagation();
     if (event.repeat) return;
-    const collapsed = !isMobile && !sidebarOpen;
-    if (collapsed) setSidebarOpen(true);
+    if (isMobile) {
+      if (!openMobile) setOpenMobile(true);
+    } else if (!sidebarOpen) {
+      setSidebarOpen(true);
+    }
     if (projectScopeMenuState.open) {
       setProjectScopeMenuOpen(false);
       return;
