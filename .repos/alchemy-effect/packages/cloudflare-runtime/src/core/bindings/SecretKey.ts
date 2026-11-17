@@ -63,22 +63,15 @@ const toPem = (base64: string, label: string): string => {
   return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----\n`;
 };
 
-const invalid = (
-  subtag: string,
-  message: string,
-  props: SecretKeyProps,
-  hint?: string,
-) =>
-  new ConfigError({
+const invalid = (subtag: string, message: string, props: SecretKeyProps, hint?: string) =>
+  ConfigError.make({
     subtag,
     message,
     ...(hint !== undefined ? { hint } : {}),
     detail: { binding: props.binding, format: props.format },
   });
 
-const keyMaterial = (
-  props: SecretKeyProps,
-): Effect.Effect<Worker_Binding_CryptoKey, ConfigError> =>
+const keyMaterial = (props: SecretKeyProps): Effect.Effect<Worker_Binding_CryptoKey, ConfigError> =>
   Effect.gen(function* () {
     switch (props.format) {
       case "raw":

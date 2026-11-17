@@ -23,11 +23,7 @@ const MIN_KV_TTL_SECONDS = 60;
 
 interface KvNamespaceLike {
   get(key: string): Promise<string | null>;
-  put(
-    key: string,
-    value: string,
-    options?: { expirationTtl?: number },
-  ): Promise<void>;
+  put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
   delete(key: string): Promise<void>;
 }
 
@@ -47,11 +43,7 @@ const kvStore = (ns: KvNamespaceLike): DataCacheStore => ({
       ttlMs !== undefined && ttlMs > 0
         ? Math.max(MIN_KV_TTL_SECONDS, Math.ceil(ttlMs / 1000))
         : undefined;
-    await ns.put(
-      key,
-      value,
-      expirationTtl !== undefined ? { expirationTtl } : undefined,
-    );
+    await ns.put(key, value, expirationTtl !== undefined ? { expirationTtl } : undefined);
   },
   async delete(key) {
     await ns.delete(key);
@@ -68,9 +60,7 @@ const createKvDataCacheAdapter = ({
   const binding = options?.binding ?? DEFAULT_BINDING;
   const ns = env?.[binding];
   if (!isKvNamespace(ns)) {
-    throw new Error(
-      `[vinext] The KV data cache adapter requires Worker binding \`${binding}\`.`,
-    );
+    throw new Error(`[vinext] The KV data cache adapter requires Worker binding \`${binding}\`.`);
   }
   return makeDataCacheHandler(kvStore(ns), options);
 };

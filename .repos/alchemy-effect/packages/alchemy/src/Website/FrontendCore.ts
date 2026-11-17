@@ -4,7 +4,7 @@ import { FrameworkServerError } from "./Server.ts";
 /**
  * Loads `@alchemy.run/frontend-frameworks/core` when a website is built or
  * served. The package is an optional peer dependency, so provider entrypoints
- * that re-export their `Website` namespace (e.g. `alchemy/Prisma`) must not
+ * that re-export their `Website` namespace (e.g. `@alchemy.run/prisma`) must not
  * import it statically — that would break every consumer that never deploys a
  * website and so never installed it.
  */

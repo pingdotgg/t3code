@@ -8,5 +8,9 @@
     "moduleResolution": "Bundler",
     "target": "ESNext"
   },
-  "references": [{ "path": "../../packages/alchemy/tsconfig.json" }]
+  "references": [
+    { "path": "../../packages/alchemy/tsconfig.json" },
+    { "path": "../../packages/cloudflare/tsconfig.json" },
+    { "path": "../../packages/drizzle/tsconfig.json" }
+  ]
 }

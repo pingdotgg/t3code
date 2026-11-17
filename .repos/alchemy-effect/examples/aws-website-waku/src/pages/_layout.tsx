@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import { Link } from "waku";
-
 // Global stylesheet — Tailwind CSS v4, compiled by the @tailwindcss/vite
 // plugin registered in waku.config.ts.
 import "../styles.css";

@@ -1,0 +1,396 @@
+---
+/**
+ * `<BarrelFigure />` — what one root import of `effect` costs in Node.
+ * Tiles: the 138 modules effect 4.0.0 re-exports from `dist/index.js`.
+ * 42 of them are reachable from `effect/Effect` + `effect/Predicate`
+ * (static import graph of the same dist). Heap (3,346 KB vs 9 KB) and
+ * import time (36 ms) are the measured costs of `core/src/error-category.ts`;
+ * each tile's share of them is scaled by its file size on disk.
+ *
+ * One instance per page: element ids are prefixed `br-`.
+ */
+---
+
+<figure class="br not-content" id="br" aria-label="Modules loaded by a root import of effect, then by direct imports">
+  <div class="br-body">
+    <div class="br-side">
+      <pre class="br-code" id="br-code"></pre>
+      <div class="br-stat">
+        <span class="br-k">Heap this line adds</span>
+        <span class="br-v" id="br-heap">0 KB</span>
+      </div>
+      <div class="br-track"><div class="br-fill" id="br-fill"></div></div>
+      <div class="br-stats2">
+        <div class="br-stat"><span class="br-k">Modules loaded</span><span class="br-v" id="br-n">0</span></div>
+        <div class="br-stat"><span class="br-k">Import time</span><span class="br-v" id="br-ms">0 ms</span></div>
+      </div>
+    </div>
+    <div class="br-right">
+      <div class="br-hd"><b>effect</b> · 138 modules</div>
+      <div class="br-grid" id="br-grid"></div>
+      <div class="br-foot">
+        <span class="br-legend"><i class="br-sw need"></i>needed <i class="br-sw extra"></i>not needed</span>
+        <button type="button" id="br-replay">↻ Replay</button>
+      </div>
+    </div>
+  </div>
+</figure>
+
+<style is:global>
+  .br {
+    --br-fg: var(--alc-fg-1);
+    --br-mut: var(--alc-fg-4);
+    --br-bg: var(--alc-bg-elev-1);
+    --br-panel: var(--alc-bg-elev-2);
+    --br-bd: var(--alc-hairline-2);
+    --br-bd2: var(--alc-hairline-3);
+    --br-need: var(--alc-info);
+    --br-extra: var(--alc-terracotta);
+    margin: 2rem 0;
+    overflow: hidden;
+    font: 14px/1.5 var(--alc-font-sans);
+    color: var(--br-fg);
+    background: var(--br-bg);
+    border: 1px solid var(--br-bd);
+    border-radius: 12px;
+  }
+  .br * {
+    box-sizing: border-box;
+  }
+  .br code {
+    font-family: var(--alc-font-mono);
+    font-size: 0.9em;
+  }
+  .br button {
+    all: unset;
+    cursor: pointer;
+    padding: 4px 11px;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    color: var(--br-fg);
+    background: var(--br-bg);
+    border: 1px solid var(--br-bd2);
+    border-radius: 7px;
+  }
+  .br button:focus-visible {
+    outline: 2px solid var(--alc-accent);
+  }
+  .br-body {
+    display: grid;
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr);
+    gap: 14px;
+    padding: 12px;
+  }
+  .br-side {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+  .br-code {
+    margin: 0 0 6px;
+    min-height: calc(4 * 17px + 18px);
+    padding: 8px 10px;
+    overflow-x: auto;
+    font: 11.5px/17px var(--alc-font-mono);
+    color: var(--br-fg);
+    white-space: pre;
+    background: var(--br-panel);
+    border: 1px solid var(--br-bd);
+    border-radius: 8px;
+  }
+  .br-code .old {
+    color: var(--br-extra);
+    text-decoration: line-through;
+  }
+  .br-code .new {
+    color: var(--alc-accent-text);
+    animation: brtype 0.5s steps(14) both;
+    display: inline-block;
+    overflow: hidden;
+    vertical-align: bottom;
+  }
+  @keyframes brtype {
+    from {
+      max-width: 0;
+    }
+    to {
+      max-width: 20ch;
+    }
+  }
+  .br-code .s {
+    color: var(--alc-accent-text);
+  }
+  .br-code .k {
+    color: var(--br-mut);
+  }
+  .br-stat {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .br-k {
+    font-size: 11.5px;
+    color: var(--br-mut);
+  }
+  .br-v {
+    font: 700 20px/1.2 var(--alc-font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .br-track {
+    position: relative;
+    height: 14px;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--br-mut) 14%, transparent);
+    border-radius: 3px;
+  }
+  .br-fill {
+    transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: var(--pct, 0%);
+    min-width: var(--min, 0);
+    background: var(--br-extra);
+    border-radius: 3px;
+  }
+  .br-fill.small {
+    background: var(--br-need);
+  }
+  .br-stats2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 6px;
+  }
+  .br-right {
+    min-width: 0;
+  }
+  .br-hd {
+    margin-bottom: 6px;
+    font-size: 11.5px;
+    color: var(--br-mut);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .br-hd b {
+    color: var(--br-fg);
+  }
+  .br-grid {
+    display: grid;
+    grid-template-columns: repeat(14, minmax(0, 1fr));
+    gap: 3px;
+  }
+  .br-t {
+    aspect-ratio: 1;
+    background: color-mix(in srgb, var(--br-mut) 13%, transparent);
+    border: 1px solid transparent;
+    border-radius: 3px;
+    transition:
+      background 0.45s,
+      border-color 0.45s,
+      opacity 0.45s;
+  }
+  .br-t.need {
+    background: color-mix(in srgb, var(--br-need) 55%, transparent);
+  }
+  .br-t.extra {
+    background: var(--br-extra);
+  }
+  .br-t.pop {
+    animation: brpop 0.45s ease;
+  }
+  @keyframes brpop {
+    from {
+      transform: scale(1.5);
+      filter: brightness(1.5);
+    }
+  }
+  .br-t.gone {
+    background: transparent;
+    border: 1px dashed var(--br-bd2);
+  }
+  .br-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 8px;
+  }
+  .br-legend {
+    font-size: 11.5px;
+    color: var(--br-mut);
+  }
+  .br-legend .br-sw + .br-sw,
+  .br-legend .extra {
+    margin-left: 10px;
+  }
+  .br-foot button {
+    padding: 3px 10px;
+    font-size: 12px;
+  }
+  .br-sw {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    margin-right: 6px;
+    vertical-align: -1px;
+    border-radius: 2px;
+  }
+  .br-sw.need {
+    background: color-mix(in srgb, var(--br-need) 55%, transparent);
+  }
+  .br-sw.extra {
+    background: var(--br-extra);
+  }
+  @media (max-width: 620px) {
+    .br-body {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .br-grid {
+      grid-template-columns: repeat(23, minmax(0, 1fr));
+      gap: 2px;
+    }
+    .br-v {
+      font-size: 17px;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .br * {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+</style>
+
+<script>
+  // Measured: error-category.ts cost 3,346 KB heap and 36 ms with the root
+  // import, 9 KB with effect/Effect + effect/Predicate.
+  const ROOT_KB = 3346;
+  const DIRECT_KB = 9;
+  const ROOT_MS = 36;
+
+  // The 138 modules effect 4.0.0 re-exports from dist/index.js, in index order.
+  const ALL =
+    "Arbitrary Array BigDecimal BigInt Boolean Brand ByteSize Cache Cause Channel ChannelSchema Chunk Clock Combiner Config ConfigProvider Console Context Cron Crypto Data DateTime Deferred Differ Duration Effect Effectable Equal Equivalence ErrorReporter ExecutionPlan Exit Fiber FiberHandle FiberMap FiberSet FileSystem Filter Formatter Function Graph Hash HashMap HashRing HashSet HKT Inspectable Iterable JsonPatch JsonPointer JsonSchema Latch Layer LayerMap LayerRef Logger LogLevel ManagedRuntime Match Metric MutableHashMap MutableHashSet MutableList MutableRef Newtype NonEmptyIterable Number Optic Option Order Ordering PartitionedSemaphore Path Pipeable PlatformError Pool Predicate PrimaryKey PubSub Pull Queue Random RcMap RcRef Record Redactable Redacted Reducer Ref References RegExp Request RequestResolver Resource Result Runtime Schedule Scheduler Schema SchemaAST SchemaGetter SchemaIssue SchemaParser SchemaRepresentation SchemaTransformation Scope ScopedCache ScopedRef Semaphore Sink StandardSchema Stdio Stream String Struct SubscriptionRef Symbol SynchronizedRef Take Terminal Tracer Trie Tuple TxChunk TxDeferred TxHashMap TxHashSet TxPriorityQueue TxPubSub TxQueue TxReentrantLock TxRef TxSemaphore TxSubscriptionRef Types UndefinedOr Unify Utils".split(
+      " ",
+    );
+
+  // Reachable from effect/Effect + effect/Predicate.
+  const NEED = new Set(
+    "Array Cause Clock Combiner Context Cron Data Deferred Duration Effect Effectable Equal Equivalence ExecutionPlan Exit Filter Formatter Function Hash Inspectable Iterable Layer Metric Number Option Order Pipeable Predicate Pull Record Redactable Reducer References Request Result Schedule Scheduler Scope String Tracer Tuple Utils".split(
+      " ",
+    ),
+  );
+
+  // The other 96, in Node's evaluation order, with the KB on disk each one
+  // brings in (its file plus internal files first evaluated under it).
+  const EXTRA: [string, number][] = [["Random",15.7],["BigDecimal",70.5],["BigInt",22.7],["ByteSize",15.5],["Chunk",65.9],["DateTime",60.6],["HashMap",53.9],["HashSet",14],["Redacted",24.5],["SchemaIssue",47.4],["SchemaGetter",60],["SchemaTransformation",50.3],["SchemaAST",102.4],["SchemaParser",47.2],["JsonPointer",7.1],["JsonSchema",46],["RegExp",11.4],["JsonPatch",49.6],["Struct",40.7],["Optic",26],["Schema",356],["Arbitrary",135.9],["Boolean",10.2],["Brand",4.5],["MutableHashMap",17.5],["Cache",35.5],["Fiber",11.1],["Latch",6.9],["MutableRef",21.1],["MutableList",16.2],["PubSub",72.2],["Queue",51.8],["Semaphore",11.1],["Take",0.6],["Channel",144.7],["ChannelSchema",4.8],["PlatformError",5.7],["Sink",42.2],["RcMap",16.1],["RcRef",7.7],["Stream",239.2],["FileSystem",12.6],["Path",20.7],["ConfigProvider",33.5],["LogLevel",8.3],["Config",37.7],["Console",23.2],["Crypto",7.3],["Differ",0.3],["ErrorReporter",11.5],["FiberHandle",18.8],["FiberMap",24.2],["FiberSet",15.7],["Graph",215.3],["PrimaryKey",2.5],["HashRing",10.7],["HKT",0],["LayerMap",7.3],["LayerRef",5.7],["Logger",29.4],["ManagedRuntime",5.8],["Match",53.6],["MutableHashSet",9.3],["Newtype",5.4],["NonEmptyIterable",1.5],["Ordering",3],["PartitionedSemaphore",12.7],["Pool",26],["Ref",17.1],["UndefinedOr",66.3],["RequestResolver",87],["SynchronizedRef",16.8],["ScopedRef",5],["Resource",4],["Runtime",9.5],["SchemaRepresentation",137.3],["ScopedCache",21.5],["StandardSchema",0.2],["Stdio",3],["SubscriptionRef",23.7],["Symbol",0.8],["Terminal",2.4],["Trie",31],["TxRef",5.9],["TxChunk",20.4],["TxDeferred",7.3],["TxHashMap",49.3],["TxHashSet",20.7],["TxPriorityQueue",13.7],["TxQueue",37.7],["TxPubSub",19.3],["TxReentrantLock",17],["TxSemaphore",19],["TxSubscriptionRef",12.7],["Types",0.4],["Unify",1.9]];
+  const DISK = EXTRA.reduce((a, [, b]) => a + b, 0);
+
+  const CODE = {
+    root: `<span class="k">import</span> { Effect, Predicate }\n  <span class="k">from</span> <span class="s">"effect"</span>`,
+    fixing: `<span class="k">import</span> { Effect, Predicate }\n  <span class="k">from</span> <span class="old">"effect"</span>`,
+    direct: `<span class="k">import</span> * as Effect\n  <span class="k">from</span> <span class="new">"effect/Effect"</span>\n<span class="k">import</span> * as Predicate\n  <span class="k">from</span> <span class="new">"effect/Predicate"</span>`,
+  };
+
+  const root = document.getElementById("br");
+  if (root) {
+    const $ = (id: string) => document.getElementById(`br-${id}`)!;
+    const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const fmt = (kb: number) => (kb >= 1000 ? `${(kb / 1000).toFixed(1)} MB` : `${Math.round(kb)} KB`);
+
+    $("grid").innerHTML = ALL.map((n) => `<i class="br-t" data-n="${n}" title="${n}"></i>`).join("");
+    const tile = new Map(
+      [...$("grid").children].map((el) => [(el as HTMLElement).dataset.n!, el as HTMLElement]),
+    );
+
+    let run = 0;
+    const wait = (ms: number) => new Promise((r) => setTimeout(r, reduced() ? 0 : ms));
+
+    function meters(kb: number, ms: string, n: number) {
+      $("heap").textContent = fmt(kb);
+      const fill = $("fill");
+      fill.classList.toggle("small", kb < 100);
+      fill.style.setProperty("--pct", `${(100 * kb) / ROOT_KB}%`);
+      fill.style.setProperty("--min", kb < 100 ? "3px" : "0");
+      $("ms").textContent = ms;
+      $("n").textContent = String(n);
+    }
+
+    /** Root import loads everything; then the line is fixed and the extra modules drop out. */
+    async function play() {
+      const me = ++run;
+      $("code").innerHTML = CODE.root;
+      for (const [n, el] of tile) el.className = `br-t${NEED.has(n) ? " need" : ""}`;
+      $("fill").style.transition = "none";
+      let kb = DIRECT_KB;
+      let disk = 0;
+      meters(kb, "0 ms", NEED.size);
+      await wait(30);
+      $("fill").style.transition = "";
+      await wait(500);
+      if (me !== run) return;
+
+      // Fill at a steady rate over a fixed time. Tiles light up as the
+      // bar passes their share of the bytes, so big modules light later.
+      $("fill").style.transition = "none";
+      const DURATION = reduced() ? 0 : 2200;
+      let lit = 0;
+      await new Promise<void>((done) => {
+        const t0 = performance.now();
+        const frame = (now: number) => {
+          if (me !== run) return done();
+          const p = DURATION ? Math.min(1, (now - t0) / DURATION) : 1;
+          const target = p * DISK;
+          while (lit < EXTRA.length && disk + EXTRA[lit]![1] <= target + 1e-9) {
+            const [n, b] = EXTRA[lit]!;
+            disk += b;
+            const el = tile.get(n)!;
+            el.classList.add("extra");
+            if (DURATION) el.classList.add("pop");
+            lit++;
+          }
+          kb = DIRECT_KB + (ROOT_KB - DIRECT_KB) * p;
+          meters(kb, `${Math.round(ROOT_MS * p)} ms`, NEED.size + lit);
+          if (p < 1) requestAnimationFrame(frame);
+          else done();
+        };
+        requestAnimationFrame(frame);
+      });
+      if (me !== run) return;
+      $("fill").style.transition = "";
+      meters(ROOT_KB, `${ROOT_MS} ms`, ALL.length);
+
+      // The fix.
+      await wait(1800);
+      if (me !== run) return;
+      $("code").innerHTML = CODE.fixing;
+      await wait(700);
+      if (me !== run) return;
+      $("code").innerHTML = CODE.direct;
+      await wait(500);
+      if (me !== run) return;
+      for (const [n] of EXTRA) tile.get(n)!.className = "br-t gone";
+      meters(DIRECT_KB, "—", NEED.size);
+    }
+
+    $("replay").onclick = () => void play();
+
+    // Start idle; play once the figure scrolls into view.
+    $("code").innerHTML = CODE.root;
+    meters(0, "0 ms", 0);
+    const io = new IntersectionObserver(
+      (es) => {
+        if (es.some((e) => e.isIntersecting)) {
+          io.disconnect();
+          void play();
+        }
+      },
+      { threshold: 0.4 },
+    );
+    io.observe(root);
+  }
+</script>

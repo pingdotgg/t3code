@@ -3,6 +3,8 @@
 // two ends of that worker's protocol: typed calls by method name, a key that lets a newer call replace a queued one
 // (as the markdown worker's queue does), transferable payloads, and a worker that fails every pending call when it dies.
 
+import * as Schema from "effect/Schema";
+
 /** What one method takes and returns. */
 export type Method<Input, Output> = { readonly input: Input; readonly output: Output };
 
@@ -43,10 +45,14 @@ export class Transfer<T> {
 }
 
 /** A call that a newer call with the same key replaced before it ran. */
-export class SupersededError extends Error {}
+export class SupersededError extends Schema.TaggedError<SupersededError>()("SupersededError", {
+  message: Schema.String,
+}) {}
 
 /** A call made after the worker failed or was closed, or pending when that happened. */
-class WorkerClosedError extends Error {}
+class WorkerClosedError extends Schema.TaggedError<WorkerClosedError>()("WorkerClosedError", {
+  message: Schema.String,
+}) {}
 
 type CallOptions = {
   /** A newer call with the same key replaces this one while it waits to run. */
@@ -93,10 +99,10 @@ export function createWorkerClient<M extends Methods>(worker: Worker) {
   });
 
   worker.addEventListener("error", (event) =>
-    fail(new WorkerClosedError(event.message || "The Office engine stopped")),
+    fail(new WorkerClosedError({ message: event.message || "The Office engine stopped" })),
   );
   worker.addEventListener("messageerror", () =>
-    fail(new WorkerClosedError("The Office engine sent an unreadable reply")),
+    fail(new WorkerClosedError({ message: "The Office engine sent an unreadable reply" })),
   );
 
   return {
@@ -108,7 +114,7 @@ export function createWorkerClient<M extends Methods>(worker: Worker) {
       if (state.failure) return Promise.reject(state.failure);
 
       if (options.signal?.aborted)
-        return Promise.reject(new WorkerClosedError("The call was aborted"));
+        return Promise.reject(new WorkerClosedError({ message: "The call was aborted" }));
 
       const id = ++state.next;
 
@@ -116,16 +122,16 @@ export function createWorkerClient<M extends Methods>(worker: Worker) {
         const timeout = setTimeout(
           () =>
             fail(
-              new WorkerClosedError(
-                "This document took too long to preview. Open it in another app.",
-              ),
+              new WorkerClosedError({
+                message: "This document took too long to preview. Open it in another app.",
+              }),
             ),
           30_000,
         );
         const abort = () => {
           clearTimeout(timeout);
           pending.delete(id);
-          reject(new WorkerClosedError("The call was aborted"));
+          reject(new WorkerClosedError({ message: "The call was aborted" }));
           worker.postMessage({ cancel: id } satisfies Cancel, []);
         };
 
@@ -138,7 +144,7 @@ export function createWorkerClient<M extends Methods>(worker: Worker) {
             if (!response.ok)
               return reject(
                 response.superseded
-                  ? new SupersededError(response.message)
+                  ? new SupersededError({ message: response.message })
                   : new Error(response.message),
               );
 
@@ -158,7 +164,7 @@ export function createWorkerClient<M extends Methods>(worker: Worker) {
     },
     /** Stops the worker, which frees its engine's memory, and fails every pending call. */
     close() {
-      fail(new WorkerClosedError("The Office engine was closed"));
+      fail(new WorkerClosedError({ message: "The Office engine was closed" }));
     },
   };
 }

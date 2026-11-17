@@ -21,6 +21,7 @@ import {
   pdfPageScrollTop,
   pdfPageText,
   pdfPageWidth,
+  pdfRestoredScrollTop,
   PDF_MAX_ZOOM,
   PDF_MIN_ZOOM,
   stepPdfZoom,
@@ -253,15 +254,8 @@ export default function PdfViewer(props: {
   const restoreView = useEffectEvent(() => {
     const node = scroll.current;
     if (!pdf || !node) return;
-    const page = Math.min(initialPage, pdf.numPages - 1);
     node.scrollTo({
-      top:
-        offsets[page]! -
-        16 +
-        Math.min(
-          initialView.offset * (savedPosition ? width / savedPosition.width : 1),
-          Math.max(0, width * ratios[page]! - 1),
-        ),
+      top: pdfRestoredScrollTop(ratios, width, initialView, savedPosition?.width),
       left: initialView.left,
     });
     setScrollTop(node.scrollTop);
@@ -295,10 +289,11 @@ export default function PdfViewer(props: {
     }
     saveView(node, anchor !== null);
   });
+  const firstMatch = matches[0];
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Scroll to the first asynchronous search result after its measured page offsets have committed.
   useLayoutEffect(() => {
-    if (matches.length) jumpToPage(matches[0]!);
-  }, [matches]);
+    if (firstMatch !== undefined) jumpToPage(firstMatch);
+  }, [firstMatch]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Debounce pdf.js text extraction and cancel obsolete searches when the query or document changes.
   useEffect(() => {
     if (!pdf || !query.trim()) {
@@ -317,18 +312,23 @@ export default function PdfViewer(props: {
         const sizes: number[] = [];
         let size = 0;
         for (let index = 0; index < pdf.numPages; index++) {
-          if (cancelled) return;
           const page = await pdf.getPage(index + 1);
           const pageSize = page.getViewport({ scale: 1 });
           sizes.push(pageSize.height / pageSize.width);
           const content = await page.getTextContent();
+          if (cancelled) return;
           const text = pdfPageText(content.items);
           size += text.length;
           if (size > MAX_FIND_TEXT)
             throw new Error(
               "This PDF has too much text to search. Save it to search in another app.",
             );
-          if (pdfFindIncludes(text, query)) found.push(index);
+          if (!pdfFindIncludes(text, query)) continue;
+          found.push(index);
+          if (found.length > 1) continue;
+          // Pages up to the first hit are measured, so its jump lands before the scan finishes.
+          setRatios((old) => [...sizes, ...old.slice(sizes.length)]);
+          setMatches([index]);
         }
         if (cancelled) return;
         setRatios(sizes);
@@ -351,7 +351,7 @@ export default function PdfViewer(props: {
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-1 border-b border-border/60 px-2 py-1 text-xs">
         <span className="mr-auto px-1 tabular-nums" aria-live="polite">
-          {pdf ? `${current + 1} / ${pdf.numPages} pages` : "PDF"}
+          {pdf ? `${current + 1} / ${pdf.numPages} page${pdf.numPages === 1 ? "" : "s"}` : "PDF"}
         </span>
         <FileSurfaceAction
           label="Previous page"

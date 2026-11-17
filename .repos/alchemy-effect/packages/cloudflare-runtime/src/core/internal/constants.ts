@@ -52,7 +52,5 @@ export const withDefaultFlags = (
   return [...defaults];
 };
 
-export const defaultDurableObjectUniqueKey = (
-  scriptName: string,
-  className: string,
-) => `${encodeURIComponent(scriptName)}-${encodeURIComponent(className)}`;
+export const defaultDurableObjectUniqueKey = (scriptName: string, className: string) =>
+  `${encodeURIComponent(scriptName)}-${encodeURIComponent(className)}`;

@@ -1,0 +1,95 @@
+---
+import { type BackfillChart, backfillCharts } from "./backfillCharts.ts";
+import { renderLineChart } from "./lineChart.ts";
+
+/**
+ * `<BackfillChart chart="timeByWidth" />` — one of the backfill scaling charts
+ * on the History at scale page, rendered inline so it follows the site theme.
+ */
+interface Props {
+  chart: BackfillChart;
+}
+
+const svg = renderLineChart(backfillCharts[Astro.props.chart]);
+---
+
+<figure class="backfill-chart not-content" set:html={svg} />
+
+<style is:global>
+  .backfill-chart {
+    margin: 1.5rem 0;
+    --lc-s1: #2a78d6;
+    --lc-s2: #eb6834;
+    --lc-s3: #1baf7a;
+  }
+  :root[data-theme="dark"] .backfill-chart {
+    --lc-s1: #3987e5;
+    --lc-s2: #d95926;
+    --lc-s3: #199e70;
+  }
+  .backfill-chart .lc {
+    display: block;
+    width: 100%;
+    max-width: 640px;
+    height: auto;
+    font-family: var(--alc-font-sans);
+  }
+  .backfill-chart .lc-surface {
+    fill: var(--alc-bg-elev-1);
+    stroke: var(--alc-hairline-2);
+  }
+  .backfill-chart .lc-text {
+    fill: var(--alc-fg-1);
+  }
+  .backfill-chart .lc-muted {
+    fill: var(--alc-fg-3);
+  }
+  .backfill-chart .lc-title {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .backfill-chart .lc-small {
+    font-size: 11px;
+  }
+  .backfill-chart .lc-grid {
+    stroke: var(--alc-hairline-2);
+    stroke-width: 1;
+  }
+  .backfill-chart .lc-s1,
+  .backfill-chart .lc-s2,
+  .backfill-chart .lc-s3 {
+    stroke-width: 2;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+  }
+  .backfill-chart .lc-s1 {
+    stroke: var(--lc-s1);
+    fill: var(--lc-s1);
+  }
+  .backfill-chart .lc-s2 {
+    stroke: var(--lc-s2);
+    fill: var(--lc-s2);
+  }
+  .backfill-chart .lc-s3 {
+    stroke: var(--lc-s3);
+    fill: var(--lc-s3);
+  }
+  .backfill-chart path[fill="none"] {
+    fill: none;
+  }
+  .backfill-chart .lc-pt > * {
+    stroke: var(--alc-bg-elev-1);
+    stroke-width: 2;
+  }
+  .backfill-chart .lc-label {
+    stroke: var(--alc-bg-elev-1);
+    stroke-width: 3;
+    paint-order: stroke;
+    stroke-linejoin: round;
+  }
+  .backfill-chart .lc-pt:hover > * {
+    transform-box: fill-box;
+    transform-origin: center;
+    transform: scale(1.4);
+  }
+</style>

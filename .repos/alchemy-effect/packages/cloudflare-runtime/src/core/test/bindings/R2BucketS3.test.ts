@@ -88,15 +88,8 @@ const s3Url = (baseUrl: URL, path: string) =>
   new URL(`${R2Bucket.PATH_R2_S3}${path}`, baseUrl).toString();
 
 /** Header-authenticated S3 request. */
-const s3 = (
-  baseUrl: URL,
-  path: string,
-  init: RequestInit = {},
-  signer: AwsClient = client,
-) =>
-  Effect.promise(async () =>
-    fetch(await signer.sign(s3Url(baseUrl, path), init)),
-  );
+const s3 = (baseUrl: URL, path: string, init: RequestInit = {}, signer: AwsClient = client) =>
+  Effect.promise(async () => fetch(await signer.sign(s3Url(baseUrl, path), init)));
 
 /** Mint a presigned URL (query auth). */
 const presign = (
@@ -139,9 +132,7 @@ layer(localRuntimeLayer)("R2 local S3 endpoint", (it) => {
       expect(put.headers.get("etag")).toMatch(/^".+"$/);
 
       // The Worker's own binding sees the S3 write
-      expect(yield* fetchText("/read?key=header/hello.txt")).toBe(
-        "hello from s3",
-      );
+      expect(yield* fetchText("/read?key=header/hello.txt")).toBe("hello from s3");
 
       const get = yield* s3(baseUrl, "/bucket/header/hello.txt");
       expect(get.status).toBe(200);
@@ -174,25 +165,15 @@ layer(localRuntimeLayer)("R2 local S3 endpoint", (it) => {
   it.effect("serves presigned PUT and GET URLs", () =>
     Effect.gen(function* () {
       const { baseUrl, fetchText } = yield* startS3Worker;
-      const putUrl = yield* presign(
-        baseUrl,
-        "/bucket/presigned/upload.txt",
-        "PUT",
-      );
+      const putUrl = yield* presign(baseUrl, "/bucket/presigned/upload.txt", "PUT");
       // An unauthenticated client (e.g. a browser) uploads with just the URL
       const put = yield* Effect.promise(() =>
         fetch(putUrl, { method: "PUT", body: "uploaded via presigned url" }),
       );
       expect(put.status).toBe(200);
-      expect(yield* fetchText("/read?key=presigned/upload.txt")).toBe(
-        "uploaded via presigned url",
-      );
+      expect(yield* fetchText("/read?key=presigned/upload.txt")).toBe("uploaded via presigned url");
 
-      const getUrl = yield* presign(
-        baseUrl,
-        "/bucket/presigned/upload.txt",
-        "GET",
-      );
+      const getUrl = yield* presign(baseUrl, "/bucket/presigned/upload.txt", "GET");
       const get = yield* Effect.promise(() => fetch(getUrl));
       expect(get.status).toBe(200);
       expect(yield* text(get)).toBe("uploaded via presigned url");
@@ -202,13 +183,9 @@ layer(localRuntimeLayer)("R2 local S3 endpoint", (it) => {
   it.effect("pins a signed Content-Type on presigned PUTs", () =>
     Effect.gen(function* () {
       const { baseUrl, fetch: workerFetch } = yield* startS3Worker;
-      const putUrl = yield* presign(
-        baseUrl,
-        "/bucket/presigned/typed.json",
-        "PUT",
-        900,
-        { "content-type": "application/json" },
-      );
+      const putUrl = yield* presign(baseUrl, "/bucket/presigned/typed.json", "PUT", 900, {
+        "content-type": "application/json",
+      });
       const wrongType = yield* Effect.promise(() =>
         fetch(putUrl, {
           method: "PUT",
@@ -239,9 +216,7 @@ layer(localRuntimeLayer)("R2 local S3 endpoint", (it) => {
         fetch(putUrl, { method: "PUT", body: "colon bucket" }),
       );
       expect(put.status).toBe(200);
-      expect(yield* fetchText("/read?bucket=dev&key=a%20key.txt")).toBe(
-        "colon bucket",
-      );
+      expect(yield* fetchText("/read?bucket=dev&key=a%20key.txt")).toBe("colon bucket");
       const encoded = yield* s3(baseUrl, "/dev%3Aabc123/a%20key.txt");
       expect(encoded.status).toBe(200);
       expect(yield* text(encoded)).toBe("colon bucket");
@@ -256,21 +231,15 @@ layer(localRuntimeLayer)("R2 local S3 endpoint", (it) => {
         body: "secret",
       });
 
-      const anonymous = yield* Effect.promise(() =>
-        fetch(s3Url(baseUrl, "/bucket/guarded.txt")),
-      );
+      const anonymous = yield* Effect.promise(() => fetch(s3Url(baseUrl, "/bucket/guarded.txt")));
       expect(anonymous.status).toBe(400);
 
-      const getUrl = new URL(
-        yield* presign(baseUrl, "/bucket/guarded.txt", "GET"),
-      );
+      const getUrl = new URL(yield* presign(baseUrl, "/bucket/guarded.txt", "GET"));
       const tampered = new URL(getUrl);
       tampered.pathname = tampered.pathname.replace("guarded", "other");
       const tamperedResponse = yield* Effect.promise(() => fetch(tampered));
       expect(tamperedResponse.status).toBe(403);
-      expect(yield* text(tamperedResponse)).toContain(
-        "<Code>SignatureDoesNotMatch</Code>",
-      );
+      expect(yield* text(tamperedResponse)).toContain("<Code>SignatureDoesNotMatch</Code>");
 
       // A presigned GET URL does not authorize a PUT
       const wrongMethod = yield* Effect.promise(() =>
@@ -288,12 +257,7 @@ layer(localRuntimeLayer)("R2 local S3 endpoint", (it) => {
       expect(expired.status).toBe(403);
       expect(yield* text(expired)).toContain("<Code>ExpiredRequest</Code>");
 
-      const tooLong = yield* presign(
-        baseUrl,
-        "/bucket/guarded.txt",
-        "GET",
-        604_801,
-      );
+      const tooLong = yield* presign(baseUrl, "/bucket/guarded.txt", "GET", 604_801);
       const tooLongResponse = yield* Effect.promise(() => fetch(tooLong));
       expect(tooLongResponse.status).toBe(400);
     }),
@@ -335,9 +299,7 @@ layer(localRuntimeLayer)("R2 local S3 endpoint", (it) => {
         method: "POST",
       });
       expect(create.status).toBe(200);
-      const uploadId = /<UploadId>(.+)<\/UploadId>/.exec(
-        yield* text(create),
-      )![1]!;
+      const uploadId = /<UploadId>(.+)<\/UploadId>/.exec(yield* text(create))![1]!;
 
       const part1Body = "a".repeat(5 * 1024 * 1024);
       const part1 = yield* s3(
@@ -373,25 +335,18 @@ layer(localRuntimeLayer)("R2 local S3 endpoint", (it) => {
   it.effect("answers CORS preflights for browser uploads", () =>
     Effect.gen(function* () {
       const { fetch: workerFetch } = yield* startS3Worker;
-      const preflight = yield* workerFetch(
-        `${R2Bucket.PATH_R2_S3}/bucket/browser.txt`,
-        {
-          method: "OPTIONS",
-          headers: {
-            Origin: "http://localhost:5173",
-            "Access-Control-Request-Method": "PUT",
-            "Access-Control-Request-Headers": "content-type",
-          },
+      const preflight = yield* workerFetch(`${R2Bucket.PATH_R2_S3}/bucket/browser.txt`, {
+        method: "OPTIONS",
+        headers: {
+          Origin: "http://localhost:5173",
+          "Access-Control-Request-Method": "PUT",
+          "Access-Control-Request-Headers": "content-type",
         },
-      );
+      });
       expect(preflight.status).toBe(204);
       expect(preflight.headers.get("access-control-allow-origin")).toBe("*");
-      expect(preflight.headers.get("access-control-allow-methods")).toContain(
-        "PUT",
-      );
-      expect(preflight.headers.get("access-control-allow-headers")).toBe(
-        "content-type",
-      );
+      expect(preflight.headers.get("access-control-allow-methods")).toContain("PUT");
+      expect(preflight.headers.get("access-control-allow-headers")).toBe("content-type");
     }),
   );
 
@@ -401,9 +356,7 @@ layer(localRuntimeLayer)("R2 local S3 endpoint", (it) => {
       // A proxy in front of the runtime (Alchemy's dev proxy, Vite) forwards
       // the URL the client used; the signature covers that host
       const publicOrigin = new URL("http://my-app.localhost:4321");
-      const putUrl = new URL(
-        yield* presign(publicOrigin, "/bucket/proxied.txt", "PUT"),
-      );
+      const putUrl = new URL(yield* presign(publicOrigin, "/bucket/proxied.txt", "PUT"));
       const direct = new URL(putUrl.pathname + putUrl.search, baseUrl);
       const unproxied = yield* Effect.promise(() =>
         fetch(direct, { method: "PUT", body: "proxied" }),

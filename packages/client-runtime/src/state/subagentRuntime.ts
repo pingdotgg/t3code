@@ -1,6 +1,7 @@
 import { groupBy } from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import type {
+  ModelSelection,
   OrchestrationV2AppThread,
   OrchestrationV2Subagent,
   OrchestrationV2SubagentWorkflow,
@@ -96,6 +97,10 @@ export function isLiveSubagentTurnItem(item: OrchestrationV2TurnItem): boolean {
   return item.type === "subagent" && isOrchestrationV2WorkActive(item.status);
 }
 
+export function waitingOnSubagentsLabel(count: number): string {
+  return count === 1 ? "Waiting on a subagent" : `Waiting on ${count} subagents`;
+}
+
 export interface SubagentWorkflowGroup {
   readonly workflow: RuntimeSubagent;
   readonly phases: ReadonlyArray<{
@@ -175,6 +180,32 @@ function workflowMembersToRuntime(
   });
 }
 
+function promptTitle(prompt: string): string {
+  if (prompt.length <= 80) return prompt;
+  let end = 77;
+  const previous = prompt.charCodeAt(end - 1);
+  const next = prompt.charCodeAt(end);
+  if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+    end -= 1;
+  }
+  return `${prompt.slice(0, end)}...`;
+}
+
+export function workflowMemberModelSelection(
+  member: Pick<RuntimeSubagent, "model" | "effort" | "speed">,
+  instanceId: ModelSelection["instanceId"],
+): ModelSelection | undefined {
+  if (!member.model) return undefined;
+  return {
+    instanceId,
+    model: member.model,
+    options: [
+      ...(member.effort ? [{ id: "effort", value: member.effort }] : []),
+      ...(member.speed ? [{ id: "fastMode", value: member.speed === "fast" }] : []),
+    ],
+  };
+}
+
 export function projectedSubagentsToRuntime(
   subagents: ReadonlyArray<{
     readonly id: string;
@@ -200,9 +231,7 @@ export function projectedSubagentsToRuntime(
     const coordinator = {
       id: subagent.id,
       kind: workflow === undefined ? "subagent" : "workflow",
-      title:
-        subagent.title ??
-        (subagent.prompt.length > 80 ? `${subagent.prompt.slice(0, 77)}...` : subagent.prompt),
+      title: subagent.title ?? promptTitle(subagent.prompt),
       role: null,
       model: subagent.model,
       effort: null,

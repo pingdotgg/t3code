@@ -1,3 +1,4 @@
+import { usePaneRole } from "../../components/ui/Pane";
 import { Button } from "../../components/ui/Button";
 import {
   applyPullRequestDraftFilterChange,
@@ -8,19 +9,13 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { useNavigation } from "@react-navigation/native";
 import { use, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAtomValue } from "@effect/atom-react";
-import {
-  Keyboard,
-  Platform,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  View,
-  type ScrollViewProps,
-} from "react-native";
-import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeScrollViewMarker";
+import { Keyboard, Platform, Pressable, View } from "react-native";
+import { RefreshControl } from "../../components/ui/RefreshControl";
+import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import { useContentTopInset } from "../../components/ui/useBarInset";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
@@ -34,6 +29,8 @@ import {
   usePullRequestListFilters,
   type PullRequestFilterMenu,
 } from "./PullRequestListFilters";
+import { SavedViewsMenu } from "../layout/workspace/SavedViewsMenu";
+import { pullRequestViewMatches } from "./pullRequestSavedViews";
 import { usePullRequestList } from "./usePullRequestList";
 import { usePullRequestListControls } from "./usePullRequestListControls";
 import { usePullRequestListActions } from "./usePullRequestListActions";
@@ -48,17 +45,9 @@ import {
   pullRequestProjectChoices,
 } from "./pullRequestList";
 import { useDebouncedValue } from "../../state/queries";
-import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
-import { useSearchScrollRestoration } from "../workspace/useSearchScrollRestoration";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
-
-function PullRequestScrollView(props: ScrollViewProps) {
-  return (
-    <ScrollViewMarker style={{ flex: 1 }}>
-      <ScrollView {...props} />
-    </ScrollViewMarker>
-  );
-}
+import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
+import { useSearchScrollRestoration } from "../layout/workspace/useSearchScrollRestoration";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 
 function PullRequestListError(props: { readonly message: string }) {
   const [expanded, setExpanded] = useState(false);
@@ -112,6 +101,7 @@ export function PullRequestsScreen(
   const { environments } = useWorkspaceState();
   const configs = useAtomValue(environmentServerConfigsAtom);
   const insets = useSafeAreaInsets();
+  const contentTopInset = useContentTopInset();
   // UIKit insets the list by its column's safe area, which this context can report as 0.
   const columnSafeBottom = useNativeColumnLayoutMetrics()?.safeArea.bottom;
   const bottomSafeArea =
@@ -121,7 +111,7 @@ export function PullRequestsScreen(
   const [initialScrollOffset] = useState(() => workspace.getScrollOffset("pullRequests"));
   useSearchScrollRestoration(tab.searchMode, () => {
     void listRef.current?.scrollToOffset({
-      offset: tab.scrollOffset - (Platform.OS === "ios" ? insets.top : 0),
+      offset: tab.scrollOffset - contentTopInset,
       animated: false,
     });
   });
@@ -186,7 +176,8 @@ export function PullRequestsScreen(
     connectedTargets.map((target) => target.environmentId),
     result.updateEntry,
   );
-  const sidebar = props.sidebar === true || primaryColumn !== null;
+  const paneRole = usePaneRole();
+  const sidebar = props.sidebar === true || (primaryColumn !== null && paneRole === "sidebar");
   const selectedKey = props.selectedPullRequestKey ?? primaryColumn?.selectedPullRequestKey;
   const connectedKey = connectedTargets.map((target) => target.environmentId).join("\n");
   const entries = useMemo(
@@ -251,7 +242,7 @@ export function PullRequestsScreen(
       if (update.query !== typedQuery)
         workspace.dispatch({ type: "query", tab: "pullRequests", query: update.query });
       void listRef.current?.scrollToOffset({
-        offset: Platform.OS === "ios" ? -insets.top : 0,
+        offset: -contentTopInset,
         animated: false,
       });
     },
@@ -306,38 +297,68 @@ export function PullRequestsScreen(
         // to this tab. The thread list shows none either.
         showsVerticalScrollIndicator={Platform.OS !== "android"}
         recycleItems
-        renderScrollComponent={Platform.OS === "ios" ? PullRequestScrollView : undefined}
-        // UIKit owns the bar's inset, so a minimizing bar and a resized column move
-        // the list in the same frame as the bar.
-        contentInsetAdjustmentBehavior="automatic"
+        renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
+        contentInsetAdjustmentBehavior="never"
+        contentInset={Platform.OS === "ios" ? { top: contentTopInset } : undefined}
         // A plain offset: LegendList adds the list header to an index-based restore, which
         // landed every return one header lower.
         initialScrollOffset={
-          initialScrollOffset > 0
-            ? initialScrollOffset - (Platform.OS === "ios" ? insets.top : 0)
-            : undefined
+          initialScrollOffset > 0 ? initialScrollOffset - contentTopInset : undefined
         }
-        contentInsetStartAdjustment={Platform.OS === "ios" ? insets.top : 0}
         contentContainerStyle={{
-          paddingBottom:
-            Math.max(bottomSafeArea, workspace.bottomClearance) -
-            (Platform.OS === "ios" ? bottomSafeArea : 0),
+          paddingBottom: Math.max(bottomSafeArea, workspace.bottomClearance),
         }}
         onScroll={(event) => {
           workspace.recordScrollOffset(
             "pullRequests",
-            Math.max(
-              0,
-              event.nativeEvent.contentOffset.y + (Platform.OS === "ios" ? insets.top : 0),
-            ),
+            Math.max(0, event.nativeEvent.contentOffset.y + contentTopInset),
           );
         }}
         keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="handled"
         renderItem={renderPullRequest}
+        // Lifted above the rows so an iOS filter menu's dismissal morph is not covered.
+        ListHeaderComponentStyle={{ zIndex: 1 }}
         ListHeaderComponent={
           <>
-            <PullRequestListFilters sidebar={sidebar} filters={filters} />
+            <PullRequestListFilters
+              sidebar={sidebar}
+              savedViewsMenu={
+                <SavedViewsMenu
+                  read={(preferences) => preferences.pullRequestSavedViews}
+                  write={(pullRequestSavedViews) => ({ pullRequestSavedViews })}
+                  noun="pull request"
+                  shortNoun="PR"
+                  suggestedName={
+                    controls.involvement === "reviewing" ? "PRs Requesting My Review" : ""
+                  }
+                  matches={pullRequestViewMatches}
+                  scope={{
+                    environmentId,
+                    controls,
+                    query: tab.searchMode === "resting" ? "" : tab.query,
+                  }}
+                  onApply={async (view) => {
+                    await listControls.applyView(view);
+                    workspace.dispatch(
+                      view.query.trim()
+                        ? { type: "search", tab: "pullRequests" }
+                        : { type: "cancel", tab: "pullRequests", scrollToTop: true },
+                    );
+                    workspace.dispatch({
+                      type: "query",
+                      tab: "pullRequests",
+                      query: view.query.trim(),
+                    });
+                    void listRef.current?.scrollToOffset({
+                      offset: Platform.OS === "ios" ? -insets.top : 0,
+                      animated: false,
+                    });
+                  }}
+                />
+              }
+              filters={filters}
+            />
             {result.data?.errors.length ? (
               <View key={JSON.stringify(targets)}>
                 {result.data.errors.map((error) => (
