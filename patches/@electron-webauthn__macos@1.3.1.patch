@@ -1,5 +1,5 @@
 diff --git a/dist/index.js b/dist/index.js
-index b86cce0..bc5c60e 100644
+index b86cce0..31b281c 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -233,6 +233,10 @@ var WebauthnGetController = NobjcClass.define({
@@ -40,3 +40,12 @@ index b86cce0..bc5c60e 100644
          const largeBlobData = credential.largeBlob().readData();
          if (largeBlobData) {
            largeBlobBuffer = bufferFromNSDataDirect(largeBlobData);
+@@ -576,7 +584,7 @@ function getCredentialInternal(rpid, challenge, nativeWindowHandle, origin, time
+         clientDataJSON: clientDataBuffer,
+         authenticatorData: bufferFromNSDataDirect(credential.rawAuthenticatorData()),
+         signature: bufferFromNSDataDirect(credential.signature()),
+-        userHandle: bufferFromNSDataDirect(credential.userID()),
++        userHandle: credential.userID() ? bufferFromNSDataDirect(credential.userID()) : null,
+         prf: [
+           prfFirst ? bufferFromNSDataDirect(prfFirst) : null,
+           prfSecond ? bufferFromNSDataDirect(prfSecond) : null
