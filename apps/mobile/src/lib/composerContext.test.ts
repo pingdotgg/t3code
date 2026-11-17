@@ -154,7 +154,7 @@ describe("mobile composer context", () => {
     expect(restore("deleted", initial)).toBeUndefined();
     expect(restore(source)?.records).toEqual(initial.records);
     expect(restore("deleted")?.records ?? []).toEqual([]);
-    expect(createComposerContextHistory()(source)?.records).toEqual([]);
+    expect(createComposerContextHistory()(source)).toBeUndefined();
   });
   it("chips a model reference only once it is complete and names a known model", () => {
     const known = new Set(["model:codex/gpt-6.1"]);
