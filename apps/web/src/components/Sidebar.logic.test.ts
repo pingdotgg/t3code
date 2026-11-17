@@ -36,6 +36,7 @@ import {
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
+  filterSidebarV2VisibleThreads,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -60,6 +61,37 @@ import {
 } from "./sidebar/routeReveal";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("sidebar environment filtering", () => {
+  const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+  const local = {
+    ...makeThreadFixture({ id: ThreadId.make("local") }),
+    environmentId: localEnvironmentId,
+  };
+  const remote = {
+    ...makeThreadFixture({ id: ThreadId.make("remote") }),
+    environmentId: remoteEnvironmentId,
+  };
+
+  it("excludes an environment independently of project scope", () => {
+    expect(
+      filterSidebarV2VisibleThreads(
+        [local, remote],
+        null,
+        new Set(),
+        new Set([remoteEnvironmentId]),
+      ),
+    ).toEqual([local]);
+    expect(
+      filterSidebarV2VisibleThreads(
+        [local, remote],
+        new Set([`${remoteEnvironmentId}:${remote.projectId}`]),
+        new Set(),
+        new Set([remoteEnvironmentId]),
+      ),
+    ).toEqual([]);
+  });
+});
 
 describe("deleteSelectedThreadEntries", () => {
   const entries = [{ threadKey: "one" }, { threadKey: "two" }, { threadKey: "three" }] as const;
@@ -789,6 +821,61 @@ describe("sortScopedProjectsForSidebar", () => {
 });
 
 describe("sortSidebarV2ProjectGroups", () => {
+  it("ignores excluded environments when sorting project activity", () => {
+    const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+    const olderProjectId = ProjectId.make("project-older");
+    const newerProjectId = ProjectId.make("project-newer");
+    const remoteProjectId = ProjectId.make("project-remote");
+    const olderProject = {
+      ...makeProject({ id: olderProjectId }),
+      projectKey: "logical-older",
+      memberProjectRefs: [
+        { environmentId: localEnvironmentId, projectId: olderProjectId },
+        { environmentId: remoteEnvironmentId, projectId: remoteProjectId },
+      ],
+    };
+    const newerProject = {
+      ...makeProject({ id: newerProjectId }),
+      projectKey: "logical-newer",
+      memberProjectRefs: [{ environmentId: localEnvironmentId, projectId: newerProjectId }],
+    };
+    const projects = [olderProject, newerProject];
+    const threads = [
+      makeThread({
+        projectId: olderProjectId,
+        createdAt: "2026-03-09T10:01:00.000Z",
+        updatedAt: "2026-03-09T10:01:00.000Z",
+      }),
+      makeThread({
+        projectId: newerProjectId,
+        createdAt: "2026-03-09T10:05:00.000Z",
+        updatedAt: "2026-03-09T10:05:00.000Z",
+      }),
+      {
+        ...makeThread({
+          projectId: remoteProjectId,
+          createdAt: "2026-03-09T10:10:00.000Z",
+          updatedAt: "2026-03-09T10:10:00.000Z",
+        }),
+        environmentId: remoteEnvironmentId,
+      },
+    ];
+
+    expect(
+      sortSidebarV2ProjectGroups(
+        projects,
+        threads,
+        "updated_at",
+        new Set(),
+        new Set([remoteEnvironmentId]),
+      ),
+    ).toEqual([newerProject, olderProject]);
+    expect(sortSidebarV2ProjectGroups(projects, threads, "updated_at", new Set())).toEqual([
+      olderProject,
+      newerProject,
+    ]);
+  });
+
   it("does not let a hidden subagent thread reorder projects", () => {
     const olderProjectId = ProjectId.make("project-older");
     const newerProjectId = ProjectId.make("project-newer");
@@ -1504,7 +1591,7 @@ describe("resolveSidebarRouteReveal", () => {
   const hiddenKey = "environment-test:thread-test";
   const findThread = (key: string) => (key === hiddenKey ? hidden : undefined);
 
-  it("widens the scope for a newly opened thread the scope hides", () => {
+  it.each([false, true])("only widens for a visible environment (excluded: %s)", (excluded) => {
     expect(
       resolveSidebarRouteReveal({
         reveal: { observedKey: "environment-test:other", pendingKey: null },
@@ -1513,9 +1600,10 @@ describe("resolveSidebarRouteReveal", () => {
         isSearching: false,
         scopedProjectKeys,
         delegatedUnderParent: new Set(),
+        excludedEnvironmentIds: excluded ? new Set([hidden.environmentId]) : new Set(),
         findThread,
       }),
-    ).toEqual({ pendingKey: hiddenKey, widensScope: true });
+    ).toEqual({ pendingKey: hiddenKey, widensScope: !excluded });
   });
 
   it("never widens for a thread whose reveal already completed", () => {
