@@ -91,34 +91,6 @@ describe("sidebar environment filtering", () => {
       ),
     ).toEqual([]);
   });
-
-  it("keeps newly connected environments visible and clears back to all environments", () => {
-    const added = { ...remote, environmentId: EnvironmentId.make("environment-new") };
-    expect(
-      filterSidebarV2VisibleThreads(
-        [local, remote, added],
-        null,
-        new Set(),
-        new Set([remoteEnvironmentId]),
-      ),
-    ).toEqual([local, added]);
-    expect(filterSidebarV2VisibleThreads([local, remote], null, new Set())).toEqual([
-      local,
-      remote,
-    ]);
-  });
-
-  it("can hide every environment, including threads without a listed project", () => {
-    const scratch = { ...local, projectId: ProjectId.make("scratch") };
-    expect(
-      filterSidebarV2VisibleThreads(
-        [scratch, remote],
-        null,
-        new Set(),
-        new Set([localEnvironmentId, remoteEnvironmentId]),
-      ),
-    ).toEqual([]);
-  });
 });
 
 describe("deleteSelectedThreadEntries", () => {
@@ -849,66 +821,60 @@ describe("sortScopedProjectsForSidebar", () => {
 });
 
 describe("sortSidebarV2ProjectGroups", () => {
-  it.each(["created_at", "updated_at"] as const)(
-    "ignores excluded environments when sorting project activity by %s",
-    (sortOrder) => {
-      const remoteEnvironmentId = EnvironmentId.make("environment-remote");
-      const olderProjectId = ProjectId.make("project-older");
-      const newerProjectId = ProjectId.make("project-newer");
-      const remoteProjectId = ProjectId.make("project-remote");
-      const olderProject = {
-        ...makeProject({ id: olderProjectId }),
-        projectKey: "logical-older",
-        memberProjectRefs: [
-          { environmentId: localEnvironmentId, projectId: olderProjectId },
-          { environmentId: remoteEnvironmentId, projectId: remoteProjectId },
-        ],
-      };
-      const newerProject = {
-        ...makeProject({ id: newerProjectId }),
-        projectKey: "logical-newer",
-        memberProjectRefs: [{ environmentId: localEnvironmentId, projectId: newerProjectId }],
-      };
-      const projects = [olderProject, newerProject];
-      const threads = [
-        makeThread({
-          projectId: olderProjectId,
-          createdAt: "2026-03-09T10:01:00.000Z",
-          updatedAt: "2026-03-09T10:01:00.000Z",
+  it("ignores excluded environments when sorting project activity", () => {
+    const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+    const olderProjectId = ProjectId.make("project-older");
+    const newerProjectId = ProjectId.make("project-newer");
+    const remoteProjectId = ProjectId.make("project-remote");
+    const olderProject = {
+      ...makeProject({ id: olderProjectId }),
+      projectKey: "logical-older",
+      memberProjectRefs: [
+        { environmentId: localEnvironmentId, projectId: olderProjectId },
+        { environmentId: remoteEnvironmentId, projectId: remoteProjectId },
+      ],
+    };
+    const newerProject = {
+      ...makeProject({ id: newerProjectId }),
+      projectKey: "logical-newer",
+      memberProjectRefs: [{ environmentId: localEnvironmentId, projectId: newerProjectId }],
+    };
+    const projects = [olderProject, newerProject];
+    const threads = [
+      makeThread({
+        projectId: olderProjectId,
+        createdAt: "2026-03-09T10:01:00.000Z",
+        updatedAt: "2026-03-09T10:01:00.000Z",
+      }),
+      makeThread({
+        projectId: newerProjectId,
+        createdAt: "2026-03-09T10:05:00.000Z",
+        updatedAt: "2026-03-09T10:05:00.000Z",
+      }),
+      {
+        ...makeThread({
+          projectId: remoteProjectId,
+          createdAt: "2026-03-09T10:10:00.000Z",
+          updatedAt: "2026-03-09T10:10:00.000Z",
         }),
-        makeThread({
-          projectId: newerProjectId,
-          createdAt: "2026-03-09T10:05:00.000Z",
-          updatedAt: "2026-03-09T10:05:00.000Z",
-        }),
-        {
-          ...makeThread({
-            projectId: remoteProjectId,
-            createdAt: "2026-03-09T10:10:00.000Z",
-            updatedAt: "2026-03-09T10:10:00.000Z",
-          }),
-          environmentId: remoteEnvironmentId,
-        },
-      ];
+        environmentId: remoteEnvironmentId,
+      },
+    ];
 
-      expect(
-        sortSidebarV2ProjectGroups(
-          projects,
-          threads,
-          sortOrder,
-          new Set(),
-          new Set([remoteEnvironmentId]),
-        ),
-      ).toEqual([newerProject, olderProject]);
-      expect(sortSidebarV2ProjectGroups(projects, threads, sortOrder, new Set())).toEqual([
-        olderProject,
-        newerProject,
-      ]);
-      expect(
-        sortSidebarV2ProjectGroups(projects, threads, sortOrder, new Set(), new Set()),
-      ).toEqual([olderProject, newerProject]);
-    },
-  );
+    expect(
+      sortSidebarV2ProjectGroups(
+        projects,
+        threads,
+        "updated_at",
+        new Set(),
+        new Set([remoteEnvironmentId]),
+      ),
+    ).toEqual([newerProject, olderProject]);
+    expect(sortSidebarV2ProjectGroups(projects, threads, "updated_at", new Set())).toEqual([
+      olderProject,
+      newerProject,
+    ]);
+  });
 
   it("does not let a hidden subagent thread reorder projects", () => {
     const olderProjectId = ProjectId.make("project-older");

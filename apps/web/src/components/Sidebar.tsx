@@ -951,6 +951,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     (environment) => !excludedEnvironmentIds.has(environment.environmentId),
   );
   const environmentFilterActive = selectedEnvironments.length < environments.length;
+  const showEnvironmentFilter = environments.length > 1 || environmentFilterActive;
   const delegatedUnderParent = useDelegatedUnderParent();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -3111,31 +3112,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       />
                     }
                   >
-                    <span className="flex shrink-0 items-center gap-1 px-1.5">
-                      {scopedProjectGroups.length > 1 && !environmentFilterActive ? (
-                        <span className="flex shrink-0">
-                          {scopedProjectGroups.slice(0, 2).map((project, index) => (
-                            <span
-                              key={project.projectKey}
-                              className={
-                                index === 0
-                                  ? "flex"
-                                  : "-ml-1 flex rounded-[25%] bg-sidebar ring-2 ring-sidebar"
-                              }
-                            >
-                              <ProjectFavicon project={project} className="size-3.5" />
-                            </span>
-                          ))}
-                        </span>
-                      ) : scopedProjectGroups[0] ? (
-                        <span className="flex shrink-0">
+                    {environmentFilterActive ? (
+                      <span className="flex shrink-0 items-center gap-1 px-1.5">
+                        {scopedProjectGroups[0] ? (
                           <ProjectFavicon project={scopedProjectGroups[0]} className="size-4" />
-                        </span>
-                      ) : (
-                        <ListFilterIcon className="size-4" />
-                      )}
-                      {environmentFilterActive ? (
-                        selectedEnvironments.length === 0 ? (
+                        ) : (
+                          <ListFilterIcon className="size-4" />
+                        )}
+                        {selectedEnvironments.length === 0 ? (
                           <BanIcon aria-hidden className="size-4" />
                         ) : (
                           <>
@@ -3155,17 +3139,37 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               </span>
                             ) : null}
                           </>
-                        )
-                      ) : null}
-                    </span>
+                        )}
+                      </span>
+                    ) : scopedProjectGroups.length > 1 ? (
+                      <span className="flex shrink-0">
+                        {scopedProjectGroups.slice(0, 2).map((project, index) => (
+                          <span
+                            key={project.projectKey}
+                            className={
+                              index === 0
+                                ? "flex"
+                                : "-ml-1 flex rounded-[25%] bg-sidebar ring-2 ring-sidebar"
+                            }
+                          >
+                            <ProjectFavicon project={project} className="size-3.5" />
+                          </span>
+                        ))}
+                      </span>
+                    ) : scopedProjectGroups[0] ? (
+                      <span className="flex shrink-0">
+                        <ProjectFavicon project={scopedProjectGroups[0]} className="size-4" />
+                      </span>
+                    ) : (
+                      <ListFilterIcon className="size-4" />
+                    )}
                   </ComboboxTrigger>
                   {/* Refocusing the trigger after a pointer close shows its focus ring and opens its tooltip. */}
                   <ComboboxPopup
                     align="start"
-                    anchor={threadSearchInputRef}
-                    maxHeight="available"
-                    className="w-72 min-w-0 max-w-[min(18rem,var(--available-width))] overflow-hidden"
+                    maxHeight={showEnvironmentFilter ? "available" : "default"}
                     collisionAvoidance={{ side: "flip", align: "shift" }}
+                    className="w-[min(18rem,var(--available-width))] overflow-hidden"
                     finalFocus={(closeType) => closeType === "keyboard"}
                   >
                     <ComboboxSearchInput
@@ -3216,7 +3220,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       }
                     />
                     <ComboboxEmpty>No matching projects.</ComboboxEmpty>
-                    <div className="flex min-h-14 max-h-72 flex-1">
+                    <div
+                      className={cn("flex min-h-14 flex-1", showEnvironmentFilter && "max-h-72")}
+                    >
                       <ComboboxList aria-multiselectable>
                         {(item: (typeof projectScopeItems)[number]) => {
                           const project = projectGroupByScopeKey.get(item.value) ?? null;
@@ -3290,7 +3296,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         }}
                       </ComboboxList>
                     </div>
-                    {environments.length > 1 || environmentFilterActive ? (
+                    {showEnvironmentFilter ? (
                       <SidebarEnvironmentFilter
                         environments={environments}
                         excludedEnvironmentIds={excludedEnvironmentIds}

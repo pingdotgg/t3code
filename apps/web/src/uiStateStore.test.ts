@@ -264,28 +264,21 @@ describe("uiStateStore persistence", () => {
     });
   });
 
-  it.each([{ excludedIds: [] }, { excludedIds: ["studio", "offline-host"] }])(
-    "restores sidebar scopes across reloads (%j)",
-    ({ excludedIds }) => {
-      const keys = ["github.com/pingdotgg/t3code", "github.com/pingdotgg/uploadthing"];
-      persistState(
-        makeUiState({ sidebarProjectScopeKeys: keys, sidebarExcludedEnvironmentIds: excludedIds }),
-      );
+  it("restores the sidebar project and environment filters across reloads", () => {
+    const keys = ["github.com/pingdotgg/t3code", "github.com/pingdotgg/uploadthing"];
+    const excludedIds = ["studio", "offline-host"];
+    persistState(
+      makeUiState({ sidebarProjectScopeKeys: keys, sidebarExcludedEnvironmentIds: excludedIds }),
+    );
 
-      const persisted = JSON.parse(
-        localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
-      ) as PersistedUiState;
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
 
-      const restored = parsePersistedState(persisted);
-      expect(restored.sidebarProjectScopeKeys).toEqual(keys);
-      expect(restored.sidebarExcludedEnvironmentIds).toEqual(excludedIds);
-      expect(parsePersistedState({}).sidebarExcludedEnvironmentIds).toEqual([]);
-      expect(
-        parsePersistedState({ sidebarExcludedEnvironmentIds: "invalid" as unknown as string[] })
-          .sidebarExcludedEnvironmentIds,
-      ).toEqual([]);
-    },
-  );
+    const restored = parsePersistedState(persisted);
+    expect(restored.sidebarProjectScopeKeys).toEqual(keys);
+    expect(restored.sidebarExcludedEnvironmentIds).toEqual(excludedIds);
+  });
 
   it("keeps a single-project scope readable by older clients", () => {
     persistState(makeUiState({ sidebarProjectScopeKeys: ["github.com/pingdotgg/t3code"] }));

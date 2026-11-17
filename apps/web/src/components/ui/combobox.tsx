@@ -174,6 +174,7 @@ function ComboboxPopup({
           )}
         >
           <ComboboxPrimitive.Popup
+            // Electron drag hit-testing ignores z-index; items over a drag region would swallow clicks.
             className={cn(
               "flex min-w-0 flex-1 flex-col overflow-hidden text-foreground [-webkit-app-region:no-drag]",
               maxHeight === "available"
