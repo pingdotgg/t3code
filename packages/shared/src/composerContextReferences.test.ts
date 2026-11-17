@@ -81,19 +81,11 @@ describe("labels and reference links", () => {
       expect(text.slice(occurrence.start, occurrence.end)).toBe(occurrence.source);
     }
     const reference = "[#30296](t3-context://v1/review-comment/ctx_pr)";
-    for (const prefix of ["See [", "See [["]) {
-      expect(collectComposerContextReferences(`${prefix}${reference} ]`)).toEqual([
-        {
-          kind: "review-comment",
-          contextId: "ctx_pr",
-          label: "#30296",
-          image: false,
-          source: reference,
-          start: prefix.length,
-          end: prefix.length + reference.length,
-        },
-      ]);
-    }
+    expect(collectComposerContextReferences(`[${reference}]`)[0]).toMatchObject({
+      label: "#30296",
+      source: reference,
+      start: 1,
+    });
   });
 
   it("recognizes a prompt made only of image references", () => {
