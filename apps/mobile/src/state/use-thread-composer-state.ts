@@ -718,8 +718,6 @@ export function useThreadComposerState(input: {
               modelSelection,
             },
           );
-        }).finally(() => {
-          startingSideChatRef.current = false;
         });
         if (AsyncResult.isSuccess(started) && started.value) {
           scheduleUnusedComposerAttachmentCleanup(attachments);
@@ -740,6 +738,8 @@ export function useThreadComposerState(input: {
             );
           }
         }
+        // Held through the restore, so a send cannot read the text without its attachments.
+        startingSideChatRef.current = false;
         for (const release of fileHolds) release();
       }
       return null;

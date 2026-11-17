@@ -777,6 +777,11 @@ it("/side puts the draft back when the side chat does not start", async () => {
   await userEvent.keyboard("{Enter}");
   await expect.element(page.getByRole("img", { name: "shot.png" })).not.toBeInTheDocument();
   await userEvent.keyboard("next draft");
+  await vi.waitFor(() =>
+    expect(dispatchedCommands().filter((command) => command.type === "thread.fork")).toHaveLength(
+      2,
+    ),
+  );
   await rejectPendingCommand("Side chats are paused.");
   await expect.element(page.getByText("Side chat not started")).toBeVisible();
   await expect.element(page.getByText("Copy message", { exact: true })).toBeVisible();

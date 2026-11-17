@@ -514,15 +514,18 @@ describe("mobile task permissions", () => {
       ],
     };
     const sent = state.draft;
-    // The merge caps attachments, so the uncapped restore must land after it.
+    // The merge caps attachments, so the uncapped restore must land after it, and a send
+    // during the restore must not start a side chat from the half-restored draft.
+    const restoring = useThreadComposerState({ startSideChat });
     const restoreOrder: string[] = [];
     state.mergeDraft.mockImplementationOnce(async () => {
-      await Promise.resolve();
+      await restoring.onSendMessage();
       restoreOrder.push("merge");
     });
     state.appendAttachments.mockImplementationOnce(() => restoreOrder.push("append"));
-    expect(await useThreadComposerState({ startSideChat }).onSendMessage()).toBeNull();
+    expect(await restoring.onSendMessage()).toBeNull();
     expect(restoreOrder).toEqual(["merge", "append"]);
+    expect(startSideChat).toHaveBeenCalledOnce();
     expect(heldDuringStart).toEqual(["file:///shot.png"]);
     expect(state.fileHolds).toEqual([]);
     expect(state.clearDraft).toHaveBeenCalled();
