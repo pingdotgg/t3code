@@ -1,9 +1,8 @@
 import type { OrchestrationV2Run, OrchestrationV2TurnItem } from "@t3tools/contracts";
-import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import * as DateTime from "effect/DateTime";
 
-import { FEEDBACK_TRACE_TURNS, type FeedbackTrace } from "./FeedbackReport.ts";
-import { scrubFeedback } from "./scrubFeedback.ts";
+import { FEEDBACK_TRACE_TURNS, type FeedbackTrace, resolveT3ToolName } from "./FeedbackReport.ts";
+import { scrubFeedbackText } from "./scrubFeedback.ts";
 
 const MAX_ENTRIES = 80;
 const MAX_TEXT_CHARS = 1_000;
@@ -25,7 +24,6 @@ export const FEEDBACK_TRACE_ITEM_TYPES = [
 // like built-ins, so there every tool that is not T3's could be one.
 const NAMES_BUILT_IN_TOOLS: ReadonlySet<string> = new Set(["claudeAgent", "codex"]);
 const BUILT_IN_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/u;
-const T3_PREFIX = /^(?:mcp__t3[-_]?code(?:[-_]direct)?__|t3[-_]?code(?:[-_]direct)?[.:/])/iu;
 /** Every tool from the user's other MCP servers, whose names describe their setup. */
 const OTHER_TOOL = "mcp";
 
@@ -39,8 +37,8 @@ const toolName = (
   if (item.type === "command_execution") return "shell";
   if (item.type !== "dynamic_tool") return item.type;
   const name = item.toolName ?? "";
-  const t3 = resolveT3McpToolId(name) ?? name.replace(T3_PREFIX, "");
-  if (t3Tools.includes(t3)) return t3;
+  const t3 = resolveT3ToolName(name, t3Tools);
+  if (t3 !== undefined) return t3;
   return namesBuiltIns &&
     item.toolSource?.kind !== "integration" &&
     !/^mcp/iu.test(name) &&
@@ -92,8 +90,9 @@ export const buildFeedbackTrace = (input: {
           length,
         };
         if (turn < firstTextTurn) return message;
-        if (length > MAX_TEXT_CHARS) truncated = true;
-        return { ...message, text: scrubFeedback(item.text, input.sensitive, MAX_TEXT_CHARS) };
+        const { text, cut } = scrubFeedbackText(item.text, input.sensitive, MAX_TEXT_CHARS);
+        if (cut) truncated = true;
+        return { ...message, text };
       }
       const started = item.startedAt;
       const completed = item.completedAt;

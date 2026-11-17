@@ -257,6 +257,12 @@ it.effect("scrubs the caller's private values and sends only the event contract"
         },
       ]);
       yield* feedback.submit({ ...input, subject: "mcp__t3_code__t3_thread_read" }, fromThread);
+      // Codex's second server, for T3 tools kept out of Code Mode, in both of its forms.
+      for (const subject of [
+        "t3-code-direct.t3_thread_read",
+        "mcp__t3-code-direct__t3_thread_read",
+      ])
+        yield* feedback.submit({ ...input, subject }, { source: "cli" });
       expect(
         (yield* feedback.list).map(({ subject, userRequested, sent, threadId }) => ({
           subject,
@@ -265,6 +271,8 @@ it.effect("scrubs the caller's private values and sends only the event contract"
           threadId,
         })),
       ).toEqual([
+        { subject: "t3_thread_read", userRequested: false, sent: true, threadId: null },
+        { subject: "t3_thread_read", userRequested: false, sent: true, threadId: null },
         { subject: "t3_thread_read", userRequested: false, sent: true, threadId },
         { subject: "general", userRequested: true, sent: true, threadId: null },
         { subject: "t3 thread show", userRequested: false, sent: true, threadId },
@@ -383,6 +391,18 @@ it.effect("attaches a trace only to requested reports, with text only for includ
       yield* Ref.update(items, (all) => all.filter((item) => item.type !== "command_execution"));
       yield* Ref.set(runId, RunId.make("run:3"));
       expect((yield* feedback.submit(requested, fromThread)).trace?.truncated).toBe(false);
+      expect(
+        (yield* feedback.submit({ ...requested, includeTurns: 1 }, fromThread)).trace,
+      ).toMatchObject({ textTurns: 1, truncated: true });
+      // Redaction lengthens 990 characters of addresses past the cap: that cut marks it too.
+      yield* Ref.update(items, (all) => [
+        ...all.filter(
+          (item) =>
+            !(item.type === "user_message" || item.type === "assistant_message") ||
+            Array.from(item.text).length <= 1_000,
+        ),
+        item(6, { type: "user_message", text: "ops@a.io ".repeat(110) }),
+      ]);
       expect(
         (yield* feedback.submit({ ...requested, includeTurns: 1 }, fromThread)).trace,
       ).toMatchObject({ textTurns: 1, truncated: true });

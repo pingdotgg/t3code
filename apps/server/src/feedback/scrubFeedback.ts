@@ -73,13 +73,14 @@ const redactAll = (text: string, patterns: ReadonlyArray<RegExp>) => {
 /**
  * Removes anything shaped like a secret, email address, or URL with credentials,
  * values the server knows are private to this caller, then file paths, and caps
- * the result at `maxChars` characters.
+ * the result at `maxChars` characters. `cut` says whether any text was dropped
+ * to fit, by the scan window or the cap.
  */
-export function scrubFeedback(
+export function scrubFeedbackText(
   text: string,
   sensitive: ReadonlyArray<string>,
   maxChars = FEEDBACK_TEXT_MAX_CHARS,
-): string {
+): { readonly text: string; readonly cut: boolean } {
   // Bounds the scrubbing cost; the margin keeps a secret that crosses the cap whole.
   const window = maxChars * 4;
   let scrubbed = "";
@@ -92,9 +93,15 @@ export function scrubFeedback(
     }
     scrubbed += char;
   }
-  // The window cut a token whose rest no pattern saw, so none of it is kept.
-  if (next !== undefined && /\S/u.test(next)) scrubbed = scrubbed.replace(/\S+$/u, REDACTED);
-  const known = [...new Set(sensitive.map((value) => value.trim()))]
+  // Every pattern below stays within one line, so only a match in the line the window cut can
+  // reach past it. No pattern saw that line's rest, so none of the line is kept.
+  if (next !== undefined && next !== "\n") {
+    scrubbed = `${scrubbed.slice(0, scrubbed.lastIndexOf("\n") + 1)}${REDACTED}`;
+  }
+  // Split on line breaks so no known value can match across lines.
+  const known = [
+    ...new Set(sensitive.flatMap((value) => value.split("\n").map((line) => line.trim()))),
+  ]
     .filter((value) => value.length >= 3)
     .map((value) => new RegExp(`(?<![A-Za-z0-9_])${escapeRegExp(value)}(?![A-Za-z0-9_])`, "gu"));
   // Secrets and known values on the original text, before either can break the other's match.
@@ -104,5 +111,15 @@ export function scrubFeedback(
     .replaceAll(LONG_RUN, (run) =>
       run.length >= 32 && (run.includes(REDACTED) || looksRandom(run)) ? REDACTED : run,
     );
-  return Array.from(scrubbed).slice(0, maxChars).join("");
+  const chars = Array.from(scrubbed);
+  return {
+    text: chars.slice(0, maxChars).join(""),
+    cut: next !== undefined || chars.length > maxChars,
+  };
 }
+
+export const scrubFeedback = (
+  text: string,
+  sensitive: ReadonlyArray<string>,
+  maxChars = FEEDBACK_TEXT_MAX_CHARS,
+): string => scrubFeedbackText(text, sensitive, maxChars).text;

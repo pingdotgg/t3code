@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
 import { FeedbackInput, FeedbackReport } from "./FeedbackReport.ts";
-import { scrubFeedback } from "./scrubFeedback.ts";
+import { scrubFeedback, scrubFeedbackText } from "./scrubFeedback.ts";
 
 const decodeInput = Schema.decodeUnknownSync(FeedbackInput);
 const decodeReport = Schema.decodeUnknownSync(FeedbackReport);
@@ -178,7 +178,36 @@ describe("scrubFeedback", () => {
 
   it("redacts a token the scan window cuts, whatever it holds past the window", () => {
     const url = `https://alice:${"a".repeat(5_000)}@example.com`;
-    expect(scrubFeedback(`see ${url} now`, [], 1_000)).toBe("see [redacted]");
-    expect(scrubFeedback(`${"b ".repeat(2_000)}tail`, [], 1_000)).toBe("b ".repeat(500));
+    expect(scrubFeedback(`see ${url} now`, [], 1_000)).toBe("[redacted]");
+    expect(scrubFeedback(`kept\nsee ${url} now`, [], 1_000)).toBe("kept\n[redacted]");
+    expect(scrubFeedback(`${"b\n".repeat(2_000)}tail`, [], 1_000)).toBe("b\n".repeat(500));
+  });
+
+  it("redacts the whole line the scan window cuts, so no match across the cut survives", () => {
+    expect(
+      scrubFeedback(`sk-${"a".repeat(3_986)} Project Aurora tail`, ["Project Aurora"], 1_000),
+    ).toBe("[redacted]");
+    expect(
+      scrubFeedback(`see "/My Documents/${"a ".repeat(2_500)}secret.txt" now`, [], 1_000),
+    ).toBe("[redacted]");
+    // A known value cannot span lines: each of its lines is a known value of its own.
+    expect(scrubFeedback("Project\nAurora Labs, Aurora Labs", ["Project\nAurora Labs"])).toBe(
+      "[redacted]\n[redacted], [redacted]",
+    );
+    const reply = Array.from({ length: 100 }, (_, index) => `Line ${index} of the reply.`).join(
+      "\n",
+    );
+    expect(scrubFeedbackText(reply, [], 1_000)).toEqual({
+      text: Array.from(reply).slice(0, 1_000).join(""),
+      cut: true,
+    });
+  });
+
+  it("reports a cut when redaction pushes the text past the cap", () => {
+    expect(scrubFeedbackText("Bob ".repeat(249), ["Bob"], 1_000).cut).toBe(true);
+    expect(scrubFeedbackText("Bob ".repeat(10), ["Bob"], 1_000)).toEqual({
+      text: "[redacted] ".repeat(10),
+      cut: false,
+    });
   });
 });

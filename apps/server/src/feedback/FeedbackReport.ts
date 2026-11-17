@@ -1,3 +1,4 @@
+import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
@@ -153,13 +154,19 @@ export type FeedbackReport = typeof FeedbackReport.Type;
 export const FEEDBACK_SUBJECT_MESSAGE =
   "Set subject to the exact T3 tool name, the t3 command, or `general`.";
 
-// Claude names T3 tools `mcp__t3-code__<tool>`; Codex Code Mode names them `mcp__t3_code__<tool>`.
-const PROVIDER_TOOL_PREFIX = /^mcp__t3[-_]code__/;
+// The shared resolver knows the presented tools; the prefix covers the rest, such as these.
+// Codex also registers `t3-code-direct` for T3 tools it keeps out of Code Mode.
+const T3_PREFIX = /^(?:mcp__t3[-_]?code(?:[-_]direct)?__|t3[-_]?code(?:[-_]direct)?[.:/])/iu;
+
+/** The bare name of a registered T3 tool however a provider prefixed it, else undefined. */
+export const resolveT3ToolName = (name: string, toolNames: ReadonlyArray<string>) => {
+  const tool = resolveT3McpToolId(name) ?? name.replace(T3_PREFIX, "");
+  return toolNames.includes(tool) ? tool : undefined;
+};
 
 /** The stored subject, or undefined when the value names no T3 tool, `t3` command, or `general`. */
 export const resolveFeedbackSubject = (value: string, toolNames: ReadonlyArray<string>) => {
   const subject = value.trim();
   if (subject === "general" || T3_CLI_COMMANDS.includes(subject)) return subject;
-  const tool = subject.replace(PROVIDER_TOOL_PREFIX, "");
-  return toolNames.includes(tool) ? tool : undefined;
+  return resolveT3ToolName(subject, toolNames);
 };
