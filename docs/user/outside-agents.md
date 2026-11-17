@@ -119,6 +119,79 @@ Any agent that supports remote MCP servers over HTTP with OAuth can connect. Giv
 it the MCP URL and choose OAuth, and the agent finds the sign-in settings itself.
 Agents without OAuth support cannot connect.
 
+### Receive thread notifications
+
+The host administrator can configure outbound webhooks for a bot, including an
+official Grok Bot webhook. Connect the bot to T3's MCP server first. The webhook
+notifies the bot when a thread needs an answer or approval, or when a run ends.
+The bot reads context and sends its response through MCP.
+
+Create `thread-webhooks.json` in the environment's userdata directory, next to
+`statev2.sqlite`. Protect it with `chmod 600 thread-webhooks.json` on macOS or
+Linux, because it contains the receiver's bearer token. Use this format:
+
+```json
+[
+  {
+    "id": "grok-bot",
+    "url": "https://your-bot.example/webhook",
+    "token": "YOUR_WEBHOOK_TOKEN",
+    "projectIds": ["YOUR_PROJECT_ID"]
+  }
+]
+```
+
+The project filter includes new threads in that project automatically. Add
+`"threadIds": ["YOUR_THREAD_ID"]` to limit notifications to named threads. Both
+filters must match when present. Omit a filter to include all projects or
+threads. An empty filter includes none. HTTPS is required, except for HTTP on
+localhost for local tests. Restart the host after each configuration change.
+An absent file or `[]` disables notifications. Invalid configuration stops startup
+with a bounded error that does not print the token. Keep this file out of Git.
+
+T3 sends JSON with `Authorization: Bearer YOUR_WEBHOOK_TOKEN` and an
+`Idempotency-Key` header equal to `deliveryId`. The version 1 payload includes
+`eventId`, `sequence`, `occurredAt`, `projectId`, `threadId`, and `runId`.
+`runId` can be null if the request has no associated run. Event types are:
+
+- `thread.user-input.requested`, with `requestId` and `status: "pending"`.
+- `thread.approval.requested`, with `requestId` and `status: "pending"`.
+- `thread.provider-error`, with `turnItemId`, `failureClass`, and status `running`
+  or `failed`. A running error means the provider is handling a retry. It does
+  not mean the run has stopped. Retry counter updates do not repeat this event.
+- `thread.goal.blocked`, with `providerThreadId` and status `usage_limited` or
+  `budget_limited`. Its `runId` is null because a provider goal can span runs.
+- `thread.run.terminal`, with status `completed`, `failed`, `interrupted`,
+  `cancelled`, or `rolled_back`.
+
+A terminal run status does not mean that delegated work, checkpoints, or the
+whole thread have settled. A question and a permission approval are different
+requests. Store these bot instructions with the bot so each callback can resume
+the same process:
+
+1. Deduplicate by `deliveryId`, then read the thread with `t3_thread_read`.
+2. For a user-input request, use `t3_pending_request` to read it and submit an
+   answer through its response action. For an approval request, ask a human to
+   approve or reject it in T3 Code. MCP cannot approve permissions.
+3. For a provider error or blocked goal, read the current retry state. Do not start duplicate
+   work while T3 or the provider is already retrying.
+4. For a terminal run, read its final result and check remaining work before
+   deciding what to do next. Use `t3_thread_send` for follow-up work.
+
+Only HTTP 200 acknowledges receipt, matching the official Grok Bot contract. T3 rejects redirects and limits each
+request to 10 seconds. Failed requests retry with exponential backoff, from one
+second up to five minutes, and survive host restarts. Delivery is at least once,
+so a callback can arrive again after the receiver has already processed it.
+The receiver must deduplicate and read current state, since retries can arrive
+after newer events. Delivery failures appear in host logs with IDs and status,
+without the token or destination URL.
+
+Remove an endpoint and restart to stop delivery to it. Its queued notifications
+remain dormant; restoring the same `id` and `url` resumes them. Changing the URL
+does not forward older notifications to the new destination. Filters apply when an event commits; changing a filter does not cancel queued
+notifications. Token rotation uses the new token after restart. Revoking the bot's MCP access is separate from
+disabling its webhook.
+
 ## Scripts on the host
 
 On the machine that runs the environment, `t3 thread` uses the same tools

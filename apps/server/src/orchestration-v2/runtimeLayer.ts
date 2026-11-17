@@ -25,6 +25,7 @@ import * as CommandPolicy from "./CommandPolicy.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as ThreadWebhooks from "./ThreadWebhooks.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
@@ -81,6 +82,7 @@ const layerStores = Layer.mergeAll(
   ProjectStore.layer,
   layerCommandReceiptStoreProvided,
   EffectOutbox.layer,
+  ThreadWebhooks.layer,
   TurnItemPositionStore.layer,
 );
 
@@ -369,6 +371,7 @@ export const layer = Layer.mergeAll(
 );
 
 export const layerProduction = Layer.mergeAll(
+  ThreadWebhooks.layerWorker.pipe(Layer.provide(layerStores)),
   WorktreeBranchSync.layer.pipe(
     Layer.provide(Layer.merge(layerThreadManagementProvided, ProjectionStore.layer)),
   ),

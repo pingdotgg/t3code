@@ -1,6 +1,7 @@
 import * as NodeURL from "node:url";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
@@ -10,6 +11,7 @@ import {
   type ModelSelection,
   OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpThreadInterruptResult,
+  OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadSendResult,
   ProjectId,
   ProviderDriverKind,
@@ -17,15 +19,20 @@ import {
   type ProviderOptionDescriptor,
   type ServerProvider,
   ThreadId,
+  ThreadWebhookEvent,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 import { McpSchema, McpServer } from "effect/ai";
+import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
@@ -33,6 +40,13 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
+import * as ThreadWebhooks from "../orchestration-v2/ThreadWebhooks.ts";
+import {
+  CODEX_MODEL_SELECTION,
+  PLAN_QUESTIONS_PROMPT,
+  READ_ONLY_NEVER_POLICY,
+} from "../orchestration-v2/testkit/fixtures/shared.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -54,6 +68,8 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
+
+const decodeThreadRead = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -195,6 +211,237 @@ const layerUnusedScheduledTaskStub = Layer.succeed(
 );
 
 describe("orchestrator MCP toolkit", () => {
+  it.live(
+    "delivers a Codex question to an HTTP webhook, accepts its MCP answer, and delivers completion",
+    () =>
+      Effect.gen(function* () {
+        const attempts: Array<ThreadWebhookEvent> = [];
+        const deliveries = yield* Queue.unbounded<{
+          readonly event: ThreadWebhookEvent;
+          readonly authorization: string | undefined;
+          readonly idempotencyKey: string | undefined;
+        }>();
+        const receiver = yield* HttpRouter.serve(
+          Layer.effectDiscard(
+            Effect.gen(function* () {
+              const router = yield* HttpRouter.HttpRouter;
+              yield* router.add(
+                "POST",
+                "/grok-routine",
+                Effect.gen(function* () {
+                  const request = yield* HttpServerRequest.HttpServerRequest;
+                  const event = yield* request.json.pipe(
+                    Effect.flatMap(Schema.decodeUnknownEffect(ThreadWebhookEvent)),
+                  );
+                  attempts.push(event);
+                  if (attempts.length === 1) {
+                    return HttpServerResponse.empty({ status: 503 });
+                  }
+                  yield* Queue.offer(deliveries, {
+                    event,
+                    authorization: request.headers.authorization,
+                    idempotencyKey: request.headers["idempotency-key"],
+                  });
+                  return HttpServerResponse.empty({ status: 200 });
+                }).pipe(Effect.orDie),
+              );
+            }),
+          ),
+          { disableListenLog: true, disableLogger: true },
+        ).pipe(Layer.provideMerge(NodeHttpServer.layerTest), Layer.build);
+        const address = Context.get(receiver, HttpServer.HttpServer).address;
+        if (address._tag === "UnixPathAddress")
+          return yield* Effect.die("Expected a TCP receiver.");
+
+        const cwd = yield* checkpointWorkspace("thread-webhook-mcp");
+        const fs = yield* FileSystem.FileSystem;
+        const rawTranscript = yield* fs
+          .readFileString(
+            NodeURL.fileURLToPath(
+              new URL(
+                "../orchestration-v2/testkit/fixtures/plan_questions/codex_transcript.ndjson",
+                import.meta.url,
+              ),
+            ),
+          )
+          .pipe(Effect.flatMap(decodeProviderReplayNdjson));
+        const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
+          materializeReplayTranscriptWorkspace(rawTranscript, cwd),
+        );
+        const threadId = ThreadId.make("thread:webhook-mcp");
+        const layerOrchestrator = ProviderReplayHarness.layerProviderReplay(
+          {
+            name: "thread-webhook-mcp/codex",
+            transcript,
+            commands: [],
+            runtimePolicyOverride: { ...READ_ONLY_NEVER_POLICY, cwd },
+          },
+          CodexOrchestratorReplayHarness,
+        ).pipe(
+          Layer.provide(
+            Layer.succeed(ThreadWebhooks.Configuration, [
+              {
+                id: "grok-proof",
+                url: `http://127.0.0.1:${address.port}/grok-routine`,
+                token: Redacted.make("local-proof-token"),
+                threadIds: [threadId],
+              },
+            ]),
+          ),
+        );
+        const layerOrchestration = ThreadManagementService.layer.pipe(
+          Layer.provideMerge(layerOrchestrator),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(
+            CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+          ),
+        );
+        const layerTest = Layer.mergeAll(
+          layerOrchestratorToolkit,
+          McpHttpServer.layerThreadToolkit.pipe(
+            Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+          ),
+          ThreadWebhooks.layerWorker,
+        ).pipe(
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+          Layer.provideMerge(layerOrchestration),
+          Layer.provide(
+            CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(transcript).pipe(
+              Layer.provide(McpProviderSessions.layer),
+            ),
+          ),
+          Layer.provide(
+            ProviderRegistryMock.layer([
+              makeProviderSnapshot({
+                instanceId: codexInstanceId,
+                driver: ProviderDriverKind.make("codex"),
+                model: CODEX_MODEL_SELECTION.model,
+              }),
+            ]),
+          ),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(layerUnusedScheduledTaskStub),
+          Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+          Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+          Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provideMerge(
+            SecretRequests.layer.pipe(
+              Layer.provide(layerMemorySecretStore),
+              Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+              Layer.provide(layerOrchestration),
+            ),
+          ),
+          Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        );
+
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const server = yield* McpServer.McpServer;
+          const invocation: McpInvocationContext.McpInvocationScope = {
+            environmentId: EnvironmentId.make("environment:webhook-proof"),
+            requestNamespace: "client:grok-proof",
+            thread: undefined,
+            client: {
+              sessionId: "grok-proof",
+              label: "Grok proof receiver",
+              access: "full-access",
+            },
+            capabilities: new Set(["orchestration"]),
+            issuedAt: 1,
+          };
+          const invoke = (name: string, args: Record<string, unknown>) =>
+            server
+              .callTool({ name, arguments: args })
+              .pipe(
+                Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+                Effect.provideService(McpSchema.McpServerClient, client),
+              );
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:webhook-proof:create"),
+            threadId,
+            projectId,
+            title: "Grok webhook proof",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "plan",
+            branch: null,
+            worktreePath: cwd,
+          });
+          const launchCall = yield* invoke("t3_thread_send", {
+            threadId,
+            message: PLAN_QUESTIONS_PROMPT,
+            clientRequestId: "webhook-proof-start",
+          });
+          expect(launchCall.isError).not.toBe(true);
+          const launch = yield* decodeThreadSendResult(launchCall.structuredContent);
+          expect(launch.delivery).toBe("started");
+
+          const question = yield* Queue.take(deliveries);
+          expect(attempts).toHaveLength(2);
+          expect(attempts[1]).toEqual(attempts[0]);
+          expect(question.authorization).toBe("Bearer local-proof-token");
+          expect(question.idempotencyKey).toBe(question.event.deliveryId);
+          expect(question.event).toMatchObject({
+            type: "thread.user-input.requested",
+            threadId,
+            projectId,
+            runId: launch.runId,
+            status: "pending",
+          });
+          if (question.event.type !== "thread.user-input.requested") {
+            return yield* Effect.die("The first callback must be the Codex question.");
+          }
+          const readQuestion = yield* invoke("t3_pending_request", {
+            action: "read",
+            threadId,
+            requestId: question.event.requestId,
+          });
+          expect(readQuestion.isError).not.toBe(true);
+          expect(readQuestion.structuredContent).toMatchObject({
+            requestId: question.event.requestId,
+            questions: [
+              { id: "schema_preference", question: expect.stringContaining("strict schemas") },
+            ],
+          });
+          const answer = yield* invoke("t3_pending_request", {
+            action: "respond",
+            threadId,
+            requestId: question.event.requestId,
+            answers: { schema_preference: "Strict schemas (Recommended)" },
+          });
+          expect(answer.isError).not.toBe(true);
+
+          const completion = yield* Queue.take(deliveries);
+          expect(completion.authorization).toBe("Bearer local-proof-token");
+          expect(completion.idempotencyKey).toBe(completion.event.deliveryId);
+          expect(completion.event).toMatchObject({
+            type: "thread.run.terminal",
+            threadId,
+            runId: launch.runId,
+            status: "completed",
+          });
+          expect(completion.event.sequence).toBeGreaterThan(question.event.sequence);
+          expect(completion.event.deliveryId).not.toBe(question.event.deliveryId);
+          const readCall = yield* invoke("t3_thread_read", { threadId });
+          expect(readCall.isError).not.toBe(true);
+          const result = yield* decodeThreadRead(readCall.structuredContent);
+          expect(JSON.stringify(result.items)).toContain("plan questions fixture complete");
+          expect((yield* orchestrator.getThreadProjection(threadId)).runtimeRequests).toEqual([
+            expect.objectContaining({
+              id: question.event.requestId,
+              status: "resolved",
+              answers: { schema_preference: "Strict schemas (Recommended)" },
+            }),
+          ]);
+        }).pipe(Effect.provide(layerTest));
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.live.each([
     { label: "distinct", result: queuedFollowupResult, latestSummary: queuedFollowupResult },
     { label: "identical", result: delegatedResult, latestSummary: null },

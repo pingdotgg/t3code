@@ -32,6 +32,7 @@ import { makeRunOutcomeRecorder, type RunOutcome } from "./RunMetrics.ts";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as ThreadWebhooks from "./ThreadWebhooks.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -233,6 +234,7 @@ const layerBase: Layer.Layer<
   never,
   | CommandReceiptStore.CommandReceiptStoreV2
   | EffectOutbox.EffectOutboxV2
+  | ThreadWebhooks.ThreadWebhooks
   | EventStore.EventStoreV2
   | ProjectionStore.ProjectionStoreV2
   | ProjectStore.ProjectStoreV2
@@ -244,6 +246,7 @@ const layerBase: Layer.Layer<
     const sql = yield* SqlClient.SqlClient;
     const commandReceipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
     const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
+    const threadWebhooks = yield* ThreadWebhooks.ThreadWebhooks;
     const eventStore = yield* EventStore.EventStoreV2;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const projectStore = yield* ProjectStore.ProjectStoreV2;
@@ -280,6 +283,7 @@ const layerBase: Layer.Layer<
         .pipe(
           Effect.andThen(eventStore.publishCommitted(events)),
           Effect.andThen(publishLiveEvents(events)),
+          Effect.andThen(threadWebhooks.wake),
         );
 
     // Serialize commit and publish; reordered publication makes clients drop earlier sequences.
@@ -383,9 +387,16 @@ const layerBase: Layer.Layer<
     const applyStoredEvents =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(function* (storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>) {
-        yield* Effect.forEach(storedEvents, (stored) => projectionStore.apply(stored.event), {
-          concurrency: 1,
-        });
+        yield* Effect.forEach(
+          storedEvents,
+          (stored) =>
+            threadWebhooks
+              .capture([stored])
+              .pipe(Effect.andThen(projectionStore.apply(stored.event))),
+          {
+            concurrency: 1,
+          },
+        );
         const sequence = storedEvents.at(-1)?.sequence;
         if (sequence !== undefined) {
           const now = DateTime.formatIso(yield* DateTime.now);
@@ -1130,6 +1141,7 @@ export const layer: Layer.Layer<
     Layer.mergeAll(
       CommandReceiptStore.layer,
       EffectOutbox.layer,
+      ThreadWebhooks.layer,
       ProjectStore.layer,
       TurnItemPositionStore.layer,
     ),

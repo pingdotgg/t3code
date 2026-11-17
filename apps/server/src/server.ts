@@ -1,3 +1,4 @@
+import * as ThreadWebhooks from "./orchestration-v2/ThreadWebhooks.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as Random from "effect/Random";
@@ -768,6 +769,7 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(DirectEndpoints.layer),
   Layer.provideMerge(ServerLifecycleEvents.layer),
   Layer.provide(NetService.layer),
+  Layer.provideMerge(ThreadWebhooks.layerConfiguration),
 );
 
 const layerCommandReadiness = HttpRouter.middleware(
