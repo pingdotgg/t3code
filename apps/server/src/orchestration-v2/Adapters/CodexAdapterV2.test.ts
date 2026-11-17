@@ -1820,94 +1820,99 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
-  it.effect("a steer that changes the service tier updates Codex's next-turn settings", () =>
-    Effect.gen(function* () {
-      const nativeThreadId = "steer-tier-thread";
-      const nativeTurnId = "steer-tier-turn";
-      const harness = yield* makeCodexReplayHarness(
-        makeCodexReplayTranscript({
-          scenario: "steer-service-tier",
-          entries: [
-            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Work." }),
-            {
-              type: "expect_outbound",
-              label: "thread/settings/update",
-              frame: {
-                id: 4,
-                method: "thread/settings/update",
-                params: { threadId: nativeThreadId, serviceTier: "fast" },
-              },
-            },
-            { type: "emit_inbound", frame: { id: 4, result: {} } },
-            {
-              type: "expect_outbound",
-              label: "turn/steer",
-              frame: {
-                id: 5,
-                method: "turn/steer",
-                params: {
-                  threadId: nativeThreadId,
-                  expectedTurnId: nativeTurnId,
-                  input: [{ type: "text", text: "Hurry up." }],
+  it.effect.each([
+    { codex: "accepts", reply: { result: {} } },
+    { codex: "rejects", reply: { error: { code: -32601, message: "Method not found" } } },
+  ] as const)(
+    "a steer that changes the service tier still steers when Codex $codex the settings update",
+    ({ codex, reply }) =>
+      Effect.gen(function* () {
+        const nativeThreadId = `steer-tier-thread-${codex}`;
+        const nativeTurnId = `steer-tier-turn-${codex}`;
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: `steer-service-tier-${codex}`,
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Work." }),
+              {
+                type: "expect_outbound",
+                label: "thread/settings/update",
+                frame: {
+                  id: 4,
+                  method: "thread/settings/update",
+                  params: { threadId: nativeThreadId, serviceTier: "fast" },
                 },
               },
-            },
-            { type: "emit_inbound", frame: { id: 5, result: { turnId: nativeTurnId } } },
-            {
-              type: "emit_inbound",
-              frame: {
-                method: "turn/completed",
-                params: {
-                  threadId: nativeThreadId,
-                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+              { type: "emit_inbound", frame: { id: 4, ...reply } },
+              {
+                type: "expect_outbound",
+                label: "turn/steer",
+                frame: {
+                  id: 5,
+                  method: "turn/steer",
+                  params: {
+                    threadId: nativeThreadId,
+                    expectedTurnId: nativeTurnId,
+                    input: [{ type: "text", text: "Hurry up." }],
+                  },
                 },
               },
-            },
-          ],
-        }),
-      );
-      const turnInput = makeCodexTestTurnInput({
-        threadId: harness.threadId,
-        providerThread: harness.providerThread,
-        now: yield* DateTime.now,
-        attemptId: RunAttemptId.make("steer-tier-attempt"),
-        text: "Work.",
-      });
-      yield* harness.runtime.startTurn(turnInput);
-      yield* harness.until(() =>
-        harness.events.some(
-          (event) =>
-            event.type === "provider_turn.updated" &&
-            event.providerTurn.nativeTurnRef?.nativeId === nativeTurnId,
-        ),
-      );
-      const providerTurnId = harness.events.flatMap((event) =>
-        event.type === "provider_turn.updated" ? [event.providerTurn.id] : [],
-      )[0];
-      assert.isDefined(providerTurnId);
-      if (providerTurnId === undefined) return;
-      yield* harness.runtime.steerTurn({
-        ...turnInput,
-        providerTurnId,
-        modelSelection: {
-          ...CODEX_TEST_MODEL_SELECTION,
-          options: [{ id: "serviceTier", value: "fast" }],
-        },
-        message: { ...turnInput.message, text: "Hurry up." },
-      });
-      yield* harness.firstTerminal;
-      assert.equal(harness.terminalEvents()[0]?.status, "completed");
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
+              { type: "emit_inbound", frame: { id: 5, result: { turnId: nativeTurnId } } },
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ],
+          }),
+        );
+        const turnInput = makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("steer-tier-attempt"),
+          text: "Work.",
+        });
+        yield* harness.runtime.startTurn(turnInput);
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "provider_turn.updated" &&
+              event.providerTurn.nativeTurnRef?.nativeId === nativeTurnId,
+          ),
+        );
+        const providerTurnId = harness.events.flatMap((event) =>
+          event.type === "provider_turn.updated" ? [event.providerTurn.id] : [],
+        )[0];
+        assert.isDefined(providerTurnId);
+        if (providerTurnId === undefined) return;
+        yield* harness.runtime.steerTurn({
+          ...turnInput,
+          providerTurnId,
+          modelSelection: {
+            ...CODEX_TEST_MODEL_SELECTION,
+            options: [{ id: "serviceTier", value: "fast" }],
+          },
+          message: { ...turnInput.message, text: "Hurry up." },
+        });
+        yield* harness.firstTerminal;
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
-    ),
   );
 
   it.effect("a speed change with no message updates Codex's next-turn settings", () =>

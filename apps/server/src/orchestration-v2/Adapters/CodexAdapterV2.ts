@@ -7845,6 +7845,24 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ),
         };
 
+        // turn/steer carries no settings, and the turns Codex starts on its own reuse the thread's.
+        const applyServiceTier = Effect.fn("CodexAdapterV2.applyServiceTier")(function* (
+          threadId: string,
+          modelSelection: ModelSelection | undefined,
+        ) {
+          const serviceTier =
+            adapterOptions.resolveRuntime === undefined
+              ? getCodexServiceTierOptionValue(modelSelection)
+              : undefined;
+          if (serviceTier === undefined) return;
+          yield* client
+            .request("thread/settings/update", { threadId, serviceTier })
+            .pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("orchestration-v2.codex-service-tier-update-failed", { cause }),
+              ),
+            );
+        });
         const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: adapterOptions.instanceId,
           driver: CODEX_PROVIDER,
@@ -8104,20 +8122,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 );
               }
 
-              const serviceTier =
-                adapterOptions.resolveRuntime === undefined
-                  ? getCodexServiceTierOptionValue(turnInput.modelSelection)
-                  : undefined;
-              if (serviceTier !== undefined) {
-                // turn/steer carries no settings, and the turns Codex starts on its own reuse the thread's.
-                yield* client.request("thread/settings/update", { threadId, serviceTier }).pipe(
-                  Effect.catch((cause) =>
-                    Effect.logWarning("orchestration-v2.codex-steer-service-tier-failed", {
-                      cause,
-                    }),
-                  ),
-                );
-              }
+              yield* applyServiceTier(threadId, turnInput.modelSelection);
               const codexInput = yield* toCodexInput(turnInput);
               yield* client.request("turn/steer", {
                 expectedTurnId: activeTurn.nativeTurnId,
@@ -8138,6 +8143,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ),
               ),
           ),
+          applyModelSelection: Effect.fn("CodexAdapterV2.applyModelSelection")(function* ({
+            providerThread,
+            modelSelection,
+          }) {
+            const threadId = providerThread.nativeThreadRef?.nativeId;
+            if (threadId != null) yield* applyServiceTier(threadId, modelSelection);
+          }),
           // Dropping this connection's subscription lets the shared app-server
           // shut the native thread (and its MCP servers) down once it is idle.
           unloadThread: Effect.fn("CodexAdapterV2.unloadThread")(
