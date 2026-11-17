@@ -34,6 +34,7 @@ test(
       target.dispatchEvent(
         new DragEvent("drop", { dataTransfer: files, bubbles: true, cancelable: true }),
       );
+      return null;
     });
 
     await screen.getByRole("button", "Use Nyx One theme").tap();
