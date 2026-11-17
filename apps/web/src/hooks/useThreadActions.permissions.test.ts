@@ -46,12 +46,17 @@ const state = vi.hoisted(() => ({
     id: ThreadId;
     lineage: { parentThreadId: ThreadId | null; sideChat?: boolean };
   }[],
-  requests: [] as { action: string; environmentId: string; input: { threadId?: string } }[],
+  requests: [] as {
+    action: string;
+    environmentId: string;
+    input: { threadId?: string; force?: boolean };
+  }[],
   localEffects: [] as string[],
   confirm: vi.fn<(message: string) => Promise<boolean>>(),
   toasts: [] as string[],
   afterRequest: undefined as ((action: string) => void) | undefined,
   sessionLookupFails: false,
+  worktreeChanges: [] as string[],
 }));
 
 vi.mock("react", () => ({
@@ -74,7 +79,7 @@ vi.mock("../state/session", () => ({
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand:
     (action: string) =>
-    async (request: { environmentId: string; input: { threadId?: string } }) => {
+    async (request: { environmentId: string; input: { threadId?: string; force?: boolean } }) => {
       state.requests.push({ action, ...request });
       const scope =
         action === "removeWorktree" ? AuthSourceControlWriteScope : AuthOrchestrationOperateScope;
@@ -82,6 +87,15 @@ vi.mock("../state/use-atom-command", () => ({
         return AsyncResult.failure(Cause.fail(new Error("Server denied the request")));
       }
       state.afterRequest?.(action);
+      if (action === "removeWorktree" && state.worktreeChanges.length > 0 && !request.input.force) {
+        return AsyncResult.failure(Cause.fail(new Error("git worktree remove failed")));
+      }
+      if (action === "refreshStatus") {
+        return AsyncResult.success({
+          hasWorkingTreeChanges: state.worktreeChanges.length > 0,
+          workingTree: { files: state.worktreeChanges.map((path) => ({ path })) },
+        });
+      }
       return AsyncResult.success(undefined);
     },
 }));
@@ -286,6 +300,7 @@ beforeEach(() => {
   state.toasts = [];
   state.afterRequest = undefined;
   state.sessionLookupFails = false;
+  state.worktreeChanges = [];
   useRightPanelStore.setState(useRightPanelStore.getInitialState(), true);
   useDiffPanelStore.setState(useDiffPanelStore.getInitialState(), true);
   usePreviewMiniPlayerStore.setState(usePreviewMiniPlayerStore.getInitialState(), true);
@@ -454,7 +469,36 @@ describe("thread action permissions", () => {
       "removeWorktree",
       "refreshStatus",
     ]);
+    // Uncommitted edits must reach Git's own dirty check before anything forces removal.
+    expect(
+      state.requests.find((request) => request.action === "removeWorktree")?.input,
+    ).not.toHaveProperty("force", true);
   });
+
+  it.each([
+    { discard: true, forced: [false, true] },
+    { discard: false, forced: [false] },
+  ])(
+    "lists a worktree's local changes before forcing its removal (discard: $discard)",
+    async ({ discard, forced }) => {
+      state.scopes
+        .get(secondary)!
+        .add(AuthOrchestrationOperateScope)
+        .add(AuthSourceControlWriteScope);
+      state.threads[0]!.worktreePath = "/worktrees/thread";
+      state.worktreeChanges = ["tracked.txt", "nested/"];
+      state.confirm.mockResolvedValueOnce(true).mockResolvedValueOnce(discard);
+      expect((await useThreadActions().deleteThread(target))._tag).toBe("Success");
+      expect(state.confirm).toHaveBeenCalledTimes(2);
+      expect(state.confirm.mock.calls[1]![0]).toContain("tracked.txt\nnested/");
+      expect(
+        state.requests
+          .filter((request) => request.action === "removeWorktree")
+          .map((request) => request.input.force === true),
+      ).toEqual(forced);
+      expect(state.toasts).toEqual([]);
+    },
+  );
 
   it("clears the drafts of the side chats deleted with it", async () => {
     state.scopes.get(secondary)!.add(AuthOrchestrationOperateScope);
