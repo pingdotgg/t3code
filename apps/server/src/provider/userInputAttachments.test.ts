@@ -134,6 +134,8 @@ describe("question answer paths", () => {
           Effect.provide(Layer.fresh(DocumentText.layer)),
           Effect.provideService(FileSystem.FileSystem, {
             ...fs,
+            // An async probe can let `staying` join only after `leaving` cancelled the lookup.
+            exists: (file) => Effect.sync(() => NodeFS.existsSync(file)),
             stat: (file) =>
               Effect.gen(function* () {
                 yield* Queue.offer(started, file);

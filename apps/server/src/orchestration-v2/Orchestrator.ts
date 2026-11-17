@@ -7464,6 +7464,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly providerThreadId: OrchestrationV2ProviderThread["id"];
         readonly providerInstanceId: ProviderInstanceId;
         readonly modelSwitch?: OrchestrationV2ModelSwitch | undefined;
+        readonly ordinal?: number;
       }) {
         const message: OrchestrationV2ConversationMessage = {
           createdBy: input.createdBy,
@@ -7508,7 +7509,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           providerTurnId: messageInput.providerTurnId,
           nativeItemRef: null,
           parentItemId: null,
-          ordinal: yield* nextTurnItemOrdinal(input.projection),
+          ordinal: messageInput.ordinal ?? (yield* nextTurnItemOrdinal(input.projection)),
           status: "completed",
           title: null,
           startedAt: now,
@@ -7645,6 +7646,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const nextRootNodeId = replaced.rootNodeId;
     const restartProviderThread = replaced.providerThread;
     const restartSessionTransition = replaced.sessionTransition;
+    const restartHandoff = replaced.handoff;
     // The restart replaces the run's input, so the wake it was running can no longer be
     // settled at its terminal. Its provider turn was running, so the wake already landed.
     yield* acceptDelegatedCompletionDelivery({
@@ -7654,6 +7656,59 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       messageId: targetRun.userMessageId,
       now,
     });
+    const steeringOrdinal = yield* nextTurnItemOrdinal(input.projection);
+    if (restartHandoff !== null) {
+      const covered = restartHandoff.coveredRunOrdinals;
+      const coveredRuns = input.projection.runs.filter(
+        (run) => run.ordinal >= covered.from && run.ordinal <= covered.to,
+      );
+      yield* emitEvent({
+        type: "turn-item.updated",
+        threadId: input.command.threadId,
+        runId: targetRun.id,
+        nodeId: nextRootNodeId,
+        providerInstanceId: input.modelSelection.instanceId,
+        occurredAt: now,
+        payload: {
+          id: idAllocator.derive.runSignalTurnItem({
+            runId: targetRun.id,
+            signal: `context-handoff:${restartHandoff.id}`,
+          }),
+          threadId: input.command.threadId,
+          runId: targetRun.id,
+          nodeId: nextRootNodeId,
+          providerThreadId: restartProviderThread.id,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: steeringOrdinal,
+          status: "completed",
+          title: "Provider handoff",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "handoff",
+          contextHandoffId: restartHandoff.id,
+          fromProviderThreadIds: restartHandoff.fromProviderThreadIds,
+          toProviderThreadId: restartHandoff.toProviderThreadId,
+          fromProviderInstanceIds: Array.from(
+            new Set(coveredRuns.map((run) => run.providerInstanceId)),
+          ),
+          toProviderInstanceId: input.modelSelection.instanceId,
+          fromModelSelections: Array.from(
+            new Map(
+              coveredRuns.map((run) => [
+                `${run.modelSelection.instanceId}\0${run.modelSelection.model}`,
+                run.modelSelection,
+              ]),
+            ).values(),
+          ),
+          toModel: input.modelSelection.model,
+          strategy: restartHandoff.strategy,
+          summary: restartHandoff.summaryText,
+        },
+      });
+    }
     yield* appendSteeringMessage({
       runId: targetRun.id,
       nodeId: nextRootNodeId,
@@ -7661,9 +7716,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       providerThreadId: restartProviderThread.id,
       providerInstanceId: input.modelSelection.instanceId,
       // Measured on the pre-restart projection, so the rewritten run is not its own baseline.
-      ...(replaced.handoff === null
-        ? modelSwitchSince(input.projection, input.modelSelection)
-        : {}),
+      ...(restartHandoff === null ? modelSwitchSince(input.projection, input.modelSelection) : {}),
+      ordinal: restartHandoff === null ? steeringOrdinal : steeringOrdinal + 1,
     });
     const interruptedAttemptId = targetRun.activeAttemptId;
     if (interruptedAttemptId === null) {
