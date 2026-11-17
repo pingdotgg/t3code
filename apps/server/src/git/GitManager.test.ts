@@ -314,6 +314,7 @@ function createTextGeneration(
       }),
     generateKnowledgeCandidates: () => Effect.succeed({ candidates: [] }),
     generateConversationSummary: () => Effect.succeed({ statements: [] }),
+    checkFactStanding: () => Effect.succeed({ verdicts: [] }),
     generateModelEvaluation: () => Effect.die("Unused evaluation fixture"),
     generateThreadTitle: () =>
       Effect.succeed({

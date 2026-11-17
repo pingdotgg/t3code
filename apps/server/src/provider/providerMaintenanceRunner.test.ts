@@ -1039,6 +1039,7 @@ describe("providerMaintenanceRunner", () => {
           generateModelEvaluation: () => Effect.die("unused"),
           generateKnowledgeCandidates: () => Effect.die("unused"),
           generateConversationSummary: () => Effect.die("unused"),
+          checkFactStanding: () => Effect.die("unused"),
           generateThreadTitle: () =>
             Effect.sync(() => {
               log.push("text generation spawned provider");

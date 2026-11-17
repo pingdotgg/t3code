@@ -187,6 +187,14 @@ Failed and stopped runs can supply evidence. Change this setting under **Memory
 health** in Project memory or in **Settings → Labs → Zack**. Project memory
 shows the last outcome and the **Automatic** filter lists automatically saved facts.
 
+A second call then reads only the proposed facts, without the conversation or your
+repository, and asks whether a new agent on unrelated work would need each one.
+A fact that only applies to one task, or that describes how code behaves, is
+saved as set aside: it is never recalled, but search finds it and the **Set
+aside** filter lists it. The fact's details say what the check decided. Editing
+a fact's text clears that decision. If the check cannot run, T3 saves nothing
+and tries the batch again later.
+
 An exact repeat can add new citations to a saved fact. You decide when similar
 or conflicting facts should supersede one another. Trust, age and retrieval
 history affect recall. Forgetting a fact removes its content, and a later run

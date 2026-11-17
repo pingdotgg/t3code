@@ -100,6 +100,16 @@ export const ProjectFactFields = Schema.Struct({
 });
 export const ProjectFactStatus = Schema.Literals(["saved", "forgotten"]);
 export type ProjectFactStatus = typeof ProjectFactStatus.Type;
+/** What a blind check said a fact is; automatic recall skips `task` and `code`. */
+export const ProjectFactVerdict = Schema.Literals(["standing", "task", "code"]);
+export type ProjectFactVerdict = typeof ProjectFactVerdict.Type;
+// "person" and "agent" are written by later versions; listing them now keeps this version decoding.
+export const ProjectFactVerdictRecord = Schema.Struct({
+  value: ProjectFactVerdict,
+  by: Schema.Literals(["check", "person", "agent"]),
+  at: IsoDateTime,
+});
+export type ProjectFactVerdictRecord = typeof ProjectFactVerdictRecord.Type;
 const FactIdentity = {
   id: ProjectFactId,
   origin: KnowledgeOrigin,
@@ -114,6 +124,8 @@ const FactIdentity = {
   // Optional so facts from older servers still decode.
   supersedes: Schema.optionalKey(Schema.NullOr(ProjectFactId)),
   supersededBy: Schema.optionalKey(Schema.NullOr(ProjectFactId)),
+  // Absent when nothing has checked the fact (it stays recallable) and from older servers.
+  verdict: Schema.optionalKey(ProjectFactVerdictRecord),
 };
 export const ActiveProjectFact = Schema.Struct({
   ...FactIdentity,
@@ -188,6 +200,8 @@ export const ProjectKnowledgeListInput = Schema.Struct({
   sourceState: Schema.optionalKey(Schema.Literal("unavailable")),
   /** Only facts saved by automatic learning. */
   origin: Schema.optionalKey(Schema.Literal("assisted")),
+  /** Only facts a verdict set aside. Send only to servers advertising projectKnowledgeStandingCheck. */
+  verdict: Schema.optionalKey(Schema.Literal("set_aside")),
 });
 export type ProjectKnowledgeListInput = typeof ProjectKnowledgeListInput.Type;
 export const KnowledgeSourceUnavailableReason = Schema.Literals([

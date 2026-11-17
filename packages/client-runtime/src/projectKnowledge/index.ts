@@ -6,6 +6,7 @@ import {
   type KnowledgeSourceUnavailableReason,
   type ProjectFact,
   type ProjectFactHistoryEntry,
+  type ProjectFactVerdictRecord,
   type ProjectKnowledgeDeliveries,
 } from "@t3tools/contracts";
 export { projectKnowledgeContextRecord } from "@t3tools/shared/composerContextReferences";
@@ -171,6 +172,24 @@ export function assistedLearningRunLabel(run: AssistedLearningRun): string {
       return `Last run skipped. ${run.reason ?? ""}`.trim();
     case "failed":
       return `Last run failed. ${run.reason ?? ""}`.trim();
+  }
+}
+
+/** The fact's recall eligibility as one line; the caller appends the formatted date. */
+export function projectFactVerdictLabel(verdict: ProjectFactVerdictRecord): string {
+  const decided =
+    verdict.by === "check"
+      ? "checked"
+      : verdict.by === "person"
+        ? "marked by you"
+        : "marked by an agent";
+  switch (verdict.value) {
+    case "standing":
+      return `Standing, recalled into related work · ${decided}`;
+    case "task":
+      return `Set aside as a task note, never recalled automatically · ${decided}`;
+    case "code":
+      return `Set aside as a code description, never recalled automatically · ${decided}`;
   }
 }
 

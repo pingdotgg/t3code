@@ -35,7 +35,7 @@ import { KnowledgeHealthRow } from "./ProjectKnowledgeFactDetail";
 import { AppText, AppTextInput } from "./ui/AppText";
 import { Button } from "./ui/Button";
 
-type StatusFilter = "saved" | "automatic" | "forgotten";
+type StatusFilter = "saved" | "automatic" | "set_aside" | "forgotten";
 
 /** Filters, search and paging for the fact list. The sheet reads its results for draft labels. */
 export function useProjectKnowledgeBrowse(props: {
@@ -60,7 +60,9 @@ export function useProjectKnowledgeBrowse(props: {
           ? { sourceState: "unavailable" as const }
           : status === "automatic"
             ? { status: "saved" as const, origin: "assisted" as const }
-            : { status }),
+            : status === "set_aside"
+              ? { status: "saved" as const, verdict: "set_aside" as const }
+              : { status }),
         ...(afterId ? { afterId } : {}),
         ...(props.history && showSuperseded ? { includeSuperseded: true } : {}),
       },
@@ -202,6 +204,7 @@ export function ProjectKnowledgeFactList(props: {
   readonly projectId: ProjectId;
   readonly browse: ProjectKnowledgeBrowse;
   readonly assisted: boolean;
+  readonly standingCheck: boolean;
   readonly canMutate: boolean;
   readonly busy: boolean;
   readonly selectionState: (current: KnowledgeSelection) => SelectionState;
@@ -240,13 +243,17 @@ export function ProjectKnowledgeFactList(props: {
       </View>
 
       <View className="flex-row flex-wrap gap-2">
-        {(props.assisted
-          ? (["saved", "automatic", "forgotten"] as const)
-          : (["saved", "forgotten"] as const)
+        {(
+          [
+            "saved",
+            ...(props.assisted ? (["automatic"] as const) : []),
+            ...(props.standingCheck ? (["set_aside"] as const) : []),
+            "forgotten",
+          ] as const
         ).map((value) => (
           <Button
             key={value}
-            label={value}
+            label={value === "set_aside" ? "set aside" : value}
             tone={
               browse.status === value && !searchInput && !browse.lostSourcesOnly
                 ? "primary"

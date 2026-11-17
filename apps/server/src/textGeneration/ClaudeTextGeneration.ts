@@ -55,6 +55,12 @@ const CLAUDE_INVESTIGATION_ALLOWED = [
 const CLAUDE_INVESTIGATION_DENIED = ["Bash(git * --output*)", "Bash(git * -o *)"].join(",");
 
 const NO_SESSION_PERSISTENCE = "--no-session-persistence";
+// Judges and memory run in an empty directory without the user's or checkout's customizations.
+const ISOLATED_OPERATIONS: ReadonlySet<TextGenerationOperations.Operation> = new Set([
+  "generateModelEvaluation",
+  "generateKnowledgeCandidates",
+  "checkFactStanding",
+]);
 // Claude Code before 2.0.63 exits with this on stderr; those runs retry without the flag.
 const NO_SESSION_PERSISTENCE_REJECTED = `error: unknown option '${NO_SESSION_PERSISTENCE}'`;
 
@@ -169,10 +175,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     TextGenerationError,
     S["DecodingServices"] | Scope.Scope
   > {
+    const isolated = ISOLATED_OPERATIONS.has(operation);
     const workingDirectory =
-      operation === "generateThreadTitle" ||
-      operation === "generateModelEvaluation" ||
-      operation === "generateKnowledgeCandidates"
+      operation === "generateThreadTitle" || isolated
         ? yield* fileSystem
             .makeTempDirectoryScoped({ prefix: "t3code-claude-title-" })
             .pipe(
@@ -277,9 +282,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
             : ["--tools", ""]),
           "--disable-slash-commands",
           // Safe mode isolates customizations while retaining subscription authentication.
-          ...(operation === "generateModelEvaluation" || operation === "generateKnowledgeCandidates"
-            ? ["--safe-mode", "--disallowedTools", "*", "--setting-sources", ""]
-            : []),
+          ...(isolated ? ["--safe-mode", "--disallowedTools", "*", "--setting-sources", ""] : []),
           ...(noSessionPersistence ? [NO_SESSION_PERSISTENCE] : []),
           // managed-mcp.json already isolates servers and makes Claude reject this flag.
           ...(managedMcpConfig ? [] : ["--strict-mcp-config"]),

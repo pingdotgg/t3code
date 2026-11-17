@@ -23,6 +23,7 @@ const OpenCodeTextGenerationOperation = Schema.Literals([
   "generateConversationSummary",
   "generateModelEvaluation",
   "generateTranscriptionPostProcessing",
+  "checkFactStanding",
 ]);
 
 const openCodeTextGenerationErrorContext = {
@@ -232,7 +233,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
                 title: `T3 Code ${input.operation}`,
                 permission: [
                   { permission: "*", pattern: "*", action: "deny" },
-                  ...(!blindEvaluation
+                  ...(!blindEvaluation && input.operation !== "checkFactStanding"
                     ? [{ permission: "read", pattern: "*", action: "allow" as const }]
                     : []),
                 ],

@@ -20,6 +20,7 @@ import {
   isSupersededFact,
   knowledgeConflictHintLabel,
   knowledgeOriginLabel,
+  projectFactVerdictLabel,
   projectFactHistoryLabel,
 } from "@t3tools/client-runtime/projectKnowledge";
 
@@ -160,6 +161,12 @@ export function ProjectFactInspector(props: {
         <AppText className="text-xs text-foreground-muted">
           {fact.kind} · {fact.status} · {knowledgeOriginLabel(fact.origin)}
         </AppText>
+        {fact.verdict ? (
+          <AppText className="text-xs text-foreground-muted">
+            {projectFactVerdictLabel(fact.verdict)}{" "}
+            {historyTimeFormatter.format(new Date(fact.verdict.at))}
+          </AppText>
+        ) : null}
         <AppText className="text-xs text-foreground-muted">
           Trust signal {fact.trust.toFixed(2)} · revision {fact.revision}
         </AppText>

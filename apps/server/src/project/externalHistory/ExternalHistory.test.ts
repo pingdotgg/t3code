@@ -118,6 +118,7 @@ const makeFixture = Effect.fn("ExternalHistory.test.fixture")(function* () {
       generateTranscriptionPostProcessing: unused,
       generateKnowledgeCandidates: unused,
       generateConversationSummary: unused,
+      checkFactStanding: unused,
       generateModelEvaluation: unused,
     },
   };

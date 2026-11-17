@@ -180,9 +180,10 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
         id: Model.ID.make(parsed.modelID),
         ...(variant === undefined ? {} : { variant: Model.VariantID.make(variant) }),
       }),
-      permissions: blindEvaluation
-        ? [{ action: "*", resource: "*", effect: "deny" as const }]
-        : GENERATION_PERMISSIONS,
+      permissions:
+        blindEvaluation || input.operation === "checkFactStanding"
+          ? [{ action: "*", resource: "*", effect: "deny" as const }]
+          : GENERATION_PERMISSIONS,
     });
     sessionId = session.id;
     yield* Effect.addFinalizer(() =>

@@ -69,7 +69,7 @@ const resolveInstance = Effect.fn("TextGeneration.resolveInstance")(function* (
       detail: `Provider '${instanceId}' does not support this text generation operation. Choose a model from a provider that supports it.`,
     });
   }
-  if (operation === "generateKnowledgeCandidates") {
+  if (operation === "generateKnowledgeCandidates" || operation === "checkFactStanding") {
     const snapshot = yield* instance.snapshot.getSnapshot;
     if (exhaustedUsageWindow(snapshot, DateTime.toEpochMillis(yield* DateTime.now), model)) {
       return yield* new TextGenerationError({
@@ -251,6 +251,14 @@ export const make = Effect.gen(function* () {
         );
       },
     ),
+    checkFactStanding: Effect.fn("TextGeneration.checkFactStanding")(function (input) {
+      return resolveInstance(
+        registry,
+        "checkFactStanding",
+        input.modelSelection.instanceId,
+        input.modelSelection.model,
+      ).pipe(Effect.flatMap((textGeneration) => textGeneration.checkFactStanding(input)));
+    }),
     generateConversationSummary: Effect.fn("TextGeneration.generateConversationSummary")(
       function (input) {
         return resolveInstance(

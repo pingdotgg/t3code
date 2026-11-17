@@ -130,7 +130,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         apiKey,
         mode: "plan",
         model: cursorSdkModelSelection(modelSelection, getModels?.() ?? []),
-        ...(evaluating ? { tools: [] } : {}),
+        ...(evaluating || operation === "checkFactStanding" ? { tools: [] } : {}),
         local: {
           cwd,
           store,

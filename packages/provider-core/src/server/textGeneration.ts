@@ -4,6 +4,7 @@ import type {
   ChatAttachment,
   ModelSelection,
   ModelEvaluationVerdict,
+  ProjectFactVerdict,
   ProjectId,
   PullRequestReviewGuide,
   TextGenerationError,
@@ -14,6 +15,7 @@ import type * as Effect from "effect/Effect";
 import type { TextGenerationPolicy } from "./textGenerationPolicy.ts";
 import type {
   ConversationSummaryPromptMessage,
+  FactStandingCheckStatement,
   KnowledgeCandidatesPromptMessage,
   ThreadTitleForkSource,
 } from "./textGenerationPrompts.ts";
@@ -128,6 +130,18 @@ export interface KnowledgeCandidatesGenerationResult {
   }>;
 }
 
+export interface FactStandingCheckInput {
+  /** An empty directory: the check must not see the repository or its instructions. */
+  cwd: string;
+  statements: ReadonlyArray<FactStandingCheckStatement>;
+  modelSelection: ModelSelection;
+}
+
+export interface FactStandingCheckResult {
+  /** One per statement, in order. */
+  verdicts: ReadonlyArray<ProjectFactVerdict>;
+}
+
 export interface ConversationSummaryGenerationInput {
   cwd: string;
   /**
@@ -193,6 +207,10 @@ export interface ProviderTextGeneration {
   readonly generateConversationSummary: (
     input: ConversationSummaryGenerationInput,
   ) => Effect.Effect<ConversationSummaryGenerationResult, TextGenerationError>;
+
+  readonly checkFactStanding: (
+    input: FactStandingCheckInput,
+  ) => Effect.Effect<FactStandingCheckResult, TextGenerationError>;
 }
 
 /** A provider declares the operations it implements; the application facade validates each call. */
