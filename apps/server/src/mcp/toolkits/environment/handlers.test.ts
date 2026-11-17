@@ -781,7 +781,6 @@ it.layer(
       const antigravity = ProviderInstanceId.make("antigravity_work");
       const pi = ProviderInstanceId.make("pi_work");
       const fork = ProviderInstanceId.make("fork_work");
-      const acp = ProviderInstanceId.make("acp_work");
       const serverPassword = "canary-server-password-4f1d";
       const envSecret = "canary-env-secret-9b2e";
       yield* Effect.flatMap(Settings.ServerSettingsService, (service) =>
@@ -800,7 +799,6 @@ it.layer(
             },
             [fork]: { driver: ProviderDriverKind.make("forkOnly") },
             [antigravity]: { driver: ProviderDriverKind.make("antigravity") },
-            [acp]: { driver: ProviderDriverKind.make("acpRegistry") },
           },
         }),
       ).pipe(Effect.provide(restartedSettingsWithSecrets()));
@@ -874,7 +872,6 @@ it.layer(
       for (const refused of [
         { instanceId: ProviderInstanceId.make("missing"), displayName: "Nope" },
         { instanceId: fork, customModels: ["x"] },
-        { instanceId: acp, customModels: [{ slug: "object-entry" }] },
         { instanceId: antigravity, customModels: ["hidden-in-settings"] },
       ]) {
         expect((yield* call(refused))?.result).toMatchObject({ code: "invalid_request" });

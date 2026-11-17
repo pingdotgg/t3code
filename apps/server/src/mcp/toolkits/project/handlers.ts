@@ -245,24 +245,30 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const launchedModel =
           launched === null || launched.deletedAt !== null ? undefined : launched.modelSelection;
         const replaying = launchedModel !== undefined;
-        const project = replaying
-          ? undefined
-          : yield* Project.ProjectService.pipe(
-              Effect.flatMap((projects) => projects.getById(projectId)),
-              Effect.mapError(unavailable),
-              Effect.flatMap(
-                Option.match({
-                  onNone: () =>
-                    Effect.fail(
-                      new OrchestratorMcpFailure({
-                        code: "invalid_request",
-                        message: "The project was not found.",
-                      }),
-                    ),
-                  onSome: Effect.succeed,
-                }),
-              ),
-            );
+        if (launched !== null && replaying && launched.projectId !== projectId)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "A launch retry must use the original project.",
+          });
+        const project =
+          replaying && input.workspaceStrategy?.type !== "existing_worktree"
+            ? undefined
+            : yield* Project.ProjectService.pipe(
+                Effect.flatMap((projects) => projects.getById(projectId)),
+                Effect.mapError(unavailable),
+                Effect.flatMap(
+                  Option.match({
+                    onNone: () =>
+                      Effect.fail(
+                        new OrchestratorMcpFailure({
+                          code: "invalid_request",
+                          message: "The project was not found.",
+                        }),
+                      ),
+                    onSome: Effect.succeed,
+                  }),
+                ),
+              );
         if (project !== undefined && input.workspaceStrategy?.type === "existing_worktree")
           yield* assertProjectWorktree({
             git: yield* GitVcsDriver.GitVcsDriver,
@@ -293,8 +299,28 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           if (provider !== undefined)
             yield* OrchestrationMcp.requireAdvertisedModel(provider, model);
         }
+        const projectSettings =
+          replaying || project === undefined
+            ? undefined
+            : yield* ServerSettings.ServerSettingsService.pipe(
+                Effect.flatMap((settings) => settings.getSettings),
+                Effect.mapError(unavailable),
+                Effect.map(
+                  (settings) => resolveProjectSettings(settings, projectId, project).settings,
+                ),
+              );
+        // An omitted startFromOrigin follows the new-worktree setting, as the composer and
+        // t3_worktree_handoff do. Otherwise a stale local branch silently becomes the base.
+        const strategy =
+          projectSettings !== undefined &&
+          input.workspaceStrategy?.type === "worktree" &&
+          input.workspaceStrategy.startFromOrigin === undefined
+            ? {
+                ...input.workspaceStrategy,
+                startFromOrigin: projectSettings.newWorktreesStartFromOrigin,
+              }
+            : input.workspaceStrategy;
         // Reject unresolved base refs and blocked branch names before accepting a launch; worktree provisioning happens later.
-        const strategy = input.workspaceStrategy;
         if (!replaying && strategy?.type === "worktree")
           yield* ThreadLaunch.ThreadLaunchService.pipe(
             Effect.flatMap((launches) =>
@@ -311,16 +337,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // A caller outside a thread has nothing to inherit, so it starts with the
         // project's effective defaults, as the composer does. Its mode stays
         // within the ceiling it was approved with.
-        const projectDefaults =
-          caller === undefined && project !== undefined
-            ? yield* ServerSettings.ServerSettingsService.pipe(
-                Effect.flatMap((settings) => settings.getSettings),
-                Effect.mapError(unavailable),
-                Effect.map(
-                  (settings) => resolveProjectSettings(settings, projectId, project).settings,
-                ),
-              )
-            : undefined;
+        const projectDefaults = caller === undefined ? projectSettings : undefined;
         const modelSelection =
           input.modelSelection ??
           launchedModel ??
@@ -367,7 +384,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           modelSelection,
           runtimeMode: startedRuntimeMode,
           interactionMode,
-          workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
+          workspaceStrategy: strategy ?? { type: "root" },
           ...(input.message === undefined && attachments.length === 0
             ? {}
             : {
@@ -542,6 +559,13 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   ),
   t3_project_delete: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
+      const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      if (yield* folders.isScratchProject(input.projectId))
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message:
+            '"No project" is the built-in scratch project and cannot be deleted through MCP. The user can remove it in Settings.',
+        });
       const projects = yield* Project.ProjectService;
       const clones = yield* ProjectCloneTracker.ProjectCloneTracker;
       return yield* mutateProjectWithClone(projects, clones, {

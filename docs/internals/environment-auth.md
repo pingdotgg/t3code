@@ -74,6 +74,12 @@ unreachable over `/mcp`. Provider custom models and display metadata are model
 preferences under `settings:write`. Which tools a grant may call is declared in
 [McpToolAccess](../../apps/server/src/mcp/McpToolAccess.ts).
 
+These clients have no calling thread, so `/mcp` does not offer them tools that
+act as one, such as `request_secret` or `delegate_task`. Hiding is only
+discovery: the handlers still refuse such a call with
+`thread_credential_required`. A secret card belongs to a thread's run, so an
+outside agent that needs a secret starts a thread and lets that agent ask.
+
 Issuer and resource URLs come from the request's Host and
 `X-Forwarded-Proto`, so one server answers over loopback, Tailscale Serve and a
 T3 Connect tunnel. A proxy that rewrites Host or drops the protocol header

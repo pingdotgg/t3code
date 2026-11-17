@@ -101,8 +101,12 @@ import Migration0089 from "./Migrations/089_ShellThreadReadIndexes.ts";
 import Migration0090 from "./Migrations/090_AuthConnectDevices.ts";
 import Migration0091 from "./Migrations/091_AuthConnectDeniedRequests.ts";
 import Migration0092 from "./Migrations/092_QueuedTurnInputIndexJsonValid.ts";
-import Migration0093 from "./Migrations/093_AuthDesktopPairingSessionTtl.ts";
-import Migration0094 from "./Migrations/094_RealtimeVoiceHistoryResume.ts";
+import Migration0093 from "./Migrations/093_ProviderTurnAttemptIndex.ts";
+import Migration0094 from "./Migrations/094_TurnItemMessageOrdinalIndex.ts";
+import Migration0095 from "./Migrations/095_TurnItemInlineWorkOutput.ts";
+import Migration0096 from "./Migrations/096_RepairStaleTitleRegeneration.ts";
+import Migration0097 from "./Migrations/097_AuthDesktopPairingSessionTtl.ts";
+import Migration0098 from "./Migrations/098_RealtimeVoiceHistoryResume.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -198,9 +202,13 @@ const migrationEntries = [
   [90, "AuthConnectDevices", Migration0090],
   [91, "AuthConnectDeniedRequests", Migration0091],
   [92, "QueuedTurnInputIndexJsonValid", Migration0092],
-  // Fork-only. Earlier fork builds recorded these as 69/70, 70/71, 73/74, 77/78, 80/81, then 81/82.
-  [93, "AuthDesktopPairingSessionTtl", Migration0093],
-  [94, "RealtimeVoiceHistoryResume", Migration0094],
+  [93, "ProviderTurnAttemptIndex", Migration0093],
+  [94, "TurnItemMessageOrdinalIndex", Migration0094],
+  [95, "TurnItemInlineWorkOutput", Migration0095],
+  [96, "RepairStaleTitleRegeneration", Migration0096],
+  // Fork-only. Earlier fork builds recorded these as 69/70, 70/71, 73/74, 77/78, 80/81, 81/82, then 93/94.
+  [97, "AuthDesktopPairingSessionTtl", Migration0097],
+  [98, "RealtimeVoiceHistoryResume", Migration0098],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -290,8 +298,8 @@ const reconcileDesktopPairingBackport = Effect.fn("reconcileDesktopPairingBackpo
 });
 
 // Fork databases recorded the fork-only migrations under ids upstream later
-// took (69/70, 70/71, 73/74, 77/78, 80/81, then 81/82). Dropping those rows lets upstream's
-// migrations run at their ids; both fork migrations are idempotent and rerun as 93/94.
+// took (69/70, 70/71, 73/74, 77/78, 80/81, 81/82, then 93/94). Dropping those rows lets upstream's
+// migrations run at their ids; both fork migrations are idempotent and rerun as 97/98.
 const reconcileForkRenumber = Effect.fn("reconcileForkRenumber")(function* () {
   const sql = yield* SqlClient.SqlClient;
   const tables = yield* sql<{ readonly name: string }>`
@@ -300,8 +308,8 @@ const reconcileForkRenumber = Effect.fn("reconcileForkRenumber")(function* () {
   if (tables.length === 0) return;
   yield* sql`
     DELETE FROM effect_sql_migrations
-    WHERE (migration_id IN (69, 70, 73, 77, 80, 81) AND name = 'AuthDesktopPairingSessionTtl')
-      OR (migration_id IN (70, 71, 74, 78, 81, 82) AND name = 'RealtimeVoiceHistoryResume')
+    WHERE (migration_id IN (69, 70, 73, 77, 80, 81, 93) AND name = 'AuthDesktopPairingSessionTtl')
+      OR (migration_id IN (70, 71, 74, 78, 81, 82, 94) AND name = 'RealtimeVoiceHistoryResume')
   `;
 });
 
@@ -334,14 +342,19 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
   // The desktop waits past its readiness budget until the finished line follows this one.
-  if (yield* hasPendingMigrations()) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
+  const hasPending = yield* hasPendingMigrations();
+  if (hasPending) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
   const includesV2 =
     toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
-  const previewMigrations = includesV2 ? yield* reconcileV2PreviewMigration() : [];
-  const forkMigrations = includesV2 ? yield* reconcileForkMigrationLedger() : [];
-  if (includesV2) {
+  // The reconciles take the write lock; CLI startup must not contend with the server for a no-op.
+  const reconcile = includesV2 && hasPending;
+  const previewMigrations = reconcile ? yield* reconcileV2PreviewMigration() : [];
+  const forkMigrations = reconcile ? yield* reconcileForkMigrationLedger() : [];
+  if (reconcile) {
     yield* reconcileDesktopPairingBackport();
     yield* reconcileForkRenumber();
+  }
+  if (includesV2) {
     yield* assertV2MigrationsCanRun(toMigrationInclusive);
   }
   const sql = yield* SqlClient.SqlClient;

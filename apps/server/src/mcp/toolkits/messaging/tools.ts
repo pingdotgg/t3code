@@ -5,7 +5,7 @@ import {
   AgentSendResult,
   OrchestratorMcpFailure,
 } from "@t3tools/contracts";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as AgentMessagingService from "../../AgentMessagingService.ts";
@@ -27,7 +27,8 @@ const AgentSendTool = Tool.make("agent_send", {
   dependencies,
 })
   .annotate(Tool.Title, "Send an agent message")
-  .annotate(Tool.Destructive, true);
+  .annotate(Tool.Destructive, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const AgentInboxTool = Tool.make("agent_inbox", {
   description:
@@ -41,6 +42,7 @@ const AgentInboxTool = Tool.make("agent_inbox", {
   .annotate(Tool.Title, "Read agent messages")
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 export const AgentMessagingToolkit = Toolkit.make(AgentSendTool, AgentInboxTool);

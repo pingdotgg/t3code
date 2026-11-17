@@ -21,10 +21,11 @@ import {
 } from "./Errors.ts";
 
 /**
- * Subjects of codes that approve one agent sign-in at a set level, as `mcp-approval:<level>`.
- * Only that sign-in may spend one, so every other use of a pairing code refuses them.
+ * These subjects are reserved for one kind and level of MCP authorization.
+ * Keep peer-link subjects under the same prefix so older servers refuse them too.
  */
 export const MCP_APPROVAL_SUBJECT_PREFIX = "mcp-approval:";
+export const PEER_LINK_PAIRING_SUBJECT_PREFIX = `${MCP_APPROVAL_SUBJECT_PREFIX}peer-link:`;
 
 const SqliteFlag = Schema.Literals([0, 1]);
 
@@ -68,8 +69,8 @@ export const ConsumeAuthPairingLinkInput = Schema.Struct({
   proofKeyThumbprint: Schema.NullOr(Schema.String),
   requestedScopes: Schema.optionalKey(AuthEnvironmentScopes),
   requiredScopes: Schema.optionalKey(AuthEnvironmentScopes),
-  /** Also spends a code with exactly this `mcp-approval:` subject. Others are always refused. */
-  mcpApprovalSubject: Schema.optionalKey(Schema.String),
+  /** Allow a purpose-bound code only when its subject matches the request. */
+  allowedSubject: Schema.optionalKey(Schema.String),
   consumedAt: Schema.DateTimeUtcFromString,
   now: Schema.DateTimeUtcFromString,
 });
@@ -236,7 +237,7 @@ export const make = Effect.gen(function* () {
       proofKeyThumbprint,
       requestedScopes,
       requiredScopes,
-      mcpApprovalSubject,
+      allowedSubject,
       consumedAt,
       now,
     }) =>
@@ -249,7 +250,7 @@ export const make = Effect.gen(function* () {
           AND expires_at > ${now}
           AND (
             subject NOT LIKE ${`${MCP_APPROVAL_SUBJECT_PREFIX}%`}
-            OR subject = ${mcpApprovalSubject ?? null}
+            OR subject = ${allowedSubject ?? null}
           )
           AND (
             proof_key_thumbprint IS NULL

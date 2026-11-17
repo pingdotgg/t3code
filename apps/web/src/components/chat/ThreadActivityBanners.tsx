@@ -224,7 +224,6 @@ export function backgroundWorkNowItem(input: {
     .filter((row) => row.activity)
     .toSorted((left, right) => right.updatedAtMs - left.updatedAtMs)[0];
   const isCommand = (row: (typeof rows)[number]) => row.task.kind !== "subagent";
-  const onlyThreadId = only?.childThreadId;
   const startedAtMs = only?.startedAtMs ?? null;
   const stoppableTaskIds = new Set(
     input.tasks.filter(({ canStop }) => canStop).map(({ task }) => task.taskId),
@@ -301,11 +300,6 @@ export function backgroundWorkNowItem(input: {
           turnItems={input.turnItems}
           onOpenThread={onOpenThread}
         />
-        {onlyThreadId === undefined ? null : (
-          <InlineButton tone="muted" onClick={() => onOpenThread(onlyThreadId)}>
-            Open
-          </InlineButton>
-        )}
         {only !== undefined && stoppableTaskIds.has(only.task.taskId) ? (
           <InlineButton
             disabled={input.stopDisabled || input.stoppingTaskId === only.task.taskId}
