@@ -152,8 +152,6 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "delegated-tasks.stop",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
-const CAPTURE_CLAIM_DEFERRAL = "+30 seconds";
-
 export const PROCESS_BOUND_EFFECT_TYPES = [
   "provider-session.apply-model-selection",
   "provider-session.apply-thread-title",
@@ -310,6 +308,8 @@ const rowToEffect = (row: EffectRow) =>
       lastError: row.last_error,
     })),
   );
+
+const CAPTURE_CLAIM_DEFERRAL = "+30 seconds";
 
 export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = Layer.effect(
   EffectOutboxV2,
