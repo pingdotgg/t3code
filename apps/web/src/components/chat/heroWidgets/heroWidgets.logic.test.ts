@@ -8,6 +8,7 @@ import {
   DAY_MS,
   estimateBurn,
   fitHeroLayout,
+  heroWidgetArea,
   HOUR_MS,
   type PoolProvider,
   projectPool,
@@ -53,6 +54,38 @@ describe("fitHeroLayout", () => {
     expect(fitHeroLayout({ width: 600, height: 470 })!.lowerRows).toEqual([["machines"]]);
     expect(fitHeroLayout({ width: 1360, height: 300 })!.lowerRows).toEqual([]);
     expect(fitHeroLayout({ width: 1360, height: 100 })).toBeNull();
+  });
+});
+
+describe("heroWidgetArea", () => {
+  const pane = {
+    width: 1014,
+    height: 731,
+    stackLeft: 147,
+    stackHeight: 164,
+    headlineHeight: 179,
+    detailsLeft: null,
+  };
+
+  it("centers in the pane, not on a lane the composer shares with a details card", () => {
+    expect(heroWidgetArea(pane)).toEqual({ left: -99, width: 918, height: 332 });
+    // The details card at 730 pulls the composer lane left to 48..698.
+    const area = heroWidgetArea({ ...pane, stackLeft: 48, detailsLeft: 730 });
+    expect(area.width).toBe(650);
+    expect(area.left).toBe(0);
+  });
+
+  it("caps the width and keeps centering inside the room left of the details card", () => {
+    const area = heroWidgetArea({ ...pane, width: 1534, stackLeft: 407, detailsLeft: 1250 });
+    expect(area.width).toBe(1170);
+    expect(area.left + 407).toBe(48);
+    expect(heroWidgetArea({ ...pane, width: 2400, stackLeft: 840 }).width).toBe(1360);
+  });
+
+  it("leaves the headline what it needs, and at least the minimum", () => {
+    expect(heroWidgetArea({ ...pane, headlineHeight: 400 }).height).toBe(111);
+    expect(heroWidgetArea({ ...pane, headlineHeight: 0 }).height).toBe(399);
+    expect(heroWidgetArea({ ...pane, height: 300 }).height).toBe(0);
   });
 });
 

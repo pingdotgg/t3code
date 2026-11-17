@@ -1,6 +1,8 @@
 import { UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
 import type { LimitPool, LimitPoolWindow } from "@t3tools/shared/usageLimits";
 
+import { DETAILS_CARD_CLEARANCE } from "../chatCanvasLayout";
+
 const MINUTE_MS = 60 * 1000;
 export const HOUR_MS = 60 * MINUTE_MS;
 export const DAY_MS = 24 * HOUR_MS;
@@ -48,7 +50,7 @@ export interface HeroLayout {
   readonly lowerRows: ReadonlyArray<ReadonlyArray<LowerWidgetId>>;
   readonly poolHeight: number;
   readonly lowerHeight: number;
-  /** Height the composer centers against; cards may then grow below it. */
+  /** Height before the cards grow into half of the spare room. */
   readonly compactHeight: number;
   readonly height: number;
 }
@@ -106,6 +108,71 @@ export function fitHeroLayout(space: {
     lowerHeight,
     compactHeight,
     height: need(poolHeight, lowerHeight, rows),
+  };
+}
+
+// Area: the box under the composer that the grid may fill.
+
+export const HERO_AREA = {
+  /** Room kept between the grid and the sides of the conversation pane. */
+  gutter: 48,
+  /** The grid never grows wider than this, so the pool chart keeps a readable week. */
+  maxWidth: 1360,
+  /** Space between the composer and the grid. */
+  gapAbove: 32,
+  /** Least room kept for the hero headline above the composer. */
+  headlineMin: 112,
+  /** Space kept between the grid and the bottom of the pane. */
+  edgeMargin: 24,
+} as const;
+
+interface HeroPane {
+  /** The conversation pane's content box. */
+  readonly width: number;
+  readonly height: number;
+  /** The composer stack's left edge in the pane, and its height. */
+  readonly stackLeft: number;
+  readonly stackHeight: number;
+  /** Height the hero headline needs to show whole; 0 when it is hidden. */
+  readonly headlineHeight: number;
+  /** Left edge of the floating details card in the pane, or null while it is closed. */
+  readonly detailsLeft: number | null;
+}
+
+export interface HeroArea {
+  /** Left edge relative to the composer stack, which positions the grid. */
+  readonly left: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * Centers the grid in the visible pane, left of an open details card, whatever the composer's
+ * lane does. Its height leaves the headline the room it needs, so cards shrink or drop first.
+ */
+export function heroWidgetArea(pane: HeroPane): HeroArea {
+  const { gutter, maxWidth, gapAbove, headlineMin, edgeMargin } = HERO_AREA;
+  const end = Math.min(
+    pane.width - gutter,
+    pane.detailsLeft === null
+      ? Number.POSITIVE_INFINITY
+      : pane.detailsLeft - DETAILS_CARD_CLEARANCE,
+  );
+  const room = Math.max(0, end - gutter);
+  const width = Math.floor(Math.min(maxWidth, room));
+  return {
+    left: Math.round(gutter + (room - width) / 2 - pane.stackLeft),
+    width,
+    height: Math.max(
+      0,
+      Math.floor(
+        pane.height -
+          pane.stackHeight -
+          Math.max(headlineMin, pane.headlineHeight) -
+          gapAbove -
+          edgeMargin,
+      ),
+    ),
   };
 }
 
