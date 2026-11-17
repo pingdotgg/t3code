@@ -247,7 +247,10 @@ it("keeps each group independent when one source fails, and opens symbols and co
   await expect
     .element(screen.getByRole("status", { name: "Active match" }))
     .toHaveTextContent("message-b");
-  await expect.element(screen.getByText("2/3")).toBeVisible();
+  const findBar = screen.getByRole("search", { name: "Find in thread" }).element();
+  await expect
+    .element(findBar.querySelector<HTMLSpanElement>("span[aria-hidden]"))
+    .toHaveTextContent("2/3");
   expect(state.queries.find((query) => query.kind === "thread-find")?.input).toMatchObject({
     threadId: "thread-b",
     query: "refresh",
