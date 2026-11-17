@@ -67,7 +67,10 @@ import * as OpenCode2Server from "./OpenCode2Server.ts";
 import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
 import { readableProviderErrorMessage } from "../providerErrorMessage.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import {
+  buildRuntimeInstructions,
+  t3AgentInstructionsEnabled,
+} from "@t3tools/provider-core/server/runtimeInstructions";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
@@ -4323,16 +4326,26 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           yield* Effect.sleep(MCP_TOOL_RELOAD_SETTLE);
         }
       }
-      const instructions = [
-        buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
-        t3OrchestrationSystemPrompt(mcpAvailable, mcpSession?.capabilities?.has("device") === true),
-        mcpAvailable
-          ? "To wait for a background shell you started (tests, a build), call `t3_background_wait` with its shell ID before you end your turn. Do not mark work you leave running, or PRs."
-          : undefined,
-      ]
+      const instructions = (
+        (yield* t3AgentInstructionsEnabled(host))
+          ? [
+              buildRuntimeInstructions({
+                harness: "OpenCode",
+                model: turnInput.modelSelection.model,
+              }),
+              t3OrchestrationSystemPrompt(
+                mcpAvailable,
+                mcpSession?.capabilities?.has("device") === true,
+              ),
+              mcpAvailable
+                ? "To wait for a background shell you started (tests, a build), call `t3_background_wait` with its shell ID before you end your turn. Do not mark work you leave running, or PRs."
+                : undefined,
+            ]
+          : []
+      )
         .filter((part) => part !== undefined && part.length > 0)
         .join("\n\n");
-      if (instructions !== state.instructions) {
+      if (instructions !== (state.instructions ?? "")) {
         yield* client.session.instructions.entry.put({
           sessionID: Session.ID.make(sessionId),
           key: INSTRUCTIONS_KEY,

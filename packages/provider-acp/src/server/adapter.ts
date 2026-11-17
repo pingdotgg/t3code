@@ -116,7 +116,10 @@ import {
   t3AcpPromptWithInstructions,
   type T3AcpInstructionState,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import {
+  buildRuntimeInstructions,
+  t3AgentInstructionsEnabled,
+} from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
@@ -8450,10 +8453,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           sessionId: string,
         ) {
           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+          const t3Instructions = yield* t3AgentInstructionsEnabled(host);
           const instructionState = {
             interactionMode: turnInput.runtimePolicy.interactionMode,
-            hasT3Mcp: mcpSession !== undefined,
-            hasDeviceTools: mcpSession?.capabilities?.has("device") === true,
+            hasT3Mcp: t3Instructions && mcpSession !== undefined,
+            hasDeviceTools: t3Instructions && mcpSession?.capabilities?.has("device") === true,
           } satisfies T3AcpInstructionState;
           const userText =
             flavor.rewriteUserText === undefined
@@ -8539,6 +8543,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
           // The agent keeps its own history, so resend only after compaction or when the text changes.
           const sendRuntimeInstructions =
+            t3Instructions &&
             !isNativeSlashCommand &&
             (compactionMarker !== undefined ||
               (yield* Ref.get(promptRuntimeInstructions)).get(sessionId) !== runtimeInstructions);

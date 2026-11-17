@@ -82,7 +82,12 @@ import {
   materializePiT3McpExtension,
   resolvePiLaunchArgs,
 } from "./mcpInjection.ts";
-import { PI_FILE_CHANGE_TOOLS, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
+import {
+  PI_FILE_CHANGE_TOOLS,
+  PI_T3_SERVICE_TIER_COMMAND,
+  T3_PI_AGENT_INSTRUCTIONS_ENV,
+} from "./mcpExtensionSource.ts";
+import { t3AgentInstructionsEnabled } from "@t3tools/provider-core/server/runtimeInstructions";
 import { PI_STANDARD_SERVICE_TIER } from "./modelCapabilities.ts";
 
 export const PI_PROVIDER = ProviderDriverKind.make("pi");
@@ -567,7 +572,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             launchArgs: resolvedLaunchArgs.args,
             // PortScanner.AGENT_THREAD_ENV, as a literal because this package cannot reach apps/server.
             environment: withVoiceNotificationsEnv(
-              { ...options.environment, T3CODE_THREAD_ID: input.threadId },
+              {
+                ...options.environment,
+                T3CODE_THREAD_ID: input.threadId,
+                ...((yield* t3AgentInstructionsEnabled(host))
+                  ? {}
+                  : { [T3_PI_AGENT_INSTRUCTIONS_ENV]: "off" }),
+              },
               input.runtimePolicy.voiceNotifications,
             ),
             mcpSession,

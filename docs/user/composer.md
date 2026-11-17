@@ -400,6 +400,29 @@ them back.
 On mobile, tap a chip to inspect its content. File references open the current file; attached
 files show the copy that was attached to the message.
 
+## What gets added automatically
+
+An agent sees more than what you type. Some of it comes from T3 Code, some from the agent's
+own CLI, and some from the model provider.
+
+- **T3 Code's instructions.** Each agent session gets instructions about T3 Code's own tools:
+  delegation, threads, browser, devices, pull request linking and runtime info. On web and
+  desktop, turn off **Settings → Threads → Automatic additions → T3 Code agent instructions**
+  to leave them out of sessions started afterwards. The tools stay available; the agent just
+  gets no guidance on them.
+- **Context T3 Code adds to a turn.** A handoff when you change provider or model, side-chat
+  context, a note after a restart, and the goal block while a goal is active. The thread shows
+  a row named **T3 Code added context to this turn**; open it to read the text that was sent.
+  Long text is cut off after 20,000 characters.
+- **Messages T3 Code sends for you.** Wake-ups from delegated tasks and watched pull requests,
+  goal continuation, idle compaction and restart continuation. They appear in the thread as
+  sent by T3 Code and follow their own features and settings.
+- **What the agent's CLI adds.** Project instruction files, memory, hook output and system
+  reminders come from the CLI, not T3 Code, so manage them in its settings. For Claude Code,
+  the thread shows what a session-start hook added.
+- **What the provider adds.** A provider can add text after a request leaves your machine.
+  T3 Code cannot show it or turn it off.
+
 ## Attached files
 
 Select a file chip in your draft or a sent message to preview it. Code and JSON use syntax

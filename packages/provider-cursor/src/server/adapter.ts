@@ -58,7 +58,10 @@ import {
 } from "./skills.ts";
 import { cursorWorkspaceMcpServers } from "./workspaceMcpServers.ts";
 import { t3OrchestrationPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import {
+  buildRuntimeInstructions,
+  t3AgentInstructionsEnabled,
+} from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
@@ -2618,6 +2621,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           mcpServers: Record<string, McpServerConfig> | undefined,
           hasDeviceTools: boolean,
+          t3Instructions: boolean,
           delivered: { readonly orchestration: boolean; readonly device: boolean },
           interrupted: string | undefined,
         ) {
@@ -2635,7 +2639,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               resolveAttachmentPath: host.resolveAttachmentPath,
               resolveExtractedTextPath: host.resolveExtractedTextPath,
             }),
-            hasT3Mcp: mcpServers !== undefined,
+            hasT3Mcp: t3Instructions && mcpServers !== undefined,
             hasDeviceTools,
             orchestrationDelivered: delivered.orchestration,
             deviceInstructionsDelivered: delivered.device,
@@ -2679,7 +2683,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               detail: "Cursor turn requires non-empty text or attachments.",
             });
           }
-          const text = `${userText}\n\n${buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model })}`;
+          const text = t3Instructions
+            ? `${userText}\n\n${buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model })}`
+            : userText;
           return {
             message: images.length === 0 ? text : ({ text, images } satisfies SDKUserMessage),
             prompt: userText,
@@ -2707,8 +2713,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             });
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
             const mcpServers = cursorMcpServers(mcpSession);
+            const t3Instructions = yield* t3AgentInstructionsEnabled(host);
             const hasDeviceTools =
-              mcpServers !== undefined && mcpSession?.capabilities?.has("device") === true;
+              t3Instructions &&
+              mcpServers !== undefined &&
+              mcpSession?.capabilities?.has("device") === true;
             const known = yield* Ref.get(told);
             // A conversation this process has not sent to was told on its first run.
             const delivered =
@@ -2750,6 +2759,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                       turnInput,
                       mcpServers,
                       hasDeviceTools,
+                      t3Instructions,
                       delivered,
                       dropped?.text,
                     );
@@ -2791,7 +2801,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             if (resume === undefined) {
               yield* Ref.set(told, {
                 agent: agent.nativeThreadId,
-                orchestration: !compacted && (delivered.orchestration || mcpServers !== undefined),
+                orchestration:
+                  !compacted &&
+                  (delivered.orchestration || (t3Instructions && mcpServers !== undefined)),
                 device: !compacted && hasDeviceTools,
               });
             }

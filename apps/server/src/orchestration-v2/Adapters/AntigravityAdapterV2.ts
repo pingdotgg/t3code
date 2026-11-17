@@ -16,7 +16,10 @@ import * as Scope from "effect/Scope";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
-import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
+import {
+  PULL_REQUEST_LINKING_INSTRUCTIONS,
+  t3AgentInstructionsEnabled,
+} from "@t3tools/provider-core/server/runtimeInstructions";
 import type { AntigravityAuth } from "../../provider/AntigravityAuth.ts";
 import * as HeadroomRouting from "../../optimizer/HeadroomRouting.ts";
 import * as SessionOptimizerAttachments from "@t3tools/provider-core/server/sessionOptimizerAttachments";
@@ -155,7 +158,9 @@ export function makeAntigravityAcpAdapterFlavor(
           options.makeRuntime({
             ...input,
             clientFileReads: true,
-            sessionSystemPromptAppend: PULL_REQUEST_LINKING_INSTRUCTIONS,
+            ...((yield* t3AgentInstructionsEnabled(options.host))
+              ? { sessionSystemPromptAppend: PULL_REQUEST_LINKING_INSTRUCTIONS }
+              : {}),
             additionalDirectories: [options.host.paths.attachmentsDir],
           }),
         )

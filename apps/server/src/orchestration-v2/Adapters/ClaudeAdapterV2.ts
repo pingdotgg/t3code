@@ -2194,6 +2194,8 @@ export function makeClaudeQueryOptions(input: {
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   /** The thread's T3 MCP session holds the `device` capability. */
   readonly deviceToolsAvailable?: boolean;
+  /** False when the `t3AgentInstructions` setting is off. */
+  readonly t3AgentInstructions?: boolean;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
@@ -2290,7 +2292,25 @@ export function makeClaudeQueryOptions(input: {
               : { ENABLE_TOOL_SEARCH: input.toolSearchOverride }),
           },
         } as ClaudeSdkSettings);
-  const deviceInstructions = input.mcpServers !== undefined && input.deviceToolsAvailable === true;
+  const t3Instructions = input.t3AgentInstructions !== false;
+  const deviceInstructions =
+    t3Instructions && input.mcpServers !== undefined && input.deviceToolsAvailable === true;
+  const systemPromptAppend = [
+    ...(t3Instructions
+      ? [
+          buildRuntimeInstructions({ harness: "Claude Code" }) +
+            (input.mcpServers === undefined
+              ? ""
+              : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
+                CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
+                CLAUDE_SEND_TO_USER_INSTRUCTIONS +
+                (deviceInstructions
+                  ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
+                  : "")),
+        ]
+      : []),
+    ...launchAppendSystemPrompt,
+  ].join("\n\n");
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
     // T3 names threads; a supplied title skips Claude's redundant naming request.
@@ -2343,18 +2363,7 @@ export function makeClaudeQueryOptions(input: {
     systemPrompt: {
       type: "preset" as const,
       preset: "claude_code" as const,
-      append: [
-        buildRuntimeInstructions({ harness: "Claude Code" }) +
-          (input.mcpServers === undefined
-            ? ""
-            : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
-              CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
-              CLAUDE_SEND_TO_USER_INSTRUCTIONS +
-              (deviceInstructions
-                ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
-                : "")),
-        ...launchAppendSystemPrompt,
-      ].join("\n\n"),
+      ...(systemPromptAppend === "" ? {} : { append: systemPromptAppend }),
     },
     ...(deviceInstructions || input.onStop !== undefined
       ? {
@@ -12990,6 +12999,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? {}
               : { mcpServers: mcpOverrides.mcpServers }),
             deviceToolsAvailable: mcpSession?.capabilities?.has("device") === true,
+            t3AgentInstructions: yield* ServerSettings.t3AgentInstructionsEnabled(serverSettings),
             permissionMode: queryPolicy.permissionMode,
             ...(queryPolicy.allowDangerouslySkipPermissions === undefined
               ? {}

@@ -67,7 +67,10 @@ import {
   withVoiceNotificationsEnv,
 } from "@t3tools/provider-core/server/instanceEnvironment";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import {
+  buildRuntimeInstructions,
+  t3AgentInstructionsEnabled,
+} from "@t3tools/provider-core/server/runtimeInstructions";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import { readableProviderErrorMessage } from "./providerErrorMessage.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -3471,7 +3474,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
 
         // OpenCode runs each step with the agent and system prompt of the latest
         // user message, so every prompt in a turn, steers included, repeats them.
-        const turnPromptOptions = (turn: ActiveOpenCodeTurn) => {
+        const turnPromptOptions = (turn: ActiveOpenCodeTurn, t3Instructions: boolean) => {
           const agent =
             getModelSelectionStringOptionValue(turn.modelSelection, "agent") ??
             (turn.runtimePolicy.interactionMode === "plan" ? "plan" : undefined);
@@ -3479,12 +3482,19 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           return {
             ...(agent === undefined ? {} : { agent }),
             ...(variant === undefined ? {} : { variant }),
-            system: [
-              orchestrationSystemPrompt,
-              buildRuntimeInstructions({ harness: "OpenCode", model: turn.modelSelection.model }),
-            ]
-              .filter(Boolean)
-              .join("\n\n"),
+            ...(t3Instructions
+              ? {
+                  system: [
+                    orchestrationSystemPrompt,
+                    buildRuntimeInstructions({
+                      harness: "OpenCode",
+                      model: turn.modelSelection.model,
+                    }),
+                  ]
+                    .filter(Boolean)
+                    .join("\n\n"),
+                }
+              : {}),
           };
         };
 
@@ -3922,7 +3932,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   sessionID: sessionId,
                   messageID: turn.admissionMessageId!,
                   model: parsedModel,
-                  ...turnPromptOptions(turn),
+                  ...turnPromptOptions(turn, yield* t3AgentInstructionsEnabled(host)),
                   parts,
                 },
                 admissionAbortController!,
@@ -4068,7 +4078,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   sessionID: sessionId,
                   messageID: turn.admissionMessageId,
                   model: parsedModel,
-                  ...turnPromptOptions(turn),
+                  ...turnPromptOptions(turn, yield* t3AgentInstructionsEnabled(host)),
                   parts,
                 },
                 admissionAbortController!,

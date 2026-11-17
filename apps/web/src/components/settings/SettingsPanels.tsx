@@ -1983,6 +1983,57 @@ export function ThreadsSettingsPanel() {
         </SettingsSection>
       ) : null}
 
+      {hasServerTargets && !isProjectScope ? (
+        <SettingsSection id="automatic-additions" title="Automatic additions">
+          <SettingsRow
+            serverScoped
+            settingKeys={["t3AgentInstructions"]}
+            title="T3 Code agent instructions"
+            description="T3 Code tells each agent session about its own tools: delegation, threads, browser, devices, pull request linking and runtime info. Off removes this from new sessions. The tools stay available."
+            resetAction={
+              settings.t3AgentInstructions !== DEFAULT_UNIFIED_SETTINGS.t3AgentInstructions ? (
+                <SettingResetButton
+                  label="T3 Code agent instructions"
+                  onClick={() =>
+                    updateSettings({
+                      t3AgentInstructions: DEFAULT_UNIFIED_SETTINGS.t3AgentInstructions,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <ScopedSwitch
+                settingKeys={["t3AgentInstructions"]}
+                checked={settings.t3AgentInstructions}
+                onCheckedChange={(checked) =>
+                  updateSettings({ t3AgentInstructions: Boolean(checked) })
+                }
+                aria-label="T3 Code agent instructions"
+              />
+            }
+          />
+          <SettingsRow
+            title="Context T3 Code adds to a turn"
+            description={
+              'Handoffs when you change provider or model, side-chat context, restart notes and the goal block. Shown in the thread as "T3 Code added context to this turn". On while the feature is in use.'
+            }
+          />
+          <SettingsRow
+            title="Messages T3 Code sends for you"
+            description="Wake-ups from delegated tasks, pull request watch updates, goal continuation, idle compaction and restart continuation. Shown in the thread as sent by T3 Code. Each follows its own setting."
+          />
+          <SettingsRow
+            title="Harness additions"
+            description="The agent CLI adds project instruction files, memory, hook output and system reminders. T3 Code does not control them. Claude Code session-start hook output is shown in the thread."
+          />
+          <SettingsRow
+            title="Provider additions"
+            description="The model provider can add its own text after a request leaves this machine. T3 Code cannot see it or turn it off."
+          />
+        </SettingsSection>
+      ) : null}
+
       <SettingsSection id="text-generation" title="Text generation">
         <SettingsRow
           serverScoped

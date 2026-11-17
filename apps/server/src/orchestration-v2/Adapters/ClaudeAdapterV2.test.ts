@@ -869,7 +869,11 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
 });
 
 describe("ClaudeAdapterV2 device instructions", () => {
-  const options = (input: { readonly mcp: boolean; readonly deviceToolsAvailable: boolean }) =>
+  const options = (input: {
+    readonly mcp: boolean;
+    readonly deviceToolsAvailable: boolean;
+    readonly t3AgentInstructions?: boolean;
+  }) =>
     ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: {
         instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -882,6 +886,9 @@ describe("ClaudeAdapterV2 device instructions", () => {
         ? { mcpServers: { "t3-code": { type: "http" as const, url: "http://127.0.0.1/mcp" } } }
         : {}),
       deviceToolsAvailable: input.deviceToolsAvailable,
+      ...(input.t3AgentInstructions === undefined
+        ? {}
+        : { t3AgentInstructions: input.t3AgentInstructions }),
       environment: {},
     });
   const append = (input: { readonly mcp: boolean; readonly deviceToolsAvailable: boolean }) =>
@@ -891,6 +898,15 @@ describe("ClaudeAdapterV2 device instructions", () => {
     const text = append({ mcp: true, deviceToolsAvailable: true });
     assert.include(text, T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH);
     assert.include(text, "Use `delegate_task`");
+  });
+
+  it("sends none of T3 Code's instruction text when the setting is off and keeps the tools", () => {
+    const session = { mcp: true, deviceToolsAvailable: true };
+    assert.deepEqual(options({ ...session, t3AgentInstructions: true }), options(session));
+    const off = options({ ...session, t3AgentInstructions: false });
+    assert.deepEqual(off.systemPrompt, { type: "preset", preset: "claude_code" });
+    assert.isUndefined(off.hooks);
+    assert.deepEqual(off.mcpServers, options(session).mcpServers);
   });
 
   it("leaves the device block out without device access or without T3 tools", () => {

@@ -123,6 +123,7 @@ import { resolveAttachmentPath, resolveAttachmentPathById } from "../../attachme
 import * as PortScanner from "../../preview/PortScanner.ts";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
   buildCodexAdditionalContext,
@@ -895,6 +896,8 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly browserToolsAvailable?: boolean;
     readonly deviceToolsAvailable?: boolean;
     readonly rtkEnabled?: boolean;
+    /** False when the `t3AgentInstructions` setting is off. */
+    readonly t3AgentInstructions?: boolean;
     /** ChatGPT token sharing does not accept service tiers. */
     readonly omitServiceTier?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
@@ -937,7 +940,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       ]),
     );
     const t3Context =
-      input.hasT3Mcp === true
+      input.hasT3Mcp === true && input.t3AgentInstructions !== false
         ? buildCodexAdditionalContext(
             { model: input.modelSelection.model, reasoningEffort: effort ?? undefined },
             {
@@ -2060,6 +2063,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
   adapterOptions: CodexAdapterV2Options,
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   const readMcpSession = (threadId: ThreadId | null) =>
     threadId === null ? Effect.undefined : mcpSessions.read(threadId);
   const { clientFactory, digest, fileSystem, idAllocator, random, serverConfig } = adapterOptions;
@@ -8424,6 +8428,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               rtkEnabled:
                 SessionOptimizerAttachments.readSessionOptimizerAttachments(turnInput.threadId)
                   ?.rtk !== undefined,
+              t3AgentInstructions: yield* ServerSettings.t3AgentInstructionsEnabled(serverSettings),
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
               ...(configuredReasoningSummary === undefined ? {} : { configuredReasoningSummary }),
