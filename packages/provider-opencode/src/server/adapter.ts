@@ -69,7 +69,10 @@ import {
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
-import { readableProviderErrorMessage } from "./providerErrorMessage.ts";
+import {
+  isExplicitProviderOverload,
+  readableProviderErrorMessage,
+} from "./providerErrorMessage.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -3220,7 +3223,13 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                       (state): state is OpenCodeThreadState => state !== undefined,
                     );
               const error = event.properties.error;
-              const usageLimit = error?.name === "APIError" && error.data.statusCode === 429;
+              const usageLimit =
+                error?.name === "APIError" &&
+                error.data.statusCode === 429 &&
+                !isExplicitProviderOverload({
+                  message: error.data.message,
+                  responseBody: error.data.responseBody,
+                });
               const failure = makeProviderFailure({
                 message: openCodeErrorMessage(event),
                 code: error?.name ?? null,

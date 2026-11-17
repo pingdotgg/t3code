@@ -65,7 +65,10 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as OpenCode2Client from "./OpenCode2Client.ts";
 import * as OpenCode2Server from "./OpenCode2Server.ts";
 import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
-import { readableProviderErrorMessage } from "../providerErrorMessage.ts";
+import {
+  isExplicitProviderOverload,
+  readableProviderErrorMessage,
+} from "../providerErrorMessage.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import {
@@ -667,22 +670,23 @@ const claudeUsageLimit = (message: string | undefined) =>
     ? { resetAt: /\bResets at (\d{4}-\d\d-\d\dT[\d:.]+Z)\.?\s*$/.exec(message)?.[1] ?? null }
     : undefined;
 
-const overloaded = (error: { readonly type: string; readonly message: string }) =>
-  /overload|capacity/i.test(error.type) ||
-  /\b(?:overloaded|overload|at capacity)\b/i.test(error.message);
-
 // OpenCode types an empty balance as provider.quota too, but it answers
 // that with HTTP 402 and it never resets. Usage windows and budgets are 429.
 const isUsageLimit = (error: {
   readonly type: string;
   readonly status?: number | undefined;
   readonly message: string;
+  readonly response?: { readonly body: string } | undefined;
 }) =>
-  error.status !== undefined && error.status >= 500 && overloaded(error)
+  isExplicitProviderOverload({
+    code: error.type,
+    message: error.message,
+    responseBody: error.response?.body,
+  })
     ? false
     : (error.type === "provider.quota" && error.status !== 402) ||
       error.type === "provider.rate-limit" ||
-      (error.status === 429 && !overloaded(error)) ||
+      error.status === 429 ||
       claudeUsageLimit(error.message) !== undefined;
 
 const retryResetAt = (created: number, retryAfterMs: number | undefined): string | null => {

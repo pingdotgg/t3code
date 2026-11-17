@@ -764,6 +764,50 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         status: 429,
         message: "Service temporarily overloaded",
         retryAfterMs: 2_000,
+        response: {
+          body: JSON.stringify({
+            error: { code: "service_overloaded", message: "Service temporarily overloaded" },
+          }),
+        },
+      },
+      failureClass: "provider_error",
+      resetAt: null,
+    },
+    {
+      name: "an overloaded 429 identified by its response body",
+      error: {
+        type: "provider.rate-limit",
+        status: 429,
+        message: "Request failed",
+        retryAfterMs: 2_000,
+        response: { body: JSON.stringify({ error: { code: "service_overloaded" } }) },
+      },
+      failureClass: "provider_error",
+      resetAt: null,
+    },
+    {
+      name: "an overloaded 429 identified by its native message",
+      error: {
+        type: "provider.rate-limit",
+        status: 429,
+        message: "Service temporarily overloaded",
+        retryAfterMs: 2_000,
+      },
+      failureClass: "provider_error",
+      resetAt: null,
+    },
+    {
+      name: "a real token rate limit with a retry hint",
+      error: {
+        type: "provider.rate-limit",
+        status: 429,
+        message: "Token rate limit reached",
+        retryAfterMs: 2_000,
+        response: {
+          body: JSON.stringify({
+            error: { code: "rate_limit_exceeded", message: "Token rate limit reached" },
+          }),
+        },
       },
       failureClass: "usage_limit",
       resetAt: "2026-11-17T12:00:02.000Z",

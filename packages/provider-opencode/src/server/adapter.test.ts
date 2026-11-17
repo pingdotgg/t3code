@@ -635,52 +635,86 @@ describe("OpenCodeAdapterV2", () => {
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
-  it.effect("classifies APIError 429 as a usage limit", () =>
-    Effect.gen(function* () {
-      const observedAt = yield* DateTime.now;
-      const nativeEvents = asyncEventStream();
-      const harness = yield* makeOpenCodeRuntimeHarness("usage-limit", "root", {
-        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
-        session: {
-          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
-          promptAsync: async () => ({ data: true }),
-          abort: async () => ({ data: true }),
-          children: async () => ({ data: [] }),
-        },
-      });
-      yield* harness.startTurn();
-      const received = yield* harness.runtime.events.pipe(
-        Stream.takeUntil((event) => event.type === "turn.terminal"),
-        Stream.runCollect,
-        Effect.forkScoped,
-      );
-      yield* Effect.promise(() =>
-        nativeEvents.push({
-          type: "session.error",
-          properties: {
-            sessionID: "root",
-            error: {
-              name: "APIError",
-              data: {
-                message: "Provider rejected request",
-                statusCode: 429,
-                isRetryable: true,
-                responseHeaders: { "Retry-After": "2" },
+  it.effect.each([
+    {
+      name: "a token rate limit",
+      message: "Token rate limit reached",
+      responseBody: JSON.stringify({ error: { code: "rate_limit_exceeded" } }),
+      failureClass: "usage_limit",
+      reset: true,
+    },
+    {
+      name: "a temporary service overload",
+      message: "Service temporarily overloaded",
+      responseBody: JSON.stringify({
+        error: { code: "service_overloaded", message: "Service temporarily overloaded" },
+      }),
+      failureClass: "provider_error",
+      reset: false,
+    },
+    {
+      name: "an overload identified by its response body",
+      message: "Request failed",
+      responseBody: JSON.stringify({ error: { code: "service_overloaded" } }),
+      failureClass: "provider_error",
+      reset: false,
+    },
+    {
+      name: "an overload identified by its native message",
+      message: "Service temporarily overloaded",
+      responseBody: "",
+      failureClass: "provider_error",
+      reset: false,
+    },
+  ] as const)(
+    "classifies APIError 429 for $name",
+    ({ message, responseBody, failureClass, reset }) =>
+      Effect.gen(function* () {
+        const observedAt = yield* DateTime.now;
+        const nativeEvents = asyncEventStream();
+        const harness = yield* makeOpenCodeRuntimeHarness("usage-limit", "root", {
+          event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          session: {
+            create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            promptAsync: async () => ({ data: true }),
+            abort: async () => ({ data: true }),
+            children: async () => ({ data: [] }),
+          },
+        });
+        yield* harness.startTurn();
+        const received = yield* harness.runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "session.error",
+            properties: {
+              sessionID: "root",
+              error: {
+                name: "APIError",
+                data: {
+                  message,
+                  statusCode: 429,
+                  isRetryable: true,
+                  responseHeaders: { "Retry-After": "2" },
+                  responseBody,
+                },
               },
             },
-          },
-        }),
-      );
-      const terminal = (yield* Fiber.join(received)).find(
-        (event) => event.type === "turn.terminal",
-      );
-      assert.equal(terminal?.status, "failed");
-      assert.equal(terminal?.failure?.class, "usage_limit");
-      assert.equal(
-        terminal?.failure?.resetAt,
-        DateTime.formatIso(DateTime.add(observedAt, { seconds: 2 })),
-      );
-    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+          }),
+        );
+        const terminal = (yield* Fiber.join(received)).find(
+          (event) => event.type === "turn.terminal",
+        );
+        assert.equal(terminal?.status, "failed");
+        assert.equal(terminal?.failure?.class, failureClass);
+        assert.equal(
+          terminal?.failure?.resetAt,
+          reset ? DateTime.formatIso(DateTime.add(observedAt, { seconds: 2 })) : undefined,
+        );
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect("applies a changed runtime policy to the session on resume and turn start", () =>
