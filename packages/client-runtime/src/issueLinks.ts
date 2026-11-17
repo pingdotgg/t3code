@@ -47,14 +47,14 @@ export function resolveIssueLinkTarget<Project extends LinkProject>(input: {
   readonly projects: ReadonlyArray<Project>;
   readonly preferredProjectId?: string | undefined;
 }): { readonly project: Project; readonly ref: IssueRef } | null {
-  const bindings = input.projects.flatMap((project) => {
-    const binding = projectIssueBinding(project);
-    return binding === null ? [] : [{ project, binding }];
-  });
   // A link names its server's port; a binding does only when its remote or web URL did.
   const url = linkHost(input.url);
   if (url === null) return null;
   const { hostname, authority } = url;
+  const bindings = input.projects.flatMap((project) => {
+    const binding = projectIssueBinding(project);
+    return binding === null ? [] : [{ project, binding }];
+  });
   const onUrlHost = bindings.filter(
     ({ binding }) => binding.host === hostname || binding.host === authority,
   );
@@ -65,7 +65,7 @@ export function resolveIssueLinkTarget<Project extends LinkProject>(input: {
     urlBindings
       .map(({ binding }) => sourceControlClients.parseIssueUrl(input.url, binding.tracker))
       .find((candidate) => candidate !== null) ?? sourceControlClients.parseIssueUrl(input.url);
-  if (parsed == null) return null;
+  if (parsed === null) return null;
   const { definition, link } = parsed;
   const onHost = bindings.filter(
     ({ binding }) =>
