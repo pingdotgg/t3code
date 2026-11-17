@@ -70,8 +70,9 @@ const CodexUsage = Schema.Struct({
     }),
   ),
 });
+// The usage endpoint can report a window without a utilization, as the CLI's own schema allows.
 const ClaudeWindow = Schema.Struct({
-  utilization: Schema.Number,
+  utilization: Schema.NullOr(Schema.Number),
   resets_at: Schema.NullOr(Schema.String),
 });
 const ClaudeUsage = Schema.Struct({
