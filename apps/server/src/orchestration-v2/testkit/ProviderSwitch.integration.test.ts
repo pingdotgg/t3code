@@ -123,6 +123,7 @@ function makeTestAdapter(input: {
   readonly subagentOnlyBackgroundWork?: boolean;
   readonly holdFirstTurn?: Deferred.Deferred<void>;
   readonly releaseFirstTurn?: Deferred.Deferred<void>;
+  readonly holdOpenSession?: Deferred.Deferred<void>;
   /** A tool call the held turn reports running before it holds. */
   readonly heldRunningToolCall?: {
     readonly id: TurnItemId;
@@ -131,6 +132,8 @@ function makeTestAdapter(input: {
   readonly backgroundTasksEndWithProcess?: true;
   readonly backgroundWork?: Ref.Ref<boolean>;
   readonly closedSessions?: Ref.Ref<ReadonlyArray<string>>;
+  // ACP cannot truncate, so its rollback answers with a fresh, empty native session.
+  readonly rollback?: "truncates" | "replaces_native_thread";
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: input.instanceId,
@@ -139,6 +142,7 @@ function makeTestAdapter(input: {
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (sessionInput) =>
       Effect.gen(function* () {
+        if (input.holdOpenSession !== undefined) yield* Deferred.await(input.holdOpenSession);
         const events = yield* PubSub.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         if (input.closedSessions !== undefined) {
           const closedSessions = input.closedSessions;
@@ -448,8 +452,25 @@ function makeTestAdapter(input: {
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () =>
             unimplemented(input.driver, "readThreadSnapshot unused in provider switch test"),
-          rollbackThread: () =>
-            unimplemented(input.driver, "rollbackThread unused in provider switch test"),
+          rollbackThread: ({ providerThread }) =>
+            input.rollback === undefined
+              ? unimplemented(input.driver, "rollbackThread unused in provider switch test")
+              : Effect.succeed({
+                  providerThread:
+                    input.rollback === "truncates" || providerThread.nativeThreadRef === null
+                      ? providerThread
+                      : {
+                          ...providerThread,
+                          nativeThreadRef: {
+                            ...providerThread.nativeThreadRef,
+                            nativeId: `${providerThread.nativeThreadRef.nativeId}:after-rollback`,
+                          },
+                          nativeConversationHeadRef: null,
+                        },
+                  providerTurns: [],
+                  messages: [],
+                  runtimeRequests: [],
+                }),
           forkThread: () =>
             unimplemented(input.driver, "forkThread unused in provider switch test"),
         };
@@ -1631,6 +1652,304 @@ describe("orchestration v2 provider switching", () => {
   );
 
   it.live.each([
+    {
+      name: "an ACP rollback that starts a fresh agent session",
+      instanceId: GROK_MODEL_SELECTION.instanceId,
+      driver: GROK_DRIVER,
+      capabilities: AcpProviderCapabilitiesV2,
+      modelSelection: GROK_MODEL_SELECTION,
+      rollback: "replaces_native_thread",
+      failResumeAfterRollback: false,
+      history: "plain",
+      delivers: ["favourite colour is teal"],
+      withholds: ["favourite animal is an otter"],
+    },
+    {
+      name: "a native rollback whose next resume fails",
+      instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+      driver: CLAUDE_DRIVER,
+      capabilities: ClaudeProviderCapabilitiesV2,
+      modelSelection: CLAUDE_MODEL_SELECTION,
+      rollback: "truncates",
+      failResumeAfterRollback: true,
+      history: "plain",
+      delivers: ["favourite colour is teal"],
+      withholds: ["favourite animal is an otter"],
+    },
+    {
+      // Pi forks into a new native thread that still holds the kept turns.
+      name: "a native rollback that forks a new native thread",
+      instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+      driver: CLAUDE_DRIVER,
+      capabilities: ClaudeProviderCapabilitiesV2,
+      modelSelection: CLAUDE_MODEL_SELECTION,
+      rollback: "replaces_native_thread",
+      failResumeAfterRollback: false,
+      history: "plain",
+      delivers: [],
+      withholds: ["favourite colour is teal", "favourite animal is an otter"],
+    },
+    {
+      name: "an ACP rollback where no attempt recorded its native session",
+      instanceId: GROK_MODEL_SELECTION.instanceId,
+      driver: GROK_DRIVER,
+      capabilities: AcpProviderCapabilitiesV2,
+      modelSelection: GROK_MODEL_SELECTION,
+      rollback: "replaces_native_thread",
+      failResumeAfterRollback: false,
+      history: "legacy_all_turns",
+      delivers: ["favourite colour is teal"],
+      withholds: ["favourite animal is an otter"],
+    },
+    {
+      name: "an ACP rollback of a forked thread to its baseline",
+      instanceId: GROK_MODEL_SELECTION.instanceId,
+      driver: GROK_DRIVER,
+      capabilities: AcpProviderCapabilitiesV2,
+      modelSelection: GROK_MODEL_SELECTION,
+      rollback: "replaces_native_thread",
+      failResumeAfterRollback: false,
+      history: "forked_to_baseline",
+      delivers: ["home town is Oslo"],
+      withholds: ["favourite colour is teal", "favourite animal is an otter"],
+    },
+    {
+      name: "an ACP rollback in a thread restarted with fresh context",
+      instanceId: GROK_MODEL_SELECTION.instanceId,
+      driver: GROK_DRIVER,
+      capabilities: AcpProviderCapabilitiesV2,
+      modelSelection: GROK_MODEL_SELECTION,
+      rollback: "replaces_native_thread",
+      failResumeAfterRollback: false,
+      history: "after_fresh_context",
+      delivers: ["favourite colour is teal"],
+      withholds: ["home town is Oslo", "favourite animal is an otter"],
+    },
+  ] as const)(
+    "gives the agent the kept conversation and not the rewound turn after $name",
+    (scenario) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const name = `rollback-kept-context-${scenario.driver}-${scenario.history}`;
+          const cwd = yield* checkpointWorkspace(name);
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
+          const failResumeOnce = yield* Ref.make(false);
+          const nativeThreadGeneration = yield* Ref.make(0);
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+            makeTestAdapter({
+              instanceId: scenario.instanceId,
+              driver: scenario.driver,
+              capabilities: scenario.capabilities,
+              modelSelection: scenario.modelSelection,
+              responseByRunOrdinal: { 1: "noted", 2: "noted", 3: "noted" },
+              capturedTurns,
+              injectedHistory,
+              failResumeOnce,
+              nativeThreadGeneration,
+              rollback: scenario.rollback,
+            }),
+          ]);
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            const runToCompletion = Effect.fn("runToCompletion")(function* (
+              ordinal: number,
+              text: string,
+              thread: ThreadId = threadId,
+              freshContext = false,
+            ) {
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`${thread}:${ordinal}`),
+                threadId: thread,
+                messageId: MessageId.make(`${thread}:${ordinal}`),
+                createdBy: "user",
+                creationSource: "web",
+                text,
+                attachments: [],
+                modelSelection: scenario.modelSelection,
+                ...(freshContext ? { freshContext: true } : {}),
+                dispatchMode: { type: "start_immediately" },
+              });
+              yield* orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.type === "run.updated" &&
+                    event.threadId === thread &&
+                    event.payload.ordinal === ordinal &&
+                    (event.payload.status === "completed" || event.payload.status === "failed"),
+                ),
+                Stream.runHead,
+              );
+              yield* worker.drain();
+            });
+            const createThread = (thread: ThreadId) =>
+              orchestrator.dispatch({
+                type: "thread.create",
+                commandId: CommandId.make(`${thread}:create`),
+                threadId: thread,
+                projectId,
+                createdBy: "user",
+                creationSource: "web",
+                title: "Edit from here",
+                modelSelection: scenario.modelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: null,
+              });
+            if (scenario.history === "forked_to_baseline") {
+              const sourceThreadId = ThreadId.make(`${name}:source`);
+              yield* createThread(sourceThreadId);
+              yield* runToCompletion(
+                1,
+                "My home town is Oslo. Reply with only the word: noted",
+                sourceThreadId,
+              );
+              yield* orchestrator.dispatch({
+                type: "thread.fork",
+                commandId: CommandId.make(`${name}:fork`),
+                sourceThreadId,
+                targetThreadId: threadId,
+                sourcePoint: {
+                  type: "run",
+                  runId: (yield* orchestrator.getThreadProjection(sourceThreadId)).runs[0]!.id,
+                },
+                createdBy: "user",
+                creationSource: "web",
+              });
+            } else {
+              yield* createThread(threadId);
+            }
+            // Runs before a fresh-context run never reach a provider again.
+            const first = scenario.history === "after_fresh_context" ? 2 : 1;
+            if (first === 2) {
+              yield* runToCompletion(1, "My home town is Oslo. Reply with only the word: noted");
+            }
+            yield* runToCompletion(
+              first,
+              "My favourite colour is teal. Reply with only the word: noted",
+              threadId,
+              first === 2,
+            );
+            yield* runToCompletion(
+              first + 1,
+              "My favourite animal is an otter. Reply with only the word: noted",
+            );
+            const beforeRollback = yield* orchestrator.getThreadProjection(threadId);
+            if (scenario.history === "legacy_all_turns") {
+              yield* (yield* EventSink.EventSinkV2).write({
+                events: beforeRollback.attempts.map(
+                  ({ nativeThreadId: _nativeThreadId, ...legacy }, index) => ({
+                    id: EventId.make(`${name}:legacy-attempt:${index}`),
+                    type: "run-attempt.updated" as const,
+                    threadId,
+                    occurredAt: beforeRollback.thread.createdAt,
+                    payload: legacy,
+                  }),
+                ),
+              });
+            }
+            const keptOrdinal = scenario.history === "forked_to_baseline" ? 0 : first;
+            const keptCheckpoint = beforeRollback.checkpoints.find(
+              (checkpoint) =>
+                (checkpoint.appRunOrdinal ?? 0) === keptOrdinal && checkpoint.status === "ready",
+            );
+            if (keptCheckpoint === undefined) {
+              return yield* Effect.die("Expected a checkpoint after the first turn.");
+            }
+            yield* orchestrator.dispatch({
+              type: "checkpoint.rollback",
+              commandId: CommandId.make(`${name}:rollback`),
+              threadId,
+              scopeId: keptCheckpoint.scopeId,
+              checkpointId: keptCheckpoint.id,
+              restoreFiles: false,
+            });
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  (event.type === "run.updated" &&
+                    event.payload.ordinal === first + 1 &&
+                    event.payload.status === "rolled_back") ||
+                  (event.type === "thread.metadata-updated" &&
+                    event.payload.rollbackFailure != null),
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+            assert.deepEqual(
+              (yield* orchestrator.getThreadProjection(threadId)).runs.map((run) => run.status),
+              scenario.history === "forked_to_baseline"
+                ? ["rolled_back", "rolled_back"]
+                : [...(first === 2 ? ["completed"] : []), "completed", "rolled_back"],
+            );
+            if (scenario.failResumeAfterRollback) {
+              const providerSessionId = (yield* orchestrator.getThreadProjection(threadId))
+                .providerThreads[0]?.providerSessionId;
+              if (providerSessionId == null) {
+                return yield* Effect.die("Expected a provider session after the rollback.");
+              }
+              yield* orchestrator.dispatch({
+                type: "provider-session.detach",
+                commandId: CommandId.make(`${name}:detach`),
+                threadId,
+                providerSessionId,
+              });
+              yield* worker.drain();
+              yield* Ref.set(failResumeOnce, true);
+            }
+            const historyBeforeRun3 = (yield* Ref.get(injectedHistory)).length;
+            yield* runToCompletion(first + 2, "What did I say first?");
+
+            const run3 = (yield* Ref.get(capturedTurns)).at(-1);
+            const delivered =
+              (run3?.text ?? "") +
+              (yield* encodeJson((yield* Ref.get(injectedHistory)).slice(historyBeforeRun3)));
+            for (const kept of scenario.delivers) {
+              assert.include(delivered, kept, "the agent's session lacks this kept turn");
+            }
+            for (const withheld of scenario.withholds) {
+              assert.notInclude(delivered, withheld, "the session holds it or it was rewound");
+            }
+            if (scenario.name === "an ACP rollback that starts a fresh agent session") {
+              const recoveries = (projection: OrchestrationV2ThreadProjection) =>
+                projection.contextHandoffs.filter(
+                  (handoff) => handoff.strategy === "full_thread_summary",
+                ).length;
+              const recoveriesBeforeRun4 = recoveries(
+                yield* orchestrator.getThreadProjection(threadId),
+              );
+              const sessionsBeforeRun4 = yield* Ref.get(nativeThreadGeneration);
+              yield* runToCompletion(4, "And what did I say second?");
+              assert.strictEqual(
+                recoveries(yield* orchestrator.getThreadProjection(threadId)),
+                recoveriesBeforeRun4,
+                "the recovered session holds the kept turns, so the next turn replays nothing",
+              );
+              assert.strictEqual(yield* Ref.get(nativeThreadGeneration), sessionsBeforeRun4);
+            }
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name,
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: { type: "readOnly" },
+                  },
+                },
+                layerRegistry,
+              ),
+            ),
+          );
+        }),
+      ),
+  );
+
+  it.live.each([
     ["background work", new ClaudeBackgroundWorkBlocksQueryReplacementError()],
     ["an unreadable append file", new ClaudeAppendSystemPromptFileError({ path: "missing.md" })],
     [
@@ -1648,10 +1967,17 @@ describe("orchestration v2 provider switching", () => {
         detail: "Claude provider query ended before the turn could start.",
       }),
     ],
-  ] as const)("keeps the native session after turns refused for %s", ([, refusalCause]) =>
+    // Injected history is text only, so a refusal after injection must not settle the image.
+    [
+      "background work after native history injection",
+      new ClaudeBackgroundWorkBlocksQueryReplacementError(),
+      true,
+    ],
+  ] as const)("keeps the native session after turns refused for %s", ([, refusalCause, inject]) =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("refused-start-keeps-native");
       const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
       const refuseStarts = yield* Ref.make(0);
       const generation = yield* Ref.make(0);
       const registry = ProviderAdapterRegistry.layerFromAdapters([
@@ -1665,11 +1991,19 @@ describe("orchestration v2 provider switching", () => {
           refuseStarts,
           refusalCause,
           nativeThreadGeneration: generation,
+          ...(inject === true ? { injectedHistory } : {}),
         }),
       ]);
       yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const missedImage: ChatAttachment = {
+          type: "image",
+          id: "refused-start-image",
+          name: "screenshot.png",
+          mimeType: "image/png",
+          sizeBytes: 100_000,
+        };
         const run = Effect.fn("run")(function* (ordinal: number) {
           yield* orchestrator.dispatch({
             type: "message.dispatch",
@@ -1679,7 +2013,7 @@ describe("orchestration v2 provider switching", () => {
             createdBy: "user",
             creationSource: "web",
             text: `Request ${ordinal}`,
-            attachments: [],
+            attachments: ordinal === 2 ? [missedImage] : [],
             modelSelection: CLAUDE_MODEL_SELECTION,
             dispatchMode: { type: "start_immediately" },
           });
@@ -1719,8 +2053,10 @@ describe("orchestration v2 provider switching", () => {
         assert.equal(turns.length, 2);
         assert.equal(yield* Ref.get(generation), 1);
         assert.equal(turns[1]?.nativeThreadId, turns[0]?.nativeThreadId);
-        assert.include(turns[1]?.text, "Request 2");
-        assert.include(turns[1]?.text, "Request 3");
+        const delivered = `${turns[1]?.text}${JSON.stringify(yield* Ref.get(injectedHistory))}`;
+        assert.include(delivered, "Request 2");
+        assert.include(delivered, "Request 3");
+        assert.deepEqual(turns[1]?.attachments, [missedImage]);
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(
@@ -2160,6 +2496,282 @@ describe("orchestration v2 provider switching", () => {
           ),
         );
       }
+    }),
+  );
+
+  const steerProviderSwitchHarness = Effect.fn("steerProviderSwitchHarness")(function* (
+    key: string,
+    holdOpenSession?: Deferred.Deferred<void>,
+  ) {
+    const cwd = yield* checkpointWorkspace(`steer-provider-switch-${key}`);
+    const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const threadId = ThreadId.make(`thread:steer-provider-switch:${key}`);
+    const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+      makeTestAdapter({
+        instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+        driver: CLAUDE_DRIVER,
+        capabilities: ClaudeProviderCapabilitiesV2,
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        responseByRunOrdinal: { 1: "Claude finished the current turn" },
+        capturedTurns,
+        holdFirstTurn: started,
+        releaseFirstTurn: release,
+        ...(holdOpenSession === undefined ? {} : { holdOpenSession }),
+      }),
+      makeTestAdapter({
+        instanceId: CODEX_MODEL_SELECTION.instanceId,
+        driver: CODEX_DRIVER,
+        capabilities: CodexProviderCapabilitiesV2,
+        modelSelection: CODEX_MODEL_SELECTION,
+        responseByRunOrdinal: { 2: "Codex continued" },
+        capturedTurns,
+      }),
+    ]);
+    const layer = ProviderReplayHarness.layerWithRegistry(
+      {
+        name: `steer-provider-switch-${key}`,
+        runtimePolicyOverride: {
+          cwd,
+          approvalPolicy: "never",
+          sandboxPolicy: {
+            type: "readOnly",
+            access: { type: "fullAccess" },
+            networkAccess: false,
+          },
+        },
+      },
+      layerRegistry,
+    );
+    const startClaudeTurn = Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`command:steer-provider-switch:${key}:create`),
+        threadId,
+        projectId: ProjectId.make(`project:steer-provider-switch:${key}`),
+        title: "Steer provider switch",
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: cwd,
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`command:steer-provider-switch:${key}:first`),
+        threadId,
+        messageId: MessageId.make(`message:steer-provider-switch:${key}:first`),
+        text: "Current Claude turn",
+        attachments: [],
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        dispatchMode: { type: "start_immediately" },
+      });
+    });
+    const markClaudeTurnRunning = Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const [claudeRun] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`event:steer-provider-switch:${key}:first-turn-running`),
+            type: "provider-turn.updated",
+            threadId,
+            runId: claudeRun!.id,
+            nodeId: claudeRun!.rootNodeId!,
+            driver: CLAUDE_DRIVER,
+            providerInstanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            occurredAt: now,
+            payload: {
+              // The adapter's own turn id, so its completion ends this turn.
+              id: ProviderTurnId.make(`provider-turn:${CLAUDE_DRIVER}:${threadId}:1`),
+              providerThreadId: claudeRun!.providerThreadId!,
+              nodeId: claudeRun!.rootNodeId!,
+              runAttemptId: claudeRun!.activeAttemptId!,
+              nativeTurnRef: null,
+              ordinal: 1,
+              status: "running",
+              startedAt: now,
+              completedAt: null,
+            },
+          },
+        ],
+      });
+    });
+    const steerToCodex = Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      return yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`command:steer-provider-switch:${key}:codex`),
+        threadId,
+        messageId: MessageId.make(`message:steer-provider-switch:${key}:codex`),
+        text: "Continue with Codex",
+        attachments: [],
+        modelSelection: CODEX_MODEL_SELECTION,
+        deliveryIntent: "steer",
+        dispatchMode: { type: "start_immediately" },
+      });
+    });
+    return {
+      threadId,
+      started,
+      release,
+      capturedTurns,
+      layer,
+      startClaudeTurn,
+      markClaudeTurnRunning,
+      steerToCodex,
+    };
+  });
+
+  it.live.each(["is running", "has no provider session yet"] as const)(
+    "runs a provider switch steered into a Claude turn that %s after that turn",
+    (phase) =>
+      Effect.gen(function* () {
+        const sessionGate = yield* Deferred.make<void>();
+        if (phase === "is running") yield* Deferred.succeed(sessionGate, undefined);
+        const harness = yield* steerProviderSwitchHarness(
+          phase === "is running" ? "running" : "before-session",
+          sessionGate,
+        );
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const waitForRun = (ordinal: number) =>
+            orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.threadId === harness.threadId &&
+                  event.payload.ordinal === ordinal &&
+                  event.payload.status === "completed",
+              ),
+              Stream.runHead,
+              Effect.andThen(worker.drain()),
+            );
+          yield* harness.startClaudeTurn;
+          if (phase === "is running") {
+            yield* Deferred.await(harness.started);
+            yield* worker.drain();
+            yield* harness.markClaudeTurnRunning;
+          } else {
+            const beforeSession = yield* orchestrator.getThreadProjection(harness.threadId);
+            assert.include(["preparing", "starting"], beforeSession.runs[0]?.status);
+            assert.lengthOf(beforeSession.providerSessions, 0);
+          }
+          // Claude cannot restart its turn for new input, so the switch waits for the turn.
+          yield* harness.steerToCodex;
+          const queued = (yield* orchestrator.getThreadProjection(harness.threadId)).runs.at(-1);
+          assert.equal(queued?.status, "queued");
+          assert.equal(queued?.providerInstanceId, CODEX_MODEL_SELECTION.instanceId);
+          assert.isUndefined(queued?.steerWhenReadyRunId);
+
+          yield* Deferred.succeed(sessionGate, undefined);
+          yield* Deferred.await(harness.started);
+          yield* Deferred.succeed(harness.release, undefined);
+          yield* waitForRun(1);
+          yield* waitForRun(2);
+          const projection = yield* orchestrator.getThreadProjection(harness.threadId);
+          assert.deepEqual(
+            projection.runs.map((run) => [run.status, run.providerInstanceId]),
+            [
+              ["completed", CLAUDE_MODEL_SELECTION.instanceId],
+              ["completed", CODEX_MODEL_SELECTION.instanceId],
+            ],
+          );
+          assert.deepEqual(projection.thread.modelSelection, CODEX_MODEL_SELECTION);
+          const handoff = projection.contextHandoffs.find(
+            (candidate) => candidate.id === projection.runs[1]?.contextHandoffId,
+          );
+          assert.isDefined(handoff);
+          const codexTurn = (yield* Ref.get(harness.capturedTurns)).at(-1)!;
+          assert.include(codexTurn.text, "Continue with Codex");
+          assert.include(codexTurn.text, "Current Claude turn");
+          assert.include(codexTurn.text, "Claude finished the current turn");
+        }).pipe(Effect.provide(harness.layer));
+      }),
+  );
+
+  it.live("stops a Claude turn for a /goal steered into it with another provider", () =>
+    Effect.gen(function* () {
+      const harness = yield* steerProviderSwitchHarness("goal");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* harness.startClaudeTurn;
+        yield* Deferred.await(harness.started);
+        yield* worker.drain();
+        yield* harness.markClaudeTurnRunning;
+        const [claudeRun] = (yield* orchestrator.getThreadProjection(harness.threadId)).runs;
+        // An explicit steer without a delivery intent, as thread tools send it.
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:steer-provider-switch:goal:codex"),
+          threadId: harness.threadId,
+          messageId: MessageId.make("message:steer-provider-switch:goal:codex"),
+          text: "/goal all tests pass",
+          attachments: [],
+          modelSelection: CODEX_MODEL_SELECTION,
+          dispatchMode: { type: "steer_active", targetRunId: claudeRun!.id },
+        });
+        const projection = yield* orchestrator.getThreadProjection(harness.threadId);
+        assert.isTrue(
+          projection.turnItems.some(
+            (item) => item.type === "run_interrupt_request" && item.runId === claudeRun!.id,
+          ),
+        );
+        assert.deepEqual(
+          projection.runs.map((run) => [run.status, run.providerInstanceId]),
+          [
+            ["running", CLAUDE_MODEL_SELECTION.instanceId],
+            ["queued", CODEX_MODEL_SELECTION.instanceId],
+          ],
+        );
+        yield* Deferred.succeed(harness.release, undefined);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  // regression: #32891 a steer that Stop already reached is refused, not queued
+  it.live("refuses a provider switch steered into a Claude turn that Stop reached", () =>
+    Effect.gen(function* () {
+      const harness = yield* steerProviderSwitchHarness("after-stop");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* harness.startClaudeTurn;
+        yield* Deferred.await(harness.started);
+        yield* worker.drain();
+        yield* harness.markClaudeTurnRunning;
+        const [claudeRun] = (yield* orchestrator.getThreadProjection(harness.threadId)).runs;
+        // The worker has not delivered the interrupt yet, so the run still reads as running.
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make("command:steer-provider-switch:after-stop:stop"),
+          threadId: harness.threadId,
+          runId: claudeRun!.id,
+        });
+        const error = yield* harness.steerToCodex.pipe(Effect.flip);
+        assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
+        assert.deepEqual(
+          (yield* orchestrator.getThreadProjection(harness.threadId)).runs.map(
+            (run) => run.providerInstanceId,
+          ),
+          [CLAUDE_MODEL_SELECTION.instanceId],
+        );
+        yield* Deferred.succeed(harness.release, undefined);
+      }).pipe(Effect.provide(harness.layer));
     }),
   );
 
