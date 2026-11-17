@@ -102,15 +102,14 @@ export function goalNowItem(input: {
     title: (
       <Popover>
         <PopoverTrigger openOnHover render={<InlineButton />}>
-          {presentation.title}
-          {presentation.usage === null ? null : ` · ${presentation.usage}`}
+          {`${presentation.title}: ${presentation.objective}`}
         </PopoverTrigger>
         <PopoverPopup side="top" width="md" padding="compact" aria-label="Goal objective">
           <p className="whitespace-pre-wrap wrap-anywhere text-sm">{presentation.objective}</p>
         </PopoverPopup>
       </Popover>
     ),
-    description: presentation.objective,
+    description: presentation.usage ?? undefined,
     // Clear stops goal work; Resume would stop unrelated work, so it waits.
     actions: (
       <>
