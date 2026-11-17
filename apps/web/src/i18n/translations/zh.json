@@ -8214,7 +8214,7 @@
         "v": "v"
       }
     },
-    " 前"
+    "前"
   ],
   "42765186ac32bfb7": "打开日志文件夹",
   "45fadeb3f2729fc2": "时间",
@@ -9017,10 +9017,10 @@
   "e68d2d3a86bc6e39": "此实例使用的 Codex 可执行文件路径。",
   "f6c671c8758ce40e": "自定义 Codex 主目录和配置目录。",
   "32291b7f403cd38d": "账户专用的 Codex 主目录。共享 CODEX_HOME 中的状态，同时单独保存 auth.json。",
-  "bf7f3d2fd910233f": "会话开始时传给 codex app-server 的额外 CLI 参数。",
+  "bf7f3d2fd910233f": "启动智能体会话时传给 codex app-server 的额外 CLI 参数。",
   "0247d5883487d39a": "此实例使用的 Claude 可执行文件路径。",
   "3d23609d27f213d7": "自定义 Claude 主目录和配置目录，单独保存 .claude.json 和 .claude。",
-  "33fbce50a4ea67e6": "会话开始时传入的额外 CLI 参数。",
+  "33fbce50a4ea67e6": "启动智能体会话时传入的额外 CLI 参数。",
   "abdee70d90cb26a3": "达到 100,000 至 1,000,000 token 时压缩。留空则使用 Claude 的默认值。",
   "f907b2466603538e": "空闲且超过 200,000 token 的会话何时压缩：在你回来后、提示缓存即将过期前，或从不压缩。覆盖“智能体提供方 > 高级”中的默认设置。",
   "484df18e29b21047": "Google 账户使用你的订阅；API 密钥和 Agent Platform 按用量计费。",
@@ -9039,7 +9039,7 @@
   "b7e33c69bf8a50d0": "留空则让 T3 Code 在需要时启动服务器。",
   "ed42d531a626ffe4": "单独存储在主机上。",
   "41bf44b0cfbc4394": "Pi 编码智能体可执行文件的路径。",
-  "af059d908bee1496": "会话开始时传给 pi --mode rpc 的额外 CLI 参数。",
+  "af059d908bee1496": "启动智能体会话时传给 pi --mode rpc 的额外 CLI 参数。",
   "3770de9ed9b3c704": "作用范围为一个仓库、项目或工作区。请在该项的 Bitbucket 设置中创建。",
   "70752f3aba4894ff": "使用 API token 而不是访问 token。",
   "417f9edb887598bd": "可访问你的 Atlassian 账户能访问的所有仓库。请授予其仓库和 pull request 的读写权限，以及 read:user:bitbucket 和 read:workspace:bitbucket。",
@@ -9232,7 +9232,7 @@
         "v": "v"
       }
     },
-    " 前"
+    "前"
   ],
   "f717a7cb4715dd3d": [
     "更新于",
