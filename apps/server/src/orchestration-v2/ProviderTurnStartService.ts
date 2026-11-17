@@ -1087,19 +1087,16 @@ export const layer: Layer.Layer<
       };
       const prepareRetryHandoff = Effect.fn("ProviderTurnStartService.prepareRetryHandoff")(
         function* (context: ReturnType<typeof handoffContextForThread>) {
-          const { missedRunIds, coveredItemIds, missedRuns } = context;
-          const missedItems =
+          const { missedRunIds, coveredItemIds, missedRuns, acceptedAttempts } = context;
+          const missedHistory =
             missedRunIds.size === 0
               ? []
               : (yield* projectionStore.getTurnStartHistory(input.threadId, [
                   ...missedRunIds,
-                ])).filter(
-                  (item) =>
-                    item.runId !== null &&
-                    missedRunIds.has(item.runId) &&
-                    !coveredItemIds.has(item.id) &&
-                    historicalMessage(item) !== null,
-                );
+                ])).filter((item) => item.runId !== null && missedRunIds.has(item.runId));
+          const missedItems = missedHistory.filter(
+            (item) => !coveredItemIds.has(item.id) && historicalMessage(item) !== null,
+          );
           const handoffs =
             missedItems.length === 0
               ? []
@@ -1122,9 +1119,30 @@ export const layer: Layer.Layer<
                     createdAt: yield* DateTime.now,
                   }),
                 ];
-          // The handoff carries only text; images the provider never received ride on this turn.
-          const attachments = missedItems.flatMap((item) =>
-            item.type === "user_message" ? item.attachments : [],
+          // History delivery (inline or injected) is text only, so missed images ride on prompts
+          // until one is accepted. Compaction and /goal starts carry none.
+          const lastPromptOrdinal = Math.max(
+            0,
+            ...acceptedAttempts.flatMap((attempt) => {
+              const source = projection.runs.find((candidate) => candidate.id === attempt.runId);
+              const message = projection.messages.find(
+                (candidate) => candidate.id === source?.userMessageId,
+              );
+              return source === undefined ||
+                (message !== undefined &&
+                  (isCompactionCommandMessage(message) ||
+                    (goalDriver && parseGoalCommand(message) !== null)))
+                ? []
+                : [source.ordinal];
+            }),
+          );
+          const attachments = missedHistory.flatMap((item) =>
+            item.type === "user_message" &&
+            missedRuns.some(
+              (source) => source.id === item.runId && source.ordinal > lastPromptOrdinal,
+            )
+              ? item.attachments
+              : [],
           );
           return { handoffs, attachments };
         },
@@ -1910,6 +1928,7 @@ export const layer: Layer.Layer<
       const deliverySession =
         effectiveHandoffs.length === 0 &&
         retryHandoff.handoffs.length === 0 &&
+        retryHandoff.attachments.length === 0 &&
         sideChatHandoff === undefined &&
         restartNote === "" &&
         !noteContinuation

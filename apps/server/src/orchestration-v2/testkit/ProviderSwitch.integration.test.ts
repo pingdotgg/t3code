@@ -1965,10 +1965,17 @@ describe("orchestration v2 provider switching", () => {
         detail: "Claude provider query ended before the turn could start.",
       }),
     ],
-  ] as const)("keeps the native session after turns refused for %s", ([, refusalCause]) =>
+    // Injected history is text only, so a refusal after injection must not settle the image.
+    [
+      "background work after native history injection",
+      new ClaudeBackgroundWorkBlocksQueryReplacementError(),
+      true,
+    ],
+  ] as const)("keeps the native session after turns refused for %s", ([, refusalCause, inject]) =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("refused-start-keeps-native");
       const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
       const refuseStarts = yield* Ref.make(0);
       const generation = yield* Ref.make(0);
       const registry = ProviderAdapterRegistry.layerFromAdapters([
@@ -1982,6 +1989,7 @@ describe("orchestration v2 provider switching", () => {
           refuseStarts,
           refusalCause,
           nativeThreadGeneration: generation,
+          ...(inject === true ? { injectedHistory } : {}),
         }),
       ]);
       yield* Effect.gen(function* () {
@@ -2043,8 +2051,9 @@ describe("orchestration v2 provider switching", () => {
         assert.equal(turns.length, 2);
         assert.equal(yield* Ref.get(generation), 1);
         assert.equal(turns[1]?.nativeThreadId, turns[0]?.nativeThreadId);
-        assert.include(turns[1]?.text, "Request 2");
-        assert.include(turns[1]?.text, "Request 3");
+        const delivered = `${turns[1]?.text}${JSON.stringify(yield* Ref.get(injectedHistory))}`;
+        assert.include(delivered, "Request 2");
+        assert.include(delivered, "Request 3");
         assert.deepEqual(turns[1]?.attachments, [missedImage]);
       }).pipe(
         Effect.provide(
