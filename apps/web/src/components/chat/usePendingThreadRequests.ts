@@ -1,4 +1,5 @@
 import { msg } from "gt-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
@@ -379,7 +380,7 @@ export function usePendingThreadRequests(input: {
       const error = squashAtomCommandFailure(result);
       setThreadError(
         activeThreadId,
-        error instanceof Error ? error.message : m(msg("Failed to submit approval decision.")),
+        errorDisplayMessage(error, m) ?? m(msg("Failed to submit approval decision.")),
       );
     }
     setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
@@ -484,7 +485,7 @@ export function usePendingThreadRequests(input: {
         const error = squashAtomCommandFailure(result);
         setThreadError(
           activeThreadId,
-          error instanceof Error ? error.message : m(msg("Failed to submit user input.")),
+          errorDisplayMessage(error, m) ?? m(msg("Failed to submit user input.")),
         );
       }
       return result;
@@ -509,7 +510,7 @@ export function usePendingThreadRequests(input: {
       const error = squashAtomCommandFailure(result);
       setThreadError(
         activeThreadId,
-        error instanceof Error ? error.message : m(msg("Failed to dismiss the question.")),
+        errorDisplayMessage(error, m) ?? m(msg("Failed to dismiss the question.")),
       );
     }
     setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));

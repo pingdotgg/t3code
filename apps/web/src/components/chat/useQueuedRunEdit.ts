@@ -1,4 +1,5 @@
 import { msg } from "gt-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -194,9 +195,7 @@ async function submitQueuedRunEdit(input: {
     });
     return result._tag === "Failure" ? m(msg("Could not save the edited queued message.")) : null;
   } catch (error) {
-    return error instanceof Error
-      ? error.message
-      : m(msg("Could not save the edited queued message."));
+    return errorDisplayMessage(error, m) ?? m(msg("Could not save the edited queued message."));
   }
 }
 

@@ -1,4 +1,5 @@
 import { msg } from "gt-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -122,7 +123,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
           stackedThreadToast({
             type: "error",
             title: m(msg("Unable to open browser")),
-            description: error.message,
+            description: errorDisplayMessage(error, m) ?? error.message,
           }),
         );
       }
@@ -275,7 +276,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
         stackedThreadToast({
           type: "error",
           title: m(msg("Failed to copy path")),
-          description: error instanceof Error ? error.message : m(msg("An error occurred.")),
+          description: errorDisplayMessage(error, m) ?? m(msg("An error occurred.")),
         }),
       );
     });

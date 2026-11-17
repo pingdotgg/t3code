@@ -1,4 +1,5 @@
-import { T, msg, useGT } from "gt-react";
+import { T, msg, useGT, useMessages } from "gt-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import {
@@ -11,11 +12,8 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { useRemoveClonedProject } from "../../hooks/useRemoveClonedProject";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { useProjectClone } from "../../state/projectClones";
-import {
-  projectCloneDisplayName,
-  projectCloneProgressSummary,
-  type ScopedProjectRef,
-} from "@t3tools/contracts";
+import { projectCloneDisplayName, type ScopedProjectRef } from "@t3tools/contracts";
+import { projectCloneProgressSummary } from "@t3tools/client-runtime/contract-labels";
 import { dismissProjectFileCopy, useProjectFileCopy } from "../../lib/addProjectToMachine";
 import { type ComposerBannerStackItem } from "./ComposerBannerStack";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -26,6 +24,7 @@ import { Button } from "../ui/button";
  */
 export function useProjectCloneBanner(activeProjectRef: ScopedProjectRef | null) {
   const gt = useGT();
+  const messages = useMessages();
   const activeProjectClone = useProjectClone(activeProjectRef);
   const cancelProjectClone = useAtomCommand(sourceControlEnvironment.cancelProjectClone, {
     reportFailure: false,
@@ -45,7 +44,7 @@ export function useProjectCloneBanner(activeProjectRef: ScopedProjectRef | null)
         stackedThreadToast({
           type: "error",
           title,
-          description: error instanceof Error ? error.message : m(msg("An error occurred.")),
+          description: errorDisplayMessage(error, m) ?? m(msg("An error occurred.")),
         }),
       );
     }
@@ -82,7 +81,7 @@ export function useProjectCloneBanner(activeProjectRef: ScopedProjectRef | null)
         variant: "info",
         icon: <DownloadIcon />,
         title: gt("Cloning {name}", { name }),
-        description: projectCloneProgressSummary(activeProjectClone),
+        description: projectCloneProgressSummary(activeProjectClone, messages),
         actions: (
           <Button
             size="xs"

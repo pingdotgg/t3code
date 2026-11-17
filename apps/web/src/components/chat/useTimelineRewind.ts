@@ -1,4 +1,5 @@
 import { msg } from "gt-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import type { EnvironmentThreadShell, ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import type { ComposerThreadTarget } from "../../composerDraftStore";
@@ -205,7 +206,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
         const error = squashAtomCommandFailure(result);
         setThreadError(
           activeThread.id,
-          error instanceof Error ? error.message : m(msg("Failed to fork this response.")),
+          errorDisplayMessage(error, m) ?? m(msg("Failed to fork this response.")),
         );
       }
       return;

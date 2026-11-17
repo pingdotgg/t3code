@@ -1,4 +1,5 @@
 import { msg } from "gt-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
 import { armFreshSession, disarmFreshSession, readFreshSessionArm } from "./freshSessionArms";
@@ -629,18 +630,25 @@ export function useComposerSend(input: ComposerSendInput) {
     })[0];
     if (strandedThread) {
       const owner =
-        readEnvironmentPresentation(strandedThread.environmentId)?.entry.target.label ??
-        m(msg("its machine"));
+        readEnvironmentPresentation(strandedThread.environmentId)?.entry.target.label ?? null;
       toastManager.add(
         stackedThreadToast({
           type: "warning",
           title: m(msg("Attached thread is on another machine")),
-          description: m(
-            msg(
-              "This machine's agent can't read \"{title}\". Remove it, or switch back to {owner} to send.",
-              { title: strandedThread.title, owner },
-            ),
-          ),
+          description:
+            owner === null
+              ? m(
+                  msg(
+                    "This machine's agent can't read \"{title}\". Remove it, or switch back to its machine to send.",
+                    { title: strandedThread.title },
+                  ),
+                )
+              : m(
+                  msg(
+                    "This machine's agent can't read \"{title}\". Remove it, or switch back to {owner} to send.",
+                    { title: strandedThread.title, owner },
+                  ),
+                ),
         }),
       );
       return;
@@ -716,35 +724,38 @@ export function useComposerSend(input: ComposerSendInput) {
         return;
       }
       feedbackUploadsInFlightRef.current.add(routeThreadKey);
-      await submitCodexFeedback({
-        submission: {
-          id: newMessageId(),
-          command: trimmed,
-          createdAt: new Date().toISOString(),
+      await submitCodexFeedback(
+        {
+          submission: {
+            id: newMessageId(),
+            command: trimmed,
+            createdAt: new Date().toISOString(),
+          },
+          clearDraft: () => {
+            promptRef.current = "";
+            clearComposerDraftContent(composerDraftTarget);
+            composerRef.current?.resetCursorState();
+          },
+          onUpdate: (submission) => {
+            setFeedbackSubmissionsByThreadKey((current) => {
+              const existing = current[routeThreadKey] ?? [];
+              const found = existing.some((entry) => entry.id === submission.id);
+              return {
+                ...current,
+                [routeThreadKey]: found
+                  ? existing.map((entry) => (entry.id === submission.id ? submission : entry))
+                  : [...existing, submission],
+              };
+            });
+          },
+          upload: () =>
+            uploadThreadFeedback({
+              environmentId: activeThread.environmentId,
+              input: { threadId: activeThread.id, ...feedbackCommand },
+            }),
         },
-        clearDraft: () => {
-          promptRef.current = "";
-          clearComposerDraftContent(composerDraftTarget);
-          composerRef.current?.resetCursorState();
-        },
-        onUpdate: (submission) => {
-          setFeedbackSubmissionsByThreadKey((current) => {
-            const existing = current[routeThreadKey] ?? [];
-            const found = existing.some((entry) => entry.id === submission.id);
-            return {
-              ...current,
-              [routeThreadKey]: found
-                ? existing.map((entry) => (entry.id === submission.id ? submission : entry))
-                : [...existing, submission],
-            };
-          });
-        },
-        upload: () =>
-          uploadThreadFeedback({
-            environmentId: activeThread.environmentId,
-            input: { threadId: activeThread.id, ...feedbackCommand },
-          }),
-      }).finally(() => {
+        m,
+      ).finally(() => {
         feedbackUploadsInFlightRef.current.delete(routeThreadKey);
       });
 
@@ -1248,11 +1259,14 @@ export function useComposerSend(input: ComposerSendInput) {
       composerRef.current?.resetCursorState();
     }
 
-    const title = deriveThreadTitleSeed({
-      text: messageTextForSend,
-      attachments: composerAttachmentsSnapshot,
-      fallbackLabels: sendTitleFallbackLabels(sendSnapshot),
-    });
+    const title = deriveThreadTitleSeed(
+      {
+        text: messageTextForSend,
+        attachments: composerAttachmentsSnapshot,
+        fallbackLabels: sendTitleFallbackLabels(sendSnapshot),
+      },
+      m,
+    );
     const threadCreateModelSelection = createModelSelection(
       ctxSelectedModelSelection.instanceId,
       ctxSelectedModel || activeProjectDefaultModelSelection?.model || DEFAULT_MODEL,
@@ -1397,7 +1411,7 @@ export function useComposerSend(input: ComposerSendInput) {
             stackedThreadToast({
               type: "warning",
               title: m(msg("Could not open a fresh composer")),
-              description: error instanceof Error ? error.message : undefined,
+              description: errorDisplayMessage(error, m) ?? undefined,
             }),
           );
         }
@@ -1529,7 +1543,7 @@ export function useComposerSend(input: ComposerSendInput) {
         const error = squashAtomCommandFailure(failure);
         setThreadError(
           threadIdForSend,
-          error instanceof Error ? error.message : m(msg("Failed to send message.")),
+          errorDisplayMessage(error, m) ?? m(msg("Failed to send message.")),
         );
         if (
           draftId &&
@@ -1542,8 +1556,7 @@ export function useComposerSend(input: ComposerSendInput) {
                 submissionIntent === "background"
                   ? m(msg("Background task failed"))
                   : m(msg("Could not start thread")),
-              description:
-                error instanceof Error ? error.message : m(msg("Failed to send message.")),
+              description: errorDisplayMessage(error, m) ?? m(msg("Failed to send message.")),
               actionProps: {
                 children: m(msg("Open draft")),
                 onClick: () => {

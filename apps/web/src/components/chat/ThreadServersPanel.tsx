@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   AuthPreviewOperateScope,
@@ -11,6 +12,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { T, useGT, Var } from "gt-react";
+import { m } from "~/i18n/messages";
 import { GlobeIcon, SquareIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { type MouseEvent, useState } from "react";
 
@@ -71,7 +73,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
       stackedThreadToast({
         type: "error",
         title,
-        description: error instanceof Error ? error.message : String(error),
+        description: errorDisplayMessage(error, m) ?? String(error),
       }),
     );
   };

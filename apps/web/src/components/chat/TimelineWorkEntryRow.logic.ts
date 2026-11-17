@@ -188,7 +188,7 @@ export function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconNa
     isJavaScriptReplTool(workEntry.structuredPayload.toolName)
   )
     return "code";
-  const toolPresentation = resolveWorkEntryToolPresentation(workEntry);
+  const toolPresentation = resolveWorkEntryToolPresentation(workEntry, undefined, m);
   if (toolPresentation) return toolPresentation.icon;
   const action = toolGroupAction(workEntry);
   if (action !== "other") return toolGroupSummaryIconName(action);

@@ -1,4 +1,5 @@
 import { msg, useGT } from "gt-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { useLoadBalancedEnvironment } from "../../hooks/useLoadBalancedEnvironment";
 import { useLogicalProjectEnvironments } from "../../hooks/useLogicalProjectEnvironments";
@@ -373,7 +374,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
           stackedThreadToast({
             type: "error",
             title: m(msg("Could not switch machine")),
-            description: error instanceof Error ? error.message : m(msg("An error occurred.")),
+            description: errorDisplayMessage(error, m) ?? m(msg("An error occurred.")),
           }),
         );
       }

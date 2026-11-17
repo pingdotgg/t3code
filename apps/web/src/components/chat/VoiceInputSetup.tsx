@@ -1,4 +1,4 @@
-import { T, Var, msg, useGT } from "gt-react";
+import { T, Var, msg, useGT, useLocale } from "gt-react";
 import { m } from "~/i18n/messages";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import {
@@ -48,8 +48,10 @@ export function VoiceInputSetup(props: {
   onStartRecording(): void;
 }) {
   const gt = useGT();
+  const locale = useLocale();
   const navigate = useNavigate();
   const environment = useEnvironment(props.environmentId);
+  const languageName = props.language ? languageLabel(props.language, locale) : null;
   const canManage = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
   const order = useClientSettings(microphoneOrder);
   const [microphones, setMicrophones] = useState<BrowserMicrophone[]>([]);
@@ -122,8 +124,8 @@ export function VoiceInputSetup(props: {
                   <p className="text-xs text-muted-foreground">
                     {model.recommended && props.language ? (
                       <T>
-                        Recommended for <Var>{languageLabel(props.language)}</Var>. Includes a 1.2
-                        MB silence detector.
+                        Recommended for <Var>{languageName}</Var>. Includes a 1.2 MB silence
+                        detector.
                       </T>
                     ) : (
                       <T>Includes a 1.2 MB silence detector.</T>

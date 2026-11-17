@@ -1,4 +1,5 @@
 import { msg } from "gt-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import type { ModelSelection, RuntimeMode, ScopedThreadRef } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -48,13 +49,14 @@ export function useSideChat(input: {
   ) => {
     if (isAtomCommandInterrupted(failure)) return;
     const error = squashAtomCommandFailure(failure);
-    input.onError(error instanceof Error ? error.message : fallback);
+    input.onError(errorDisplayMessage(error, m) ?? fallback);
   };
   const start = async (threadRef: ScopedThreadRef, prompt: string | undefined) => {
     const { runtimeMode, modelSelection } = input.readSettings();
     const targetThreadId = newThreadId();
     const fork = await forkSideChat({
       environmentId: threadRef.environmentId,
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- stored on the server as the thread title, shared by every viewer
       input: { sourceThreadId: threadRef.threadId, targetThreadId, title: "Side chat" },
     });
     if (fork._tag === "Failure") {
@@ -99,7 +101,7 @@ export function useSideChat(input: {
           threadId: targetThreadId,
           message: { messageId: newMessageId(), role: "user", text, attachments: [] },
           ...(modelSelection === undefined ? {} : { modelSelection }),
-          titleSeed: deriveThreadTitleSeed({ text, attachments: [] }),
+          titleSeed: deriveThreadTitleSeed({ text, attachments: [] }, m),
           runtimeMode,
           interactionMode: "default",
           createdAt: new Date().toISOString(),

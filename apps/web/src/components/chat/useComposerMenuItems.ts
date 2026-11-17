@@ -141,11 +141,14 @@ export function useComposerMenuItems({
     ...identity,
     machine: environmentMachines.get(identity.environmentId) ?? ("server" as const),
   }));
-  const workspaceEntries = useComposerPathSearch({
-    environmentId,
-    cwd: isPathTrigger ? gitCwd : null,
-    query: isPathTrigger ? pathTriggerQuery : null,
-  });
+  const workspaceEntries = useComposerPathSearch(
+    {
+      environmentId,
+      cwd: isPathTrigger ? gitCwd : null,
+      query: isPathTrigger ? pathTriggerQuery : null,
+    },
+    messages,
+  );
 
   const pullRequestListTargets =
     composerTriggerKind !== "pull-request" ||

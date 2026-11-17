@@ -1,4 +1,5 @@
 import { T, msg, useGT } from "gt-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { m, type MessageResolver } from "~/i18n/messages";
 import {
   type OrchestrationV2LimitRecovery,
@@ -165,7 +166,7 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
           action === "resume"
             ? m(msg("Could not change auto-resume"))
             : m(msg("Could not snooze thread")),
-        description: cause instanceof Error ? cause.message : m(msg("An error occurred.")),
+        description: errorDisplayMessage(cause, m) ?? m(msg("An error occurred.")),
       });
     }
     setPending(false);

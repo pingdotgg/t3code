@@ -1,4 +1,5 @@
 import { T, msg, useGT, useMessages } from "gt-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { type EnvironmentId } from "@t3tools/contracts";
@@ -99,7 +100,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
         stackedThreadToast({
           type: "error",
           title: m(msg("Could not reconnect environment")),
-          description: error instanceof Error ? error.message : m(msg("Failed to reconnect.")),
+          description: errorDisplayMessage(error, m) ?? m(msg("Failed to reconnect.")),
         }),
       );
     }
@@ -127,7 +128,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
           stackedThreadToast({
             type: "error",
             title: m(msg("Could not disconnect server")),
-            description: error instanceof Error ? error.message : m(msg("Failed to disconnect.")),
+            description: errorDisplayMessage(error, m) ?? m(msg("Failed to disconnect.")),
           }),
         );
       }

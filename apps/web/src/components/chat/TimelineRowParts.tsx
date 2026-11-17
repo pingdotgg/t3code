@@ -38,7 +38,7 @@ export function TimelineRowTimestamp({
       >
         {formatDayAwareTimestamp(createdAt, timestampFormat, undefined, undefined, m)}
       </TooltipTrigger>
-      <TooltipPopup>{formatChatTimestampTooltip(createdAt, timestampFormat)}</TooltipPopup>
+      <TooltipPopup>{formatChatTimestampTooltip(createdAt, timestampFormat, m)}</TooltipPopup>
     </Tooltip>
   );
 }

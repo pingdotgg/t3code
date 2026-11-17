@@ -860,7 +860,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           )}
         </TooltipTrigger>
         <TooltipPopup>
-          {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
+          {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat, m)}
         </TooltipPopup>
       </Tooltip>
       <div className={cn("flex items-center gap-0.5", floatActions && "flex-wrap justify-end")}>

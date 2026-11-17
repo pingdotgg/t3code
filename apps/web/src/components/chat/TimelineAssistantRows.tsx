@@ -41,6 +41,7 @@ const NO_VCS_STATUS = Atom.make(AsyncResult.initial());
 
 export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
+  const gt = useGT();
   // The timeline holds a streaming message's row while only its text grows.
   const liveText = useAssistantMessageText(
     row.message.streaming ? ctx.threadRef : null,
@@ -48,7 +49,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
   );
   const text = liveText ?? row.message.text;
   const messageText =
-    text || (row.message.streaming || row.suppressEmptyResponse ? "" : "(empty response)");
+    text || (row.message.streaming || row.suppressEmptyResponse ? "" : gt("(empty response)"));
 
   return (
     <>
@@ -267,7 +268,7 @@ function AssistantMessageMeta({
             )}
           </TooltipTrigger>
           <TooltipPopup>
-            {formatChatTimestampTooltip(message.updatedAt, ctx.timestampFormat)}
+            {formatChatTimestampTooltip(message.updatedAt, ctx.timestampFormat, m)}
           </TooltipPopup>
         </Tooltip>
       )}

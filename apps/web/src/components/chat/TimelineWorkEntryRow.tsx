@@ -16,15 +16,17 @@ import { Link } from "@tanstack/react-router";
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
 import {
   resolveViewedImageAsset,
+  resolveWorkEntryToolPresentation,
   toolGroupAction,
   workEntryViewedImagePath,
 } from "@t3tools/client-runtime/work-log/presentation";
+import { t3ToolResultIndicatesFailure } from "@t3tools/client-runtime/t3ToolSummary";
 import {
   turnItemHasDetail,
   turnItemNeedsDetailFetch,
 } from "@t3tools/client-runtime/work-log/item-detail";
 import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
-import { T, useGT, useMessages } from "gt-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { memo, use, useState, type KeyboardEvent } from "react";
 import {
   workEntryDisplayIndicatesToolFailure,
@@ -40,13 +42,13 @@ import { Button, InlineButton } from "../ui/button";
 import { useAssetUrls } from "../../assets/assetUrls";
 import { useThreadShell } from "../../state/entities";
 import {
-  threadReadLabelPrefix,
   threadReadTargetId,
   threadReadTargetTitle,
   workEntryDisplayLabel,
   workEntryReadOutput,
 } from "./MessagesTimeline.logic";
 import { cn } from "~/lib/utils";
+import type { MessageResolver } from "~/i18n/messages";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { FetchedToolOutput, V2ItemInspector } from "./V2ItemInspector";
 import { SubagentNotificationLink } from "./V2LifecycleRow";
@@ -80,9 +82,49 @@ export function useThreadReadTarget(entry: TimelineWorkEntry, environmentId: Env
   return threadId && title ? { threadId, title } : null;
 }
 
-export function threadReadLabel(label: string, target: ReturnType<typeof useThreadReadTarget>) {
-  const prefix = target && threadReadLabelPrefix(label);
-  return prefix ? { ...target, prefix, text: `${prefix} “${target.title}”` } : null;
+const THREAD_READ_STATUSES = ["inProgress", "completed", "failed", "declined", "stopped"] as const;
+type ThreadReadStatus = (typeof THREAD_READ_STATUSES)[number];
+
+// The label arrives resolved (or still English), so its status is found by resolving each one.
+function threadReadStatus(
+  label: string,
+  entry: TimelineWorkEntry,
+  resolve: MessageResolver,
+): ThreadReadStatus | null {
+  const payload = entry.structuredPayload;
+  if (payload?.type !== "dynamic_tool") return null;
+  if (t3ToolResultIndicatesFailure(payload.output)) return "failed";
+  for (const resolver of [resolve, undefined]) {
+    for (const status of THREAD_READ_STATUSES) {
+      const presentation = resolveWorkEntryToolPresentation(
+        { ...entry, toolLifecycleStatus: status },
+        undefined,
+        resolver,
+      );
+      if (presentation?.displayName === label) return status;
+    }
+  }
+  return null;
+}
+
+export function threadReadLabel(
+  label: string,
+  entry: TimelineWorkEntry,
+  target: ReturnType<typeof useThreadReadTarget>,
+  resolve: MessageResolver,
+) {
+  const status = target && threadReadStatus(label, entry, resolve);
+  if (!target || !status) return null;
+  return {
+    ...target,
+    status,
+    text: resolve(
+      msg(
+        "{status, select, inProgress {Reading thread “{title}”} completed {Read thread “{title}”} failed {Failed to read thread “{title}”} declined {Declined to read thread “{title}”} stopped {Stopped reading thread “{title}”} other {Reading thread “{title}”}}",
+        { status, title: target.title },
+      ),
+    ),
+  };
 }
 
 export function ThreadReadLabel({
@@ -94,23 +136,52 @@ export function ThreadReadLabel({
   environmentId: EnvironmentId;
   linked: boolean;
 }) {
+  const title = linked ? (
+    <Link
+      to="/$environmentId/$threadId"
+      params={{ environmentId, threadId: label.threadId }}
+      className="min-w-0 truncate rounded-sm text-foreground underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+      onClick={stopRowToggle}
+      onKeyDown={stopRowToggle}
+    >
+      {label.title}
+    </Link>
+  ) : (
+    <span className="min-w-0 truncate">{label.title}</span>
+  );
   return (
     <span className="flex min-w-0">
-      <span className="shrink-0">{label.prefix} “</span>
-      {linked ? (
-        <Link
-          to="/$environmentId/$threadId"
-          params={{ environmentId, threadId: label.threadId }}
-          className="min-w-0 truncate rounded-sm text-foreground underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
-          onClick={stopRowToggle}
-          onKeyDown={stopRowToggle}
-        >
-          {label.title}
-        </Link>
+      {label.status === "completed" ? (
+        <T>
+          <span className="shrink-0">Read thread “</span>
+          <Var>{title}</Var>
+          <span className="shrink-0">”</span>
+        </T>
+      ) : label.status === "failed" ? (
+        <T>
+          <span className="shrink-0">Failed to read thread “</span>
+          <Var>{title}</Var>
+          <span className="shrink-0">”</span>
+        </T>
+      ) : label.status === "declined" ? (
+        <T>
+          <span className="shrink-0">Declined to read thread “</span>
+          <Var>{title}</Var>
+          <span className="shrink-0">”</span>
+        </T>
+      ) : label.status === "stopped" ? (
+        <T>
+          <span className="shrink-0">Stopped reading thread “</span>
+          <Var>{title}</Var>
+          <span className="shrink-0">”</span>
+        </T>
       ) : (
-        <span className="min-w-0 truncate">{label.title}</span>
+        <T>
+          <span className="shrink-0">Reading thread “</span>
+          <Var>{title}</Var>
+          <span className="shrink-0">”</span>
+        </T>
       )}
-      <span className="shrink-0">”</span>
     </span>
   );
 }
@@ -425,7 +496,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       : workLogEntryIsToolLike(workEntry)
         ? "text-secondary-label"
         : "text-foreground/80";
-  const threadLabel = isReasoning ? null : threadReadLabel(previewText, threadTarget);
+  const threadLabel = isReasoning ? null : threadReadLabel(previewText, workEntry, threadTarget, m);
   const accessiblePreview = [threadLabel?.text ?? previewText, answerPreview]
     .filter(Boolean)
     .join(": ");

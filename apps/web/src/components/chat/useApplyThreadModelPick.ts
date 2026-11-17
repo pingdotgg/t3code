@@ -1,4 +1,5 @@
 import { msg } from "gt-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { RegistryContext } from "@effect/atom-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -44,7 +45,7 @@ export function useApplyThreadModelPick() {
           title: m(msg("Could not apply model selection")),
           description: m(
             msg("This model pick was not saved. {detail}", {
-              detail: error instanceof Error ? error.message : m(msg("Try again.")),
+              detail: errorDisplayMessage(error, m) ?? m(msg("Try again.")),
             }),
           ),
         }),

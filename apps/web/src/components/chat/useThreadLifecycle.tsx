@@ -1,4 +1,5 @@
 import { msg, useGT, useMessages } from "gt-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -81,6 +82,10 @@ import { environmentThreadDetails } from "../../state/threads";
 import { resolveThreadOpenRoute } from "../../lib/sideChatPane";
 import type { useLocalDispatchState } from "./useLocalDispatchState";
 const RELATED_THREAD_SHELL_WAIT_MS = 1_000;
+
+function actionErrorMessage(error: unknown): string {
+  return errorDisplayMessage(error, m) ?? chatActionErrorMessage(error, m);
+}
 const NO_RUN_STOP_ATOM = Atom.make<RunStopPresentation | null>(null).pipe(
   Atom.withLabel("web-thread-run-stop:empty"),
 );
@@ -261,7 +266,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         stackedThreadToast({
           type: "error",
           title: m(msg("Failed to un-settle thread")),
-          description: error instanceof Error ? error.message : m(msg("An error occurred.")),
+          description: errorDisplayMessage(error, m) ?? m(msg("An error occurred.")),
         }),
       );
     }
@@ -306,7 +311,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         stackedThreadToast({
           type: "error",
           title: m(msg("Failed to wake thread")),
-          description: error instanceof Error ? error.message : m(msg("An error occurred.")),
+          description: errorDisplayMessage(error, m) ?? m(msg("An error occurred.")),
         }),
       );
     }
@@ -374,7 +379,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
           stackedThreadToast({
             type: "error",
             title: m(msg("Failed to switch checkout")),
-            description: chatActionErrorMessage(squashAtomCommandFailure(checkoutResult)),
+            description: actionErrorMessage(squashAtomCommandFailure(checkoutResult)),
           }),
         );
       }
@@ -398,7 +403,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
             stackedThreadToast({
               type: "error",
               title: m(msg("Checkout switched, but the thread could not be updated")),
-              description: chatActionErrorMessage(squashAtomCommandFailure(updateResult)),
+              description: actionErrorMessage(squashAtomCommandFailure(updateResult)),
             }),
           );
         }
@@ -461,7 +466,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         const error = squashAtomCommandFailure(result);
         setThreadError(
           activeThread.id,
-          error instanceof Error ? error.message : m(msg("Failed to stop background work.")),
+          errorDisplayMessage(error, m) ?? m(msg("Failed to stop background work.")),
         );
       }
     }
@@ -572,7 +577,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       resetLocalDispatch();
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
-        setThreadError(threadId, error instanceof Error ? error.message : failureMessage);
+        setThreadError(threadId, errorDisplayMessage(error, m) ?? failureMessage);
       }
     } else {
       clearUsageLimitsFor(routeThreadKey);
@@ -630,15 +635,17 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   const snoozedUntil = activeThreadShell?.snoozedUntil ?? null;
   const settledAt = activeThreadShell?.settledAt ?? null;
   // Same rounding as the sidebar's snoozed shelf, so both read the same hour.
-  const snoozeWake = snoozedUntil
-    ? snoozeWakeLabel(snoozedUntil, { now: `${nowMinute}:00.000Z` })
-    : null;
+  const snoozeNow = `${nowMinute}:00.000Z`;
+  const snoozeWake =
+    snoozedUntil && Date.parse(snoozedUntil) > Date.parse(snoozeNow)
+      ? snoozeWakeLabel(snoozedUntil, { now: snoozeNow }, messages)
+      : null;
   const threadStatusLine = activeThreadSnoozed ? (
     limitRecoveryHoldsSnooze ? null : (
       <ThreadStatusLine
         icon={<AlarmClockIcon />}
         label={
-          snoozeWake && snoozeWake !== "now"
+          snoozeWake
             ? gt("Snoozed, {remaining} left", { remaining: snoozeWake })
             : gt("Snoozed", { $context: "thread status" })
         }
@@ -677,7 +684,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         stackedThreadToast({
           type: "error",
           title,
-          description: error instanceof Error ? error.message : m(msg("An error occurred.")),
+          description: errorDisplayMessage(error, m) ?? m(msg("An error occurred.")),
         }),
       );
     };

@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { useNavigate } from "@tanstack/react-router";
 import { T, useGT, useMessages, Var } from "gt-react";
@@ -101,7 +102,7 @@ export function ThreadAutomationsPanel(props: {
       stackedThreadToast({
         type: "error",
         title,
-        description: error instanceof Error ? error.message : String(error),
+        description: errorDisplayMessage(error, m) ?? String(error),
       }),
     );
   };

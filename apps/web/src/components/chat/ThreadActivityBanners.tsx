@@ -13,7 +13,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-execution";
 import { childThreadInputsTitle } from "@t3tools/client-runtime/state/threads";
 import { commandDisplayText } from "@t3tools/client-runtime/work-log/command-label";
-import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
 import * as DateTime from "effect/DateTime";
 import { msg, T, Var } from "gt-react";
 import {
@@ -69,7 +69,7 @@ export function childInputNowItem(
     ) : (
       <MessageCircleIcon className="text-info-foreground" />
     ),
-    title: childThreadInputsTitle(childThreadInputs),
+    title: childThreadInputsTitle(childThreadInputs, resolve),
     waitingLabel: childThreadInputs.every((child) => child.lineage.sideChat === true)
       ? resolve(msg("Side chat waiting"))
       : resolve(msg("Subagent waiting")),
@@ -179,7 +179,7 @@ export function runStopNowItem(input: {
       <>
         <span
           ref={tickTextContent(
-            (nowMs) => formatDuration(Math.max(1_000, nowMs - requestedAtMs)),
+            (nowMs) => formatDuration(Math.max(1_000, nowMs - requestedAtMs), m),
             true,
           )}
           className="tabular-nums"
@@ -280,7 +280,7 @@ export function backgroundWorkNowItem(
         {startedAtMs === null ? null : (
           <span
             ref={tickTextContent(
-              (nowMs) => formatDuration(Math.max(1_000, nowMs - startedAtMs)),
+              (nowMs) => formatDuration(Math.max(1_000, nowMs - startedAtMs), m),
               true,
             )}
             className="tabular-nums"
@@ -314,30 +314,33 @@ export function branchMismatchBannerItem(
   resolve: MessageResolver = m,
 ): ComposerBannerStackItem {
   const { mismatch } = input;
+  const branchTooltip = (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <code className="min-w-0 truncate font-medium text-foreground">
+            {mismatch.threadBranch}
+          </code>
+        }
+      />
+      <TooltipPopup side="top">
+        <T>
+          This thread last ran on <Var>{mismatch.threadBranch}</Var>. Sending will continue on{" "}
+          <Var>{mismatch.currentBranch}</Var>.
+        </T>
+      </TooltipPopup>
+    </Tooltip>
+  );
   return {
     id: `branch-mismatch:${input.mismatchKey}`,
     variant: "info",
     icon: <GitBranchIcon />,
     title: (
       <span className="flex min-w-0 items-baseline gap-1.5">
-        <span className="shrink-0 font-normal text-muted-foreground">
-          <T>Branch changed from</T>
-        </span>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <code className="min-w-0 truncate font-medium text-foreground">
-                {mismatch.threadBranch}
-              </code>
-            }
-          />
-          <TooltipPopup side="top">
-            <T>
-              This thread last ran on <Var>{mismatch.threadBranch}</Var>. Sending will continue on{" "}
-              <Var>{mismatch.currentBranch}</Var>.
-            </T>
-          </TooltipPopup>
-        </Tooltip>
+        <T>
+          <span className="shrink-0 font-normal text-muted-foreground">Branch changed from</span>
+          <Var>{branchTooltip}</Var>
+        </T>
       </span>
     ),
     actions: (

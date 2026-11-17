@@ -1,5 +1,6 @@
 import type { RunId, ScreenReaderAnnouncements } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { searchToolLabelParts } from "@t3tools/shared/toolActivity";
 import { msg } from "gt-react";
 
 import { m } from "../../i18n/messages";
@@ -43,10 +44,23 @@ function cutText(text: string, maxLength: number): string | null {
   return characters.length > maxLength ? characters.slice(0, maxLength).join("") : null;
 }
 
+// The label was then built as a whole "Searched ..." sentence by formatSearchToolLabel.
+function labelledFromSearchParts(work: WorkLogEntry): boolean {
+  const data = work.toolData;
+  const record =
+    data !== null && typeof data === "object" && !Array.isArray(data)
+      ? (data as Record<string, unknown>)
+      : undefined;
+  const { query, glob, target } = searchToolLabelParts(record);
+  return Boolean(query || glob || target);
+}
+
 // On screen these labels are a path or a query beside an icon.
 function withVerb(work: WorkLogEntry, label: string) {
   if (work.itemType === "file_change") return m(msg("Editing {label}", { label }));
   if (work.itemType !== "file_search" && work.itemType !== "web_search") return label;
+  if (work.itemType === "web_search" && labelledFromSearchParts(work)) return label;
+  // Labels that did not come from the search parts are provider text, which stays English.
   if (/^search(?:ed|ing)?\s/i.test(label)) return label;
   return work.itemType === "web_search"
     ? m(msg("Searching the web for {label}", { label }))

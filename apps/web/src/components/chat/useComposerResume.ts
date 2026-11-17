@@ -1,4 +1,5 @@
 import { msg } from "gt-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import {
   type EnvironmentId,
@@ -150,7 +151,7 @@ export function useComposerResume(input: ComposerResumeInput) {
         const error = squashAtomCommandFailure(result);
         setThreadError(
           threadId,
-          error instanceof Error ? error.message : m(msg("Could not resume thread.")),
+          errorDisplayMessage(error, m) ?? m(msg("Could not resume thread.")),
         );
       }
     } else {

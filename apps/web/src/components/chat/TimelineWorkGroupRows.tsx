@@ -145,6 +145,8 @@ function useWorkGroupViewedImages(
   groupedEntries: ReadonlyArray<TimelineWorkEntry>,
 ): ReadonlyArray<WorkGroupViewedImage> {
   const { threadRef, workspaceRoot, activeThreadEnvironmentId } = use(TimelineRowCtx);
+  const gt = useGT();
+  const fallbackName = gt("image", { $context: "fallback name of an image without alt text" });
   const viewed = threadRef
     ? workEntriesViewedImagePaths(groupedEntries).flatMap((path) => {
         const asset = resolveViewedImageAsset(path, {
@@ -163,7 +165,7 @@ function useWorkGroupViewedImages(
     const url = urls[index];
     if (!url) return { path, item: null };
     const src = url + asset.srcFragment;
-    const name = asset.alt.trim() || "image";
+    const name = asset.alt.trim() || fallbackName;
     return {
       path,
       item: {
@@ -173,7 +175,7 @@ function useWorkGroupViewedImages(
           environmentId,
           resource: asset.resource,
           kind: "image",
-          name: asset.alt || "image",
+          name: asset.alt || fallbackName,
           src,
           workspaceRoot,
         }),
@@ -440,6 +442,7 @@ function CompactingLabel({ createdAt }: { createdAt: string | null }) {
 export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "thinking" }> }) {
   const ctx = use(TimelineRowCtx);
   const gt = useGT();
+  const m = useMessages();
   const { isCompacting, isPreparingWorktree, liveAnswerPreview, providerStartingLabel } =
     use(TimelineRowActivityCtx);
   if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
@@ -447,7 +450,12 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
   const live = ctx.pendingApprovals.size === 0;
   const activity = (
     <LiveActivityRow
-      label={providerStartingLabel ?? row.label ?? liveAnswerPreview ?? gt("Thinking")}
+      label={
+        (providerStartingLabel === null ? null : m(providerStartingLabel)) ??
+        row.label ??
+        liveAnswerPreview ??
+        gt("Thinking")
+      }
       iconName="brain"
       active={live}
       shimmer={live}
@@ -582,7 +590,7 @@ export function LiveWorkEntryTimelineRow({
   const m = useMessages();
   const threadTarget = useThreadReadTarget(row.entry, ctx.activeThreadEnvironmentId);
   const label = liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active, m);
-  const threadLabel = threadReadLabel(label, threadTarget);
+  const threadLabel = threadReadLabel(label, row.entry, threadTarget, m);
 
   const item = row.entry.projectedItem?.item;
   const pendingApproval =
