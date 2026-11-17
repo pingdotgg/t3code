@@ -2261,6 +2261,11 @@ it.layer(
         yield* fs.makeDirectory(toolsDir);
         yield* fs.writeFileString(customShell, "#!/bin/sh\nexec /bin/sh\n");
         yield* fs.chmod(customShell, 0o755);
+        const spacedDir = path.join(baseDir, "shells ");
+        const spacedShell = path.join(spacedDir, "custom-shell");
+        yield* fs.makeDirectory(spacedDir);
+        yield* fs.writeFileString(spacedShell, "#!/bin/sh\nexec /bin/sh\n");
+        yield* fs.chmod(spacedShell, 0o755);
         for (const { shell, searchPath, cwd, expectedShell } of [
           { shell: path.join(baseDir, "missing"), searchPath: "/bin", expectedShell: "/bin/sh" },
           { shell: nonExecutable, searchPath: "/bin", expectedShell: "/bin/sh" },
@@ -2268,6 +2273,7 @@ it.layer(
           { shell: "custom-shell", searchPath: toolsDir, expectedShell: customShell },
           { shell: "custom-shell", searchPath: '"./tools"', expectedShell: customShell },
           { shell: "custom-shell", searchPath: ":/bin", cwd: toolsDir, expectedShell: customShell },
+          { shell: "custom-shell", searchPath: `${spacedDir}:/bin`, expectedShell: spacedShell },
         ] as ReadonlyArray<{
           shell: string;
           searchPath: string;
