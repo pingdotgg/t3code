@@ -50,7 +50,8 @@ const PASS_INTERVAL_MS = 30 * DAY_MS;
 const LAST_PASS = "thread-history-trim-last-pass";
 const DELETE_PAGE_SIZE = 200;
 const NOTICE_SIGNAL = "history-trim";
-// Work the reader skips: `file_change` stays because it is small and names what a run touched.
+// Work the reader skips: `file_change` stays because it is small and names what a run touched,
+// and so does output the timeline always shows inline (`inline_work_output`).
 const TRIMMED_ITEM_TYPES = [
   "command_execution",
   "dynamic_tool",
@@ -166,6 +167,7 @@ const make = Effect.gen(function* () {
         SELECT 1 FROM orchestration_v2_projection_turn_items AS item
         WHERE item.thread_id = thread.thread_id
           AND item.type IN ${sql.in(TRIMMED_ITEM_TYPES)}
+          AND item.inline_work_output = 0
           AND item.status NOT IN ${sql.in(LIVE_ITEM_STATUSES)}
           -- A trimmed thread keeps the tool items its kept items hang off.
           AND NOT EXISTS (
@@ -197,10 +199,12 @@ const make = Effect.gen(function* () {
           (SELECT COUNT(*) FROM orchestration_v2_projection_turn_items
             WHERE thread_id = ${candidate.threadId}
               AND type IN ${sql.in(TRIMMED_ITEM_TYPES)}
+              AND inline_work_output = 0
               AND status NOT IN ${sql.in(LIVE_ITEM_STATUSES)}) AS items,
           COALESCE((SELECT SUM(${sql.literal(ITEM_BYTES)}) FROM orchestration_v2_projection_turn_items
             WHERE thread_id = ${candidate.threadId}
               AND type IN ${sql.in(TRIMMED_ITEM_TYPES)}
+              AND inline_work_output = 0
               AND status NOT IN ${sql.in(LIVE_ITEM_STATUSES)}), 0)
           + COALESCE((SELECT SUM(${sql.literal(nodeBytes(""))}) FROM orchestration_v2_projection_nodes
             WHERE thread_id = ${candidate.threadId}
@@ -294,6 +298,7 @@ const make = Effect.gen(function* () {
       readonly parent: string | null;
       readonly type: string;
       readonly status: string;
+      readonly inline: number;
       readonly bytes: number;
     }>`
       SELECT
@@ -301,6 +306,7 @@ const make = Effect.gen(function* () {
         parent_item_id AS parent,
         type,
         status,
+        inline_work_output AS inline,
         ${sql.literal(ITEM_BYTES)} AS bytes
       FROM orchestration_v2_projection_turn_items
       WHERE thread_id = ${threadId} AND ordinal < ${boundary}
@@ -309,7 +315,10 @@ const make = Effect.gen(function* () {
     const liveItemStatuses: ReadonlyArray<string> = LIVE_ITEM_STATUSES;
     const removedItems = unreferenced(
       items,
-      (item) => trimmedItemTypes.includes(item.type) && !liveItemStatuses.includes(item.status),
+      (item) =>
+        trimmedItemTypes.includes(item.type) &&
+        item.inline === 0 &&
+        !liveItemStatuses.includes(item.status),
       [],
     );
     yield* deleteInPages(
@@ -321,6 +330,7 @@ const make = Effect.gen(function* () {
               DELETE FROM orchestration_v2_projection_turn_items
               WHERE turn_item_id IN ${sql.in(page)}
                 AND status NOT IN ${sql.in(LIVE_ITEM_STATUSES)}
+                AND inline_work_output = 0
             `;
             yield* sql`
               DELETE FROM orchestration_v2_turn_item_positions

@@ -220,6 +220,13 @@ const seedThread = Effect.fn(function* (name: string, options: SeedOptions = {})
         fileName: "harness.ts",
       }),
       item({
+        ...itemBase("sent"),
+        type: "dynamic_tool",
+        toolName: "mcp__t3-code__send_to_user",
+        input: null,
+        output: "The draft the user was asked to read.",
+      }),
+      item({
         ...itemBase("assistant"),
         type: "assistant_message",
         messageId: assistantMessageId,
@@ -242,8 +249,9 @@ const itemTitles = Effect.fn(function* (threadId: ThreadId) {
   return rows.map((row) => row.title);
 });
 
-const everyItem = ["user", "reasoning", "command", "tool", "edit", "assistant"];
-const trimmedItems = ["user", "tool", "edit", "assistant", "Older detail was trimmed"];
+const everyItem = ["user", "reasoning", "command", "tool", "edit", "sent", "assistant"];
+// `sent` stays: the timeline always shows that output inline.
+const trimmedItems = ["user", "tool", "edit", "sent", "assistant", "Older detail was trimmed"];
 
 const trim = Effect.gen(function* () {
   const service = yield* ThreadHistoryTrim.ThreadHistoryTrim;
