@@ -23,7 +23,7 @@ import { isEditableFocused } from "./lib/editableFocus";
 import { projectScriptIdFromCommand } from "./projectScripts";
 
 export type { ShortcutModifierStateLike } from "@t3tools/shared/keybindings";
-export { shortcutKeyFromEvent } from "@t3tools/shared/keybindings";
+export { letterKeyForLayoutSymbol, shortcutKeyFromEvent } from "@t3tools/shared/keybindings";
 
 export interface ShortcutEventLike extends SharedShortcutEventLike {
   target?: EventTarget | null;
