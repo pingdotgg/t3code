@@ -13,6 +13,7 @@ import {
   KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL,
   isSupersededFact,
   knowledgeOriginLabel,
+  projectFactVerdictLabel,
 } from "@t3tools/client-runtime/projectKnowledge";
 import { ChevronRightIcon } from "lucide-react";
 import type { ReactNode } from "react";
@@ -160,6 +161,12 @@ export function FactInspector(props: {
       <p className="whitespace-pre-wrap text-base leading-relaxed">
         {fact.content ?? "Forgotten fact"}
       </p>
+      {fact.verdict ? (
+        <p className="text-muted-foreground text-sm">
+          {projectFactVerdictLabel(fact.verdict)}{" "}
+          <time dateTime={fact.verdict.at}>{dateFormatter.format(new Date(fact.verdict.at))}</time>
+        </p>
+      ) : null}
       {fact.entities.length + fact.tags.length > 0 ? (
         <ul aria-label="Entities and tags" className="flex flex-wrap gap-1.5">
           {[...new Set([...fact.entities, ...fact.tags])].map((label) => (

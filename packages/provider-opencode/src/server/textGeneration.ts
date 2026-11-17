@@ -23,6 +23,7 @@ const OpenCodeTextGenerationOperation = Schema.Literals([
   "generateConversationSummary",
   "generateModelEvaluation",
   "generateTranscriptionPostProcessing",
+  "checkFactStanding",
 ]);
 
 const openCodeTextGenerationErrorContext = {
@@ -194,8 +195,10 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
     input: TextGenerationOperations.Request<S>,
   ) {
     const blindEvaluation = input.operation === "generateModelEvaluation";
+    // The standing check gets the evaluator's isolation, without its exact-model checks.
+    const blind = blindEvaluation || input.operation === "checkFactStanding";
     const isolated = BlindEvaluation.runsIsolated(input.operation);
-    if (isolated) {
+    if (isolated && input.operation !== "checkFactStanding") {
       yield* BlindEvaluation.validateBlindEvaluationSelection(
         input.modelSelection,
         input.operation,
@@ -289,7 +292,8 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
               {
                 sessionID: session.data.id,
                 model: parsedModel,
-                ...(selectedAgent ? { agent: selectedAgent } : {}),
+                // A custom agent brings its own prompt.
+                ...(selectedAgent && !blind ? { agent: selectedAgent } : {}),
                 ...(selectedVariant ? { variant: selectedVariant } : {}),
                 parts: [{ type: "text", text: input.prompt }, ...fileParts],
               },
@@ -343,7 +347,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           });
         }
         const responseParts = result.data?.parts ?? [];
-        if (blindEvaluation && BlindEvaluation.hasBlindEvaluationPartActivity(responseParts)) {
+        if (blind && BlindEvaluation.hasBlindEvaluationPartActivity(responseParts)) {
           return yield* new TextGenerationError({
             operation: input.operation,
             detail: "OpenCode reported tool activity during blind evaluation.",

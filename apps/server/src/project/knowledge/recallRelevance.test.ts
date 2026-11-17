@@ -360,7 +360,7 @@ it("enforces coverage, overlap and relevance order", () => {
       ids: ["strong", "middle"],
     },
     {
-      name: "a fact the brief already states gives its slot to the next match",
+      name: "overlap in a longer brief still admits the complete fact",
       text: "Update the invoice exporter. Archive receipts must preserve invoice timestamps during nightly exports, and the reconciliation job reads them afterwards.",
       facts: [
         fact("stated", "Archive receipts preserve invoice timestamps during nightly exports."),
@@ -371,7 +371,68 @@ it("enforces coverage, overlap and relevance order", () => {
         fact("next", "The reconciliation job owns the invoice exporter schedule."),
       ],
       docs: 1,
-      ids: ["shared-words", "next"],
+      ids: ["stated", "shared-words"],
+    },
+    {
+      name: "a question needs the saved requirement",
+      text: "Should cache keys include tenant IDs?",
+      facts: [fact("requirement", "Cache keys must include tenant IDs.")],
+      docs: 1,
+      ids: ["requirement"],
+    },
+    {
+      name: "a contradictory request needs the saved prohibition",
+      text: "Disable tenant authorization checks.",
+      facts: [fact("prohibition", "Never disable tenant authorization checks.")],
+      docs: 1,
+      ids: ["prohibition"],
+    },
+    {
+      name: "shared wording does not carry the fact's qualification",
+      text: "Rotate production cache keys.",
+      facts: [
+        fact(
+          "condition",
+          "Rotate production cache keys only after replicas have acknowledged the new encryption material.",
+        ),
+      ],
+      docs: 1,
+      ids: ["condition"],
+    },
+    {
+      name: "matching entities do not restate the saved content",
+      text: "tenant authorization policy checks",
+      facts: [
+        fact("entity-only", "Release migrations require a verified backup.", [
+          "tenant authorization policy checks",
+        ]),
+      ],
+      docs: 1,
+      ids: ["entity-only"],
+    },
+    {
+      name: "a complete copied statement gives up its slot",
+      text: "Cache keys must include tenant IDs.",
+      facts: [
+        fact("copied", "Cache keys must include tenant IDs."),
+        fact("additional", "Tenant IDs in cache keys prevent cross-tenant data leaks."),
+      ],
+      docs: 1,
+      ids: ["additional"],
+    },
+    {
+      name: "surrounding whitespace still carries the complete statement",
+      text: " \nNever disable tenant authorization checks.\n ",
+      facts: [fact("copied", "Never disable tenant authorization checks.")],
+      docs: 1,
+      ids: [],
+    },
+    {
+      name: "internal whitespace can change a quoted cache prefix",
+      text: 'Cache keys use the prefix "tenant id".',
+      facts: [fact("prefix", 'Cache keys use the prefix "tenant  id".')],
+      docs: 1,
+      ids: ["prefix"],
     },
   ];
   for (const row of cases) {

@@ -77,7 +77,7 @@ function omitBinaryLines(text: string): string {
   return lines.join("\n");
 }
 
-function omitWrappedBase64(text: string): string {
+function omitBase64Text(text: string): string {
   const lines = text.split("\n");
   const output: string[] = [];
   for (let start = 0; start < lines.length;) {
@@ -88,10 +88,15 @@ function omitWrappedBase64(text: string): string {
       end++;
     }
     if (end - start < 2) {
-      output.push(lines[start++]!);
+      output.push(
+        lines[start++]!.replace(/[A-Za-z0-9+/_=-]+/g, (token) =>
+          token.length < 4096 ? token : omitBase64Token(token),
+        ),
+      );
       continue;
     }
     if (end < lines.length && /^[A-Za-z0-9+/_=-]*\r?$/.test(lines[end]!)) end++;
+    // A wrapped line can split a UTF-8 character; classify the complete block only once.
     output.push(omitBase64Token(lines.slice(start, end).join("\n")));
     start = end;
   }
@@ -99,13 +104,11 @@ function omitWrappedBase64(text: string): string {
 }
 
 function omitEncodedText(text: string): string {
-  return omitWrappedBase64(
+  return omitBase64Text(
     omitBinaryLines(text).replace(
       /\bdata:((?:[\w.+-]+\/[\w.+-]+)?(?:;[^,\s"'<>]*)?),([^\s"'<>\x60)\]\\]+)/gi,
       omitDataUrl,
     ),
-  ).replace(/[A-Za-z0-9+/_=-]+/g, (token) =>
-    token.length < 4096 ? token : omitBase64Token(token),
   );
 }
 

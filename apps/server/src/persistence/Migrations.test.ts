@@ -6,11 +6,15 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
+import { ProjectId } from "@t3tools/contracts";
 
 import { createMessageSearchTriggers } from "../orchestration-v2/messageSearchIndex.ts";
+import { makeStore } from "../project/knowledge/persistence.ts";
 import { migrationManifest, runMigrations } from "./Migrations.ts";
 import ProjectLoomTimeIndexes from "./Migrations/075_ProjectLoomTimeIndexes.ts";
 import ProjectLoomBoundedReads from "./Migrations/077_ProjectLoomBoundedReads.ts";
+import ConversationSummarySearch from "./Migrations/116_ConversationSummarySearch.ts";
+import ToolOutputSearch from "./Migrations/117_ToolOutputSearch.ts";
 
 const v2Migrations = migrationManifest.filter(([id]) => id >= 55);
 const newerMigrationId = Math.max(...migrationManifest.map(([id]) => id)) + 1;
@@ -36,11 +40,13 @@ const messageSearchTextMigration = [98, "ProjectionMessageSearchText"] as const;
 const turnItemConversationMigration = [99, "TurnItemConversationIndex"] as const;
 const laterMigrations = migrationManifest.filter(([id]) => id > 99);
 
-it.effect("backfills summary search and tracks replacement, scrubbing and deletion", () =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* runMigrations({ toMigrationInclusive: 114 });
-    yield* sql`INSERT INTO conversation_summaries
+it.effect.each(["main", "summary preview", "tool preview"] as const)(
+  "backfills summary search and tracks replacement, scrubbing and deletion (%s)",
+  (preview) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 114 });
+      yield* sql`INSERT INTO conversation_summaries
       (summary_id, project_id, thread_id, position, created_at, payload_json)
       VALUES ('first', 'project', 'thread', '1', '2026-01-01',
         '{"statements":[{"text":"kernel extended attributes"}]}'),
@@ -48,40 +54,85 @@ it.effect("backfills summary search and tracks replacement, scrubbing and deleti
         '{"statements":[{"text":"kernel secret"}],"scrubbed":true}'),
       ('legacy', 'project', 'thread', '3', '2026-01-01',
         '{"statements":[{"text":"[Source unavailable: removed or changed.]"}]}')`;
-    yield* runMigrations();
-    assert.deepEqual(yield* sql`SELECT text FROM conversation_summary_fts`, [
-      { text: "kernel extended attributes" },
-    ]);
-    yield* sql`INSERT INTO conversation_summaries
+      if (preview !== "main") {
+        yield* ConversationSummarySearch;
+        yield* sql`INSERT INTO effect_sql_migrations (migration_id, name, created_at)
+        VALUES (115, 'ConversationSummarySearch', '2026-11-17 00:00:00')`;
+        if (preview === "tool preview") {
+          yield* ToolOutputSearch;
+          yield* sql`INSERT INTO effect_sql_migrations (migration_id, name, created_at)
+          VALUES (116, 'ToolOutputSearch', '2026-11-17 00:00:00')`;
+          yield* sql`INSERT INTO effect_sql_migrations (migration_id, name)
+          VALUES (117, 'UnknownFork')`;
+          const unexpected = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
+          assert.isTrue(Exit.isFailure(yield* Effect.exit(runMigrations())));
+          assert.deepEqual(
+            yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`,
+            unexpected,
+          );
+          yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id = 117`;
+          yield* sql`CREATE TRIGGER fail_search_preview BEFORE INSERT ON effect_sql_migrations
+          WHEN NEW.name = 'ProjectKnowledgeFactVerdict'
+          BEGIN SELECT RAISE(ABORT, 'injected failure'); END`;
+          const history = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
+          const schema = yield* sql`SELECT name, sql FROM sqlite_master ORDER BY name`;
+          assert.isTrue(Exit.isFailure(yield* Effect.exit(runMigrations())));
+          assert.deepEqual(
+            yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`,
+            history,
+          );
+          assert.deepEqual(yield* sql`SELECT name, sql FROM sqlite_master ORDER BY name`, schema);
+          yield* sql`DROP TRIGGER fail_search_preview`;
+        }
+      }
+      yield* runMigrations();
+      assert.deepEqual(
+        yield* sql`SELECT migration_id, name FROM effect_sql_migrations
+        WHERE migration_id >= 115 ORDER BY migration_id`,
+        [
+          { migration_id: 115, name: "ProjectKnowledgeFactVerdict" },
+          { migration_id: 116, name: "ConversationSummarySearch" },
+          { migration_id: 117, name: "ToolOutputSearch" },
+        ],
+      );
+      if (preview !== "main")
+        assert.deepEqual(
+          yield* sql`SELECT created_at FROM effect_sql_migrations WHERE migration_id = 116`,
+          [{ created_at: "2026-11-17 00:00:00" }],
+        );
+      assert.deepEqual(yield* sql`SELECT text FROM conversation_summary_fts`, [
+        { text: "kernel extended attributes" },
+      ]);
+      yield* sql`INSERT INTO conversation_summaries
       SELECT 'legacy-insert', project_id, thread_id, position, created_at, payload_json
       FROM conversation_summaries WHERE summary_id = 'legacy'`;
-    yield* sql`UPDATE conversation_summaries SET payload_json = payload_json WHERE summary_id = 'legacy'`;
-    assert.deepEqual(yield* sql`SELECT text FROM conversation_summary_fts`, [
-      { text: "kernel extended attributes" },
-    ]);
-    assert.deepEqual(
-      yield* sql`SELECT text FROM conversation_summary_fts WHERE conversation_summary_fts MATCH 'kernel'`,
-      [{ text: "kernel extended attributes" }],
-    );
-    yield* sql`UPDATE conversation_summaries SET payload_json = '{"statements":[{"text":"replacement résumé"}]}' WHERE summary_id = 'first'`;
-    assert.deepEqual(
-      yield* sql`SELECT text FROM conversation_summary_fts WHERE conversation_summary_fts MATCH 'kernel'`,
-      [],
-    );
-    assert.deepEqual(
-      yield* sql`SELECT text FROM conversation_summary_fts WHERE conversation_summary_fts MATCH 'resume'`,
-      [{ text: "replacement résumé" }],
-    );
-    yield* sql`UPDATE conversation_summaries SET payload_json = json_set(payload_json, '$.scrubbed', 1) WHERE summary_id = 'first'`;
-    assert.deepEqual(
-      yield* sql`SELECT text FROM conversation_summary_fts WHERE conversation_summary_fts MATCH 'resume'`,
-      [],
-    );
-    yield* sql`DELETE FROM conversation_summaries`;
-    assert.deepEqual(yield* sql`SELECT * FROM conversation_summary_search_ids`, []);
-    assert.deepEqual(yield* sql`SELECT * FROM conversation_summary_fts`, []);
-    yield* sql`INSERT INTO conversation_summary_fts(conversation_summary_fts) VALUES ('integrity-check')`;
-  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+      yield* sql`UPDATE conversation_summaries SET payload_json = payload_json WHERE summary_id = 'legacy'`;
+      assert.deepEqual(yield* sql`SELECT text FROM conversation_summary_fts`, [
+        { text: "kernel extended attributes" },
+      ]);
+      assert.deepEqual(
+        yield* sql`SELECT text FROM conversation_summary_fts WHERE conversation_summary_fts MATCH 'kernel'`,
+        [{ text: "kernel extended attributes" }],
+      );
+      yield* sql`UPDATE conversation_summaries SET payload_json = '{"statements":[{"text":"replacement résumé"}]}' WHERE summary_id = 'first'`;
+      assert.deepEqual(
+        yield* sql`SELECT text FROM conversation_summary_fts WHERE conversation_summary_fts MATCH 'kernel'`,
+        [],
+      );
+      assert.deepEqual(
+        yield* sql`SELECT text FROM conversation_summary_fts WHERE conversation_summary_fts MATCH 'resume'`,
+        [{ text: "replacement résumé" }],
+      );
+      yield* sql`UPDATE conversation_summaries SET payload_json = json_set(payload_json, '$.scrubbed', 1) WHERE summary_id = 'first'`;
+      assert.deepEqual(
+        yield* sql`SELECT text FROM conversation_summary_fts WHERE conversation_summary_fts MATCH 'resume'`,
+        [],
+      );
+      yield* sql`DELETE FROM conversation_summaries`;
+      assert.deepEqual(yield* sql`SELECT * FROM conversation_summary_search_ids`, []);
+      assert.deepEqual(yield* sql`SELECT * FROM conversation_summary_fts`, []);
+      yield* sql`INSERT INTO conversation_summary_fts(conversation_summary_fts) VALUES ('integrity-check')`;
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
 
 it.effect("upgrades attempt receipts atomically and preserves distinct steering messages", () =>
@@ -1454,6 +1505,37 @@ it.effect(
         { term: "lantern", doc: 1 },
         { term: "πύλη", doc: 1 },
       ]);
+      // Set-aside facts are never recall candidates, so they never weigh recall's terms.
+      const store = yield* makeStore;
+      const recallStats = store
+        .termStats(["cobalt", "harrier", "kestrel", "lantern", "πύλη"], ProjectId.make("project"))
+        .pipe(Effect.map((stats) => [stats.corpusSize, Object.fromEntries(stats.docs)]));
+      yield* sql`
+      INSERT INTO project_knowledge_facts
+        (id, project_id, status, revision, content, entities_json, tags_json, kind, trust,
+         retrieval_count, created_at, updated_at, forgotten_at, sources_json, origin_json, verdict)
+      VALUES ('third', 'project', 'saved', 1, 'harrier cobalt', '[]', '[]',
+        'note', 0.6, 0, '2026-11-16', '2026-11-16', NULL, '[]', '{"kind":"assisted"}', 'task')`;
+      assert.deepEqual(yield* recallStats, [1, { cobalt: 1, lantern: 1, πύλη: 1 }]);
+      yield* sql`UPDATE project_knowledge_facts SET verdict='code' WHERE id='second'`;
+      assert.deepEqual(yield* recallStats, [0, {}]);
+      yield* sql`UPDATE project_knowledge_facts SET content='cobalt kestrel' WHERE id='second'`;
+      assert.deepEqual(yield* recallStats, [0, {}]);
+      yield* sql`UPDATE project_knowledge_facts SET verdict='standing' WHERE id='second'`;
+      const standingOnly = [1, { cobalt: 1, kestrel: 1, lantern: 1 }];
+      assert.deepEqual(yield* recallStats, standingOnly);
+      yield* sql`UPDATE project_knowledge_facts SET verdict=NULL WHERE id='third'`;
+      assert.deepEqual(yield* recallStats, [2, { cobalt: 2, harrier: 1, kestrel: 1, lantern: 1 }]);
+      yield* sql`UPDATE project_knowledge_facts SET verdict='task' WHERE id='third'`;
+      assert.deepEqual(yield* recallStats, standingOnly);
+      yield* sql`UPDATE project_knowledge_facts SET superseded_by_id='second' WHERE id='third'`;
+      yield* sql`UPDATE project_knowledge_facts SET verdict=NULL WHERE id='third'`;
+      assert.deepEqual(yield* recallStats, standingOnly);
+      yield* sql`UPDATE project_knowledge_facts SET verdict='task', superseded_by_id=NULL WHERE id='third'`;
+      yield* sql`UPDATE project_knowledge_facts SET status='forgotten',content=NULL WHERE id='third'`;
+      assert.deepEqual(yield* recallStats, standingOnly);
+      yield* sql`DELETE FROM project_knowledge_facts WHERE id='third'`;
+      assert.deepEqual(yield* recallStats, standingOnly);
       yield* sql`UPDATE project_knowledge_facts SET project_id='other' WHERE id='second'`;
       assert.deepEqual(yield* counts, []);
       yield* sql`DELETE FROM project_knowledge_facts WHERE id='second'`;

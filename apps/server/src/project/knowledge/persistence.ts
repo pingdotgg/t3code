@@ -12,6 +12,8 @@ import {
   ProjectFactHistoryEntry,
   ProjectFactId,
   ProjectFactStatus,
+  ProjectFactVerdict,
+  ProjectFactVerdictRecord,
   ProjectId,
   ProjectKnowledgeDelivery,
   ProjectKnowledgeDeliveryBudget,
@@ -64,6 +66,7 @@ const FactRow = Schema.Struct({
   tags: Schema.fromJsonString(ActiveProjectFact.fields.tags),
   origin: Schema.fromJsonString(KnowledgeOrigin),
   sources: Schema.fromJsonString(Schema.Array(KnowledgeFactSource)),
+  verdict: Schema.NullOr(Schema.fromJsonString(ProjectFactVerdictRecord)),
 });
 const encodeOrigin = Schema.encodeSync(Schema.fromJsonString(KnowledgeOrigin));
 const encodeFactIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(ProjectFactId)));
@@ -80,7 +83,12 @@ const encodeSources = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Knowl
 const decodeRows = Schema.decodeUnknownEffect(Schema.Array(FactRow));
 const decodeProjectFacts = Schema.decodeUnknownEffect(Schema.Array(ProjectFact));
 const decodeFacts = Effect.fn("ProjectKnowledgeStore.decodeFacts")(function* (rows: unknown) {
-  return yield* decodeProjectFacts(yield* decodeRows(rows));
+  // Unchecked facts omit the key, as facts built in memory do, and cost nothing on the wire.
+  return yield* decodeProjectFacts(
+    (yield* decodeRows(rows)).map(({ verdict, ...row }) =>
+      verdict === null ? row : { ...row, verdict },
+    ),
+  );
 });
 
 const HistoryRow = Schema.Struct({
@@ -179,8 +187,16 @@ export const makeStore = Effect.gen(function* () {
     entities_json AS entities, tags_json AS tags, kind, trust,
     retrieval_count AS "retrievalCount", created_at AS "createdAt",
     updated_at AS "updatedAt", forgotten_at AS "forgottenAt", sources_json AS sources, origin_json AS origin,
-    supersedes_id AS supersedes, superseded_by_id AS "supersededBy"
+    supersedes_id AS supersedes, superseded_by_id AS "supersededBy",
+    CASE WHEN verdict IS NULL THEN NULL
+      ELSE json_object('value', verdict, 'by', verdict_by, 'at', verdict_at) END AS verdict
   `;
+  /**
+   * The only definition of a fact automatic recall may offer. Explicit search does not use it.
+   * Migration 115's recall-term triggers and partial index must state the same condition.
+   */
+  const recallable = sql`f.status = 'saved' AND f.superseded_by_id IS NULL
+    AND (f.verdict IS NULL OR f.verdict = 'standing')`;
   const find = Effect.fn("ProjectKnowledgeStore.find")(function* (
     projectId: ProjectId,
     id: ProjectFactId,
@@ -197,6 +213,7 @@ export const makeStore = Effect.gen(function* () {
     includeSuperseded: boolean,
     onlyIds: ReadonlyArray<ProjectFactId> | null = null,
     origin: KnowledgeOrigin["kind"] | null = null,
+    setAside = false,
   ) {
     if (onlyIds !== null && onlyIds.length === 0) return [];
     return yield* sql`
@@ -207,6 +224,7 @@ export const makeStore = Effect.gen(function* () {
         AND (${includeSuperseded ? 1 : 0} = 1 OR status = 'forgotten' OR superseded_by_id IS NULL)
         AND ${onlyIds === null ? sql`1 = 1` : sql.in("id", onlyIds)}
         AND ${origin === null ? sql`1 = 1` : sql`json_extract(origin_json, '$.kind') = ${origin}`}
+        AND ${setAside ? sql`verdict IN ('task', 'code')` : sql`1 = 1`}
       ORDER BY id ASC LIMIT ${limit}
     `.pipe(Effect.flatMap(decodeFacts));
   });
@@ -214,12 +232,13 @@ export const makeStore = Effect.gen(function* () {
     yield* sql`INSERT INTO project_knowledge_facts (
       id, project_id, status, revision, content, entities_json, tags_json, kind, trust,
       retrieval_count, created_at, updated_at, forgotten_at, sources_json, origin_json,
-      supersedes_id, superseded_by_id
+      supersedes_id, superseded_by_id, verdict, verdict_by, verdict_at
     ) VALUES (
       ${fact.id}, ${fact.projectId}, ${fact.status}, ${fact.revision}, ${fact.content},
       ${encodeLabels(fact.entities)}, ${encodeLabels(fact.tags)}, ${fact.kind}, ${fact.trust},
       ${fact.retrievalCount}, ${fact.createdAt}, ${fact.updatedAt}, ${fact.forgottenAt}, ${encodeSources(fact.sources)}, ${encodeOrigin(fact.origin)},
-      ${fact.supersedes ?? null}, ${fact.supersededBy ?? null}
+      ${fact.supersedes ?? null}, ${fact.supersededBy ?? null},
+      ${fact.verdict?.value ?? null}, ${fact.verdict?.by ?? null}, ${fact.verdict?.at ?? null}
     )`;
   });
   const update = Effect.fn("ProjectKnowledgeStore.update")(function* (
@@ -231,10 +250,22 @@ export const makeStore = Effect.gen(function* () {
       entities_json = ${encodeLabels(fact.entities)}, tags_json = ${encodeLabels(fact.tags)},
       kind = ${fact.kind}, trust = ${fact.trust}, updated_at = ${fact.updatedAt},
       forgotten_at = ${fact.forgottenAt}, sources_json = ${encodeSources(fact.sources)}, origin_json = ${encodeOrigin(fact.origin)},
-      supersedes_id = ${fact.supersedes ?? null}, superseded_by_id = ${fact.supersededBy ?? null}
+      supersedes_id = ${fact.supersedes ?? null}, superseded_by_id = ${fact.supersededBy ?? null},
+      verdict = ${fact.verdict?.value ?? null}, verdict_by = ${fact.verdict?.by ?? null},
+      verdict_at = ${fact.verdict?.at ?? null}
       WHERE id = ${fact.id} AND project_id = ${fact.projectId} AND revision = ${expectedRevision}
       RETURNING id`;
     return changed.length === 1;
+  });
+  const writeCheckVerdict = Effect.fn("ProjectKnowledgeStore.writeCheckVerdict")(function* (
+    projectId: ProjectId,
+    factId: ProjectFactId,
+    verdict: ProjectFactVerdict,
+    at: string,
+  ) {
+    yield* sql`UPDATE project_knowledge_facts
+      SET verdict = ${verdict}, verdict_by = 'check', verdict_at = ${at}
+      WHERE project_id = ${projectId} AND id = ${factId}`;
   });
   // A search receipt older than searchNotBefore reads as absent: its cursor has expired.
   const receipt = Effect.fn("ProjectKnowledgeStore.receipt")(function* (
@@ -290,7 +321,7 @@ export const makeStore = Effect.gen(function* () {
     minTrust: number,
     includeSuperseded: boolean,
   ) {
-    const recallable = sql`f.status = 'saved' AND f.trust >= ${minTrust}
+    const searchable = sql`f.status = 'saved' AND f.trust >= ${minTrust}
       AND (${includeSuperseded ? 1 : 0} = 1 OR f.superseded_by_id IS NULL)`;
     const ftsQuery = ftsMatch(terms);
     const lexical =
@@ -300,18 +331,18 @@ export const makeStore = Effect.gen(function* () {
       SELECT f.id, bm25(project_knowledge_fts) AS rank
       FROM project_knowledge_fts JOIN project_knowledge_facts f ON f.rowid = project_knowledge_fts.rowid
       WHERE project_knowledge_fts MATCH ${ftsQuery} AND f.project_id = ${projectId}
-        AND ${recallable}
+        AND ${searchable}
       ORDER BY rank ASC, f.updated_at DESC, f.id ASC LIMIT 1001`;
     const byEntity =
       entities.length === 0
         ? []
         : yield* sql<{ id: ProjectFactId }>`
       SELECT id FROM project_knowledge_facts f WHERE project_id = ${projectId}
-        AND ${recallable}
+        AND ${searchable}
         AND EXISTS (SELECT 1 FROM json_each(f.entities_json) e WHERE ${sql.or(entities.map((entity) => sql`lower(e.value) = ${entity}`))})
       ORDER BY updated_at DESC, id ASC LIMIT 1001`;
     const newest = yield* sql<{ id: ProjectFactId }>`SELECT id FROM project_knowledge_facts f
-      WHERE project_id = ${projectId} AND ${recallable}
+      WHERE project_id = ${projectId} AND ${searchable}
       ORDER BY updated_at DESC, id ASC LIMIT 1001`;
     const ids = [...new Set([...lexical, ...byEntity, ...newest].map((row) => row.id))];
     return {
@@ -337,7 +368,7 @@ export const makeStore = Effect.gen(function* () {
   ) {
     const [count] = yield* sql<{
       readonly n: number;
-    }>`SELECT count(*) AS n FROM project_knowledge_facts WHERE project_id=${projectId} AND status='saved' AND superseded_by_id IS NULL`;
+    }>`SELECT count(*) AS n FROM project_knowledge_facts f WHERE f.project_id=${projectId} AND ${recallable}`;
     const rows =
       terms.length === 0
         ? []
@@ -368,7 +399,7 @@ export const makeStore = Effect.gen(function* () {
       SELECT f.id
       FROM project_knowledge_fts JOIN project_knowledge_facts f ON f.rowid = project_knowledge_fts.rowid
       WHERE project_knowledge_fts MATCH ${ftsQuery} AND f.project_id = ${projectId}
-        AND f.status = 'saved' AND f.trust >= ${minTrust} AND f.superseded_by_id IS NULL
+        AND ${recallable} AND f.trust >= ${minTrust}
         AND ${unseen}
         AND NOT (
           json_extract(f.origin_json, '$.kind') IN ('agent-thread', 'assisted')
@@ -498,12 +529,12 @@ export const makeStore = Effect.gen(function* () {
       readonly retrievals: number;
     }>`
       WITH recallable AS (
-        SELECT trust FROM project_knowledge_facts
-        WHERE project_id = ${projectId} AND status = 'saved'
-          AND superseded_by_id IS NULL
+        SELECT f.trust FROM project_knowledge_facts f
+        WHERE f.project_id = ${projectId} AND ${recallable}
       )
       SELECT
-        (SELECT COUNT(*) FROM recallable) AS saved,
+        (SELECT COUNT(*) FROM project_knowledge_facts WHERE project_id = ${projectId}
+          AND status = 'saved' AND superseded_by_id IS NULL) AS saved,
         (SELECT COUNT(*) FROM project_knowledge_facts WHERE project_id = ${projectId}
           AND status != 'forgotten' AND superseded_by_id IS NOT NULL) AS superseded,
         (SELECT COUNT(*) FROM project_knowledge_facts WHERE project_id = ${projectId}
@@ -853,6 +884,7 @@ export const makeStore = Effect.gen(function* () {
     list,
     insert,
     update,
+    writeCheckVerdict,
     receipt,
     record,
     recordSearch,

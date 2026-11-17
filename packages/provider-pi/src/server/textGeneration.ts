@@ -44,7 +44,12 @@ const ISOLATED_SYSTEM_PROMPTS: Partial<
     system: "You summarize the supplied conversation sources.",
     append: "Use only the supplied sources. Do not use tools.",
   },
+  checkFactStanding: {
+    system: "You classify the supplied statements.",
+    append: "Use only the supplied statements. Do not use tools.",
+  },
 };
+const PI_BLIND_ARGS = ["--no-context-files", "--no-skills", "--no-prompt-templates"] as const;
 
 export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* (
   piSettings: PiSettings,
@@ -139,9 +144,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
           isolatedPrompts !== undefined
             ? [
                 ...launch.args,
-                "--no-context-files",
-                "--no-skills",
-                "--no-prompt-templates",
+                ...PI_BLIND_ARGS,
                 // Explicit sources suppress discovery of global SYSTEM.md and APPEND_SYSTEM.md.
                 "--system-prompt",
                 isolatedPrompts.system,

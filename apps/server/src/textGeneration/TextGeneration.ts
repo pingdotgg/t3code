@@ -46,9 +46,19 @@ export type {
   TranscriptionPostProcessingResult,
 } from "@t3tools/provider-core/server/textGeneration";
 
-export class TextGeneration extends Context.Service<TextGeneration, ProviderTextGeneration>()(
-  "t3/textGeneration/TextGeneration",
-) {}
+export class TextGeneration extends Context.Service<
+  TextGeneration,
+  ProviderTextGeneration & {
+    /** Whether the instance runs the operation; unsupported is permanent, unlike a failed call. */
+    readonly supportsOperation: (
+      operation: TextGenerationOperation,
+      instanceId: ProviderInstanceId,
+    ) => Effect.Effect<boolean>;
+  }
+>()("t3/textGeneration/TextGeneration") {}
+
+const supports = (instance: ProviderInstance, operation: TextGenerationOperation) =>
+  instance.textGeneration.supportedOperations.includes(operation);
 
 const resolveInstance = Effect.fn("TextGeneration.resolveInstance")(function* (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -63,7 +73,7 @@ const resolveInstance = Effect.fn("TextGeneration.resolveInstance")(function* (
       detail: `No provider instance registered for id '${instanceId}'.`,
     });
   }
-  if (!instance.textGeneration.supportedOperations.includes(operation)) {
+  if (!supports(instance, operation)) {
     return yield* new TextGenerationError({
       operation,
       detail:
@@ -72,7 +82,7 @@ const resolveInstance = Effect.fn("TextGeneration.resolveInstance")(function* (
           : `Provider '${instanceId}' does not support this text generation operation. Choose a model from a provider that supports it.`,
     });
   }
-  if (operation === "generateKnowledgeCandidates") {
+  if (operation === "generateKnowledgeCandidates" || operation === "checkFactStanding") {
     const snapshot = yield* instance.snapshot.getSnapshot;
     if (exhaustedUsageWindow(snapshot, DateTime.toEpochMillis(yield* DateTime.now), model)) {
       return yield* new TextGenerationError({
@@ -195,6 +205,12 @@ export const make = Effect.gen(function* () {
     );
   });
   return TextGeneration.of({
+    supportsOperation: Effect.fn("TextGeneration.supportsOperation")(
+      function* (operation, instanceId) {
+        const instance = yield* registry.getInstance(instanceId);
+        return instance !== undefined && supports(instance, operation);
+      },
+    ),
     generateModelEvaluation: Effect.fn("TextGeneration.generateModelEvaluation")(function* (input) {
       const textGenerator = yield* textGenerators.runner(input.modelSelection.instanceId);
       const judge =
@@ -254,6 +270,14 @@ export const make = Effect.gen(function* () {
         );
       },
     ),
+    checkFactStanding: Effect.fn("TextGeneration.checkFactStanding")(function (input) {
+      return resolveInstance(
+        registry,
+        "checkFactStanding",
+        input.modelSelection.instanceId,
+        input.modelSelection.model,
+      ).pipe(Effect.flatMap((textGeneration) => textGeneration.checkFactStanding(input)));
+    }),
     generateConversationSummary: Effect.fn("TextGeneration.generateConversationSummary")(
       function (input) {
         return resolveInstance(

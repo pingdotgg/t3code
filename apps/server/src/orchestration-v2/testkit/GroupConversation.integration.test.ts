@@ -2,10 +2,15 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  type ChatAttachment,
+  ChatAttachmentId,
   CommandId,
+  COMPOSER_CONTEXT_MAX_RECORDS,
+  ComposerContextId,
   EventId,
   MessageId,
   type ModelSelection,
+  type OrchestrationMessageContext,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
@@ -26,6 +31,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -542,6 +548,8 @@ const say = Effect.fn("GroupConversationTest.say")(function* (
   text: string,
   groupAudience?: "everyone" | ReadonlyArray<ThreadId | "primary">,
   delivery: "auto" | "queue" = "auto",
+  attachments: ReadonlyArray<ChatAttachment> = [],
+  context?: OrchestrationMessageContext,
 ) {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   return yield* orchestrator.dispatch({
@@ -552,7 +560,8 @@ const say = Effect.fn("GroupConversationTest.say")(function* (
     createdBy: "user",
     creationSource: "web",
     text,
-    attachments: [],
+    attachments,
+    ...(context === undefined ? {} : { context }),
     ...(groupAudience === undefined ? {} : { groupAudience }),
     dispatchMode: { type: "queue_after_active" },
     ...(delivery === "auto" ? { deliveryIntent: "auto" as const } : {}),
@@ -664,11 +673,12 @@ const noticesOf = (projection: Pick<OrchestrationV2ThreadProjection, "turnItems"
 
 describe("group conversations", () => {
   it.live.each([
-    ["cross-instance", ASTRA, "Astra"],
-    ["same-instance", OPUS, "Opus"],
+    ["cross-instance", ASTRA, "Astra", 1],
+    ["same-instance", OPUS, "Opus", 1],
+    ["context-limit", ASTRA, "Astra", COMPOSER_CONTEXT_MAX_RECORDS],
   ] as const)(
     "runs a %s discussion to its budget without moving the primary",
-    ([kind, peer, label]) =>
+    ([kind, peer, label, contextCount]) =>
       Effect.scoped(
         Effect.gen(function* () {
           const harness = yield* makeHarness(`everyone-${kind}`);
@@ -687,28 +697,78 @@ describe("group conversations", () => {
 
               const seat = yield* invite(threadId, peer);
               const other = yield* invite(threadId, STEERLESS);
-              const seats = [threadId, seat, other];
-              const holds = yield* Effect.forEach(seats, (id) => hold(harness.control, id));
-              yield* say(threadId, "question", "Should sync be CRDT or event log?");
-              yield* Effect.forEach(holds, (entry) => Deferred.await(entry.started), {
-                discard: true,
-              });
+              const primaryHold = yield* hold(harness.control, threadId);
+              const sketch = {
+                type: "file" as const,
+                id: ChatAttachmentId.make(`sketch-${kind}`),
+                name: "sync.md",
+                mimeType: "text/markdown",
+                sizeBytes: 12,
+              };
+              const terminal = {
+                version: 1 as const,
+                kind: "terminal" as const,
+                contextId: ComposerContextId.make(`terminal-${kind}`),
+                label: "Sync failure",
+                terminalId: "sync",
+                terminalLabel: "Sync",
+                lineStart: 1,
+                lineEnd: 1,
+                text: "Replica rejected a duplicate revision.",
+              };
+              const records = Array.from({ length: contextCount }, (_, index) => ({
+                ...terminal,
+                contextId: ComposerContextId.make(`${terminal.contextId}-${index}`),
+                text: `${terminal.text} Context ${index}.`,
+              }));
+              yield* say(
+                threadId,
+                "question",
+                `Should sync be CRDT or event log? ${records.map(formatComposerContextReference).join(" ")}`,
+                undefined,
+                "auto",
+                [sketch],
+                { version: 1, records },
+              );
+              yield* Deferred.await(primaryHold.started);
 
               const during = (yield* readGroup(threadId))!;
               assert.equal(during.discussion?.mode, "everyone");
               assert.equal(
                 during.discussion?.turnsLeft,
-                3,
-                "min(2 * 3, 8) minus the three started",
+                5,
+                "min(2 * 3, 8) minus the primary, which answers first",
               );
+              assert.lengthOf(yield* turnsOf(harness.control, seat), 0, "seats wait for the lead");
+              assert.lengthOf(yield* turnsOf(harness.control, other), 0);
               const seatProjection = yield* orchestrator.getThreadProjection(seat);
               assert.equal(seatProjection.thread.runtimeMode, before.thread.runtimeMode);
               assert.equal(seatProjection.thread.lineage.sideChat, true);
-              yield* Effect.forEach(
-                holds,
-                (entry) => Deferred.succeed(entry.release, "completed"),
-                { discard: true },
+              yield* until(
+                orchestrator
+                  .getThreadProjection(threadId)
+                  .pipe(
+                    Effect.map((p) => p.providerTurns.some((turn) => turn.status === "running")),
+                  ),
               );
+              yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+              const clarification = {
+                ...terminal,
+                contextId: ComposerContextId.make(`clarification-${kind}`),
+                text: "Replica logs include conflicting branches.",
+              };
+              yield* say(
+                threadId,
+                "clarification",
+                `Please check the edge cases too.${contextCount > 1 ? ` ${formatComposerContextReference(clarification)}` : ""}`,
+                undefined,
+                "auto",
+                [],
+                contextCount > 1 ? { version: 1, records: [clarification] } : undefined,
+              );
+              assert.equal(yield* Queue.take(harness.control.steered), threadId);
+              yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+              yield* Deferred.succeed(primaryHold.release, "completed");
 
               const after = yield* settle(threadId);
               const group = (yield* readGroup(threadId))!;
@@ -729,6 +789,31 @@ describe("group conversations", () => {
               assert.lengthOf(seatTurns, 2, "first answer and one reaction");
               assert.include(seatTurns[0]!.text, "group conversation");
               assert.include(seatTurns[0]!.text, "Should sync be CRDT or event log?");
+              assert.include(seatTurns[0]!.text, "Please check the edge cases too.");
+              assert.include(
+                seatTurns[0]!.text,
+                terminal.text,
+                "the original context reaches peers",
+              );
+              if (contextCount > 1) {
+                assert.include(seatTurns[0]!.text, records.at(-1)!.text);
+                assert.include(seatTurns[0]!.text, clarification.text);
+                assert.notInclude(seatTurns[0]!.text, records[0]!.text);
+                assert.notInclude(seatTurns[0]!.text, formatComposerContextReference(records[0]!));
+                assert.include(
+                  seatTurns[0]!.text,
+                  `kind="terminal" id="${records[0]!.contextId}" unavailable="true"`,
+                );
+              }
+              assert.include(seatTurns[0]!.text, `from ${threadId}`, "the lead's reply came first");
+              const seatFirst = (yield* orchestrator.getThreadProjection(seat)).messages.find(
+                (message) => message.role === "user",
+              );
+              assert.deepEqual(
+                seatFirst?.attachments.map((attachment) => attachment.id),
+                [sketch.id],
+                "the user's files reach a seat woken by the lead's reply",
+              );
               assert.notInclude(seatTurns[1]!.text, "group conversation with the user");
               assert.notInclude(
                 seatTurns[1]!.text,
@@ -747,7 +832,7 @@ describe("group conversations", () => {
               const visibleUserRows = after.turnItems.filter(
                 (item) => item.type === "user_message",
               );
-              assert.lengthOf(visibleUserRows, 2, "a wake writes no user row");
+              assert.lengthOf(visibleUserRows, 3, "a wake writes no user row");
               assert.isTrue(after.turnItems.some((item) => item.type === "notification"));
               assert.isFalse(
                 after.turnItems.some((item) => item.type === "handoff"),
@@ -768,6 +853,82 @@ describe("group conversations", () => {
                 after.runs.map((run) => run.ordinal),
                 after.runs.map((run) => run.ordinal).toSorted((a, b) => a - b),
               );
+            }),
+          ).pipe(Effect.provide(harness.layer));
+        }),
+      ),
+  );
+
+  it.live.each([
+    ["failed", "failed", "answer", "everyone"],
+    ["PASS", "unavailable", "answer", "everyone"],
+    ["PASS", "PASS", "answer", "everyone"],
+    ["", "PASS", "answer", "everyone"],
+    ["failed", "failed", "failed", "everyone"],
+    ["PASS", "PASS", "PASS", "everyone"],
+    ["failed", "PASS", "answer", "direct"],
+    ["PASS", "PASS", "answer", "direct"],
+  ] as const)(
+    "hands an unanswered question along once (%s, %s, %s, %s)",
+    ([leadReply, firstReply, lastReply, mode]) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeHarness("unanswered");
+          const threadId = ThreadId.make("thread:group:unanswered");
+          yield* withReactor(
+            Effect.gen(function* () {
+              yield* startThread(threadId);
+              const first = yield* invite(
+                threadId,
+                firstReply === "unavailable"
+                  ? {
+                      instanceId: ProviderInstanceId.make("removed-provider"),
+                      model: "removed-model",
+                    }
+                  : ASTRA,
+              );
+              const last = yield* invite(threadId, OPUS);
+              const replies = [
+                [threadId, leadReply],
+                [first, firstReply],
+                [last, lastReply],
+              ] as const;
+              yield* Ref.set(
+                harness.control.failing,
+                new Set(replies.filter(([, reply]) => reply === "failed").map(([id]) => id)),
+              );
+              for (const [id, reply] of replies) {
+                yield* script(harness.control, id, [
+                  reply === "answer" ? "Here is the answer.\n@user" : reply,
+                ]);
+              }
+              yield* say(
+                threadId,
+                "question",
+                "Can someone answer this?",
+                mode === "direct" ? ["primary"] : "everyone",
+              );
+              const after = yield* settle(threadId);
+              const turns = yield* Ref.get(harness.control.turns);
+              assert.deepEqual(
+                turns.map((turn) => turn.threadId),
+                mode === "direct"
+                  ? [threadId]
+                  : firstReply === "unavailable"
+                    ? [threadId, last]
+                    : [threadId, first, last],
+                "each fallback gets one turn in seating order, without retrying the lead",
+              );
+              assert.equal(after.thread.group?.closedBecause, "settled");
+              if (firstReply === "unavailable") {
+                assert.deepEqual(noticesOf(after), ["removed-model could not start."]);
+              }
+              if (mode === "everyone" && lastReply === "answer") {
+                assert.include(
+                  publishedRows(after).map((row) => row.text),
+                  "Here is the answer.\n@user",
+                );
+              }
             }),
           ).pipe(Effect.provide(harness.layer));
         }),
@@ -953,7 +1114,13 @@ describe("group conversations", () => {
             const holds = yield* Effect.forEach([threadId, steerable, queued], (id) =>
               hold(harness.control, id),
             );
-            yield* say(threadId, "first", "First question");
+            // Only named members run at once, and the primary's reply names the seats to wake them.
+            const members = ["primary", steerable, queued] as const;
+            const seated = (yield* readGroup(threadId))!.seats;
+            yield* script(harness.control, threadId, [
+              `Reply from ${threadId}\n${seated.map((seat) => `@${seat.handle}`).join(" ")}`,
+            ]);
+            yield* say(threadId, "first", "First question", members);
             yield* Effect.forEach(holds, (entry) => Deferred.await(entry.started), {
               discard: true,
             });
@@ -974,7 +1141,7 @@ describe("group conversations", () => {
             const before = (yield* orchestrator.getThreadProjection(steerable)).runs[0]!;
             const firstThrough = before.groupThrough ?? 0;
             assert.isAbove(firstThrough, 0, "the first turn delivered through the question");
-            yield* say(threadId, "second", MARK);
+            yield* say(threadId, "second", MARK, members);
             // The primary and the steerable seat each take a steer. The other seat cannot.
             const steeredThreads = [
               yield* Queue.take(harness.control.steered),
@@ -1040,7 +1207,7 @@ describe("group conversations", () => {
               yield* hold(harness.control, talker, "STREAMEDMARK half a thought\n\n"),
               yield* hold(harness.control, silent),
             ];
-            yield* say(threadId, "go", "Go");
+            yield* say(threadId, "go", "Go", ["primary", talker, silent]);
             yield* Effect.forEach(holds, (entry) => Deferred.await(entry.started), {
               discard: true,
             });
@@ -1105,7 +1272,6 @@ describe("group conversations", () => {
               "nothing starts after Stop",
             );
 
-            yield* script(harness.control, threadId, ["PASS"]);
             yield* script(harness.control, talker, ["PASS"]);
             yield* script(harness.control, silent, ["PASS"]);
             yield* say(threadId, "resume", "RESUMEMARK carry on");
@@ -1144,7 +1310,7 @@ describe("group conversations", () => {
 
             const primaryHold = yield* hold(harness.control, threadId);
             const seatHold = yield* hold(harness.control, seat, "LATEMARK unfinished");
-            yield* say(threadId, "both", "Both of you");
+            yield* say(threadId, "both", "Both of you", ["primary", seat]);
             yield* Deferred.await(primaryHold.started);
             yield* Deferred.await(seatHold.started);
             yield* until(
@@ -1384,7 +1550,9 @@ describe("group conversations", () => {
           assert.deepEqual(yield* counts, stable, "a second sweep changes nothing");
 
           // The reactor published and died before it planned the next wave.
-          yield* say(threadId, "two", "Everyone");
+          const { primary, seats } = (yield* readGroup(threadId))!;
+          yield* script(harness.control, threadId, [`Primary view\n@${seats[0]!.handle}`]);
+          yield* say(threadId, "two", "Both of you", ["primary", seat]);
           yield* seatSettled(2);
           yield* primarySettled;
           yield* worker.drain();
@@ -1394,7 +1562,7 @@ describe("group conversations", () => {
             commandId: CommandId.make(`server:group-publish:${seatRun.id}`),
             threadId,
             status: "completed",
-            text: "Published just before the crash",
+            text: `Published just before the crash\n@${primary.handle}`,
             entry: {
               type: "peer_reply",
               seatThreadId: seat,
@@ -2406,7 +2574,9 @@ describe("group conversations", () => {
               const primaryHold = yield* hold(harness.control, threadId, "long");
               yield* script(harness.control, seat, ["Done here.\n@user", "Second view"]);
               yield* script(harness.control, other, ["First plain", "Second plain"]);
-              yield* say(threadId, "first", "First question");
+              // Seats answer while the primary runs only when the message names them.
+              const members = ["primary", seat, other] as const;
+              yield* say(threadId, "first", "First question", members);
               yield* Deferred.await(primaryHold.started);
               yield* until(
                 orchestrator
@@ -2416,7 +2586,7 @@ describe("group conversations", () => {
               yield* publishedCount(2);
               yield* worker.drain();
               assert.equal((yield* readGroup(threadId))?.closedBecause, "settled");
-              yield* say(threadId, "second", "Second question", undefined, delivery);
+              yield* say(threadId, "second", "Second question", members, delivery);
               const { runs } = yield* orchestrator.getThreadProjection(threadId);
               assert.equal(
                 runs.some((run) => run.status === "queued"),
@@ -2604,8 +2774,8 @@ describe("group conversations", () => {
             });
             assert.equal(
               fresh.discussion?.turnsLeft,
-              2,
-              "no discussion was open, so a fresh budget",
+              3,
+              "no discussion was open, so a fresh budget, and only the primary starts",
             );
             yield* settle(threadId);
             const told = (yield* turnsOf(harness.control, seat))[0]!.text;
@@ -2616,9 +2786,11 @@ describe("group conversations", () => {
             yield* say(threadId, "question", "One question", [seat]);
             yield* Deferred.await(seatHold.started);
             assert.equal((yield* readGroup(threadId))!.discussion!.turnsLeft, 3);
+            const both = [fresh.primary.handle, fresh.seats[0]!.handle];
             const spent = yield* service.discuss({
               threadId,
               text: "AGENTWORDS two",
+              to: both,
               createdBy: "agent",
               creationSource: "mcp",
             });
@@ -2627,6 +2799,7 @@ describe("group conversations", () => {
               .discuss({
                 threadId,
                 text: "AGENTWORDS three",
+                to: both,
                 createdBy: "agent",
                 creationSource: "mcp",
               })
@@ -2669,7 +2842,7 @@ describe("group conversations", () => {
             assert.isTrue(noteOf(turns[1]!.text));
             assert.include(turns[1]!.text, "You are Fable, known here as @fable");
             assert.include(turns[1]!.text, "Astra (@");
-            assert.include(turns[1]!.text, "They got this message too");
+            assert.include(turns[1]!.text, "You answer first");
             assert.include(turns[1]!.text, "`@user` closes the discussion");
             assert.include(turns[1]!.text, "Which design?");
             assert.isAbove(turns.length, 2, "the primary woke for Astra's reply");
@@ -2689,7 +2862,7 @@ describe("group conversations", () => {
             yield* settle(threadId);
             const direct = (yield* turnsOf(harness.control, threadId)).at(-1)!.text;
             assert.isTrue(noteOf(direct));
-            assert.notInclude(direct, "got this message too");
+            assert.notInclude(direct, "You answer first");
           }),
         ).pipe(Effect.provide(harness.layer));
       }),

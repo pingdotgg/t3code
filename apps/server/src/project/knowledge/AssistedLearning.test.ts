@@ -41,6 +41,9 @@ import * as ProjectKnowledge from "./ProjectKnowledge.ts";
 const isTextGenerationError = Schema.is(TextGenerationError);
 
 type Generate = TextGeneration.TextGeneration["Service"]["generateKnowledgeCandidates"];
+type Check = TextGeneration.TextGeneration["Service"]["checkFactStanding"];
+const allStanding: Check = (input) =>
+  Effect.succeed({ verdicts: input.statements.map(() => "standing" as const) });
 
 const projectId = ProjectId.make("learning");
 const threadId = ThreadId.make("learning-thread");
@@ -51,10 +54,17 @@ const at = DateTime.makeUnsafe(Date.UTC(2026, 9, 1));
 const makeLayer = (
   generate: Generate,
   settings: Parameters<typeof ServerSettings.layerTest>[0] = {},
+  check: Check = allStanding,
+  canCheck = true,
 ) =>
   AssistedLearning.layerRunner.pipe(
     Layer.provide(
-      Layer.mock(TextGeneration.TextGeneration)({ generateKnowledgeCandidates: generate }),
+      Layer.mock(TextGeneration.TextGeneration)({
+        generateKnowledgeCandidates: generate,
+        checkFactStanding: check,
+        supportsOperation: (operation) =>
+          Effect.succeed(operation !== "checkFactStanding" || canCheck),
+      }),
     ),
     Layer.provideMerge(ProjectKnowledge.layer.pipe(Layer.provide(HolographicMemory.layer))),
     Layer.provideMerge(
@@ -316,6 +326,117 @@ it.effect("saves a settled run's cited facts exactly once, recallable without re
   }).pipe(Effect.provide(makeLayer(model.generate)));
 });
 
+it.effect("stores what the blind check set aside without making it recallable", () => {
+  const scopeLimit = {
+    kind: "constraint" as const,
+    content: "Keep this change limited to the API handlers.",
+    entities: [],
+    citations: ["M1"],
+  };
+  const model = scripted([{ candidates: [snakeCase, scopeLimit] }]);
+  const checks: Array<Parameters<Check>[0]> = [];
+  const check: Check = (input) => {
+    checks.push(input);
+    return Effect.succeed({ verdicts: ["standing", "task"] });
+  };
+  return Effect.gen(function* () {
+    yield* seedRun;
+    const runner = yield* AssistedLearningRunner;
+    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+    yield* runner.extractRun({ threadId, runId, runOutcome: "completed" });
+    // Only the statements reach the check, from outside the project's workspace.
+    assert.equal(checks.length, 1);
+    assert.deepEqual(checks[0]!.statements, [
+      { kind: snakeCase.kind, content: snakeCase.content },
+      { kind: scopeLimit.kind, content: scopeLimit.content },
+    ]);
+    assert.notEqual(checks[0]!.cwd, `/work/${projectId}`);
+    const saved = (yield* knowledge.list({ projectId, status: "saved" })).facts;
+    assert.deepEqual(
+      saved.map((fact) => [fact.content, fact.verdict?.value, fact.verdict?.by]).toSorted(),
+      [
+        [snakeCase.content, "standing", "check"],
+        [scopeLimit.content, "task", "check"],
+      ],
+    );
+    assert.deepEqual(
+      (yield* knowledge.list({ projectId, verdict: "set_aside" })).facts.map(
+        (fact) => fact.content,
+      ),
+      [scopeLimit.content],
+    );
+    const lastRun = (yield* knowledge.status({ projectId })).assistedLearning?.lastRun;
+    assert.deepEqual([lastRun?.saved, lastRun?.reason], [1, "1 set aside: 1 task note."]);
+  }).pipe(Effect.provide(makeLayer(model.generate, {}, check)));
+});
+
+it.effect("saves nothing when the check fails, and retries the batch before giving up", () => {
+  const model = scripted([{ candidates: [snakeCase] }]);
+  let checks = 0;
+  const check: Check = () => {
+    checks += 1;
+    return Effect.fail(
+      new TextGenerationError({ operation: "checkFactStanding", detail: "Rate limited." }),
+    );
+  };
+  return Effect.gen(function* () {
+    yield* seedRun;
+    yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.add(at, { minutes: 10 })));
+    const runner = yield* AssistedLearningRunner;
+    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+    const sql = yield* SqlClient.SqlClient;
+    yield* runner.enqueueRun({ threadId, runId, runOutcome: "completed" });
+    yield* TestClock.adjust("30 minutes");
+    yield* runner.drainDue;
+    yield* runner.drainDue;
+    assert.deepEqual([model.calls.length, checks], [1, 1]);
+    assert.equal((yield* knowledge.status({ projectId })).assistedLearning?.lastRun, null);
+    assert.equal((yield* sql`SELECT * FROM project_knowledge_learning_queue`).length, 1);
+    yield* TestClock.adjust("30 minutes");
+    yield* runner.drainDue;
+    yield* TestClock.adjust("30 minutes");
+    yield* runner.drainDue;
+    assert.deepEqual([model.calls.length, checks], [3, 3]);
+    const lastRun = (yield* knowledge.status({ projectId })).assistedLearning?.lastRun;
+    assert.deepEqual(
+      [lastRun?.result, lastRun?.reason],
+      ["failed", "Standing check failed: Rate limited."],
+    );
+    assert.deepEqual(yield* sql`SELECT * FROM project_knowledge_learning_queue`, []);
+    assert.deepEqual((yield* knowledge.list({ projectId, status: "saved" })).facts, []);
+  }).pipe(Effect.provide(makeLayer(model.generate, {}, check)));
+});
+
+it.effect("skips a batch with no model call when the provider cannot run the check", () => {
+  const model = scripted([{ candidates: [snakeCase] }]);
+  let checks = 0;
+  const check: Check = (input) => {
+    checks += 1;
+    return allStanding(input);
+  };
+  return Effect.gen(function* () {
+    yield* seedRun;
+    yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.add(at, { minutes: 10 })));
+    const runner = yield* AssistedLearningRunner;
+    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+    const sql = yield* SqlClient.SqlClient;
+    yield* runner.enqueueRun({ threadId, runId, runOutcome: "completed" });
+    yield* TestClock.adjust("30 minutes");
+    yield* runner.drainDue;
+    assert.deepEqual([model.calls.length, checks], [0, 0]);
+    const lastRun = (yield* knowledge.status({ projectId })).assistedLearning?.lastRun;
+    assert.deepEqual(
+      [lastRun?.result, lastRun?.reason],
+      [
+        "skipped",
+        "The text generation model's provider can't check memories. Choose another model in Settings → Threads → Text generation.",
+      ],
+    );
+    // Finished on the first attempt: nothing waits in the queue for a retry.
+    assert.deepEqual(yield* sql`SELECT * FROM project_knowledge_learning_queue`, []);
+  }).pipe(Effect.provide(makeLayer(model.generate, {}, check, false)));
+});
+
 /** Marks a message as a peer's reply, as a group conversation's published turn item does. */
 const speakAsPeer = (input: {
   readonly threadId: ThreadId;
@@ -565,6 +686,7 @@ it.effect(
         const result = yield* knowledge.saveAutomatic(
           { ...create(`crowded-auto-${index}`, content), sources: facts[0]!.sources },
           { kind: "assisted", threadId, runId, runOutcome: "completed" },
+          "standing",
         );
         assert.equal(result.outcome, "duplicate");
       }
@@ -604,6 +726,7 @@ it.effect(
             .saveAutomatic(
               { ...create(`negation-${index}`, content), sources: facts[0]!.sources },
               { kind: "assisted", threadId, runId, runOutcome: "completed" },
+              "standing",
             )
             .pipe(Effect.map((result) => result.outcome)),
       );

@@ -249,6 +249,11 @@ function selectOpenCodeRuntimeTextGeneration(
         v1: v1.generateTranscriptionPostProcessing(input),
         v2: v2.generateTranscriptionPostProcessing(input),
       }),
+    checkFactStanding: (input) =>
+      byOpenCodeRuntime(resolve, {
+        v1: v1.checkFactStanding(input),
+        v2: v2.checkFactStanding(input),
+      }),
   };
 }
 

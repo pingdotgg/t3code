@@ -122,6 +122,10 @@ describe("summaryToolText", () => {
   });
 
   it("preserves ordinary data fields, resource text, code, numbers, and attachment references", () => {
+    const wrappedText = Buffer.from("😀€".repeat(4_000))
+      .toString("base64")
+      .match(/.{1,4096}/g)!
+      .join("\n");
     const output = {
       data: "ordinary data",
       declaration: "const metadata:Value, input:unknown;",
@@ -132,6 +136,7 @@ describe("summaryToolText", () => {
       imageFixture: 'await expect(load("data:image/png;base64,AAAA")).rejects.toThrow();',
       contents: { "scripts/check.py": { base64: encodedScript } },
       patchMessage: `Apply this patch:\n${encodedPatch}\nthen run tests.`,
+      wrappedText,
       jsonData: { mimeType: "application/json", data: { answer: 42 } },
       jsonRows: { mimeType: "application/json", data: [1, 2, 3] },
       textFile: { type: "file", mimeType: "text/plain", data: "Keep port 8421." },

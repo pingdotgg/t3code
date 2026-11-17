@@ -25,6 +25,9 @@ import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   type ChatAttachment,
   CommandId,
+  COMPOSER_CONTEXT_MAX_RECORDS,
+  COMPOSER_CONTEXT_MAX_SERIALIZED_CHARS,
+  ComposerContextRecord,
   type GuestMessageId,
   isCompactionCommandMessage,
   isOrchestrationV2PublicationRun,
@@ -80,6 +83,11 @@ import {
   TrimmedNonEmptyString,
   managedRuntimeModeCeilingMessage,
 } from "@t3tools/contracts";
+import {
+  collectComposerContextReferences,
+  projectComposerContextForProvider,
+  replaceComposerContextReferences,
+} from "@t3tools/shared/composerContextReferences";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { modelSwitchSince } from "./modelSwitch.ts";
@@ -6358,10 +6366,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       readonly model: string | null;
       readonly text: string;
     }> = [...unseen];
+    // A message to everyone reaches a seat with the primary's reply, so its attachments come then.
+    const addressedId =
+      command.messageId ?? unseen.findLast((entry) => entry.speaker === "user")?.messageId;
     const addressed =
-      command.messageId === undefined
+      addressedId == null
         ? undefined
-        : parent.messages.find((message) => message.id === command.messageId);
+        : parent.messages.find((message) => message.id === addressedId);
     if (
       addressed !== undefined &&
       !handed.has(seatMessageId(addressed.id)) &&
@@ -6374,6 +6385,67 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     if (delta.length === 0) return undefined;
+    // The lead may receive several user messages before a seat first wakes.
+    const sourceMessageIds = new Set(
+      unseen.filter((entry) => entry.speaker === "user").map((entry) => entry.messageId),
+    );
+    if (addressed !== undefined && !handed.has(seatMessageId(addressed.id))) {
+      sourceMessageIds.add(addressed.id);
+    }
+    const sourceMessages = parent.messages.filter((message) => sourceMessageIds.has(message.id));
+    const attachments = Array.from(
+      new Map(
+        sourceMessages.flatMap((message) =>
+          message.attachments.map((attachment) => [attachment.id, attachment] as const),
+        ),
+      ).values(),
+    );
+    const referenced = new Set(
+      delta.flatMap((entry) =>
+        collectComposerContextReferences(entry.text).map((ref) => ref.contextId),
+      ),
+    );
+    const records: ComposerContextRecord[] = [];
+    const seen = new Set<string>();
+    const omitted = new Set<string>();
+    const encodeRecord = Schema.encodeEffect(Schema.fromJsonString(ComposerContextRecord));
+    let serializedChars = 2; // The enclosing JSON array.
+    // Each source fits separately; their union may not. Keep the newest context within both limits.
+    for (const record of sourceMessages
+      .flatMap((message) => message.context?.records ?? [])
+      .toReversed()) {
+      if (seen.has(record.contextId) || !referenced.has(record.contextId)) continue;
+      seen.add(record.contextId);
+      if (records.length === COMPOSER_CONTEXT_MAX_RECORDS) {
+        omitted.add(record.contextId);
+        continue;
+      }
+      const chars =
+        (yield* encodeRecord(record).pipe(mapDispatchError(command))).length +
+        (records.length === 0 ? 0 : 1);
+      if (serializedChars + chars > COMPOSER_CONTEXT_MAX_SERIALIZED_CHARS) {
+        omitted.add(record.contextId);
+        continue;
+      }
+      records.push(record);
+      serializedChars += chars;
+    }
+    const context =
+      records.length === 0 && addressed?.context === undefined
+        ? undefined
+        : { ...addressed?.context, version: 1 as const, records: records.reverse() };
+    const deliveredDelta =
+      omitted.size === 0
+        ? delta
+        : delta.map((entry) => ({
+            ...entry,
+            // Omitted knowledge links must not reach late resolution as stale raw references.
+            text: replaceComposerContextReferences(entry.text, (ref) =>
+              omitted.has(ref.contextId)
+                ? projectComposerContextForProvider({ text: ref.source, records: [] })
+                : ref.source,
+            ),
+          }));
     const through = Math.max(delivered ?? 0, settledThrough);
     const reaction = command.messageId === undefined;
     const others = participants.filter((person) => person.handle !== seat.handle);
@@ -6424,10 +6496,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         messageId: seatMessageId(command.messageId ?? `wave:${through}`),
         text:
           delivered === undefined
-            ? renderSeatFirstPrompt({ self: seat, others, delta, reaction })
-            : renderSeatTurnPrompt({ delta, reaction }),
-        attachments: addressed?.attachments ?? [],
-        ...(addressed?.context === undefined ? {} : { context: addressed.context }),
+            ? renderSeatFirstPrompt({ self: seat, others, delta: deliveredDelta, reaction })
+            : renderSeatTurnPrompt({ delta: deliveredDelta, reaction }),
+        attachments,
+        ...(context === undefined ? {} : { context }),
         dispatchMode: { type: "queue_after_active" },
         deliveryIntent: "auto",
         createdBy: "agent",

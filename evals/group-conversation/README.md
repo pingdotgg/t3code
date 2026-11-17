@@ -15,7 +15,7 @@ Missing pairings, errors, truncated answers, or fewer trials make the decision i
 
 ## Status
 
-No real model has run these cases yet, so the rule above has not been applied and `GROUP_PARALLEL = true` is only a default. The routing cases in `mcp-tool-use/cases/group-conversation.ndjson` have not run either. `primary-first-reply` has no failing baseline. Replace this section when a run lands.
+Behavior cases ran on 2026-11-16 with `morph-kimik31` and judge `morph-kimik3`, three samples each. On the earlier prompts `seat-adds-nothing-to-complete-answer` failed 0/3, with seats agreeing with and restating the primary's answer. On the current prompts it passes 2/3, and `seat-corrects-lead` and `lead-folds-in-correction` pass 3/3. The edit cases fail on that model because it writes absolute paths such as `/home/user/app/notes.txt`, which the simulated file store rejects; `ordinary-edit` uses no group text and fails the same way. The design comparison has not run, so the rule above has not been applied and `GROUP_PARALLEL = true` is only a default. The routing cases in `mcp-tool-use/cases/group-conversation.ndjson` have not run either. `primary-first-reply` has no failing baseline.
 
 ## Judge criteria
 
@@ -47,7 +47,7 @@ Start with one case and one sample, inspect all requests and outputs, then run t
 
 ## What the comparison simulates
 
-The code at the starting commit sends the initial user message to **both** members regardless of `GROUP_PARALLEL`. Only subsequent `planWave` calls use the flag. Both arms therefore start with independent replies. The serial arm then allows one reaction at a time. This differs from a fully serial conversation that exposes the first reply to the second initial speaker. Such a conversation would require another server change and is outside this comparison.
+A message to everyone starts only the primary. The seat's first turn is a reaction to the primary's reply, so both arms share that first hop, and `GROUP_PARALLEL` only decides whether several woken members react at once. With one seat the arms schedule identically; the flag matters only in larger groups.
 
 The runner imports production policy and prompts. To exercise the other arm it loads `GroupConversation.ts` in memory with only the exported flag changed. No second scheduler is maintained. The production audience and budget helpers initialize both arms. Each wave reads one transcript snapshot, consumes its invocation budget, and advances each member's delivered cursor. Real `PASS`, final-line addressing, early close, and plain replies determine who wakes. Primary reactions use real public-history rendering and `renderPrimaryWakePrompt`. Seat turns use the real digest and `renderSeatFirstPrompt` or `renderSeatTurnPrompt`. Model order alternates with sample number, identically for both arms. Arm execution order also alternates. Requests preserve each member's private conversation.
 

@@ -134,6 +134,7 @@ export function ProjectKnowledgeEntry(props: Scope) {
       // Older servers lack readFact, status and supersede.
       history={config.environment.capabilities.projectKnowledgeHistory === true}
       assisted={config.environment.capabilities.projectKnowledgeAssistedLearning === true}
+      standingCheck={config.environment.capabilities.projectKnowledgeStandingCheck === true}
       seedMessage={open.seed}
       onClose={() => setOpen(null)}
     />
@@ -144,6 +145,7 @@ function ProjectKnowledgeSheet(
   props: Scope & {
     readonly history: boolean;
     readonly assisted: boolean;
+    readonly standingCheck: boolean;
     readonly seedMessage: MessageCitation | null;
     readonly onClose: () => void;
   },
@@ -460,6 +462,7 @@ function ProjectKnowledgeSheet(
               projectId={props.projectId}
               browse={browse}
               assisted={props.assisted}
+              standingCheck={props.standingCheck}
               canMutate={canMutate}
               busy={busy}
               selectionState={selectionState}

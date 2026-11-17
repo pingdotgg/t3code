@@ -302,7 +302,7 @@ export const ComposerContextRecord = Schema.Union([
 export type ComposerContextRecord = typeof ComposerContextRecord.Type;
 
 export const COMPOSER_CONTEXT_MAX_RECORDS = 200;
-const COMPOSER_CONTEXT_MAX_SERIALIZED_CHARS = 16_000_000;
+export const COMPOSER_CONTEXT_MAX_SERIALIZED_CHARS = 16_000_000;
 
 /**
  * Marks a user message as a guest's, sent by the owner. The message `text` keeps the attributed

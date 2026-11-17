@@ -30,6 +30,7 @@ const OPERATION_LABELS: Record<TextGenerationOperation, string> = {
   generateKnowledgeCandidates: "project knowledge",
   generateConversationSummary: "conversation summaries",
   generateModelEvaluation: "model evaluations",
+  checkFactStanding: "project knowledge checks",
 };
 
 export function useScopedModelDisabledReason(
