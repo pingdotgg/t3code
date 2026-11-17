@@ -73,6 +73,12 @@ export const threadNotFound = Effect.fn("OrchestratorMcpService.threadNotFound")
       break;
     }
   }
+  if (suggested !== null && hasThreadLinks(threadId)) {
+    return yield* new OrchestratorMcpFailure({
+      code: "thread_not_found",
+      message: `\`${threadId}\` is a thread link, not a thread id. Pass \`${suggested}\` instead.`,
+    });
+  }
   const mcpHint = suggested === null ? "" : ` Did you mean \`${suggested}\`?`;
   const caller =
     scope.thread === undefined

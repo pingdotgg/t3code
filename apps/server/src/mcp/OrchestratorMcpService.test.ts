@@ -4652,6 +4652,8 @@ describe("OrchestratorMcpService thread lookup", () => {
             .pipe(Effect.flip);
           assert.equal(read.code, "thread_not_found");
           assert.include(read.message, `\`${delegated.id}\``);
+          assert.include(read.message, "is a thread link");
+          assert.notInclude(read.message, "no longer available");
         }
       }).pipe(Effect.provide(service([delegated], sent)));
     }),
