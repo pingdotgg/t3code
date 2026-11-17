@@ -289,6 +289,31 @@ export function AppearanceSettingsPanel() {
             </div>
           }
         />
+        <SettingsRow
+          {...searchableSetting("thread-minimap")}
+          description="Show the strip of message marks beside the chat for jumping through a thread."
+          resetAction={
+            settings.timelineMinimapEnabled !== DEFAULT_UNIFIED_SETTINGS.timelineMinimapEnabled ? (
+              <SettingResetButton
+                label="thread minimap"
+                onClick={() =>
+                  updateSettings({
+                    timelineMinimapEnabled: DEFAULT_UNIFIED_SETTINGS.timelineMinimapEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.timelineMinimapEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ timelineMinimapEnabled: Boolean(checked) })
+              }
+              aria-label="Show thread minimap"
+            />
+          }
+        />
         <ThreadDetailsItemsRow />
         <SettingsRow
           {...searchableSetting("effort-display")}
