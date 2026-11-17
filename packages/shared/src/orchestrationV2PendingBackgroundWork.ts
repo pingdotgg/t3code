@@ -115,7 +115,7 @@ export const isPullRequestWatchTask = (task: Pick<PendingBackgroundWorkTask, "ta
 
 /**
  * A monitor wakes the agent once per line, so a progress wake run's completion waits for the
- * monitor to end. A pull request watch wakes only on news and holds while its checks run.
+ * monitor to end. A pull request watch holds while checks run or its opted-in approval is pending.
  */
 export function monitorHoldsWakeCompletion(
   thread: Pick<OrchestrationV2ThreadShell, "latestRunBackgroundWake" | "pendingBackgroundTasks">,
@@ -134,7 +134,10 @@ type PendingBackgroundWorkPullRequest = Pick<
   ThreadPullRequestLink,
   "host" | "repository" | "number" | "url" | "source" | "watch"
 > & {
-  readonly snapshot: Pick<NonNullable<ThreadPullRequestLink["snapshot"]>, "state"> | null;
+  readonly snapshot: Pick<
+    NonNullable<ThreadPullRequestLink["snapshot"]>,
+    "state" | "reviewDecision"
+  > | null;
 };
 
 type PendingBackgroundWorkProviderThread = Pick<
@@ -326,8 +329,10 @@ function pullRequestWatchTasks(
             taskId: `${PULL_REQUEST_WATCH_TASK_ID}${link.host.toLowerCase()}/${link.repository.toLowerCase()}#${link.number}`,
             description: `Watching pull request #${link.number}`,
             kind: "monitor" as const,
-            // Once every check finished, a person moves the PR next: the watch stays on but holds nothing.
-            ...(link.watch.checksPending === false ? {} : { awaited: true as const }),
+            ...(link.watch.checksPending !== false ||
+            (link.watch.waitForApproval === true && link.snapshot?.reviewDecision !== "approved")
+              ? { awaited: true as const }
+              : {}),
           },
         ],
   );

@@ -204,6 +204,7 @@ export const WatchPullRequestResult = Schema.Struct({
   ...PullRequestIdentity,
   watching: Schema.Boolean,
   wasWatching: Schema.Boolean,
+  waitForApproval: Schema.optional(Schema.Boolean),
 });
 export type WatchPullRequestResult = typeof WatchPullRequestResult.Type;
 
@@ -211,6 +212,7 @@ export const ThreadPullRequestEntry = Schema.Struct({
   ...PullRequestIdentity,
   source: ThreadPullRequestLinkSource,
   watching: Schema.Boolean,
+  waitForApproval: Schema.optional(Schema.Boolean),
   state: Schema.NullOr(PullRequestState),
   title: Schema.NullOr(Schema.String),
   headBranch: Schema.NullOr(Schema.String),
@@ -327,7 +329,15 @@ const ListThreadPullRequestsTool = Tool.make("list_thread_pull_requests", {
 const WatchPullRequestTool = Tool.make("watch_pull_request", {
   description:
     "Watch an open PR for this thread, linking it first if needed. T3 wakes you on failed checks, passed required checks, new comments or reviews, or conflicts. Handle old comments first. Only later ones wake you. After this call, end your turn. The watch stays on after each wake, so do not call this again on a wake. A wake is not a merge decision. Check readiness yourself.",
-  parameters: PullRequestTargetInput,
+  parameters: Schema.Struct({
+    ...PullRequestTargetInput.fields,
+    waitForApproval: Schema.optional(
+      Schema.Boolean.annotate({
+        description:
+          "Use true when asked to wait for PR approval: keep this thread Waiting until checks finish and the host reports approved, including bot approvals. No approval yet keeps waiting. Default false for a new watch; omit to preserve an existing watch's setting. false clears the approval wait without stopping the watch.",
+      }),
+    ),
+  }),
   success: WatchPullRequestResult,
   failure: PullRequestToolError,
   dependencies: watchDependencies,

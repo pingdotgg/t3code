@@ -400,6 +400,12 @@ up to a person. That includes a workflow waiting for a maintainer to approve it,
 once someone does. The watch stays on and still wakes the agent on new comments, failed checks or
 conflicts, and a watched thread never auto-settles.
 
+Ask the agent to wait for PR approval to also keep the thread **Waiting** until the host reports
+an approved review and checks finish. This is opt-in, including for bot approvals where repository
+rules don't require a review. Approval releases the waiting state without ending the watch. If the
+host never reports approval, the thread keeps waiting; ask the agent to cancel the approval wait,
+or stop watching yourself.
+
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked
 out from the matching organization and repository.
 

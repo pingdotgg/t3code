@@ -122,10 +122,15 @@ describe("evaluatePullRequestWatch", () => {
 
   it.each([false, true])("baselines already-passed checks (required: %s)", (required) => {
     const green = detail({ checks: [{ ...check("test", "success"), required }] });
-    const baseline = evaluatePullRequestWatch(watch({ awaitingBaseline: "all" }), green, noRemarks);
+    const baseline = evaluatePullRequestWatch(
+      watch({ awaitingBaseline: "all", waitForApproval: true }),
+      green,
+      noRemarks,
+    );
     assert.deepEqual(baseline.changes, []);
     assert.equal(baseline.next.headSha, green.headSha);
     assert.isTrue(baseline.next.passed);
+    assert.isTrue(baseline.next.waitForApproval);
     assert.deepEqual(baseline.next.passedChecks, ["test"]);
     assert.isFalse(baseline.exhausted);
     assert.deepEqual(evaluatePullRequestWatch(baseline.next, green, noRemarks).changes, []);

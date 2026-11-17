@@ -4134,6 +4134,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         threadId,
         ...key,
         watching: true,
+        waitForApproval: true,
         link: { url, source: "agent" },
       });
       assert.equal(
@@ -4143,6 +4144,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const started = yield* watchOf;
       assert.isDefined(started);
       if (started === undefined) return;
+      assert.isTrue(started.waitForApproval);
 
       yield* orchestrator.dispatch({
         type: "thread.metadata.update",
@@ -4151,6 +4153,24 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         linkedPullRequest: { projectId: ProjectId.make("pr-watch-project"), ...key, url },
       });
       assert.deepEqual(yield* watchOf, started);
+
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-repeat"),
+        threadId,
+        ...key,
+        watching: true,
+      });
+      assert.deepEqual(yield* watchOf, started);
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-disable-approval-wait"),
+        threadId,
+        ...key,
+        watching: true,
+        waitForApproval: false,
+      });
+      assert.deepEqual(yield* watchOf, { ...started, waitForApproval: false });
 
       const recorded = { ...started, headSha: "abc123", failedChecks: ["lint"], wakes: 1 };
       yield* orchestrator.dispatch({
@@ -4161,9 +4181,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         startedAt: started.startedAt,
         watch: recorded,
       });
-      assert.deepEqual(yield* watchOf, recorded);
+      const expected = { ...recorded, waitForApproval: false };
+      assert.deepEqual(yield* watchOf, expected);
       assert.isTrue((yield* maintenance.rebuild).valid);
-      assert.deepEqual(yield* watchOf, recorded);
+      assert.deepEqual(yield* watchOf, expected);
 
       yield* orchestrator.dispatch({
         type: "thread.pull-request.watch",

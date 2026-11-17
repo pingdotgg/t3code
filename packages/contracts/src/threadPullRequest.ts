@@ -82,6 +82,8 @@ export type ThreadPullRequestKey = typeof ThreadPullRequestKey.Type;
 
 export const ThreadPullRequestWatch = Schema.Struct({
   startedAt: IsoDateTime,
+  /** Opt-in completion hold until the host reports approval, even after checks finish. */
+  waitForApproval: Schema.optional(Schema.Boolean),
   headSha: Schema.NullOr(TrimmedNonEmptyString),
   failedChecks: Schema.Array(TrimmedNonEmptyString),
   passed: Schema.Boolean,
@@ -114,8 +116,8 @@ export const ThreadPullRequestWatch = Schema.Struct({
    */
   checksAwaitedSince: Schema.optional(Schema.NullOr(IsoDateTime)),
   /**
-   * Whether the host was still running checks on the head at the last read. Only then does the
-   * watch keep its thread waiting; absent on watches not read since it existed.
+   * Whether the host was still running checks on the head at the last read;
+   * absent on watches not read since it existed.
    */
   checksPending: Schema.optional(Schema.Boolean),
 });

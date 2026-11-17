@@ -6,7 +6,7 @@ tags: [upstream, fork, integration]
 status: stable
 generated:
   by: opencode/gpt-6.1-sol
-  at: 2026-11-16T18:15:36+00:00
+  at: 2026-11-17T02:15:40+00:00
 verified:
   - by: opencode/gpt-6.1-sol
     at: 2026-11-16T18:15:36+00:00
@@ -408,6 +408,9 @@ sources:
   - id: open-in-default-app
     resource: ../apps/web/src/components/chat/OpenInPicker.tsx
     title: Open-in picker item that opens a file with the host's default app
+  - id: pr-watch-review-hold
+    resource: ../packages/shared/src/orchestrationV2PendingBackgroundWork.ts
+    title: Opt-in PR approval hold alongside upstream's checks-only waiting
 ---
 
 # Upstream integration
@@ -1153,6 +1156,18 @@ and never becomes the favorite editor, so the contracts and server stay
 unchanged. Keep the item when integrating upstream picker
 changes.[^open-in-default-app]
 
+## Opt-in pull request approval waits
+
+Upstream (`36254ab82`) stops a watched pull request from holding its thread
+once every check finishes, even while review is pending, so forgotten watches
+cannot keep completed work in Working indefinitely.
+[PR #83](https://github.com/NicholasZolton/t3code/pull/83) preserves that default
+and adds an optional `waitForApproval` setting. An opted-in watch holds until
+checks finish and the host reports `approved`, including bot approvals without
+mandatory-review rules. Approval releases the hold without ending the watch.
+Keep the opt-in separate from the default checks-only policy when integrating
+upstream watch changes.[^pr-watch-review-hold]
+
 ## Rechecking the boundary
 
 After fetching `origin main` and `upstream main`, use ancestry to identify the
@@ -1266,6 +1281,8 @@ git log --reverse --oneline origin/main..upstream/main
 [^sidebar-all-projects-search]: The sidebar project filter's search ranking, which keeps the "All projects" row searchable.
 
 [^open-in-default-app]: The Open-in picker's "Default app" item and its local-exec, file-only gate.
+
+[^pr-watch-review-hold]: The watch option and shared completion hold derived from the PR snapshot.
 
 [^reviewed-fork-main]: Exact fork main revision fetched for this review.
 
