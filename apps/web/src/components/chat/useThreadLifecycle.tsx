@@ -665,7 +665,9 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       if (
         !activeThreadShell ||
         !activeThreadRef ||
-        document.querySelector('[role="dialog"]:not([data-closed])')
+        document.querySelector(
+          '[role="dialog"]:not([data-closed]), [role="alertdialog"]:not([data-closed])',
+        )
       )
         return false;
       if (!event.repeat) markThreadUnread(activeThreadRef);

@@ -581,6 +581,47 @@ it("a mounted thread view lets go of the thread structures it has replaced", asy
   expect(kept).toEqual([]);
 });
 
+it("thread title shortcuts ignore closed dialogs but stop for open dialogs and confirmations", async () => {
+  const thread = threadWithHistory("thread-title-dialog-guard", 1);
+  using _environment = installFakeEnvironment([thread], {
+    keybindings: mergeWithDefaultKeybindings(
+      compileResolvedKeybindingsConfig([{ key: "ctrl+shift+r", command: "thread.rename" }]),
+    ),
+  });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using screen = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  using overlays = new DisposableStack();
+  const dialog = document.createElement("div");
+  document.body.append(dialog);
+  overlays.defer(() => dialog.remove());
+  const composer = screen.getByTestId("composer-editor");
+  const title = screen.getByRole("textbox", { name: "Thread title", exact: true });
+  for (const role of ["alertdialog", "dialog"]) {
+    dialog.setAttribute("role", role);
+    dialog.removeAttribute("data-closed");
+    await composer.click();
+    await userEvent.keyboard("{Control>}{Shift>}r{/Shift}{/Control}");
+    expect(document.querySelector('input[aria-label="Thread title"]')).toBeNull();
+
+    dialog.setAttribute("data-closed", "");
+    await userEvent.keyboard("{Control>}{Shift>}r{/Shift}{/Control}");
+    await expect.element(title).toBeVisible();
+    await title.click();
+    await userEvent.keyboard("{Escape}");
+    await expect.element(title).not.toBeInTheDocument();
+  }
+});
+
 it("a shortcut conditioned on rightPanelOpen sees the thread's open right panel", async () => {
   await page.viewport(1280, 800);
   const thread = threadWithHistory("thread-panel-shortcut", 1);

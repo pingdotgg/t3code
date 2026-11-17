@@ -2769,7 +2769,9 @@ export default function ChatView(props: ChatViewProps) {
           !isServerThread ||
           !activeThreadId ||
           !canOperateThread ||
-          document.querySelector('[role="dialog"]:not([data-closed])')
+          document.querySelector(
+            '[role="dialog"]:not([data-closed]), [role="alertdialog"]:not([data-closed])',
+          )
         )
           return false;
         if (event.repeat) return;
@@ -2785,7 +2787,9 @@ export default function ChatView(props: ChatViewProps) {
           !isServerThread ||
           !activeThreadId ||
           !canOperateThread ||
-          document.querySelector('[role="dialog"]:not([data-closed])')
+          document.querySelector(
+            '[role="dialog"]:not([data-closed]), [role="alertdialog"]:not([data-closed])',
+          )
         )
           return false;
         if (event.repeat || activeThreadShell?.titleRegeneration != null) return;
