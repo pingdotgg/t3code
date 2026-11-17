@@ -57,6 +57,7 @@ import {
 export type { NewProjectScriptInput, ProjectScriptActionResult };
 
 const NO_FILE_SCRIPTS: ReadonlyArray<T3ProjectFileScript> = [];
+const SCRIPT_ACTIONS_MAX_ROWS = 10;
 
 interface ProjectScriptsControlProps {
   displayMode?: "toolbar" | "panel";
@@ -91,8 +92,8 @@ export default function ProjectScriptsControl({
   const isPanel = displayMode === "panel";
   const scriptMenuHeightClass =
     presentation === "menu"
-      ? "[&>div]:max-h-[25.5rem]"
-      : "[&>div]:max-h-[20.5rem] sm:[&>div]:max-h-[18rem]";
+      ? "[&>div]:max-h-[min(var(--available-height,100dvh),25.5rem)]"
+      : "[&>div]:max-h-[min(var(--available-height,100dvh),20.5rem)] sm:[&>div]:max-h-[min(var(--available-height,100dvh),18rem)]";
   const ActionGroup = isPanel ? "div" : Group;
   const panelAnchorRef = React.useRef<HTMLDivElement | null>(null);
   const keybindings =
@@ -281,7 +282,14 @@ export default function ProjectScriptsControl({
         </>
       ) : isPanel && (scripts.length > 0 || importableScripts.length > 0) ? (
         <>
-          <div className="flex max-h-[20rem] flex-col overflow-y-auto overscroll-contain">
+          <div
+            data-thread-details-script-list=""
+            className={cn(
+              "flex flex-col",
+              scripts.length + importableScripts.length > SCRIPT_ACTIONS_MAX_ROWS &&
+                "max-h-[20rem] overflow-y-auto",
+            )}
+          >
             {scripts.map((script) => {
               const shortcutLabel = shortcutLabelForCommand(
                 keybindings,
@@ -320,22 +328,22 @@ export default function ProjectScriptsControl({
                 </div>
               );
             })}
+            {importableScripts.map((fileScript) => (
+              <ThreadDetailsControl
+                key={`${fileScript.name} ${fileScript.command}`}
+                size="sm"
+                variant="ghost"
+                part="row"
+                panel
+                onClick={() => void importFileScript(fileScript)}
+              >
+                <DownloadIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+                <span className={cn("min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+                  Import {fileScript.name}
+                </span>
+              </ThreadDetailsControl>
+            ))}
           </div>
-          {importableScripts.map((fileScript) => (
-            <ThreadDetailsControl
-              key={`${fileScript.name} ${fileScript.command}`}
-              size="sm"
-              variant="ghost"
-              part="row"
-              panel
-              onClick={() => void importFileScript(fileScript)}
-            >
-              <DownloadIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
-              <span className={cn("min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
-                Import {fileScript.name}
-              </span>
-            </ThreadDetailsControl>
-          ))}
           <ThreadDetailsControl size="sm" variant="ghost" part="row" panel onClick={openAddDialog}>
             <PlusIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
             <span className={cn("min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
