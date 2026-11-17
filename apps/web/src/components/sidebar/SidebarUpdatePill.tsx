@@ -95,8 +95,8 @@ function resolveSidebarUpdatePresentation({
   readonly isCheckIconLatched: boolean;
 }) {
   const showUpdateDetails = action !== "none" || showsEverything || run !== null || isDownloading;
-  // The latch only finishes a spin; it must not hide an update the check just found.
-  const showCheckIcon = isChecking || (isCheckIconLatched && !showUpdateDetails);
+  // A provider check or the spin latch must not hide an update the app check just found.
+  const showCheckIcon = !showUpdateDetails && (isChecking || isCheckIconLatched);
   const iconStatus: DesktopUpdateStatusIconState = showCheckIcon
     ? "checking"
     : isDownloading
@@ -284,13 +284,11 @@ function DesktopUpdateControl({
         : (idleTooltip?.title ?? "Check for updates");
   // Only the real status disables; the spin latch releases on an animation event that a
   // paused (hidden or off-screen) animation never fires.
-  const disabled = isChecking
-    ? true
-    : runsEverything
-      ? false
-      : showUpdateDetails
-        ? isDesktopUpdateButtonDisabled(state)
-        : !canCheckForUpdate(state);
+  const disabled = runsEverything
+    ? false
+    : showUpdateDetails
+      ? isDesktopUpdateButtonDisabled(state)
+      : isChecking || !canCheckForUpdate(state);
   const isInteractionDisabled = disabled || isActionPending || isRunningEverything;
   const showReleaseNotesPopover =
     !isRunningEverything && shouldUseSidebarUpdateReleaseNotesPopover(showUpdateDetails, state);
@@ -357,7 +355,7 @@ function DesktopUpdateControl({
       setIsCheckAnimationLatched(true);
       setCheckAnimationKey((key) => key + 1);
     }
-    const appCheck = bridge
+    void bridge
       .checkForUpdate()
       .then((result) => {
         if (result.checked) return;
@@ -380,10 +378,10 @@ function DesktopUpdateControl({
             description: error instanceof Error ? error.message : "Update check failed.",
           }),
         );
-      });
+      })
+      .finally(() => setIsActionPending(false));
     setProviderCheck("button");
-    const providersChecked = checkProviderUpdates().finally(() => setProviderCheck(null));
-    void Promise.allSettled([appCheck, providersChecked]).then(() => setIsActionPending(false));
+    void checkProviderUpdates().finally(() => setProviderCheck(null));
   };
 
   const runEverything = async () => {
