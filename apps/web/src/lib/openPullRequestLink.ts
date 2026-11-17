@@ -44,23 +44,24 @@ export function usePullRequestPreviewTarget(environmentId: EnvironmentId | null,
   });
 }
 
-function readChangeRequestLinkTarget(
-  url: string,
-  environmentId: EnvironmentId | undefined,
-  primaryEnvironmentId: EnvironmentId | null,
-  lendHostProject: boolean,
-) {
+/** Where a click on this link opens the in-app panel, read at call time as the click reads it. */
+export function pullRequestLinkPanelTarget(input: {
+  readonly url: string;
+  readonly environmentId: EnvironmentId | undefined;
+  readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly lendHostProject: boolean;
+}) {
   // Read at click time: every provider status push replaces the config map, and
   // subscribing would hand every rendered link a new handler. Projects likewise, so a
   // link can resolve against a snapshot that arrived after this handler was built.
   const serverConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
   return resolveChangeRequestLinkTarget({
-    url,
+    url: input.url,
     projects: readProjects(),
-    configLoaded: (candidate) => serverConfigs.has(candidate),
-    environmentId,
-    primaryEnvironmentId,
-    lendHostProject,
+    configLoaded: (environmentId) => serverConfigs.has(environmentId),
+    environmentId: input.environmentId,
+    primaryEnvironmentId: input.primaryEnvironmentId,
+    lendHostProject: input.lendHostProject,
   });
 }
 
@@ -88,12 +89,12 @@ export function readThreadPullRequestSurface(
   url: string,
 ): PullRequestSurface | null {
   if (!getClientSettings().pullRequestLinksOpenInApp) return null;
-  const target = readChangeRequestLinkTarget(
+  const target = pullRequestLinkPanelTarget({
     url,
-    threadRef.environmentId,
-    readPrimaryEnvironmentId(),
-    true,
-  );
+    environmentId: threadRef.environmentId,
+    primaryEnvironmentId: readPrimaryEnvironmentId(),
+    lendHostProject: true,
+  });
   return target === null
     ? null
     : pullRequestSurface(panelPullRequestTarget(threadRef, target, url));
@@ -135,12 +136,12 @@ export function useOpenChangeRequestLink(
     const resolvedThreadRef = targetThreadRef ?? threadRef;
     const resolvedPanelRef = panelRef ?? resolvedThreadRef;
     const openPullRequest = () => {
-      const target = readChangeRequestLinkTarget(
-        targetUrl,
-        resolvedThreadRef?.environmentId ?? targetEnvironmentId,
+      const target = pullRequestLinkPanelTarget({
+        url: targetUrl,
+        environmentId: resolvedThreadRef?.environmentId ?? targetEnvironmentId,
         primaryEnvironmentId,
-        resolvedPanelRef !== undefined,
-      );
+        lendHostProject: resolvedPanelRef !== undefined,
+      });
       if (target === null) return false;
       const { project, repository, number, host } = target;
       const revealUrl = parsePullRequestAnchor(targetUrl) === null ? undefined : targetUrl;

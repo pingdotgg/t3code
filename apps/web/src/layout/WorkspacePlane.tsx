@@ -8,6 +8,7 @@ import {
 import { type ReactNode } from "react";
 
 import { BackgroundThreadContext } from "../components/chat/backgroundThread";
+import { GlobalVoiceInputIndicator } from "../components/chat/GlobalVoiceInputIndicator";
 import { isAppModalPage } from "../components/sidebar/mainAppLocation";
 import { ThreadLinkPrompt } from "../components/promptLinks/ThreadLinkPrompt";
 import { buildThreadRouteParams, type ThreadRouteTarget } from "../threadRoutes";
@@ -67,6 +68,7 @@ export function WorkspacePlane({ children }: { children: ReactNode }) {
       ) : null}
       <BackgroundThreadContext value={modalOpen}>{host}</BackgroundThreadContext>
       {modalOpen ? children : null}
+      <GlobalVoiceInputIndicator hidden={modalOpen} />
       {promotedThreadRef && !modalOpen ? (
         <Navigate
           to="/$environmentId/$threadId"
