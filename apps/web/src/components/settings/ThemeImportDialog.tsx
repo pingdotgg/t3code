@@ -1,15 +1,14 @@
 import { DownloadIcon, PlusIcon } from "lucide-react";
 import type { ChangeEvent, DragEvent, UIEvent } from "react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { formatBytes } from "../../lib/formatBytes";
 import { cn } from "../../lib/utils";
 import {
   getCustomThemes,
   installCustomTheme,
-  parseThemeFile,
   removeCustomTheme,
-  THEME_FILE_VERSION,
+  renameTheme,
   updateCustomTheme,
   type ThemeDefinition,
 } from "../../themePalette";
@@ -37,6 +36,10 @@ const MAX_HIGHLIGHTED_JSON_LENGTH = 20_000;
 function describeOversizedThemeFile(bytes: number): string | null {
   if (bytes <= MAX_THEME_FILE_BYTES) return null;
   return `That file is ${formatBytes(bytes)}. Theme files are only a few KB, so this one was not read (limit ${formatBytes(MAX_THEME_FILE_BYTES)}).`;
+}
+
+function isThemeIdTaken(themeId: string): boolean {
+  return getCustomThemes().some((existing) => existing.id === themeId);
 }
 
 function escapeJsonHtml(value: string): string {
@@ -161,6 +164,20 @@ export function ThemeImportDialog({
     session.controller.abort();
     onOpenChange(false);
   };
+  // Leaving the page ends the session as closing does. The abort waits a microtask
+  // so StrictMode's replayed cleanup, undone by its replayed setup, keeps it alive.
+  const { controller } = session;
+  const mountedController = useRef<AbortController | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- unmounting must abort in-flight Open VSX installs
+  useEffect(() => {
+    mountedController.current = controller;
+    return () => {
+      mountedController.current = null;
+      queueMicrotask(() => {
+        if (mountedController.current !== controller) controller.abort();
+      });
+    };
+  }, [controller]);
 
   return (
     <Dialog
@@ -264,7 +281,7 @@ function ThemeImportBody({
     const installed: ThemeDefinition[] = [];
     const conflicting: ThemeDefinition[] = [];
     for (const theme of pairVsCodeThemes(resolveThemeLabelCollisions(parsed))) {
-      if (getCustomThemes().some((existing) => existing.id === theme.id)) {
+      if (isThemeIdTaken(theme.id)) {
         conflicting.push(theme);
         continue;
       }
@@ -325,28 +342,17 @@ function ThemeImportBody({
     theme: ThemeDefinition,
     preferredName?: string | null,
   ): ThemeDefinition => {
+    // renameTheme leaves the collection behind: updating a collection replaces every theme in it.
     if (preferredName && preferredName.toLowerCase() !== theme.label.toLowerCase()) {
-      const candidate = parseThemeFile({
-        version: THEME_FILE_VERSION,
-        name: preferredName.slice(0, 48),
-        appearance: theme.appearance,
-        colors: theme.colors,
-        ...(theme.variants ? { variants: theme.variants } : {}),
-        ...(theme.managed ? { managed: true } : {}),
-      });
-      if (!getCustomThemes().some((existing) => existing.id === candidate.id)) return candidate;
+      const candidate = renameTheme(theme, preferredName.slice(0, 48));
+      if (!isThemeIdTaken(candidate.id)) return candidate;
     }
     for (let copy = 1; copy < 100; copy += 1) {
-      const candidate = parseThemeFile({
-        version: THEME_FILE_VERSION,
-        name: `${theme.label.slice(0, 48 - ` (${copy})`.length)} (${copy})`,
-        appearance: theme.appearance,
-        colors: theme.colors,
-        ...(theme.variants ? { variants: theme.variants } : {}),
-        ...(theme.managed ? { managed: true } : {}),
-      });
-      if (getCustomThemes().some((existing) => existing.id === candidate.id)) continue;
-      return candidate;
+      const candidate = renameTheme(
+        theme,
+        `${theme.label.slice(0, 48 - ` (${copy})`.length)} (${copy})`,
+      );
+      if (!isThemeIdTaken(candidate.id)) return candidate;
     }
     throw new Error(`Too many copies of "${theme.label}".`);
   };
@@ -391,7 +397,7 @@ function ThemeImportBody({
     }
     try {
       const theme = parseThemeImport(json);
-      if (getCustomThemes().some((existing) => existing.id === theme.id)) {
+      if (isThemeIdTaken(theme.id)) {
         setError(null);
         setConflicts([theme]);
         return;
