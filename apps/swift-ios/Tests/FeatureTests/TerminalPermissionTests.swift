@@ -8,7 +8,7 @@ struct TerminalPermissionTests {
     @Test func readOnlySessionObservesWithoutAnyPTYMutation() async throws {
         let fixture = try await TerminalPermissionFixture.make()
         defer { fixture.cleanUp() }
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let thread = try #require(snapshot.threads.first { $0.environmentID == "two" })
         let initial = try await fixture.client.terminalSnapshot(threadID: thread.id, terminalID: "default")
         #expect(initial.state == .stopped)
@@ -32,7 +32,7 @@ struct TerminalPermissionTests {
         let fixture = try await TerminalPermissionFixture.make()
         defer { fixture.cleanUp() }
         await fixture.server.setPermissions(["terminal:read", "terminal:operate"], host: "two.example")
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let thread = try #require(snapshot.threads.first { $0.environmentID == "two" })
         _ = try await fixture.client.terminalSnapshot(threadID: thread.id, terminalID: "default")
         #expect(fixture.client.permissions(forThreadID: thread.id)?.grants("terminal:operate") == true)
@@ -60,7 +60,7 @@ struct TerminalPermissionTests {
     @Test func currentOperateGrantDoesNotGrantTerminalReadsOrCachedOutput() async throws {
         let fixture = try await TerminalPermissionFixture.make()
         defer { fixture.cleanUp() }
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let thread = try #require(snapshot.threads.first { $0.environmentID == "two" })
         var readable = fixture.client.terminalEvents(threadID: thread.id, terminalID: "default").makeAsyncIterator()
         #expect(await readable.next()?.buffer == "$ existing output\r\n")
@@ -82,7 +82,7 @@ struct TerminalPermissionTests {
     @Test func unsupportedObservationNeverFallsBackToAttach() async throws {
         let fixture = try await TerminalPermissionFixture.make()
         defer { fixture.cleanUp() }
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let thread = try #require(snapshot.threads.first { $0.environmentID == "two" })
         await fixture.server.rejectObservation()
         var events = fixture.client.terminalEvents(threadID: thread.id, terminalID: "default").makeAsyncIterator()

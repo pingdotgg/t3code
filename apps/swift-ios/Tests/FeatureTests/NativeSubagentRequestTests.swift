@@ -10,7 +10,7 @@ struct NativeSubagentRequestTests {
         defer { fixture.cleanUp() }
         let client = fixture.client()
         do {
-            let snapshot = try await client.initialSnapshot()
+            let snapshot = try await client.hydratedInitialSnapshot()
             let cases: [(String, OrchestrationV2PendingSubagentRequest)] = [("one", .userInput), ("two", .approval)]
             for (environmentID, request) in cases {
                 let id = FeatureScopedID.thread(environmentID: environmentID, wireID: "parent")
