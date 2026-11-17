@@ -723,6 +723,8 @@ function TerminalSessionViewport({
         theme: terminalThemeFromApp(mount),
         font: terminalFontOptions(setupFont.family, setupFont.size),
         onData: (data) => handleData(data),
+        onBinary: (data) => void sendTerminalInput(data, "Terminal write failed", "binary"),
+        onReply: (data) => void sendTerminalInput(data, "Terminal write failed", "reply"),
         onResize: (cols, rows) => void resizeTerminal(cols, rows),
         onSelectionChange: () => {},
         beforeKey: (event) => handleBeforeKey(event),
@@ -929,12 +931,18 @@ function TerminalSessionViewport({
 
       const readInputSession = () => appAtomRegistry.get(terminalSessionAtom);
       const canWriteInput = () => readEnvironmentScope(environmentId, AuthTerminalOperateScope);
-      const writeInputChunk = (data: string) =>
+      const writeInputChunk = (data: string, kind?: "binary" | "reply") =>
         retainedTerminalWrite.current({
           environmentId,
-          input: { threadId, terminalId, data },
+          input: kind
+            ? { threadId, terminalId, data, [kind]: true }
+            : { threadId, terminalId, data },
         });
-      const sendTerminalInput = (data: string, fallbackError: string) => {
+      const sendTerminalInput = (
+        data: string,
+        fallbackError: string,
+        kind?: "binary" | "reply",
+      ) => {
         // The server rejects input until the shell runs, and each rejection would print an error.
         // Input belongs to the shell and surface it was typed into; a restart the client has seen drops what is left.
         const session = readTerminalSession();
@@ -962,7 +970,7 @@ function TerminalSessionViewport({
             ) {
               return "not-dispatched";
             }
-            const result = await writeInputChunk(chunk);
+            const result = await writeInputChunk(chunk, kind);
             if (result._tag === "Success") return true;
             if (terminalRef.current === terminal && !isAtomCommandInterrupted(result)) {
               const error = squashAtomCommandFailure(result);
