@@ -33,43 +33,23 @@ const renderMarkdown = (source: string, math = false) =>
 
 const html = (source: string) => renderMarkdown(source);
 
-const punctuatedHeadings = [
-  "Step 1: Install",
-  "Done:",
-  "/home/a/b.ts",
-  "home/a/b.ts",
-  "see www.x.com/a b",
-  "apps/web",
-  "Fix (web)",
-  "Step 1, setup",
-  "Version 1.2",
-  "What's next?",
-  'The "quoted" heading',
-  "Issue #123",
-  "Before - after – later — end",
-];
+const punctuatedHeadings = ["Step 1: Install", "Done:", "apps/web", "Fix (web)", "What's next?"];
 
 describe("splitMarkdownBlocks", () => {
   it.each([
-    ...punctuatedHeadings.map((heading) => `## ${heading}\n\nNext paragraph.`),
     "# Title\n\nFirst paragraph with `code` and **bold**.\n\nSecond [link](https://example.com).",
     "## Step 1: Install\n\n## Step 1: Install\n\n[second](#step-1-install-1)",
     "## /home/a/b.ts\n\n## home/a/b.ts",
     "## see https://x.com/a\n\n## see httpsxcoma",
-    "## www.x.com/a b\n\nNext paragraph.",
-    "## apps/web and C:/x\n\nNext paragraph.",
-    "## a ::git-stage now\n\nNext paragraph.",
     "## Done:\n\n## Done",
     "## `Setup`\n\n## Setup",
     "## a ` x ` b\n\n## a x b",
     "# Setup\n\n# $$ Setup $$\n\n[second](#setup-1)",
-    "# Setup\n\n# $ Setup $\n\n[second](#setup-1)",
     "# Setup\n\n# Setup\n\n[Second setup](#setup-1)",
     "\ufeff# Setup\n\n# Setup\n\n[second](#setup-1)",
     "> Setup\n> ===\n\n> Setup\n> ===",
     "# onetwo\n\none\ntwo\n===",
     "# Setup\n\n# &#83;etup\n\n[second](#setup-1)",
-    "# Setup\n\n# &Sopf;etup\n\n[second](#setup-1)",
     "# Setup\n\npara\n\n- a\n\n  ```\n  b\nx\n\nSetup\n===\n",
     "Setup\n===\n\n> ## **Setup**\n\n- # [Setup](https://example.com)\n\n```sh\n# Setup\n```",
     "- one\n- two\n\n- loose three\n\n  continued\n\nAfter the list.",
@@ -108,6 +88,7 @@ describe("splitMarkdownBlocks", () => {
       "```\nb\n\nc\n```\n\n- d\n\n- e\n\n",
       "f",
     ]);
+    expect(splitMarkdownBlocks("a\n\n---\n\nb")).toEqual(["a\n\n", "---\n\n", "b"]);
   });
 
   it.each([

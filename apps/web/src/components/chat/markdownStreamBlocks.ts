@@ -43,10 +43,15 @@ export function splitMarkdownBlocks(text: string): string[] | null {
     headingKeys.add(key);
     return false;
   };
-  const headingNeedsWholeDocument = (line: string) =>
-    SETEXT_UNDERLINE_PATTERN.test(line) || needsWholeHeading(ATX_HEADING_PATTERN.exec(line)?.[1]);
+  const headingNeedsWholeDocument = (line: string, mayUnderline = true) =>
+    (mayUnderline && SETEXT_UNDERLINE_PATTERN.test(line)) ||
+    needsWholeHeading(ATX_HEADING_PATTERN.exec(line)?.[1]);
+  // Only a line right after paragraph text can underline it; elsewhere "---" is a thematic break.
+  let afterContentLine = false;
   for (const line of text.split("\n")) {
     const opener = FENCE_PATTERN.exec(line)?.[1];
+    const mayUnderline = afterContentLine;
+    afterContentLine = false;
     if (fence !== null) {
       // A line left of an indented fence may end the list item holding it, which isn't tracked.
       if (/\S/.test(line.slice(0, fenceIndent))) {
@@ -70,7 +75,8 @@ export function splitMarkdownBlocks(text: string): string[] | null {
     } else if (line.trim() === "") {
       afterBlankLine = true;
     } else {
-      if (headingNeedsWholeDocument(line)) return null;
+      if (headingNeedsWholeDocument(line, mayUnderline)) return null;
+      afterContentLine = opener === undefined;
       if (
         afterBlankLine &&
         insightIndent === null &&
