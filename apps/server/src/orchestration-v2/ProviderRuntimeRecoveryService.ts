@@ -165,13 +165,21 @@ const cancelledItem = (
 ): OrchestrationV2ThreadProjection["turnItems"][number] =>
   item.type === "secret_request" && item.secretStatus === "pending"
     ? { ...item, status: "cancelled", secretStatus: "cancelled", completedAt: now, updatedAt: now }
-    : {
-        ...item,
-        ...("streaming" in item ? { streaming: false } : {}),
-        status: "cancelled",
-        completedAt: now,
-        updatedAt: now,
-      };
+    : item.type === "feedback_request" && item.feedbackStatus === "pending"
+      ? {
+          ...item,
+          status: "cancelled",
+          feedbackStatus: "cancelled",
+          completedAt: now,
+          updatedAt: now,
+        }
+      : {
+          ...item,
+          ...("streaming" in item ? { streaming: false } : {}),
+          status: "cancelled",
+          completedAt: now,
+          updatedAt: now,
+        };
 
 function latestStartedRun(
   projection: ProjectionStore.ProjectionRuntimeRecoveryState,

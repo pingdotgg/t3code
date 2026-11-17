@@ -279,7 +279,7 @@ const AGENT_FEEDBACK_MODE_LABELS: Record<AgentFeedbackMode, string> = {
 const AGENT_FEEDBACK_MODE_DESCRIPTIONS: Record<AgentFeedbackMode, string> = {
   off: "Agents send no feedback to the T3 team.",
   "on-request":
-    "Agents send the T3 team a short report about T3 Code when you ask, with an outline of recent turns.",
+    "When you ask, agents show you a short report about T3 Code and send it to the T3 team if you approve.",
   auto: "Agents also report T3 Code problems they hit on their own, such as a T3 tool that failed.",
 };
 

@@ -149,7 +149,8 @@ exception is `agent.feedback`, sent only while the user has turned on agent
 feedback: its `expected`, `actual`, and `workaround` fields are agent-written text,
 which [FeedbackService](../../apps/server/src/feedback/FeedbackService.ts) scrubs of
 file paths, values the server knows are private to the caller, and secret-shaped
-strings, and caps at 300 characters each. A report the user asked for also carries
+strings, and caps at 300 characters each. `userRequested: true` means the user saw the
+report in its preview card and pressed Send; only such a report carries
 `trace`, which the server builds from the thread: an outline of recent turns with
 no text, plus scrubbed message text only for the turns the user asked to include,
 capped at 1,000 characters per message and 16 KB per trace so a telemetry batch stays

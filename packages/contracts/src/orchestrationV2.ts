@@ -7,6 +7,7 @@ import * as SchemaAST from "effect/SchemaAST";
 import * as SchemaGetter from "effect/SchemaGetter";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
+import { AgentFeedbackPreview, AgentFeedbackRequestStatus } from "./agentFeedback.ts";
 import {
   CheckpointId,
   CheckpointRef,
@@ -1708,6 +1709,16 @@ const OrchestrationV2LinkRequestFields = {
   failure: Schema.optional(Schema.String),
 } as const;
 
+/**
+ * A report the user asked the agent to send to the T3 team, shown for approval. `preview` is
+ * exactly what Send stores and sends.
+ */
+const OrchestrationV2FeedbackRequestFields = {
+  type: Schema.Literal("feedback_request"),
+  preview: AgentFeedbackPreview,
+  feedbackStatus: AgentFeedbackRequestStatus,
+} as const;
+
 export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1910,6 +1921,10 @@ export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     ...OrchestrationV2LinkRequestFields,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    ...OrchestrationV2FeedbackRequestFields,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2794,6 +2809,10 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     ...OrchestrationV2LinkRequestFields,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    ...OrchestrationV2FeedbackRequestFields,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -3802,6 +3821,17 @@ const OrchestrationV2InternalCommand = Schema.Union([
     placeholder: Schema.optional(Schema.String),
     delivery: Schema.optional(OrchestrationV2SecretRequestDelivery),
     secretStatus: OrchestrationV2SecretRequestStatus,
+  }),
+  /** Internal so no client can mark a report sent without it being stored and sent. */
+  Schema.Struct({
+    type: Schema.Literal("feedback_request.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    nodeId: NodeId,
+    turnItemId: TurnItemId,
+    preview: AgentFeedbackPreview,
+    feedbackStatus: AgentFeedbackRequestStatus,
   }),
   /**
    * Records or updates a link an agent asked the user to make. Internal so no

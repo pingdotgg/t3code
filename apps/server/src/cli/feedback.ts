@@ -74,31 +74,22 @@ export const feedbackCommand = Command.make("feedback", {
     Flag.withDescription("What you did instead."),
     Flag.withDefault(""),
   ),
-  userRequested: Flag.Boolean("user-requested").pipe(
-    Flag.withDescription("The user asked for this report."),
-    Flag.withDefault(false),
-  ),
-  includeTurns: Flag.Int("include-turns").pipe(
-    Flag.withDescription("Attach the redacted messages of this many recent turns of its thread."),
-    Flag.withDefault(0),
-  ),
 }).pipe(
   Command.withDescription(
-    "Send feedback about T3 Code to the T3 team. Agent feedback must be on in Settings > Labs.",
+    "Send feedback about T3 Code to the T3 team. Needs Agent feedback set to Automatic in Settings > Labs; to approve a report first, ask your agent in a thread.",
   ),
-  Command.withHandler(
-    ({ baseDir, kind, subject, expected, actual, workaround, userRequested, includeTurns }) =>
-      withThreadTools(
-        { baseDir, json: true, clientLabel: FEEDBACK_CLI_CLIENT_LABEL },
-        Effect.fn("cli.feedback.submit")(function* (tools) {
-          const report = yield* tools.call(
-            "t3_feedback",
-            { kind, subject, expected, actual, workaround, userRequested, includeTurns },
-            FeedbackSubmitResult,
-          );
-          yield* printJson(report);
-        }),
-      ).pipe(Effect.catchTags({ ThreadToolMissingError: feedbackOff }), reportThreadErrors),
+  Command.withHandler(({ baseDir, kind, subject, expected, actual, workaround }) =>
+    withThreadTools(
+      { baseDir, json: true, clientLabel: FEEDBACK_CLI_CLIENT_LABEL },
+      Effect.fn("cli.feedback.submit")(function* (tools) {
+        const report = yield* tools.call(
+          "t3_feedback",
+          { kind, subject, expected, actual, workaround },
+          FeedbackSubmitResult,
+        );
+        yield* printJson(report);
+      }),
+    ).pipe(Effect.catchTags({ ThreadToolMissingError: feedbackOff }), reportThreadErrors),
   ),
   Command.withSubcommands([feedbackListCommand]),
 );

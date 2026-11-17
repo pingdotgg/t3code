@@ -252,7 +252,7 @@ const AGENT_FEEDBACK_CHOICES: ReadonlyArray<{
   {
     mode: "on-request",
     label: "When I ask",
-    description: "A short report about T3 Code when you ask, with an outline of recent turns.",
+    description: "When you ask, you see a short report and send it if you approve.",
   },
   {
     mode: "auto",
@@ -311,8 +311,8 @@ function AgentFeedbackSection() {
         );
       })}
       <Text className="px-2 text-sm text-foreground-muted">
-        Reports go to the T3 team. A report you ask for carries an outline of recent turns, and
-        their messages only if you ask for that too.
+        Reports go to the T3 team. A report you ask for is shown to you first, with an outline of
+        recent turns and their messages only if you ask for that too.
       </Text>
     </View>
   );

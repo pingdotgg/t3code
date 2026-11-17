@@ -15,9 +15,11 @@ import {
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as Struct from "effect/Struct";
+import * as TestClock from "effect/testing/TestClock";
 
 import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as Threads from "../orchestration-v2/ThreadManagementService.ts";
@@ -26,6 +28,8 @@ import * as Projects from "../project/ProjectService.ts";
 import * as Providers from "../provider/ProviderRegistry.ts";
 import * as Settings from "../serverSettings.ts";
 import * as Analytics from "../telemetry/AnalyticsService.ts";
+import * as Approvals from "./FeedbackApprovals.ts";
+import type { FeedbackInput } from "./FeedbackReport.ts";
 import * as Feedback from "./FeedbackService.ts";
 
 const threadId = ThreadId.make("thread:feedback");
@@ -37,6 +41,7 @@ const run = (ordinal: number, started = true) =>
     id: RunId.make(`run:${ordinal}`),
     ordinal,
     providerInstanceId: instanceId,
+    rootNodeId: `node:${ordinal}`,
     startedAt: started ? at(ordinal * 60_000) : null,
   }) as unknown as OrchestrationV2Run;
 let ordinal = 0;
@@ -92,9 +97,44 @@ const harness = Effect.gen(function* () {
   const telemetry = yield* Ref.make(true);
   const runId = yield* Ref.make(RunId.make("run:1"));
   const events = yield* Ref.make<ReadonlyArray<readonly [string, unknown]>>([]);
+  // Every feedback card the service records, in order.
+  const cards = yield* Queue.unbounded<CardRecord>();
+  const threads = Layer.mock(Threads.ThreadManagementService)({
+    dispatch: (command) => Queue.offer(cards, command as CardRecord).pipe(Effect.as({} as never)),
+    getThreadRecords: (_threadId, fields, filter) =>
+      Ref.get(items).pipe(
+        Effect.map((stored) =>
+          (fields as ReadonlyArray<string>).includes("runs")
+            ? {
+                runs:
+                  filter?.runIds === undefined
+                    ? runs.slice(-(filter?.latestRunLimit ?? runs.length))
+                    : runs.filter((run) => filter.runIds?.includes(run.id)),
+              }
+            : {
+                turnItems: stored.filter(
+                  (item) =>
+                    filter?.turnItemRunIds?.includes(item.runId) === true &&
+                    filter.turnItemTypes?.includes(item.type) === true,
+                ),
+              },
+        ),
+      ) as never,
+    getThreadShell: () =>
+      Ref.get(runId).pipe(
+        Effect.map((activeRunId) => ({
+          ...liveThreadShell(threadId, { activeRunId }),
+          modelSelection: { instanceId, model: "gpt-5.5" },
+          branch: "acme/secret-launch",
+          worktreePath: "/srv/checkouts/acme-app-7",
+        })),
+      ),
+  });
   const layer = Feedback.layer(() => ["t3_thread_read"]).pipe(
+    Layer.provideMerge(Approvals.layer),
     Layer.provide(
       Layer.mergeAll(
+        threads,
         Layer.mock(Settings.ServerSettingsService)({
           getSettings: Ref.get(mode).pipe(
             Effect.map((mode) => ({ ...DEFAULT_SERVER_SETTINGS, agentFeedback: { mode } })),
@@ -108,31 +148,6 @@ const harness = Effect.gen(function* () {
                   ? Ref.update(events, (rows) => [...rows, [event, properties] as const])
                   : Effect.void,
               ),
-            ),
-        }),
-        Layer.mock(Threads.ThreadManagementService)({
-          getThreadRecords: (_threadId, fields, filter) =>
-            Ref.get(items).pipe(
-              Effect.map((stored) =>
-                (fields as ReadonlyArray<string>).includes("runs")
-                  ? { runs: runs.slice(-(filter?.latestRunLimit ?? runs.length)) }
-                  : {
-                      turnItems: stored.filter(
-                        (item) =>
-                          filter?.turnItemRunIds?.includes(item.runId) === true &&
-                          filter.turnItemTypes?.includes(item.type) === true,
-                      ),
-                    },
-              ),
-            ) as never,
-          getThreadShell: () =>
-            Ref.get(runId).pipe(
-              Effect.map((activeRunId) => ({
-                ...liveThreadShell(threadId, { activeRunId }),
-                modelSelection: { instanceId, model: "gpt-5.5" },
-                branch: "acme/secret-launch",
-                worktreePath: "/srv/checkouts/acme-app-7",
-              })),
             ),
         }),
         Layer.mock(Projects.ProjectService)({
@@ -164,8 +179,38 @@ const harness = Effect.gen(function* () {
     ),
     Layer.provideMerge(SqlitePersistence.layerMemory),
   );
-  return { mode, items, telemetry, runId, events, layer };
+  return { mode, items, telemetry, runId, events, cards, layer };
 });
+
+type CardRecord = Extract<
+  Parameters<Threads.ThreadManagementService["Service"]["dispatch"]>[0],
+  { readonly type: "feedback_request.record" }
+>;
+
+/** Submits a requested report, answers its card, and returns the outcome with the shown card. */
+const answered = (
+  cards: Queue.Queue<CardRecord>,
+  report: FeedbackInput,
+  answer: "send" | "decline",
+) =>
+  Effect.gen(function* () {
+    const feedback = yield* Feedback.FeedbackService;
+    const approvals = yield* Approvals.FeedbackApprovals;
+    const call = yield* feedback.submit(report, fromThread).pipe(Effect.forkChild);
+    // Skips the decided records of earlier cards.
+    let card = yield* Queue.take(cards);
+    while (card.feedbackStatus !== "pending") card = yield* Queue.take(cards);
+    yield* approvals.answer({ threadId, turnItemId: card.turnItemId, answer });
+    return { outcome: yield* Fiber.join(call), card };
+  });
+
+/** A requested report the user approved. */
+const approved = (cards: Queue.Queue<CardRecord>, report: FeedbackInput) =>
+  answered(cards, report, "send").pipe(
+    Effect.flatMap(({ outcome }) =>
+      "approved" in outcome ? Effect.die("The report was not approved.") : Effect.succeed(outcome),
+    ),
+  );
 
 const input = {
   kind: "bug" as const,
@@ -195,23 +240,20 @@ it.effect("stores nothing and fails when agent feedback is off", () =>
 
 it.effect("scrubs the caller's private values and sends only the event contract", () =>
   Effect.gen(function* () {
-    const { telemetry, events, layer } = yield* harness;
+    const { telemetry, events, cards, layer } = yield* harness;
     yield* Effect.gen(function* () {
       const feedback = yield* Feedback.FeedbackService;
       yield* Ref.set(telemetry, false);
-      const local = yield* feedback.submit(
-        {
-          kind: "other",
-          subject: "mcp__t3-code__t3_thread_read",
-          expected: `Reading /srv/checkouts/acme-app-7 on acme/secret-launch as ${NodeOS.userInfo().username}`,
-          actual:
-            "git@github.com:acme/payments.git in Acme Payments with sk-proj-abcdefghij1234567890",
-          workaround: "x".repeat(400),
-          userRequested: true,
-          includeTurns: 0,
-        },
-        fromThread,
-      );
+      const local = yield* approved(cards, {
+        kind: "other",
+        subject: "mcp__t3-code__t3_thread_read",
+        expected: `Reading /srv/checkouts/acme-app-7 on acme/secret-launch as ${NodeOS.userInfo().username}`,
+        actual:
+          "git@github.com:acme/payments.git in Acme Payments with sk-proj-abcdefghij1234567890",
+        workaround: "x".repeat(400),
+        userRequested: true,
+        includeTurns: 0,
+      });
       expect(local).toMatchObject({
         kind: "other",
         subject: "t3_thread_read",
@@ -227,7 +269,7 @@ it.effect("scrubs the caller's private values and sends only the event contract"
 
       yield* Ref.set(telemetry, true);
       const sent = yield* feedback.submit({ ...input, subject: "t3 thread show" }, fromThread);
-      expect(sent.sent).toBe(true);
+      expect("sent" in sent && sent.sent).toBe(true);
       expect(yield* Ref.get(events)).toEqual([
         [
           "agent.feedback",
@@ -245,13 +287,16 @@ it.effect("scrubs the caller's private values and sends only the event contract"
           },
         ],
       ]);
-      const general = { ...input, subject: " general ", userRequested: true };
-      yield* feedback.submit(general, { source: "cli" });
+      yield* feedback.submit({ ...input, subject: " general " }, { source: "cli" });
       expect((yield* Ref.get(events))[1]).toEqual([
         "agent.feedback",
         {
-          ...Struct.omit(general, ["includeTurns"]),
+          kind: "bug",
           subject: "general",
+          expected: input.expected,
+          actual: input.actual,
+          workaround: "",
+          userRequested: false,
           trace: null,
           source: "cli",
         },
@@ -274,7 +319,7 @@ it.effect("scrubs the caller's private values and sends only the event contract"
         { subject: "t3_thread_read", userRequested: false, sent: true, threadId: null },
         { subject: "t3_thread_read", userRequested: false, sent: true, threadId: null },
         { subject: "t3_thread_read", userRequested: false, sent: true, threadId },
-        { subject: "general", userRequested: true, sent: true, threadId: null },
+        { subject: "general", userRequested: false, sent: true, threadId: null },
         { subject: "t3 thread show", userRequested: false, sent: true, threadId },
         { subject: "t3_thread_read", userRequested: true, sent: false, threadId },
       ]);
@@ -303,12 +348,16 @@ it.effect("allows 3 reports per turn and 10 per thread, not counting refused rep
       expect(yield* refused({ includeTurns: 2 }, fromThread)).toBe(
         "Conversation text goes only on a report the user asked for (userRequested).",
       );
+      // Only a thread can show the user a requested report to approve.
       expect(yield* refused({ includeTurns: 1, userRequested: true }, { source: "cli" })).toBe(
-        "This report comes from no thread, so it has no turns to include.",
+        "A report the user asks for is shown to them for approval in their thread, and this call has no active thread turn, so nothing was sent.",
       );
       yield* Ref.set(mode, "on-request");
       expect(yield* refused({}, fromThread)).toBe(
         "Agent feedback is set to When I ask: send a report only when the user asks for one.",
+      );
+      expect(yield* refused({}, { source: "cli" })).toBe(
+        "Agent feedback is set to When I ask: ask your agent in a thread to send it, so you can approve what is sent.",
       );
       yield* Ref.set(mode, "auto");
       expect(yield* Ref.get(events)).toEqual([]);
@@ -332,13 +381,14 @@ it.effect("allows 3 reports per turn and 10 per thread, not counting refused rep
 
 it.effect("attaches a trace only to requested reports, with text only for includeTurns", () =>
   Effect.gen(function* () {
-    const { events, items, runId, layer } = yield* harness;
+    const { events, items, runId, cards, layer } = yield* harness;
     yield* Effect.gen(function* () {
       const feedback = yield* Feedback.FeedbackService;
-      expect((yield* feedback.submit(input, fromThread)).trace).toBeNull();
+      const unprompted = yield* feedback.submit(input, fromThread);
+      expect("trace" in unprompted && unprompted.trace).toBeNull();
 
       const requested = { ...input, userRequested: true };
-      const outline = (yield* feedback.submit(requested, fromThread)).trace!;
+      const outline = (yield* approved(cards, requested)).trace!;
       expect(outline).toMatchObject({ turns: 5, textTurns: 0, truncated: true });
       expect(outline.entries).toHaveLength(80);
       expect(JSON.stringify(outline)).not.toMatch(/Ask|Done|acme|linear|zzz/u);
@@ -354,8 +404,7 @@ it.effect("attaches a trace only to requested reports, with text only for includ
         { turn: 5, type: "tool", tool: "t3_thread_read", outcome: "unfinished" },
       ]);
 
-      const withText = (yield* feedback.submit({ ...requested, includeTurns: 2 }, fromThread))
-        .trace!;
+      const withText = (yield* approved(cards, { ...requested, includeTurns: 2 })).trace!;
       expect(Buffer.byteLength(JSON.stringify(withText))).toBeLessThanOrEqual(16_000);
       expect(withText).toMatchObject({ textTurns: 2 });
       const texts = withText.entries.flatMap((entry) =>
@@ -372,7 +421,7 @@ it.effect("attaches a trace only to requested reports, with text only for includ
 
       // Past 16 KB, the oldest text goes first.
       yield* Ref.set(runId, RunId.make("run:2"));
-      const capped = (yield* feedback.submit({ ...requested, includeTurns: 5 }, fromThread)).trace!;
+      const capped = (yield* approved(cards, { ...requested, includeTurns: 5 })).trace!;
       expect(Buffer.byteLength(JSON.stringify(capped))).toBeLessThanOrEqual(16_000);
       expect(capped.truncated).toBe(true);
       expect(capped.entries.find((entry) => entry.turn === 1)).toEqual({
@@ -390,10 +439,11 @@ it.effect("attaches a trace only to requested reports, with text only for includ
       // Under the entry and byte caps, a message cut to 1,000 characters alone marks the trace.
       yield* Ref.update(items, (all) => all.filter((item) => item.type !== "command_execution"));
       yield* Ref.set(runId, RunId.make("run:3"));
-      expect((yield* feedback.submit(requested, fromThread)).trace?.truncated).toBe(false);
-      expect(
-        (yield* feedback.submit({ ...requested, includeTurns: 1 }, fromThread)).trace,
-      ).toMatchObject({ textTurns: 1, truncated: true });
+      expect((yield* approved(cards, requested)).trace?.truncated).toBe(false);
+      expect((yield* approved(cards, { ...requested, includeTurns: 1 })).trace).toMatchObject({
+        textTurns: 1,
+        truncated: true,
+      });
       // Redaction lengthens 990 characters of addresses past the cap: that cut marks it too.
       yield* Ref.update(items, (all) => [
         ...all.filter(
@@ -403,9 +453,90 @@ it.effect("attaches a trace only to requested reports, with text only for includ
         ),
         item(6, { type: "user_message", text: "ops@a.io ".repeat(110) }),
       ]);
-      expect(
-        (yield* feedback.submit({ ...requested, includeTurns: 1 }, fromThread)).trace,
-      ).toMatchObject({ textTurns: 1, truncated: true });
+      expect((yield* approved(cards, { ...requested, includeTurns: 1 })).trace).toMatchObject({
+        textTurns: 1,
+        truncated: true,
+      });
     }).pipe(Effect.provide(layer));
   }),
+);
+
+it.effect(
+  "stores and sends a requested report only as shown, and only once the user approves",
+  () =>
+    Effect.gen(function* () {
+      const { events, runId, cards, layer } = yield* harness;
+      yield* Effect.gen(function* () {
+        const feedback = yield* Feedback.FeedbackService;
+        const approvals = yield* Approvals.FeedbackApprovals;
+        const requested = { ...input, userRequested: true, includeTurns: 1 };
+        const nothingKept = Effect.gen(function* () {
+          expect(yield* feedback.list).toEqual([]);
+          expect(yield* Ref.get(events)).toEqual([]);
+        });
+
+        // Decline: nothing is stored, sent or counted, then or later.
+        const call = yield* feedback.submit(requested, fromThread).pipe(Effect.forkChild);
+        const shown = yield* Queue.take(cards);
+        expect(shown).toMatchObject({
+          feedbackStatus: "pending",
+          runId: "run:1",
+          nodeId: "node:1",
+        });
+        yield* nothingKept;
+        yield* approvals.answer({ threadId, turnItemId: shown.turnItemId, answer: "decline" });
+        expect(yield* Fiber.join(call)).toEqual({
+          approved: false,
+          status: "declined",
+          note: "The user did not approve this report, so nothing was sent. Do not send it, or any part of it, another way.",
+        });
+        expect((yield* Queue.take(cards)).feedbackStatus).toBe("declined");
+        yield* nothingKept;
+        // A decided card takes no second answer.
+        const late = yield* Effect.flip(
+          approvals.answer({ threadId, turnItemId: shown.turnItemId, answer: "send" }),
+        );
+        expect(late._tag).toBe("AgentFeedbackRequestError");
+
+        // No answer in time: the card closes and nothing is kept.
+        const unanswered = yield* feedback.submit(requested, fromThread).pipe(Effect.forkChild);
+        yield* Queue.take(cards);
+        yield* TestClock.adjust("10 minutes");
+        expect(yield* Fiber.join(unanswered)).toMatchObject({
+          approved: false,
+          status: "timed_out",
+        });
+        expect((yield* Queue.take(cards)).feedbackStatus).toBe("cancelled");
+        yield* nothingKept;
+
+        // Send: exactly the shown preview is stored and sent, marked as requested.
+        const { outcome, card } = yield* answered(cards, requested, "send");
+        expect(outcome).toMatchObject({ userRequested: true, threadId, sent: true });
+        expect((yield* Queue.take(cards)).feedbackStatus).toBe("sent");
+        const [[, properties]] = (yield* Ref.get(events)) as [[string, Record<string, unknown>]];
+        const [stored] = yield* feedback.list;
+        for (const kept of [properties, stored]) {
+          expect({
+            kind: kept?.kind,
+            subject: kept?.subject,
+            expected: kept?.expected,
+            actual: kept?.actual,
+            workaround: kept?.workaround,
+            trace: kept?.trace,
+          }).toEqual(card.preview);
+        }
+        expect(properties.userRequested).toBe(true);
+
+        // Unprompted reports in Automatic mode go out with no card. The declined and timed-out
+        // reports did not count: this turn still takes two more.
+        yield* Effect.replicateEffect(feedback.submit(input, fromThread), 2, { discard: true });
+        expect(yield* Queue.size(cards)).toBe(0);
+        expect((yield* feedback.list).map((report) => report.userRequested)).toEqual([
+          false,
+          false,
+          true,
+        ]);
+        yield* Ref.set(runId, RunId.make("run:2"));
+      }).pipe(Effect.provide(layer));
+    }),
 );

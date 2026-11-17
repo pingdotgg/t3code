@@ -71,6 +71,7 @@ export * from "./resourceTelemetry.ts";
 export * from "./rpc.ts";
 export * from "./worktreeSetup.ts";
 export * from "./secretRequest.ts";
+export * from "./agentFeedback.ts";
 export * from "./secretReference.ts";
 export * from "./settingsSecretValue.ts";
 export * from "./clientRpcPermissions.ts";

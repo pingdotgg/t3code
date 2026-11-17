@@ -18,13 +18,21 @@ export const layer = McpToolAccess.toLayer(FeedbackToolkit, {
           ...(scope.thread === undefined ? {} : { threadId: scope.thread.threadId }),
         })
         .pipe(
-          Effect.map(({ trace, ...report }) => ({
-            ...report,
-            trace:
-              trace === null
-                ? null
-                : { turns: trace.turns, textTurns: trace.textTurns, truncated: trace.truncated },
-          })),
+          Effect.map((outcome) =>
+            "approved" in outcome
+              ? outcome
+              : {
+                  ...outcome,
+                  trace:
+                    outcome.trace === null
+                      ? null
+                      : {
+                          turns: outcome.trace.turns,
+                          textTurns: outcome.trace.textTurns,
+                          truncated: outcome.trace.truncated,
+                        },
+                },
+          ),
           Effect.mapError(
             (error) =>
               new OrchestratorMcpFailure({

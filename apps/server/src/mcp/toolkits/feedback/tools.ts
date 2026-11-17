@@ -4,6 +4,7 @@ import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import {
   FeedbackInput,
+  FeedbackNotApproved,
   FeedbackReport,
   FeedbackSubmitResult,
 } from "../../../feedback/FeedbackReport.ts";
@@ -25,9 +26,9 @@ export const FeedbackToolkit = Toolkit.make(
   Tool.make("t3_feedback", {
     ...shared,
     description:
-      "Send feedback to the T3 team: a T3 tool or `t3` command that misbehaved, a confusing instruction, a missing capability, or anything about T3 Code the user asks you to send. Not the user's own code. Use your own words; never quote the user's messages, code, files, or names. A requested report also carries an outline of recent turns, without text; set `includeTurns` only if the user asks to include the conversation.",
+      "Send feedback to the T3 team: a T3 tool or `t3` command that misbehaved, a confusing instruction, a missing capability, or anything about T3 Code the user asks you to send. Not the user's own code. Use your own words; never quote the user's messages, code, files, or names. A requested report also carries an outline of recent turns, without text; set `includeTurns` only if the user asks to include the conversation. The user sees a requested report and approves it before it is sent, so call this when asked without asking first; the result says whether they approved.",
     parameters: FeedbackInput,
-    success: FeedbackSubmitResult,
+    success: Schema.Union([FeedbackSubmitResult, FeedbackNotApproved]),
   })
     .annotate(Tool.Destructive, false)
     .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileFeedbackOff),

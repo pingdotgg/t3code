@@ -1,3 +1,4 @@
+import { AgentFeedbackKind, AgentFeedbackTrace } from "@t3tools/contracts";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -10,7 +11,7 @@ const FeedbackText = Schema.String.check(Schema.isMaxCodePoints(300));
 export const FEEDBACK_TRACE_TURNS = 5;
 
 const reportFields = {
-  kind: Schema.Literals(["bug", "confusing", "missing_capability", "wrong_docs", "other"]),
+  kind: AgentFeedbackKind,
   subject: Schema.String.annotate({ description: "T3 tool name, `t3` command, or `general`." }),
   expected: FeedbackText,
   actual: FeedbackText,
@@ -31,26 +32,8 @@ export const FeedbackInput = Schema.Struct({
     .pipe(Schema.withDecodingDefaultKey(Effect.succeed(0))),
 });
 
-/** Built by the server from the thread's stored items; the agent never writes it. */
-export const FeedbackTrace = Schema.Struct({
-  turns: Schema.Int,
-  textTurns: Schema.Int,
-  /** A cap dropped an entry or cut or dropped a message text. */
-  truncated: Schema.Boolean,
-  entries: Schema.Array(
-    Schema.Struct({
-      turn: Schema.Int,
-      type: Schema.Literals(["user", "assistant", "tool"]),
-      tool: Schema.optionalKey(Schema.String),
-      outcome: Schema.optionalKey(Schema.Literals(["ok", "error", "unfinished"])),
-      durationMs: Schema.optionalKey(Schema.Int),
-      /** A message's length in characters. */
-      length: Schema.optionalKey(Schema.Int),
-      text: Schema.optionalKey(Schema.String),
-    }),
-  ),
-});
-export type FeedbackTrace = typeof FeedbackTrace.Type;
+export const FeedbackTrace = AgentFeedbackTrace;
+export type FeedbackTrace = AgentFeedbackTrace;
 
 const storedFields = {
   id: Schema.String,
@@ -72,6 +55,21 @@ export const FeedbackSubmitResult = Schema.Struct({
   ...storedFields,
   trace: Schema.NullOr(FeedbackTrace.mapFields(Struct.omit(["entries"]))),
 });
+
+/** What `t3_feedback` answers when the user did not approve a requested report. */
+export const FEEDBACK_NOT_APPROVED_NOTE = {
+  declined:
+    "The user did not approve this report, so nothing was sent. Do not send it, or any part of it, another way.",
+  timed_out:
+    "The user did not answer in time, so nothing was sent. Do not send it another way; ask again only if the user wants to.",
+} as const;
+
+export const FeedbackNotApproved = Schema.Struct({
+  approved: Schema.Literal(false),
+  status: Schema.Literals(["declined", "timed_out"]),
+  note: Schema.String,
+});
+export type FeedbackNotApproved = typeof FeedbackNotApproved.Type;
 
 export const FEEDBACK_OFF_MESSAGE =
   "Agent feedback is off. Turn it on in T3 Code under Settings > Labs, then try again.";

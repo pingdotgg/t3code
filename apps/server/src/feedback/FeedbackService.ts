@@ -1,10 +1,18 @@
 import * as NodeOS from "node:os";
 
-import type { ThreadId } from "@t3tools/contracts";
+import {
+  type AgentFeedbackPreview,
+  CommandId,
+  type ThreadId,
+  TurnItemId,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -18,20 +26,25 @@ import * as Settings from "../serverSettings.ts";
 import * as Analytics from "../telemetry/AnalyticsService.ts";
 import { providerDimensions } from "../telemetry/ProviderDimensions.ts";
 import {
+  FEEDBACK_NOT_APPROVED_NOTE,
   FEEDBACK_OFF_MESSAGE,
   FEEDBACK_SUBJECT_MESSAGE,
   FEEDBACK_TRACE_TURNS,
   type FeedbackInput,
+  type FeedbackNotApproved,
   type FeedbackReport,
   FeedbackTrace,
   resolveFeedbackSubject,
 } from "./FeedbackReport.ts";
+import * as Approvals from "./FeedbackApprovals.ts";
 import { buildFeedbackTrace, FEEDBACK_TRACE_ITEM_TYPES } from "./FeedbackTrace.ts";
 import { scrubFeedback } from "./scrubFeedback.ts";
 
 const MAX_REPORTS_PER_RUN = 3;
 const MAX_REPORTS_PER_THREAD = 10;
 const LIST_LIMIT = 50;
+// As long as a secret card waits; Claude's and Codex's T3 tool calls allow 65 minutes.
+const APPROVAL_TIMEOUT = Duration.minutes(10);
 
 export class FeedbackOffError extends Schema.TaggedError<FeedbackOffError>()(
   "FeedbackOffError",
@@ -62,21 +75,31 @@ export class FeedbackSubjectError extends Schema.TaggedError<FeedbackSubjectErro
 
 export class FeedbackNotRequestedError extends Schema.TaggedError<FeedbackNotRequestedError>()(
   "FeedbackNotRequestedError",
-  {},
+  { source: Schema.Literals(["mcp", "cli"]) },
 ) {
   override get message() {
-    return "Agent feedback is set to When I ask: send a report only when the user asks for one.";
+    return this.source === "cli"
+      ? "Agent feedback is set to When I ask: ask your agent in a thread to send it, so you can approve what is sent."
+      : "Agent feedback is set to When I ask: send a report only when the user asks for one.";
   }
 }
 
 export class FeedbackTurnsError extends Schema.TaggedError<FeedbackTurnsError>()(
   "FeedbackTurnsError",
-  { reason: Schema.Literals(["not_requested", "no_thread"]) },
+  {},
 ) {
   override get message() {
-    return this.reason === "not_requested"
-      ? "Conversation text goes only on a report the user asked for (userRequested)."
-      : "This report comes from no thread, so it has no turns to include.";
+    return "Conversation text goes only on a report the user asked for (userRequested).";
+  }
+}
+
+/** A requested report needs a thread with an active turn to show the user its preview. */
+export class FeedbackApprovalError extends Schema.TaggedError<FeedbackApprovalError>()(
+  "FeedbackApprovalError",
+  {},
+) {
+  override get message() {
+    return "A report the user asks for is shown to them for approval in their thread, and this call has no active thread turn, so nothing was sent.";
   }
 }
 
@@ -97,15 +120,20 @@ export interface FeedbackCaller {
 export class FeedbackService extends Context.Service<
   FeedbackService,
   {
+    /**
+     * Sends an unprompted report at once. A requested one is shown to the user first and is
+     * stored and sent only if they approve, exactly as shown.
+     */
     readonly submit: (
       input: FeedbackInput,
       caller: FeedbackCaller,
     ) => Effect.Effect<
-      FeedbackReport,
+      FeedbackReport | FeedbackNotApproved,
       | FeedbackOffError
       | FeedbackNotRequestedError
       | FeedbackTurnsError
       | FeedbackSubjectError
+      | FeedbackApprovalError
       | FeedbackLimitError
       | FeedbackStorageError
     >;
@@ -133,6 +161,7 @@ const make = Effect.fn("FeedbackService.make")(function* (
   const settings = yield* Settings.ServerSettingsService;
   const analytics = yield* Analytics.AnalyticsService;
   const random = yield* SecureRandom.SecureRandom;
+  const approvals = yield* Approvals.FeedbackApprovals;
   // Serializes the limit check with its insert.
   const lock = yield* Semaphore.make(1);
   const requireOn = settings.getSettings.pipe(
@@ -148,15 +177,15 @@ const make = Effect.fn("FeedbackService.make")(function* (
   ) {
     const mode = yield* requireOn;
     if (mode === "on-request" && !input.userRequested) {
-      return yield* new FeedbackNotRequestedError({});
+      return yield* new FeedbackNotRequestedError({ source: caller.source });
     }
     if (input.includeTurns > 0 && !input.userRequested) {
-      return yield* new FeedbackTurnsError({ reason: "not_requested" });
+      return yield* new FeedbackTurnsError({});
     }
     const subject = resolveFeedbackSubject(input.subject, mcpToolNames());
     if (subject === undefined) return yield* new FeedbackSubjectError({});
-    if (input.includeTurns > 0 && caller.threadId === undefined) {
-      return yield* new FeedbackTurnsError({ reason: "no_thread" });
+    if (input.userRequested && caller.threadId === undefined) {
+      return yield* new FeedbackApprovalError({});
     }
 
     const thread =
@@ -230,52 +259,109 @@ const make = Effect.fn("FeedbackService.make")(function* (
             });
           }).pipe(Effect.mapError(storageError))
         : null;
-    const properties = {
+    const preview: AgentFeedbackPreview = {
       kind: input.kind,
       subject,
       expected: scrubFeedback(input.expected, sensitive),
       actual: scrubFeedback(input.actual, sensitive),
       workaround: scrubFeedback(input.workaround, sensitive),
-      userRequested: input.userRequested,
       trace,
-      source: caller.source,
-      ...dimensions,
-    };
-    const report = {
-      kind: properties.kind,
-      subject: properties.subject,
-      expected: properties.expected,
-      actual: properties.actual,
-      workaround: properties.workaround,
-      userRequested: properties.userRequested,
-      trace,
-      source: properties.source,
-      id: yield* random.uuidV7(),
-      threadId: caller.threadId ?? null,
-      createdAt: DateTime.formatIso(yield* DateTime.now),
     };
     const runId = thread?.activeRunId ?? null;
-    const traceJson = yield* encodeTrace(trace).pipe(Effect.mapError(storageError));
+    const id = yield* random.uuidV7();
+    if (!input.userRequested) {
+      return yield* store(preview, { caller, runId, id, dimensions, userRequested: false });
+    }
 
+    // Nothing is stored, sent or counted before the user answers.
+    if (yield* overLimit(caller.threadId ?? null, runId)) return yield* new FeedbackLimitError({});
+    const run =
+      runId === null || caller.threadId === undefined
+        ? undefined
+        : (yield* threads
+            .getThreadRecords(caller.threadId, ["runs"], { runIds: [runId] })
+            .pipe(Effect.mapError(storageError))).runs.find((candidate) => candidate.id === runId);
+    if (caller.threadId === undefined || run === undefined || run.rootNodeId === null) {
+      return yield* new FeedbackApprovalError({});
+    }
+    const card = {
+      threadId: caller.threadId,
+      runId: run.id,
+      nodeId: run.rootNodeId,
+      turnItemId: TurnItemId.make(`turn-item:feedback-request:${id}`),
+      preview,
+    };
+    const record = (feedbackStatus: "pending" | "sent" | "declined" | "cancelled") =>
+      threads
+        .dispatch({
+          type: "feedback_request.record",
+          commandId: CommandId.make(`feedback-request:${id}:${feedbackStatus}`),
+          ...card,
+          feedbackStatus,
+        })
+        .pipe(Effect.mapError(storageError));
+    const answered = yield* approvals.open(card).pipe(
+      Effect.tap(() => record("pending")),
+      Effect.flatMap(Deferred.await),
+      Effect.timeoutOption(APPROVAL_TIMEOUT),
+      // An aborted call, a failed record or a timeout closes the card unsent.
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit) && Option.isSome(exit.value)
+          ? Effect.void
+          : record("cancelled").pipe(Effect.ignore),
+      ),
+      Effect.scoped,
+    );
+    if (Option.isNone(answered) || answered.value === "decline") {
+      const status = Option.isNone(answered) ? "timed_out" : "declined";
+      if (status === "declined") yield* record("declined").pipe(Effect.ignore);
+      return { approved: false, status, note: FEEDBACK_NOT_APPROVED_NOTE[status] } as const;
+    }
+    return yield* store(preview, { caller, runId, id, dimensions, userRequested: true }).pipe(
+      Effect.tap(() => record("sent").pipe(Effect.ignore)),
+      Effect.tapError(() => record("cancelled").pipe(Effect.ignore)),
+    );
+  });
+
+  /** Stores and sends a report as built, with `userRequested` only for an approved preview. */
+  const store = Effect.fn("FeedbackService.store")(function* (
+    preview: AgentFeedbackPreview,
+    context: {
+      readonly caller: FeedbackCaller;
+      readonly runId: string | null;
+      readonly id: string;
+      readonly dimensions: Readonly<Record<string, string>>;
+      /** True only for a preview the user approved. */
+      readonly userRequested: boolean;
+    },
+  ) {
+    const { userRequested } = context;
+    const properties = {
+      ...preview,
+      userRequested,
+      source: context.caller.source,
+      ...context.dimensions,
+    };
+    const report = {
+      ...preview,
+      userRequested,
+      source: context.caller.source,
+      id: context.id,
+      threadId: context.caller.threadId ?? null,
+      createdAt: DateTime.formatIso(yield* DateTime.now),
+    };
+    const traceJson = yield* encodeTrace(preview.trace).pipe(Effect.mapError(storageError));
     yield* lock.withPermit(
       sql
         .withTransaction(
           Effect.gen(function* () {
-            if (report.threadId !== null) {
-              const [counts] = yield* sql<{ readonly thread: number; readonly run: number }>`
-                SELECT COUNT(*) AS thread, COALESCE(SUM(run_id IS ${runId}), 0) AS run
-                FROM agent_feedback WHERE thread_id = ${report.threadId}`;
-              if (
-                (counts?.thread ?? 0) >= MAX_REPORTS_PER_THREAD ||
-                (counts?.run ?? 0) >= MAX_REPORTS_PER_RUN
-              ) {
-                return yield* new FeedbackLimitError({});
-              }
+            if (yield* overLimit(report.threadId, context.runId)) {
+              return yield* new FeedbackLimitError({});
             }
             yield* sql`INSERT INTO agent_feedback ${sql.insert({
               id: report.id,
               thread_id: report.threadId,
-              run_id: runId,
+              run_id: context.runId,
               created_at: report.createdAt,
               kind: report.kind,
               subject: report.subject,
@@ -295,7 +381,6 @@ const make = Effect.fn("FeedbackService.make")(function* (
           ),
         ),
     );
-
     const sent = yield* analytics.record("agent.feedback", properties);
     if (sent) {
       yield* sql`UPDATE agent_feedback SET sent = 1 WHERE id = ${report.id}`.pipe(
@@ -304,6 +389,20 @@ const make = Effect.fn("FeedbackService.make")(function* (
     }
     return { ...report, sent };
   });
+
+  const overLimit = (threadId: string | null, runId: string | null) =>
+    threadId === null
+      ? Effect.succeed(false)
+      : sql<{ readonly thread: number; readonly run: number }>`
+          SELECT COUNT(*) AS thread, COALESCE(SUM(run_id IS ${runId}), 0) AS run
+          FROM agent_feedback WHERE thread_id = ${threadId}`.pipe(
+          Effect.map(
+            ([counts]) =>
+              (counts?.thread ?? 0) >= MAX_REPORTS_PER_THREAD ||
+              (counts?.run ?? 0) >= MAX_REPORTS_PER_RUN,
+          ),
+          Effect.mapError(storageError),
+        );
 
   const list = requireOn.pipe(
     Effect.andThen(

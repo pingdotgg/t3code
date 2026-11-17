@@ -59,6 +59,7 @@ import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as FeedbackApprovals from "../feedback/FeedbackApprovals.ts";
 
 export const layerEventInfrastructure = Layer.mergeAll(
   OrchestrationEventStore.layer,
@@ -295,6 +296,10 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(
   Layer.provide(layerThreadManagementProvided),
 );
+// Shown from /mcp and answered over WebSocket, so both need this one instance.
+const layerFeedbackApprovalsProvided = FeedbackApprovals.layer.pipe(
+  Layer.provide(layerThreadManagementProvided),
+);
 const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -396,6 +401,7 @@ export const layerProduction = Layer.mergeAll(
   layerScheduledTaskProvided,
   layerScratchThreadPromotionProvided,
   layerSecretRequestsProvided,
+  layerFeedbackApprovalsProvided,
   GuestShareService.layer.pipe(
     Layer.provide(Layer.merge(layerOrchestratorProvided, layerCommandOutputHubProvided)),
   ),

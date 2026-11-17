@@ -21,23 +21,27 @@ do what they expected, a confusing instruction, or a missing capability. Choose 
 
 - **Off**, the default: agents do not see the feedback tools, and `t3 feedback` stops with a
   message pointing to Labs.
-- **When I ask**: agents send a report only when you ask them to. Ask your agent to send the T3
-  team feedback about anything in T3 Code, or send one yourself with
-  `t3 feedback --user-requested --kind bug --subject "t3 thread send" --expected "…" --actual "…"`.
+- **When I ask**: agents send a report only when you ask them to, about anything in T3 Code.
 - **Automatic**: agents also report T3 Code problems they hit on their own, such as a T3 tool that
-  failed and made them find another way.
+  failed and made them find another way. These reports carry no outline and no message text, and
+  go out without asking you. `t3 feedback --kind bug --subject "t3 thread send" --expected "…" --actual "…"`
+  sends one the same way, so it works only in this mode.
 
-Each report has the kind of problem, the T3 tool or command it concerns (or `general`), whether
-you asked for it, and up to 300 characters each of expected behavior, actual behavior, and
-workaround, written by the agent, which is told not to quote your messages or code.
+When you ask your agent for a report, in either mode, T3 Code shows it in the thread as a card
+with exactly what would leave your machine, and sends it only if you press **Send**. **Don't
+send**, stopping the agent, or leaving the card unanswered for 10 minutes sends nothing, and the
+agent is told not to send it another way. Only someone who can run agents on that machine can
+answer the card; people on a guest link cannot.
 
-A report you asked for also carries an outline of the thread's last 5 turns: who spoke, how long
-each message was, and which tools ran, whether they worked, and how long they took. The outline
-has no text. Tools from your other MCP servers appear only as `mcp`. If you ask the agent to
-include the conversation, or its last few turns, the text of your messages and the agent's
-replies in those turns is attached too, up to 1,000 characters per message and 16 KB in all,
-oldest text dropped first. Tool inputs and outputs, files, and attachments are never sent. A
-report the agent sends on its own carries no outline and no text.
+Each report has the kind of problem, the T3 tool or command it concerns (or `general`), and up to
+300 characters each of expected behavior, actual behavior, and workaround, written by the agent,
+which is told not to quote your messages or code. A report you approved also carries an outline of
+the thread's last 5 turns: who spoke, how long each message was, and which tools ran, whether
+they worked, and how long they took. The outline has no text. Tools from your other MCP servers
+appear only as `mcp`. If you ask the agent to include the conversation, or its last few turns, the
+text of your messages and the agent's replies in those turns is attached too, up to 1,000
+characters per message and 16 KB in all, oldest text dropped first. Tool inputs and outputs,
+files, and attachments are never sent.
 
 Before anything is saved, T3 Code removes file paths (when text mentions one, the rest of that line
 goes with it), your user name, machine name, project title, branch, and git remote, and anything
@@ -46,9 +50,10 @@ or a name written in a sentence, so only ask for the conversation when it holds 
 not send. Reports from agents also name the provider, and the model when it is from the provider's
 public model list. No thread IDs or project IDs are sent.
 
-Reports are saved on your machine first. When product usage data is turned off, they stay there
-and are not sent. `t3 feedback list` shows recent reports, the thread each came from, and a line for
-each outline; `t3 feedback list --json` shows exactly what each one holds.
+Reports are saved on your machine first, and a declined one is not saved at all. When product usage
+data is turned off, saved reports stay there and are not sent. `t3 feedback list` shows recent
+reports, the thread each came from, and a line for each outline; `t3 feedback list --json` shows
+exactly what each one holds.
 
 ## Relay connection diagnostics
 

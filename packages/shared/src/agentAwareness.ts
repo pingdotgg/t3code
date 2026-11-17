@@ -37,7 +37,10 @@ export interface SubagentRequestAwareness {
  * updates must keep these, or the parent's "Input needed" never appears or never clears.
  */
 export const turnItemCanChangeUserWait = (item: { readonly type: string }) =>
-  item.type === "secret_request" || item.type === "link_request" || item.type === "user_message";
+  item.type === "secret_request" ||
+  item.type === "feedback_request" ||
+  item.type === "link_request" ||
+  item.type === "user_message";
 
 /**
  * Provider-native subagents ask on their parent. The coordinator answers child questions,
