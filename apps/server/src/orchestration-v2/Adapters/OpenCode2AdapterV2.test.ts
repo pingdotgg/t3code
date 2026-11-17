@@ -1527,6 +1527,90 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  // regression: #38100 a subagent's own agent denies were overridden by T3's session rules
+  it.effect.each(["full-access", "approval-required"] as const)(
+    "keeps a subagent's own agent denies in the rules T3 writes to it (%s)",
+    (mode) =>
+      Effect.gen(function* () {
+        const editDeny = { action: "edit", resource: "*", effect: "deny" };
+        const agents = {
+          ...agentList,
+          data: [
+            ...agentList.data,
+            {
+              id: "review",
+              name: "Review",
+              request: { settings: {}, headers: {}, body: {} },
+              description: "Reviews changes",
+              mode: "subagent",
+              hidden: false,
+              permissions: [{ action: "*", resource: "*", effect: "allow" }, editDeny],
+            },
+          ],
+        };
+        const launch = backgroundLaunch(CHILD).map((entry) =>
+          entry.type === "emit_inbound" &&
+          (entry.frame as { event?: { type?: string } }).event?.type === "session.created"
+            ? event("session.created", { ...childCreated(CHILD), agent: "review" })
+            : entry,
+        );
+        const supervised = mode === "approval-required";
+        const { runtime, thread } = yield* resumed([
+          ...launch,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          out("agent.list", "<any>"),
+          reply("agent.list", agents),
+          ...(supervised
+            ? [
+                out("session.update", { sessionID: SESSION, permissions: supervisedRules }),
+                reply("session.update", null),
+              ]
+            : []),
+          out("session.update", {
+            sessionID: CHILD,
+            permissions: [
+              ...(supervised ? supervisedRules.slice(0, 3) : t3Rules.slice(0, 1)),
+              editDeny,
+              ...mcpRules,
+            ],
+          }),
+          reply("session.update", null),
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ]);
+        const firstEnded = yield* Deferred.make<void>();
+        const ended = yield* runtime.events.pipe(
+          Stream.filter(
+            (
+              event,
+            ): event is Extract<
+              ProviderAdapter.ProviderAdapterV2Event,
+              { type: "turn.terminal" }
+            > => event.type === "turn.terminal",
+          ),
+          Stream.tap(() => Deferred.succeed(firstEnded, undefined)),
+          Stream.take(2),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(withLineage(thread));
+        yield* Deferred.await(firstEnded);
+        yield* runtime.startTurn({
+          ...withLineage(thread),
+          runId: RunId.make("run:opencode2-adapter:2"),
+          runOrdinal: 2,
+          providerTurnOrdinal: 2,
+          attemptId: RunAttemptId.make("attempt:opencode2-adapter:2"),
+          runtimePolicy: policy(mode),
+        });
+        assert.deepEqual(
+          [...(yield* Fiber.join(ended))].map((terminal) => terminal.status),
+          ["completed", "completed"],
+        );
+      }),
+  );
+
   it.effect("gives a background subagent the rules of a mode changed while it runs", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
