@@ -1,6 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { buildProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
-import { useMessages } from "gt-react-native";
+import { useLocale, useMessages } from "gt-react-native";
 import {
   createContext,
   useContext,
@@ -27,7 +27,7 @@ export type SettingsTarget = EnvironmentPresentation & {
 const targetsCache = new WeakMap<readonly EnvironmentPresentation[], readonly SettingsTarget[]>();
 const groupsCache = new WeakMap<
   object,
-  WeakMap<MessageResolver, Map<string, ReturnType<typeof buildProjectGroups>>>
+  Map<string, Map<string, ReturnType<typeof buildProjectGroups>>>
 >();
 
 function connectedSettingsTargets(environments: readonly EnvironmentPresentation[]) {
@@ -46,11 +46,12 @@ function settingsProjectGroups(
   projects: Parameters<typeof buildProjectGroups>[0]["projects"],
   groupingMode: Parameters<typeof buildProjectGroups>[0]["settings"]["sidebarProjectGroupingMode"],
   resolve: MessageResolver,
+  locale: string,
 ) {
-  let byResolver = groupsCache.get(projects);
-  if (!byResolver) groupsCache.set(projects, (byResolver = new WeakMap()));
-  let byMode = byResolver.get(resolve);
-  if (!byMode) byResolver.set(resolve, (byMode = new Map()));
+  let byLocale = groupsCache.get(projects);
+  if (!byLocale) groupsCache.set(projects, (byLocale = new Map()));
+  let byMode = byLocale.get(locale);
+  if (!byMode) byLocale.set(locale, (byMode = new Map()));
   let groups = byMode.get(groupingMode);
   if (!groups) {
     groups = buildProjectGroups(
@@ -127,7 +128,8 @@ export function useSettingsEnvironmentFilter() {
   const groupingSettings = useMobileProjectGroupingSettings();
   const groupingMode = groupingSettings.sidebarProjectGroupingMode;
   const messages = useMessages();
-  const projectGroups = settingsProjectGroups(projects, groupingMode, messages);
+  const locale = useLocale();
+  const projectGroups = settingsProjectGroups(projects, groupingMode, messages, locale);
   const availableTargets = connectedSettingsTargets(environments);
   const selectedTargets = useMemo(
     () =>

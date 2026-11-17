@@ -350,7 +350,7 @@ const projectedEntriesCache = new WeakMap<
   OrchestrationV2ProjectedTurnItem,
   {
     readonly attemptId: RunAttemptId | null;
-    readonly resolve: MessageResolver;
+    readonly locale: string | undefined;
     readonly entries: ReadonlyArray<RawThreadFeedEntry>;
   }
 >();
@@ -369,7 +369,7 @@ const presentedActivityGroupsCache = new WeakMap<
     readonly activeRunId: RunId | null;
     readonly isWorking: boolean;
     readonly activeTail: boolean;
-    readonly resolve: MessageResolver;
+    readonly locale: string | undefined;
     readonly rows: ReadonlyArray<ThreadFeedEntry>;
   }
 >();
@@ -1457,7 +1457,7 @@ interface ThreadFeedPresentationBuild {
   readonly activeWorkStartedAt: string | null;
   readonly runlessWorkActive: boolean;
   readonly display: ThreadFeedDisplay;
-  readonly resolve: MessageResolver;
+  readonly locale: string | undefined;
   readonly rows: ReadonlyArray<ThreadFeedEntry>;
   /** Feed entry `entry` is a user message whose rows start at `rowsLength`. */
   readonly restarts: ReadonlyArray<{ readonly entry: number; readonly rowsLength: number }>;
@@ -1523,11 +1523,11 @@ function presentationRestart(
   activeWorkStartedAt: string | null,
   runlessWorkActive: boolean,
   display: ThreadFeedDisplay,
-  resolve: MessageResolver,
+  locale: string | undefined,
 ): { readonly entry: number; readonly rowsLength: number; readonly index: number } | null {
   if (
     previous === null ||
-    previous.resolve !== resolve ||
+    previous.locale !== locale ||
     !latestRunsEqual(previous.latestRun, latestRun) ||
     previous.activeWorkStartedAt !== activeWorkStartedAt ||
     previous.runlessWorkActive !== runlessWorkActive ||
@@ -1698,6 +1698,7 @@ export function deriveThreadFeedPresentation(
   cache?: ThreadFeedCache,
   display: ThreadFeedDisplay = DEFAULT_THREAD_FEED_DISPLAY,
   resolve: MessageResolver = m,
+  locale?: string,
 ): ThreadFeedEntry[] {
   const previous = cache?.presentation ?? null;
   const restart = presentationRestart(
@@ -1709,7 +1710,7 @@ export function deriveThreadFeedPresentation(
     activeWorkStartedAt,
     runlessWorkActive,
     display,
-    resolve,
+    locale,
   );
   const start = restart?.entry ?? 0;
   const result: ThreadFeedEntry[] =
@@ -1925,6 +1926,7 @@ export function deriveThreadFeedPresentation(
         isWorking,
         isActiveTailGroup,
         resolve,
+        locale,
       );
     }
   }
@@ -2032,7 +2034,7 @@ export function deriveThreadFeedPresentation(
       activeWorkStartedAt,
       runlessWorkActive,
       display,
-      resolve,
+      locale,
       rows: result,
       restarts: cleanRestarts,
       firstEntryByRun,
@@ -2132,6 +2134,7 @@ function appendPresentedFeedEntry(
   isWorking: boolean,
   activeTail: boolean,
   resolve: MessageResolver,
+  locale: string | undefined,
 ): void {
   if (entry.type !== "activity-group") {
     result.push(entry);
@@ -2153,7 +2156,7 @@ function appendPresentedFeedEntry(
     cached.activeRunId !== activeRunId ||
     cached.isWorking !== isWorking ||
     cached.activeTail !== activeTail ||
-    cached.resolve !== resolve ||
+    cached.locale !== locale ||
     cached.rows.some(
       (row) => row.type === "work-toggle" && expandedWorkGroupIds.has(row.groupId) !== row.expanded,
     )
@@ -2168,7 +2171,7 @@ function appendPresentedFeedEntry(
       activeTail,
       resolve,
     );
-    cached = { activeRunId, isWorking, activeTail, resolve, rows };
+    cached = { activeRunId, isWorking, activeTail, locale, rows };
     presentedActivityGroupsCache.set(entry, cached);
   }
   for (const row of cached.rows) {
@@ -2426,7 +2429,7 @@ function liveToolActivitySummary(
 
 interface ThreadFeedBuild {
   readonly rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
-  readonly resolve: MessageResolver;
+  readonly locale: string | undefined;
   readonly attempts: ReadonlyArray<OrchestrationV2RunAttempt> | undefined;
   readonly nodes: ReadonlyArray<OrchestrationV2ExecutionNode> | undefined;
   readonly checkpointSummaries: ReadonlyArray<ThreadCheckpointSummary> | undefined;
@@ -2517,10 +2520,13 @@ export function buildThreadFeed(
     readonly checkpointSummaries?: ReadonlyArray<ThreadCheckpointSummary>;
     readonly cache?: ThreadFeedCache;
     readonly resolve?: MessageResolver;
+    /** Keys the caches; text comes from `resolve`. */
+    readonly locale?: string;
   },
 ): ThreadFeedEntry[] {
   const anchoredMessages = options?.anchoredMessages ?? [];
   const resolve = options?.resolve ?? m;
+  const locale = options?.locale;
   const attemptByRootNodeId = new Map(
     (options?.attempts ?? []).map((attempt) => [attempt.rootNodeId, attempt] as const),
   );
@@ -2562,7 +2568,7 @@ export function buildThreadFeed(
   if (
     previous !== null &&
     anchoredMessages.length === 0 &&
-    previous.resolve === resolve &&
+    previous.locale === locale &&
     previous.attempts === options?.attempts &&
     previous.nodes === options?.nodes &&
     checkpointSummariesEqual(previous.checkpointSummaries, options?.checkpointSummaries) &&
@@ -2620,7 +2626,7 @@ export function buildThreadFeed(
     }
     const attemptId = resolveAttemptId(item);
     const cached = projectedEntriesCache.get(row);
-    if (cached?.attemptId === attemptId && cached.resolve === resolve) {
+    if (cached?.attemptId === attemptId && cached.locale === locale) {
       for (const entry of cached.entries) {
         entries.push(entry);
         entryRows.push(index);
@@ -2640,7 +2646,7 @@ export function buildThreadFeed(
         runId: item.runId,
         render,
       };
-      projectedEntriesCache.set(row, { attemptId, resolve, entries: [entry] });
+      projectedEntriesCache.set(row, { attemptId, locale, entries: [entry] });
       entries.push(entry);
       entryRows.push(index);
       continue;
@@ -2657,7 +2663,7 @@ export function buildThreadFeed(
         runId: item.runId,
         text: sentMessage,
       };
-      projectedEntriesCache.set(row, { attemptId, resolve, entries: [entry] });
+      projectedEntriesCache.set(row, { attemptId, locale, entries: [entry] });
       entries.push(entry);
       entryRows.push(index);
       continue;
@@ -2694,7 +2700,7 @@ export function buildThreadFeed(
           projectedItem: row,
         },
       };
-      projectedEntriesCache.set(row, { attemptId, resolve, entries: [entry] });
+      projectedEntriesCache.set(row, { attemptId, locale, entries: [entry] });
       entries.push(entry);
       entryRows.push(index);
       continue;
@@ -2717,7 +2723,7 @@ export function buildThreadFeed(
         app,
       });
     }
-    projectedEntriesCache.set(row, { attemptId, resolve, entries: rowEntries });
+    projectedEntriesCache.set(row, { attemptId, locale, entries: rowEntries });
     for (const entry of rowEntries) {
       entries.push(entry);
       entryRows.push(index);
@@ -2790,7 +2796,7 @@ export function buildThreadFeed(
         ? null
         : {
             rows: visibleTurnItems,
-            resolve,
+            locale,
             attempts: options?.attempts,
             nodes: options?.nodes,
             checkpointSummaries: options?.checkpointSummaries,

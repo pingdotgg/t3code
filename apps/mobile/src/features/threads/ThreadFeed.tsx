@@ -1,4 +1,4 @@
-import { msg, T, useGT, useMessages } from "gt-react-native";
+import { msg, T, useGT, useLocale, useMessages } from "gt-react-native";
 import { m } from "../../i18n/messages";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { toServerClock } from "@t3tools/client-runtime/clock";
@@ -2901,6 +2901,7 @@ function useThreadFeedPresentation(
 ) {
   const [feedCache] = useState(createThreadFeedCache);
   const messages = useMessages();
+  const locale = useLocale();
   return appendPendingThreadMessages(
     deriveThreadFeedPresentation(
       props.feed,
@@ -2916,6 +2917,7 @@ function useThreadFeedPresentation(
       feedCache,
       { toolCallVisibility: props.toolCallVisibility ?? "showAll", revealedMessageId },
       messages,
+      locale,
     ),
     props.feed,
     props.queuedMessages,
