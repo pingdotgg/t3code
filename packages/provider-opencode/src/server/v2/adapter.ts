@@ -73,6 +73,7 @@ import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import { compareSemverVersions } from "@t3tools/shared/semver";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -448,8 +449,13 @@ const policyRules = (policy: RulesPolicy): ReadonlyArray<Rule> =>
       ];
 
 // A child session inherits its parent's rules, which outrank agent rules; repeat the agent's own
-// restrictions after them. Its later allows and asks never loosen T3's policy.
-const agentLimits = (policy: RulesPolicy, agentRules: ReadonlyArray<Rule>): ReadonlyArray<Rule> => {
+// restrictions after them. T3's approval asks still cover its later allows, except its own
+// path allows, which skip approval as they do for root sessions.
+const agentLimits = (
+  policy: RulesPolicy,
+  agentRules: ReadonlyArray<Rule>,
+  caseless: boolean,
+): ReadonlyArray<Rule> => {
   const start = agentRules.findIndex((entry) => entry.effect === "deny");
   if (start === -1) return [];
   const caps = policyRules(policy).filter((own) => own.effect !== "allow");
@@ -463,19 +469,20 @@ const agentLimits = (policy: RulesPolicy, agentRules: ReadonlyArray<Rule>): Read
           : [
               entry,
               ...caps
-                .filter((own) => actionPattern(entry.action).test(own.action))
+                .filter((own) => actionPattern(entry.action, caseless).test(own.action))
                 .map((own) => ({ ...own, resource: entry.resource })),
             ],
     );
 };
 
-// OpenCode matches rule actions as globs: `*` is any run, `?` one character.
-const actionPattern = (pattern: string) =>
+// Mirrors OpenCode's Wildcard.match: `*` is any run, `?` one character, no case on Windows.
+const actionPattern = (pattern: string, caseless: boolean) =>
   new RegExp(
     `^${pattern
       .replaceAll(/[.+^${}()|[\]\\]/g, "\\$&")
       .replaceAll("*", ".*")
       .replaceAll("?", ".")}$`,
+    caseless ? "si" : "s",
   );
 
 const sessionRules = (
@@ -833,6 +840,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
   const server = yield* OpenCode2Server.OpenCode2Server;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
+  const caseless = (yield* HostProcess.Platform) === "win32";
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const fileSystem = yield* FileSystem.FileSystem;
   const paths = yield* Path.Path;
@@ -4059,7 +4067,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const limits =
         thread.subagent === undefined
           ? []
-          : agentLimits(policy, (yield* agentsIn(thread.directory)).get(thread.agent) ?? []);
+          : agentLimits(
+              policy,
+              (yield* agentsIn(thread.directory)).get(thread.agent) ?? [],
+              caseless,
+            );
       return sessionRules(
         policy,
         paths,
