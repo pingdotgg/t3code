@@ -662,3 +662,98 @@ it("selecting a side-chat tab focuses that side chat's composer", async () => {
   await expect.element(sideEditor).toHaveFocus();
   await expect.element(mainEditor).toHaveTextContent("main draft");
 });
+
+it("/side sends the draft's attachments and context to the new side chat", async () => {
+  await page.viewport(1400, 900);
+  const thread = threadWithHistory("side-attachments", 1);
+  using _environment = installFakeEnvironment([thread], { acceptCommands: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  using _uploads = acceptAttachmentUploads();
+  await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
+
+  const editor = page.getByTestId("composer-editor");
+  await userEvent.click(editor);
+  const clipboardData = new DataTransfer();
+  clipboardData.items.add(new File([PNG], "shot.png", { type: "image/png" }));
+  editor
+    .element()
+    .dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+  await expect.element(page.getByRole("img", { name: "shot.png" })).toBeVisible();
+  await userEvent.keyboard("/side what is in this screenshot?{Enter}");
+
+  await vi.waitFor(() =>
+    expect(dispatchedCommands()).toContainEqual(
+      expect.objectContaining({
+        type: "message.dispatch",
+        text: "what is in this screenshot?",
+        attachments: [expect.objectContaining({ type: "image", id: "upload-1" })],
+        context: {
+          version: 1,
+          records: [expect.objectContaining({ kind: "image", attachmentId: "upload-1" })],
+        },
+      }),
+    ),
+  );
+  const fork = dispatchedCommands().find((command) => command.type === "thread.fork");
+  expect(fork).toMatchObject({ sourceThreadId: thread.id, sideChat: true });
+  expect(dispatchedCommands().find((command) => command.type === "message.dispatch")).toMatchObject(
+    { threadId: fork?.type === "thread.fork" ? fork.targetThreadId : null },
+  );
+  await expect.element(page.getByText("Side chats take text only")).not.toBeInTheDocument();
+  await expect.element(page.getByRole("img", { name: "shot.png" })).not.toBeInTheDocument();
+});
+
+it("/side puts the draft back when the side chat does not start", async () => {
+  await page.viewport(1400, 900);
+  const thread = threadWithHistory("side-attachments-failed", 1);
+  using _environment = installFakeEnvironment([thread], {
+    acceptCommands: true,
+    holdCommand: (command) => command.type === "thread.fork",
+  });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  using _uploads = acceptAttachmentUploads();
+  await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
+
+  const editor = page.getByTestId("composer-editor");
+  await userEvent.click(editor);
+  const clipboardData = new DataTransfer();
+  clipboardData.items.add(new File([PNG], "shot.png", { type: "image/png" }));
+  editor
+    .element()
+    .dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+  await expect.element(page.getByRole("img", { name: "shot.png" })).toBeVisible();
+  await userEvent.keyboard("/side what is this?{Enter}");
+
+  // While the side chat starts, the sent image is out of the draft and cannot be removed.
+  await vi.waitFor(() =>
+    expect(dispatchedCommands().map((command) => command.type)).toContain("thread.fork"),
+  );
+  await expect.element(page.getByRole("img", { name: "shot.png" })).not.toBeInTheDocument();
+  await rejectPendingCommand("Side chats are paused.");
+
+  await expect.element(page.getByText("Side chats are paused.")).toBeVisible();
+  await expect.element(page.getByRole("img", { name: "shot.png" })).toBeVisible();
+  await expect.element(editor).toHaveTextContent("/side what is this?");
+});
