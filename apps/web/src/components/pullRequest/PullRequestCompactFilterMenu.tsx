@@ -1,7 +1,6 @@
 import { ChevronDownIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { translateDynamic } from "../../i18nCore";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../ui/menu";
@@ -10,6 +9,7 @@ import {
   PullRequestFilterOptionIcon,
   type PullRequestFilterOption,
 } from "./PullRequestListFilters";
+import { presentationLabel } from "./pullRequestPresentation";
 
 export function PullRequestCompactFilterMenu<Value extends string>({
   label,
@@ -39,13 +39,11 @@ export function PullRequestCompactFilterMenu<Value extends string>({
       <MenuTrigger
         aria-label={
           triggerLabel || iconOnly
-            ? `${translateDynamic(`pullRequest:${label}`)}: ${translateDynamic(`pullRequest:${current.label}`)}`
-            : translateDynamic(`pullRequest:${label}`)
+            ? `${presentationLabel(label)}: ${presentationLabel(current.label)}`
+            : presentationLabel(label)
         }
         title={
-          iconOnly
-            ? `${translateDynamic(`pullRequest:${label}`)}: ${translateDynamic(`pullRequest:${current.label}`)}`
-            : undefined
+          iconOnly ? `${presentationLabel(label)}: ${presentationLabel(current.label)}` : undefined
         }
         render={
           outlined ? (
@@ -65,7 +63,7 @@ export function PullRequestCompactFilterMenu<Value extends string>({
           </>
         ) : (
           <>
-            <span className="truncate">{translateDynamic(`pullRequest:${current.label}`)}</span>
+            <span className="truncate">{presentationLabel(current.label)}</span>
             <ChevronDownIcon aria-hidden className="size-3 shrink-0 text-muted-foreground/70" />
           </>
         )}
@@ -82,7 +80,7 @@ export function PullRequestCompactFilterMenu<Value extends string>({
               >
                 <span className="flex min-w-0 items-center gap-2">
                   <PullRequestFilterOptionIcon option={option} />
-                  {translateDynamic(`pullRequest:${option.label}`)}
+                  {presentationLabel(option.label)}
                 </span>
               </MenuRadioItem>
             );

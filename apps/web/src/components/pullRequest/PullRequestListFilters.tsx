@@ -55,7 +55,7 @@ import {
   type PullRequestAuthorFacet,
   type PullRequestLabelFacet,
 } from "./pullRequestList.logic";
-import { PullRequestActorAvatar } from "./pullRequestPresentation";
+import { presentationLabel, PullRequestActorAvatar } from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
 import { translateDynamic } from "../../i18nCore";
@@ -150,13 +150,13 @@ export const pullRequestProjectKey = (project: {
 }) => JSON.stringify([project.environmentId, project.id]);
 
 const DRAFT_OPTIONS = [
-  { value: UNFILTERED_VALUE, label: "All", Icon: LayersIcon },
+  { value: UNFILTERED_VALUE, label: "list.all", Icon: LayersIcon },
   { value: "only", label: "list.draft.only", Icon: PullRequestGlyph.draft },
   { value: "hide", label: "list.draft.hide", Icon: EyeOffIcon },
 ] as const satisfies ReadonlyArray<PullRequestFilterOption<string>>;
 
 const REVIEW_OPTIONS = [
-  { value: UNFILTERED_VALUE, label: "All", Icon: LayersIcon },
+  { value: UNFILTERED_VALUE, label: "list.all", Icon: LayersIcon },
   { value: "approved", label: "reviewDecision.approved", Icon: CircleCheckIcon },
   { value: "changes-requested", label: "reviewDecision.changesRequested", Icon: CircleXIcon },
   { value: "review-required", label: "list.review.reviewRequired", Icon: CircleDashedIcon },
@@ -164,7 +164,7 @@ const REVIEW_OPTIONS = [
 ] as const satisfies ReadonlyArray<PullRequestFilterOption<string>>;
 
 const CHECKS_OPTIONS = [
-  { value: UNFILTERED_VALUE, label: "All", Icon: LayersIcon },
+  { value: UNFILTERED_VALUE, label: "list.all", Icon: LayersIcon },
   { value: "passing", label: "list.checks.passing", Icon: CircleCheckIcon },
   { value: "failing", label: "list.checks.failing", Icon: CircleXIcon },
 ] as const satisfies ReadonlyArray<PullRequestFilterOption<string>>;
@@ -198,7 +198,7 @@ function PullRequestFilterRadioGroup<Value extends string>({
           >
             <span className="flex min-w-0 items-center gap-2">
               <PullRequestFilterOptionIcon option={option} />
-              <span className="min-w-0 flex-1 truncate">{option.label}</span>
+              <span className="min-w-0 flex-1 truncate">{presentationLabel(option.label)}</span>
               {option.unavailable ? (
                 <span className="shrink-0">{td("list.unavailableDot")}</span>
               ) : null}
@@ -237,7 +237,7 @@ function PullRequestFilterRadioSubmenu<Value extends string>({
         <PullRequestFilterOptionIcon option={current} />
         <span className="flex-1">{label}</span>
         <span className="min-w-0 max-w-32 truncate text-xs text-muted-foreground">
-          {current.label}
+          {presentationLabel(current.label)}
         </span>
       </MenuSubTrigger>
       <MenuSubPopup>
