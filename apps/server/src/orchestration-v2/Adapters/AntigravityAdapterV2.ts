@@ -74,7 +74,9 @@ export interface AntigravityAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly selfInvocation: SelfInvocation;
   readonly makeRuntime: (
-    input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
+    input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner"> & {
+      readonly processEnvironment?: NodeJS.ProcessEnv;
+    },
   ) => Effect.Effect<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
     EffectAcpErrors.AcpError | ProviderSetupError,
