@@ -105,7 +105,10 @@ function xml(source: string, extension: string): XmlNode {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
-    if (extension === ".docx" && node.name === "del") {
+    if (
+      (extension === ".docx" && node.name === "del") ||
+      (odf && node.name === "annotation" && parent.name !== "semantics")
+    ) {
       parent.children.pop();
       return;
     }
@@ -738,5 +741,5 @@ export async function extractDocumentText(path: string, extension: string): Prom
   }
   result = result.replaceAll(/\n(?:[ \t]*\n){2,}/g, "\n\n").trim();
   if (!result && !truncated) throw new Error("No text extracted");
-  return result + (truncated ? TRUNCATED : "");
+  return truncated ? result.replace(/[\uD800-\uDBFF]$/, "").trimEnd() + TRUNCATED : result;
 }

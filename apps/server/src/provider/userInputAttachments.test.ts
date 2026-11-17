@@ -134,6 +134,8 @@ describe("question answer paths", () => {
           Effect.provide(Layer.fresh(DocumentText.layer)),
           Effect.provideService(FileSystem.FileSystem, {
             ...fs,
+            // An async probe can let `staying` join only after `leaving` cancelled the lookup.
+            exists: (file) => Effect.sync(() => NodeFS.existsSync(file)),
             stat: (file) =>
               Effect.gen(function* () {
                 yield* Queue.offer(started, file);
@@ -764,6 +766,16 @@ describe("question answer paths", () => {
           absent: ["Reviewer", "$500"],
         },
         {
+          ext: "odt",
+          bounded: true,
+          parts: {
+            "content.xml":
+              '<document><text><p>Fee <office:annotation><dc:creator>Reviewer</dc:creator><dc:date>2026-01-01T00:00:00</dc:date><initials>JR</initials><p>Check</p></office:annotation>$700</p><table><table-row><table-cell office:value-type="float" office:value="150"><office:annotation><p>was 120</p></office:annotation></table-cell></table-row></table><p>Formula <math:math><math:semantics><math:mrow>x+y</math:mrow><math:annotation encoding="application/x-tex">x+y</math:annotation></math:semantics></math:math></p></text></document>',
+          },
+          expected: ["Fee $700\n150\nFormula x+yx+y"],
+          absent: ["Reviewer", "2026-01-01", "JR", "Check", "was 120"],
+        },
+        {
           ext: "docx",
           bounded: true,
           parts: {
@@ -1297,10 +1309,14 @@ describe("question answer paths", () => {
       });
       expect(yield* (yield* DocumentText.DocumentText).ensure(unsupportedPath)).toBeUndefined();
       expect(NodeFS.existsSync(unsupportedPath + ".txt")).toBe(false);
-      NodeFS.writeFileSync(path, String.raw`{\rtf1 ` + "x".repeat(1_000_100) + "}");
-      expect(yield* Effect.promise(() => extractDocumentText(path, ".rtf"))).toContain(
-        "[Extracted text truncated",
+      NodeFS.writeFileSync(
+        path,
+        String.raw`{\rtf1 ` + "x".repeat(999_999) + String.raw`\u-10179?\u-8576? After}`,
       );
+      const unicodeTruncated = yield* Effect.promise(() => extractDocumentText(path, ".rtf"));
+      expect(unicodeTruncated).toContain("[Extracted text truncated");
+      expect(unicodeTruncated.isWellFormed()).toBe(true);
+      expect(unicodeTruncated.startsWith("x".repeat(999_999))).toBe(true);
       NodeFS.writeFileSync(path, String.raw`{\rtf1 First` + " ".repeat(1_000_100) + "Last}");
       const whitespaceTruncated = yield* Effect.promise(() => extractDocumentText(path, ".rtf"));
       expect(whitespaceTruncated).toBe(

@@ -206,6 +206,64 @@ describe("CursorAgentSdkRunner", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("rewinds the agent to the state its first unwound run started from", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-rewind-" });
+      const loaders = yield* Effect.promise(() =>
+        vi.importActual<typeof import("./sdk.ts")>("./sdk.ts"),
+      );
+      const sdk = loaders.loadCursorSdk();
+      const store = new sdk.JsonlLocalAgentStore(workspace);
+      const platform = yield* Effect.promise(() =>
+        sdk.createAgentPlatform({ localStore: store, workspaceRef: workspace }),
+      );
+      const { agent, run: first } = yield* Effect.promise(() =>
+        platform.store.createAgent({ agentId: "agent-rewind", workspaceRef: workspace }),
+      );
+      const finishRun = (runId: string, state: string) =>
+        Effect.promise(async () => {
+          const checkpoint = await platform.checkpointStore.saveCheckpoint(agent.agentId, {
+            toBinary: () => new TextEncoder().encode(state),
+          });
+          await platform.store.patchCheckpoint(agent.agentId, runId, checkpoint);
+          await platform.store.markRunTerminal(agent.agentId, runId, { status: "FINISHED" });
+          return checkpoint.blobId;
+        });
+      const followUp = Effect.promise(() => platform.store.createFollowUpRun(agent.agentId, {}));
+      const head = Effect.promise(
+        async () => (await platform.store.getAgent(agent.agentId))?.latestCheckpointRef?.blobId,
+      );
+
+      const afterFirst = yield* finishRun(first.runId, "after first");
+      const second = yield* followUp;
+      yield* finishRun(second.runId, "after second");
+      const third = yield* followUp;
+      const afterThird = yield* finishRun(third.runId, "after third");
+
+      const runner = yield* CursorAgentSdk.makeCursorAgentSdkRunner(() => undefined).pipe(
+        Effect.provideService(CursorSdk.CursorSdk, {
+          load: loaders.loadCursorSdk,
+          loadSqlite: loaders.loadCursorSqlite,
+        }),
+      );
+      const session = yield* runner.open({
+        operation: "resume",
+        agentId: agent.agentId,
+        storeCwd: workspace,
+        options: { apiKey: "synthetic-cursor-key", local: { cwd: workspace, store } },
+        threadId: ThreadId.make("rewind"),
+        providerSessionId: ProviderSessionId.make("rewind"),
+      });
+
+      yield* session.rewindAfterRun!(third.runId);
+      assert.strictEqual(yield* head, afterThird, "nothing ran after the kept run");
+      yield* session.rewindAfterRun!(first.runId);
+      assert.strictEqual(yield* head, afterFirst);
+      yield* session.close;
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("constructs without loading and reports first-use load failures as runner errors", () =>
     Effect.gen(function* () {
       const failure = new Error("missing SDK chunk");

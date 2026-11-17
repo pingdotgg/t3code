@@ -26,7 +26,6 @@ import {
   closedStateNames,
   workItemStates,
   decodeCommentsJson,
-  decodeProfileJson,
   decodeUpdatesJson,
   decodeWorkItemJson,
   decodeWorkItemsJson,
@@ -580,33 +579,9 @@ export const make: Effect.Effect<
     kind: KIND,
     capabilities: CAPABILITIES,
 
-    // The profile the token belongs to, which is what WIQL's `@Me` resolves to. Its email is the
-    // `uniqueName` every identity on a work item carries, so the two compare.
-    getViewer: (input) =>
-      read({
-        cwd: input.cwd,
-        operation: "getViewer",
-        args: [
-          "devops",
-          "invoke",
-          "--detect",
-          "true",
-          "--area",
-          "profile",
-          "--resource",
-          "profiles",
-          "--api-version",
-          REST_API_VERSION,
-          "--route-parameters",
-          "id=me",
-        ],
-        decode: decodeProfileJson,
-      }).pipe(
-        Effect.filterOrFail(
-          (login) => login !== null,
-          () => refused("getViewer", "Azure DevOps could not name the signed-in account."),
-        ),
-      ),
+    // Listing filters with WIQL's `@Me`, so nothing compares against a name. Looking one up
+    // needs a profile host that a PAT saved for one organization cannot reach.
+    getViewer: () => Effect.succeed("@Me"),
 
     listIssues: Effect.fn("AzureDevOpsIssueTracker.listIssues")(function* (input) {
       const cursor = input.cursor === undefined ? undefined : parseCursor(input.cursor);
