@@ -396,7 +396,14 @@ function computeToolGroupAction(entry: WorkLogPresentationEntry): ToolGroupActio
   return workLogEntryIsToolLike(entry) ? "other" : "update";
 }
 
+export function workEntryToolCallFailed(
+  entry: Pick<WorkLogPresentationEntry, "toolLifecycleStatus">,
+): boolean {
+  return entry.toolLifecycleStatus === "failed" || entry.toolLifecycleStatus === "declined";
+}
+
 export function workEntryViewedImagePath(entry: WorkLogPresentationEntry): string | null {
+  if (workEntryToolCallFailed(entry)) return null;
   const viewedImagePath = entry.viewedImagePath?.trim();
   if (
     viewedImagePath !== undefined &&

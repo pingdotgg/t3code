@@ -30,6 +30,7 @@ import {
   type ToolGroupSummaryKind,
   liveThoughtLine,
   workEntryHiddenByToolCallVisibility,
+  workEntryToolCallFailed,
 } from "@t3tools/client-runtime/work-log/presentation";
 import {
   deriveRevertTurnCountByUserMessageId,
@@ -208,13 +209,20 @@ export function threadReadLabelPrefix(label: string) {
     : null;
 }
 
+/** `undefined` means the row shows the tool's own output instead, as a failed Read must for its error. */
 export function workEntryReadOutput(
   entry: Pick<
     WorkLogEntry,
-    "changedFiles" | "detail" | "viewedImagePath" | "structuredPayload" | "toolData"
+    | "changedFiles"
+    | "detail"
+    | "viewedImagePath"
+    | "structuredPayload"
+    | "toolData"
+    | "toolLifecycleStatus"
   >,
   workspaceRoot: string | undefined,
-): string | null {
+): string | null | undefined {
+  if (workEntryToolCallFailed(entry)) return undefined;
   const paths = [
     ...new Set(
       workEntryReadRawPaths(entry as WorkLogEntry)

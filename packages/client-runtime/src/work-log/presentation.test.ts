@@ -9,6 +9,8 @@ import {
   type WorkLogPresentationEntry,
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
+  workEntriesViewedImagePaths,
+  workEntryViewedImagePath,
 } from "./presentation.js";
 
 function commandItem(
@@ -202,5 +204,25 @@ describe("resolveWorkEntryToolPresentation", () => {
         toolData: { server: "another-server", tool: "preview_click" },
       }),
     ).toBeNull();
+  });
+});
+
+describe("workEntryViewedImagePath", () => {
+  it("offers no image preview for a Read that failed", () => {
+    const read = (toolLifecycleStatus: "completed" | "failed"): WorkLogPresentationEntry => ({
+      id: `read-${toolLifecycleStatus}`,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      label: "Read",
+      tone: "tool",
+      itemType: "dynamic_tool",
+      toolLifecycleStatus,
+      // The Claude adapter tags every Read of an image path, whether or not the file exists.
+      viewedImagePath: "/tmp/does-not-exist.png",
+      detail: "/tmp/does-not-exist.png",
+    });
+
+    expect(workEntryViewedImagePath(read("completed"))).toBe("/tmp/does-not-exist.png");
+    expect(workEntryViewedImagePath(read("failed"))).toBeNull();
+    expect(workEntriesViewedImagePaths([read("failed")])).toEqual([]);
   });
 });
