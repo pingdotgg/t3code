@@ -21,6 +21,8 @@ import { Button } from "../ui/button";
 import { AgentIcon } from "./AgentIcon";
 import type { AgentTaskSeed } from "./AgentTaskDialog";
 
+const templateDate = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
+
 const updateKey = (update: AgentTemplateUpdate) =>
   update.kind === "agent" ? `agent:${update.profile.profileId}` : `skill:${update.skill.skillId}`;
 
@@ -81,8 +83,9 @@ export function AgentTemplateUpdates({
         <DialogHeader>
           <DialogTitle>Template updates</DialogTitle>
           <DialogDescription>
-            Newer versions of the built-in agents and skills you installed. Ones you edited are
-            never replaced: an agent chat merges the update into your copy for you to review.
+            {APP_NAME} updated the templates of built-in agents and skills you installed. Copies you
+            edited are never replaced: an agent chat merges the update into your copy for you to
+            review.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -117,9 +120,9 @@ export function AgentTemplateUpdates({
                         </span>
                       </strong>
                       <span className="text-xs text-muted-foreground">
-                        {item.modified
-                          ? "Your copy has its own changes. A newer template is available."
-                          : "Update available"}
+                        Template updated in {APP_NAME} on{" "}
+                        {templateDate.format(Date.parse(item.template.template.updatedAt))}.
+                        {item.modified && " Your copy has your own changes."}
                       </span>
                     </span>
                     <Button

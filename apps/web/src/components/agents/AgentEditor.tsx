@@ -48,6 +48,7 @@ import {
 } from "../ui/dialog";
 import { randomUUID } from "../../lib/utils";
 import {
+  agentTemplateRecord,
   findIdenticalSkill,
   type AgentPreset,
   type AgentPresetSkill,
@@ -125,7 +126,9 @@ export function AgentEditor({
   const skillsTriggerRef = useRef<HTMLButtonElement>(null);
   // Preset skills already in the library preselect that skill instead of a copy.
   const presetSkills = skillsAvailable && preset ? preset.skills : [];
-  const template = profile ? profile.template : preset?.template;
+  const template = profile
+    ? profile.template
+    : preset?.template && agentTemplateRecord(preset.template);
   const presetSkillIds = presetSkills.map(
     (skill, index) =>
       findIdenticalSkill(skills, skill)?.skillId ??

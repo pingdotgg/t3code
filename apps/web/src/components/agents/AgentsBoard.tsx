@@ -46,7 +46,6 @@ import {
   markAgentTemplateMerged,
   type AgentTemplateUpdate,
 } from "@t3tools/shared/agentTemplateUpdates";
-import { APP_VERSION } from "../../branding";
 import { AgentsLoadingNotice } from "./AgentsLoadingNotice";
 import { useAgentsPaneWidths } from "./useAgentsPaneWidths";
 import { RightPanelResizeHandle } from "../preview/RightPanelResizeHandle";
@@ -203,7 +202,7 @@ export function AgentsBoard() {
   const builtInPresets = useBuiltInAgentPresets();
   const library = { agentSkills: skills, mcpGatewayProfiles: profiles };
   const templateUpdates =
-    builtInPresets && available ? agentTemplateUpdates(library, builtInPresets, APP_VERSION) : [];
+    builtInPresets && available ? agentTemplateUpdates(library, builtInPresets) : [];
   const [order, setOrder] = useLocalStorage(
     "t3code:agents:column-order",
     emptyAgentOrder,

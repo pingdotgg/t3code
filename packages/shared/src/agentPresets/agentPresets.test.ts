@@ -18,8 +18,11 @@ import {
   DEFAULT_AGENT_SKILL_NAMES,
   exportAgentPresets,
   presetSkillConflicts,
+  withAgentTemplates,
   type AgentPresetSkill,
 } from "./agentPresets.ts";
+import { AGENT_TEMPLATE_UPDATED_AT } from "./agentTemplateDates.ts";
+import recordedTemplates from "./agentTemplateDigests.json" with { type: "json" };
 import { readAgentPresetSkillFiles } from "./agentPresetSkillFiles.ts";
 
 function readTree(root: string, directory: string): Record<string, string> {
@@ -250,7 +253,7 @@ describe("defaultAgentSkills", () => {
   };
 
   it("seeds a new library with stable ids that a preset install then reuses", () => {
-    const seeded = defaultAgentSkills(empty, skillFiles, "1.0.0");
+    const seeded = defaultAgentSkills(empty, skillFiles);
     expect(seeded.map((skill) => [skill.skillId, skill.name])).toEqual(
       DEFAULT_AGENT_SKILL_NAMES.map((name) => [`t3-default-${name}`, name]),
     );
@@ -263,7 +266,7 @@ describe("defaultAgentSkills", () => {
   });
 
   it("seeds copies older than any edit or deletion, so another machine's library wins a merge", () => {
-    const [seeded] = defaultAgentSkills(empty, skillFiles, "1.0.0");
+    const [seeded] = defaultAgentSkills(empty, skillFiles);
     const edited = { ...seeded!, content: "mine", revision: 2, updatedAt: now };
     expect(
       mergeAgentLibraries([
@@ -282,13 +285,91 @@ describe("defaultAgentSkills", () => {
   it.each([
     [
       "an edited default",
-      { agentSkills: [{ ...defaultAgentSkills(empty, skillFiles, "1.0.0")[0]!, content: "mine" }] },
+      { agentSkills: [{ ...defaultAgentSkills(empty, skillFiles)[0]!, content: "mine" }] },
     ],
     ["a deleted default", { agentSkillDeletedAt: { "t3-default-t3-agents": now } }],
     ["an agent", { mcpGatewayProfiles: [{}] }],
     ["a deleted agent", { mcpGatewayProfileDeletedAt: { agent: now } }],
   ])("leaves a library holding %s alone", (_label, library) => {
-    expect(defaultAgentSkills({ ...empty, ...library }, skillFiles, "1.0.0")).toEqual([]);
+    expect(defaultAgentSkills({ ...empty, ...library }, skillFiles)).toEqual([]);
+  });
+});
+
+describe("built-in template dates", () => {
+  it("move with every template change", () => {
+    const root = import.meta.dirname;
+    const skillFiles = readAgentPresetSkillFiles();
+    const decoded = decodeAgentPresets({ ...readTree(root, "presets"), ...skillFiles });
+    const presets = withAgentTemplates(decoded, decoded);
+    const empty = {
+      agentSkills: [],
+      agentSkillDeletedAt: {},
+      mcpGatewayProfiles: [],
+      mcpGatewayProfileDeletedAt: {},
+    };
+    const dates = (digest: string | undefined, updatedAt: string | undefined) => ({
+      digest,
+      updatedAt,
+    });
+    const templates = new Map<string, ReturnType<typeof dates>>([
+      ...presets.map(
+        (preset) =>
+          [
+            `presets/${preset.id}`,
+            dates(preset.template?.digest, preset.template?.updatedAt),
+          ] as const,
+      ),
+      ...presets
+        .flatMap((preset) => preset.skills)
+        .map(
+          (skill) =>
+            [
+              `skills/${skill.name}`,
+              dates(skill.template?.digest, skill.template?.updatedAt),
+            ] as const,
+        ),
+      ...defaultAgentSkills(empty, skillFiles).map(
+        (skill) =>
+          [
+            `skills/${skill.name}`,
+            dates(skill.template?.digest, skill.template?.syncedAt),
+          ] as const,
+      ),
+    ]);
+    const recorded: Record<string, { digest: string; updatedAt: string }> = recordedTemplates;
+    const dated = [
+      ...Object.keys(AGENT_TEMPLATE_UPDATED_AT.presets).map((id) => `presets/${id}`),
+      ...Object.keys(AGENT_TEMPLATE_UPDATED_AT.skills).map((name) => `skills/${name}`),
+    ];
+    const problems = [
+      ...[...templates].flatMap(([path, template]) => {
+        if (!template.updatedAt)
+          return [
+            `${path} has no date: add it to AGENT_TEMPLATE_UPDATED_AT in agentTemplateDates.ts.`,
+          ];
+        const entry = recorded[path];
+        if (
+          entry !== undefined &&
+          entry.digest === template.digest &&
+          entry.updatedAt === template.updatedAt
+        )
+          return [];
+        if (entry && entry.digest !== template.digest && entry.updatedAt === template.updatedAt)
+          return [
+            `${path} changed but kept its date: set its AGENT_TEMPLATE_UPDATED_AT entry in agentTemplateDates.ts to now, so installed copies are offered the update.`,
+          ];
+        return [
+          `Record ${path} in agentTemplateDigests.json as ${JSON.stringify({ digest: template.digest, updatedAt: template.updatedAt })}.`,
+        ];
+      }),
+      ...[...new Set([...dated, ...Object.keys(recorded)])]
+        .filter((path) => !templates.has(path))
+        .map(
+          (path) =>
+            `${path} is not a built-in template: remove it from agentTemplateDates.ts and agentTemplateDigests.json.`,
+        ),
+    ];
+    expect(problems).toEqual([]);
   });
 });
 
