@@ -36,6 +36,11 @@ const { appListeners } = vi.hoisted(() => ({
   appListeners: new Map<string, (...args: unknown[]) => void>(),
 }));
 
+const { getMediaAccessStatus, askForMediaAccess } = vi.hoisted(() => ({
+  getMediaAccessStatus: vi.fn<(device: string) => string>(() => "granted"),
+  askForMediaAccess: vi.fn<(device: string) => Promise<boolean>>(() => Promise.resolve(true)),
+}));
+
 vi.mock("electron", () => ({
   app: {
     on: (eventName: string, listener: (...args: unknown[]) => void) => {
@@ -49,6 +54,7 @@ vi.mock("electron", () => ({
   session: {
     fromPartition,
   },
+  systemPreferences: { getMediaAccessStatus, askForMediaAccess },
 }));
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -396,6 +402,52 @@ describe("BrowserSession", () => {
       assert.isFalse(checkClipboard("https://blocked.test"));
       assert.isTrue(checkClipboard("https://allowed.test"));
       assert.strictEqual(showMessageBox.mock.calls.length, 2);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("asks once per origin and device before a page uses the camera", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-a");
+      yield* browserSessions.getSession("scope-a");
+      const browserSession = sessions.get(partition);
+      assert.isDefined(browserSession);
+      const requestHandler = browserSession.setPermissionRequestHandler.mock.calls[0]?.[0];
+      const checkHandler = browserSession.setPermissionCheckHandler.mock.calls[0]?.[0];
+
+      const requestMedia = (requestingUrl: string, mediaTypes: ReadonlyArray<string>) =>
+        Effect.callback<boolean>((resume) => {
+          requestHandler(null, "media", (granted: boolean) => resume(Effect.succeed(granted)), {
+            requestingUrl,
+            securityOrigin: requestingUrl,
+            mediaTypes,
+            isMainFrame: true,
+          });
+        });
+      const checkMedia = (origin: string, mediaType: string): boolean =>
+        checkHandler(null, "media", origin, { mediaType }) as boolean;
+
+      showMessageBox.mockReset();
+      showMessageBox.mockReturnValueOnce(0).mockReturnValueOnce(1);
+      getMediaAccessStatus.mockReturnValue("granted");
+
+      assert.isFalse(checkMedia("https://allowed.test", "video"));
+      assert.isTrue(yield* requestMedia("https://allowed.test/scan", ["video"]));
+      assert.strictEqual(
+        showMessageBox.mock.calls[0]?.[0].message,
+        "https://allowed.test wants to use your camera",
+      );
+      assert.isTrue(yield* requestMedia("https://allowed.test/again", ["video"]));
+      assert.isTrue(checkMedia("https://allowed.test", "video"));
+      assert.isFalse(checkMedia("https://allowed.test", "audio"));
+      assert.strictEqual(showMessageBox.mock.calls.length, 1);
+
+      assert.isFalse(yield* requestMedia("https://blocked.test/", ["video", "audio"]));
+      assert.isFalse(yield* requestMedia("https://blocked.test/", ["audio"]));
+      assert.isFalse(checkMedia("https://blocked.test", "video"));
+      assert.strictEqual(showMessageBox.mock.calls.length, 2);
+
+      assert.isFalse(yield* requestMedia("https://allowed.test/", []));
     }).pipe(Effect.provide(layer)),
   );
 

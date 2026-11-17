@@ -1,6 +1,6 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { Certificate, Session, WebContents } from "electron";
-import { BrowserWindow, session } from "electron";
+import { BrowserWindow, session, systemPreferences } from "electron";
 import { msg } from "gt-i18n";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -139,6 +139,29 @@ interface CertificateTrust {
   /** Bumped by each revocation, so an answer to an older prompt cannot restore trust. */
   revocations: number;
 }
+
+type MediaDevice = "camera" | "microphone";
+
+const mediaDeviceFor = (mediaType: string | undefined): MediaDevice | null =>
+  mediaType === "video" ? "camera" : mediaType === "audio" ? "microphone" : null;
+
+const describeMediaDevices = (devices: ReadonlyArray<MediaDevice>): string =>
+  devices.length === 2 ? "camera and microphone" : (devices[0] ?? "media devices");
+
+/**
+ * macOS gates capture devices per app and lists an app under Privacy & Security
+ * only after it asks, so ask the OS once the user allowed the page.
+ */
+const ensureSystemMediaAccess = async (
+  platform: NodeJS.Platform,
+  device: MediaDevice,
+): Promise<boolean> => {
+  if (platform !== "darwin") return true;
+  const status = systemPreferences.getMediaAccessStatus(device);
+  if (status === "granted") return true;
+  if (status !== "not-determined") return false;
+  return systemPreferences.askForMediaAccess(device).catch(() => false);
+};
 
 export class BrowserSessionPartitionDerivationError extends Schema.TaggedError<BrowserSessionPartitionDerivationError>()(
   "BrowserSessionPartitionDerivationError",
@@ -641,6 +664,76 @@ export const make = Effect.gen(function* BrowserSessionMake() {
               },
             );
           };
+          // Camera and microphone ask once per origin and device, like clipboard reads.
+          const mediaDecisions = new Map<string, boolean>();
+          const mediaKey = (origin: string, device: MediaDevice) => `${device} ${origin}`;
+          const confirmMedia = (
+            requester: WebContents,
+            rawUrl: string | undefined,
+            mediaTypes: ReadonlyArray<string> | undefined,
+            callback: (granted: boolean) => void,
+          ): void => {
+            const origin = permissionOrigin(rawUrl);
+            const devices = [
+              ...new Set((mediaTypes ?? []).map(mediaDeviceFor).filter((d) => d !== null)),
+            ];
+            if (origin === null || devices.length === 0) {
+              callback(false);
+              return;
+            }
+            const finish = (granted: boolean) => {
+              if (!granted) {
+                callback(false);
+                return;
+              }
+              void Promise.all(
+                devices.map((device) => ensureSystemMediaAccess(platform, device)),
+              ).then(
+                (results) => {
+                  const systemGranted = results.every(Boolean);
+                  if (!systemGranted) {
+                    promptPermission(
+                      requester,
+                      {
+                        buttons: ["OK", "Close"],
+                        message: `macOS blocked T3 Code from using your ${describeMediaDevices(devices)}`,
+                        detail:
+                          "Allow T3 Code in System Settings › Privacy & Security, then restart T3 Code.",
+                      },
+                      () => undefined,
+                    );
+                  }
+                  callback(systemGranted);
+                },
+                () => callback(false),
+              );
+            };
+            const remembered = devices.map((device) =>
+              mediaDecisions.get(mediaKey(origin, device)),
+            );
+            if (remembered.some((answer) => answer === false)) {
+              callback(false);
+              return;
+            }
+            if (remembered.every((answer) => answer === true)) {
+              finish(true);
+              return;
+            }
+            promptPermission(
+              requester,
+              {
+                buttons: ["Allow", "Block"],
+                message: `${truncateForPrompt(origin)} wants to use your ${describeMediaDevices(devices)}`,
+              },
+              (answer) => {
+                if (answer !== undefined) {
+                  for (const device of devices)
+                    mediaDecisions.set(mediaKey(origin, device), answer);
+                }
+                finish(answer === true);
+              },
+            );
+          };
           // Rewriting Electron's native User-Agent makes Turnstile fail integrity checks with error 600010.
           browserSession.setPermissionRequestHandler(
             (webContents, permission, callback, details) => {
@@ -660,13 +753,37 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 );
                 return;
               }
+              if (permission === "media") {
+                confirmMedia(
+                  webContents,
+                  ("securityOrigin" in details ? details.securityOrigin : undefined) ??
+                    details.requestingUrl,
+                  "mediaTypes" in details ? details.mediaTypes : undefined,
+                  callback,
+                );
+                return;
+              }
               callback(ALLOWED_PREVIEW_PERMISSIONS.has(permission));
             },
           );
-          browserSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin) =>
-            permission === "clipboard-read"
-              ? clipboardReadDecisions.get(permissionOrigin(requestingOrigin) ?? "") === true
-              : ALLOWED_PREVIEW_PERMISSIONS.has(permission),
+          browserSession.setPermissionCheckHandler(
+            (_webContents, permission, requestingOrigin, details) => {
+              if (permission === "clipboard-read") {
+                return (
+                  clipboardReadDecisions.get(permissionOrigin(requestingOrigin) ?? "") === true
+                );
+              }
+              if (permission === "media") {
+                const origin = permissionOrigin(requestingOrigin);
+                const device = mediaDeviceFor(details?.mediaType);
+                return (
+                  origin !== null &&
+                  device !== null &&
+                  mediaDecisions.get(mediaKey(origin, device)) === true
+                );
+              }
+              return ALLOWED_PREVIEW_PERMISSIONS.has(permission);
+            },
           );
           browserSession.webRequest.onBeforeSendHeaders(
             { urls: TEAMS_URL_PATTERNS },
