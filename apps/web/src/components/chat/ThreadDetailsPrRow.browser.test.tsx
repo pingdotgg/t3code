@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  IssueTrackerKind,
   ProjectId,
   SourceControlProviderKind,
   ThreadId,
@@ -174,7 +175,6 @@ it("merges with the last selected merge method", async () => {
         status={null}
         project={null}
         label="Test PR"
-        openAriaLabel="Open PR"
         onOpen={vi.fn()}
       />,
     );
@@ -203,7 +203,6 @@ it("requires a new merge click after passing checks become pending and pass agai
       status={null}
       project={null}
       label="Test PR"
-      openAriaLabel="Open PR"
       onOpen={vi.fn()}
     />
   );
@@ -267,7 +266,6 @@ it("adds the failing checks to a given composer instead of opening a new thread"
         status={null}
         project={null}
         label="Test PR"
-        openAriaLabel="Open PR"
         onOpen={vi.fn()}
         composerTarget={threadRef}
       />,
@@ -372,7 +370,7 @@ it("names a linked issue row by its kind, number and title, not its URL", async 
       <ThreadDetailsIssueRows
         links={[
           {
-            tracker: "github",
+            tracker: IssueTrackerKind.make("github"),
             host: "github.com",
             scope: "owner/repo",
             key: "123",
