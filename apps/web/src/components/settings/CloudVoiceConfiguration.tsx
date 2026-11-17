@@ -218,7 +218,7 @@ export function CloudVoiceConfiguration({
   const destination = (): CloudDestination =>
     routed && isModelId(model)
       ? { kind: "cloud", provider: "openrouter", environmentId: id, model }
-      : { kind: "cloud", provider: provider as "openai" | "xai", environmentId: id };
+      : { kind: "cloud", provider: provider as "openai" | "xai" | "deepgram", environmentId: id };
   const enable = () => chooseAudioDestination(destination());
   const canSubmit = routed
     ? modelChosen && keyReady && (!active || modelChanged || keyChanged)
@@ -343,11 +343,10 @@ export function CloudVoiceConfiguration({
               <Button size="sm" variant="outline" onClick={refresh}>
                 Retry loading API key
               </Button>
-            ) : routed &&
-              AsyncResult.isSuccess(presence) &&
-              presence.value &&
-              saved === undefined ? (
-              <p>Update {environment.label} to use OpenRouter dictation.</p>
+            ) : AsyncResult.isSuccess(presence) && presence.value && saved === undefined ? (
+              <p>
+                Update {environment.label} to use {name} dictation.
+              </p>
             ) : saved === undefined ? (
               <p role="status">Checking for an API key…</p>
             ) : routed ? (
