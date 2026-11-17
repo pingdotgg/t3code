@@ -1890,7 +1890,7 @@ it.effect(
       yield* createProject(projectId);
       yield* knowledge.mutate(createFact(projectId), { kind: "user" });
       const threadId = ThreadId.make("recall-thread");
-      const query = "Change cache keys to include tenant IDs.";
+      const query = "Do the cache keys carry tenant IDs?";
       const recall = (
         overrides: Partial<Parameters<typeof knowledge.recall>[0]> = {},
         requestId = "recall",
@@ -2031,7 +2031,7 @@ it.effect("does not recall a fact the thread's agent has already been shown", ()
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const projectId = ProjectId.make("recall-seen");
     yield* createProject(projectId);
-    const query = "Change cache keys to include tenant IDs.";
+    const query = "Do the cache keys carry tenant IDs?";
     // The facts differ enough that reading one does not quote another as a look-alike.
     const contents = {
       one: "Cache keys include tenant IDs, rule one.",
@@ -2241,7 +2241,7 @@ it.effect("recalls unseen facts beyond a full page of facts the thread has read"
       read.facts.map((fact) => fact.id),
       ids.slice(0, 9),
     );
-    const query = "Change cache keys to include tenant IDs.";
+    const query = "Do the cache keys carry tenant IDs?";
     const recalled = attachedComposer(
       yield* knowledge.recall({
         projectId,
@@ -2273,7 +2273,7 @@ it.effect("recall keeps the most trusted fact when more than the bound match equ
     for (const factId of ids)
       yield* knowledge.mutate(createFact(projectId, factId), { kind: "user" });
     yield* sql`UPDATE project_knowledge_facts SET trust = 1 WHERE id = ${ids[40]!}`;
-    const query = "Change cache keys to include tenant IDs.";
+    const query = "Do the cache keys carry tenant IDs?";
     const outcome = yield* knowledge.recall({
       projectId,
       threadId: ThreadId.make("recall-trust-tie"),
@@ -2292,7 +2292,7 @@ it.effect("recall does not score with the holographic kernel", () =>
     const projectId = ProjectId.make("recall-no-kernel");
     yield* createProject(projectId);
     yield* knowledge.mutate(createFact(projectId), { kind: "user" });
-    const query = "Change cache keys to include tenant IDs.";
+    const query = "Do the cache keys carry tenant IDs?";
     const outcome = yield* knowledge.recall({
       projectId,
       threadId: ThreadId.make("recall-no-kernel"),
@@ -2353,7 +2353,7 @@ it.effect("recall preserves trust order for equally covered eligible near-duplic
       );
     yield* sql`UPDATE project_knowledge_facts SET trust = 0.9 WHERE project_id = ${projectId} AND id LIKE 'dup-%'`;
     yield* sql`UPDATE project_knowledge_facts SET trust = 0.51 WHERE project_id = ${projectId} AND id = 'current'`;
-    const query = "Ship the ledger labs toggle for billing.";
+    const query = "Toggle ledger labs, then ship billing.";
     const outcome = yield* knowledge.recall({
       projectId,
       threadId: ThreadId.make("recall-near-duplicates"),
@@ -2375,7 +2375,7 @@ it.effect(
     Effect.gen(function* () {
       const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
       const projections = yield* ProjectionStore.ProjectionStoreV2;
-      const query = "Change cache keys to include tenant IDs.";
+      const query = "Do the cache keys carry tenant IDs?";
       const longer = "Cache keys include tenant IDs. " + "background note ".repeat(40);
       const recallTarget = (projectId: ProjectId, threadId: ThreadId, requestId: string) =>
         knowledge.recall({
@@ -3444,7 +3444,7 @@ it.effect(
       const blocked = yield* Deferred.make<void>();
       const stall: Statement.Transformer = (statement) =>
         Deferred.await(blocked).pipe(Effect.as(statement));
-      const query = "Change cache keys to include tenant IDs.";
+      const query = "Do the cache keys carry tenant IDs?";
       const pending = yield* knowledge
         .recall({
           projectId,
@@ -3499,7 +3499,7 @@ it.effect("does not consider a newer fact that shares no term with the recall qu
       },
       { kind: "user" },
     );
-    const query = "Change cache keys to include tenant IDs.";
+    const query = "Do the cache keys carry tenant IDs?";
     const outcome = yield* knowledge.recall({
       projectId,
       threadId: ThreadId.make("recall-bounded"),
@@ -3558,7 +3558,7 @@ it.effect("reads the recall lookup on the reader connection", () =>
       const projectId = ProjectId.make("recall-reader");
       yield* createProject(projectId);
       yield* knowledge.mutate(createFact(projectId), { kind: "user" });
-      const query = "Change cache keys to include tenant IDs.";
+      const query = "Do the cache keys carry tenant IDs?";
       yield* knowledge
         .recall({
           projectId,
@@ -3842,13 +3842,14 @@ it.effect("lost-source fact outranks a valid one", () =>
       );
     yield* sql`UPDATE project_knowledge_facts SET trust = 0.9 WHERE id = 'lost'`;
     yield* sql`UPDATE project_knowledge_facts SET trust = 0.6 WHERE id = 'valid'`;
+    const query = "Which invoices and billing changes gate on the toggle in ledger labs?";
     const run = (id: string) =>
       knowledge.recall({
         projectId,
         threadId: ThreadId.make("t-" + id),
         requestId: CommandId.make("r-" + id),
-        query: content,
-        composer: { text: content, records: [] },
+        query,
+        composer: { text: query, records: [] },
         knowledgeAllowance: 48000,
       });
     const before = yield* run("before");

@@ -133,7 +133,7 @@ it("recalls a fact the message actually names, and stays quiet otherwise", () =>
     {
       name: "pull request watch has only seven matching terms",
       message: {
-        text: "Checks failed: archive receipts preserve invoice timestamps during exports.",
+        text: "Checks failed: during exports, invoice timestamps in archive receipts were lost; preserve them.",
         notification: { source: { kind: "monitor" } },
       },
       ids: [],
@@ -141,7 +141,7 @@ it("recalls a fact the message actually names, and stays quiet otherwise", () =>
     {
       name: "pull request watch has eight matching terms",
       message: {
-        text: "Checks failed: archive receipts preserve invoice timestamps during nightly exports.",
+        text: "Checks failed: during nightly exports, invoice timestamps in archive receipts were lost; preserve them.",
         notification: { source: { kind: "monitor" } },
       },
       ids: ["receipt-archive"],
@@ -353,11 +353,25 @@ it("enforces coverage, overlap and relevance order", () => {
       text: `${shared} orchard harbor willow badger meadow pebble granite`,
       facts: [
         fact("weak", `${shared} violet copper quartz blossom crimson spruce coral`),
-        fact("middle", `${shared} orchard harbor violet copper quartz blossom crimson`),
-        fact("strong", `${shared} orchard harbor willow badger meadow violet copper`),
+        fact("middle", `${shared} harbor orchard violet copper quartz blossom crimson`),
+        fact("strong", `${shared} meadow badger willow harbor orchard violet copper`),
       ],
       docs: 1,
       ids: ["strong", "middle"],
+    },
+    {
+      name: "a fact the brief already states gives its slot to the next match",
+      text: "Update the invoice exporter. Archive receipts must preserve invoice timestamps during nightly exports, and the reconciliation job reads them afterwards.",
+      facts: [
+        fact("stated", "Archive receipts preserve invoice timestamps during nightly exports."),
+        fact(
+          "shared-words",
+          "Nightly reconciliation rejects exports whose invoice timestamps differ from archive receipts.",
+        ),
+        fact("next", "The reconciliation job owns the invoice exporter schedule."),
+      ],
+      docs: 1,
+      ids: ["shared-words", "next"],
     },
   ];
   for (const row of cases) {
