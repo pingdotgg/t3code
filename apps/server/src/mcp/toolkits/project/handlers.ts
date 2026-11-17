@@ -99,6 +99,30 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
     });
 });
 
+/** A linked worktree of a registered checkout belongs to that project; registering it duplicates it. */
+const assertNotProjectWorktree = Effect.fn("mcp.assertNotProjectWorktree")(function* (
+  workspaceRoot: string,
+) {
+  const git = yield* GitVcsDriver.GitVcsDriver;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const real = (path: string) => fileSystem.realPath(path).pipe(Effect.orElseSucceed(() => path));
+  const worktrees = yield* git.listWorktreePaths(workspaceRoot).pipe(
+    Effect.flatMap((paths) => Effect.forEach(paths, real)),
+    Effect.orElseSucceed((): ReadonlyArray<string> => []),
+  );
+  // `git worktree list` names the main checkout first; a subfolder of any checkout is not listed.
+  const [mainCheckout] = worktrees;
+  if (mainCheckout === undefined || worktrees.indexOf(yield* real(workspaceRoot)) <= 0) return;
+  const owner = yield* (yield* Project.ProjectService)
+    .getByWorkspaceRoot(mainCheckout)
+    .pipe(Effect.mapError(unavailable));
+  if (Option.isNone(owner)) return;
+  return yield* new OrchestratorMcpFailure({
+    code: "invalid_request",
+    message: `This folder is a git worktree of project "${owner.value.title}" (${owner.value.id}). Use t3_thread_launch with that projectId and workspaceStrategy {type: "existing_worktree", worktreePath} instead of registering it.`,
+  });
+});
+
 /** The composer falls back to the project's t3.json when no setting picks the mode. */
 const projectFileThreadEnvMode = Effect.fn("mcp.projectFileThreadEnvMode")(function* (
   workspaceRoot: string,
@@ -463,6 +487,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             ...(created.commitError === undefined ? {} : { commitError: created.commitError }),
           };
         }
+        yield* assertNotProjectWorktree(workspaceRoot);
         const commandId = yield* newCommandId();
         return yield* projects
           .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })

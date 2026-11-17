@@ -62,6 +62,7 @@ const clientLaunchHarness = (input: {
   readonly hostedAppUrl?: string;
   /** The orchestrator refuses the new thread's mode, as under a managed ceiling. */
   readonly refusedByCeiling?: true;
+  readonly created?: Array<Project.ProjectCreateInput>;
 }) => {
   const projectId = ProjectId.make("project:client-target");
   const modelSelection = {
@@ -172,6 +173,25 @@ const clientLaunchHarness = (input: {
               } as unknown as ProjectRecord)
             : Option.none(),
         ),
+      getByWorkspaceRoot: (workspaceRoot) =>
+        Effect.succeed(
+          workspaceRoot === input.workspaceRoot
+            ? Option.some({ id: projectId, title: "Client target", workspaceRoot } as ProjectRecord)
+            : Option.none(),
+        ),
+      create: (create) => {
+        input.created?.push(create);
+        return Effect.succeed({
+          id: create.projectId,
+          title: create.title,
+          workspaceRoot: create.workspaceRoot,
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          deletedAt: null,
+        } as ProjectRecord);
+      },
     }),
     Layer.mock(PeerForwarding.PeerForwarding)({}),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
@@ -576,6 +596,54 @@ it.effect("a launch binds only an existing checkout that is one of the project's
     expect((yield* launchInto(worktree)).at(-1)?.result).toMatchObject({
       code: "invalid_request",
     });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("an agent cannot register a worktree of a registered project as its own project", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fileSystem.realPath(
+      yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-create-worktree-" }),
+    );
+    const repo = path.join(root, "repo");
+    const worktree = path.join(root, "feature");
+    const outside = path.join(root, "outside");
+    const subfolder = path.join(repo, "packages");
+    yield* fileSystem.makeDirectory(subfolder, { recursive: true });
+    yield* fileSystem.makeDirectory(outside);
+
+    const created: Array<Project.ProjectCreateInput> = [];
+    const { dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "full-access",
+      launched: [],
+      workspaceRoot: repo,
+      created,
+    });
+    const git = yield* GitVcsDriver.GitVcsDriver.pipe(Effect.provide(dependencies));
+    for (const args of [
+      ["init", "-b", "main"],
+      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init"],
+      ["worktree", "add", "-b", "feature", worktree],
+    ]) {
+      yield* git.execute({ operation: "test.setupRepo", cwd: repo, args });
+    }
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const register = (workspaceRoot: string) =>
+      toolkit
+        .handle("t3_project_create", { title: "Repo", workspaceRoot })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    expect((yield* register(worktree)).at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+    });
+    yield* register(outside);
+    yield* register(subfolder);
+    expect(created.map((create) => create.workspaceRoot)).toEqual([outside, subfolder]);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
