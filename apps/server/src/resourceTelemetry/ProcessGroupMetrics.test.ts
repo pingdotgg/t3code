@@ -133,10 +133,7 @@ describe("ProcessGroupMetrics.layer", () => {
           now >= 5_000 ? Effect.succeed(emptySnapshot) : Effect.fail(notRunning),
         ),
       );
-      const logs = yield* logsAfter(
-        refresh,
-        TestClock.adjust("1 second").pipe(Effect.andThen(TestClock.adjust("1 minute"))),
-      );
+      const logs = yield* logsAfter(refresh, TestClock.adjust("1 minute"));
       assert.deepStrictEqual(logs, []);
     }),
   );
