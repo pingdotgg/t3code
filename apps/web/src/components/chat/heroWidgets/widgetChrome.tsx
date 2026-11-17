@@ -74,17 +74,17 @@ export function WidgetCard({
     <section
       data-hero-widget={id}
       className={cn(
-        "flex h-full min-w-0 flex-col overflow-hidden rounded-xl border bg-card/85 p-4 text-card-foreground shadow-xs backdrop-blur-sm",
+        "flex h-full min-w-0 flex-col overflow-hidden rounded-xl border bg-card/85 p-4 shadow-xs backdrop-blur-sm",
         className,
       )}
     >
-      <header className="flex items-center gap-2 text-sm">
+      <header className="flex items-center gap-2">
         <Icon className="size-4 shrink-0 opacity-80" aria-hidden />
-        <h3 className="font-medium">{title}</h3>
+        <h3 className="text-label">{title}</h3>
         {meta ? (
           <span
             className={cn(
-              "ms-auto truncate text-xs",
+              "ms-auto truncate text-meta",
               metaTone === "warning" ? "text-warning" : "text-muted-foreground",
             )}
           >
@@ -94,6 +94,18 @@ export function WidgetCard({
       </header>
       {children}
     </section>
+  );
+}
+
+/**
+ * A card's headline figure. No type role runs this large, so it is the title role with the
+ * role's size raised, the way other screens scale a role (see WelcomePage).
+ */
+export function HeadlineFigure({ children }: { readonly children: ReactNode }) {
+  return (
+    <span className="text-title tracking-tight tabular-nums [--type-title:1.875rem]">
+      {children}
+    </span>
   );
 }
 

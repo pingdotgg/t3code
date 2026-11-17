@@ -6,6 +6,7 @@ import { ServerIcon } from "lucide-react";
 import { useContext, useEffect } from "react";
 
 import { cn } from "~/lib/utils";
+import { Text } from "../../ui/text";
 import { useClientSettings } from "../../../hooks/useSettings";
 import { useQuietThreadShells } from "../../../state/entities";
 import { useEnvironments } from "../../../state/environments";
@@ -172,28 +173,47 @@ function MachineRow(props: MachineRowProps) {
           phase === "connecting" && "animate-pulse",
         )}
       />
-      <span className="truncate text-sm font-medium">{label}</span>
+      <span className="truncate text-label">{label}</span>
       {isNext ? (
-        <span className="shrink-0 rounded-full border border-primary/40 bg-primary/15 px-1.5 text-3xs leading-4 text-primary">
+        <span className="shrink-0 rounded-full border border-primary/40 bg-primary/15 px-1.5 text-micro leading-4 text-primary">
           next chat
         </span>
       ) : null}
     </span>
   );
-  const detail = resources
+  // Facts sit apart in the layout rather than in one joined string; the last one truncates.
+  const facts = resources
     ? compact
-      ? `${resources.cpuCount} cores · ${formatGigabytes(resources.availableMemoryBytes)} free · ${agents} running`
-      : `${resources.cpuCount} cores · ${formatGigabytes(resources.availableMemoryBytes)} free of ${formatGigabytes(resources.totalMemoryBytes)} · ${agents} agent${agents === 1 ? "" : "s"} running`
-    : connected
-      ? failed
-        ? "Load unavailable"
-        : "Reading load…"
-      : phase;
-  const cpuLabel = (
-    <span className="text-sm font-semibold tabular-nums">
-      {cpu === null ? "–" : `${Math.round(cpu * 100)}%`}
-      <span className="ms-1 text-2xs font-normal text-muted-foreground">CPU</span>
+      ? [
+          `${resources.cpuCount} cores`,
+          `${formatGigabytes(resources.availableMemoryBytes)} free`,
+          `${agents} running`,
+        ]
+      : [
+          `${resources.cpuCount} cores`,
+          `${formatGigabytes(resources.availableMemoryBytes)} free of ${formatGigabytes(resources.totalMemoryBytes)}`,
+          `${agents} agent${agents === 1 ? "" : "s"} running`,
+        ]
+    : [connected ? (failed ? "Load unavailable" : "Reading load…") : phase];
+  const detail = (className: string) => (
+    <span
+      className={cn(
+        "flex min-w-0 gap-3 overflow-hidden whitespace-nowrap text-muted-foreground tabular-nums",
+        className,
+      )}
+    >
+      {facts.map((fact, index) => (
+        <span key={fact} className={index === facts.length - 1 ? "truncate" : "shrink-0"}>
+          {fact}
+        </span>
+      ))}
     </span>
+  );
+  const cpuLabel = (
+    <Text variant="label" tone="inherit" emphasis numeric>
+      {cpu === null ? "–" : `${Math.round(cpu * 100)}%`}
+      <span className="ms-1 text-caption text-muted-foreground">CPU</span>
+    </Text>
   );
 
   if (compact) {
@@ -201,9 +221,7 @@ function MachineRow(props: MachineRowProps) {
       <li className="grid min-h-0 flex-1 grid-cols-[minmax(0,11rem)_minmax(0,1fr)_4.5rem] items-center gap-3 py-1.5">
         <span className="min-w-0">
           {name}
-          <span className="block truncate text-2xs text-muted-foreground tabular-nums">
-            {detail}
-          </span>
+          {detail("text-caption")}
         </span>
         <CpuSparkline history={history} now={now} className="h-full max-h-12 min-h-5" />
         <span className="flex flex-col items-end gap-1">
@@ -220,9 +238,9 @@ function MachineRow(props: MachineRowProps) {
         {name}
         <span className="ms-auto">{cpuLabel}</span>
       </div>
-      <div className="truncate text-xs text-muted-foreground tabular-nums">{detail}</div>
+      {detail("text-meta")}
       <CpuSparkline history={history} now={now} className="min-h-5 flex-1" showCeiling />
-      <div className="grid grid-cols-[2.25rem_minmax(0,1fr)_2.5rem] items-center gap-2 text-2xs text-muted-foreground tabular-nums">
+      <div className="grid grid-cols-[2.25rem_minmax(0,1fr)_2.5rem] items-center gap-2 text-caption text-muted-foreground tabular-nums">
         <span>RAM</span>
         <MemoryBar used={memoryUsed} className="h-2.5" />
         <span className="text-right">
@@ -283,7 +301,7 @@ function CpuSparkline({
         }}
       />
       {showCeiling ? (
-        <span className="pointer-events-none absolute top-0.5 right-0 text-3xs text-muted-foreground tabular-nums">
+        <span className="pointer-events-none absolute top-0.5 right-0 text-micro text-muted-foreground tabular-nums">
           {Math.round(ceiling * 100)}%
         </span>
       ) : null}

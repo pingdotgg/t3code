@@ -15,6 +15,7 @@ import { GaugeIcon } from "lucide-react";
 import { useRef, useState, type CSSProperties, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { Text } from "../../ui/text";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 import { environmentPresentations } from "../../../state/presentation";
 import { PROVIDER_PRESENTATION } from "../../usage/usageProviders";
@@ -42,6 +43,7 @@ import {
   startOfLocalDay,
 } from "./heroWidgets.logic";
 import {
+  HeadlineFigure,
   readStored,
   useDebugValue,
   useElementSize,
@@ -120,7 +122,7 @@ const TAG_GAP = 4;
 const TAG_ROWS_DOWN = 4;
 /** Room kept between a pill's edge and another event's tick. */
 const TAG_TICK_CLEAR = 3;
-/** Clear space kept between neighbouring tags, and right of the NOW label. */
+/** Clear space kept between neighbouring tags, and right of the Now label. */
 const TAG_SPACING = 4;
 const NOW_LABEL_PX = 24;
 const NOW_LABEL_HEIGHT = 12;
@@ -129,13 +131,13 @@ const PIPS_PER_ROW = 8;
 const PIP_GAP = 4;
 /** Height of the rose bar an empty account's pip sits on. */
 const PIP_EMPTY_BAR = 2;
-/** The rail's gap plus one text-xs line, for the "No limits" line. */
+/** The rail's gap plus one text-meta line, for the "No limits" line. */
 const NO_LIMITS_PX = 28;
 /** Room a weekday label needs under the chart. */
 const DAY_LABEL_PX = 24;
 
 const CELL = 3;
-/** Room above the full pool for NOW and refill tags. */
+/** Room above the full pool for the Now label and refill tags. */
 const TOP_GUTTER = 20;
 /** Under the baseline: a gap, the 4px dry strip, a gap. */
 const UNDER_BASELINE = 8;
@@ -347,7 +349,7 @@ export function PoolWidget({
       }
     >
       {providers.length === 0 ? (
-        <p className="mt-3 text-xs text-muted-foreground">
+        <p className="mt-3 text-meta text-muted-foreground">
           No provider reports subscription limits yet.
         </p>
       ) : (
@@ -420,24 +422,21 @@ function PoolBody({
   return (
     <div ref={ref} className="mt-2.5 flex min-h-0 flex-1 flex-col">
       <div className="flex items-baseline gap-2 leading-none whitespace-nowrap">
-        <span className="text-3xl font-semibold tracking-tight tabular-nums">
-          {formatPercent(model.left)}
-        </span>
-        <span className="truncate text-sm text-muted-foreground">
-          left of {formatPercent(model.capacity)} · {accounts} account{accounts === 1 ? "" : "s"}
+        <HeadlineFigure>{formatPercent(model.left)}</HeadlineFigure>
+        <span className="truncate text-body text-muted-foreground">
+          left of {formatPercent(model.capacity)} across {accounts} account
+          {accounts === 1 ? "" : "s"}
         </span>
         {nextRefill ? (
-          <span className="ms-auto inline-flex min-w-0 items-baseline gap-1.5 ps-4 text-sm tabular-nums">
+          <span className="ms-auto inline-flex min-w-0 items-baseline gap-1.5 ps-4 text-body tabular-nums">
             {narrow ? null : (
-              <span className="shrink-0 text-3xs tracking-wider text-muted-foreground uppercase">
-                Next refill
-              </span>
+              <span className="shrink-0 text-micro text-muted-foreground">Next refill</span>
             )}
             <Chip driver={nextRefill.driver} className="ms-1" />
-            <span className="shrink-0 font-medium">+{formatPercent(nextRefill.amount)}</span>
-            <span className="flex min-w-0 text-muted-foreground">
+            <span className="shrink-0 text-label">+{formatPercent(nextRefill.amount)}</span>
+            <span className="flex min-w-0 gap-2 text-muted-foreground">
               <span className="truncate">{poolLabel(nextRefill.driver)}</span>
-              <span className="shrink-0 whitespace-pre"> · {formatReset(nextRefill.at)}</span>
+              <span className="shrink-0">{formatReset(nextRefill.at)}</span>
             </span>
           </span>
         ) : null}
@@ -446,7 +445,7 @@ function PoolBody({
         <div className="flex min-w-0 flex-1 flex-col">
           <PoolChart model={model} />
           {narrow ? (
-            <div className="mt-2 flex items-center gap-x-4 overflow-hidden text-xs whitespace-nowrap tabular-nums">
+            <div className="mt-2 flex items-center gap-x-4 overflow-hidden text-meta whitespace-nowrap tabular-nums">
               {listed.map((provider) => {
                 const status = providerStatus(model, provider.driver);
                 return (
@@ -490,7 +489,7 @@ function Rail({
   return (
     <div
       ref={railRef}
-      className="flex w-48 shrink-0 flex-col justify-center-safe gap-3 overflow-hidden text-xs tabular-nums"
+      className="flex w-48 shrink-0 flex-col justify-center-safe gap-3 overflow-hidden text-meta tabular-nums"
     >
       <div ref={listRef} className="flex flex-col gap-3">
         {listed.map((provider) => (
@@ -532,7 +531,9 @@ function Capacity({
 }) {
   return (
     <span className={className}>
-      <span className="font-semibold">{Math.round(provider.left)}</span>
+      <Text variant="meta" tone="inherit" emphasis>
+        {Math.round(provider.left)}
+      </Text>
       <span className="text-muted-foreground">/{provider.capacity}%</span>
     </span>
   );
@@ -767,7 +768,7 @@ function dayLabels(model: PoolModel, geometry: ChartGeometry, width: number): Da
     if (previous && x - previous.x < DAY_LABEL_PX + 6) continue;
     labels.push({
       key: String(day.getTime()),
-      label: day.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase(),
+      label: day.toLocaleDateString("en-US", { weekday: "short" }),
       x,
       today: day.getTime() === today,
     });
@@ -841,21 +842,27 @@ interface TagBox {
 
 let measureContext: CanvasRenderingContext2D | null | undefined;
 
-/** Width of a text-3xs medium label, for laying tags out before they render. */
+/** Width of a label in the text-micro role (500 weight), for laying tags out before they render. */
 function tagTextWidth(text: string): number {
   if (measureContext === undefined) {
     measureContext = document.createElement("canvas").getContext("2d");
   }
   if (!measureContext) return text.length * 6;
-  measureContext.font = `500 10px ${getComputedStyle(document.body).fontFamily}`;
+  // The role's size steps up on phones, so read it rather than assume 10px.
+  const root = getComputedStyle(document.documentElement);
+  const size =
+    Number.parseFloat(root.getPropertyValue("--type-micro")) * Number.parseFloat(root.fontSize);
+  measureContext.font = `500 ${size || 10}px ${getComputedStyle(document.body).fontFamily}`;
   return Math.ceil(measureContext.measureText(text).width) + 1;
 }
 
-/** "Claude out · 3d" alone; several runouts in one tag drop their lengths to stay short. */
+/** "Claude out for 3d" alone; several runouts in one tag drop their lengths to stay short. */
 function runoutText(points: ReadonlyArray<LanePoint>): string | null {
   const runouts = points.flatMap((point) => (point.runout ? [point.runout] : []));
   if (runouts.length === 0) return null;
-  if (runouts.length === 1) return `${poolLabel(runouts[0]!.driver)} out · ${runouts[0]!.length}`;
+  if (runouts.length === 1) {
+    return `${poolLabel(runouts[0]!.driver)} out for ${runouts[0]!.length}`;
+  }
   return `${[...new Set(runouts.map((runout) => poolLabel(runout.driver)))].join(", ")} out`;
 }
 
@@ -879,7 +886,7 @@ const overlaps = (a: TagBox, b: TagBox) =>
 /**
  * Places one group's pill over its own events: centred on them where it can be, sliding no
  * further than keeps every event inside its middle half, and stepping up a row (down only when
- * the top is reached) until it clears every pill placed before it and the NOW label.
+ * the top is reached) until it clears every pill placed before it and the Now label.
  */
 function placeTag(
   points: ReadonlyArray<LanePoint>,
@@ -1040,7 +1047,7 @@ function PoolChart({ model }: { readonly model: PoolModel }) {
     const to = Math.min(model.end, span.to ?? model.end);
     const x = geometry.xOf(from);
     if (geometry.xOf(to) - x < POOL_DRY_LABEL_MIN_PX) return [];
-    return [{ key: String(span.from), x, text: `Pool dry · ${runoutLength(model, span)}` }];
+    return [{ key: String(span.from), x, text: `Pool dry for ${runoutLength(model, span)}` }];
   });
 
   return (
@@ -1053,17 +1060,17 @@ function PoolChart({ model }: { readonly model: PoolModel }) {
         />
         <span
           className={cn(
-            "pointer-events-none absolute top-0 text-3xs leading-3 tracking-wider text-muted-foreground",
+            "pointer-events-none absolute top-0 text-micro leading-3 text-muted-foreground",
             nowX >= 14 && "-translate-x-1/2",
           )}
           style={{ left: nowX >= 14 ? nowX : 0 }}
         >
-          NOW
+          Now
         </span>
         {poolDryLabels.map((label) => (
           <span
             key={label.key}
-            className="pointer-events-none absolute text-3xs leading-3.5 font-medium"
+            className="pointer-events-none absolute text-micro leading-3.5"
             style={{ left: label.x + 4, top: geometry.plotTop + 3, color: ROSE }}
           >
             {label.text}
@@ -1081,7 +1088,7 @@ function PoolChart({ model }: { readonly model: PoolModel }) {
           />
         ) : null}
       </div>
-      <div className="relative mt-1 h-3 text-3xs leading-3 tracking-wider text-muted-foreground">
+      <div className="relative mt-1 h-3 text-micro leading-3 text-muted-foreground">
         {days.map((day) => (
           <span
             key={day.key}
@@ -1151,7 +1158,7 @@ function ChartHover({
         {tags.map((tag) => (
           <span
             key={tag.key}
-            className="absolute inline-flex items-center justify-center gap-1.5 rounded-sm border bg-popover/90 px-1 text-3xs font-medium whitespace-nowrap tabular-nums"
+            className="absolute inline-flex items-center justify-center gap-1.5 rounded-sm border bg-popover/90 px-1 text-micro whitespace-nowrap tabular-nums"
             style={{
               left: tag.left,
               top: tag.top,
@@ -1230,15 +1237,15 @@ function HoverReadout({
   });
   return (
     <div
-      className="pointer-events-none absolute top-0 z-10 min-w-40 rounded-md border bg-popover/95 px-2.5 py-1.5 text-2xs leading-4 text-popover-foreground shadow-lg backdrop-blur-sm"
+      className="pointer-events-none absolute top-0 z-10 min-w-40 rounded-md border bg-popover/95 px-2.5 py-1.5 text-caption leading-4 text-popover-foreground shadow-lg backdrop-blur-sm"
       style={style}
     >
       <div className="flex items-baseline justify-between gap-3">
-        <span className="font-medium tabular-nums">
+        <Text variant="caption" tone="inherit" emphasis numeric>
           {recorded ? WEEKDAY_TIME.format(t) : formatForecast(t)}
-        </span>
-        <span className="text-3xs tracking-wider text-muted-foreground uppercase">
-          {recorded ? "recorded" : "forecast"}
+        </Text>
+        <span className="text-micro text-muted-foreground">
+          {recorded ? "Recorded" : "Forecast"}
         </span>
       </div>
       {rows.toReversed().map(({ provider, accounts, listed, value }) => {
