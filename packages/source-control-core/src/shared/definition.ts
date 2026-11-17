@@ -38,6 +38,7 @@ export interface ChangeRequestLink {
  */
 export interface IssueLink {
   readonly host: string;
+  readonly authority?: string;
   readonly scope: string;
   readonly key: string;
 }
@@ -454,7 +455,12 @@ export function parseIssuePath(url: URL, route: RegExp): IssueLink | null {
   const scope = match?.[1];
   const number = Number(match?.[2]);
   return scope && Number.isSafeInteger(number) && number > 0
-    ? { host: url.hostname.toLowerCase(), scope: scope.toLowerCase(), key: String(number) }
+    ? {
+        host: url.hostname.toLowerCase(),
+        ...(url.port ? { authority: url.host.toLowerCase() } : {}),
+        scope: scope.toLowerCase(),
+        key: String(number),
+      }
     : null;
 }
 
@@ -495,6 +501,32 @@ export function defineSourceControl<const Definition extends SourceControlDefini
   definition: Definition,
 ): Definition {
   return definition;
+}
+
+/** Web URLs take precedence; an SSH remote alone does not specify an HTTP port. */
+function issueWebUrl(identity: ChangeRequestHostIdentity): URL | null {
+  return httpUrl(identity?.webUrl ?? "") ?? httpUrl(identity?.locator?.remoteUrl ?? "");
+}
+
+/** For links with a port, a configured web authority wins over an SSH-only host. */
+export function projectsOnIssueHost<
+  Project extends {
+    readonly host: string;
+    readonly repositoryIdentity?: ChangeRequestHostIdentity;
+  },
+>(projects: ReadonlyArray<Project>, link: IssueLink): ReadonlyArray<Project> {
+  const matches = projects.flatMap((project) => {
+    const web = issueWebUrl(project.repositoryIdentity);
+    if (web !== null) {
+      return web.host.toLowerCase() === (link.authority ?? link.host)
+        ? [{ project, authority: true }]
+        : [];
+    }
+    if (project.host === link.authority) return [{ project, authority: true }];
+    return project.host === link.host ? [{ project, authority: false }] : [];
+  });
+  const configured = link.authority === undefined ? [] : matches.filter((match) => match.authority);
+  return (configured.length > 0 ? configured : matches).map((match) => match.project);
 }
 
 export function isChangeRequestAuthorityOfProject(
