@@ -1584,7 +1584,7 @@ describe("AcpRegistryAdapterV2", () => {
           ],
         },
       ];
-      const stdio = (authorization: string) => [
+      const stdio = (authorization: string, deferred = false) => [
         {
           name: "t3-code",
           command: selfInvocation.command,
@@ -1593,6 +1593,7 @@ describe("AcpRegistryAdapterV2", () => {
             { name: "ELECTRON_RUN_AS_NODE", value: "1" },
             { name: "T3_ACP_MCP_ENDPOINT", value: endpoint },
             { name: "T3_ACP_MCP_AUTHORIZATION", value: authorization },
+            ...(deferred ? [{ name: "T3_ACP_MCP_TOOL_EXPOSURE", value: "deferred" }] : []),
           ],
         },
       ];
@@ -1610,8 +1611,8 @@ describe("AcpRegistryAdapterV2", () => {
         { new: acp, load: acp },
       );
       assert.deepEqual(yield* sessionMcpServers({ agentId: "github-copilot-cli" }), {
-        new: stdio("Bearer opened-token"),
-        load: stdio("Bearer rotated-token"),
+        new: stdio("Bearer opened-token", true),
+        load: stdio("Bearer rotated-token", true),
       });
       assert.deepEqual(yield* sessionMcpServers({ agentId: "gemini" }, { T3_ACP_MCP_HTTP: "1" }), {
         new: stdio("Bearer opened-token"),

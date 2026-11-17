@@ -344,8 +344,10 @@ describe("AntigravityAdapterV2 MCP exposure", () => {
           const threadId = ThreadId.make("thread-antigravity-mcp-exposure");
           const providerSessionId = ProviderSessionId.make("provider-session-mcp-exposure");
           const token = "antigravity-exposure-token";
-          const capturedMcpServers =
-            yield* Deferred.make<ReadonlyArray<EffectAcpSchema.McpServer>>();
+          const capturedMcpServers = yield* Deferred.make<{
+            readonly stdio: ReadonlyArray<EffectAcpSchema.McpServer>;
+            readonly http: ReadonlyArray<EffectAcpSchema.McpServer>;
+          }>();
 
           const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
           yield* mcpSessions.set({
@@ -362,7 +364,10 @@ describe("AntigravityAdapterV2 MCP exposure", () => {
             instanceId,
             selfInvocation: yield* resolveSelfInvocation(),
             makeRuntime: (input) =>
-              Deferred.succeed(capturedMcpServers, input.httpMcpServers ?? []).pipe(
+              Deferred.succeed(capturedMcpServers, {
+                stdio: input.mcpServers ?? [],
+                http: input.httpMcpServers ?? [],
+              }).pipe(
                 Effect.andThen(
                   makeAntigravityAcpRuntime({
                     ...input,
@@ -393,7 +398,17 @@ describe("AntigravityAdapterV2 MCP exposure", () => {
           });
 
           const mcpServers = yield* Deferred.await(capturedMcpServers);
-          const t3Server = mcpServers.find(
+          const stdioT3Server = mcpServers.stdio.find(
+            (server): server is Extract<EffectAcpSchema.McpServer, { command: string }> =>
+              "command" in server && server.name === "t3-code",
+          );
+          assert.isDefined(stdioT3Server);
+          assert.strictEqual(
+            stdioT3Server?.env?.find((entry) => entry.name === "T3_ACP_MCP_TOOL_EXPOSURE")?.value,
+            "deferred",
+          );
+
+          const t3Server = mcpServers.http.find(
             (server): server is Extract<EffectAcpSchema.McpServer, { type: "http" }> =>
               "type" in server && server.type === "http" && server.name === "t3-code",
           );

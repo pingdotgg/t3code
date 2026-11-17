@@ -445,4 +445,32 @@ describe("AcpMcpStdioBridge", () => {
       expect(signal?.aborted).toBe(true);
     }),
   );
+
+  it.effect("forwards t3-tool-exposure when toolExposure is configured on the stdio bridge", () =>
+    Effect.gen(function* () {
+      const headersSeen: Array<string | null> = [];
+      const input = new NodeStream.PassThrough();
+      const written: Array<string> = [];
+      const bridge = runAcpMcpStdioBridge({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        toolExposure: "deferred",
+        input,
+        output: {
+          write: (chunk: string) => {
+            written.push(chunk);
+          },
+        },
+        fetchImplementation: async (_url, init) => {
+          const request = new Request("http://127.0.0.1:1/mcp", init);
+          headersSeen.push(request.headers.get("t3-tool-exposure"));
+          return Response.json({ jsonrpc: "2.0", id: 1, result: { tools: [] } });
+        },
+      });
+      input.end(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" })}\n`);
+      yield* bridge;
+      expect(headersSeen).toEqual(["deferred"]);
+      expect(written).toHaveLength(1);
+    }),
+  );
 });

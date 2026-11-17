@@ -970,6 +970,9 @@ function acpMcpContext(
           { name: "ELECTRON_RUN_AS_NODE", value: "1" },
           { name: "T3_ACP_MCP_ENDPOINT", value: session.endpoint },
           { name: "T3_ACP_MCP_AUTHORIZATION", value: session.authorizationHeader },
+          ...(deferMcpTools === true
+            ? [{ name: "T3_ACP_MCP_TOOL_EXPOSURE", value: "deferred" }]
+            : []),
         ],
       },
     ],
