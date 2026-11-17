@@ -40,6 +40,7 @@ import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspace
 import { WorkspaceListEmptyDetail } from "../layout/workspace/WorkspaceListEmptyDetail";
 import { WorkspaceListHeader } from "../layout/workspace/WorkspaceListHeader";
 import { buildHomeListFilterMenuItems, homeListFilterEnvironments } from "./home-list-filter-menu";
+import { renderProjectFilterMenuIcon } from "./ProjectFilterMenuIcon";
 
 export function HomeRouteScreen() {
   const nativePrimaryColumn = use(NativePrimaryColumnContext);
@@ -138,6 +139,7 @@ export function HomeRouteScreen() {
       ).map((scope) => ({
         key: scope.key,
         label: scope.title,
+        representative: scope.representative,
       })),
     [projectScopes, threads],
   );
@@ -175,6 +177,7 @@ export function HomeRouteScreen() {
               selectedProjectKey,
               onEnvironmentChange: setSelectedEnvironmentId,
               onProjectChange: setSelectedProjectKey,
+              renderProjectIcon: renderProjectFilterMenuIcon,
             }),
           }}
         />
