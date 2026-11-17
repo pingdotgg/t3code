@@ -214,7 +214,7 @@ export type ResolvedAsset =
       readonly fileName?: string;
       readonly mimeType?: string;
       readonly file?: OpenMediaFile;
-      readonly renderIntent?: "mcp-app";
+      readonly renderIntent?: "mcp-app" | "file-preview";
     }
   | {
       readonly kind: "bytes";
@@ -1091,5 +1091,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     relativePath: joinedRelativePath,
     previewDependency: true,
   });
-  return workspaceFile ? ({ kind: "file", path: workspaceFile } satisfies ResolvedAsset) : null;
+  return workspaceFile
+    ? ({ kind: "file", path: workspaceFile, renderIntent: "file-preview" } satisfies ResolvedAsset)
+    : null;
 });

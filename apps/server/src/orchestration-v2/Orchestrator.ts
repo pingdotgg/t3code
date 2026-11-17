@@ -195,6 +195,7 @@ import {
   makeSubagentChildThread,
   subagentResultForRun,
   delegatedTaskProgress,
+  delegatedTaskReportRuns,
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
 import {
@@ -14411,18 +14412,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
 
+      // A run queued behind the report can end the task without saying anything.
+      const reportRuns = delegatedTaskReportRuns(childControls, { ...childRun, status: outcome });
+      const resultRunIds = [childRun.id, ...reportRuns.map((run) => run.id)];
       const childResult = yield* projectionStore.getThreadRecords(
         childThreadId,
         ["messages", "turnItems"],
         {
           messageRoles: ["assistant"],
-          messageRunIds: [childRun.id],
-          turnItemRunId: childRun.id,
+          messageRunIds: resultRunIds,
+          turnItemRunIds: resultRunIds,
           turnItemTypes: ["assistant_message", "error", "system_notice"],
         },
       );
       const childProjection = {
         ...childControls,
+        runs: reportRuns,
         messages: childResult.messages,
         turnItems: childResult.turnItems,
       };
