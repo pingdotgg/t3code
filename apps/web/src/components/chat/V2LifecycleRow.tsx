@@ -130,7 +130,9 @@ export function V2LifecycleRow(props: {
             size="xs"
             variant="outline"
             aria-label={
-              item.title ? gt("Open {title}", { title: item.title }) : gt("Open created thread")
+              item.title != null
+                ? gt("Open {title}", { title: item.title })
+                : gt("Open created thread")
             }
             onClick={() => props.onOpenThread(item.targetThreadId)}
           >
@@ -155,7 +157,9 @@ export function V2LifecycleRow(props: {
         trailing={
           <InlineButton
             aria-label={
-              item.title ? gt("Open {title}", { title: item.title }) : gt("Open created thread")
+              item.title != null
+                ? gt("Open {title}", { title: item.title })
+                : gt("Open created thread")
             }
             onClick={() => props.onOpenThread(item.targetThreadId)}
           >

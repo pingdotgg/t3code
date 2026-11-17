@@ -113,15 +113,15 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
           {approval.fullAccessOverride ? (
             <Popover>
               <PopoverTrigger openOnHover render={<InlineButton tone="muted" />}>
-                {FULL_ACCESS_OVERRIDE_QUESTION}
+                {m(FULL_ACCESS_OVERRIDE_QUESTION)}
               </PopoverTrigger>
               <PopoverPopup
-                aria-label={FULL_ACCESS_OVERRIDE_QUESTION}
+                aria-label={m(FULL_ACCESS_OVERRIDE_QUESTION)}
                 tooltipStyle
                 side="top"
                 className="max-w-[min(22rem,calc(100vw-2rem))] whitespace-normal"
               >
-                {fullAccessOverrideExplanation(approval.fullAccessOverride)}
+                {fullAccessOverrideExplanation(approval.fullAccessOverride, m)}
               </PopoverPopup>
             </Popover>
           ) : null}

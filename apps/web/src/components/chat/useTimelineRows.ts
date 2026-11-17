@@ -1,3 +1,4 @@
+import { useMessages } from "gt-react";
 import { useState } from "react";
 import {
   computeStableMessagesTimelineRows,
@@ -43,19 +44,26 @@ export function useIncrementalTimelineRows(
   identity: string,
   input: MessagesTimelineRowsInput,
 ): MessagesTimelineRow[] {
+  const resolve = useMessages();
   const [state, setState] = useState(() => ({
     identity,
     input,
-    projection: deriveMessagesTimelineRowsWithState(input),
+    resolve,
+    projection: deriveMessagesTimelineRowsWithState(input, null, resolve),
   }));
-  if (state.identity === identity && sameRowsInput(state.input, input)) {
+  if (
+    state.identity === identity &&
+    state.resolve === resolve &&
+    sameRowsInput(state.input, input)
+  ) {
     return state.projection.rows;
   }
   const projection = deriveMessagesTimelineRowsWithState(
     input,
-    state.identity === identity ? state.projection : null,
+    state.identity === identity && state.resolve === resolve ? state.projection : null,
+    resolve,
   );
-  setState({ identity, input, projection });
+  setState({ identity, input, resolve, projection });
   return projection.rows;
 }
 

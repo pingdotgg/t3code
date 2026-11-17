@@ -1,4 +1,4 @@
-import { T, msg, useGT } from "gt-react";
+import { T, msg, useGT, useMessages } from "gt-react";
 import { m } from "~/i18n/messages";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { type EnvironmentId } from "@t3tools/contracts";
@@ -69,6 +69,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
     autoUpdateEnvironments,
   } = input;
   const gt = useGT();
+  const messages = useMessages();
   const navigate = useNavigate();
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
   const setEnvironmentEnabled = useAtomCommand(environmentCatalog.setEnabled, {
@@ -138,7 +139,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
     handleDisconnectActiveEnvironment,
   );
   const autoBalanceUpdateBanner = useAutoBalanceUpdateBanner(autoUpdateEnvironments);
-  const versionMismatch = resolveServerConfigVersionMismatch(serverConfig);
+  const versionMismatch = resolveServerConfigVersionMismatch(serverConfig, messages);
   const versionMismatchServerName =
     hasMultipleRegisteredEnvironments && activeThreadEnvironmentId !== null
       ? (activeEnvironment?.label ?? serverConfig?.environment.label ?? activeThreadEnvironmentId)
@@ -262,7 +263,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
         description:
           serverUpdateState.status === "failed"
             ? serverUpdateState.message
-            : serverUpdateStageLabel(serverUpdateState.stage),
+            : serverUpdateStageLabel(serverUpdateState.stage, messages),
         actions: !updateFailed ? (
           disconnectAction
         ) : !versionMismatch ||

@@ -299,8 +299,12 @@ export function useComposerAttachmentIntake(input: {
         compressionErrors.set(
           id,
           result.reason === "unreadable"
-            ? `'${file.name}' could not be read as an image.`
-            : `'${file.name}' is too large to attach, even after compression.`,
+            ? m(msg("''{name}'' could not be read as an image.", { name: file.name }))
+            : m(
+                msg("''{name}'' is too large to attach, even after compression.", {
+                  name: file.name,
+                }),
+              ),
         );
         continue;
       }
@@ -383,7 +387,18 @@ export function useComposerAttachmentIntake(input: {
       return;
     }
     const confirmation = requestConfirmDialog(
-      `Remove ${image?.name ?? "this image"} from the message?\nIt is referenced in your text; removing it also removes every reference.`,
+      image?.name != null
+        ? m(
+            msg(
+              "Remove {name} from the message?\nIt is referenced in your text; removing it also removes every reference.",
+              { name: image.name },
+            ),
+          )
+        : m(
+            msg(
+              "Remove this image from the message?\nIt is referenced in your text; removing it also removes every reference.",
+            ),
+          ),
       { variant: "destructive" },
     );
     if (!confirmation) {

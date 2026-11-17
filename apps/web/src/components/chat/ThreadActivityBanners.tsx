@@ -103,7 +103,7 @@ export function goalNowItem(
   resolve: MessageResolver = m,
 ): ThreadNowItem {
   const { isWorking, onSendCommand } = input;
-  const presentation = presentProviderGoal(input.goal, isWorking);
+  const presentation = presentProviderGoal(input.goal, isWorking, resolve);
   return {
     id: `goal:${input.threadId}`,
     icon: <TargetIcon />,
@@ -195,18 +195,21 @@ export function runStopNowItem(input: {
 }
 
 /** Background commands and subagents, for the end of the timeline. */
-export function backgroundWorkNowItem(input: {
-  readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId;
-  readonly tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>;
-  readonly turnItems: ThreadStructure["turnItems"];
-  readonly stopDisabled: boolean;
-  readonly stopping: boolean;
-  readonly onStop: () => Promise<void>;
-  readonly onOpenThread: (threadId: ThreadId) => void;
-}): ThreadNowItem | null {
+export function backgroundWorkNowItem(
+  input: {
+    readonly environmentId: EnvironmentId;
+    readonly threadId: ThreadId;
+    readonly tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>;
+    readonly turnItems: ThreadStructure["turnItems"];
+    readonly stopDisabled: boolean;
+    readonly stopping: boolean;
+    readonly onStop: () => Promise<void>;
+    readonly onOpenThread: (threadId: ThreadId) => void;
+  },
+  resolve: MessageResolver = m,
+): ThreadNowItem | null {
   const { onOpenThread } = input;
-  const presentation = presentPendingBackgroundWork(input.tasks);
+  const presentation = presentPendingBackgroundWork(input.tasks, resolve);
   if (presentation === null) return null;
   const rows = presentation.items.map((task) => {
     const itemKey =

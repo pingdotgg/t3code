@@ -851,7 +851,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       ) : null}
       <Tooltip>
         <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
-          {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
+          {formatDayAwareTimestamp(
+            row.message.createdAt,
+            ctx.timestampFormat,
+            undefined,
+            undefined,
+            m,
+          )}
         </TooltipTrigger>
         <TooltipPopup>
           {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}

@@ -97,6 +97,7 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
       ? (threshold / maxTokens) * 100
       : null;
   const gt = useGT();
+  const m = useMessages();
   const usedTokens = formatContextWindowTokens(usage.usedTokens);
   return (
     <ThreadDetailsSection
@@ -138,7 +139,7 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
               ) : null}
               {threshold !== null && threshold > 0 ? (
                 <span className="text-muted-foreground">
-                  {formatContextWindowCompactionMessage(threshold)}
+                  {formatContextWindowCompactionMessage(threshold, m)}
                 </span>
               ) : null}
             </>
@@ -178,7 +179,7 @@ function LimitRow({
             <span className="text-muted-foreground">
               {gt("Resets in {duration} · {time}", {
                 duration: formatDuration(resetsAt - now),
-                time: formatUpcomingTimestamp(window.resetsAt, timestampFormat, now),
+                time: formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m),
               })}
             </span>
           ) : null}

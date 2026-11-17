@@ -1,4 +1,5 @@
-import { T, useGT } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
+import type { MessageResolver } from "~/i18n/messages";
 import { useNativeFileDrag } from "../../useNativeFileDrag";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { documentChipKindForFileName } from "~/pierre-icons";
@@ -285,6 +286,7 @@ interface UserMessageContextRenderContext {
   onExpandVideo: (file: ChatFileAttachment) => void;
   onOpenFile: (file: ChatFileAttachment) => void;
   gt: ReturnType<typeof useGT>;
+  m: MessageResolver;
 }
 
 function UnavailableUserMessageContextChip(props: UserMessageContextRenderContext) {
@@ -399,7 +401,7 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
         }
         const attachment = context.attachment;
         const isVideo = isVideoAttachment(attachment);
-        const label = userMessageFileLabel(attachment);
+        const label = userMessageFileLabel(attachment, context.m);
         const disabled =
           attachment.downloadable === false && (!isVideo || attachment.previewUrl === undefined);
         const size =
@@ -561,6 +563,7 @@ export function UserMessageContextReferenceChip(props: {
 }) {
   const { resolvedTheme, activeThreadEnvironmentId } = use(TimelineRowCtx);
   const gt = useGT();
+  const m = useMessages();
   const copyMarkdown = formatComposerContextReference({
     kind: props.reference.kind,
     contextId: props.reference.contextId as ComposerContextId,
@@ -577,16 +580,20 @@ export function UserMessageContextReferenceChip(props: {
     onExpandVideo: props.onExpandVideo,
     onOpenFile: props.onOpenFile,
     gt,
+    m,
   });
 }
 
 function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentContext }) {
+  const m = useMessages();
   const renderedAppearance = useRenderedAppearance();
   const ctx = use(TimelineRowCtx);
   const fenceLanguage = comment.fenceLanguage ?? "diff";
   const renderablePatch = getRenderablePatch(
     buildReviewCommentRenderablePatch(comment),
     `review-comment:${comment.id}`,
+    undefined,
+    m,
   );
 
   return (

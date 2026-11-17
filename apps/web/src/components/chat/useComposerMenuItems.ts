@@ -1,4 +1,4 @@
-import { useGT } from "gt-react";
+import { useGT, useMessages } from "gt-react";
 import {
   legacyThreadPullRequestKey,
   threadPullRequestKeyOf,
@@ -108,6 +108,7 @@ export function useComposerMenuItems({
   };
 }) {
   const gt = useGT();
+  const messages = useMessages();
   // Thread mentions rank by recency as of when the composer mounted.
   const [now] = useState(() => Date.now());
   const composerTriggerKind = composerTrigger?.kind ?? null;
@@ -208,21 +209,27 @@ export function useComposerMenuItems({
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
       return [
-        ...matchComposerThreadItems({
-          shells: environmentThreadShells,
-          environmentId,
-          linkedEnvironments,
-          excludeThreadId: activeThreadId,
-          query: composerTrigger.query,
-          now,
-        }),
+        ...matchComposerThreadItems(
+          {
+            shells: environmentThreadShells,
+            environmentId,
+            linkedEnvironments,
+            excludeThreadId: activeThreadId,
+            query: composerTrigger.query,
+            now,
+          },
+          messages,
+        ),
         // An answer to an agent's question carries thread links, not machines.
         ...(questionAttachmentTarget === null && offersMachines
-          ? matchComposerEnvironmentItems({
-              environments: mentionableEnvironments,
-              environmentId,
-              query: composerTrigger.query,
-            })
+          ? matchComposerEnvironmentItems(
+              {
+                environments: mentionableEnvironments,
+                environmentId,
+                query: composerTrigger.query,
+              },
+              messages,
+            )
           : []),
         ...matchComposerModelItems({
           instanceEntries: modelMentions.instanceEntries,

@@ -98,7 +98,7 @@ export function VoiceInputSetup(props: {
           title={props.step === 0 ? gt("Set up voice input") : gt("Voice input is ready")}
           description={
             props.step === 0
-              ? environment?.label
+              ? environment?.label != null
                 ? gt("Download a speech model once. Your audio is transcribed on {destination}.", {
                     destination: environment.label,
                   })

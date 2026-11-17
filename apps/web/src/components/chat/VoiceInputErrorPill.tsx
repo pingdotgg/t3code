@@ -1,4 +1,5 @@
 import { msg, useGT, useMessages } from "gt-react";
+import type { MessageResolver } from "~/i18n/messages";
 import { MICROPHONE_PERMISSION_ERROR } from "@t3tools/client-runtime/voice-input";
 import { useNavigate } from "@tanstack/react-router";
 import { CircleAlertIcon, XIcon } from "lucide-react";
@@ -7,31 +8,38 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { VoiceInputPill } from "./VoiceInputPill";
 
-const VOICE_ERROR_LABELS: Record<string, string> = {
-  [MICROPHONE_PERMISSION_ERROR]: msg("Mic blocked"),
-  "Microphone access is required for voice input.": msg("Mic blocked"),
-  "This draft is no longer available.": msg("Draft unavailable"),
-  "Another voice recording is already active.": msg("Already recording"),
-  "Voice transcription is not available.": msg("Voice input unavailable"),
-  "Voice transcription is still finishing. Try again shortly.": msg("Still transcribing"),
-  "Voice transcription is not available for this language.": msg("Language unsupported"),
-  "Could not prepare voice transcription.": msg("Couldn’t start"),
-  "Could not start voice recording.": msg("Couldn’t start"),
-  "Voice recording was interrupted.": msg("Recording interrupted"),
-  "Could not finish voice recording.": msg("Couldn’t finish"),
-  "Could not transcribe this recording.": msg("Transcription failed"),
-  "Voice transcription on this environment failed.": msg("Transcription failed"),
-  "The draft changed while voice input was running. The transcript was not added.":
+// The controller reports errors as text, resolved in English or the UI language.
+const VOICE_ERROR_LABELS: ReadonlyArray<readonly [error: string, label: string]> = [
+  [MICROPHONE_PERMISSION_ERROR, msg("Mic blocked")],
+  [msg("Microphone access is required for voice input."), msg("Mic blocked")],
+  [msg("This draft is no longer available."), msg("Draft unavailable")],
+  [msg("Another voice recording is already active."), msg("Already recording")],
+  [msg("Voice transcription is not available."), msg("Voice input unavailable")],
+  [msg("Voice transcription is still finishing. Try again shortly."), msg("Still transcribing")],
+  [msg("Voice transcription is not available for this language."), msg("Language unsupported")],
+  [msg("Could not prepare voice transcription."), msg("Couldn’t start")],
+  [msg("Could not start voice recording."), msg("Couldn’t start")],
+  [msg("Voice recording was interrupted."), msg("Recording interrupted")],
+  [msg("Could not finish voice recording."), msg("Couldn’t finish")],
+  [msg("Could not transcribe this recording."), msg("Transcription failed")],
+  [msg("Voice transcription on this environment failed."), msg("Transcription failed")],
+  [
+    msg("The draft changed while voice input was running. The transcript was not added."),
     msg("Draft changed"),
-  "No speech was detected.": msg("No speech heard"),
-  "Microphone processing failed.": msg("Mic failed"),
-  "The microphone disconnected.": msg("Mic disconnected"),
-};
+  ],
+  [msg("No speech was detected."), msg("No speech heard")],
+  [msg("Microphone processing failed."), msg("Mic failed")],
+  [msg("The microphone disconnected."), msg("Mic disconnected")],
+];
 
-const RETRYABLE_TRANSCRIPTIONS = new Set([
-  "Could not transcribe this recording.",
-  "Voice transcription on this environment failed.",
-]);
+const RETRYABLE_TRANSCRIPTIONS = [
+  msg("Could not transcribe this recording."),
+  msg("Voice transcription on this environment failed."),
+];
+
+function isVoiceError(error: string, source: string, resolve: MessageResolver): boolean {
+  return error === source || error === resolve(source);
+}
 
 export function VoiceInputErrorPill(props: {
   error: string | null;
@@ -48,10 +56,13 @@ export function VoiceInputErrorPill(props: {
   const message = props.error ?? gt("Voice input failed");
   const openSettings = props.errorAction === "settings";
   const compact = props.size === "compact";
-  const errorLabel = props.error ? VOICE_ERROR_LABELS[props.error] : undefined;
+  const error = props.error;
+  const errorLabel = error
+    ? VOICE_ERROR_LABELS.find(([source]) => isVoiceError(error, source, m))?.[1]
+    : undefined;
   const action = openSettings
     ? { label: gt("Open voice settings"), text: gt("Settings") }
-    : props.error && RETRYABLE_TRANSCRIPTIONS.has(props.error)
+    : error && RETRYABLE_TRANSCRIPTIONS.some((source) => isVoiceError(error, source, m))
       ? {
           label: gt("Retry transcription"),
           text: gt("Retry", { $context: "verb, retries transcription" }),

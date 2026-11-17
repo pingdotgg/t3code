@@ -68,9 +68,27 @@ export function usageLimitRecoveryBannerItem(
   const resetDescription = displayAt
     ? resumes
       ? resolve(
-          msg("Resumes {time}", { time: formatUpcomingTimestamp(displayAt, timestampFormat) }),
+          msg("Resumes {time}", {
+            time: formatUpcomingTimestamp(
+              displayAt,
+              timestampFormat,
+              undefined,
+              undefined,
+              resolve,
+            ),
+          }),
         )
-      : resolve(msg("Resets {time}", { time: formatUpcomingTimestamp(displayAt, timestampFormat) }))
+      : resolve(
+          msg("Resets {time}", {
+            time: formatUpcomingTimestamp(
+              displayAt,
+              timestampFormat,
+              undefined,
+              undefined,
+              resolve,
+            ),
+          }),
+        )
     : resolve(msg("Reset time unavailable; retry manually"));
   if (!chatGptLimit) {
     return {
