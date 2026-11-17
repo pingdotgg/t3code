@@ -1,4 +1,5 @@
-// Counts copy that `t3code/no-untranslated-copy` flags, per directory, to split the translation pass.
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off - a synchronous wrapper around one lint run.
+// Counts copy that `t3code/no-untranslated-copy` flags, per directory.
 import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
 
