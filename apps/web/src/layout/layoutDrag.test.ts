@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { useDiffPanelStore } from "../diffPanelStore";
 import { fileSurface, selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
+import { createLayoutNewTabContent } from "./layoutActions";
 import { useLayoutBehaviorStore } from "./layoutBehavior";
 import {
   commitLayoutDrop,
@@ -17,7 +18,9 @@ import {
   createLayoutTab,
   findLayoutChatForThread,
   findLayoutTab,
+  findLayoutTabByContent,
   selectFocusedTab,
+  selectFocusedWorkspace,
   type LayoutColumn,
   type LayoutState,
   type LayoutTab,
@@ -126,6 +129,94 @@ describe("layout drops from sidebar buttons", () => {
     const moved = findLayoutTab(useLayoutStore.getState().layout, (tab) => tab.id === page.id)!;
     expect(moved.workspace.id).toBe("focused");
     expect(moved.workspace.columns.at(-1)!.panes[0]!.tabs.map((tab) => tab.id)).toEqual([page.id]);
+  });
+});
+
+describe("layout drops of a new tab from the + button", () => {
+  const newTab = () => ({ kind: "new-tab", content: createLayoutNewTabContent() }) as const;
+  const placed = (source: ReturnType<typeof newTab>) =>
+    findLayoutTabByContent(useLayoutStore.getState().layout, source.content);
+  const blankTabCount = () =>
+    useLayoutStore
+      .getState()
+      .layout.workspaces.flatMap((workspace) => workspace.columns)
+      .flatMap((column) => column.panes)
+      .flatMap((pane) => pane.tabs)
+      .filter((tab) => tab.content.kind === "launcher").length;
+
+  it("opens a blank tab for the chat at the tab row's insertion index and focuses it", () => {
+    using fixture = setup();
+    const source = newTab();
+    expect(source.content.context).toEqual({ kind: "server", threadRef });
+
+    expect(commitLayoutDrop(source, { kind: "into", paneId: fixture.chatPaneId, index: 0 })).toBe(
+      true,
+    );
+    const tab = placed(source)!;
+    expect(tab.pane.id).toBe(fixture.chatPaneId);
+    expect(tab.tabIndex).toBe(0);
+    expect(tab.pane.tabs).toHaveLength(2);
+    expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(tab.tab.id);
+  });
+
+  it("opens a blank tab in a new pane beside a pane, or a new column at an edge", () => {
+    using fixture = setup();
+    const beside = newTab();
+    expect(
+      commitLayoutDrop(beside, { kind: "side", paneId: fixture.chatPaneId, side: "down" }),
+    ).toBe(true);
+    const below = placed(beside)!;
+    expect(below.column.panes.map((pane) => pane.tabs.length)).toEqual([1, 1]);
+    expect(below.column.panes[1]!.id).toBe(below.pane.id);
+    expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(below.tab.id);
+
+    const edge = newTab();
+    expect(commitLayoutDrop(edge, { kind: "extend", edge: "left" })).toBe(true);
+    const left = placed(edge)!;
+    expect(left.workspace.columns).toHaveLength(2);
+    expect(left.workspace.columns[0]!.panes[0]!.tabs.map((tab) => tab.id)).toEqual([left.tab.id]);
+    expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(left.tab.id);
+    expect(placed(beside)).not.toBeNull();
+  });
+
+  it("adds another blank tab beside a pane's blank tab, as clicking + does", () => {
+    using fixture = setup();
+    const first = newTab();
+    commitLayoutDrop(first, { kind: "into", paneId: fixture.chatPaneId });
+    const layout = useLayoutStore.getState().layout;
+    const second = newTab();
+    expect(isLayoutDropUseful(layout, second, { kind: "into", paneId: fixture.chatPaneId })).toBe(
+      true,
+    );
+    expect(commitLayoutDrop(second, { kind: "into", paneId: fixture.chatPaneId, index: 1 })).toBe(
+      true,
+    );
+    expect(placed(first)!.pane.tabs.map((tab) => tab.content.kind)).toEqual([
+      "chat",
+      "launcher",
+      "launcher",
+    ]);
+    expect(placed(second)!.tabIndex).toBe(1);
+    expect(blankTabCount()).toBe(3);
+  });
+
+  it("goes to the blank workspace below at the bottom edge instead of doubling it", () => {
+    const behavior = useLayoutBehaviorStore.getState().behavior;
+    using _restore = { [Symbol.dispose]: () => useLayoutBehaviorStore.setState({ behavior }) };
+    useLayoutBehaviorStore.setState({ behavior: { ...behavior, scrollingWorkspaces: true } });
+    using _fixture = setup();
+    const spare = createLayoutState().workspaces[0]!;
+    const filled = useLayoutStore.getState().layout;
+    useLayoutStore.setState({ layout: { ...filled, workspaces: [...filled.workspaces, spare] } });
+    const before = useLayoutStore.getState().layout;
+
+    expect(commitLayoutDrop(newTab(), { kind: "extend", edge: "bottom" })).toBe(true);
+    const after = useLayoutStore.getState().layout;
+    expect(after.workspaces.map((workspace) => workspace.id)).toEqual(
+      before.workspaces.map((workspace) => workspace.id),
+    );
+    expect(selectFocusedWorkspace(after).id).toBe(spare.id);
+    expect(selectFocusedWorkspace(after).columns).toEqual(spare.columns);
   });
 });
 

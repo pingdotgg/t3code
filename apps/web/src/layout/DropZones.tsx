@@ -323,6 +323,7 @@ export function LayoutDropZones() {
     const found = findLayoutPane(layout, state.target.paneId);
     if (!found || !isBlankLayoutWorkspace(found.workspace)) return false;
     const { source } = state;
+    if (source.kind === "new-tab") return false;
     return (
       source.kind !== "tab" ||
       findLayoutTab(layout, (tab) => tab.id === source.tabId)?.tab.content.kind !== "launcher"

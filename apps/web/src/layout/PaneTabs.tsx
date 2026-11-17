@@ -85,10 +85,11 @@ import {
 import {
   closeLayoutTabByUser,
   closeOtherLayoutTabsByUser,
+  createLayoutNewTabContent,
   openLayoutNewTab,
   splitLayoutTab,
 } from "./layoutActions";
-import { beginLayoutTabDrag } from "./layoutDrag";
+import { beginLayoutContentDrag, beginLayoutTabDrag } from "./layoutDrag";
 import { useLayoutPane } from "./layoutPaneContext";
 import { isScrollingWorkspacesEnabled } from "./layoutBehavior";
 import { useLayoutStore } from "./layoutStore";
@@ -936,6 +937,12 @@ export function LayoutNewTabButton({ tabId }: { tabId: string | null }) {
             size="icon-xs"
             data-pane-notch-add=""
             aria-label="New tab"
+            onPointerDown={(event) =>
+              beginLayoutContentDrag(event, {
+                kind: "new-tab",
+                content: createLayoutNewTabContent(tabId),
+              })
+            }
             onClick={() => {
               if (tabId !== null) useLayoutStore.getState().focusTab(tabId);
               openLayoutNewTab();

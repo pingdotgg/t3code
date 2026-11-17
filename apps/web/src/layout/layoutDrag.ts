@@ -21,6 +21,7 @@ import {
   THREAD_TERMINAL_SURFACE_ID,
   selectFocusedChatTab,
   type LayoutDirection,
+  type LayoutLauncherContent,
   type LayoutState,
   type LayoutTabContent,
   type LayoutTabDestination,
@@ -53,7 +54,8 @@ export type LayoutDragSource =
       threadRef: ScopedThreadRef;
       surface: LayoutDragSurface;
       resolve?: () => Promise<LayoutDragSurface | null>;
-    };
+    }
+  | { kind: "new-tab"; content: LayoutLauncherContent };
 
 export type LayoutDragContentSource = Exclude<LayoutDragSource, { kind: "tab" }>;
 
@@ -293,6 +295,7 @@ export function layoutDragContent(source: LayoutDragContentSource): LayoutTabCon
     return { kind: "chat", target: { kind: "server", threadRef: source.threadRef } };
   }
   if (source.kind === "pull-requests") return { kind: "pull-requests" };
+  if (source.kind === "new-tab") return source.content;
   return {
     kind: "surface",
     threadRef: layoutDragSurfaceOwner(source),
@@ -456,6 +459,13 @@ export function commitLayoutDrop(
   }
   if (source.kind === "tab") {
     store.moveTab(source.tabId, destination);
+  } else if (
+    source.kind === "new-tab" &&
+    destination.kind === "column" &&
+    target.kind === "extend" &&
+    target.edge === "bottom"
+  ) {
+    store.focusWorkspace(destination.workspaceId);
   } else if (source.kind === "surface") {
     const owner = layoutDragSurfaceOwner(source);
     const existing = layoutDragSourceTab(store.layout, source);
