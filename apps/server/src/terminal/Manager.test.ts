@@ -18,6 +18,8 @@ import {
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import * as NodePtyAdapter from "./NodePtyAdapter.ts";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -61,10 +63,16 @@ vi.mock("effect/SynchronizedRef", async (importOriginal) => {
 
 // The server omits DOM types, which include TypeScript's WebAssembly declarations.
 
+const POWERSHELL_ARGS = [
+  "-NoLogo",
+  "-NoExit",
+  "-Command",
+  "[Console]::OutputEncoding = $OutputEncoding = [System.Text.UTF8Encoding]::new()",
+];
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 class FakePtyProcess implements PtyAdapter.PtyProcess {
-  readonly writes: string[] = [];
+  readonly writes: Array<string | Buffer> = [];
   readonly resizeCalls: Array<{ cols: number; rows: number }> = [];
   readonly killSignals: Array<string | undefined> = [];
   readonly pid: number;
@@ -80,7 +88,7 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
     this.pid = pid;
   }
 
-  write(data: string): void {
+  write(data: string | Buffer): void {
     if (this.writeFailure !== undefined) {
       throw this.writeFailure;
     }
@@ -242,6 +250,7 @@ interface CreateManagerOptions {
     ReadonlyArray<{ readonly pid: number; readonly ppid: number; readonly name: string }>,
     never
   >;
+  foregroundProcessGroup?: (terminalPid: number) => Effect.Effect<number | null>;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
   registerTerminalProcesses?: Parameters<
@@ -293,6 +302,8 @@ const createManager = (
           ? { subprocessInspector: options.subprocessInspector }
           : {}),
         ...(options.processTable !== undefined ? { processTable: options.processTable } : {}),
+        // Fixture pids are not real processes; default to a shell idle at its prompt.
+        foregroundProcessGroup: options.foregroundProcessGroup ?? ((pid) => Effect.succeed(pid)),
         ...(options.subprocessPollIntervalMs !== undefined
           ? { subprocessPollIntervalMs: options.subprocessPollIntervalMs }
           : {}),
@@ -312,7 +323,7 @@ const createManager = (
               managedBinaryCacheDir: options.managedBinaryCacheDir,
               managedBinaryToolsDir: options.managedBinaryToolsDir,
             }),
-      });
+      }).pipe(Effect.provideService(SpawnExecutableResolution, (command) => command));
       const eventsRef = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
       const unsubscribe = yield* manager.subscribe((event) =>
         Ref.update(eventsRef, (events) => [...events, event]),
@@ -738,6 +749,39 @@ it.layer(
     }),
   );
 
+  // Every attached renderer answers the same query; a second DECRQM answer breaks Vim's input.
+  it.effect("lets one attached viewer answer terminal queries on a shared PTY", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const attach = (terminalId: string, viewerId: string) =>
+        manager.attachStream(openInput({ terminalId }), () => Effect.void, undefined, viewerId);
+      const stopFirst = yield* attach(DEFAULT_TERMINAL_ID, "first");
+      const stopSecond = yield* attach(DEFAULT_TERMINAL_ID, "second");
+      const stopOther = yield* attach("other", "second");
+      yield* Effect.addFinalizer(() => Effect.sync(() => (stopSecond(), stopOther())));
+      const [shared, other] = ptyAdapter.processes;
+      const modeReply = "\x1b[?12;2$y";
+      const write = (terminalId: string, viewerId: string, data: string, reply?: boolean) =>
+        manager.write(
+          { threadId: "thread-1", terminalId, data, ...(reply ? { reply } : {}) },
+          viewerId,
+        );
+
+      yield* write(DEFAULT_TERMINAL_ID, "first", modeReply, true);
+      yield* write(DEFAULT_TERMINAL_ID, "second", modeReply, true);
+      yield* write(DEFAULT_TERMINAL_ID, "second", "iHELLO");
+      yield* write("other", "second", modeReply, true);
+      expect(shared!.writes).toEqual([modeReply, "iHELLO"]);
+      expect(other!.writes).toEqual([modeReply]);
+
+      stopFirst();
+      yield* write(DEFAULT_TERMINAL_ID, "first", modeReply, true);
+      yield* write(DEFAULT_TERMINAL_ID, "second", modeReply, true);
+      yield* write(DEFAULT_TERMINAL_ID, "first", modeReply, true);
+      expect(shared!.writes).toEqual([modeReply, "iHELLO", modeReply]);
+    }),
+  );
+
   it.effect("resumed attaches after close never respawn until the terminal is reopened", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
@@ -888,9 +932,15 @@ it.layer(
 
       yield* manager.write({ threadId: "thread-1", terminalId: "default", data: "pwd\n" });
       yield* manager.write({ threadId: "thread-1", terminalId: "term-2", data: "ls\n" });
+      yield* manager.write({
+        threadId: "thread-1",
+        terminalId: "term-2",
+        data: "\x1b[M \x80(",
+        binary: true,
+      });
 
       expect(first.writes).toEqual(["pwd\n"]);
-      expect(second.writes).toEqual(["ls\n"]);
+      expect(second.writes).toEqual(["ls\n", Buffer.from([0x1b, 0x5b, 0x4d, 0x20, 0x80, 0x28])]);
       expect(ptyAdapter.spawnInputs).toHaveLength(2);
     }),
   );
@@ -940,6 +990,51 @@ it.layer(
           false,
           true,
         ]);
+      }),
+  );
+
+  it.effect("keeps a terminal whose shell was replaced by exec open on settlement", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => "/bin/bash",
+        processTable: Effect.succeed([{ pid: 9000, ppid: 1, name: "node" }]),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      yield* manager.open(openInput());
+
+      yield* manager.closeOnSettle({ threadId: "thread-1" });
+
+      expect(ptyAdapter.processes[0]?.killed).toBe(false);
+    }),
+  );
+
+  it.effect.each([
+    { label: "idle prompt", platform: "linux", foregroundProcessGroup: 9000, killed: true },
+    { label: "foreground job", platform: "linux", foregroundProcessGroup: 100, killed: false },
+    {
+      label: "unknown foreground group",
+      platform: "linux",
+      foregroundProcessGroup: null,
+      killed: false,
+    },
+    { label: "idle prompt", platform: "darwin", foregroundProcessGroup: 9000, killed: true },
+    { label: "foreground job", platform: "darwin", foregroundProcessGroup: 100, killed: false },
+  ] as const)(
+    "settles a shell with a childless shell-named child by its foreground group: $label ($platform)",
+    ({ platform, foregroundProcessGroup, killed }) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          shellResolver: () => "/bin/bash",
+          processTable: Effect.succeed([
+            { pid: 9000, ppid: 1, name: "bash" },
+            { pid: 100, ppid: 9000, name: "bash" },
+          ]),
+          foregroundProcessGroup: () => Effect.succeed(foregroundProcessGroup),
+        }).pipe(Effect.provide(layerWithHostPlatform(platform)));
+        yield* manager.open(openInput());
+
+        yield* manager.closeOnSettle({ threadId: "thread-1" });
+
+        expect(ptyAdapter.processes[0]?.killed).toBe(killed);
       }),
   );
 
@@ -1940,6 +2035,41 @@ it.layer(
     }),
   );
 
+  it.effect("keeps a startup failure in the snapshot every later attachment receives", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      ptyAdapter.spawnFailures.push(new Error("forkpty(3) failed."));
+      const startupFailure = {
+        type: "snapshot",
+        snapshot: {
+          status: "error",
+          error: expect.stringContaining("Failed to spawn PTY process"),
+        },
+      };
+      const record = (events: TerminalAttachStreamEvent[]) => (event: TerminalAttachStreamEvent) =>
+        Effect.sync(() => events.push(event));
+
+      const creating: TerminalAttachStreamEvent[] = [];
+      (yield* manager.attachStream(openInput(), record(creating)))();
+      const resumed: TerminalAttachStreamEvent[] = [];
+      (yield* manager.attachStream({ ...openInput(), resume: true }, record(resumed)))();
+      const observed: TerminalAttachStreamEvent[] = [];
+      (yield* manager.observeStream(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        record(observed),
+      ))();
+      expect([creating, resumed, observed]).toMatchObject([
+        [startupFailure],
+        [startupFailure],
+        [startupFailure],
+      ]);
+
+      const restarted = yield* manager.open(openInput());
+      expect(restarted.status).toBe("running");
+      expect(restarted).not.toHaveProperty("error");
+    }),
+  );
+
   it.effect("retries with fallback shells when preferred shell spawn fails", () =>
     Effect.gen(function* () {
       const platform = yield* HostProcess.Platform;
@@ -1977,29 +2107,56 @@ it.layer(
     }),
   );
 
-  it.effect("starts a $SHELL whose path contains a space", () =>
+  it.effect("starts an existing $SHELL whose path contains spaces before a dash", () =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-shell-path-" });
+      const bin = join(root, "Jane -Doe Smith", ".local", "bin");
+      yield* fs.makeDirectory(bin, { recursive: true });
+      yield* fs.writeFileString(join(bin, "fish"), "");
+      // Temp dirs are not POSIX-absolute on Windows, so stat maps a fixed POSIX prefix onto them.
+      const fixtureFs = FileSystem.FileSystem.of({
+        ...fs,
+        stat: (filePath) =>
+          fs.stat(
+            filePath.startsWith("/shell-fixture/")
+              ? join(root, filePath.slice("/shell-fixture/".length))
+              : filePath,
+          ),
+      });
       const { manager, ptyAdapter } = yield* createManager(5, {
-        env: { SHELL: "/Users/Jane Doe/.local/bin/fish" },
-      }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
+        env: { SHELL: "/shell-fixture/Jane -Doe Smith/.local/bin/fish -l" },
+      }).pipe(
+        Effect.provide(layerWithHostPlatform("darwin")),
+        Effect.provideService(FileSystem.FileSystem, fixtureFs),
+      );
 
       yield* manager.open(openInput());
 
       expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual([
-        "/Users/Jane Doe/.local/bin/fish",
+        "/shell-fixture/Jane -Doe Smith/.local/bin/fish",
       ]);
     }),
   );
 
-  it.effect("starts a quoted $SHELL whose path contains a space and a dash", () =>
+  it.effect("keeps missing or quoted $SHELL paths that contain spaces", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager(5, {
-        env: { SHELL: '"/opt/my -shell/fish" -l' },
-      }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
+      for (const [shell, expected] of [
+        ["/Users/Jane Doe/.local/bin/fish", "/Users/Jane Doe/.local/bin/fish"],
+        ['"/opt/my -shell/fish" -l', "/opt/my -shell/fish"],
+      ]) {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          env: { SHELL: shell },
+        }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
 
-      yield* manager.open(openInput());
+        yield* manager.open(openInput());
 
-      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual(["/opt/my -shell/fish"]);
+        expect(
+          ptyAdapter.spawnInputs.map((input) => input.shell),
+          shell,
+        ).toEqual([expected]);
+      }
     }),
   );
 
@@ -2055,6 +2212,91 @@ it.layer(
         yield* Deferred.await(written);
         const command = process.writes[0]!;
         expect(command).toContain('"$?"');
+      }),
+  );
+
+  it.effect.each([
+    { platform: "win32", shell: String.raw`C:\Program Files\Git\bin\bash.exe` },
+    { platform: "linux", shell: "/opt/custom shell/bin/bash" },
+  ] as const)("prefers the configured terminal shell on $platform: $shell", ({ platform, shell }) =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { T3CODE_TERMINAL_SHELL: ` ${shell} `, SHELL: "/bin/zsh" },
+      }).pipe(Effect.provide(layerWithHostPlatform(platform)));
+
+      yield* manager.open(openInput());
+
+      expect(ptyAdapter.spawnInputs[0]?.shell).toBe(shell);
+    }),
+  );
+
+  it.effect("lets script terminals keep the default shell without changing other terminals", () =>
+    Effect.gen(function* () {
+      const gitBash = String.raw`C:\Program Files\Git\bin\bash.exe`;
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { T3CODE_TERMINAL_SHELL: gitBash },
+      }).pipe(Effect.provide(layerWithHostPlatform("win32")));
+
+      yield* manager.open(openInput({ env: { T3CODE_TERMINAL_SHELL: "" } }));
+      yield* manager.open(openInput({ terminalId: "interactive" }));
+
+      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual(["pwsh.exe", gitBash]);
+    }),
+  );
+
+  // POSIX exec failures are asynchronous in node-pty; ConPTY has a separate readiness protocol.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "resolves configured shells and falls back from invalid paths with the real PTY adapter",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-real-shell-" });
+        const nonExecutable = path.join(baseDir, "not-executable");
+        yield* fs.writeFileString(nonExecutable, "#!/bin/sh\nexit 0\n");
+        yield* fs.chmod(nonExecutable, 0o644);
+        const ptyAdapter = yield* PtyAdapter.PtyAdapter.pipe(Effect.provide(NodePtyAdapter.layer));
+        const toolsDir = path.join(baseDir, "tools");
+        const customShell = path.join(toolsDir, "custom-shell");
+        yield* fs.makeDirectory(toolsDir);
+        yield* fs.writeFileString(customShell, "#!/bin/sh\nexec /bin/sh\n");
+        yield* fs.chmod(customShell, 0o755);
+        const spacedDir = path.join(baseDir, "shells ");
+        const spacedShell = path.join(spacedDir, "custom-shell");
+        yield* fs.makeDirectory(spacedDir);
+        yield* fs.writeFileString(spacedShell, "#!/bin/sh\nexec /bin/sh\n");
+        yield* fs.chmod(spacedShell, 0o755);
+        for (const { shell, searchPath, cwd, expectedShell } of [
+          { shell: path.join(baseDir, "missing"), searchPath: "/bin", expectedShell: "/bin/sh" },
+          { shell: nonExecutable, searchPath: "/bin", expectedShell: "/bin/sh" },
+          { shell: "custom-shell", searchPath: "./tools", expectedShell: customShell },
+          { shell: "custom-shell", searchPath: toolsDir, expectedShell: customShell },
+          { shell: "custom-shell", searchPath: '"./tools"', expectedShell: customShell },
+          { shell: "custom-shell", searchPath: ":/bin", cwd: toolsDir, expectedShell: customShell },
+          { shell: "custom-shell", searchPath: `${spacedDir}:/bin`, expectedShell: spacedShell },
+        ] as ReadonlyArray<{
+          shell: string;
+          searchPath: string;
+          cwd?: string;
+          expectedShell: string;
+        }>) {
+          const spawnedShells: string[] = [];
+          const manager = yield* TerminalManager.makeWithOptions({
+            logsDir: path.join(baseDir, "logs"),
+            ptyAdapter: {
+              spawn: (input) => {
+                spawnedShells.push(input.shell);
+                return ptyAdapter.spawn(input);
+              },
+            },
+            shellResolver: () => "/bin/sh",
+            env: { ...process.env, T3CODE_TERMINAL_SHELL: shell, PATH: searchPath },
+          });
+          const snapshot = yield* manager.open(openInput({ cwd: cwd ?? baseDir }));
+          expect(spawnedShells).toEqual([expectedShell]);
+          expect(snapshot.status).toBe("running");
+          yield* manager.close({ threadId: "thread-1" });
+        }
       }),
   );
 
@@ -2127,8 +2369,8 @@ it.layer(
       const ptyAdapter = new FakePtyAdapter();
       const { manager } = yield* createManager(5, {
         ptyAdapter,
-        shellResolver: () => "C:\\missing\\custom-shell.exe",
         env: {
+          T3CODE_TERMINAL_SHELL: "C:\\missing\\custom-shell.exe",
           ComSpec: "C:\\Windows\\System32\\cmd.exe",
           PATH: "C:\\Windows\\System32",
           SystemRoot: "C:\\Windows",
@@ -2146,8 +2388,8 @@ it.layer(
         "pwsh.exe",
         "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
       ]);
-      expect(ptyAdapter.spawnInputs[1]?.args).toEqual(["-NoLogo"]);
-      expect(ptyAdapter.spawnInputs[2]?.args).toEqual(["-NoLogo"]);
+      expect(ptyAdapter.spawnInputs[1]?.args).toEqual(POWERSHELL_ARGS);
+      expect(ptyAdapter.spawnInputs[2]?.args).toEqual(POWERSHELL_ARGS);
     }),
   );
 
@@ -2521,6 +2763,30 @@ it.layer(
     }),
   );
 
+  it.effect("force-kills a closed terminal that ignores SIGTERM when the manager shuts down", () =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make();
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        processKillGraceMs: 1_000,
+      }).pipe(Effect.provideService(Scope.Scope, scope));
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      const sigterm = yield* Deferred.make<void>();
+      process.onKill = (signal) => {
+        if (signal === "SIGTERM") Deferred.doneUnsafe(sigterm, Effect.void);
+      };
+      yield* manager.close({ threadId: "thread-1" });
+      yield* Deferred.await(sigterm);
+
+      const shutdown = yield* Scope.close(scope, Exit.void).pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(shutdown);
+
+      expect(process.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+      expect(process.exitListenerCount).toBe(0);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("attaches to a running provider terminal without resolving the provider again", () =>
     Effect.gen(function* () {
       const providerInstanceId = ProviderInstanceId.make("codex_work");
@@ -2551,16 +2817,16 @@ it.layer(
     }),
   );
 
-  it.effect("starts bash as a login shell on macOS only", () =>
+  it.effect("starts bash as a login shell on macOS and Windows", () =>
     Effect.gen(function* () {
       for (const [platform, shell, args] of [
         ["darwin", "/bin/bash", ["-l"]],
         ["darwin", "/opt/homebrew/bin/bash", ["-l"]],
         ["linux", "/bin/bash", undefined],
-        ["win32", "C:\\Program Files\\Git\\bin\\bash.exe", undefined],
+        ["win32", "C:\\Program Files\\Git\\bin\\bash.exe", ["--login", "-i"]],
         ["darwin", "/bin/zsh", ["-o", "nopromptsp"]],
         ["linux", "/bin/zsh", ["-o", "nopromptsp"]],
-        ["win32", "pwsh.exe", ["-NoLogo"]],
+        ["win32", "pwsh.exe", POWERSHELL_ARGS],
       ] as const) {
         const { manager, ptyAdapter } = yield* createManager(5, {
           shellResolver: () => shell,

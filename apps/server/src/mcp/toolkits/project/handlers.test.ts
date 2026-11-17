@@ -170,7 +170,10 @@ const clientLaunchHarness = (input: {
         ),
     }),
     Layer.mock(PeerForwarding.PeerForwarding)({}),
-    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      namedProjectsRoot: "/projects",
+      isScratchProject: () => Effect.succeed(false),
+    }),
     DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
   ).pipe(
     Layer.provideMerge(GitVcsDriver.layer),
@@ -537,16 +540,22 @@ it.effect("a launch binds only an existing checkout that is one of the project's
         McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
       ),
     );
-    const launchInto = (worktreePath: string) =>
+    const launchInto = (worktreePath: string, clientRequestId?: string) =>
       toolkit
         .handle("t3_thread_launch", {
           title: "Fix",
           projectId,
+          ...(clientRequestId === undefined ? {} : { clientRequestId }),
           workspaceStrategy: { type: "existing_worktree", worktreePath },
         })
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
-    expect((yield* launchInto(worktree)).at(-1)?.result).toMatchObject({ projectId });
+    expect((yield* launchInto(worktree, "existing-checkout")).at(-1)?.result).toMatchObject({
+      projectId,
+    });
+    expect((yield* launchInto(outside, "existing-checkout")).at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+    });
     expect((yield* launchInto(repo)).at(-1)?.result).toMatchObject({ projectId });
     for (const elsewhere of [outside, path.join(worktree, "..", "outside"), "/"]) {
       expect((yield* launchInto(elsewhere)).at(-1)?.result).toMatchObject({
@@ -573,36 +582,56 @@ it.effect("a launch into a new worktree creates nothing when its base ref has no
       runtimeModeCeiling: "auto",
       launched,
       checkWorktreeBase: ({ projectId, workspaceStrategy }) =>
-        workspaceStrategy.type === "worktree" && workspaceStrategy.baseRef === "t3/renamed"
-          ? Effect.fail(
-              new ThreadLaunch.ThreadLaunchBaseRefError({
-                projectId,
-                projectTitle: "Client target",
-                workspaceRoot: "/projects/client-target",
-                baseRef: workspaceStrategy.baseRef,
-              }),
-            )
-          : Effect.void,
+        workspaceStrategy.type !== "worktree"
+          ? Effect.void
+          : workspaceStrategy.baseRef === "t3/renamed"
+            ? Effect.fail(
+                new ThreadLaunch.ThreadLaunchBaseRefError({
+                  projectId,
+                  projectTitle: "Client target",
+                  workspaceRoot: "/projects/client-target",
+                  baseRef: workspaceStrategy.baseRef,
+                }),
+              )
+            : workspaceStrategy.branch === "feature/taken"
+              ? Effect.fail(
+                  new ThreadLaunch.ThreadLaunchBranchExistsError({
+                    projectId,
+                    projectTitle: "Client target",
+                    branch: workspaceStrategy.branch,
+                  }),
+                )
+              : Effect.void,
     });
     const toolkit = yield* ProjectToolkit.pipe(
       Effect.provide(
         McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
       ),
     );
-    const launchFrom = (baseRef: string) =>
+    const launchFrom = (baseRef: string, branch?: string) =>
       toolkit
         .handle("t3_thread_launch", {
           title: "Fix",
           projectId,
-          workspaceStrategy: { type: "worktree", baseRef, startFromOrigin: false },
+          workspaceStrategy: {
+            type: "worktree",
+            baseRef,
+            ...(branch === undefined ? {} : { branch }),
+            startFromOrigin: false,
+          },
         })
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
     const refused = (yield* launchFrom("t3/renamed")).at(-1)?.result;
     expect(refused).toMatchObject({ code: "invalid_request" });
     expect((refused as { message: string }).message).toContain(
-      'Base ref "t3/renamed" does not resolve to a commit in project "Client target" (/projects/client-target). No thread was created.',
+      'Base ref "t3/renamed" does not resolve to a commit in project "Client target" (/projects/client-target). No thread was created. Pass a branch, tag, or commit that exists there',
     );
+    expect((yield* launchFrom("main", "feature/taken")).at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+      message:
+        'Branch "feature/taken" already exists in project "Client target". No thread was created. Pass a branch name that does not exist yet, or omit branch to get a generated name.',
+    });
     expect(launched).toHaveLength(0);
 
     expect((yield* launchFrom("main")).at(-1)?.result).toMatchObject({ projectId });
@@ -886,6 +915,22 @@ it.effect("an agent's clone is not cut off while git is still transferring", () 
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+const deletedProject = (id: ProjectId) => ({
+  id,
+  title: "client-target",
+  workspaceRoot: "/projects/client-target",
+  repositoryIdentity: null,
+  faviconPath: null,
+  defaultModelSelection: null,
+  defaultThreadEnvMode: null,
+  autoPull: false,
+  projectIcon: null,
+  scripts: [],
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+  deletedAt: "2026-01-01T00:00:00.000Z",
+});
+
 it.effect("deleting a project through MCP also discards its clone record", () =>
   Effect.gen(function* () {
     const discarded: Array<ProjectId> = [];
@@ -894,22 +939,7 @@ it.effect("deleting a project through MCP also discards its clone record", () =>
       harness.dependencies,
       Layer.mergeAll(
         Layer.mock(Project.ProjectService)({
-          delete: (input) =>
-            Effect.succeed({
-              id: input.projectId,
-              title: "client-target",
-              workspaceRoot: "/projects/client-target",
-              repositoryIdentity: null,
-              faviconPath: null,
-              defaultModelSelection: null,
-              defaultThreadEnvMode: null,
-              autoPull: false,
-              projectIcon: null,
-              scripts: [],
-              createdAt: "2026-01-01T00:00:00.000Z",
-              updatedAt: "2026-01-01T00:00:00.000Z",
-              deletedAt: "2026-01-01T00:00:00.000Z",
-            }),
+          delete: (input) => Effect.succeed(deletedProject(input.projectId)),
         }),
         Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({
           discard: (projectId) => Effect.sync(() => void discarded.push(projectId)),
@@ -927,6 +957,45 @@ it.effect("deleting a project through MCP also discards its clone record", () =>
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
     expect(discarded).toEqual([harness.projectId]);
+  }),
+);
+
+it.effect("an agent cannot delete the built-in scratch project, even with force", () =>
+  Effect.gen(function* () {
+    const deleted: Array<ProjectId> = [];
+    const harness = clientLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
+    const dependencies = Layer.merge(
+      harness.dependencies,
+      Layer.mergeAll(
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          isScratchProject: (projectId) => Effect.succeed(projectId === harness.projectId),
+        }),
+        Layer.mock(Project.ProjectService)({
+          delete: (input) =>
+            Effect.sync(() => {
+              deleted.push(input.projectId);
+              return deletedProject(input.projectId);
+            }),
+        }),
+        Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ discard: () => Effect.void }),
+      ),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+
+    const refused = yield* toolkit
+      .handle("t3_project_delete", { projectId: harness.projectId, force: true })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    expect(deleted).toEqual([]);
+    expect(refused.at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringMatching(/scratch|no project/i),
+    });
   }),
 );
 
