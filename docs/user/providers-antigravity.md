@@ -58,13 +58,9 @@ space for downloading and staging an update.
 ### Use a manual installation
 
 Install [Antigravity CLI](https://antigravity.google/docs/getting-started) on the environment.
-In **Settings > Providers**, set **Binary path** to its `agy` executable to use
-the external CLI instead of T3's managed runtime. The executable must support
-`agy acp`; T3 verifies it through ACP initialization before loading models. Leave
-the field blank to use the managed runtime, or a compatible `agy` on `PATH` if no
-managed runtime is installed. T3 Code verifies the executable and reloads account
-models when you save a changed path. The external CLI uses the same Google
-sign-in and usage reporting as the managed runtime.
+Set **Binary path** to its `agy` executable and update it yourself.
+Leave the field blank to use the managed runtime, or a compatible executable on
+`PATH` if no managed runtime is installed.
 
 ## Update the managed runtime
 

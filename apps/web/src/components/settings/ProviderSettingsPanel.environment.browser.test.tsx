@@ -285,36 +285,6 @@ describe("EnvironmentProviderSettings routing", () => {
     );
   });
 
-  it("refreshes Antigravity model discovery after changing its executable", async () => {
-    await setup();
-    const antigravityId = ProviderInstanceId.make("antigravity");
-    const antigravity = ProviderDriverKind.make("antigravity");
-    state.settings = {
-      ...DEFAULT_UNIFIED_SETTINGS,
-      providerInstances: {
-        [antigravityId]: {
-          driver: antigravity,
-          enabled: true,
-          config: { binaryPath: "" },
-        },
-      },
-    };
-    await setProviders([{ ...provider(), instanceId: antigravityId, driver: antigravity }]);
-    await using _screen = await render(panel({ targetInstanceId: antigravityId }));
-
-    await userEvent.type(
-      page.getByRole("textbox", { name: "Binary path" }),
-      "/opt/google/agy{Enter}",
-    );
-
-    await vi.waitFor(() =>
-      expect(state.refresh).toHaveBeenCalledWith({
-        environmentId,
-        input: { instanceId: antigravityId, refreshModels: true },
-      }),
-    );
-  });
-
   it.each([false, true])(
     "builds a custom model save on the last one before its config echo (replied %s)",
     async (replied) => {

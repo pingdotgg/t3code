@@ -917,9 +917,8 @@ export const AntigravitySettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
         title: "Binary path",
-        description:
-          "External agy CLI path. It must support `agy acp`; leave empty to use the managed runtime or agy on PATH if none is installed.",
-        providerSettingsForm: { placeholder: "Managed runtime", clearWhenEmpty: "persist" },
+        description: "Custom ACP executable. Leave empty to select automatically.",
+        providerSettingsForm: { placeholder: "Automatic", clearWhenEmpty: "persist" },
       }),
     ),
     customModels: Schema.Array(CustomModelSetting).pipe(

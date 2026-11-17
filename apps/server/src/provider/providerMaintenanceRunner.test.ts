@@ -491,41 +491,6 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 
-  it.effect("does not start the Antigravity installer after managed eligibility changes", () => {
-    const freshLookups: Array<boolean> = [];
-    return Effect.gen(function* () {
-      const { registry } = yield* makeRegistry(baseAntigravityProvider);
-      const managed = makeManagedAntigravityCapabilities();
-      const updater = yield* makeTestRunner({
-        ...registry,
-        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, _provider, options) => {
-          freshLookups.push(options?.fresh === true);
-          return Effect.succeed(options?.fresh ? { ...managed, installerUpdate: null } : managed);
-        },
-      });
-
-      const result = yield* updater.updateProvider({
-        provider: ANTIGRAVITY_DRIVER,
-        instanceId: ANTIGRAVITY_INSTANCE_ID,
-      });
-
-      assert.deepStrictEqual(freshLookups, [false, true]);
-      assert.strictEqual(result.providers[0]?.updateState?.status, "failed");
-      assert.strictEqual(
-        result.providers[0]?.updateState?.message,
-        "Provider installation changed. Refresh and try again.",
-      );
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          layerNonWindowsPlatform,
-          layerLatestVersionHttpClient("1.5.9"),
-          layerMockSpawner(() => ({ stdout: "unexpected shell update" })),
-        ),
-      ),
-    );
-  });
-
   it.effect.each([
     { name: "current", probe: {}, skip: true },
     { name: "failed", probe: { status: "error" }, skip: false },

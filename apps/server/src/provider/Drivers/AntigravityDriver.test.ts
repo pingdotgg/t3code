@@ -61,12 +61,7 @@ function shellQuote(value: string): string {
 }
 
 const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
-  options: {
-    readonly config?:
-      | Partial<AntigravitySettings>
-      | ((executablePath: string) => Partial<AntigravitySettings>);
-    readonly enabled?: boolean;
-  } = {},
+  options: { readonly config?: Partial<AntigravitySettings>; readonly enabled?: boolean } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -239,12 +234,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     instanceId,
     displayName: "Google test account",
     enabled: options.enabled ?? true,
-    config: {
-      ...AntigravityDriver.defaultConfig(),
-      ...(typeof options.config === "function"
-        ? options.config(first.executablePath)
-        : options.config),
-    },
+    config: { ...AntigravityDriver.defaultConfig(), ...options.config },
     environment: [
       { name: "PATH", value: instancePath },
       { name: "T3_ACP_ANTIGRAVITY", value: "1" },
@@ -353,9 +343,6 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
     () =>
       Effect.gen(function* () {
         const h = yield* makeHarness();
-        expect((yield* h.instance.snapshot.resolveMaintenance()).installerUpdate).toBeUndefined();
-        h.controls.installedVersion = h.first.version;
-        expect((yield* h.instance.snapshot.resolveMaintenance()).installerUpdate).not.toBeNull();
         yield* h.refresh();
         const snapshot = yield* h.instance.snapshot.getSnapshot;
         expect(snapshot.status).toBe("ready");
@@ -500,44 +487,6 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           ).toEqual(["default"]);
         }
       }),
-  );
-
-  it.effect.skipIf(windowsHost)("loads models from an explicitly selected agy CLI", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness({ config: (binaryPath) => ({ binaryPath }) });
-      const binaryPath = h.first.executablePath;
-      h.controls.selected = {
-        ...h.first,
-        executablePath: binaryPath,
-        harnessPath: null,
-        source: "override",
-        version: null,
-        managedVersionDirectory: null,
-      };
-
-      yield* h.refresh();
-
-      const snapshot = yield* h.instance.snapshot.getSnapshot;
-      expect(snapshot.status).toBe("ready");
-      expect(snapshot.auth.status).toBe("authenticated");
-      expect(snapshot.models.map((model) => model.slug)).toEqual([
-        "gemini-test-low",
-        "gemini-test-high",
-      ]);
-      expect(h.acquisitions).toEqual([{ binaryPath, path: h.instancePath }]);
-      expect(h.launches.map((launch) => launch.command)).toEqual([binaryPath]);
-      expect(h.launches[0]?.args).toEqual([
-        "acp",
-        "--gemini-dir",
-        h.profileDirectory,
-        "--app-data-dir",
-        "antigravity-acp",
-      ]);
-      expect(h.launches[0]?.harnessPath).toBeUndefined();
-      h.controls.installedVersion = h.first.version;
-      expect((yield* h.instance.snapshot.resolveMaintenance()).installerUpdate).toBeUndefined();
-      yield* h.assertClosed;
-    }),
   );
 
   it.effect.skipIf(windowsHost)(
