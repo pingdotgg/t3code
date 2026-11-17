@@ -412,17 +412,27 @@ export function pairVsCodeThemes(
 
   const paired: Array<{ theme: ThemeDefinition; order: number }> = [];
   for (const [key, group] of groups) {
-    if (group.light.length === 1 && group.dark.length === 1) {
+    const [light] = group.light;
+    const [dark] = group.dark;
+    // A theme carries one stylesheet for both modes, so differing CSS stays as two themes.
+    if (
+      light &&
+      dark &&
+      group.light.length === 1 &&
+      group.dark.length === 1 &&
+      light.css === dark.css
+    ) {
       try {
         paired.push({
           order: group.order,
           theme: parseThemeFile({
             version: THEME_FILE_VERSION,
-            ...(options?.pairedId ? { id: options.pairedId(group.light[0]!, group.dark[0]!) } : {}),
+            ...(options?.pairedId ? { id: options.pairedId(light, dark) } : {}),
             name: key,
             appearance: "light",
-            colors: group.light[0]!.colors,
-            variants: { dark: group.dark[0]!.colors },
+            colors: light.colors,
+            variants: { dark: dark.colors },
+            ...(light.css ? { css: light.css } : {}),
           }),
         });
         continue;
