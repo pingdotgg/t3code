@@ -1,5 +1,5 @@
 diff --git a/dist/index.js b/dist/index.js
-index b86cce0..6746982 100644
+index b86cce0..bc5c60e 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -233,6 +233,10 @@ var WebauthnGetController = NobjcClass.define({
@@ -31,13 +31,7 @@ index b86cce0..6746982 100644
    }
    const delegate = createDelegate("ASAuthorizationControllerDelegate", {
      authorizationController$didCompleteWithAuthorization$: (_, authorization) => {
-@@ -557,12 +565,12 @@ function getCredentialInternal(rpid, challenge, nativeWindowHandle, origin, time
-       if (isPlatform && credential.attachment() === ASAuthorizationPublicKeyCredentialAttachment.Platform) {
-         authenticatorAttachment = "platform";
-       }
--      const prf = credential.prf();
-+      const prf = isPlatform ? credential.prf() : null;
-       const prfFirst = prf?.first ? prf.first() : null;
+@@ -562,7 +570,7 @@ function getCredentialInternal(rpid, challenge, nativeWindowHandle, origin, time
        const prfSecond = prf?.second ? prf.second() : null;
        let largeBlobBuffer = null;
        let largeBlobWritten = null;
