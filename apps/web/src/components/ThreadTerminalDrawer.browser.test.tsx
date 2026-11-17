@@ -190,6 +190,8 @@ vi.mock("../state/server", async () => {
     themeServerEnvironmentThemesAtom: Atom.make([]),
   };
 });
+// The pane notch's theme loads main's theme background, which needs the real environment state.
+vi.mock("../themeBackground", () => ({ applyThemeBackground: () => {} }));
 vi.mock("../state/terminal", () => ({
   terminalEnvironment: { write: {}, resize: fixture.resizeCommand },
 }));

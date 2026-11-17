@@ -281,8 +281,6 @@ export function DraftHeroHeadline({
   activeProjectTitle,
 }: DraftHeroHeadlineProps) {
   const model = useProjectPickerModel(activeProjectRef);
-  const providersByEnvironment = useEnvironmentProviders();
-  const nowMinute = useNowMinute();
   const { projects, environments, activeProjectKey, scratchTargetEnvironmentId } = model;
   const setLogicalProjectDraftThreadId = useComposerDraftStore(
     (store) => store.setLogicalProjectDraftThreadId,
@@ -292,8 +290,6 @@ export function DraftHeroHeadline({
   const isTriageDraftPrompt = useComposerDraftStore((store) =>
     draftId ? isTriagePrompt(store.getComposerDraft(draftId)?.prompt ?? "") : false,
   );
-  const applyStickyState = useComposerDraftStore((store) => store.applyStickyState);
-  const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const { openScratchProject, scratchWorkspaceRootFor } = useScratchProject();
   const openProjectDraft = useNewThreadHandler();
   const hasResolvedProject = activeProjectTitle !== null;

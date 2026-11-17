@@ -7,7 +7,6 @@ import {
   type PullRequestDetailView,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
 import { page, userEvent } from "vite-plus/test/browser";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { act, fakeTimers, render } from "../../../test/render";
@@ -58,6 +57,15 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
   const actual = await original();
   return {
     ...actual,
+    usePullRequestList: () => ({
+      data: null,
+      error: null,
+      isPending: false,
+      observations: [],
+      refresh: vi.fn(),
+    }),
+    usePullRequestListStats: () => ({ stats: null, isPending: false, refresh: vi.fn() }),
+    usePullRequestTurnRefreshes: () => [],
     pullRequestEnvironment: {
       ...actual.pullRequestEnvironment,
       diff: ((target: unknown) => {
@@ -107,19 +115,6 @@ vi.mock(import("~/hooks/useSidebarProjectGroups"), () => ({
     },
   ]) as never,
 }));
-vi.mock(import("~/state/pullRequests"), async (original) => ({
-  ...(await original()),
-  usePullRequestList: () => ({
-    data: null,
-    error: null,
-    isPending: false,
-    observations: [],
-    refresh: vi.fn(),
-  }),
-  usePullRequestListStats: () => ({ stats: null, isPending: false, refresh: vi.fn() }),
-  usePullRequestTurnRefreshes: () => [],
-}));
-
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 import { PullRequestsPage } from "./PullRequestsPage";
 import { SidebarProvider } from "../ui/sidebar";
