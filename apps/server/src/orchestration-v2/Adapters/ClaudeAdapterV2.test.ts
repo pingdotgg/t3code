@@ -9472,6 +9472,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   it.effect.each([
     { cooldown: " (reset after 1h2m3s)", seconds: 3723 },
     { cooldown: " (reset after 4m 6s) (last error: rate limited)", seconds: 246 },
+    {
+      cooldown:
+        " (last error: rate_limit_error: This request would exceed your account's rate limit. Please try again later.) (reset after 19h30m2s)",
+      seconds: 70202,
+    },
+    {
+      cooldown:
+        " (last error: All credentials for model upstream are cooling down (reset after 1h)) (reset after 1m)",
+      seconds: 60,
+    },
+    {
+      cooldown: " (last error: Request rejected (429) (reset after 1h) (last error: rate limited))",
+      seconds: 0,
+    },
     { cooldown: "", seconds: 0 },
   ])("keeps a gateway's reset on a direct 429 with cooldown '$cooldown'", (input) =>
     Effect.gen(function* () {
@@ -14082,6 +14096,50 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             NodeServices.layer,
             NodeCrypto.layer,
           ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("resumes in a fresh session after Claude Code reports its conversation gone", () =>
+    Effect.gen(function* () {
+      const harness = yield* openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame(
+        "claude-query-conversation-missing",
+        Stream.fail(
+          new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+            method: "fromAsyncIterable",
+            cause: new ClaudeAdapterV2.ClaudeConversationNotFoundError({
+              cause: new Error("Claude Code process exited with code 1"),
+            }),
+          }),
+        ),
+      );
+      const turnInput = harness.turnInput("a", 1);
+      const started = yield* harness.runtime.startTurn(turnInput).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(started));
+      if (Exit.isFailure(started)) {
+        assert.include(
+          makeProviderFailure({ cause: started.cause, class: "transport_error" }).message,
+          "could not find this conversation",
+        );
+      }
+      // A failed resume is what sends the next turn to a fresh native session.
+      const resumed = yield* harness.runtime
+        .resumeThread({
+          providerThread: turnInput.providerThread,
+          threadId: turnInput.threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        })
+        .pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(resumed));
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
         ),
       ),
     ),

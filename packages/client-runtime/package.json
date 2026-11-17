@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./pull-request-diff-fold": {
+      "types": "./src/pullRequestDiffFold.ts",
+      "default": "./src/pullRequestDiffFold.ts"
+    },
     "./assembly-highlighting": {
       "types": "./src/assemblyHighlighting.ts",
       "default": "./src/assemblyHighlighting.ts"
@@ -558,6 +562,10 @@
     "./pull-request-reviewers": {
       "types": "./src/pullRequestReviewers.ts",
       "default": "./src/pullRequestReviewers.ts"
+    },
+    "./pull-request-selection": {
+      "types": "./src/pullRequestSelection.ts",
+      "default": "./src/pullRequestSelection.ts"
     },
     "./provider-clients": {
       "types": "./src/providerClients.ts",
