@@ -10,6 +10,7 @@ import {
   type Project as ProjectRecord,
   type ModelSelection,
   type RuntimeMode,
+  type OrchestrationProjectShell,
   type OrchestrationV2ThreadShell,
   ThreadId,
 } from "@t3tools/contracts";
@@ -173,11 +174,17 @@ const clientLaunchHarness = (input: {
               } as unknown as ProjectRecord)
             : Option.none(),
         ),
-      getByWorkspaceRoot: (workspaceRoot) =>
+      listShells: () =>
         Effect.succeed(
-          workspaceRoot === input.workspaceRoot
-            ? Option.some({ id: projectId, title: "Client target", workspaceRoot } as ProjectRecord)
-            : Option.none(),
+          input.workspaceRoot === undefined
+            ? []
+            : [
+                {
+                  id: projectId,
+                  title: "Client target",
+                  workspaceRoot: input.workspaceRoot,
+                } as OrchestrationProjectShell,
+              ],
         ),
       create: (create) => {
         input.created?.push(create);
@@ -612,12 +619,15 @@ it.effect("an agent cannot register a worktree of a registered project as its ow
     const subfolder = path.join(repo, "packages");
     yield* fileSystem.makeDirectory(subfolder, { recursive: true });
     yield* fileSystem.makeDirectory(outside);
+    // The project was added through a symlink; git reports the real path.
+    const link = path.join(root, "link");
+    yield* fileSystem.symlink(repo, link);
 
     const created: Array<Project.ProjectCreateInput> = [];
     const { dependencies } = clientLaunchHarness({
       runtimeModeCeiling: "full-access",
       launched: [],
-      workspaceRoot: repo,
+      workspaceRoot: link,
       created,
     });
     const git = yield* GitVcsDriver.GitVcsDriver.pipe(Effect.provide(dependencies));

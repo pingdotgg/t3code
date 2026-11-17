@@ -113,14 +113,17 @@ const assertNotProjectWorktree = Effect.fn("mcp.assertNotProjectWorktree")(funct
   // `git worktree list` names the main checkout first; a subfolder of any checkout is not listed.
   const [mainCheckout] = worktrees;
   if (mainCheckout === undefined || worktrees.indexOf(yield* real(workspaceRoot)) <= 0) return;
-  const owner = yield* (yield* Project.ProjectService)
-    .getByWorkspaceRoot(mainCheckout)
+  // Project roots keep the path they were added by, which may run through a symlink.
+  const projects = yield* (yield* Project.ProjectService)
+    .listShells()
     .pipe(Effect.mapError(unavailable));
-  if (Option.isNone(owner)) return;
-  return yield* new OrchestratorMcpFailure({
-    code: "invalid_request",
-    message: `This folder is a git worktree of project "${owner.value.title}" (${owner.value.id}). Use t3_thread_launch with that projectId and workspaceStrategy {type: "existing_worktree", worktreePath} instead of registering it.`,
-  });
+  for (const owner of projects) {
+    if ((yield* real(owner.workspaceRoot)) !== mainCheckout) continue;
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message: `This folder is a git worktree of project "${owner.title}" (${owner.id}). Use t3_thread_launch with that projectId and workspaceStrategy {type: "existing_worktree", worktreePath} instead of registering it.`,
+    });
+  }
 });
 
 /** The composer falls back to the project's t3.json when no setting picks the mode. */
