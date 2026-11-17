@@ -1,5 +1,4 @@
 import { assert, it } from "@effect/vitest";
-import { expect } from "vite-plus/test";
 import {
   CommandId,
   EnvironmentId,
@@ -426,7 +425,7 @@ it("reports a provider's stop reason with and without assistant progress", () =>
     updatedAt: childCreatedAt,
     type: "system_notice",
     level: "warning",
-    message: "preCompact hook (project): Save a current task checkpoint before compaction.",
+    message: "sessionStart hook (user): Plugin guard blocked this session.",
   } satisfies OrchestrationV2TurnItem;
   assert.equal(
     subagentResultForRun({ ...projection, turnItems: [notice] }, run).text,
@@ -445,16 +444,17 @@ it("reports a provider's stop reason with and without assistant progress", () =>
     ordinal: 1,
     now: childCreatedAt,
   });
-  const result = subagentResultForRun(
-    {
-      ...projection,
-      messages: [{ ...progress.message, runId: run.id }],
-      turnItems: [{ ...progress.turnItem, runId: run.id }, notice],
-    },
-    run,
+  assert.equal(
+    subagentResultForRun(
+      {
+        ...projection,
+        messages: [{ ...progress.message, runId: run.id }],
+        turnItems: [{ ...progress.turnItem, runId: run.id }, notice],
+      },
+      run,
+    ).text,
+    `${progress.message.text}\n\n${notice.message}`,
   );
-  expect(result.text).toContain(progress.message.text);
-  expect(result.text).toContain(notice.message);
 });
 
 it("keeps the final report of a run that failed after its turn ended", () => {
