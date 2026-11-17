@@ -365,6 +365,32 @@ it("waits for nested work and retains the report across monitor acknowledgements
   });
   assert.equal(progress.state, "result_available");
   assert.equal(progress.resultRun?.id, report.id);
+  const ended = { ...report, id: RunId.make("monitor-ended"), ordinal: 4 };
+  const afterMonitorEnded = delegatedTaskProgress({
+    ...projection,
+    runs: [run, report, monitor, ended],
+    messages: [
+      {
+        ...artifacts.message,
+        runId: monitor.id,
+        notification: {
+          source: { kind: "monitor" },
+          outcome: "updated",
+          summary: "Monitor update",
+        },
+      },
+      {
+        ...artifacts.message,
+        runId: ended.id,
+        notification: {
+          source: { kind: "monitor" },
+          outcome: "completed",
+          summary: 'Monitor "ticks" finished',
+        },
+      },
+    ],
+  });
+  assert.equal(afterMonitorEnded.resultRun?.id, ended.id);
 });
 
 it("exposes the provider failure rather than a progress message from the failed run", () => {

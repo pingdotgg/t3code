@@ -197,6 +197,15 @@ itself, or **Skip** to leave them for a setup script. It resolves in the same or
 workspace default: a `"worktreeSubmodules"` value in the `t3.json` of the branch being checked out
 applies when the project and environment are both on **Inherit**.
 
+New worktrees check out every file. For a large repository, set `"worktreeSparsePatternsPath"` in
+`t3.json` to a repository-relative file of git sparse-checkout patterns in non-cone syntax. New
+worktrees then check out only the matching files, before any other file is written. Both files are
+read from the branch being checked out, so the patterns can leave out `t3.json` and `.gitmodules`.
+If the pattern file is missing, creating the worktree fails instead of checking out everything.
+Submodules still follow **Submodules** above, also under excluded paths; set it to **Skip** to leave
+them empty. The first sparse worktree turns on Git's `extensions.worktreeConfig` for the repository.
+This needs Git 2.35 or newer.
+
 ## Repository Worktrees
 
 Some projects are a folder that holds several Git repositories, such as a team folder with a service, a client, and shared libraries. Select that project and turn on **Multi-Repository Project Folder** in **Settings → Worktrees**. It is off by default. Threads in the project stay in the folder, and the agent creates or reuses a worktree for each repository the work needs, including ones it discovers partway through a task. The setting applies from the agent's next turn.
