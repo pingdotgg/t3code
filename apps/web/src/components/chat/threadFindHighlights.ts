@@ -186,6 +186,9 @@ export function useThreadFindHighlights(input: {
             : mutation.target.parentElement;
         const row = target?.closest("[data-timeline-row-id]");
         if (row) cache.delete(row);
+        // A hidden wrapper around rows changes their runs, which are cached with their matches.
+        if (mutation.attributeName === "hidden" && target)
+          for (const cached of cache.keys()) if (target.contains(cached)) cache.delete(cached);
       }
       dirty = true;
       schedule();

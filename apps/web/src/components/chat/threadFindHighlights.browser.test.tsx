@@ -154,3 +154,23 @@ it("registers a row's matches only while it is near the viewport, and again afte
   timeline.container.scrollTop = timeline.container.scrollHeight;
   await vi.waitFor(() => expect([paintedIn(near!), paintedIn(far!)]).toEqual([0, 1]));
 });
+
+it("paints a row's matches once the hidden wrapper around it is revealed", async () => {
+  using timeline = mountTimeline(
+    `<div id="wrap" hidden><div data-timeline-row-id="row"><div data-thread-find-text>e e</div></div></div>`,
+  );
+  const text = timeline.container.querySelector("[data-thread-find-text]")!;
+  await using _screen = await render(
+    <Highlights
+      container={timeline.container}
+      query="e"
+      activeRowId={null}
+      activeOccurrence={0}
+      onActiveRange={() => {}}
+    />,
+  );
+  expect(paintedIn(text)).toBe(0);
+
+  timeline.container.querySelector("#wrap")!.removeAttribute("hidden");
+  await vi.waitFor(() => expect(paintedIn(text)).toBe(2));
+});
