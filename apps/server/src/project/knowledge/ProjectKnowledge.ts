@@ -1319,7 +1319,7 @@ const make = Effect.gen(function* () {
           docs: (term) => counted.docs.get(term) ?? 0,
           tokenize,
         };
-        const ranked = rankRecallCandidates(text, active, stats, input.notification);
+        const ranked = rankRecallCandidates(input.query, active, stats, input.notification);
         const top = ranked.slice(0, 5).map((match) => ({ factId: match.fact.id }));
         const selections = [];
         for (const match of ranked) {
