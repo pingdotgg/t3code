@@ -1,3 +1,4 @@
+import { useNativeFileDrag } from "../../useNativeFileDrag";
 import { useAssetUrlState } from "../../assets/assetUrls";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import {
@@ -7,6 +8,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { ContextMenuSource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { memo, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { FolderIcon } from "lucide-react";
 
 import { contextMenuSourceOf } from "../../contextMenuSource";
 import { readLocalApi } from "../../localApi";
@@ -24,7 +26,7 @@ import {
   shouldUseMarkdownFileBrowserPrimaryAction,
 } from "./MarkdownFileLink.logic";
 import { reportMarkdownActionFailure } from "./markdownActionFailure";
-import { WorkspaceEntryIcon, WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
+import { WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
 
 interface MarkdownFileLinkProps {
   environmentId: EnvironmentId | null;
@@ -41,6 +43,7 @@ interface MarkdownFileLinkProps {
   threadRef?: ScopedThreadRef | undefined;
   onOpen?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onOpenInPanel: (panelPath: string, line: number | undefined) => void;
+  resolveDragPath: () => Promise<string>;
   resolveCopyPaths: () => Promise<ReturnType<typeof markdownFileCopyPaths>>;
   openInEditorMenuLabel: string;
   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
@@ -72,7 +75,9 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   onReveal,
   revealLabel,
   resolveCopyPaths,
+  resolveDragPath,
 }: MarkdownFileLinkProps) {
+  const nativeDrag = useNativeFileDrag(environmentId, resolveDragPath);
   const handleOpenInEditor = () => {
     if (!onOpen) {
       return;
@@ -315,7 +320,6 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
     canOpenMedia: onOpenMedia !== undefined,
   });
   const useBrowserPrimaryAction = shouldUseMarkdownFileBrowserPrimaryAction({
-    iconPath,
     canOpenInEditor,
     canOpenInBrowser,
     canOpenInPanel,
@@ -328,6 +332,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
         render={
           hasPrimaryAction ? (
             <ContextChip
+              {...nativeDrag}
               kind={chipKind}
               dir="ltr"
               render={<a href={href} />}
@@ -351,7 +356,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
               <FileTagChipContent
                 icon={
                   isAppBundle ? (
-                    <AppBundleIcon environmentId={environmentId} path={iconPath} theme={theme} />
+                    <AppBundleIcon environmentId={environmentId} path={iconPath} />
                   ) : undefined
                 }
                 path={iconPath}
@@ -362,6 +367,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
             </ContextChip>
           ) : (
             <ContextChip
+              {...nativeDrag}
               kind={chipKind}
               dir="ltr"
               render={<button type="button" />}
@@ -375,7 +381,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
               <FileTagChipContent
                 icon={
                   isAppBundle ? (
-                    <AppBundleIcon environmentId={environmentId} path={iconPath} theme={theme} />
+                    <AppBundleIcon environmentId={environmentId} path={iconPath} />
                   ) : undefined
                 }
                 path={iconPath}
@@ -418,29 +424,36 @@ function areMarkdownFileLinkPropsEqual(
     previous.onOpenMedia === next.onOpenMedia &&
     previous.onReveal === next.onReveal &&
     previous.resolveCopyPaths === next.resolveCopyPaths &&
+    previous.resolveDragPath === next.resolveDragPath &&
     previous.revealLabel === next.revealLabel
   );
 }
 
-function AppBundleIcon(props: {
-  environmentId: EnvironmentId | null;
-  path: string;
-  theme: "light" | "dark";
-}) {
+function AppBundleIcon(props: { environmentId: EnvironmentId | null; path: string }) {
   const asset = useAssetUrlState(props.environmentId, {
     _tag: "native-app-icon",
     app: { _tag: "app-path", path: props.path },
   });
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
-  if (asset._tag !== "Success" || asset.url === failedUrl) {
-    return <WorkspaceEntryIcon {...props} />;
-  }
+  const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
+  const url = asset._tag === "Success" && asset.url !== failedUrl ? asset.url : null;
+  const loaded = url !== null && loadedUrl === url;
   return (
-    <img
-      src={asset.url}
-      alt=""
-      className="size-4 shrink-0 object-contain"
-      onError={() => setFailedUrl(asset.url)}
-    />
+    <span
+      data-app-bundle-icon=""
+      aria-hidden="true"
+      className="relative me-[0.2em] inline-block size-[1em] align-[calc((1cap-1em)/2)]"
+    >
+      <FolderIcon className={cn("size-full text-icon-muted", loaded && "invisible")} />
+      {url !== null && (
+        <img
+          src={url}
+          alt=""
+          className={cn("absolute inset-0 size-full object-contain", !loaded && "invisible")}
+          onLoad={() => setLoadedUrl(url)}
+          onError={() => setFailedUrl(url)}
+        />
+      )}
+    </span>
   );
 }
