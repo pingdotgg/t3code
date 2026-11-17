@@ -12,12 +12,13 @@ import { HttpClient, HttpClientRequest } from "effect/http";
 
 import * as GitHubRest from "./GitHubRest.ts";
 
-/** Events only say that something changed; readers fetch the pull request for what. */
+/** Readers fetch the pull request on every event, so check suites' conclusions go unused. */
 const EVENT_TYPES = [
   "com.github.pull_request.review.submitted.v1",
   "com.github.pull_request.head.changed.v1",
   "com.github.pull_request.state.changed.v1",
   "com.github.pull_request.merge_conflict.v1",
+  "com.github.pull_request.check_suite.status.changed.v1",
 ];
 const API_ORIGIN = "https://api.github.com";
 /** GitHub sends a keep-alive at least every 15 seconds while a stream is idle. */
