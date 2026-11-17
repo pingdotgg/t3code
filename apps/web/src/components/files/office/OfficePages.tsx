@@ -1,4 +1,5 @@
 /* oxlint-disable react/no-array-index-key -- A page keeps its ordinal throughout incremental layout. */
+import { useGT } from "gt-react";
 import { observeResize } from "~/lib/observeResize";
 import {
   useEffect,
@@ -24,7 +25,7 @@ export type PaintPage = (
 export function OfficePages(props: {
   pages: readonly PageSize[];
   paint: PaintPage;
-  label: string;
+  label: "Slide" | "Page";
   overlay?: (index: number) => ReactNode;
   footer?: (index: number) => ReactNode;
   scrollRef?: RefObject<((index: number, y?: number) => void) | null>;
@@ -124,7 +125,7 @@ function OfficePage(props: {
   scale: number;
   rasterScale: number;
   paint: PaintPage;
-  label: string;
+  label: "Slide" | "Page";
   overlay?: (index: number) => ReactNode;
   footer?: (index: number) => ReactNode;
   onError: (error: unknown) => void;
@@ -142,6 +143,7 @@ function OfficePage(props: {
     overlay,
     footer,
   } = props;
+  const gt = useGT();
   const row = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [near, setNear] = useState(false);
@@ -189,7 +191,11 @@ function OfficePage(props: {
           register(el);
         }}
         role="group"
-        aria-label={`${label} ${index + 1}`}
+        aria-label={
+          label === "Slide"
+            ? gt("Slide {number}", { number: String(index + 1) })
+            : gt("Page {number}", { number: String(index + 1) })
+        }
         className="relative shrink-0 shadow-md"
         style={{
           width: page.width * scale,
