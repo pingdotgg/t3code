@@ -1,5 +1,6 @@
 // @effect-diagnostics globalDate:off
 import type {
+  ThreadId,
   UsageBucket,
   UsageCategoryCost,
   UsageDay,
@@ -7,6 +8,7 @@ import type {
   UsageModelSelector,
   UsageResolution,
   UsageTokenTotals,
+  UsageWeeklyThread,
 } from "@t3tools/contracts";
 
 import { EMPTY_TOTALS, type UsageRecord } from "@t3tools/provider-core/server/usage";
@@ -134,6 +136,21 @@ export function canonicalModelFilter(
     ...(filter.include === undefined ? {} : { include: canonicalSelectors(filter.include) }),
     ...(exclude === undefined ? {} : { exclude }),
   };
+}
+
+// Aliases use the target's rate. Only an unpriced target goes through the provider's own rate naming.
+export function applyModelAlias(
+  options: Pick<AggregateOptions, "rates" | "modelAliases" | "rateModel">,
+  record: UsageRecord,
+): UsageRecord {
+  const model = options.modelAliases?.get(record.model);
+  if (model === undefined) return record;
+  const { rateModel: _rateModel, ...rest } = record;
+  const rateModel =
+    lookupRate(options.rates, model) === null
+      ? options.rateModel?.(record.provider, model)
+      : undefined;
+  return rateModel === undefined ? { ...rest, model } : { ...rest, model, rateModel };
 }
 
 export interface AggregateResult {
@@ -342,16 +359,8 @@ export class UsageAggregator {
     if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
   }
 
-  // Aliases use the target's rate. Only an unpriced target goes through the provider's own rate naming.
   #mapModel(record: UsageRecord): UsageRecord {
-    const model = this.#options.modelAliases?.get(record.model);
-    if (model === undefined) return record;
-    const { rateModel: _rateModel, ...rest } = record;
-    const rateModel =
-      lookupRate(this.#options.rates, model) === null
-        ? this.#options.rateModel?.(record.provider, model)
-        : undefined;
-    return rateModel === undefined ? { ...rest, model } : { ...rest, model, rateModel };
+    return applyModelAlias(this.#options, record);
   }
 
   // Time-ordered records usually reuse the previous bucket; avoid rebuilding its key.
@@ -465,4 +474,82 @@ function resolveCostSource(bucket: MutableBucket): UsageBucket["costSource"] {
   if (bucket.unpricedRecords === bucket.records) return "unpriced";
   if (bucket.providerReportedRecords === bucket.records) return "providerReported";
   return "modelPriced";
+}
+
+export interface WeeklyThreadSource {
+  readonly provider: UsageRecord["provider"];
+  readonly sourcePath: string;
+  readonly startMs: number;
+  readonly endMs: number;
+  readonly usedPercent: number;
+  readonly resetsAt: string;
+  /** Every record the scan read for this account; out-of-window ones are skipped here. */
+  readonly records: readonly UsageRecord[];
+  readonly threadForSession: (
+    sessionId: string,
+  ) => { readonly threadId: ThreadId; readonly title: string } | undefined;
+}
+
+/**
+ * Splits each account's weekly used percent across T3 threads by their share of the account's
+ * cost in [startMs, endMs). Sessions with no thread still count in the denominator, so CLI use
+ * outside T3 keeps its share. Token share stands in when nothing in the window was priced.
+ */
+export function attributeWeeklyThreads(
+  sources: readonly WeeklyThreadSource[],
+  price: (record: UsageRecord) => number,
+  limit: number,
+): UsageWeeklyThread[] {
+  const rows: UsageWeeklyThread[] = [];
+  for (const source of sources) {
+    const keyed = new Map<string, UsageRecord>();
+    const unkeyed: UsageRecord[] = [];
+    for (const record of source.records) {
+      if (record.timestampMs < source.startMs || record.timestampMs >= source.endMs) continue;
+      if (record.dedupeKey === null) {
+        unkeyed.push(record);
+        continue;
+      }
+      const held = keyed.get(record.dedupeKey);
+      keyed.set(record.dedupeKey, held === undefined ? record : mergeUsageCopies(held, record));
+    }
+    let totalCost = 0;
+    let totalTokens = 0;
+    const threads = new Map<ThreadId, { title: string; costUsd: number; tokens: number }>();
+    for (const record of [...keyed.values(), ...unkeyed]) {
+      const costUsd = price(record);
+      const tokens =
+        record.totals.uncachedInputTokens +
+        record.totals.cachedInputTokens +
+        record.totals.cacheCreationTokens +
+        record.totals.outputTokens;
+      totalCost += costUsd;
+      totalTokens += tokens;
+      const thread = source.threadForSession(record.sessionId);
+      if (thread === undefined) continue;
+      const row = threads.get(thread.threadId) ?? { title: thread.title, costUsd: 0, tokens: 0 };
+      row.costUsd += costUsd;
+      row.tokens += tokens;
+      threads.set(thread.threadId, row);
+    }
+    const basis: UsageWeeklyThread["basis"] = totalCost > 0 ? "cost" : "tokens";
+    const total = basis === "cost" ? totalCost : totalTokens;
+    if (total <= 0) continue;
+    const ranked = [...threads]
+      .map(([threadId, row]) => ({
+        provider: source.provider,
+        sourcePath: source.sourcePath,
+        threadId,
+        title: row.title,
+        limitPercent: ((basis === "cost" ? row.costUsd : row.tokens) / total) * source.usedPercent,
+        basis,
+        costUsd: roundUsd(row.costUsd),
+        tokens: row.tokens,
+        windowResetsAt: source.resetsAt,
+      }))
+      .toSorted((a, b) => b.limitPercent - a.limitPercent || b.tokens - a.tokens)
+      .slice(0, limit);
+    rows.push(...ranked);
+  }
+  return rows;
 }
