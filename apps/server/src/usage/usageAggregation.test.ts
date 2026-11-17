@@ -12,11 +12,13 @@ const rates: RateTable = new Map([
       outputCostPerToken: 5e-5,
       cacheReadCostPerToken: 1e-6,
       cacheCreationCostPerToken: 1.25e-5,
+      cacheCreation1hCostPerToken: 2e-5,
       fast: {
         inputCostPerToken: 2e-5,
         outputCostPerToken: 1e-4,
         cacheReadCostPerToken: 2e-6,
         cacheCreationCostPerToken: 2.5e-5,
+        cacheCreation1hCostPerToken: 4e-5,
       },
       ultrafast: null,
       contextTiers: [],
@@ -139,6 +141,32 @@ describe("UsageAggregator", () => {
     }
   });
 
+  it("keeps a live Grok turn over a saved pre-v17 maximum in either source order", () => {
+    const turn = (timestampMs: number, outputTokens: number) =>
+      record({
+        provider: "grok",
+        model: "grok-4.5",
+        timestampMs,
+        dedupeKey: `s:p:${timestampMs}:grok-4.5`,
+        reportedCostUsd: outputTokens / 10,
+        totals: { ...record().totals, uncachedInputTokens: 0, outputTokens },
+      });
+    const first = turn(Date.parse("2026-08-08T10:00:00Z"), 10);
+    const resumed = turn(Date.parse("2026-08-08T11:00:00Z"), 20);
+    const savedMaximum = { ...first, totals: resumed.totals, reportedCostUsd: 2 };
+
+    const expected = aggregate([first, resumed]).buckets;
+
+    for (const order of [
+      [first, resumed, savedMaximum],
+      [savedMaximum, first, resumed],
+    ]) {
+      const result = aggregate(order);
+      expect(result.duplicatesDropped).toBe(1);
+      expect(result.buckets).toEqual(expected);
+    }
+  });
+
   it("does not count a key whose first copy fell outside the window", () => {
     const result = aggregate([
       record({ dedupeKey: "msg_1:", timestampMs: Date.parse("2026-07-01T12:00:00Z") }),
@@ -249,6 +277,7 @@ describe("UsageAggregator", () => {
       untilDay: "2026-08-31",
       rates,
       modelAliases: resolveModelAliases({ "example-preview": "claude-fable-5" }),
+      rateModel: () => "claude-fable",
     });
     aggregator.add(record());
     aggregator.add(record({ model: "example-preview", rateModel: "example-preview-high" }));
@@ -264,20 +293,24 @@ describe("UsageAggregator", () => {
 
 describe("resolveModelAliases", () => {
   it("follows chains to the final model and drops chains that enter a loop", () => {
-    expect(
-      resolveModelAliases({
+    expect([
+      ...resolveModelAliases({
         "preview[1m]": "preview",
         preview: "example-model",
+        shared: "preview",
+        intoLoop: "loop",
         loop: "back",
         back: "loop",
-        intoLoop: "loop",
+        laterIntoLoop: "back",
+        deepIntoLoop: "intoLoop",
         self: "self",
+        validAfterLoops: "shared",
       }),
-    ).toEqual(
-      new Map([
-        ["preview[1m]", "example-model"],
-        ["preview", "example-model"],
-      ]),
-    );
+    ]).toEqual([
+      ["preview[1m]", "example-model"],
+      ["preview", "example-model"],
+      ["shared", "example-model"],
+      ["validAfterLoops", "example-model"],
+    ]);
   });
 });

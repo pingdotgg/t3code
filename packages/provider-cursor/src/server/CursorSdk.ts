@@ -1,7 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off -- The guard runs in Node's unhandled-rejection callback, outside an Effect runtime. stderr must match Node's default unhandled-rejection print.
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import { loadCursorSdk, loadCursorSqlite } from "./sdk.ts";
 
@@ -51,6 +55,20 @@ function isCursorClosedStreamWrite(reason: unknown): boolean {
   );
 }
 
+/**
+ * When the SDK's stall detector fires it aborts the request, then rejects a promise
+ * nothing awaits. The abort is the SDK's own recovery, so it must not stop the server.
+ * Only an abort raised from `onStall` counts; any other AbortError is still unexpected.
+ */
+function isCursorStallAbort(reason: unknown): boolean {
+  return (
+    reason instanceof Error &&
+    reason.name === "AbortError" &&
+    typeof reason.stack === "string" &&
+    /^\s+at (?:\S+\.)?onStall\b/m.test(reason.stack)
+  );
+}
+
 function onUnhandledRejection(reason: unknown): void {
   if (isCursorShellSpawnFailure(reason)) {
     console.error("Cursor shell spawn failed. The server will keep running.", reason);
@@ -60,12 +78,49 @@ function onUnhandledRejection(reason: unknown): void {
     console.error("Cursor SDK wrote to a closed stream. The server will keep running.");
     return;
   }
+  if (isCursorStallAbort(reason)) {
+    console.error("Cursor SDK aborted a stalled request. The server will keep running.");
+    return;
+  }
   if (process.listenerCount("unhandledRejection") > 1) {
     return;
   }
   console.error(reason);
   process.exit(1);
 }
+
+const decodeCursorCliConfig = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      network: Schema.optionalKey(
+        Schema.Struct({ useHttp1ForAgent: Schema.optionalKey(Schema.Boolean) }),
+      ),
+    }),
+  ),
+);
+
+// Proxies without HTTP/2 need this Cursor CLI setting, which the SDK never reads itself.
+const readCursorCliUseHttp1ForAgent = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const { CURSOR_CONFIG_DIR, XDG_CONFIG_HOME } = yield* HostProcess.Environment;
+  const configDirectory = CURSOR_CONFIG_DIR?.trim()
+    ? CURSOR_CONFIG_DIR
+    : XDG_CONFIG_HOME?.trim()
+      ? path.join(XDG_CONFIG_HOME, "cursor")
+      : path.join(yield* HostProcess.HomeDirectory, ".cursor");
+  const configPath = path.join(configDirectory, "cli-config.json");
+  const config = yield* fileSystem.readFileString(configPath).pipe(
+    Effect.flatMap(decodeCursorCliConfig),
+    Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
+    Effect.catch(() =>
+      Effect.logWarning("Cursor CLI config could not be read; using the default agent transport", {
+        path: configPath,
+      }).pipe(Effect.as(undefined)),
+    ),
+  );
+  return config?.network?.useHttp1ForAgent === true;
+}).pipe(Effect.withSpan("CursorSdk.readCliUseHttp1ForAgent"));
 
 /** Keeps the shell spawn guard armed while in-process agents run. */
 export class CursorSdk extends Context.Service<
@@ -79,13 +134,34 @@ export class CursorSdk extends Context.Service<
 /** Provide once per process: a second guard would defer to the first and swallow real rejections. */
 export const layer = Layer.effect(
   CursorSdk,
-  Effect.acquireRelease(
-    Effect.sync(() => {
-      process.on("unhandledRejection", onUnhandledRejection);
-    }),
-    () =>
+  Effect.gen(function* () {
+    yield* Effect.acquireRelease(
       Effect.sync(() => {
-        process.off("unhandledRejection", onUnhandledRejection);
+        process.on("unhandledRejection", onUnhandledRejection);
       }),
-  ).pipe(Effect.as(CursorSdk.of({ load: loadCursorSdk, loadSqlite: loadCursorSqlite }))),
+      () =>
+        Effect.sync(() => {
+          process.off("unhandledRejection", onUnhandledRejection);
+        }),
+    );
+    // The SDK picks the agent transport per process, so no provider instance can own this.
+    const useHttp1ForAgent = yield* readCursorCliUseHttp1ForAgent;
+    let configured = false;
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        if (configured) loadCursorSdk().Cursor.configure({ local: { useHttp1ForAgent: null } });
+      }),
+    );
+    return CursorSdk.of({
+      load: () => {
+        const sdk = loadCursorSdk();
+        if (useHttp1ForAgent && !configured) {
+          sdk.Cursor.configure({ local: { useHttp1ForAgent: true } });
+          configured = true;
+        }
+        return sdk;
+      },
+      loadSqlite: loadCursorSqlite,
+    });
+  }),
 );

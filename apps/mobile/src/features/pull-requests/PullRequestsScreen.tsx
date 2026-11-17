@@ -9,7 +9,8 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { useNavigation } from "@react-navigation/native";
 import { use, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAtomValue } from "@effect/atom-react";
-import { Keyboard, Platform, Pressable, RefreshControl, View } from "react-native";
+import { Keyboard, Platform, Pressable, View } from "react-native";
+import { RefreshControl } from "../../components/ui/RefreshControl";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -28,6 +29,8 @@ import {
   usePullRequestListFilters,
   type PullRequestFilterMenu,
 } from "./PullRequestListFilters";
+import { SavedViewsMenu } from "../layout/workspace/SavedViewsMenu";
+import { pullRequestViewMatches } from "./pullRequestSavedViews";
 import { usePullRequestList } from "./usePullRequestList";
 import { usePullRequestListControls } from "./usePullRequestListControls";
 import { usePullRequestListActions } from "./usePullRequestListActions";
@@ -318,7 +321,44 @@ export function PullRequestsScreen(
         ListHeaderComponentStyle={{ zIndex: 1 }}
         ListHeaderComponent={
           <>
-            <PullRequestListFilters sidebar={sidebar} filters={filters} />
+            <PullRequestListFilters
+              sidebar={sidebar}
+              savedViewsMenu={
+                <SavedViewsMenu
+                  read={(preferences) => preferences.pullRequestSavedViews}
+                  write={(pullRequestSavedViews) => ({ pullRequestSavedViews })}
+                  noun="pull request"
+                  shortNoun="PR"
+                  suggestedName={
+                    controls.involvement === "reviewing" ? "PRs Requesting My Review" : ""
+                  }
+                  matches={pullRequestViewMatches}
+                  scope={{
+                    environmentId,
+                    controls,
+                    query: tab.searchMode === "resting" ? "" : tab.query,
+                  }}
+                  onApply={async (view) => {
+                    await listControls.applyView(view);
+                    workspace.dispatch(
+                      view.query.trim()
+                        ? { type: "search", tab: "pullRequests" }
+                        : { type: "cancel", tab: "pullRequests", scrollToTop: true },
+                    );
+                    workspace.dispatch({
+                      type: "query",
+                      tab: "pullRequests",
+                      query: view.query.trim(),
+                    });
+                    void listRef.current?.scrollToOffset({
+                      offset: Platform.OS === "ios" ? -insets.top : 0,
+                      animated: false,
+                    });
+                  }}
+                />
+              }
+              filters={filters}
+            />
             {result.data?.errors.length ? (
               <View key={JSON.stringify(targets)}>
                 {result.data.errors.map((error) => (

@@ -7,10 +7,13 @@ import * as NetService from "@t3tools/shared/Net";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
 import { vi } from "vite-plus/test";
@@ -21,6 +24,7 @@ import {
   persistServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import {
+  launchModelSelection,
   readLatestMessages,
   resolveProject,
   threadCommand,
@@ -210,6 +214,133 @@ it.effect("--wait follows the sent run to its continuation's terminal status", (
   }),
 );
 
+/** The reads that ask whether a run after `runId` holds a message someone sent. */
+const laterRunReads = (
+  laterRun: RunId,
+  items: ReadonlyArray<{ readonly runId: RunId; readonly type: string }>,
+) => [
+  {
+    recentRuns: [
+      { runId, ordinal: 1 },
+      { runId: laterRun, ordinal: 2 },
+    ],
+  },
+  { thread: {}, items, nextPosition: null, hasMore: false },
+];
+
+it.effect("--wait lasts until background work the agent waits on wakes it and that run ends", () =>
+  Effect.gen(function* () {
+    const wakeRun = RunId.make("run-2");
+    const { tools, calls } = scriptedTools({
+      t3_thread_wait: [
+        { threadId, runId, status: "completed", timedOut: false },
+        {
+          threadId,
+          runId,
+          status: "completed",
+          timedOut: false,
+          resultRun: { runId: wakeRun, status: "completed" },
+        },
+      ],
+      // The wake run starts from a notification, which the messages view leaves out.
+      t3_thread_read: laterRunReads(wakeRun, []),
+    });
+
+    const outcome = yield* waitForRun(tools, threadId, runId, true);
+
+    assert.deepStrictEqual(
+      calls.filter((entry) => entry.tool === "t3_thread_wait").map((entry) => entry.args),
+      [
+        { threadId, runId, timeoutMs: 15_000 },
+        { threadId, runId, timeoutMs: 15_000, untilDelegatedWorkSettled: true },
+      ],
+    );
+    assert.deepStrictEqual(outcome, { type: "ended", runId: wakeRun, status: "completed" });
+  }),
+);
+
+it.effect(
+  "--wait waits out the moment between background work ending and its wake run starting",
+  () =>
+    Effect.gen(function* () {
+      const wakeRun = RunId.make("run-2");
+      const ownOnly = { recentRuns: [{ runId, ordinal: 1, status: "completed" }] };
+      const withWake = (status: string) => [
+        {
+          recentRuns: [
+            { runId, ordinal: 1, status: "completed" },
+            { runId: wakeRun, ordinal: 2, status },
+          ],
+        },
+        { thread: {}, items: [], nextPosition: null, hasMore: false },
+      ];
+      const { tools } = scriptedTools({
+        t3_thread_wait: [
+          { threadId, runId, status: "completed", timedOut: false },
+          { threadId, runId, status: "completed", timedOut: true },
+          // The work ended, and the run it wakes is not recorded yet.
+          {
+            threadId,
+            runId,
+            status: "completed",
+            timedOut: false,
+            resultRun: { runId, status: "completed" },
+          },
+          {
+            threadId,
+            runId,
+            status: "completed",
+            timedOut: false,
+            resultRun: { runId: wakeRun, status: "completed" },
+          },
+        ],
+        t3_thread_read: [
+          ownOnly,
+          { thread: { pendingRequestCount: 0 } },
+          ownOnly,
+          ...withWake("running"),
+          ...withWake("completed"),
+        ],
+      });
+
+      const fiber = yield* Effect.forkChild(waitForRun(tools, threadId, runId, true));
+      yield* TestClock.adjust("500 millis");
+
+      assert.deepStrictEqual(yield* Fiber.join(fiber), {
+        type: "ended",
+        runId: wakeRun,
+        status: "completed",
+      });
+    }),
+);
+
+it.effect(
+  "--wait keeps its own run's result when another client's later run settles the thread",
+  () =>
+    Effect.gen(function* () {
+      const sentRun = RunId.make("run-2");
+      const { tools } = scriptedTools({
+        t3_thread_wait: [
+          { threadId, runId, status: "completed", timedOut: false },
+          {
+            threadId,
+            runId,
+            status: "completed",
+            timedOut: false,
+            resultRun: { runId: sentRun, status: "failed" },
+          },
+        ],
+        t3_thread_read: laterRunReads(sentRun, [{ runId: sentRun, type: "user_message" }]),
+      });
+
+      assert.deepStrictEqual(yield* waitForRun(tools, threadId, runId, true), {
+        type: "ended",
+        runId,
+        status: "completed",
+      });
+    }),
+);
+
 it.effect("--wait stops when the thread waits for an answer instead of polling forever", () =>
   Effect.gen(function* () {
     const { tools } = scriptedTools({
@@ -240,6 +371,50 @@ it.effect("--wait reports its run's result when a later run is the one waiting",
       status: "completed",
     });
   }),
+);
+
+it.effect("start sends each --option as a typed model option", () =>
+  Effect.gen(function* () {
+    const selection = yield* launchModelSelection({
+      provider: Option.some("codex"),
+      model: Option.some("gpt-6.1-sol"),
+      option: ["reasoningEffort=high", " fastMode = false ", "note=a=b"],
+    });
+
+    assert.deepStrictEqual(selection, {
+      instanceId: "codex",
+      model: "gpt-6.1-sol",
+      options: [
+        { id: "reasoningEffort", value: "high" },
+        { id: "fastMode", value: false },
+        { id: "note", value: "a=b" },
+      ],
+    });
+  }),
+);
+
+it.effect("start rejects a repeated --option before reaching the server", () =>
+  Effect.gen(function* () {
+    const error = yield* Command.runWith(threadCommand, { version: "0.0.0" })([
+      "start",
+      ".",
+      "hi",
+      "--provider",
+      "codex",
+      "--model",
+      "gpt-6.1-sol",
+      "--option",
+      "reasoningEffort=high",
+      "--option",
+      "reasoningEffort=low",
+    ]).pipe(Effect.flip);
+
+    assert.strictEqual(error.message, "--option reasoningEffort is given more than once.");
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer, TestConsole.layer),
+    ),
+  ),
 );
 
 /** Serves t3_thread_read pages the way the server does: positions count every item. */

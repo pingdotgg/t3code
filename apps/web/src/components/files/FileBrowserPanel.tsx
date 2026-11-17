@@ -42,8 +42,14 @@ import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 
 import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
-import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
-import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
+import {
+  areAllDirectoriesExpanded,
+  coalesceReentrantCalls,
+  readExpandedDirectories,
+  setAllDirectoriesExpanded,
+  writeExpandedDirectories,
+} from "./fileTreeExpansion";
+import { buildFileTreePathUpdates, shouldRebuildFileTree } from "./fileTreePathReconciliation";
 import {
   createFileTreeSortComparator,
   DEFAULT_FILE_TREE_SORT_ORDER,
@@ -364,11 +370,6 @@ export default function FileBrowserPanel({
         if (clicked === "copy-mention") {
           try {
             await writeTextToClipboard(mention);
-            toastManager.add({
-              type: "success",
-              title: "Mention copied",
-              description: relativePath,
-            });
           } catch (error) {
             toastManager.add({
               type: "error",
@@ -487,30 +488,45 @@ export default function FileBrowserPanel({
     return subscribePreviewAction(onPanelAction);
   }, [answersPanelFind]);
   const expandedPathsRef = useRef(new Set<string>());
+  const expansionRoot = `${environmentId}:${cwd}`;
+  // Folders expanded when the panel last unmounted; each reopens once lazy loading lists it.
+  const [pendingExpandedPaths] = useState(() => new Set(readExpandedDirectories(expansionRoot)));
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the Pierre tree model to load directories as they are expanded
   useEffect(() => {
     const currentPaths = new Set(directoryPaths);
     for (const path of expandedPathsRef.current) {
       if (!currentPaths.has(path)) expandedPathsRef.current.delete(path);
     }
-    const loadExpanded = () => {
+    // Restoring calls item.expand(), which notifies subscribers synchronously.
+    const loadExpanded = coalesceReentrantCalls(() => {
       if (model.isSearchOpen() || resettingTreeRef.current) return;
+      let changed = false;
       for (const path of directoryPaths) {
         const item = model.getItem(path);
+        if (item?.isDirectory() && pendingExpandedPaths.delete(path) && "expand" in item) {
+          item.expand();
+        }
         if (item?.isDirectory() && "isExpanded" in item && item.isExpanded()) {
           if (!expandedPathsRef.current.has(path)) {
             expandedPathsRef.current.add(path);
+            changed = true;
             void load(path.replace(/\/$/, ""));
           }
         } else {
           if (item?.isDirectory() && expandedPathsRef.current.has(path)) setExpandAll(false);
-          expandedPathsRef.current.delete(path);
+          if (expandedPathsRef.current.delete(path)) changed = true;
         }
       }
-    };
+      if (changed) {
+        writeExpandedDirectories(expansionRoot, [
+          ...expandedPathsRef.current,
+          ...pendingExpandedPaths,
+        ]);
+      }
+    });
     loadExpanded();
     return model.subscribe(loadExpanded);
-  }, [directoryPaths, load, model]);
+  }, [directoryPaths, expansionRoot, load, model, pendingExpandedPaths]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes ignored-file status into the imperative Pierre tree model
   useEffect(() => {
     model.setGitStatus(
@@ -580,11 +596,11 @@ export default function FileBrowserPanel({
       model.resetPaths(treePaths);
       return;
     }
-    if (resort) {
+    const updates = resort ? [] : buildFileTreePathUpdates(previousTreePaths, treePaths);
+    if (resort || shouldRebuildFileTree(previousTreePaths, treePaths, updates)) {
       resetTreeKeepingViewState(model, treePaths, directoryPaths, query, resettingTreeRef);
       return;
     }
-    const updates = buildFileTreePathUpdates(previousTreePaths, treePaths);
     if (updates.length > 0) model.batch(updates);
   }, [ready, entryKinds, model, treePaths, directoryPaths, mtimes, sortKey, sortDirection, query]);
 

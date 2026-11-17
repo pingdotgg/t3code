@@ -812,13 +812,17 @@ function wordPartTypes() {
 }
 
 // Bound inherited style and numbering expansion before the engine loads it.
-// Picture bullets can duplicate embedded images, so omit those definitions.
+// Picture bullets can duplicate embedded images, so `pictures` locates those definitions to omit.
 function wordXmlCost(xml: string, roles: Set<string> | undefined) {
   const parser = xmlParser();
   let depth = 0;
   let markup = 0;
   const limit = Symbol("Word style budget");
-  const exceeded = { bytes: Infinity, markup: Infinity, pictures: false };
+  const exceeded = {
+    bytes: Infinity,
+    markup: Infinity,
+    pictures: [] as { start: number; end: number }[],
+  };
   let styleCount = 0;
   let ownUnits = 0;
   const styles = new Map<
@@ -832,7 +836,8 @@ function wordXmlCost(xml: string, roles: Set<string> | undefined) {
   const references: { id: string; selector: number }[] = [];
   let definition: { id: string; start: number; markup: number } | null = null;
   let reference: { id: string; selector: number } | null = null;
-  let pictures = false;
+  const pictures: { start: number; end: number }[] = [];
+  let picture: { start: number; depth: number } | null = null;
   parser.on("opentag", (tag) => {
     if (++depth > 64)
       throw new Error("Preview limited: this Word document has excessive XML nesting.");
@@ -870,9 +875,14 @@ function wordXmlCost(xml: string, roles: Set<string> | undefined) {
       }
       if (tag.local === "abstractNumId" && reference) reference.id = attr("val");
     }
-    if (tag.local === "numPicBullet") pictures = true;
+    if (!picture && (tag.local === "numPicBullet" || tag.local === "lvlPicBulletId"))
+      picture = { start: xml.lastIndexOf("<", parser.position - 1), depth };
   });
   parser.on("closetag", (tag) => {
+    if (picture?.depth === depth) {
+      pictures.push({ start: picture.start, end: parser.position });
+      picture = null;
+    }
     if (definition && tag.local === "abstractNum") {
       const previous = definitions.get(definition.id);
       definitions.set(definition.id, {
@@ -1251,11 +1261,17 @@ export async function boundedArchive(input: Extract<OfficeWorkerRequest, { type:
       if (entry.name === "[Content_Types].xml" || entry.name.endsWith(".rels"))
         xml = partTypes.metadata(entry.name, xml);
       const roles = partTypes.roles.get(entry.name);
-      const cost = wordXmlCost(xml, roles);
+      let cost = wordXmlCost(xml, roles);
       // The renderer parses related parts even when their render option is off.
       if (roles && [...roles].every((role) => WORD_DISABLED_PARTS.has(role))) continue;
+      // Picture bullets come out, and their list levels keep the text bullets Word falls back to.
+      if (roles?.has("numbering") && cost.pictures.length > 0) {
+        for (const range of cost.pictures.toReversed())
+          xml = xml.slice(0, range.start) + xml.slice(range.end);
+        cost = wordXmlCost(xml, roles);
+        wordInputTruncated = true;
+      }
       if (
-        (roles?.has("numbering") && cost.pictures) ||
         (roles?.has("styles") &&
           (cost.bytes > WORD_LIMITS.styleBytes || cost.markup > WORD_LIMITS.styleUnits)) ||
         (roles?.has("numbering") &&

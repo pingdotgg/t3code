@@ -10,7 +10,8 @@ T3 Code has one server-side observability model:
 
 The local trace file is the persisted source of truth for normal local launches. Those launches do not
 write a separate server log file, but SSH-managed launches also persist the remote process's
-stdout/stderr at `~/.t3/ssh-launch/<state>/server.log`.
+stdout/stderr at `~/.t3/ssh-launch/<state>/server.log`. Each managed launch starts that file
+empty, so it holds only the latest launch's output.
 
 ## Where To Find Things
 
@@ -57,8 +58,9 @@ The `TraceRecord`, `EffectTraceRecord`, and `OtlpTraceRecord` schemas live in
 `packages/shared/src/observability.ts`.
 
 SQL statement spans (named `sqlite`) and `sql.transaction` spans carry `db.connection` and
-`db.lock_wait_ms`. `db.connection` is `writer` for the main connection, which runs on the event loop,
-or `reader` for the read-only connection in a worker thread. `db.lock_wait_ms` is the part of the
+`db.lock_wait_ms`. `db.connection` is `writer` for the read-write connection or `reader` for a
+read-only one. For a database file both run in worker threads; an in-memory database has only a
+writer, on the event loop. `db.lock_wait_ms` is the part of the
 span spent waiting for that connection, behind other SQL. That wait does not block the event loop,
 so subtract it before you blame a slow span on the query. Statements inside a transaction use its
 connection and do not carry these attributes.

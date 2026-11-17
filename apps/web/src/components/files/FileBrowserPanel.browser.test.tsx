@@ -21,7 +21,15 @@ const entries: readonly ProjectEntry[] = [
   { path: "c.txt", kind: "file", mtimeMs: 300 },
 ];
 const loadingDirectories: ReadonlySet<string> = new Set();
-const directory = {
+const directory: {
+  entries: readonly ProjectEntry[];
+  load: () => Promise<void>;
+  refresh: () => void;
+  ready: boolean;
+  error: null;
+  isPending: boolean;
+  loadingDirectories: ReadonlySet<string>;
+} = {
   entries,
   load: () => Promise.resolve(),
   refresh: () => {},
@@ -69,10 +77,16 @@ function visibleRowPaths(): string[] {
 }
 
 const SORT_STORAGE_KEY = "t3code:file-browser-sort";
+const EXPANDED_DIRECTORIES_STORAGE_KEY = "t3code.fileTreeExpandedDirectories";
 
+// Expanded folders persist across remounts, so a test that clicks folders open needs a clean slate.
 function setupSort(): Disposable {
-  localStorage.removeItem(SORT_STORAGE_KEY);
-  return { [Symbol.dispose]: () => localStorage.removeItem(SORT_STORAGE_KEY) };
+  const reset = () => {
+    localStorage.removeItem(SORT_STORAGE_KEY);
+    localStorage.removeItem(EXPANDED_DIRECTORIES_STORAGE_KEY);
+  };
+  reset();
+  return { [Symbol.dispose]: reset };
 }
 
 const panel = () => (
@@ -91,8 +105,8 @@ function renderPanel() {
   return render(panel());
 }
 
-function setEntries(next: readonly ProjectEntry[]): Disposable {
-  directory.entries = next;
+function withDirectoryListing(listing: readonly ProjectEntry[]): Disposable {
+  directory.entries = listing;
   return {
     [Symbol.dispose]: () => {
       directory.entries = entries;
@@ -185,6 +199,108 @@ describe("FileBrowserPanel", () => {
     await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledTimes(1));
   });
 
+  it("keeps an expanded folder open when a very large listing rebuilds the tree", async () => {
+    using _listing = withDirectoryListing(entries);
+    const renderPanel = () => (
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo-large-folder-1"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />
+    );
+    await using screen = await render(renderPanel());
+    await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+    findTreeRow("src/")!.click();
+    await vi.waitFor(() => expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"));
+
+    directory.entries = [
+      ...entries,
+      // Out of sort order, because inserting in order hides the cost of each insert.
+      ...Array.from({ length: 2_000 }, (_, index): ProjectEntry => {
+        const name = String((index * 7_919) % 2_000).padStart(4, "0");
+        return { path: `src/generated-${name}`, kind: "directory" };
+      }),
+    ];
+    await screen.rerender(renderPanel());
+
+    await vi.waitFor(() => expect(findTreeRow("src/generated-0000/")).not.toBeNull());
+    expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("keeps the selected file through a very large listing without reopening it", async () => {
+    const onOpenFile = vi.fn();
+    const renderPanel = () => (
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo-large-folder-2"
+        projectName="repo"
+        selectedPath="src/aaa.ts"
+        selectedPathRevealId={1}
+        onOpenFile={onOpenFile}
+        workspaceMutationId={null}
+      />
+    );
+    using _listing = withDirectoryListing([...entries, { path: "src/aaa.ts", kind: "file" }]);
+    await using screen = await render(renderPanel());
+    await vi.waitFor(() =>
+      expect(findTreeRow("src/aaa.ts")?.getAttribute("aria-selected")).toBe("true"),
+    );
+
+    directory.entries = [
+      ...directory.entries,
+      ...Array.from({ length: 2_000 }, (_, index): ProjectEntry => {
+        const name = String((index * 7_919) % 2_000).padStart(4, "0");
+        return { path: `src/generated-${name}.ts`, kind: "file" };
+      }),
+    ];
+    await screen.rerender(renderPanel());
+
+    await vi.waitFor(() => expect(findTreeRow("src/generated-0000.ts")).not.toBeNull());
+    expect(findTreeRow("src/aaa.ts")?.getAttribute("aria-selected")).toBe("true");
+    expect(findTreeRow("src/")?.getAttribute("aria-expanded")).toBe("true");
+    expect(onOpenFile).not.toHaveBeenCalled();
+  });
+
+  it("keeps an open search accurate when a very large folder listing arrives", async () => {
+    const renderPanel = () => (
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo-large-folder-3"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />
+    );
+    using _listing = withDirectoryListing([
+      ...entries,
+      { path: "lib", kind: "directory" },
+      { path: "lib/generated-existing.ts", kind: "file" },
+    ]);
+    await using screen = await render(renderPanel());
+    const search = page.getByRole("searchbox", { name: "Search repo files" });
+    await userEvent.fill(search, "generated-");
+    await vi.waitFor(() => expect(findTreeRow("lib/generated-existing.ts")).not.toBeNull());
+
+    directory.entries = [
+      ...directory.entries,
+      ...Array.from({ length: 2_000 }, (_, index): ProjectEntry => {
+        const name = String((index * 7_919) % 2_000).padStart(4, "0");
+        return { path: `src/generated-${name}.ts`, kind: "file" };
+      }),
+    ];
+    await screen.rerender(renderPanel());
+
+    await vi.waitFor(() => expect(findTreeRow("src/generated-0000.ts")).not.toBeNull());
+    expect(findTreeRow("lib/generated-existing.ts")).not.toBeNull();
+    await expect.element(search).toHaveValue("generated-");
+  });
+
   it("mod+f from a tree row, or the panel find command, focuses the file search", async () => {
     await using _screen = await render(
       <FileBrowserPanel
@@ -210,6 +326,32 @@ describe("FileBrowserPanel", () => {
     (search.element() as HTMLElement).blur();
     dispatchPreviewAction("find");
     await expect.element(search).toHaveFocus();
+  });
+
+  it("keeps expanded folders when the panel remounts", async () => {
+    const panel = () => (
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />
+    );
+    {
+      await using _first = await render(panel());
+      await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+      findTreeRow("src/")!.click();
+      await vi.waitFor(() =>
+        expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"),
+      );
+    }
+
+    await using _second = await render(panel());
+    await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+    await vi.waitFor(() => expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"));
   });
 });
 
@@ -330,7 +472,7 @@ describe("FileBrowserPanel sorting", () => {
 
   it("re-sorts by date modified when a refresh adds or drops timestamps", async () => {
     using _sort = setupSort();
-    using _entries = setEntries([
+    using _entries = withDirectoryListing([
       { path: "a.txt", kind: "file" },
       { path: "z.txt", kind: "file" },
     ]);
@@ -338,14 +480,14 @@ describe("FileBrowserPanel sorting", () => {
     await userEvent.click(sortKeyButton("Sort by date modified"));
     await expectRows(["a.txt", "z.txt"]);
 
-    setEntries([
+    withDirectoryListing([
       { path: "a.txt", kind: "file", mtimeMs: 20 },
       { path: "z.txt", kind: "file", mtimeMs: 10 },
     ]);
     await screen.rerender(panel());
     await expectRows(["z.txt", "a.txt"]);
 
-    setEntries([
+    withDirectoryListing([
       { path: "a.txt", kind: "file", mtimeMs: 5 },
       { path: "z.txt", kind: "file" },
     ]);
@@ -359,13 +501,13 @@ describe("FileBrowserPanel sorting", () => {
       { path: "alpha", kind: "directory", mtimeMs: 1 },
       { path: "zeta.txt", kind: "file", mtimeMs: 2 },
     ];
-    using _entries = setEntries(root);
+    using _entries = withDirectoryListing(root);
     await using screen = await renderPanel();
     await userEvent.click(sortKeyButton("Sort by date modified"));
     await userEvent.click(sortDirectionButton("Sort descending"));
     findTreeRow("alpha/")!.click();
 
-    setEntries([
+    withDirectoryListing([
       ...root,
       { path: "alpha/a.ts", kind: "file", mtimeMs: 10 },
       { path: "alpha/b.ts", kind: "file", mtimeMs: 30 },
@@ -384,18 +526,18 @@ describe("FileBrowserPanel sorting", () => {
       { path: "beta", kind: "directory", mtimeMs: 2 },
       { path: "beta/b.ts", kind: "file", mtimeMs: 2 },
     ];
-    using _entries = setEntries(loaded);
+    using _entries = withDirectoryListing(loaded);
     await using screen = await renderPanel();
     await userEvent.click(sortKeyButton("Sort by date modified"));
     await userEvent.click(page.getByRole("button", { name: "Expand all folders", exact: true }));
     await expectRows(["alpha/", "alpha/a.ts", "beta/", "beta/b.ts"]);
 
     loaded[0] = { path: "alpha", kind: "directory", mtimeMs: 3 };
-    setEntries([...loaded]);
+    withDirectoryListing([...loaded]);
     await screen.rerender(panel());
     await expectRows(["beta/", "beta/b.ts", "alpha/", "alpha/a.ts"]);
 
-    setEntries([
+    withDirectoryListing([
       ...loaded,
       { path: "alpha/inner", kind: "directory", mtimeMs: 4 },
       { path: "alpha/inner/x.ts", kind: "file", mtimeMs: 4 },
@@ -421,7 +563,7 @@ describe("FileBrowserPanel sorting", () => {
       { path: "alpha/z.ts", kind: "file", mtimeMs: 1 },
       { path: "beta.txt", kind: "file", mtimeMs: 2 },
     ];
-    using _entries = setEntries(tree);
+    using _entries = withDirectoryListing(tree);
     await using screen = await renderPanel();
     await userEvent.click(sortKeyButton("Sort by date modified"));
     findTreeRow("alpha/")!.click();
@@ -432,7 +574,7 @@ describe("FileBrowserPanel sorting", () => {
     await expectRows(["alpha/", "beta.txt"]);
 
     tree[4] = { path: "beta.txt", kind: "file", mtimeMs: 3 };
-    setEntries([...tree]);
+    withDirectoryListing([...tree]);
     await screen.rerender(panel());
     await userEvent.click(sortDirectionButton("Sort descending"));
 
@@ -441,7 +583,7 @@ describe("FileBrowserPanel sorting", () => {
 
   it("shows new search matches after a refresh re-sorts by date modified", async () => {
     using _sort = setupSort();
-    using _entries = setEntries([
+    using _entries = withDirectoryListing([
       { path: "a.txt", kind: "file", mtimeMs: 1 },
       { path: "b.md", kind: "file", mtimeMs: 2 },
     ]);
@@ -450,7 +592,7 @@ describe("FileBrowserPanel sorting", () => {
     await userEvent.fill(page.getByRole("searchbox", { name: "Search repo files" }), "txt");
     await expectRows(["a.txt"]);
 
-    setEntries([
+    withDirectoryListing([
       { path: "a.txt", kind: "file", mtimeMs: 3 },
       { path: "b.md", kind: "file", mtimeMs: 2 },
       { path: "c.txt", kind: "file", mtimeMs: 4 },
@@ -467,7 +609,7 @@ describe("FileBrowserPanel sorting", () => {
       { path: "alpha/a.ts", kind: "file", mtimeMs: 1 },
       { path: "beta.txt", kind: "file", mtimeMs: 2 },
     ];
-    using _entries = setEntries(tree);
+    using _entries = withDirectoryListing(tree);
     await using screen = await renderPanel();
     await userEvent.click(sortKeyButton("Sort by date modified"));
     findTreeRow("alpha/")!.click();
@@ -476,10 +618,45 @@ describe("FileBrowserPanel sorting", () => {
     await vi.waitFor(() => expect(findTreeRow("alpha/a.ts")?.dataset.itemFocused).toBe("true"));
 
     tree[2] = { path: "beta.txt", kind: "file", mtimeMs: 0 };
-    setEntries([...tree]);
+    withDirectoryListing([...tree]);
     await screen.rerender(panel());
 
     await expectRows(["alpha/", "alpha/a.ts", "beta.txt"]);
     await vi.waitFor(() => expect(findTreeRow("alpha/a.ts")?.dataset.itemFocused).toBe("true"));
+  });
+
+  it("keeps nested folders open when a very large listing rebuilds under date sort", async () => {
+    using _sort = setupSort();
+    const tree: ProjectEntry[] = [
+      { path: "src", kind: "directory", mtimeMs: 1 },
+      { path: "src/inner", kind: "directory", mtimeMs: 5 },
+      { path: "src/inner/x.ts", kind: "file", mtimeMs: 1 },
+      { path: "src/old", kind: "directory", mtimeMs: 2 },
+      { path: "src/old/y.ts", kind: "file", mtimeMs: 1 },
+      { path: "zeta.txt", kind: "file", mtimeMs: 2 },
+    ];
+    using _entries = withDirectoryListing(tree);
+    await using screen = await renderPanel();
+    await userEvent.click(sortKeyButton("Sort by date modified"));
+    findTreeRow("src/")!.click();
+    await vi.waitFor(() => expect(findTreeRow("src/inner/")).not.toBeNull());
+    findTreeRow("src/inner/")!.click();
+    await vi.waitFor(() => expect(findTreeRow("src/inner/x.ts")).not.toBeNull());
+    findTreeRow("src/old/")!.click();
+    await vi.waitFor(() => expect(findTreeRow("src/old/y.ts")).not.toBeNull());
+    withDirectoryListing([
+      ...tree,
+      ...Array.from({ length: 2_000 }, (_, index): ProjectEntry => {
+        const name = String((index * 7_919) % 2_000).padStart(4, "0");
+        return { path: `src/generated-${name}`, kind: "directory", mtimeMs: 100 + index };
+      }),
+    ]);
+    await screen.rerender(panel());
+    await vi.waitFor(() => expect(findTreeRow("src/generated-0000/")).not.toBeNull());
+    expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true");
+    expect(findTreeRow("src/inner/")!.getAttribute("aria-expanded")).toBe("true");
+    expect(findTreeRow("src/old/")!.getAttribute("aria-expanded")).toBe("true");
+    expect(findTreeRow("src/inner/x.ts")).not.toBeNull();
+    expect(findTreeRow("src/old/y.ts")).not.toBeNull();
   });
 });
