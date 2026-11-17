@@ -5,10 +5,12 @@ import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeSocketServer from "@effect/platform-node/NodeSocketServer";
 import * as NodeWS from "@effect/platform-node/NodeWS";
 import type { DesktopPreviewTunnelAccessRequest } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { NonEmptyReadonlyArray } from "effect/Array";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as NetAddress from "effect/net/NetAddress";
 import * as Option from "effect/Option";
@@ -154,6 +156,23 @@ const dialDestination = Effect.fnUntraced(function* (tunnelUrl: string, port: nu
   };
 });
 
+const TCP_TABLES = ["/proc/net/tcp", "/proc/net/tcp6"];
+
+// Rows read `sl local_address rem_address st queues timer retransmits uid ...`, with addresses
+// as HEXIP:HEXPORT. The client's row has its own port local and the listener's port remote.
+const connectionOwner = (
+  tables: ReadonlyArray<string>,
+  clientPort: number,
+  listenerPort: number,
+) => {
+  const portOf = (address: string | undefined) => Number.parseInt(address?.split(":")[1] ?? "", 16);
+  for (const line of tables.flatMap((table) => table.split("\n").slice(1))) {
+    const [, local, remote, , , , , uid] = line.trim().split(/\s+/);
+    if (portOf(local) === clientPort && portOf(remote) === listenerPort) return Number(uid);
+  }
+  return undefined;
+};
+
 const pump =
   /* Runs for the life of the connection; a span per direction adds no diagnostic value. */
   Effect.fnUntraced(function* (
@@ -192,6 +211,9 @@ export class LoopbackTunnel extends Context.Service<
 
 const make = Effect.gen(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const platform = yield* HostProcess.Platform;
+  const userId = yield* HostProcess.UserId;
   const listenerScope = yield* Effect.scope;
   const routing = yield* Semaphore.make(1);
   const pending = new Map<string, Deferred.Deferred<string | null>>();
@@ -221,10 +243,26 @@ const make = Effect.gen(function* () {
   });
 
   /** Serves one SOCKS connection; never falls back to a direct local connection. */
+  // Chromium can't authenticate to a SOCKS proxy, so on Linux the listener checks that the
+  // client belongs to this OS user. Other users could otherwise ride this user's tunnel.
+  const isOwnConnection = Effect.fn("LoopbackTunnel.isOwnConnection")(function* () {
+    if (platform !== "linux") return true;
+    const connection = yield* Effect.serviceOption(NodeSocket.NetSocket);
+    if (Option.isNone(connection)) return false;
+    const { remotePort, localPort } = connection.value;
+    if (remotePort === undefined || localPort === undefined) return false;
+    const tables = yield* Effect.forEach(TCP_TABLES, (path) =>
+      fileSystem.readFileString(path).pipe(Effect.orElseSucceed(() => "")),
+    );
+    return connectionOwner(tables, remotePort, localPort) === userId;
+  });
+
   const serve = (environmentId: string) => (socket: Socket.Socket) =>
     Effect.gen(function* () {
       const pull = yield* Socket.readerBytes(socket);
       const writer = yield* socket.writer;
+      // "No acceptable methods": the only refusal a client gets before its request.
+      if (!(yield* isOwnConnection())) return yield* writer.write(Uint8Array.of(5, 0xff));
       const request = yield* readSocksRequest(pull, writer);
       if (request === undefined) return;
       if ("refusal" in request) return yield* writer.write(socksReply(request.refusal));

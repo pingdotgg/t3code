@@ -1,4 +1,6 @@
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodeWS from "@effect/platform-node/NodeWS";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { expect, it } from "@effect/vitest";
 import * as NodeNet from "node:net";
 import * as Context from "effect/Context";
@@ -72,7 +74,7 @@ const unusedPort = Effect.promise(
 );
 
 /** Routes a stand-in session through the tunnel and returns its SOCKS listener port. */
-const routeThroughTunnel = (tunnelUrl: string | null) =>
+const routeThroughTunnel = (tunnelUrl: string | null, host?: Layer.Layer<never>) =>
   Effect.gen(function* () {
     const accessRequests = yield* Queue.unbounded<string>();
     const window = {
@@ -85,9 +87,13 @@ const routeThroughTunnel = (tunnelUrl: string | null) =>
     const services = yield* Layer.build(
       LoopbackTunnel.layer.pipe(
         Layer.provide(
-          Layer.mock(ElectronWindow.ElectronWindow, {
-            currentMainOrFirst: Effect.succeedSome(window as unknown as Electron.BrowserWindow),
-          }),
+          Layer.mergeAll(
+            Layer.mock(ElectronWindow.ElectronWindow, {
+              currentMainOrFirst: Effect.succeedSome(window as unknown as Electron.BrowserWindow),
+            }),
+            NodeFileSystem.layer,
+            host ?? Layer.empty,
+          ),
         ),
       ),
     );
@@ -127,6 +133,8 @@ const socksConnect = (proxyPort: number, host: string, port: number) =>
           const onData = (chunk: Buffer) => {
             received = Buffer.concat([received, chunk]);
             if (!greeted && received.length >= 2) {
+              // A refused greeting is the whole answer.
+              if (received[1] !== 0) return resolve({ socket, reply: received.subarray(0, 2) });
               greeted = true;
               received = received.subarray(2);
               const destination = Buffer.alloc(2);
@@ -183,6 +191,7 @@ it.effect.each([
   { case: "a non-loopback destination", host: "192.168.1.20", tunnel: "endpoint" },
   { case: "no tunnel URL", host: "127.0.0.1", tunnel: "none" },
   { case: "an unreachable tunnel endpoint", host: "localhost", tunnel: "unreachable" },
+  { case: "another OS user's client", host: "localhost", tunnel: "other-user" },
 ] as const)("fails the SOCKS request for $case without dialling locally", ({ host, tunnel }) =>
   Effect.gen(function* () {
     const decoy = yield* listenDecoy;
@@ -191,6 +200,13 @@ it.effect.each([
       tunnel === "unreachable" ? yield* unusedPort : addressPort(endpoint.server);
     const proxyPort = yield* routeThroughTunnel(
       tunnel === "none" ? null : `ws://127.0.0.1:${endpointPort}/api/preview/tunnel`,
+      // This process owns the client, so a different user id here makes it another user's.
+      tunnel === "other-user"
+        ? Layer.mergeAll(
+            Layer.succeed(HostProcess.Platform, "linux"),
+            Layer.succeed(HostProcess.UserId, (process.getuid?.() ?? 0) + 1),
+          )
+        : undefined,
     );
     const { reply } = yield* socksConnect(proxyPort, host, addressPort(decoy.server));
     expect(reply[1]).not.toBe(0);
