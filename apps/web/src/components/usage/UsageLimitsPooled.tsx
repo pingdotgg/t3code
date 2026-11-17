@@ -122,8 +122,8 @@ function AccountName({
 function Row({ label, children }: { readonly label: string; readonly children: ReactNode }) {
   return (
     <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-3">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="min-w-0 text-foreground tabular-nums">{children}</span>
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="min-w-0 text-foreground tabular-nums">{children}</dd>
     </div>
   );
 }
@@ -174,13 +174,13 @@ function SegmentPopover({
           />
         ) : null}
       </div>
-      <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
+      <dl className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
         {account.plan ? <Row label="Plan">{account.plan}</Row> : null}
         {where ? (
           <Row label={account.environments.length > 0 ? "Signed in" : "Via"}>{where}</Row>
         ) : null}
-      </div>
-      <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
+      </dl>
+      <dl className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
         <Row label="Left">{remaining}%</Row>
         {window.resetsAt ? (
           <Row label="Resets">
@@ -192,7 +192,7 @@ function SegmentPopover({
         {reset && reset.restoresPercent > 0 ? (
           <Row label="Restores">+{reset.restoresPercent}% of pool</Row>
         ) : null}
-      </div>
+      </dl>
       {choices.length > 0 && redeem ? (
         <div className="flex flex-col gap-1.5 border-t border-border/60 pt-2.5 text-muted-foreground">
           {choices.map((choice) => (
