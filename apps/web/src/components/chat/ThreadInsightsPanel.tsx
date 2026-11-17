@@ -1,10 +1,10 @@
 import type { ScopedThreadRef, UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useAtomValue, RegistryContext } from "@effect/atom-react";
-import { useContext, useEffect, useRef } from "react";
+import { useContext } from "react";
 import { threadInsightsViewAtom } from "../../state/threadInsights";
 import { RefreshCwIcon, ChevronDownIcon } from "lucide-react";
-import { useServerConfigs, useThreadShells } from "../../state/entities";
+import { useServerConfigs } from "../../state/entities";
 import { useEnvironmentProviders } from "../../state/environments";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "../ui/collapsible";
@@ -33,32 +33,10 @@ export function ThreadInsightsPanel({
   const registry = useContext(RegistryContext);
   const configs = useServerConfigs();
   const providersByEnvironment = useEnvironmentProviders();
-  const shells = useThreadShells();
-  const keys = new Set(
-    merged.rows.map((row) =>
-      scopedThreadKey({ environmentId: row.environmentId, threadId: row.threadId }),
-    ),
-  );
-  const signature = shells
-    .filter((shell) =>
-      keys.has(scopedThreadKey({ environmentId: shell.environmentId, threadId: shell.id })),
-    )
-    .map((shell) => `${shell.id}:${shell.updatedAt}`)
-    .join("|");
-  const previous = useRef(signature);
   const queries = merged.queries;
   const refresh = () => {
     for (const query of queries) registry.refresh(query);
   };
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Debounce shell changes into the mounted RPC query cache; no timer survives panel closure.
-  useEffect(() => {
-    if (previous.current === signature) return;
-    const timer = setTimeout(() => {
-      previous.current = signature;
-      for (const query of queries) registry.refresh(query);
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [signature, queries, registry]);
   return (
     <div className="h-full overflow-y-auto p-4 text-sm">
       <div className="mb-4 flex items-center justify-between gap-2">

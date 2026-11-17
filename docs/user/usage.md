@@ -59,7 +59,11 @@ update model pricing.
 
 ## Inspect one thread
 
-On web and desktop, choose **View usage** in a thread's menu, or in the menu beside a
+On web and desktop, the thread details card shows an estimated cost for the thread and its
+subagents. Select it to open the usage breakdown. You can hide it in **Settings → Appearance →
+Thread details**.
+
+You can also choose **View usage** in a thread's menu, or in the menu beside a
 subagent in the work log or Lineage. The **Tasks & usage** side panel combines the thread
 and its subagents, including descendants on connected environments. Forks and side chats
 are separate. Expand a row to inspect its tasks, or open **View tasks** to start there.

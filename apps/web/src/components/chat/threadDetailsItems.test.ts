@@ -23,6 +23,7 @@ describe("thread details items", () => {
     expect(visibility.usage).toBe(row.usage);
     expect(visibility.context).toBe(row.context);
     expect(visibility.servers).toBe(true);
+    expect(visibility.cost).toBe(true);
   });
 
   it("stores only choices that differ from the default", () => {
@@ -32,5 +33,14 @@ describe("thread details items", () => {
 
     const hidden = { threadDetailsItems: { servers: false }, threadDetailsUsageEnabled: false };
     expect(setThreadDetailsItem(hidden, servers, true)).toEqual({});
+
+    const cost = THREAD_DETAILS_ITEMS.find((item) => item.id === "cost")!;
+    expect(setThreadDetailsItem(legacyOn, cost, false)).toEqual({ cost: false });
+    expect(
+      resolveThreadDetailsVisibility({ ...legacyOn, threadDetailsItems: { cost: false } }).cost,
+    ).toBe(false);
+    expect(
+      setThreadDetailsItem({ ...legacyOn, threadDetailsItems: { cost: false } }, cost, true),
+    ).toEqual({});
   });
 });
