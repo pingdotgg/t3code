@@ -310,6 +310,120 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("leaves out of Reviewing what the viewer has voted on and still steps over it", () =>
+    Effect.gen(function* () {
+      const [voted, waiting, groupRequested] = pullRequestRows(3, 1);
+      const viewer = { displayName: "Bilal Hassan", uniqueName: "Bilal@acme.dev" };
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            JSON.stringify([
+              { ...voted, reviewers: [{ ...viewer, vote: 10 }] },
+              { ...waiting, reviewers: [{ ...viewer, vote: 0 }] },
+              {
+                ...groupRequested,
+                reviewers: [{ displayName: "[web]\\Reviewers", uniqueName: "web-reviewers" }],
+              },
+            ]),
+          ),
+        ),
+      );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "web",
+        state: "open",
+        involvement: "reviewing",
+        viewer: "bilal@acme.dev",
+        limit: 2,
+      });
+
+      expect(batch.items.map((item) => item.number)).toEqual([2, 3]);
+      assert.isTrue(batch.truncated);
+      assert.strictEqual(batch.cursorAdvance, 3);
+    }),
+  );
+
+  it.effect("stops reading Reviewing pages of voted pull requests once it has one to show", () =>
+    Effect.gen(function* () {
+      const viewer = { displayName: "Bilal Hassan", uniqueName: "bilal@acme.dev" };
+      const page = (count: number, firstNumber: number, pendingNumbers: ReadonlyArray<number>) =>
+        Effect.succeed(
+          output(
+            JSON.stringify(
+              pullRequestRows(count, firstNumber).map((row) => ({
+                ...row,
+                reviewers: [
+                  { ...viewer, vote: pendingNumbers.includes(Number(row.pullRequestId)) ? 0 : 10 },
+                ],
+              })),
+            ),
+          ),
+        );
+      // Once one row is kept, `--top` asks for one fewer.
+      mockedExecute
+        .mockReturnValueOnce(page(3, 1, [1]))
+        .mockReturnValueOnce(page(2, 4, []))
+        .mockReturnValueOnce(page(2, 6, []))
+        .mockReturnValueOnce(page(2, 8, [8]));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "web",
+        state: "all",
+        involvement: "reviewing",
+        viewer: "bilal@acme.dev",
+        limit: 2,
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 3);
+      expect(batch.items.map((item) => item.number)).toEqual([1]);
+      assert.isTrue(batch.truncated);
+      assert.strictEqual(batch.cursorAdvance, 7);
+    }),
+  );
+
+  it.effect("keeps reading past voted Reviewing pages until it finds one to show", () =>
+    Effect.gen(function* () {
+      const viewer = { displayName: "Bilal Hassan", uniqueName: "bilal@acme.dev" };
+      const page = (count: number, firstNumber: number, pendingNumbers: ReadonlyArray<number>) =>
+        Effect.succeed(
+          output(
+            JSON.stringify(
+              pullRequestRows(count, firstNumber).map((row) => ({
+                ...row,
+                reviewers: [
+                  { ...viewer, vote: pendingNumbers.includes(Number(row.pullRequestId)) ? 0 : 10 },
+                ],
+              })),
+            ),
+          ),
+        );
+      mockedExecute
+        .mockReturnValueOnce(page(3, 1, []))
+        .mockReturnValueOnce(page(3, 4, []))
+        .mockReturnValueOnce(page(3, 7, []))
+        .mockReturnValueOnce(page(3, 10, [10]));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "web",
+        state: "all",
+        involvement: "reviewing",
+        viewer: "bilal@acme.dev",
+        limit: 2,
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 4);
+      expect(batch.items.map((item) => item.number)).toEqual([10]);
+      assert.isTrue(batch.truncated);
+      assert.strictEqual(batch.cursorAdvance, 12);
+    }),
+  );
+
   it.effect("reads the signed-in account, which az reports as a bare value", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
