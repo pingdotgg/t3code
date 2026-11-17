@@ -34,6 +34,8 @@ describe("Enriched link presentation", () => {
       "https://example.com/app.tsx",
       "x + y",
       "README.md",
+      "Dockerfile",
+      "docker/Dockerfiles",
       "/app/settings",
     ]) {
       expect(ENRICHED_INLINE_FILE_LINK_REGEX.test(text), text).toBe(false);
