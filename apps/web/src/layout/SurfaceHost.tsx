@@ -1985,9 +1985,19 @@ function PaneCuts() {
     <>
       <span aria-hidden data-pane-cut="start-top" />
       <span aria-hidden data-pane-cut="start-notch" />
+      <span aria-hidden data-pane-cut="start-after-notch">
+        <span>
+          <span />
+        </span>
+      </span>
       <span aria-hidden data-pane-cut="start-bottom" />
       <span aria-hidden data-pane-cut="end-top" />
       <span aria-hidden data-pane-cut="end-notch">
+        <span>
+          <span />
+        </span>
+      </span>
+      <span aria-hidden data-pane-cut="end-before-notch">
         <span>
           <span />
         </span>
