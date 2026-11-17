@@ -57,6 +57,7 @@ import {
 export type { NewProjectScriptInput, ProjectScriptActionResult };
 
 const NO_FILE_SCRIPTS: ReadonlyArray<T3ProjectFileScript> = [];
+const SCRIPT_ACTIONS_MAX_ROWS = 10;
 
 interface ProjectScriptsControlProps {
   displayMode?: "toolbar" | "panel";
@@ -89,6 +90,10 @@ export default function ProjectScriptsControl({
   onDeleteScript,
 }: ProjectScriptsControlProps) {
   const isPanel = displayMode === "panel";
+  const scriptMenuHeightClass =
+    presentation === "menu"
+      ? "[&>div]:max-h-[min(var(--available-height,100dvh),25.5rem)]"
+      : "[&>div]:max-h-[min(var(--available-height,100dvh),20.5rem)] sm:[&>div]:max-h-[min(var(--available-height,100dvh),18rem)]";
   const ActionGroup = isPanel ? "div" : Group;
   const panelAnchorRef = React.useRef<HTMLDivElement | null>(null);
   const keybindings =
@@ -263,7 +268,7 @@ export default function ProjectScriptsControl({
                 <ScriptIcon icon="play" className="size-4" />
                 <MenuItemLabel>Project actions</MenuItemLabel>
               </MenuSubTrigger>
-              <MenuSubPopup>{scriptItems}</MenuSubPopup>
+              <MenuSubPopup className={scriptMenuHeightClass}>{scriptItems}</MenuSubPopup>
             </MenuSub>
           ) : (
             <MenuItem
@@ -274,6 +279,77 @@ export default function ProjectScriptsControl({
               <MenuItemLabel>Add project action…</MenuItemLabel>
             </MenuItem>
           )}
+        </>
+      ) : isPanel && (scripts.length > 0 || importableScripts.length > 0) ? (
+        <>
+          <div
+            data-thread-details-script-list=""
+            className={cn(
+              "flex flex-col",
+              scripts.length + importableScripts.length > SCRIPT_ACTIONS_MAX_ROWS &&
+                "max-h-[20rem] overflow-y-auto",
+            )}
+          >
+            {scripts.map((script) => {
+              const shortcutLabel = shortcutLabelForCommand(
+                keybindings,
+                commandForProjectScript(script.id),
+              );
+              return (
+                <div key={script.id} className={THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS}>
+                  <ThreadDetailsControl
+                    size="sm"
+                    variant="ghost"
+                    part="primary"
+                    panel
+                    disabled={!onRunScript}
+                    aria-label={`Run ${script.name}`}
+                    onClick={() => onRunScript?.(script)}
+                  >
+                    <ScriptIcon icon={script.icon} className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+                    <span className={cn("min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+                      {projectScriptMenuLabel(script)}
+                    </span>
+                    {shortcutLabel ? (
+                      <span className="ms-auto text-xs text-muted-foreground">{shortcutLabel}</span>
+                    ) : null}
+                  </ThreadDetailsControl>
+                  <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
+                  <ThreadDetailsControl
+                    size="sm"
+                    variant="ghost"
+                    part="secondary"
+                    panel
+                    aria-label={`Edit ${script.name}`}
+                    onClick={() => openEditDialog(script)}
+                  >
+                    <SettingsIcon className="size-3.5" />
+                  </ThreadDetailsControl>
+                </div>
+              );
+            })}
+            {importableScripts.map((fileScript) => (
+              <ThreadDetailsControl
+                key={`${fileScript.name} ${fileScript.command}`}
+                size="sm"
+                variant="ghost"
+                part="row"
+                panel
+                onClick={() => void importFileScript(fileScript)}
+              >
+                <DownloadIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+                <span className={cn("min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+                  Import {fileScript.name}
+                </span>
+              </ThreadDetailsControl>
+            ))}
+          </div>
+          <ThreadDetailsControl size="sm" variant="ghost" part="row" panel onClick={openAddDialog}>
+            <PlusIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+            <span className={cn("min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+              Add project script
+            </span>
+          </ThreadDetailsControl>
         </>
       ) : primaryScript ? (
         <ActionGroup
@@ -356,77 +432,31 @@ export default function ProjectScriptsControl({
             <MenuPopup
               align="end"
               {...(isPanel ? { anchor: panelAnchorRef } : {})}
-              className={isPanel ? "w-(--anchor-width)" : undefined}
+              className={cn(scriptMenuHeightClass, isPanel && "w-(--anchor-width)")}
             >
               {scriptItems}
             </MenuPopup>
           </Menu>
         </ActionGroup>
       ) : scripts.length > 0 || importableScripts.length > 0 ? (
-        isPanel ? (
-          <div
-            role="group"
-            aria-label="Project actions"
-            className={THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS}
-            ref={panelAnchorRef}
-          >
-            <ThreadDetailsControl
-              size="sm"
-              variant="ghost"
-              part="primary"
-              aria-label="Project actions"
-              onClick={() => setActionsMenuOpen({ presentation, scripts: false, imports: true })}
-            >
-              <WrenchIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
-              <span className={cn("min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
-                Actions
-              </span>
-            </ThreadDetailsControl>
-            <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
-            <Menu
-              highlightItemOnHover={false}
-              open={actionsMenuOpen.imports}
-              onOpenChange={(open) =>
-                setActionsMenuOpen({ presentation, scripts: false, imports: open })
-              }
-            >
-              <MenuTrigger
-                render={
-                  <ThreadDetailsControl
-                    size="sm"
-                    variant="ghost"
-                    part="secondary"
-                    aria-label="Choose project action"
-                  />
-                }
-              >
-                <ChevronDownIcon className={THREAD_DETAILS_PANEL_CHEVRON_CLASS} />
-              </MenuTrigger>
-              <MenuPopup align="end" anchor={panelAnchorRef} className="w-(--anchor-width)">
-                {scriptItems}
-              </MenuPopup>
-            </Menu>
-          </div>
-        ) : (
-          <Menu
-            highlightItemOnHover={false}
-            open={actionsMenuOpen.imports}
-            onOpenChange={(open) =>
-              setActionsMenuOpen({ presentation, scripts: false, imports: open })
-            }
-          >
-            <MenuTrigger
-              render={<Button size="xs" variant="outline" aria-label="Project actions" />}
-            >
-              <WrenchIcon className="size-3.5" />
-              <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-                Actions
-              </span>
-              <ChevronDownIcon className="size-3.5" />
-            </MenuTrigger>
-            <MenuPopup align="end">{scriptItems}</MenuPopup>
-          </Menu>
-        )
+        <Menu
+          highlightItemOnHover={false}
+          open={actionsMenuOpen.imports}
+          onOpenChange={(open) =>
+            setActionsMenuOpen({ presentation, scripts: false, imports: open })
+          }
+        >
+          <MenuTrigger render={<Button size="xs" variant="outline" aria-label="Project actions" />}>
+            <WrenchIcon className="size-3.5" />
+            <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+              Actions
+            </span>
+            <ChevronDownIcon className="size-3.5" />
+          </MenuTrigger>
+          <MenuPopup align="end" className={scriptMenuHeightClass}>
+            {scriptItems}
+          </MenuPopup>
+        </Menu>
       ) : (
         <Tooltip>
           <TooltipTrigger

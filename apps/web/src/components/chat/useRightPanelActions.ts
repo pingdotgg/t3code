@@ -234,7 +234,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
         activeThreadRef,
         "inline",
       );
-      if (!open) requestWorkspaceFocus({ area: "details" });
+      if (!open) requestWorkspaceFocus({ area: "details", restore: false });
       else if (document.activeElement?.closest('[data-workspace-area="details"]'))
         requestWorkspaceContentFocus();
     }
