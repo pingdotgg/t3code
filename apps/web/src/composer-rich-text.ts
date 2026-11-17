@@ -28,6 +28,9 @@ const PATH_TOKEN = /(?:[\p{L}\p{N}_/.:@%+=&?#-]|(?<!~)~(?!~))+/gu;
 const FILE_EXTENSION = /^\.[a-z][a-z0-9]*(?::\d+){0,2}$/i;
 // `_yes_/_no_`: each side of a slash is its own emphasis span, so the word is not a path.
 const EMPHASIS_ALTERNATIVES = /^_[^/]+_(?:\/_[^/]+_)+$/;
+// Word characters in any script; callers pass two code units so a letter outside the BMP matches whole.
+const WORD_CHARACTER_BEFORE = /[\p{L}\p{M}\p{N}_]$/u;
+const WORD_CHARACTER_AFTER = /^[\p{L}\p{M}\p{N}_]/u;
 
 /**
  * Starts of underscore runs that belong to a URL, path, or filename, not to emphasis.
@@ -55,7 +58,7 @@ function literalUnderscoreRuns(text: string): Set<number> {
       while (body[end] === "_") end += 1;
       if (start > 0) {
         literal.add(match.index + start);
-        closesInside ||= !/\w/.test(body[end]!);
+        closesInside ||= !WORD_CHARACTER_AFTER.test(body.slice(end, end + 2));
       }
       start = body.indexOf("_", end);
     }
@@ -118,8 +121,10 @@ function parseInlineMarkdownPieces(text: string): SourcePiece[] {
     }
     const before = text[index - 1] ?? "";
     const after = text[end] ?? "";
-    const canClose = before !== "" && !/\s/.test(before) && (char !== "_" || !/\w/.test(after));
-    const canOpen = after !== "" && !/\s/.test(after) && (char !== "_" || !/\w/.test(before));
+    const wordAfter = WORD_CHARACTER_AFTER.test(text.slice(end, end + 2));
+    const wordBefore = WORD_CHARACTER_BEFORE.test(text.slice(Math.max(0, index - 2), index));
+    const canClose = before !== "" && !/\s/.test(before) && (char !== "_" || !wordAfter);
+    const canOpen = after !== "" && !/\s/.test(after) && (char !== "_" || !wordBefore);
     while (index < end) {
       const top = stack.at(-1);
       const opensNestedBold =

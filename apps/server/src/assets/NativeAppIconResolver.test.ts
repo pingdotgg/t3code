@@ -1,6 +1,8 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import * as Digest from "effect/crypto/Digest";
+import * as Hex from "effect/encoding/Hex";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -28,18 +30,34 @@ it.effect("resolves the exact bundle path without Spotlight and caches the conve
           commands.push(command.command);
           if (command.command === "/usr/bin/plutil") return "AppIcon";
           if (command.command === "/usr/bin/sips") {
+            expect(command.args.slice(0, 3)).toEqual(["-z", "128", "128"]);
             yield* fs.writeFileString(String(command.args.at(-1)), "converted icon");
           }
           return "";
         }),
     });
     yield* Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const canonicalBundle = yield* fs.realPath(bundle);
+      const sourceIcon = path.join(canonicalBundle, "Contents", "Resources", "AppIcon.icns");
+      const digest = yield* Digest.Digest;
+      const legacyKey = yield* digest
+        .digest(
+          Digest.sha256,
+          new TextEncoder().encode(`${canonicalBundle}\0AppIcon\0${sourceIcon}`),
+        )
+        .pipe(Effect.map(Hex.encode), Effect.orDie);
+      const cacheDirectory = path.join(config.providerStatusCacheDir, "native-app-icons");
+      yield* fs.makeDirectory(cacheDirectory, { recursive: true });
+      const legacyIcon = path.join(cacheDirectory, `${legacyKey}.png`);
+      yield* fs.writeFileString(legacyIcon, "legacy 64px icon");
       const resolver = yield* NativeAppIconResolver.make;
       const reference = { _tag: "app-path" as const, path: bundle };
       const icon = yield* resolver.resolve(reference);
       expect(icon).not.toBeNull();
       if (icon === null) return;
       expect(yield* fs.readFileString(icon)).toBe("converted icon");
+      expect(icon).not.toBe(legacyIcon);
       expect(yield* resolver.resolve(reference)).toBe(icon);
       expect(yield* resolver.resolve({ _tag: "app-path", path: "~/Build Output/My App.app" })).toBe(
         icon,
