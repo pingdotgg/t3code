@@ -66,7 +66,7 @@ export function PullRequestCompletionSuggestions({
   const copy = COPY[completions.kind];
   return (
     <GlassSurface
-      glassEffectStyle="clear"
+      glassEffectStyle="regular"
       tintColorClassName="accent-glass-surface"
       style={{ borderRadius: 16, overflow: "hidden" }}
     >
