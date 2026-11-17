@@ -15,6 +15,7 @@ import {
   RawEventId,
   RunAttemptId,
   RunId,
+  type RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -47,12 +48,13 @@ export class ProviderEventNormalizeError extends Schema.TaggedError<ProviderEven
   {
     providerSessionId: ProviderSessionId,
     threadId: ThreadId,
-    providerEvent: ProviderAdapter.ProviderAdapterV2Event,
+    // The rejected payload cannot be validated again while reporting its normalization failure.
+    eventType: Schema.String,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Failed to normalize provider event ${this.providerEvent.type} for thread ${this.threadId}.`;
+    return `Failed to normalize provider event ${this.eventType} for thread ${this.threadId}.`;
   }
 }
 
@@ -299,11 +301,14 @@ export const layer: Layer.Layer<
         input: ProviderEventIngestInput,
         providerTurnId: ProviderTurnId,
         threadId = input.threadId,
+        retained: ReadonlyArray<RuntimeRequestId> = [],
       ) {
         const pending = yield* projections.getPendingNativeUserInputs(threadId, providerTurnId);
         const now = yield* DateTime.now;
         const events: Array<OrchestrationV2DomainEvent> = [];
+        const kept = new Set(retained);
         for (const request of pending.runtimeRequests) {
+          if (kept.has(request.id)) continue;
           events.push(
             yield* makeDomainEvent(input, {
               type: "runtime-request.updated",
@@ -314,6 +319,7 @@ export const layer: Layer.Layer<
           );
         }
         for (const node of pending.nodes) {
+          if (node.runtimeRequestId !== null && kept.has(node.runtimeRequestId)) continue;
           events.push(
             yield* makeDomainEvent(input, {
               type: "node.updated",
@@ -325,6 +331,7 @@ export const layer: Layer.Layer<
           );
         }
         for (const item of pending.turnItems) {
+          if (item.type === "user_input_request" && kept.has(item.requestId)) continue;
           events.push(
             yield* makeDomainEvent(input, {
               type: "turn-item.updated",
@@ -528,6 +535,7 @@ export const layer: Layer.Layer<
                       input,
                       input.event.providerTurn.id,
                       input.event.threadId,
+                      input.event.retainedRuntimeRequestIds,
                     )
                   : []),
                 yield* makeDomainEvent(input, {
@@ -653,7 +661,12 @@ export const layer: Layer.Layer<
               // The session manager serves these to clients before ingestion.
               return [];
             case "turn.terminal":
-              const dismissed = yield* dismissNativeUserInputs(input, input.event.providerTurnId);
+              const dismissed = yield* dismissNativeUserInputs(
+                input,
+                input.event.providerTurnId,
+                undefined,
+                input.event.retainedRuntimeRequestIds,
+              );
               if (input.event.status !== "failed") {
                 return dismissed;
               }
@@ -661,36 +674,35 @@ export const layer: Layer.Layer<
               const reported = (yield* agentScope.oomKilled(input.threadId))
                 ? { ...input.event.failure, message: "Killed: out of memory.", code: "oom_kill" }
                 : input.event.failure;
-              // A proxy's CLI can drop the reset time; its hub still knows when the pool refills.
-              const provider =
+              // A proxied CLI can drop the reset time; the hub still knows when its pool refills.
+              const endpoint =
                 reported.class === "usage_limit" && reported.resetAt == null
-                  ? yield* Effect.flatMap(
+                  ? (yield* Effect.flatMap(
                       instances.getInstance(input.providerInstanceId),
                       (instance) => instance?.snapshot.getSnapshot ?? Effect.undefined,
-                    )
+                    ))?.auth.endpoint
                   : undefined;
-              // Only an instance sent to a hub's address is served by that hub.
-              const endpoint = provider?.auth.endpoint;
-              // The failing run's model, which may differ from a selection changed mid-turn.
-              const model =
-                endpoint !== undefined
-                  ? yield* Effect.gen(function* () {
+              const hubResetAt =
+                endpoint === undefined
+                  ? null
+                  : yield* Effect.gen(function* () {
+                      // The failing run's model, which may differ from a selection changed mid-turn.
                       const { runs } =
                         input.runId === undefined
                           ? { runs: [] }
                           : yield* projections.getThreadRecords(input.threadId, ["runs"], {
                               runIds: [input.runId],
                             });
-                      const selection =
+                      return (
                         runs[0]?.modelSelection ??
-                        (yield* projections.getThread(input.threadId)).modelSelection;
-                      return selection.model;
-                    }).pipe(Effect.orElseSucceed(() => null))
-                  : null;
-              const hubResetAt =
-                endpoint !== undefined
-                  ? yield* usageLimitResets.resetAt(input.event.driver, endpoint, model)
-                  : null;
+                        (yield* projections.getThread(input.threadId)).modelSelection
+                      ).model;
+                    }).pipe(
+                      Effect.orElseSucceed(() => null),
+                      Effect.flatMap((model) =>
+                        usageLimitResets.resetAt(input.event.driver, endpoint, model),
+                      ),
+                    );
               const failure = hubResetAt === null ? reported : { ...reported, resetAt: hubResetAt };
               return [
                 ...dismissed,
@@ -722,7 +734,7 @@ export const layer: Layer.Layer<
                 new ProviderEventNormalizeError({
                   providerSessionId: input.providerSessionId,
                   threadId: input.threadId,
-                  providerEvent: input.event,
+                  eventType: input.event.type,
                   cause,
                 }),
             ),

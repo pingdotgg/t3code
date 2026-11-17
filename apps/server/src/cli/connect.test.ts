@@ -3,6 +3,7 @@ import * as NodeHttp from "node:http";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { assert, it } from "@effect/vitest";
@@ -22,6 +23,7 @@ import {
   persistServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import { acquireRelayClientForLink } from "./connect.ts";
+import { resolveHostCliCommand } from "./invocation.ts";
 
 const managedExecutable = {
   status: "available",
@@ -60,11 +62,49 @@ it.effect("does not install the relay client when the user declines the managed 
 );
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))(
+  "t3 connect next steps",
+  (it) => {
+    it.effect.each([
+      { subcommand: "status", hint: "connect link" },
+      { subcommand: "publish", hint: "connect login" },
+    ])("t3 connect $subcommand names `t3 $hint` with --base-dir", ({ subcommand, hint }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-connect-hint-test-" });
+
+        yield* Command.runWith(makeCli({ cloudEnabled: true }), { version: "0.0.0" })([
+          "connect",
+          subcommand,
+          "--base-dir",
+          baseDir,
+        ]);
+
+        const { command } = yield* resolveHostCliCommand(hint, ["--base-dir", baseDir]);
+        assert.include((yield* TestConsole.logLines).join("\n"), `\`${command}\``);
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(HostProcess.Environment, {}),
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            Layer.fresh(TestConsole.layer),
+          ),
+        ),
+      ),
+    );
+  },
+);
+
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))(
   "t3 connect unlink and status",
   (it) => {
     const runConnect = (
       recordedPid: number,
-      options?: { readonly portFreed?: boolean; readonly command?: "unlink" | "status" },
+      options?: {
+        readonly portFreed?: boolean;
+        readonly command?: "unlink" | "status";
+        readonly linkMode?: "managed" | "publish_only";
+      },
     ) =>
       Effect.gen(function* () {
         const requests: Array<string> = [];
@@ -105,7 +145,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
           yield* fs.makeDirectory(`${baseDir}/userdata/secrets`, { recursive: true });
           yield* fs.writeFileString(
             `${baseDir}/userdata/secrets/${CLOUD_CLI_DESIRED_LINK_SECRET}.bin`,
-            "managed",
+            options.linkMode ?? "managed",
           );
         }
 
@@ -176,6 +216,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
         const { requests } = yield* runConnect(process.pid, { command: "status" });
 
         assert.deepEqual(requests, ["POST /api/connect/reachability"]);
+      }),
+    );
+
+    it.effect("status does not report a publish-only link as exposed", () =>
+      Effect.gen(function* () {
+        const { printed } = yield* runConnect(process.pid, {
+          command: "status",
+          linkMode: "publish_only",
+        });
+
+        assert.include(printed, "Exposure: publish-only");
+        assert.notInclude(printed, "Other devices can reach this machine");
       }),
     );
 

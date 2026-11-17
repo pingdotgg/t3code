@@ -49,6 +49,8 @@ import { ViewedImagesTimelineRow } from "./TimelineWorkEntryRow";
 import { remarkThoughtPreview, THOUGHT_PREVIEW_MAX_LENGTH } from "./TimelineWorkEntryRow.logic";
 import { TimelineRowCtx } from "./timelineRowContext";
 import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
+import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
+import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import { collectThreadFindRanges } from "./threadFindHighlights";
 import { toastManager } from "../ui/toast";
 import type { CitedHistory } from "./citationProcedure";
@@ -86,6 +88,10 @@ vi.mock(import("~/assets/assetUrls"), async (original) => {
       stubbedAsset.url
         ? { _tag: "Success", url: stubbedAsset.url }
         : actual.useAssetUrlState(...args)) as typeof actual.useAssetUrlState,
+    useAssetUrls: ((...args: Parameters<typeof actual.useAssetUrls>) =>
+      stubbedAsset.url
+        ? args[1].map(() => stubbedAsset.url)
+        : actual.useAssetUrls(...args)) as typeof actual.useAssetUrls,
   };
 });
 
@@ -861,6 +867,30 @@ describe("MessagesTimeline messages", () => {
     expect((globalThis as { __t3Xss?: number }).__t3Xss).toBeUndefined();
   });
 
+  it("shows the spaces typed at the start of user lines, where find also matches them", async () => {
+    const source = "Plan\n   Step one\n\tDetail";
+    await using screen = await renderTimeline([
+      message(source),
+      message(source, { role: "assistant" }, "assistant-1"),
+    ]);
+    const [user, assistant] = screen.container.querySelectorAll<HTMLElement>(
+      "[data-timeline-row-kind=message]",
+    );
+    expect(user?.querySelector<HTMLElement>("[data-user-message-body]")?.innerText).toBe(source);
+    expect(assistant?.querySelector<HTMLElement>(".chat-markdown")?.innerText).toBe(
+      "Plan Step one Detail",
+    );
+    const query = "   Step one";
+    const indexed = searchableMessageSegments({ role: "user", text: source, streaming: false });
+    const ranges = collectThreadFindRanges(screen.container, query);
+    expect(ranges.map(({ rowId, range }) => [rowId, range.toString()])).toEqual([
+      [user?.closest("[data-timeline-row-id]")?.getAttribute("data-timeline-row-id"), query],
+    ]);
+    expect(
+      indexed?.reduce((count, segment) => count + countThreadSearchOccurrences(segment, query), 0),
+    ).toBe(ranges.length);
+  });
+
   it("keeps single tildes in user paths literal without changing double tildes or assistant text", async () => {
     const source =
       "Install the skill as ~/folder-a/skills/x, then follow the guide (~/folder-a/guide.md).";
@@ -1205,6 +1235,27 @@ const CITATION_REQUEST = {
 } satisfies NonNullable<TimelineProps["citationRequest"]>;
 
 describe("MessagesTimeline citations", () => {
+  it("offers Cite for text an agent sent with send_to_user", async () => {
+    const text = "The draft the next question refers to";
+    await using screen = await renderTimeline(
+      [
+        {
+          id: "sent",
+          kind: "sent-message",
+          createdAt: CREATED_AT,
+          runId: RunId.make("run-sent"),
+          text,
+        },
+      ],
+      { onCiteAssistantText: () => true },
+    );
+    await expect.element(screen.getByText(text)).toHaveStyle({ pointerEvents: "auto" });
+    await userEvent.tripleClick(screen.getByText(text));
+    await expect
+      .element(page.getByRole("button", { name: "Cite selection in composer" }))
+      .toBeVisible();
+  });
+
   it("lands a citation present at mount under StrictMode", async () => {
     await using _screen = await renderElement(
       <StrictMode>
@@ -1227,6 +1278,21 @@ describe("MessagesTimeline citations", () => {
         "the cited answer",
       ),
     );
+  });
+
+  it("moves focus to the cited response so screen readers follow it", async () => {
+    await using _screen = await renderTimeline(
+      [
+        message("A question", {}, "question"),
+        message("the cited answer", { role: "assistant" }, "cited"),
+      ],
+      { citationRequest: CITATION_REQUEST, citationHistory: { _tag: "found" } },
+    );
+    await vi.waitFor(() => {
+      const cited = document.querySelector("[data-citation-highlighted]");
+      expect(cited?.textContent).toContain("the cited answer");
+      expect(cited?.contains(document.activeElement)).toBe(true);
+    });
   });
 
   it("opens the superseded attempt that folds the cited response", async () => {
@@ -1711,6 +1777,47 @@ describe("MessagesTimeline attachments", () => {
       }),
     );
   });
+
+  it("opens an image from an expanded tool row as a gallery of the turn's viewed images", async () => {
+    stubbedAsset.url =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+    onTestFinished(() => {
+      stubbedAsset.url = "";
+    });
+    const onImageExpand = vi.fn<ComponentProps<typeof MessagesTimeline>["onImageExpand"]>();
+    const read = (name: string) =>
+      work(`read-${name}`, {
+        label: `Read ${name}`,
+        toolTitle: "Read",
+        tone: "tool",
+        itemType: "dynamic_tool",
+        toolLifecycleStatus: "completed",
+        viewedImagePath: `/repo/${name}`,
+      });
+    await using screen = await renderTimeline(
+      [read("first.png"), read("second.png"), read("third.png")],
+      { onImageExpand, workspaceRoot: "/repo" },
+    );
+    await click(screen.button(/^Read 3 files/));
+    await vi.waitFor(() => expect(screen.buttons("Read")).toHaveLength(3));
+    await click(screen.buttons("Read")[1]!);
+    const inRow = await vi.waitFor(() => {
+      const image = [...screen.container.querySelectorAll("img")].find(
+        (img) => img.alt === "second.png" && !img.closest("[data-image-gallery]"),
+      );
+      expect(image).toBeTruthy();
+      return image!;
+    });
+    await click(inRow.closest<HTMLElement>("button, [role=button]")!);
+    expect(onImageExpand).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        index: 1,
+        images: ["first.png", "second.png", "third.png"].map((name) =>
+          expect.objectContaining({ name }),
+        ),
+      }),
+    );
+  });
 });
 
 describe("MessagesTimeline thread find", () => {
@@ -2017,7 +2124,7 @@ it("renders automatic compaction as one live divider that finishes with its reas
   await expect
     .element(
       screen.getByRole("separator", {
-        name: "Context automatically compacted before cache expiry 899K → 19K tokens",
+        name: "Auto-compacted before cache expiry 899K → 19K tokens",
       }),
     )
     .toBeVisible();

@@ -123,8 +123,13 @@ export function useComposerMenuItems({
     pullRequestTextQuery === debouncedPullRequestTextQuery ? pullRequestTextQuery : null;
   const isPathTrigger = composerTriggerKind === "path";
   const environmentThreadShells = useVisibleThreadShells(isPathTrigger);
-  // Mounts older settled threads matching the mention, which shells may leave out.
-  useThreadSearch(isPathTrigger ? [environmentId] : [], pathTriggerQuery, { titlesOnly: true });
+  // Mounts older settled threads matching the mention, here and on linked machines, which shells
+  // may leave out.
+  useThreadSearch(
+    isPathTrigger ? [environmentId, ...linkedEnvironments.keys()] : [],
+    pathTriggerQuery,
+    { titlesOnly: true },
+  );
   // The user's machines feed `@` machine matches; the catalog summary is cheap and stable.
   const environmentIdentities = useEnvironmentIdentities();
   const environmentMachines = useEnvironmentMachines();
@@ -396,7 +401,7 @@ export function useComposerMenuItems({
     return [];
   })();
   const isLoading =
-    (composerTriggerKind === "path" && pathTriggerQuery.length > 0 && workspaceEntries.isPending) ||
+    (composerTriggerKind === "path" && workspaceEntries.isPending) ||
     ((composerTriggerKind === "skill" || composerTriggerKind === "slash-command") &&
       workspaceSkillsScanning) ||
     (composerTriggerKind === "pull-request" &&

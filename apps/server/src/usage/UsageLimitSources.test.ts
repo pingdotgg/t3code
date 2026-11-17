@@ -5,12 +5,17 @@ import {
   SecretProviderId,
   ServerConfigStreamEvent,
   UsageLimitSourceId,
+  type ServerProviderUsageWindow,
+  type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
@@ -31,6 +36,7 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
       "hub.test:8317",
       "Usage limit source",
     ]);
+    // Only an http(s) hub URL names an endpoint an agent can be sent to.
     expect(snapshots.map((source) => source.origin)).toEqual([
       undefined,
       undefined,
@@ -38,6 +44,7 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
       "https://hub.test:8317",
       undefined,
     ]);
+    expect(snapshots[3]?.endpoint).toBe("https://hub.test:8317/team-a");
     expect(() =>
       encodeConfigEvent({
         version: 1,
@@ -78,7 +85,7 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
           },
           [UsageLimitSourceId.make("valid-hub")]: {
             kind: "cliproxy",
-            url: "https://hub.test:8317",
+            url: "https://hub.test:8317/team-a/management.html",
             managementKey: "",
             enabled: true,
           },
@@ -168,143 +175,164 @@ it.effect("reads a management key from its secret provider", () => {
   );
 });
 
-it("waits for the first refill only when every pooled account of the driver is spent", () => {
-  const now = Date.parse("2026-11-06T12:00:00.000Z");
-  const claude = ProviderDriverKind.make("claudeAgent");
-  const account = (id: string, windows: ReadonlyArray<object>, models?: ReadonlyArray<string>) => ({
-    id,
-    driver: claude,
-    ...(models ? { models } : {}),
-    usageLimits: { checkedAt: "2026-11-06T12:00:00.000Z", windows },
-  });
-  const session = (usedPercent: number, resetsAt: string) => ({
-    id: "five_hour",
-    kind: "session",
-    label: "Session",
-    usedPercent,
-    resetsAt,
-  });
-  const hub = (accounts: ReadonlyArray<ReturnType<typeof account>>) =>
-    [
-      {
-        id: UsageLimitSourceId.make("hub"),
-        kind: "cliproxy",
-        label: "Hub",
-        checkedAt: "",
-        accounts,
-      },
-    ] as never;
-  const spent = [
-    account("a", [session(100, "2026-11-06T14:00:00.000Z")]),
-    account("b", [
-      session(100, "2026-11-06T13:00:00.000Z"),
-      {
-        id: "seven_day_fable",
-        kind: "weekly",
-        label: "Weekly · Fable",
-        usedPercent: 100,
-        resetsAt: "2026-11-10T00:00:00.000Z",
-      },
-    ]),
-  ];
-  // regression: #30778 a spent Fable allowance does not hold back other models
-  expect(UsageLimitSources.hubPoolResetAt(hub(spent), claude, null, now)).toBe(
-    "2026-11-06T13:00:00.000Z",
-  );
-  expect(UsageLimitSources.hubPoolResetAt(hub(spent), claude, "claude-sonnet-5-5", now)).toBe(
-    "2026-11-06T13:00:00.000Z",
-  );
-  expect(UsageLimitSources.hubPoolResetAt(hub(spent), claude, "claude-fable-5-2", now)).toBe(
-    "2026-11-06T14:00:00.000Z",
-  );
-  const idle = account("idle", [session(20, "2026-11-06T15:00:00.000Z")], []);
-  expect(UsageLimitSources.hubPoolResetAt(hub([...spent, idle]), claude, "opus", now)).toBe(
-    "2026-11-06T13:00:00.000Z",
-  );
-  const withRoom = [...spent, account("c", [session(40, "2026-11-06T15:00:00.000Z")])];
-  expect(UsageLimitSources.hubPoolResetAt(hub(withRoom), claude, null, now)).toBeNull();
-  const unread = {
-    id: "d",
-    driver: claude,
-    usageLimits: { checkedAt: "", windows: [], unavailable: { reason: "probeFailed" } },
-  };
-  expect(UsageLimitSources.hubPoolResetAt(hub([...spent, unread]), claude, null, now)).toBeNull();
-  expect(
-    UsageLimitSources.hubPoolResetAt(hub(spent), ProviderDriverKind.make("codex"), null, now),
-  ).toBeNull();
-  const routed = [
-    account("opus", [session(100, "2026-11-06T13:00:00.000Z")], ["claude-opus-5-5"]),
-    account("sonnet", [session(40, "2026-11-06T15:00:00.000Z")], ["claude-sonnet-5-5"]),
-  ];
-  expect(UsageLimitSources.hubPoolResetAt(hub(routed), claude, "claude-opus-5-5[1m]", now)).toBe(
-    "2026-11-06T13:00:00.000Z",
-  );
-  expect(UsageLimitSources.hubPoolResetAt(hub(routed), claude, null, now)).toBeNull();
-  const unlisted = account("unlisted", [session(30, "2026-11-06T15:00:00.000Z")]);
-  expect(
-    UsageLimitSources.hubPoolResetAt(hub([...routed, unlisted]), claude, "claude-opus-5-5", now),
-  ).toBeNull();
-  // regression: #30778 a spent Gemini quota does not hold back Claude on an Antigravity account
-  const antigravity = {
-    ...account("ag", [
-      { ...session(100, "2026-11-06T13:00:00.000Z"), id: "3p-5h" },
-      { ...session(100, "2026-11-07T12:00:00.000Z"), id: "gemini-5h" },
-    ]),
-    driver: ProviderDriverKind.make("antigravity"),
-    models: ["claude-opus-4-6-thinking", "gemini-3-pro"],
-  };
-  expect(
-    UsageLimitSources.hubPoolResetAt(hub([antigravity]), claude, "claude-opus-4-6-thinking", now),
-  ).toBe("2026-11-06T13:00:00.000Z");
+const NOW = Date.parse("2026-11-13T12:00:00.000Z");
+const at = (hours: number) => DateTime.formatIso(DateTime.makeUnsafe(NOW + hours * 3_600_000));
+const spent = (id: string, hours: number): ServerProviderUsageWindow => ({
+  id,
+  kind: "weekly",
+  label: id,
+  usedPercent: 100,
+  resetsAt: at(hours),
+});
+const hub = (
+  accounts: ReadonlyArray<{
+    driver?: string;
+    models?: ReadonlyArray<string>;
+    windows?: ReadonlyArray<ServerProviderUsageWindow>;
+    unavailable?: true;
+  }>,
+): UsageLimitSourceSnapshot => ({
+  id: UsageLimitSourceId.make("hub"),
+  kind: "cliproxy",
+  label: "hub",
+  checkedAt: at(0),
+  accounts: accounts.map((account, index) => ({
+    id: `account-${index}`,
+    driver: ProviderDriverKind.make(account.driver ?? "claudeAgent"),
+    ...(account.models ? { models: account.models } : {}),
+    usageLimits: {
+      checkedAt: at(0),
+      windows: account.windows ?? [],
+      ...(account.unavailable ? { unavailable: { reason: "probeFailed" as const } } : {}),
+    },
+  })),
 });
 
-it.effect("takes a reset only from the hub at the instance's endpoint", () => {
-  const claude = ProviderDriverKind.make("claudeAgent");
-  const spentHub = (id: string, origin: string) => ({
-    id: UsageLimitSourceId.make(id),
-    kind: "cliproxy" as const,
-    label: id,
-    origin,
-    checkedAt: "2026-11-06T12:00:00.000Z",
+it.each([
+  {
+    name: "earliest refill when every account is spent, each at its latest spent window",
+    accounts: [
+      { windows: [spent("five_hour", 1), spent("seven_day", 3)] },
+      { windows: [spent("five_hour", 2)] },
+      { driver: "codex", windows: [] },
+    ],
+    model: "claude-haiku-5-5",
+    expected: at(2),
+  },
+  {
+    name: "unknown while an account still has room",
+    accounts: [{ windows: [spent("five_hour", 1)] }, { windows: [] }],
+    model: "claude-haiku-5-5",
+    expected: null,
+  },
+  {
+    name: "unknown while an account could not be read",
+    accounts: [{ windows: [spent("five_hour", 1)] }, { unavailable: true as const }],
+    model: "claude-haiku-5-5",
+    expected: null,
+  },
+  {
+    name: "unknown when a spent window has no reset or already reset",
+    accounts: [{ windows: [{ ...spent("five_hour", 1), resetsAt: undefined }] }],
+    model: "claude-haiku-5-5",
+    expected: null,
+  },
+  {
+    name: "a model-scoped weekly window blocks only its own model",
+    accounts: [{ windows: [spent("seven_day_fable", 5)] }],
+    model: "claude-haiku-5-5",
+    expected: null,
+  },
+  {
+    name: "a model-scoped weekly window blocks its own model",
+    accounts: [{ windows: [spent("seven_day_fable", 5)] }],
+    model: "claude-fable-5-2",
+    expected: at(5),
+  },
+  {
+    name: "no account of the driver",
+    accounts: [{ driver: "codex", windows: [spent("five_hour", 1)] }],
+    model: "claude-haiku-5-5",
+    expected: null,
+  },
+  // regression: #30778 only the accounts the hub routes the model to can refill it
+  {
+    name: "an account of another driver the hub routes the model to counts",
+    accounts: [
+      { driver: "codex", models: ["gpt-5.6-sol"], windows: [spent("five_hour", 3)] },
+      { windows: [] },
+    ],
+    model: "gpt-5.6-sol",
+    expected: at(3),
+  },
+  {
+    name: "an account that lists no models is left out of an alias",
+    accounts: [{ windows: [spent("five_hour", 1)] }, { models: [], windows: [] }],
+    model: "opus",
+    expected: at(1),
+  },
+  {
+    name: "a spent Gemini quota does not hold back Claude on Antigravity",
     accounts: [
       {
-        id: "a",
-        driver: claude,
-        usageLimits: {
-          checkedAt: "2026-11-06T12:00:00.000Z",
-          windows: [
-            {
-              id: "five_hour",
-              kind: "session" as const,
-              label: "Session",
-              usedPercent: 100,
-              resetsAt: `2026-11-06T1${id === "home" ? 3 : 4}:00:00.000Z`,
-            },
-          ],
-        },
+        driver: "antigravity",
+        models: ["claude-opus-4-6-thinking"],
+        windows: [spent("3p-5h", 1), spent("gemini-5h", 24)],
       },
     ],
-  });
-  return Effect.gen(function* () {
-    const fallback = yield* UsageLimitSources.UsageLimitResetFallback;
-    expect(yield* fallback.resetAt(claude, "http://home:8317", null)).toBe(
-      "2026-11-06T13:00:00.000Z",
-    );
-    // regression: #30778 a gateway that is not a configured hub gets no hub's reset
-    expect(yield* fallback.resetAt(claude, "http://gateway:8080", null)).toBeNull();
-  }).pipe(
-    Effect.provide(
-      UsageLimitSources.layerResetFallback.pipe(
-        Layer.provide(
-          Layer.mock(UsageLimitSources.UsageLimitSources)({
-            current: Effect.succeed([
-              spentHub("home", "http://home:8317"),
-              spentHub("work", "http://work:8317"),
-            ]),
-            refresh: Effect.die("hub refresh"),
-          }),
+    model: "claude-opus-4-6-thinking",
+    expected: at(1),
+  },
+])("hub pool reset: $name", ({ accounts, model, expected }) => {
+  expect(
+    UsageLimitSources.hubPoolResetAt(
+      [hub(accounts)],
+      ProviderDriverKind.make("claudeAgent"),
+      model,
+      NOW,
+    ),
+  ).toBe(expected);
+});
+
+it.effect("the reset fallback refreshes its hub, and a stalled hub cannot hold the failure", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(NOW);
+    const roomLeft = { ...hub([{ windows: [spent("five_hour", 2)] }]), origin: "http://hub.test" };
+    const cached = {
+      ...roomLeft,
+      accounts: roomLeft.accounts.map((account) => ({
+        ...account,
+        usageLimits: {
+          ...account.usageLimits,
+          windows: account.usageLimits.windows.map((window) => ({ ...window, usedPercent: 99 })),
+        },
+      })),
+    };
+    let current: ReadonlyArray<UsageLimitSourceSnapshot> = [cached];
+    let refresh: Effect.Effect<void> = Effect.sync(() => {
+      current = [roomLeft];
+    });
+    const lookup = UsageLimitSources.UsageLimitResetFallback.pipe(
+      Effect.flatMap((fallback) =>
+        fallback.resetAt(ProviderDriverKind.make("claudeAgent"), "http://hub.test", null),
+      ),
+      Effect.provide(
+        UsageLimitSources.layerResetFallback.pipe(
+          Layer.provide(
+            Layer.mock(UsageLimitSources.UsageLimitSources)({
+              current: Effect.sync(() => current),
+              refresh: Effect.suspend(() => refresh),
+            }),
+          ),
         ),
       ),
-    ),
-  );
-});
+    );
+    // The last poll saw room; the account was spent after it.
+    expect(yield* lookup).toBe(at(2));
+    current = [cached];
+    refresh = Effect.never;
+    const stalled = yield* Effect.forkChild(lookup);
+    yield* TestClock.adjust("5 seconds");
+    expect(yield* Fiber.join(stalled)).toBeNull();
+  }),
+);

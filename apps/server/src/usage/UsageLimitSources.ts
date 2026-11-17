@@ -88,7 +88,12 @@ export const make = Effect.gen(function* () {
       id,
       kind: config.kind,
       label: sourceLabel(id, config),
-      ...(url && /^https?:$/.test(url.protocol) ? { origin: url.origin } : {}),
+      ...(url && /^https?:$/.test(url.protocol)
+        ? {
+            origin: url.origin,
+            endpoint: `${url.origin}${url.pathname.replace(/(\/management\.html)?\/*$/i, "")}`,
+          }
+        : {}),
       checkedAt,
     } as const;
     const managementKey = yield* readManagementKey(config);
@@ -255,8 +260,14 @@ export const layerResetFallback = Layer.effect(
     return {
       resetAt: Effect.fn("UsageLimitResetFallback.resetAt")(function* (driver, endpoint, model) {
         // Only the hub at the instance's endpoint serves its turns.
+        const atEndpoint = Effect.map(sources.current, (current) =>
+          current.filter((source) => source.origin === endpoint),
+        );
+        if ((yield* atEndpoint).length === 0) return null;
+        // The pool usually ran out after the last poll, so the cached accounts still show room.
+        yield* sources.refresh.pipe(Effect.timeout("5 seconds"), Effect.ignore);
         return hubPoolResetAt(
-          (yield* sources.current).filter((source) => source.origin === endpoint),
+          yield* atEndpoint,
           driver,
           model,
           DateTime.toEpochMillis(yield* DateTime.now),

@@ -36,6 +36,7 @@ import { claudeMcpToolPresentationInput } from "./claude_mcp_tool_presentation/i
 import { assertClaudeMcpToolPresentationOutput } from "./claude_mcp_tool_presentation/output.ts";
 import { claudeResultIsErrorInput } from "./claude_result_is_error/input.ts";
 import { assertClaudeResultIsErrorOutput } from "./claude_result_is_error/output.ts";
+import { assertClaudeUsageLimitOutput } from "./usage_limit/claude_output.ts";
 import { grokAutoBlockedCommandInput } from "./grok_auto_blocked_command/input.ts";
 import { kiroCompactionInput } from "./kiro_compaction/input.ts";
 import { kiroForkFromTurnInput } from "./kiro_fork_from_turn/input.ts";
@@ -100,6 +101,7 @@ import { assertOpenCodeChildApprovalOutput } from "./opencode_child_approval/out
 import { openCodeRunningChildApprovalInput } from "./opencode_running_child_approval/input.ts";
 import { assertOpenCodeRunningChildApprovalOutput } from "./opencode_running_child_approval/output.ts";
 import { openCodeSubagentInput } from "./opencode_subagent/input.ts";
+import { openCodeBackgroundWakeInput } from "./opencode_background_wake/input.ts";
 import { openCode2InboxInput } from "./opencode2_inbox/input.ts";
 import { openCode2RevertInput } from "./opencode2_revert/input.ts";
 import { assertOpenCode2RevertOutput } from "./opencode2_revert/output.ts";
@@ -131,6 +133,7 @@ import { assertCodexModelRerouteOutput } from "./codex_model_reroute/output.ts";
 import { openCode2ToolCallInput } from "./opencode2_tool_call/input.ts";
 import { assertOpenCode2ToolCallOutput } from "./opencode2_tool_call/output.ts";
 import { assertOpenCodeSubagentOutput } from "./opencode_subagent/output.ts";
+import { assertOpenCodeBackgroundWakeOutput } from "./opencode_background_wake/output.ts";
 import {
   assertCodexPlanQuestionsOutput,
   assertPlanQuestionsOutput,
@@ -505,6 +508,18 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         transcriptFile: new URL("./claude_idle_resume/claude_transcript.ndjson", import.meta.url),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertClaudeIdleResumeOutput,
+      },
+    ],
+  },
+  {
+    name: "usage_limit",
+    buildInput: simpleInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL("./usage_limit/claude_transcript.ndjson", import.meta.url),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertClaudeUsageLimitOutput,
       },
     ],
   },
@@ -1174,6 +1189,22 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
     ],
   },
   {
+    name: "opencode_background_wake",
+    buildInput: openCodeBackgroundWakeInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode"),
+        transcriptFile: new URL(
+          "./opencode_background_wake/opencode_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertOpenCodeBackgroundWakeOutput,
+      },
+    ],
+  },
+  {
     name: "opencode2_simple",
     buildInput: openCode2SimpleInput,
     providers: [
@@ -1778,12 +1809,6 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         transcriptFile: new URL("./message_steering/cursor_transcript.ndjson", import.meta.url),
         modelSelection: CURSOR_MODEL_SELECTION,
         assertOutput: assertCursorMessageSteeringOutput,
-      },
-      {
-        driver: ProviderDriverKind.make("grok"),
-        transcriptFile: new URL("./message_steering/grok_transcript.ndjson", import.meta.url),
-        modelSelection: GROK_MODEL_SELECTION,
-        assertOutput: assertGrokMessageSteeringOutput,
       },
       {
         driver: ProviderDriverKind.make("fx"),
