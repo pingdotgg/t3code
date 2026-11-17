@@ -162,7 +162,7 @@ describe("CursorAgentSdkRunner", () => {
       const platform = yield* Effect.promise(() =>
         sdk.createAgentPlatform({ localStore: store, workspaceRef: storeCwd }),
       );
-      const { agent } = yield* Effect.promise(() =>
+      const { agent, run } = yield* Effect.promise(() =>
         platform.store.createAgent({ agentId: "agent-moved", workspaceRef: storeCwd }),
       );
       const runner = yield* CursorAgentSdk.makeCursorAgentSdkRunner(() => undefined).pipe(
@@ -182,6 +182,25 @@ describe("CursorAgentSdkRunner", () => {
       assert.equal(session.agentId, agent.agentId);
       assert.deepStrictEqual(yield* session.listMessages, []);
       assert.strictEqual(yield* session.readContextUsage!, undefined);
+
+      // Cursor's conversation holds a run's request only once that run saved its own checkpoint.
+      assert.isFalse(yield* session.runCheckpointed!());
+      yield* Effect.promise(() =>
+        platform.store.patchCheckpoint(agent.agentId, run.runId, {
+          blobId: "checkpoint-1",
+          storeKind: "local",
+        }),
+      );
+      assert.isTrue(yield* session.runCheckpointed!());
+      yield* Effect.promise(() =>
+        platform.store.markRunTerminal(agent.agentId, run.runId, { status: "CANCELLED" }),
+      );
+      const followUp = yield* Effect.promise(() =>
+        platform.store.createFollowUpRun(agent.agentId, {}),
+      );
+      assert.isFalse(yield* session.runCheckpointed!(), "the follow-up has no checkpoint yet");
+      assert.isTrue(yield* session.runCheckpointed!(run.runId));
+      assert.isFalse(yield* session.runCheckpointed!(followUp.runId));
       yield* session.close;
     }).pipe(Effect.provide(NodeServices.layer)),
   );

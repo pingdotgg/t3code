@@ -87,6 +87,20 @@ export function allowedMergeMethods(pr: ActionDetail) {
   return pr.capabilities.mergeMethods.filter((method) => pr.mergeCapabilities[method]);
 }
 
+export function resolveMergeMethod(
+  pr: ActionDetail,
+  selected: PullRequestMergeMethod | null,
+  projectDefault: PullRequestMergeMethod | null,
+  lastUsed: PullRequestMergeMethod | undefined,
+) {
+  const methods = allowedMergeMethods(pr);
+  return (
+    [selected, projectDefault, lastUsed, "squash" as const].find(
+      (method) => method != null && methods.includes(method),
+    ) ?? methods[0]
+  );
+}
+
 export function allowedUpdateMethods(pr: ActionDetail) {
   return (pr.capabilities.updateMethods ?? []).filter((method) =>
     pr.viewerPermissions.updateMethods?.includes(method),

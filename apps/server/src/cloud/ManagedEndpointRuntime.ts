@@ -60,6 +60,8 @@ export interface ConnectorFacts {
   readonly readyConnections: number | null;
   /** The public tunnel hostname from the remote config cloudflared receives once it connects. */
   readonly hostname: string | null;
+  /** The local origin that remote config routes the public hostname to. */
+  readonly origin: string | null;
   readonly protocol: string | null;
 }
 
@@ -123,7 +125,14 @@ const ConnectorReadyBody = Schema.Struct({ readyConnections: Schema.Number });
 const ConnectorConfigBody = Schema.Struct({
   config: Schema.Struct({
     ingress: Schema.optional(
-      Schema.NullOr(Schema.Array(Schema.Struct({ hostname: Schema.optional(Schema.String) }))),
+      Schema.NullOr(
+        Schema.Array(
+          Schema.Struct({
+            hostname: Schema.optional(Schema.String),
+            service: Schema.optional(Schema.String),
+          }),
+        ),
+      ),
     ),
   }),
 });
@@ -158,6 +167,14 @@ export function classifyRelayClientOutput(
 ): "connected" | "unregistered" | "warning" | "debug" {
   if (/\bRegistered tunnel connection\b/iu.test(line)) {
     return "connected";
+  }
+  // cloudflared logs a browser closing its request mid-stream as ERR; the tunnel itself is fine.
+  if (
+    /\bERR\s+(?:Request failed\s+)?error="Incoming request ended abruptly: context canceled"(?:\s|$)/u.test(
+      line,
+    )
+  ) {
+    return "debug";
   }
   // cloudflared uses zerolog FTL/PNC for fatal/panic; classify them above debug too.
   if (/\b(?:ERR|WRN|FTL|PNC)\b/u.test(line)) {
@@ -924,7 +941,13 @@ export const make = Effect.gen(function* () {
     const pid = Number(active.child.pid);
     const protocol = yield* Ref.get(active.protocol);
     if (!(yield* Deferred.isDone(active.metricsAddress))) {
-      return { pid, readyConnections: null, hostname: null, protocol } satisfies ConnectorFacts;
+      return {
+        pid,
+        readyConnections: null,
+        hostname: null,
+        origin: null,
+        protocol,
+      } satisfies ConnectorFacts;
     }
     const metricsUrl = `http://${yield* Deferred.await(active.metricsAddress)}`;
     const [ready, config] = yield* Effect.all(
@@ -934,10 +957,12 @@ export const make = Effect.gen(function* () {
       ],
       { concurrency: 2 },
     );
+    const hostnameRule = config?.config.ingress?.find((rule) => rule.hostname);
     return {
       pid,
       readyConnections: ready?.readyConnections ?? null,
-      hostname: config?.config.ingress?.find((rule) => rule.hostname)?.hostname ?? null,
+      hostname: hostnameRule?.hostname ?? null,
+      origin: hostnameRule?.service ?? null,
       protocol,
     } satisfies ConnectorFacts;
   });
