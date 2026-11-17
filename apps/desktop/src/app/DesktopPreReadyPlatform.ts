@@ -15,6 +15,8 @@ import * as DesktopEarlyElectronStartup from "./DesktopEarlyElectronStartup.ts";
 import { trimmedString } from "./DesktopConfig.ts";
 import { resolveDesktopAppBranding } from "./DesktopEnvironment.ts";
 import {
+  launchesAppImage,
+  linuxWindowClass,
   renderUrlHandlerDesktopEntry,
   replacedVersionedAppImagePath,
 } from "./DesktopLinuxUrlHandler.ts";
@@ -139,6 +141,23 @@ export const make = Effect.gen(function* () {
             }
           } catch {}
         }
+        const plainAppImage = Option.isNone(linuxDesktopEntryConfig.launcherPath)
+          ? Option.getOrUndefined(appImagePath)
+          : undefined;
+        let integrated = false;
+        if (plainAppImage !== undefined) {
+          try {
+            integrated = NodeFS.readdirSync(applicationsDir).some((name) => {
+              if (!name.endsWith(".desktop") || name === linux.linuxDesktopEntryName) return false;
+              try {
+                const entryPath = NodePath.posix.join(applicationsDir, name);
+                return launchesAppImage(NodeFS.readFileSync(entryPath, "utf8"), plainAppImage);
+              } catch {
+                return false;
+              }
+            });
+          } catch {}
+        }
         NodeFS.writeFileSync(
           desktopEntryPath,
           renderUrlHandlerDesktopEntry({
@@ -155,6 +174,9 @@ export const make = Effect.gen(function* () {
               ) ?? process.execPath,
             scheme: ElectronProtocol.getDesktopScheme(linux.isDevelopment),
             ...(iconPath === undefined ? {} : { iconPath }),
+            ...(plainAppImage !== undefined && !integrated
+              ? { windowClass: linuxWindowClass(linux.linuxDesktopEntryName) }
+              : {}),
           }),
           "utf8",
         );

@@ -74,13 +74,14 @@ const escapeUrlHandlerExecTarget = (value: string): string =>
     ? escapeDesktopEntryExecArgument(value)
     : escapeDesktopEntryString(value.replaceAll("%", "%%"));
 
-// The AppImage integration entry owns the window identity. This
-// hidden URL-only entry must not compete with it for StartupWMClass matching.
+// With windowClass the entry is also the app's launcher; otherwise an installed or integrator
+// entry owns the window identity and this URL-only entry stays hidden so it cannot compete.
 export function renderUrlHandlerDesktopEntry(input: {
   readonly displayName: string;
   readonly execTarget: string;
   readonly scheme: string;
   readonly iconPath?: string;
+  readonly windowClass?: string;
 }): string {
   return [
     "[Desktop Entry]",
@@ -89,12 +90,25 @@ export function renderUrlHandlerDesktopEntry(input: {
     `Exec=${escapeUrlHandlerExecTarget(input.execTarget)} %U`,
     ...(input.iconPath === undefined ? [] : [`Icon=${escapeDesktopEntryString(input.iconPath)}`]),
     "Terminal=false",
-    "NoDisplay=true",
+    ...(input.windowClass === undefined
+      ? ["NoDisplay=true"]
+      : [
+          "Categories=Development;",
+          `StartupWMClass=${escapeDesktopEntryString(input.windowClass)}`,
+        ]),
     "StartupNotify=false",
     `MimeType=x-scheme-handler/${input.scheme};`,
     "",
   ].join("\n");
 }
+
+// AppImageLauncher and Gear Lever write their own visible entry that launches the AppImage.
+export function launchesAppImage(entry: string, appImagePath: string): boolean {
+  return entry.split("\n").some((line) => line.startsWith("Exec=") && line.includes(appImagePath));
+}
+
+export const linuxWindowClass = (desktopEntryName: string): string =>
+  desktopEntryName.replace(/\.desktop$/u, "");
 
 function parseUrlHandlerExecTarget(entry: string): string | null {
   const exec = /^Exec=(.*) %U$/mu.exec(entry)?.[1];
@@ -132,7 +146,7 @@ export function replacedVersionedAppImagePath(input: {
 const LINUX_THEME_ICON_SIZE = "256x256";
 
 function linuxThemeIconNames(desktopEntryName: string): readonly string[] {
-  const appId = desktopEntryName.replace(/\.desktop$/u, "");
+  const appId = linuxWindowClass(desktopEntryName);
   return [...new Set([appId.toLowerCase(), appId])];
 }
 
@@ -172,11 +186,30 @@ export const make = Effect.gen(function* () {
       Option.orElse(() => environment.appImagePath),
       Option.getOrElse(() => process.execPath),
     );
+    const plainAppImage = Option.isNone(environment.desktopLauncherPath)
+      ? Option.getOrUndefined(environment.appImagePath)
+      : undefined;
+    const integrated =
+      plainAppImage !== undefined &&
+      (yield* Effect.forEach(
+        (yield* fileSystem
+          .readDirectory(environment.linuxApplicationsDir)
+          .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))).filter(
+          (name) => name.endsWith(".desktop") && name !== environment.linuxDesktopEntryName,
+        ),
+        (name) =>
+          fileSystem
+            .readFileString(environment.path.join(environment.linuxApplicationsDir, name))
+            .pipe(Effect.orElseSucceed(() => "")),
+      )).some((entry) => launchesAppImage(entry, plainAppImage));
     const content = renderUrlHandlerDesktopEntry({
       displayName: environment.displayName,
       execTarget,
       scheme,
       ...(environment.isPackaged ? { iconPath } : {}),
+      ...(plainAppImage !== undefined && !integrated
+        ? { windowClass: linuxWindowClass(environment.linuxDesktopEntryName) }
+        : {}),
     });
     // Avoid truncating the pre-ready entry while the portal may be reading it.
     const existing = yield* fileSystem

@@ -71,6 +71,7 @@ const layerHandler = (
     readonly xdgMimeExitCode?: number;
     readonly writeError?: PlatformError.PlatformError;
     readonly existingEntry?: string;
+    readonly otherEntries?: Readonly<Record<string, string>>;
     readonly iconSource?: string;
     readonly iconWriteError?: PlatformError.PlatformError;
   } = {},
@@ -115,7 +116,13 @@ const layerHandler = (
               : Effect.sync(() => {
                   recorded.icons.push({ path, bytes: [...bytes] });
                 }),
-          readFileString: () => Effect.succeed(input.existingEntry ?? ""),
+          readDirectory: () => Effect.succeed(Object.keys(input.otherEntries ?? {})),
+          readFileString: (path) =>
+            Effect.succeed(
+              input.otherEntries?.[path.slice(path.lastIndexOf("/") + 1)] ??
+                input.existingEntry ??
+                "",
+            ),
           makeDirectory: (path) =>
             Effect.sync(() => {
               recorded.directories.push(path);
@@ -293,6 +300,28 @@ describe("DesktopLinuxUrlHandler", () => {
       });
 
       assert.include(recorded.files[0]?.content, 'Exec="/opt/T3 Code/t3code" %U');
+      assert.include(recorded.files[0]?.content, "NoDisplay=true");
+    });
+  });
+
+  it.effect.each([
+    { label: "is the launcher of a plain AppImage", otherEntries: {}, launcher: true },
+    {
+      label: "stays hidden beside an integrator's AppImage launcher",
+      otherEntries: {
+        "appimagekit_1f2e-T3_Code.desktop": "Exec=/home/alice/Applications/T3-Code.AppImage %U\n",
+      },
+      launcher: false,
+    },
+  ])("$label", ({ otherEntries, launcher }) => {
+    const recorded = emptyRecording();
+
+    return Effect.gen(function* () {
+      yield* runRegister(recorded, { otherEntries });
+
+      const entry = recorded.files[0]?.content ?? "";
+      assert.equal(entry.includes("StartupWMClass=com.t3tools.T3Code\n"), launcher);
+      assert.equal(entry.includes("NoDisplay=true"), !launcher);
     });
   });
 
@@ -306,6 +335,7 @@ describe("DesktopLinuxUrlHandler", () => {
           execTarget: "/home/alice/Applications/T3-Code.AppImage",
           scheme: "t3code",
           iconPath: "/home/alice/.local/share/icons/com.t3tools.T3Code.desktop.png",
+          windowClass: "com.t3tools.T3Code",
         }),
       });
 
@@ -335,6 +365,7 @@ describe("DesktopLinuxUrlHandler", () => {
           execTarget: "/home/alice/Applications/T3-Code.AppImage",
           scheme: "t3code",
           iconPath,
+          windowClass: "com.t3tools.T3Code",
         }),
       });
       assert.deepEqual(recorded.files, []);
