@@ -27,8 +27,11 @@ const make = Effect.gen(function* () {
       // Subscribe before counting: counted first, an offer in between reports a
       // delivery that the subscription never receives.
       const subscription = yield* PubSub.subscribe(alerts);
-      yield* Ref.update(subscribers, (count) => count + 1);
-      yield* Effect.addFinalizer(() => Ref.update(subscribers, (count) => count - 1));
+      // One step, so an interrupt cannot leave the count raised with no cleanup registered.
+      yield* Effect.acquireRelease(
+        Ref.update(subscribers, (count) => count + 1),
+        () => Ref.update(subscribers, (count) => count - 1),
+      );
       return Stream.fromSubscription(subscription);
     }),
   );
