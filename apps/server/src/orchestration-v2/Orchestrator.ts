@@ -4828,7 +4828,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             limitRecovery: thread.limitRecovery
               ? { ...thread.limitRecovery, autoResume: false, snooze: false }
               : thread.limitRecovery,
-            pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
             unsettledAt: null,
             pinnedAt: null,
             pinOrderKey: null,

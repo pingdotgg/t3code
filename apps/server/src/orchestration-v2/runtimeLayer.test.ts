@@ -5996,6 +5996,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                   checks,
                 }),
               ),
+            requiredChecks: () => Effect.succeed(["lint"]),
             activity: () =>
               Effect.succeed({
                 comments: [],
