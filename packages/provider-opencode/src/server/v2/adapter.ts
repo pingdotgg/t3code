@@ -4026,7 +4026,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       contextWindows.has(directoryOf(cwd)) ? Effect.void : readModels(directoryOf(cwd));
     yield* readModels(session.cwd);
 
-    const windows = (yield* HostProcess.Platform) === "win32";
+    const hostWindows = (yield* HostProcess.Platform) === "win32";
+    // A server T3 did not start may run on another platform, so both of OpenCode's matchings must agree.
+    const decide = (action: string, resource: string, rules: ReadonlyArray<Rule>) => {
+      const effects = (connection.external ? [false, true] : [hostWindows]).map((windows) =>
+        effectOf(action, resource, rules, windows),
+      );
+      return effects.includes("deny") ? "deny" : effects.includes("ask") ? "ask" : "allow";
+    };
     const agentRules = new Map<string, ReadonlyMap<string, ReadonlyArray<Rule>>>();
     const agentsIn = Effect.fnUntraced(function* (directory: string, subagent?: string) {
       const known = agentRules.get(directory);
@@ -4114,9 +4121,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         own === undefined || rules === undefined
           ? ["deny" as const]
           : data.resources.map((resource) =>
-              child && effectOf(data.action, resource, own, windows) === "deny"
+              child && decide(data.action, resource, own) === "deny"
                 ? "deny"
-                : effectOf(data.action, resource, [...own, ...rules.rules, ...rules.mcp], windows),
+                : decide(data.action, resource, [...own, ...rules.rules, ...rules.mcp]),
             );
       const denied = effects.includes("deny");
       if (!denied && (effects.length === 0 || effects.includes("ask"))) return false;
@@ -4124,9 +4131,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const written = [...(own ?? []), ...(rules?.written ?? [])];
       if (
         !denied &&
-        data.resources.every(
-          (resource) => effectOf(data.action, resource, written, windows) === "allow",
-        )
+        data.resources.every((resource) => decide(data.action, resource, written) === "allow")
       ) {
         return false;
       }
