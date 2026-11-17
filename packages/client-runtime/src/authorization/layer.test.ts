@@ -51,13 +51,16 @@ const BOOTSTRAP: RelayEnvironmentConnectResponse = {
   expiresAt: "2026-06-06T01:00:00.000Z",
 };
 
-type RecordedResponse = Response | ((init: RequestInit) => Response);
+type RecordedResponse = Response | ((init: RequestInit) => Response | Promise<Response>);
 
-function recordedFetch(responses: ReadonlyArray<RecordedResponse>) {
+function recordedFetch(responses: ReadonlyArray<RecordedResponse>, descriptor?: object) {
   const calls: Array<readonly [RequestInfo | URL, RequestInit]> = [];
   let responseIndex = 0;
   const fetchFn = ((input, init) => {
     calls.push([input, init ?? {}]);
+    if (descriptor !== undefined && String(input).endsWith("/.well-known/t3/environment")) {
+      return Promise.resolve(Response.json(descriptor));
+    }
     const response = responses[responseIndex++];
     return response === undefined
       ? Promise.reject(new Error(`Unexpected fetch call to ${String(input)}`))
@@ -113,6 +116,8 @@ const persistedToken = (
 const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (input: {
   readonly initialToken?: TokenStore.RemoteDpopAccessToken;
   readonly responses: ReadonlyArray<RecordedResponse>;
+  /** Answers every descriptor read, so one that runs beside a ticket does not shift `responses`. */
+  readonly descriptor?: object;
   readonly bootstrap?: RelayEnvironmentConnectResponse;
   readonly beforeBootstrap?: Effect.Effect<void, ManagedRelay.ManagedRelayClientError>;
   readonly beforePut?: Effect.Effect<void>;
@@ -141,7 +146,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
       readonly accessToken?: string;
     }>
   >([]);
-  const fetch = recordedFetch(input.responses);
+  const fetch = recordedFetch(input.responses, input.descriptor);
 
   const tokenStore = TokenStore.RemoteDpopAccessTokenStore.of({
     get: (environmentId) =>
@@ -238,6 +243,9 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
   };
 });
 
+const requestsTo = (harness: Effect.Success<ReturnType<typeof makeHarness>>, path: string) =>
+  harness.fetch.calls.filter(([url]) => String(url).endsWith(path)).length;
+
 const prepareDirectBearer = Effect.fn("TestRemoteAuthorization.prepareDirectBearer")(function* (
   harness: Effect.Success<ReturnType<typeof makeHarness>>,
   times: number,
@@ -318,7 +326,7 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
-  it.effect("reuses a matching descriptor a check just read, once, while fresh, over HTTPS", () =>
+  it.effect("reuses a matching descriptor a check just read, once, while fresh", () =>
     Effect.gen(function* () {
       const descriptor = {
         ...DESCRIPTOR,
@@ -327,10 +335,13 @@ describe("RemoteEnvironmentAuthorization", () => {
       const harness = yield* makeHarness({
         responses: [
           websocketTicket("reused"),
-          ...Array.from({ length: 5 }, () => [
+          ...Array.from({ length: 4 }, () => [
             Response.json(descriptor),
             websocketTicket("fresh"),
           ]).flat(),
+          websocketTicket("reused over plain HTTP"),
+          Response.json(descriptor),
+          websocketTicket("fresh"),
         ],
       });
 
@@ -346,7 +357,7 @@ describe("RemoteEnvironmentAuthorization", () => {
           });
         const authorize = authorizeAt(ENDPOINT.httpBaseUrl);
         const remember = (value: Option.Option<ExecutionEnvironmentDescriptor>) =>
-          remote.rememberCheckedDescriptor(ENDPOINT.httpBaseUrl, value);
+          remote.rememberCheckedDescriptor(ENDPOINT.httpBaseUrl, value, true);
 
         yield* remember(Option.some(descriptor));
         yield* authorize;
@@ -363,17 +374,31 @@ describe("RemoteEnvironmentAuthorization", () => {
         yield* remember(Option.some(descriptor));
         yield* remember(Option.none());
         yield* authorize;
+        // Plain HTTP is no reason to read again where the address keeps its host.
+        yield* remote.rememberCheckedDescriptor(
+          "http://127.0.0.1:3773",
+          Option.some(descriptor),
+          true,
+        );
+        yield* authorizeAt("http://127.0.0.1:3773");
         // After a network change, a plain LAN address can belong to another machine.
-        yield* remote.rememberCheckedDescriptor("http://192.168.1.2:3773", Option.some(descriptor));
+        yield* remote.rememberCheckedDescriptor(
+          "http://192.168.1.2:3773",
+          Option.some(descriptor),
+          false,
+        );
         yield* authorizeAt("http://192.168.1.2:3773");
       }).pipe(Effect.provide(harness.layer));
 
       expect(harness.fetch.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
         "/api/auth/websocket-ticket/rpc",
-        ...Array.from({ length: 5 }, () => [
+        ...Array.from({ length: 4 }, () => [
           "/.well-known/t3/environment",
           "/api/auth/websocket-ticket/rpc",
         ]).flat(),
+        "/api/auth/websocket-ticket/rpc",
+        "/.well-known/t3/environment",
+        "/api/auth/websocket-ticket/rpc",
       ]);
     }),
   );
@@ -446,6 +471,44 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
+  it.effect("gives up on a silent loopback or LAN address sooner than on a remote one", () =>
+    Effect.gen(function* () {
+      const silent = () => new Promise<Response>(() => {});
+      const harness = yield* makeHarness({ responses: [silent, silent, silent] });
+
+      yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const authorizeAt = (httpBaseUrl: string, connectionMethod: "direct" | "ssh" = "direct") =>
+          remote
+            .authorizeBearer({
+              expectedEnvironmentId: ENVIRONMENT_ID,
+              httpBaseUrl,
+              wsBaseUrl: httpBaseUrl.replace(/^http/, "ws"),
+              bearerToken: "bearer-token",
+              connectionMethod,
+            })
+            .pipe(Effect.flip, Effect.forkChild);
+        const lan = yield* authorizeAt("http://192.168.1.2:3773");
+        const tailnet = yield* authorizeAt("http://100.101.102.103:3773");
+        // An SSH forward listens on loopback but reaches a remote host.
+        const forwarded = yield* authorizeAt("http://127.0.0.1:4010", "ssh");
+
+        yield* TestClock.adjust("3 seconds");
+        expect(lan.pollUnsafe()).toBeDefined();
+        expect(tailnet.pollUnsafe()).toBeUndefined();
+        expect(forwarded.pollUnsafe()).toBeUndefined();
+        expect(yield* Fiber.join(lan)).toMatchObject({
+          _tag: "ConnectionTransientError",
+          reason: "timeout",
+        });
+
+        yield* TestClock.adjust("7 seconds");
+        expect(tailnet.pollUnsafe()).toBeDefined();
+        expect(forwarded.pollUnsafe()).toBeDefined();
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
   it.effect("reuses a same-account persisted environment token without contacting the relay", () =>
     Effect.gen(function* () {
       const cached = new TokenStore.RemoteDpopAccessToken({
@@ -459,6 +522,7 @@ describe("RemoteEnvironmentAuthorization", () => {
       });
       const harness = yield* makeHarness({
         initialToken: cached,
+        descriptor: DESCRIPTOR,
         responses: [websocketTicket("cached-ticket")],
       });
 
@@ -472,10 +536,12 @@ describe("RemoteEnvironmentAuthorization", () => {
       expect(authorized.socketUrl).toContain("wsTicket=cached-ticket");
       expect(authorized.socketUrl).toContain("connectionMethod=relay");
       expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
-      expect(harness.fetch.calls).toHaveLength(1);
-      expect(String(harness.fetch.calls[0]?.[0])).toBe(
+      // The descriptor is read beside the ticket, so the connect needs no later read.
+      expect(authorized.descriptor).toMatchObject({ environmentId: ENVIRONMENT_ID });
+      expect(harness.fetch.calls.map(([url]) => String(url)).toSorted()).toEqual([
+        "https://environment.example.test/.well-known/t3/environment",
         "https://environment.example.test/api/auth/websocket-ticket/rpc",
-      );
+      ]);
     }),
   );
 
@@ -576,6 +642,8 @@ describe("RemoteEnvironmentAuthorization", () => {
       }).pipe(Effect.provide(harness.layer));
 
       expect(authorized.socketUrl).toContain("wsTicket=fresh-ticket");
+      // The mint already read the descriptor.
+      expect(authorized.descriptor).toMatchObject({ environmentId: ENVIRONMENT_ID });
       expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
       expect((yield* Ref.get(harness.tokens)).get(ENVIRONMENT_ID)).toEqual(
         expect.objectContaining({
@@ -729,9 +797,9 @@ describe("RemoteEnvironmentAuthorization", () => {
       });
       const harness = yield* makeHarness({
         initialToken: cached,
+        descriptor: DESCRIPTOR,
         responses: [
           authInvalid(),
-          Response.json(DESCRIPTOR),
           accessToken("replacement-access-token"),
           websocketTicket("replacement-ticket"),
         ],
@@ -751,7 +819,8 @@ describe("RemoteEnvironmentAuthorization", () => {
           accessToken: "replacement-access-token",
         }),
       );
-      expect(harness.fetch.calls).toHaveLength(4);
+      expect(requestsTo(harness, "/api/auth/websocket-ticket/rpc")).toBe(2);
+      expect(requestsTo(harness, "/oauth/token")).toBe(1);
     }),
   );
 
@@ -768,9 +837,9 @@ describe("RemoteEnvironmentAuthorization", () => {
       });
       const harness = yield* makeHarness({
         initialToken: cached,
+        descriptor: DESCRIPTOR,
         responses: [
           new Response("endpoint unavailable", { status: 503 }),
-          Response.json(DESCRIPTOR),
           accessToken("replacement-access-token"),
           websocketTicket("replacement-ticket"),
         ],
@@ -790,7 +859,8 @@ describe("RemoteEnvironmentAuthorization", () => {
           accessToken: "replacement-access-token",
         }),
       );
-      expect(harness.fetch.calls).toHaveLength(4);
+      expect(requestsTo(harness, "/api/auth/websocket-ticket/rpc")).toBe(2);
+      expect(requestsTo(harness, "/oauth/token")).toBe(1);
     }),
   );
 

@@ -22,7 +22,6 @@ import {
   getChangedRanges,
   type Command,
   type Editor,
-  Extension,
   InputRule,
   markInputRule,
   markPasteRule,
@@ -304,6 +303,45 @@ function markInputRuleOutsideCode(find: RegExp, type: MarkType) {
   });
 }
 
+const SURROUND_MARKS: Record<string, string> = { "`": "code", "*": "italic", _: "italic" };
+
+export function surroundSelectionWithMark(
+  state: EditorState,
+  from: number,
+  to: number,
+  marker: string,
+) {
+  const markType = state.schema.marks[SURROUND_MARKS[marker] ?? ""];
+  if (!markType || touchesMarkdownSource(state, from, to)) return null;
+  const $from = state.doc.resolve(from);
+  if (!$from.sameParent(state.doc.resolve(to)) || !$from.parent.type.allowsMarkType(markType)) {
+    return null;
+  }
+  // Inline markdown cannot span lines, so keep literal wrapping across hard breaks.
+  let crossesLine = false;
+  state.doc.nodesBetween(from, to, (node) => {
+    if (node.type.name === "hardBreak") crossesLine = true;
+    return !crossesLine;
+  });
+  if (crossesLine) return null;
+  const tr = state.tr.addMark(from, to, markType.create());
+  // Nearby delimiters can change how the saved span parses. Atoms are opaque
+  // to inline markdown, so use a placeholder instead of parsing their sources.
+  const children: ProseMirrorNode[] = [];
+  tr.doc.resolve(from).parent.forEach((node) => {
+    children.push(
+      node.isAtom && !node.isText && node.type.name !== "hardBreak"
+        ? state.schema.text("\uFFFC", node.marks)
+        : node,
+    );
+  });
+  const paragraph = state.schema.nodes.paragraph!.create(null, children);
+  const markdown = serializeEditorDoc(state.doc.type.create(null, paragraph)).value;
+  const rebuilt = buildTiptapContent(markdown, () => null, { blocks: false });
+  const restored = state.schema.nodeFromJSON({ type: "doc", content: rebuilt });
+  return paragraph.content.eq(restored.firstChild!.content) ? tr : null;
+}
+
 /**
  * The composer writes italic as `*text*`, so it keeps only the `*` shortcuts.
  * Tiptap's `_text_` rules fire on the `_` in names like `node_modules` and
@@ -330,20 +368,6 @@ export const ComposerBoldExtension = Bold.extend({
 export const ComposerStrikeExtension = Strike.extend({
   addInputRules() {
     return [markInputRuleOutsideCode(strikeInputRegex, this.type)];
-  },
-});
-
-/**
- * Mod+B bolds selected text only. Without a selection Tiptap would toggle bold
- * for the next typed text, which users hit by accident when they mean the
- * sidebar toggle. Runs ahead of the Bold extension and swallows the chord.
- */
-export const ComposerBoldSelectionOnlyExtension = Extension.create({
-  name: "composerBoldSelectionOnly",
-  priority: 1000,
-  addKeyboardShortcuts() {
-    const ignoreWithoutSelection = () => this.editor.state.selection.empty;
-    return { "Mod-b": ignoreWithoutSelection, "Mod-B": ignoreWithoutSelection };
   },
 });
 
@@ -462,7 +486,8 @@ const ComposerListItemExtension = ListItem.extend({
   addKeyboardShortcuts() {
     return {
       ...withoutBlockChords(this.parent?.(), LIST_NESTING_KEYS),
-      Backspace: () => backspaceAcrossList(this.editor),
+      // Replacing Tiptap's Backspace drops its undoInputRule, which keeps a just-typed "+ " literal.
+      Backspace: () => this.editor.commands.undoInputRule() || backspaceAcrossList(this.editor),
       Delete: () => deleteAcrossList(this.editor),
     };
   },
@@ -1052,7 +1077,12 @@ export function buildTiptapContent(
     });
     openQuote = null;
   };
-  for (const entry of entries) {
+  const isProseLine = (entry: (typeof entries)[number] | undefined, empty: boolean) =>
+    entry !== undefined &&
+    "line" in entry &&
+    !entry.line.list &&
+    (entry.line.inline.length === 0) === empty;
+  for (const [entryIndex, entry] of entries.entries()) {
     if ("quote" in entry) {
       flushLists();
       if (openQuote && openQuote.prefix !== entry.quote.prefix) flushQuote();
@@ -1060,7 +1090,11 @@ export function buildTiptapContent(
       openQuote.content.push(entry.quote.inline);
       continue;
     }
+    // The serializer separates a quote from the prose after it with one blank line; it is not an empty paragraph.
+    const quoteSeparator =
+      openQuote !== null && isProseLine(entry, true) && isProseLine(entries[entryIndex + 1], false);
     flushQuote();
+    if (quoteSeparator) continue;
     if ("code" in entry) {
       flushLists();
       blocks.push(entry.code);
@@ -1200,14 +1234,26 @@ function pushBreakRun(acc: RichAccumulator, position?: number): void {
   acc.md += 1;
 }
 
-// Separate prose from quotes to avoid lazy continuation; an empty paragraph already separates them.
-function needsBlankLineAfterQuote(previous: ProseMirrorNode, block: ProseMirrorNode): boolean {
+function horizontalRuleSource(block: ProseMirrorNode): string {
+  const source = (block.attrs as Record<string, unknown>).source;
+  return typeof source === "string" && source ? source : "---";
+}
+
+// A blank line keeps prose out of a quote (lazy continuation) and a dash rule from
+// underlining the line above into a setext heading; an empty paragraph already separates them.
+function needsBlankLineBetween(previous: ProseMirrorNode, block: ProseMirrorNode): boolean {
+  if (previous.type.name === "blockquote") {
+    return block.type.name === "paragraph" && block.content.size > 0;
+  }
   return (
-    previous.type.name === "blockquote" && block.type.name === "paragraph" && block.content.size > 0
+    block.type.name === "horizontalRule" &&
+    previous.type.name === "paragraph" &&
+    previous.content.size > 0 &&
+    /^-+[ \t]*\r?$/.test(horizontalRuleSource(block))
   );
 }
 
-// Blank-line runs own no document characters; offsets clamp to the paragraph start.
+// Blank-line runs own no document characters; offsets clamp to the start of the next block.
 function pushBlankLineRun(acc: RichAccumulator, pmPos: number): void {
   acc.runs.push({
     kind: "prefix",
@@ -1221,6 +1267,27 @@ function pushBlankLineRun(acc: RichAccumulator, pmPos: number): void {
   });
   acc.value += "\n";
   acc.md += 1;
+}
+
+// Moves an offset into a parsed `value` past the blank lines its serialization inserted,
+// treating other differences (`__` written as `**`) as same-length rewrites. When the two
+// strings do not align that way end to end, the offset is returned unmapped.
+export function serializedMarkdownOffset(
+  value: string,
+  serialized: string,
+  offset: number,
+): number {
+  if (value === serialized) return offset;
+  let index = 0;
+  let mapped = 0;
+  let target = -1;
+  while (index < value.length && mapped < serialized.length) {
+    if (index === offset && target < 0) target = mapped;
+    if (value[index] === serialized[mapped] || serialized[mapped] !== "\n") index += 1;
+    mapped += 1;
+  }
+  if (index !== value.length || mapped !== serialized.length) return offset;
+  return target < 0 ? mapped + (offset - index) : target;
 }
 
 function appendInlineRuns(
@@ -1651,7 +1718,7 @@ function serializeDoc(doc: ProseMirrorNode): RichDocMap {
   let pmBlockStart = 0;
   blocks.forEach((block, blockIndex) => {
     if (blockIndex > 0 && !isTrailingLineAfterRule(doc, blockIndex)) pushBreakRun(acc);
-    if (blockIndex > 0 && needsBlankLineAfterQuote(blocks[blockIndex - 1]!, block)) {
+    if (blockIndex > 0 && needsBlankLineBetween(blocks[blockIndex - 1]!, block)) {
       pushBlankLineRun(acc, pmBlockStart + 1);
     }
     if (LIST_NODE_NAMES.has(block.type.name)) {
@@ -1679,8 +1746,7 @@ function serializeDoc(doc: ProseMirrorNode): RichDocMap {
       acc.md += prefix.length;
       appendInlineRuns(block, pmBlockStart + 1, acc);
     } else if (block.type.name === "horizontalRule") {
-      const attrs = block.attrs as Record<string, unknown>;
-      const source = typeof attrs.source === "string" && attrs.source ? attrs.source : "---";
+      const source = horizontalRuleSource(block);
       acc.runs.push({
         kind: "prefix",
         flatStart: acc.flat,

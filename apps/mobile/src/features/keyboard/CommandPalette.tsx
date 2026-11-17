@@ -1,3 +1,4 @@
+import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { useAtomValue } from "@effect/atom-react";
 import { uuidv4 } from "../../lib/uuid";
 import { useNavigation } from "@react-navigation/native";
@@ -8,7 +9,8 @@ import {
   type EnvironmentThreadSearchMatch,
   type ShownOrder,
 } from "@t3tools/client-runtime/state/thread-search";
-import { isListedThreadLineage, THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
+import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
+import { THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
 import {
   foldSearchQuery,
   PALETTE_MESSAGE_LIMIT,
@@ -19,7 +21,6 @@ import {
 } from "@t3tools/shared/paletteSearch";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  FlatList,
   KeyboardAvoidingView,
   Modal,
   Pressable,
@@ -43,6 +44,7 @@ import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
 import {
+  useDelegatedUnderParent,
   useProjects,
   useServerConfigs,
   useThreadShell,
@@ -227,6 +229,7 @@ export function CommandPalette(props: {
   const runCommand = props.onCommand;
   const projects = useProjects();
   const threads = useVisibleThreadShells();
+  const delegatedUnderParent = useDelegatedUnderParent();
   const activeThreadRef = parseActiveThreadPath(props.pathname);
   const activeThread = useThreadShell(activeThreadRef);
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
@@ -240,7 +243,7 @@ export function CommandPalette(props: {
   const pendingAction = useRef<(() => void) | null>(null);
   const closing = useRef(false);
   const inputRef = useRef<TextInputInstance>(null);
-  const listRef = useRef<FlatList<CommandPaletteResult>>(null);
+  const listRef = useRef<LegendListRef>(null);
   const { width, height } = useWindowDimensions();
   // The palette floats above every column, so it keeps itself inside the window's side insets
   // and to one side of a book fold.
@@ -426,7 +429,15 @@ export function CommandPalette(props: {
         }),
     }));
     const threadItems: CommandPaletteItem[] = threads
-      .filter((thread) => thread.archivedAt === null && isListedThreadLineage(thread.lineage))
+      .filter(
+        (thread) =>
+          thread.archivedAt === null &&
+          !isShownUnderParent(
+            { environmentId: thread.environmentId, threadId: thread.id },
+            thread.lineage,
+            delegatedUnderParent,
+          ),
+      )
       .map((thread) => {
         const project = projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId));
         const environment =
@@ -473,6 +484,7 @@ export function CommandPalette(props: {
     selectDetail,
     startTriage,
     threads,
+    delegatedUnderParent,
     triageEnvironmentId,
   ]);
   const rankedMessageKeys = useMemo(() => {
@@ -663,25 +675,30 @@ export function CommandPalette(props: {
                   />
                 </View>
               </View>
-              <FlatList
+              {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- The palette is a modal with no navigation header to register with. */}
+              <LegendList
                 ref={listRef}
                 data={results}
-                extraData={selectedKey}
+                extraData={{
+                  selectedKey,
+                  firstMessageIndex,
+                  contentMatchByKey,
+                  query: search.query,
+                }}
                 keyboardShouldPersistTaps="handled"
                 keyExtractor={(item) => item.key}
-                getItemLayout={(_, index) => ({
-                  length: ROW_HEIGHT + (index === firstMessageIndex ? SECTION_LABEL_HEIGHT : 0),
-                  offset:
-                    ROW_HEIGHT * index +
-                    (firstMessageIndex !== -1 && index > firstMessageIndex
-                      ? SECTION_LABEL_HEIGHT
-                      : 0),
-                  index,
-                })}
-                contentContainerClassName="pb-2"
+                getFixedItemSize={(_, index) =>
+                  ROW_HEIGHT + (index === firstMessageIndex ? SECTION_LABEL_HEIGHT : 0)
+                }
+                recycleItems
+                contentContainerStyle={{ paddingBottom: 8 }}
                 ListEmptyComponent={
                   <Text className="p-5 text-center text-foreground-muted">
-                    {search.isPending ? "Searching…" : "No results"}
+                    {search.isPending
+                      ? "Searching…"
+                      : search.failed
+                        ? "Couldn't search messages"
+                        : "No results"}
                   </Text>
                 }
                 // Message results from slower environments may still arrive below.
