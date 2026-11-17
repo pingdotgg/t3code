@@ -19,7 +19,13 @@ import { ChildProcessSpawner } from "effect/process";
 import * as Metric from "effect/Metric";
 import { assert, it } from "@effect/vitest";
 
-import { CheckpointRef, GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  GitCommandError,
+  VcsProcessExitError,
+  VcsProcessOutputLimitError,
+  VcsProcessTimeoutError,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as ServerConfig from "../config.ts";
@@ -1383,6 +1389,125 @@ it.effect.each([1_700_000_000, 1_700_000_000.9999])(
       assert.deepEqual(yield* fileSystem.readFile(indexPath), originalIndex);
       assert.deepEqual((yield* fileSystem.stat(indexPath)).mtime, originalIndexMtime);
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect.each([
+  "local",
+  "mixed",
+  "incomplete",
+  "exit",
+  "timeout",
+  "output-limit",
+  "interrupt",
+] as const)("checkpoint authorship uses local evidence or full fallback ($0)", (mode) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const liveProcess = yield* VcsProcess.VcsProcess;
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-authorship-" });
+    const { git } = yield* makeCheckpointFixture(driver, cwd);
+    yield* git(["commit", "-am", "baseline"]);
+    const fromCheckpointRef = CheckpointRef.make("refs/t3/checkpoints/authorship/from");
+    const toCheckpointRef = CheckpointRef.make("refs/t3/checkpoints/authorship/to");
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: fromCheckpointRef });
+    if (mode === "mixed") {
+      yield* fs.writeFileString(path.join(cwd, "imported.txt"), "upstream\n");
+      yield* git(["add", "."]);
+      const tree = (yield* git(["write-tree"])).stdout.trim();
+      const imported = (yield* git([
+        "commit-tree",
+        tree,
+        "-p",
+        "HEAD",
+        "-m",
+        "upstream",
+      ])).stdout.trim();
+      yield* git([
+        "update-ref",
+        "--create-reflog",
+        "-m",
+        "fetch origin: fast-forward",
+        "refs/remotes/origin/main",
+        imported,
+      ]);
+      yield* git(["reset", "--hard", imported]);
+    }
+    yield* fs.writeFileString(path.join(cwd, "local.txt"), "local\n");
+    yield* git(["add", "."]);
+    yield* git(["commit", "-m", "local"]);
+    yield* driver.checkpoints.captureCheckpoint({
+      cwd,
+      checkpointRef: toCheckpointRef,
+      previousCheckpointRef: fromCheckpointRef,
+    });
+
+    const reflogScopes: string[] = [];
+    const queryDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) => {
+          if (!input.args.includes("--walk-reflogs")) return liveProcess.run(input);
+          const scope = input.args.includes("--all") ? "--all" : "HEAD";
+          assert.include(input.args, scope);
+          reflogScopes.push(scope);
+          if (scope === "--all") return liveProcess.run(input);
+
+          assert.include(input.args, "--max-count=512");
+          assert.strictEqual(input.timeoutMs, 1_000);
+          assert.strictEqual(input.outputMode, "error");
+          const context = {
+            operation: input.operation,
+            command: input.command,
+            cwd: input.cwd,
+          };
+          switch (mode) {
+            case "exit":
+              return Effect.fail(
+                new VcsProcessExitError({
+                  ...context,
+                  exitCode: 1,
+                  detail: "HEAD reflog unavailable.",
+                }),
+              );
+            case "timeout":
+              return Effect.fail(new VcsProcessTimeoutError({ ...context, timeoutMs: 1_000 }));
+            case "output-limit":
+              return Effect.fail(
+                new VcsProcessOutputLimitError({
+                  ...context,
+                  stream: "stdout",
+                  maxBytes: 10_000_000,
+                  observedBytes: 10_000_001,
+                }),
+              );
+            case "interrupt":
+              return Effect.interrupt;
+            case "incomplete":
+              return liveProcess
+                .run(input)
+                .pipe(Effect.map((result) => ({ ...result, stdout: "" })));
+            default:
+              return liveProcess.run(input);
+          }
+        },
+      }),
+    );
+    const query = queryDriver.checkpoints.listAuthoredPaths({
+      cwd,
+      fromCheckpointRef,
+      toCheckpointRef,
+    });
+    if (mode === "interrupt") {
+      const exit = yield* Effect.exit(query);
+      assert.isTrue(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
+    } else {
+      assert.deepEqual(yield* query, new Set(["local.txt"]));
+    }
+    assert.deepEqual(
+      reflogScopes,
+      mode === "local" || mode === "interrupt" ? ["HEAD"] : ["HEAD", "--all"],
+    );
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 it.effect("a branch switch landing after the snapshot belongs to the next checkpoint", () =>
