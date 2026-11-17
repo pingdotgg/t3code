@@ -7,6 +7,7 @@ import {
   hostCredentialSettingsFields,
   isChangeRequestAuthorityOfProject,
   parseChangeRequestPath,
+  parseIssuePath,
   parseCommitPath,
   remoteWebOrigin,
 } from "@t3tools/source-control-core/shared/definition";
@@ -16,6 +17,10 @@ import { azureDevOpsOrganizationKey } from "./organization.ts";
 // Azure DevOps Server runs on any hostname; its `_git` route identifies it.
 const CHANGE_REQUEST_PATH = /^\/((?:[^/]+\/)*_git\/[^/]+)\/pullrequest\/(\d+)(?:\/|$)/u;
 const COMMIT_PATH = /^\/((?:[^/]+\/)*_git\/[^/]+)\/commit\/([0-9a-f]+)\/?$/iu;
+// Work items belong to the project: /{organization}/{project}/_workitems/edit/{id}.
+const WORK_ITEM_PATH = /^\/([^/]+\/[^/]+)\/_workitems\/edit\/(\d+)(?:\/|$)/u;
+// A legacy organization is its hostname: https://{organization}.visualstudio.com/{project}/...
+const LEGACY_WORK_ITEM_PATH = /^\/([^/]+)\/_workitems\/edit\/(\d+)(?:\/|$)/u;
 const CHECKOUT_COMMAND = /^az\s+repos\s+pr\s+checkout\s+(.+)$/i;
 const CHANGE_REQUEST_REFERENCE =
   /^https:\/\/(?:dev\.azure\.com\/[^/\s]+\/[^/\s]+|[^/\s]+\.visualstudio\.com\/(?:DefaultCollection\/)?[^/\s]+)\/_git\/[^/\s]+\/pullrequest\/(\d+)(?:[/?#].*)?$/i;
@@ -137,6 +142,17 @@ export const definition = defineSourceControl({
     const link = parseChangeRequestPath(url, CHANGE_REQUEST_PATH);
     return link === null || url.port === "" ? link : { ...link, authority: url.host.toLowerCase() };
   },
+  // A project named with spaces arrives percent-encoded; the binding it is matched against is not.
+  parseIssueUrl: (url) => {
+    const link =
+      parseIssuePath(url, WORK_ITEM_PATH) ??
+      (url.hostname.toLowerCase().endsWith(".visualstudio.com")
+        ? parseIssuePath(url, LEGACY_WORK_ITEM_PATH)
+        : null);
+    return link === null
+      ? null
+      : { ...link, scope: link.scope.split("/").map(decodeUrlPathSegment).join("/").toLowerCase() };
+  },
   changeRequestUrlFromReferenceAutolink: () => null,
   changeRequestActions: new Set([
     "merge",
@@ -172,6 +188,15 @@ export const definition = defineSourceControl({
     const segments = (identity.displayName ?? "").split("/").filter((part) => part !== "_git");
     const name = identity.name || segments.at(-1);
     return name ? decodeUrlPathSegment(name) : null;
+  },
+  // Work items belong to the project: `organization/project` out of the remote's
+  // `organization/project/_git/repository`. A shorter path is not placed: `acme/_git/web` is a
+  // project named after its repository on dev.azure.com and a bare project on a legacy host, and
+  // nothing here says which host the remote is on.
+  issueScope: (identity) => {
+    const segments = (identity.displayName ?? "").split("/").filter((part) => part !== "");
+    const at = segments.indexOf("_git");
+    return at === 2 ? segments.slice(0, at).map(decodeUrlPathSegment).join("/") : null;
   },
   repositoryKeyFromRemote,
   canonicalRepositoryKey,

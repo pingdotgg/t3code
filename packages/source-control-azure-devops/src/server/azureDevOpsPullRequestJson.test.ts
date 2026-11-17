@@ -42,7 +42,15 @@ const asJson = (value: unknown) => JSON.stringify(value);
 
 describe("decodePullRequestListJson", () => {
   it("reads a pull request as a change request", () => {
-    const batch = expectSuccess(decodePullRequestListJson(asJson([pullRequest()])));
+    const batch = expectSuccess(
+      decodePullRequestListJson(
+        asJson([
+          pullRequest({
+            labels: [{ id: "4f1c", name: "release-1.0", active: true, url: null }],
+          }),
+        ]),
+      ),
+    );
 
     expect(batch.items).toHaveLength(1);
     expect(batch.items[0]).toMatchObject({
@@ -54,6 +62,7 @@ describe("decodePullRequestListJson", () => {
       state: "open",
       isDraft: false,
       mergeability: "mergeable",
+      labels: [{ name: "release-1.0" }],
     });
   });
 
@@ -348,15 +357,33 @@ describe("decodeIterationChangesJson", () => {
               item: { path: "/README.md", objectId: "8f80", originalObjectId: "0ca4" },
             },
             { changeType: "delete", item: { path: "/OLD.md", originalObjectId: "1111" } },
+            // Azure names a deleted file only where it came from.
+            {
+              changeType: "delete",
+              originalPath: "/GONE.md",
+              item: { path: null, objectId: "2222", originalObjectId: "2222" },
+            },
+            { changeType: "delete", sourceServerItem: "/src/gone.ts", item: { objectId: null } },
+            { changeType: "delete", item: { originalObjectId: "3333" } },
+            { changeType: "edit", originalPath: "/LOST.md", item: { objectId: "4444" } },
           ],
         }),
       ),
     );
 
-    expect(page.changes.map((change) => [change.path, change.changeKind])).toEqual([
-      ["DEMO.md", "new"],
-      ["README.md", "change"],
-      ["OLD.md", "deleted"],
+    expect(
+      page.changes.map((change) => [
+        change.path,
+        change.oldPath,
+        change.changeKind,
+        change.objectId,
+      ]),
+    ).toEqual([
+      ["DEMO.md", "DEMO.md", "new", "ec00"],
+      ["README.md", "README.md", "change", "8f80"],
+      ["OLD.md", "OLD.md", "deleted", null],
+      ["GONE.md", "GONE.md", "deleted", null],
+      ["src/gone.ts", "src/gone.ts", "deleted", null],
     ]);
   });
 

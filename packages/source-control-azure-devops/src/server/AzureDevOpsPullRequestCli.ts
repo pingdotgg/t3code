@@ -10,6 +10,7 @@ import type {
   PullRequestCheck,
   PullRequestComment,
   PullRequestInvolvement,
+  PullRequestLabel,
   PullRequestListState,
   PullRequestMergeMethod,
 } from "@t3tools/contracts";
@@ -24,6 +25,7 @@ import {
   decodeItemContentJson,
   decodeIterationChangesJson,
   decodeIterationsJson,
+  decodeLabelsJson,
   decodePolicyChecksJson,
   decodePullRequestJson,
   decodePullRequestListJson,
@@ -190,6 +192,13 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly number: number;
     }) => Effect.Effect<ReadonlyArray<PullRequestComment>, AzureDevOpsPullRequestCliError>;
 
+    /** `az repos pr show` returns null labels, so the detail reads them here. */
+    readonly listLabels: (input: {
+      readonly cwd: string;
+      readonly location: AzureDevOpsRepositoryLocation;
+      readonly number: number;
+    }) => Effect.Effect<ReadonlyArray<PullRequestLabel>, AzureDevOpsPullRequestCliError>;
+
     readonly listIterations: (input: {
       readonly cwd: string;
       readonly location: AzureDevOpsRepositoryLocation;
@@ -336,21 +345,23 @@ const make = Effect.gen(function* () {
     });
 
   /** Use the extension's credentials; `az rest` uses the default tenant. */
-  const invoke = <A>(input: {
-    readonly cwd: string;
-    readonly operation: string;
-    readonly resource: string;
-    readonly routeParameters: ReadonlyArray<string>;
-    readonly queryParameters?: ReadonlyArray<string>;
-    /** The same resource's REST URL, read first when present. */
-    readonly restUrl?: string | undefined;
-    readonly maxOutputBytes: number;
-    readonly decode: (raw: string) => Result.Result<A, unknown>;
-  }): Effect.Effect<A, AzureDevOpsPullRequestCliError> => {
+  const invoke = <A>(
+    input: {
+      readonly cwd: string;
+      readonly operation: string;
+      readonly resource: string;
+      readonly routeParameters: ReadonlyArray<string>;
+      readonly queryParameters?: ReadonlyArray<string>;
+      readonly decode: (raw: string) => Result.Result<A, unknown>;
+    } & (
+      | { readonly restUrl?: undefined; readonly maxOutputBytes?: number }
+      | { readonly restUrl: string | undefined; readonly maxOutputBytes: number }
+    ),
+  ): Effect.Effect<A, AzureDevOpsPullRequestCliError> => {
     const viaCli = Effect.suspend(() =>
       executeJson({
         cwd: input.cwd,
-        maxOutputBytes: input.maxOutputBytes,
+        ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
         args: [
           "devops",
           "invoke",
@@ -706,6 +717,16 @@ const make = Effect.gen(function* () {
         restUrl: restUrl(input.location, `pullRequests/${input.number}/threads`),
         maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
         decode: decodeThreadsJson,
+      });
+    }),
+
+    listLabels: Effect.fn("AzureDevOpsPullRequestCli.listLabels")(function (input) {
+      return invoke({
+        cwd: input.cwd,
+        operation: "listLabels",
+        resource: "pullRequestLabels",
+        routeParameters: pullRequestRoute(input),
+        decode: decodeLabelsJson,
       });
     }),
 

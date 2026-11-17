@@ -47,7 +47,8 @@ describe("classifyReachability", () => {
     [{ kind: "status", status: 502 }, "origin_unreachable"],
     [{ kind: "status", status: 530 }, "no_connector"],
     [{ kind: "status", status: 530, cloudflareError: "1033" }, "no_connector"],
-    [{ kind: "status", status: 530, cloudflareError: "1016" }, "unexpected_response"],
+    [{ kind: "status", status: 530, cloudflareError: "1016" }, "dns_failed"],
+    [{ kind: "status", status: 530, cloudflareError: "1001" }, "unexpected_response"],
     [{ kind: "network_error" }, "timeout"],
   ] as const)("maps endpoint result %o to %s", (endpoint, cause) => {
     expect(classifyReachability(facts({ endpoint, edgeReachable: true }), checkedAt)).toMatchObject(
@@ -209,7 +210,7 @@ describe("ConnectReachability stale connector recovery", () => {
         expect(yield* reachability.check).toMatchObject({ status: "reachable" });
         status = 530;
         body = { cloudflareError: 1016 };
-        expect(yield* reachability.check).toMatchObject({ cause: "unexpected_response" });
+        expect(yield* reachability.check).toMatchObject({ cause: "dns_failed" });
         yield* TestClock.adjust(Duration.minutes(2));
         expect(yield* Queue.size(restarts)).toBe(0);
 
