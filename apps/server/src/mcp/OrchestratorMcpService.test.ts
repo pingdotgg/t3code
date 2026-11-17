@@ -24,6 +24,7 @@ import {
   ProviderTurnId,
   RunId,
   ThreadId,
+  TurnItemId,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadProjection,
@@ -250,6 +251,147 @@ describe("OrchestratorMcpService", () => {
         const commandIds = yield* Ref.get(acknowledgementCommandIds);
         assert.equal(commandIds.length, 2);
         assert.notEqual(commandIds[0], commandIds[1]);
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
+  it.effect("reports a child's report when a later queued run ends without text", () =>
+    Effect.gen(function* () {
+      const parentThreadId = ThreadId.make("thread:mcp-silent-parent");
+      const childThreadId = ThreadId.make("thread:mcp-silent-child");
+      const taskId = NodeId.make("node:mcp-silent-task");
+      const reportRunId = RunId.make("run:mcp-silent-report");
+      const wakeRunId = RunId.make("run:mcp-silent-wake");
+      const parentProjection = {
+        thread: { id: parentThreadId },
+        runs: [],
+        contextTransfers: [],
+        subagents: [
+          {
+            id: taskId,
+            threadId: parentThreadId,
+            origin: "app_owned",
+            childThreadId,
+            driver: "codex",
+            model: "gpt-5.6-terra",
+            status: "running",
+            result: null,
+          },
+        ],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const childProjection = {
+        thread: { id: childThreadId, title: "Child" },
+        runs: [
+          {
+            id: reportRunId,
+            ordinal: 1,
+            status: "completed",
+            startedAt: DateTime.makeUnsafe("2026-10-03T10:00:00Z"),
+            completedAt: DateTime.makeUnsafe("2026-10-03T10:01:00Z"),
+          },
+          {
+            id: wakeRunId,
+            ordinal: 2,
+            status: "completed",
+            startedAt: DateTime.makeUnsafe("2026-10-03T10:02:00Z"),
+            completedAt: DateTime.makeUnsafe("2026-10-03T10:03:00Z"),
+          },
+        ],
+        contextTransfers: [],
+        messages: [
+          {
+            id: MessageId.make("message:mcp-silent-report"),
+            runId: reportRunId,
+            role: "assistant",
+            text: "REPORT-OK",
+            createdAt: DateTime.makeUnsafe("2026-10-03T10:01:00Z"),
+            updatedAt: DateTime.makeUnsafe("2026-10-03T10:01:00Z"),
+          },
+        ],
+        turnItems: [
+          {
+            id: TurnItemId.make("turn-item:mcp-silent-report"),
+            runId: reportRunId,
+            type: "assistant_message",
+            messageId: MessageId.make("message:mcp-silent-report"),
+            text: "REPORT-OK",
+            ordinal: 1,
+          },
+        ],
+        subagents: [],
+        providerThreads: [],
+        providerTurns: [],
+        runtimeRequests: [],
+      } as unknown as OrchestrationV2ThreadProjection;
+      let finalized = false;
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId, _fields, filter) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? finalized
+                  ? {
+                      ...parentProjection,
+                      subagents: parentProjection.subagents.map((task) => ({
+                        ...task,
+                        status: "completed" as const,
+                        result: "REPORT-OK",
+                      })),
+                    }
+                  : parentProjection
+                : {
+                    ...childProjection,
+                    messages: childProjection.messages.filter(
+                      (message) =>
+                        (filter?.messageRoles?.includes(message.role) ?? true) &&
+                        (filter?.messageRunIds === undefined ||
+                          (message.runId !== null && filter.messageRunIds.includes(message.runId))),
+                    ),
+                    turnItems: childProjection.turnItems.filter(
+                      (item) => filter?.turnItemRunIds?.includes(item.runId) ?? true,
+                    ),
+                  },
+            ),
+          delegatedTaskResultPending: () => Effect.succeed(false),
+          dispatch: () => Effect.succeed({} as never),
+        }),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      const scope: McpInvocationScope = {
+        environmentId: EnvironmentId.make("environment:mcp-silent"),
+        requestNamespace: "provider-session:mcp-silent",
+        thread: {
+          threadId: parentThreadId,
+          providerSessionId: "provider-session:mcp-silent",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const pending = yield* service.taskStatus(scope, taskId);
+        assert.equal(pending.status, "completed");
+        assert.equal(pending.latestTerminalRunId, wakeRunId);
+        assert.equal(pending.summary, "REPORT-OK");
+        // Null means the latest terminal run reports the same text as the task.
+        assert.isNull(pending.latestTerminalSummary);
+        finalized = true;
+        const stored = yield* service.taskStatus(scope, taskId);
+        assert.equal(stored.summary, "REPORT-OK");
+        assert.isNull(stored.latestTerminalSummary);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );

@@ -91,6 +91,7 @@ import * as Stream from "effect/Stream";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
+  subagentReportRunIds,
   subagentResultForRun,
   delegatedTaskProgress,
 } from "@t3tools/provider-core/server/subagentProjection";
@@ -1741,11 +1742,22 @@ const make = Effect.gen(function* () {
         [taskResultRun?.id, terminalRun?.id].filter((id): id is RunId => id !== undefined),
       ),
     ];
+    const reportCandidates =
+      followupRuns ?? childControls.runs.filter((run) => run.delegatedTaskId === undefined);
+    const reportRunIds = [
+      ...new Set(
+        [taskResultRun, terminalRun].flatMap((run) =>
+          run === undefined
+            ? []
+            : subagentReportRunIds(reportCandidates, childControls.messages, run),
+        ),
+      ),
+    ];
     const resultRecords = yield* threadManagement
       .getThreadRecords(task.childThreadId, ["messages", "turnItems"], {
         messageRoles: ["assistant"],
         messageRunIds: resultRunIds,
-        turnItemRunIds: resultRunIds,
+        turnItemRunIds: reportRunIds,
         turnItemTypes: ["assistant_message", "error", "system_notice"],
       })
       .pipe(Effect.mapError(threadManagementFailure));

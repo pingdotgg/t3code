@@ -314,7 +314,7 @@ export function subagentHoldsCompletion(
 }
 
 /** Monitor updates report progress, never a task's result. */
-export function monitorUpdateRunIds(
+function monitorUpdateRunIds(
   messages: ReadonlyArray<Pick<OrchestrationV2ConversationMessage, "runId" | "notification">>,
 ) {
   return new Set(
@@ -326,6 +326,31 @@ export function monitorUpdateRunIds(
       )
       .map((message) => message.runId),
   );
+}
+
+/**
+ * Runs whose assistant text `subagentResultForRun` may report for `resultRun`: the run itself
+ * and, when it completed, the task's earlier runs that can hold its report.
+ */
+export function subagentReportRunIds(
+  taskRuns: ReadonlyArray<OrchestrationV2Run>,
+  messages: ReadonlyArray<Pick<OrchestrationV2ConversationMessage, "runId" | "notification">>,
+  resultRun: Pick<OrchestrationV2Run, "id" | "ordinal" | "status">,
+): ReadonlyArray<OrchestrationV2Run["id"]> {
+  if (resultRun.status !== "completed") return [resultRun.id];
+  const monitorRuns = monitorUpdateRunIds(messages);
+  return [
+    resultRun.id,
+    ...taskRuns
+      .filter(
+        (run) =>
+          run.id !== resultRun.id &&
+          run.ordinal <= resultRun.ordinal &&
+          run.status !== "rolled_back" &&
+          !monitorRuns.has(run.id),
+      )
+      .map((run) => run.id),
+  ];
 }
 
 export function delegatedTaskProgress(projection: {
