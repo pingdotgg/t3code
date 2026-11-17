@@ -15,7 +15,8 @@ type TextPart = string | typeof CELL_START | typeof CELL_END | { fallback: strin
 
 const TRUNCATED = "\n\n[Extracted text truncated at document extraction limits.]";
 // Parts the document never displays: the XHTML head, tracked deletions and moves, field codes,
-// phonetic guides, paragraph properties such as tab-stop definitions.
+// phonetic guides, paragraph properties such as tab-stop definitions, drawing anchor layout
+// values and encoded field data.
 const HIDDEN = new Set([
   "head",
   "script",
