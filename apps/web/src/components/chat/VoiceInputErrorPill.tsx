@@ -106,7 +106,7 @@ export function VoiceInputErrorPill(props: {
               props.onRetry();
             }
           }}
-          className="ms-auto shrink-0"
+          className="ms-auto shrink-0 [-webkit-app-region:no-drag]"
         >
           {action.text}
         </Button>
