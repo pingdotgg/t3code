@@ -23,6 +23,7 @@ import {
   placeLayoutTabs,
   replaceLayoutTabContent,
   resizeLayoutColumnEdge,
+  sameLayoutSpan,
   selectFocusedTab,
   selectFocusedLayoutGhostId,
   selectFocusedWorkspace,
@@ -754,6 +755,42 @@ describe("selectLayoutStripSize", () => {
         }
       }
     }
+  });
+});
+
+describe("sameLayoutSpan", () => {
+  const workspace = {
+    id: "workspace",
+    name: null,
+    focusedPaneId: "chat-pane",
+    cameraWidth: 1094,
+    columns: [column("chat", 0.75), column("pulls", 0.75)],
+  };
+  const spanAt = (width: number, at = workspace, index = 0) => {
+    const { slots, stripWidth } = selectLayoutPaneSlots(at, {
+      width,
+      whenNoRoom: "shrink-then-scroll",
+    });
+    const slot = slots[index]!;
+    return {
+      paneId: slot.paneId,
+      left: slot.rect.left,
+      width: slot.rect.width,
+      px: Math.round(slot.rect.width * stripWidth * width),
+    };
+  };
+
+  it("keeps the focused pane's span at every strip width, where its pixel width rounds either way", () => {
+    const widths = Array.from({ length: 532 }, (_, index) => 900 + index);
+    const resting = spanAt(1174);
+    expect(widths.filter((width) => spanAt(width).px !== resting.px).length).toBeGreaterThan(0);
+    for (const width of widths) expect(sameLayoutSpan(spanAt(width), resting)).toBe(true);
+  });
+
+  it("tells a resized column and another pane apart", () => {
+    const resized = { ...workspace, columns: [column("chat", 0.76), column("pulls", 0.74)] };
+    expect(sameLayoutSpan(spanAt(1174, resized), spanAt(1174))).toBe(false);
+    expect(sameLayoutSpan(spanAt(1174, workspace, 1), spanAt(1174))).toBe(false);
   });
 });
 

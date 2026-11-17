@@ -13,7 +13,7 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
 import { cn, isMacPlatform } from "../lib/utils";
 import { scrollTabStripFromRow, sidewaysWheelScrollsStrip, wheelDeltaPx } from "../motion/gesture";
-import { PaneMotionSnapshot, usePaneMotion } from "../motion/paneMotion";
+import { noteStripScroll, PaneMotionSnapshot, usePaneMotion } from "../motion/paneMotion";
 import {
   ChatPanelAnimationSuppressionProvider,
   usePanelNavigationSuppression,
@@ -65,6 +65,7 @@ import { ThreadSurfaceServices, ThreadSurfaceTab } from "../components/ThreadSur
 import { findThreadChat, useLayoutSurfaceSync } from "./surfaceSync";
 import {
   isLayoutPageContent,
+  sameLayoutSpan,
   selectFocusedPane,
   selectFocusedTab,
   selectFocusedWorkspace,
@@ -72,6 +73,7 @@ import {
   selectLayoutStripSize,
   selectWindowStartPaneId,
   type LayoutColumn,
+  type LayoutSpan,
   type LayoutSurfaceContent,
   type LayoutLauncherContent,
   type LayoutPaneSlot,
@@ -359,9 +361,10 @@ interface StripSpan {
 }
 
 /** Preserve screen positions when the strip edge shifts, except at its start. Reveal focused panes
- * after resizing without exposing trailing chrome. */
+ * after its end moves without exposing trailing chrome. */
 function useStripResizeScroll(
   scrollerRef: React.RefObject<HTMLDivElement | null>,
+  stageRef: React.RefObject<HTMLDivElement | null>,
   focusedSpanRef: React.RefObject<StripSpan | null>,
   active: boolean,
 ): void {
@@ -369,44 +372,82 @@ function useStripResizeScroll(
   useLayoutEffect(() => {
     const scroller = scrollerRef.current;
     if (!scroller || !active) return;
-    // The scroll from before the latest resize, as the observer last left it.
-    let scrollLeft = scroller.scrollLeft;
-    let width = scroller.clientWidth;
-    let left = scroller.getBoundingClientRect().left;
+    let target = scroller.scrollLeft;
+    let landed = target;
+    let offset = 0;
+    let owed = 0;
+    let owedStage = 0;
+    let { left, right, width } = scroller.getBoundingClientRect();
+    const content = () => stageRef.current?.getBoundingClientRect().width ?? scroller.scrollWidth;
+    let slack = 0;
+    const measureSlack = () => {
+      slack = Math.max(0, target - (content() - width));
+    };
+    measureSlack();
+    const place = (next: number) => {
+      if (next === offset) return;
+      offset = next;
+      scroller.style.left = next === 0 ? "" : `${next}px`;
+    };
+    const adopt = () => {
+      target = landed = scroller.scrollLeft;
+      owed = 0;
+      measureSlack();
+      place(0);
+    };
+    const moved = () => Math.abs(scroller.scrollLeft - landed) >= 1;
     const onScroll = () => {
       // The clamp of a resize the observer has not seen yet: it starts from before it.
-      if (scroller.clientWidth !== width) return;
-      scrollLeft = scroller.scrollLeft;
+      if (scroller.getBoundingClientRect().width !== width) return;
+      if (moved()) adopt();
     };
     // Runs after layout and before paint.
     const stopObserving = observeResize(scroller, () => {
-      if (scroller.clientWidth === width) return;
-      const grew = scroller.clientWidth > width;
-      width = scroller.clientWidth;
-      const nextLeft = scroller.getBoundingClientRect().left;
-      const shift = nextLeft - left;
-      left = nextLeft;
+      const box = scroller.getBoundingClientRect();
+      const boxLeft = box.left - offset;
+      const boxRight = box.right - offset;
+      if (box.width === width && boxLeft === left) return;
+      const shift = boxLeft - left;
+      const endMoved = Math.abs(boxRight - right) >= 0.5;
+      const grew = box.width > width;
+      left = boxLeft;
+      right = boxRight;
+      width = box.width;
+      const now = scroller.scrollLeft;
       // Grown past the strip's end, the browser clamped the scroll before this ran.
-      const clamped = grew && scroller.scrollLeft + width >= scroller.scrollWidth - 1;
-      const from = clamped ? scrollLeft : scroller.scrollLeft;
-      let target =
-        Math.abs(shift) < 0.5 ? scroller.scrollLeft : from > 0 ? Math.max(0, from + shift) : 0;
-      const focused = focusedSpanRef.current;
-      if (focused && focused.left < target - 1) target = focused.left;
-      else if (focused && focused.left + focused.width > target + width + 1) {
-        target = Math.min(focused.left, focused.left + focused.width - width);
+      const clamped =
+        grew && now < landed && now >= scroller.scrollWidth - scroller.clientWidth - 1;
+      if (moved() && !clamped) adopt();
+      const stage = content();
+      if (owed > 0 && stage !== owedStage) owed = 0;
+      const room = Math.max(0, stage - width) + slack;
+      const wanted = target > 0 || owed > 0 ? target - owed + shift : 0;
+      let next = Math.min(Math.max(0, wanted), room);
+      owed = Math.max(0, -wanted);
+      owedStage = stage;
+      const focused = endMoved ? focusedSpanRef.current : null;
+      if (focused) owed = 0;
+      if (focused && focused.left < next - 1) next = focused.left;
+      else if (focused && focused.left + focused.width > next + width + 1) {
+        next = Math.min(focused.left, focused.left + focused.width - width);
       }
-      scrollLeft = target;
-      if (Math.abs(target - scroller.scrollLeft) < 0.5) return;
-      settleStripCamera();
-      scroller.scrollLeft = target;
+      target = next;
+      if (Math.abs(next - scroller.scrollLeft) >= 0.01) {
+        settleStripCamera();
+        scroller.scrollLeft = next;
+        noteStripScroll(scroller);
+      }
+      landed = scroller.scrollLeft;
+      const rest = landed - next;
+      place(Math.abs(rest) < 0.01 ? 0 : rest);
     });
     scroller.addEventListener("scroll", onScroll, { passive: true });
     return () => {
       stopObserving();
       scroller.removeEventListener("scroll", onScroll);
+      place(0);
     };
-  }, [active, focusedSpanRef, scrollerRef]);
+  }, [active, focusedSpanRef, scrollerRef, stageRef]);
 }
 
 /** Pure placement derivations stay separate from the host's retained transition state. */
@@ -655,6 +696,8 @@ export function LayoutSurfaceHost({
   const focusedSlot = slots.find((slot) => slot.paneId === focusedPaneId) ?? null;
   const focusedLeft = focusedSlot ? Math.round(focusedSlot.rect.left * stripPx) : null;
   const focusedWidth = focusedSlot ? Math.round(focusedSlot.rect.width * stripPx) : null;
+  const focusedStart = focusedSlot?.rect.left ?? null;
+  const focusedShare = focusedSlot?.rect.width ?? null;
   const dragging = preview !== null;
 
   // Where the strip's camera is, in half windows: it changes a couple of
@@ -809,19 +852,33 @@ export function LayoutSurfaceHost({
   // still at 0 that it would spring sideways.
   useOverviewStage(overviewPhase, stage, scrollerRef, stageRef);
 
+  const revealedSpan = useRef<LayoutSpan | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Reveal the committed focused pane with an imperative camera move after measuring its DOM.
   useLayoutEffect(() => {
     const scroller = scrollerRef.current;
     const element = stageRef.current;
-    if (!scroller || !element || staged || stacked || dragging) return;
-    if (focusedPaneId === null || focusedLeft === null || focusedWidth === null) return;
+    if (!scroller || !element || staged || stacked || dragging || focusedPaneId === null) {
+      revealedSpan.current = null;
+      return;
+    }
+    if (
+      focusedLeft === null ||
+      focusedWidth === null ||
+      focusedStart === null ||
+      focusedShare === null
+    ) {
+      return;
+    }
+    const span = { paneId: focusedPaneId, left: focusedStart, width: focusedShare };
     // The first render sizes the strip for the window's width, before the
     // scroller is measured, and a scroll then clamps short of the pane. The
     // render with the measured width reveals it.
     if (scroller.clientWidth !== viewportWidth) return;
+    if (revealedSpan.current && sameLayoutSpan(revealedSpan.current, span)) return;
     const left = focusedLeft;
     const right = left + focusedWidth;
     return afterPressRelease(() => {
+      revealedSpan.current = span;
       const viewLeft = scroller.scrollLeft;
       const viewRight = viewLeft + scroller.clientWidth;
       let target: number | null = null;
@@ -832,10 +889,21 @@ export function LayoutSurfaceHost({
       // so the composer's caret scroll, right after, finds the pane in place.
       moveStripCamera(scroller, element, target);
     });
-  }, [dragging, focusedLeft, focusedPaneId, focusedWidth, stacked, staged, viewportWidth]);
+  }, [
+    dragging,
+    focusedLeft,
+    focusedPaneId,
+    focusedShare,
+    focusedStart,
+    focusedWidth,
+    stacked,
+    staged,
+    viewportWidth,
+  ]);
 
   useStripResizeScroll(
     scrollerRef,
+    stageRef,
     focusedSpanRef,
     !staged && !stacked && !narrow && maximizedTabId === null,
   );

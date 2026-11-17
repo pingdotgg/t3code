@@ -378,6 +378,22 @@ export function selectLayoutPaneSlots(
   return { slots, stripWidth, fits, unitWidth };
 }
 
+export interface LayoutSpan {
+  paneId: string;
+  left: number;
+  width: number;
+}
+
+const SAME_SPAN_EPSILON = 1e-9;
+
+export function sameLayoutSpan(a: LayoutSpan, b: LayoutSpan): boolean {
+  return (
+    a.paneId === b.paneId &&
+    Math.abs(a.left - b.left) < SAME_SPAN_EPSILON &&
+    Math.abs(a.width - b.width) < SAME_SPAN_EPSILON
+  );
+}
+
 export function selectLayoutStripSize(
   workspace: LayoutWorkspace,
   whenNoRoom: LayoutWhenNoRoom,
