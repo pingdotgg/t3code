@@ -1185,6 +1185,53 @@ describe("EnvironmentThreads", () => {
       }),
     );
 
+    // An expanded visit must still move the cached cursor, or every reopen replays it.
+    it.effect.each(["older history", "deferred work"] as const)(
+      "saves the live cursor after loading %s",
+      (load) =>
+        Effect.gen(function* () {
+          const anchor = {
+            ...command("anchor", "completed", 0, 1),
+            deferredWork: { cursor: "work", itemCount: 1, lastOrdinal: 2 },
+          };
+          const scope = yield* Scope.make();
+          const harness = yield* makeHarness({
+            cached: cachedItem(anchor),
+            cachedHistory: { historyCursor: "older", hasMoreHistory: true },
+            historyHttpClient: HttpClient.make((request) =>
+              Effect.succeed(
+                historyPage(
+                  request,
+                  [
+                    localRow(
+                      command("loaded", "completed", 0, load === "older history" ? 0 : 2),
+                      0,
+                    ),
+                  ],
+                  null,
+                ),
+              ),
+            ),
+          }).pipe(Scope.provide(scope));
+          const result =
+            load === "older history"
+              ? yield* harness.loadEarlier()
+              : yield* harness.loadWork(anchor.id);
+          expect(result).toEqual({ _tag: "loaded" });
+
+          yield* Queue.offer(harness.inputs, titleUpdated("Live", CACHED_SNAPSHOT_SEQUENCE + 1));
+          yield* awaitThreadState(
+            harness.observed,
+            (state) => state.sequence > CACHED_SNAPSHOT_SEQUENCE,
+          );
+          yield* TestClock.adjust("5 seconds");
+          yield* Scope.close(scope, Exit.void);
+
+          const saved = (yield* Ref.get(harness.savedThreads)).at(-1);
+          expect(saved?.snapshotSequence).toBe(CACHED_SNAPSHOT_SEQUENCE + 1);
+        }),
+    );
+
     it.effect.each(["deferred", "complete"] as const)(
       "settles a replaced work request when the new snapshot is %s",
       (mode) =>
