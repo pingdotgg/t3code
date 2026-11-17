@@ -94,6 +94,11 @@ export interface TrackerIssueDetail extends TrackerIssueSummary {
   readonly linkedPullRequests: ReadonlyArray<IssueLinkedPullRequest>;
 }
 
+/** Whose issues a listing keeps. Only a filter by the signed-in account names that account. */
+export type IssueListInvolvement =
+  | { readonly involvement: "all" }
+  | { readonly involvement: Exclude<IssueInvolvement, "all">; readonly viewer: string };
+
 export interface IssueTrackerApi {
   readonly kind: IssueTrackerKind;
   readonly capabilities: IssueCapabilities;
@@ -105,21 +110,20 @@ export interface IssueTrackerApi {
   }) => Effect.Effect<string, IssueTrackerError>;
 
   readonly listIssues: (
-    input: IssueScopeTarget & {
-      readonly state: IssueListState;
-      readonly involvement: IssueInvolvement;
-      readonly viewer: string;
-      readonly limit: number;
-      /** Free text as the tracker understands it; ignored by a tracker without `search`. */
-      readonly query?: string | undefined;
-      /** Label names an issue must carry, every one of them. */
-      readonly labels?: ReadonlyArray<string> | undefined;
-      /** The `login` of an assignee, as this tracker's own issues name them. */
-      readonly assignee?: string | undefined;
-      readonly sort: IssueListSort;
-      /** A cursor this tracker handed back from an earlier page. Absent asks for the first. */
-      readonly cursor?: string | undefined;
-    },
+    input: IssueScopeTarget &
+      IssueListInvolvement & {
+        readonly state: IssueListState;
+        readonly limit: number;
+        /** Free text as the tracker understands it; ignored by a tracker without `search`. */
+        readonly query?: string | undefined;
+        /** Label names an issue must carry, every one of them. */
+        readonly labels?: ReadonlyArray<string> | undefined;
+        /** The `login` of an assignee, as this tracker's own issues name them. */
+        readonly assignee?: string | undefined;
+        readonly sort: IssueListSort;
+        /** A cursor this tracker handed back from an earlier page. Absent asks for the first. */
+        readonly cursor?: string | undefined;
+      },
   ) => Effect.Effect<TrackerIssuePage, IssueTrackerError>;
 
   /** The issue with its first page of conversation, in one read where the tracker allows. */

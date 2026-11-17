@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import {
   IssueTrackerError,
+  type IssueListInvolvement,
   type IssueTrackerApi,
 } from "@t3tools/source-control-core/server/IssueTracker";
 
@@ -58,29 +59,29 @@ function searchTerms(query: string): ReadonlyArray<string> {
     .map(quotedTerm);
 }
 
-const INVOLVEMENT_QUALIFIER: Record<IssueInvolvement, string | null> = {
-  all: null,
+const INVOLVEMENT_QUALIFIER: Record<Exclude<IssueInvolvement, "all">, string> = {
   assigned: "assignee",
   authored: "author",
   mentioned: "mentions",
 };
 
-function searchQuery(input: {
-  readonly scope: string;
-  readonly state: "all" | "open" | "closed";
-  readonly involvement: IssueInvolvement;
-  readonly viewer: string;
-  readonly query?: string | undefined;
-  readonly labels?: ReadonlyArray<string> | undefined;
-  readonly assignee?: string | undefined;
-  readonly sort: IssueListSort;
-}): string {
-  const qualifier = INVOLVEMENT_QUALIFIER[input.involvement];
+function searchQuery(
+  input: IssueListInvolvement & {
+    readonly scope: string;
+    readonly state: "all" | "open" | "closed";
+    readonly query?: string | undefined;
+    readonly labels?: ReadonlyArray<string> | undefined;
+    readonly assignee?: string | undefined;
+    readonly sort: IssueListSort;
+  },
+): string {
   return [
     "is:issue",
     `repo:${input.scope.trim()}`,
     ...(input.state === "all" ? [] : [`is:${input.state}`]),
-    ...(qualifier === null ? [] : [`${qualifier}:${input.viewer}`]),
+    ...(input.involvement === "all"
+      ? []
+      : [`${INVOLVEMENT_QUALIFIER[input.involvement]}:${input.viewer}`]),
     ...(input.labels ?? []).map((label) => `label:${quotedTerm(label)}`),
     ...(input.assignee === undefined ? [] : [`assignee:${quotedTerm(input.assignee)}`]),
     `sort:${input.sort}-desc`,

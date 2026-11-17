@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import {
   IssueTrackerKind,
   type IssueCapabilities,
+  type IssueInvolvement,
   type IssueLinkedPullRequest,
   type IssueViewerPermissions,
 } from "@t3tools/contracts";
@@ -54,6 +55,12 @@ const CAPABILITIES: IssueCapabilities = {
   linkedPullRequests: true,
   events: true,
   search: true,
+};
+
+const INVOLVEMENT_PARAM: Record<Exclude<IssueInvolvement, "all">, string> = {
+  assigned: "assigned_by",
+  authored: "created_by",
+  mentioned: "mentioned_by",
 };
 
 /** Forgejo's own ceiling on a page, which a self-hosted server may lower. */
@@ -400,15 +407,8 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
         if (labels.length > 0) params.set("labels", labels.join(","));
         const text = input.query?.trim() ?? "";
         if (text.length > 0) params.set("q", text);
-        const involvement =
-          input.involvement === "assigned"
-            ? "assigned_by"
-            : input.involvement === "authored"
-              ? "created_by"
-              : input.involvement === "mentioned"
-                ? "mentioned_by"
-                : null;
-        if (involvement !== null) params.set(involvement, input.viewer);
+        if (input.involvement !== "all")
+          params.set(INVOLVEMENT_PARAM[input.involvement], input.viewer);
         if (input.assignee !== undefined) params.set("assigned_by", input.assignee);
         // `assigned_by` names one person, so "assigned to me" is kept here beside a named assignee.
         const alsoAssignedTo =

@@ -36,6 +36,7 @@ import * as SourceControlRateLimit from "@t3tools/source-control-core/server/Sou
 import {
   IssueTrackerError,
   isStandaloneIssueTracker,
+  type IssueListInvolvement,
   type IssueTrackerApi,
   type StandaloneIssueTrackerApi,
 } from "@t3tools/source-control-core/server/IssueTracker";
@@ -327,6 +328,9 @@ const make = Effect.gen(function* () {
       if (!scopes.has(key)) scopes.set(key, project);
     }
     const continuing = input.cursors;
+    const involvement = input.involvement ?? "all";
+    // A fresh listing reports the account; a continuation reads it only to filter by it.
+    const needsViewer = continuing === undefined || involvement !== "all";
     const viewers = new Map<string, string>();
     const trackers = new Map<string, IssueTrackerSummary>();
     const entries: IssueListEntry[] = [];
@@ -334,7 +338,7 @@ const make = Effect.gen(function* () {
     const nextCursors: Record<string, string> = {};
 
     const viewerRequests = new Map<string, Effect.Effect<string, IssueTrackerError>>();
-    for (const project of scopes.values()) {
+    for (const project of needsViewer ? scopes.values() : []) {
       if (viewerRequests.has(project.host)) continue;
       const request = yield* Effect.cached(
         project.api
@@ -379,15 +383,19 @@ const make = Effect.gen(function* () {
           // A continuation names the scopes it wants; one not named has nothing to add.
           if (continuing !== undefined && continuing[key] === undefined) return;
           const cursor = continuing?.[key];
-          const page = yield* viewerRequests.get(project.host)!.pipe(
-            Effect.flatMap((viewer) =>
+          const viewer = viewerRequests.get(project.host);
+          const filter: Effect.Effect<IssueListInvolvement, IssueTrackerError> =
+            involvement === "all"
+              ? Effect.as(viewer ?? Effect.void, { involvement })
+              : viewer!.pipe(Effect.map((login) => ({ involvement, viewer: login })));
+          const page = yield* filter.pipe(
+            Effect.flatMap((filter) =>
               project.api.listIssues({
+                ...filter,
                 cwd: project.project.workspaceRoot,
                 host: project.host,
                 scope: project.scope,
                 state: input.state,
-                involvement: input.involvement ?? "all",
-                viewer,
                 limit,
                 query: input.query,
                 labels: input.labels,

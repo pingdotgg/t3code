@@ -11,7 +11,6 @@ import {
   type IssueComment,
   type IssueEvent,
   type IssueExternalTemplate,
-  type IssueInvolvement,
   type IssueLinkedPullRequest,
   type IssueReaction,
   type IssueReactionContent,
@@ -22,6 +21,7 @@ import {
 } from "@t3tools/contracts";
 import {
   IssueTrackerError,
+  type IssueListInvolvement,
   type StandaloneIssueTrackerApi,
   type TrackerIssueSummary,
 } from "@t3tools/source-control-core/server/IssueTracker";
@@ -307,10 +307,7 @@ export function toTemplate(
   };
 }
 
-function involvementFilter(input: {
-  readonly involvement: IssueInvolvement;
-  readonly viewer: string;
-}): LinearApi.IssueFilter {
+function involvementFilter(input: IssueListInvolvement): LinearApi.IssueFilter {
   switch (input.involvement) {
     case "assigned":
       return { assignee: { displayName: { eq: input.viewer } } };

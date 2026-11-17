@@ -10,11 +10,11 @@ import {
   IssueTrackerKind,
   type IssueCapabilities,
   type IssueEvent,
-  type IssueInvolvement,
   type IssueViewerPermissions,
 } from "@t3tools/contracts";
 import {
   IssueTrackerError,
+  type IssueListInvolvement,
   type IssueTrackerApi,
 } from "@t3tools/source-control-core/server/IssueTracker";
 
@@ -137,11 +137,9 @@ function query(params: ReadonlyArray<readonly [string, string]>): string {
   return params.map(([key, value]) => `${key}=${encodeURIComponent(value)}`).join("&");
 }
 
-function involvementParams(input: {
-  readonly involvement: IssueInvolvement;
-  readonly viewer: string;
-  readonly assignee?: string | undefined;
-}): ReadonlyArray<readonly [string, string]> {
+function involvementParams(
+  input: IssueListInvolvement & { readonly assignee?: string | undefined },
+): ReadonlyArray<readonly [string, string]> {
   switch (input.involvement) {
     case "authored":
       return [["author_username", input.viewer]];
