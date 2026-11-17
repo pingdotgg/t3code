@@ -1123,6 +1123,35 @@ describe("AssetAccess", () => {
       expect(yield* resolveAsset(token, "../secret.txt")).toBeNull();
       expect(yield* resolveAsset(token, ".env")).toBeNull();
       expect(yield* resolveAsset(`${token}tampered`, "report.html")).toBeNull();
+
+      const reportsDirectory = path.join(root, ".reports");
+      yield* fileSystem.makeDirectory(path.join(reportsDirectory, ".cache"), { recursive: true });
+      const dotHtmlPath = path.join(reportsDirectory, "report.html");
+      const dotCssPath = path.join(reportsDirectory, "report.css");
+      yield* fileSystem.writeFileString(dotHtmlPath, "<h1>Quarterly report</h1>");
+      yield* fileSystem.writeFileString(dotCssPath, "body { color: red; }");
+      yield* fileSystem.writeFileString(path.join(reportsDirectory, ".cache", "hidden.css"), "");
+      const dotUrl = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: dotHtmlPath,
+        },
+        workspaceRoot: root,
+      });
+      const dotSuffix = dotUrl.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const dotToken = dotSuffix.slice(0, dotSuffix.indexOf("/"));
+      expect(yield* resolveAsset(dotToken, "report.html")).toEqual({
+        kind: "file",
+        path: yield* fileSystem.realPath(dotHtmlPath),
+        renderIntent: "file-preview",
+      });
+      expect(yield* resolveAsset(dotToken, "report.css")).toEqual({
+        kind: "file",
+        path: yield* fileSystem.realPath(dotCssPath),
+        renderIntent: "file-preview",
+      });
+      expect(yield* resolveAsset(dotToken, ".cache/hidden.css")).toBeNull();
       for (const extension of [
         "odt",
         "ods",
