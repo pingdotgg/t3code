@@ -12,9 +12,6 @@ export const ptBR: Messages = {
     githubStars: "{stars} estrelas no GitHub",
     language: "Idioma",
     mitLicensed: "Licença MIT",
-    terms: "Termos",
-    privacy: "Privacidade",
-    security: "Segurança",
   },
   home: {
     title: `${APP_NAME} | ${APP_SLOGAN}`,

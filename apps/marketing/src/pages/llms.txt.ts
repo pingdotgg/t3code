@@ -17,12 +17,6 @@ Official builds come from ${absoluteUrl("/download")} and ${GITHUB_REPOSITORY_UR
 - [Download ${APP_NAME}](${absoluteUrl("/download")}): macOS, Windows, and Linux installers
 - [Source code](${GITHUB_REPOSITORY_URL}): the MIT-licensed repository
 - [Releases](${GITHUB_REPOSITORY_URL}/releases): release builds and changelogs
-
-## Policies
-
-- [Security policy](${absoluteUrl("/security-policy")})
-- [Privacy policy](${absoluteUrl("/privacy-policy")})
-- [Terms of service](${absoluteUrl("/terms-of-service")})
 `;
   return new Response(body, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
 };

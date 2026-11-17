@@ -12,9 +12,6 @@ export const zh: Messages = {
     githubStars: "{stars} GitHub 星标",
     language: "语言",
     mitLicensed: "MIT 许可",
-    terms: "条款",
-    privacy: "隐私",
-    security: "安全",
   },
   home: {
     title: `${APP_NAME} | ${APP_SLOGAN}`,

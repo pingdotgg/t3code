@@ -12,9 +12,6 @@ export const ru: Messages = {
     githubStars: "{stars} звёзд на GitHub",
     language: "Язык",
     mitLicensed: "Лицензия MIT",
-    terms: "Условия",
-    privacy: "Конфиденциальность",
-    security: "Безопасность",
   },
   home: {
     title: `${APP_NAME} | ${APP_SLOGAN}`,

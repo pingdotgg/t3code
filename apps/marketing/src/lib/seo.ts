@@ -68,8 +68,4 @@ export const jsonLdGraph = (nodes: ReadonlyArray<JsonLd>): string =>
 export const STATIC_PAGES = [
   { path: "/", priority: "1.0" },
   { path: "/download", priority: "0.9" },
-  { path: "/legal", priority: "0.3" },
-  { path: "/privacy-policy", priority: "0.3" },
-  { path: "/security-policy", priority: "0.3" },
-  { path: "/terms-of-service", priority: "0.3" },
 ] as const;

@@ -12,9 +12,6 @@ export const fr: Messages = {
     githubStars: "{stars} étoiles sur GitHub",
     language: "Langue",
     mitLicensed: "Licence MIT",
-    terms: "Conditions",
-    privacy: "Confidentialité",
-    security: "Sécurité",
   },
   home: {
     title: `${APP_NAME} | ${APP_SLOGAN}`,

@@ -12,9 +12,6 @@ export const ja: Messages = {
     githubStars: "GitHub スター {stars}",
     language: "言語",
     mitLicensed: "MIT ライセンス",
-    terms: "利用規約",
-    privacy: "プライバシー",
-    security: "セキュリティ",
   },
   home: {
     title: `${APP_NAME} | ${APP_SLOGAN}`,

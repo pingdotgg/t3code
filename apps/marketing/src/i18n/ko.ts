@@ -12,9 +12,6 @@ export const ko: Messages = {
     githubStars: "GitHub 스타 {stars}",
     language: "언어",
     mitLicensed: "MIT 라이선스",
-    terms: "이용약관",
-    privacy: "개인정보처리방침",
-    security: "보안",
   },
   home: {
     title: `${APP_NAME} | ${APP_SLOGAN}`,
