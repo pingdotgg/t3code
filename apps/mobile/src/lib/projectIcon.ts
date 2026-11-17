@@ -66,15 +66,6 @@ export function resolveProjectIconGlyph(
 
 const SYMBOL_BY_LUCIDE_NAME: Partial<Record<string, AppSymbolName>> = {
   "message-square-dashed": "text.bubble",
-  info: "info.circle",
-  terminal: "terminal",
-  "globe-2": "globe",
-  server: "server.rack",
-  bot: "robot",
-  smartphone: "iphone",
-  monitor: "desktopcomputer",
-  "flask-conical": "flask",
-  image: "photo",
 };
 
 export function resolveProjectIconSymbol(

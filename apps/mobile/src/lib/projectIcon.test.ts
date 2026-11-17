@@ -1,11 +1,7 @@
 import type { ProjectIconOverride } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  projectAutoMonogram,
-  resolveProjectChipIcon,
-  resolveProjectIconSymbol,
-} from "./projectIcon";
+import { projectAutoMonogram, resolveProjectChipIcon } from "./projectIcon";
 
 const project = (title: string, projectIcon?: ProjectIconOverride) => ({
   title,
@@ -81,14 +77,5 @@ describe("projectAutoMonogram", () => {
   it("leaves untitled projects to the folder icon, like desktop", () => {
     expect(projectAutoMonogram("")).toBeNull();
     expect(projectAutoMonogram("   ")).toBeNull();
-  });
-});
-
-describe("resolveProjectIconSymbol", () => {
-  it("renders a saved Lucide icon as its native symbol, in its colour", () => {
-    expect(resolveProjectIconSymbol({ kind: "lucide", name: "info", color: "gray" })).toEqual({
-      name: "info.circle",
-      color: "gray",
-    });
   });
 });
