@@ -13,7 +13,7 @@ import { AsyncResult } from "effect/reactivity";
 
 import { assetEnvironment } from "~/state/assets";
 import { useFilesystemReadAccess } from "~/state/filesystem";
-import { usePreparedConnection } from "~/state/session";
+import { readPreparedConnection, usePreparedConnection } from "~/state/session";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 export { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
@@ -54,17 +54,20 @@ export function useAssetUrlRefresh(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
 ): () => Promise<string | null> {
-  const connection = usePreparedConnection(environmentId);
-  const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
   const refresh = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
     refresh: true,
   });
   return async () => {
-    if (environmentId === null || resource === null || httpBaseUrl === null) return null;
+    if (environmentId === null || resource === null) return null;
+    if (readPreparedConnection(environmentId) === null) return null;
     const result = await refresh({ environmentId, input: { resource } });
     if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-    return resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
+    // A route can change while the query runs; resolve against the connection now current.
+    const connection = readPreparedConnection(environmentId);
+    return connection === null
+      ? null
+      : resolveAssetUrl(connection.httpBaseUrl, result.value.relativeUrl);
   };
 }
 
