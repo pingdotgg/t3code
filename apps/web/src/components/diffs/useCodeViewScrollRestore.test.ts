@@ -52,8 +52,11 @@ function mount(
 function setup() {
   const frames: FrameRequestCallback[] = [];
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => frames.push(callback));
+  const runFrame = () => {
+    for (const callback of frames.splice(0)) callback(0);
+  };
   const runFrames = () => {
-    while (frames.length > 0) frames.shift()?.(0);
+    while (frames.length > 0) runFrame();
   };
   const scroll = (
     restore: ReturnType<typeof mount>,
@@ -64,7 +67,7 @@ function setup() {
     restore.onScroll(top, view.instance);
     runFrames();
   };
-  return { runFrames, scroll };
+  return { runFrame, runFrames, scroll };
 }
 
 describe("createCodeViewScrollRestore", () => {
@@ -85,13 +88,17 @@ describe("createCodeViewScrollRestore", () => {
   });
 
   it("reads the anchor from the viewport Pierre renders after the scroll, not the one before", () => {
-    const { runFrames } = setup();
+    const { runFrame, runFrames } = setup();
     const first = viewer({ a: 0, b: 4000, c: 8000 });
     first.instance.rendered = ["a"];
     const restore = mount("thread-e", first);
-    // A scrollbar jump notifies before the viewer renders file c.
+    first.instance.scrollTop = 104;
+    restore.onScroll(104, first.instance);
+    runFrame();
+    // The drag goes on to file c between the frames and notifies before the viewer renders it.
     first.instance.scrollTop = 8104;
     restore.onScroll(8104, first.instance);
+    runFrame();
     first.instance.rendered = ["c"];
     runFrames();
 

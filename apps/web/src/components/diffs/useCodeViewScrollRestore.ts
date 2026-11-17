@@ -72,9 +72,8 @@ export function createCodeViewScrollRestore() {
   let viewer: Viewer | undefined;
   let handle: ScrollRestoreHandle | null = null;
   let pending: ScrollAnchor | null = null;
-  let captureQueued = false;
+  let captureRequest = 0;
   const capture = (source: object) => {
-    captureQueued = false;
     if (!handle || source !== viewer || pending !== null || scopeKey === null) return;
     const scrollTop = viewer.getScrollTop();
     const anchor = anchorAt(viewer, scrollTop);
@@ -114,11 +113,15 @@ export function createCodeViewScrollRestore() {
       flush();
     },
     onScroll(_scrollTop: number, source: object) {
-      if (source !== viewer || pending !== null || captureQueued) return;
-      captureQueued = true;
+      if (source !== viewer || pending !== null) return;
       // Pierre notifies before it renders the new viewport in the next frame, so the rendered
-      // items are read in the frame after that.
-      requestAnimationFrame(() => requestAnimationFrame(() => capture(source)));
+      // items are read in the frame after the last scroll's render.
+      const request = ++captureRequest;
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (request === captureRequest) capture(source);
+        }),
+      );
     },
     /** Something else positions the viewer, such as a file reveal or collapsing every file. */
     discard() {
