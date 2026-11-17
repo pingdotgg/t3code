@@ -192,6 +192,15 @@ function returnUnsentAnswersToThreadDraft(
   store.addFiles(target, files);
   const moved = useComposerDraftStore.getState().getComposerDraft(target);
   const movedIds = new Set([...(moved?.images ?? []), ...(moved?.files ?? [])].map(({ id }) => id));
+  // Only a mounted composer re-serializes images, so carry their saved copies for a reload.
+  const persisted = moved?.persistedAttachments ?? [];
+  const persistedIds = new Set(persisted.map(({ id }) => id));
+  const movedPersisted = questionDrafts
+    .flatMap(([, draft]) => draft.persistedAttachments)
+    .filter(({ id }) => movedIds.has(id) && !persistedIds.has(id));
+  if (movedPersisted.length > 0) {
+    void store.syncPersistedAttachments(target, [...persisted, ...movedPersisted]);
+  }
   for (const [key] of questionDrafts) clearQuestionAttachmentDraft(DraftId.make(key), movedIds);
 }
 
