@@ -3,6 +3,7 @@ import {
   MessageId,
   ThreadId,
   OrchestratorMcpFailure,
+  type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ProjectId,
 } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
@@ -91,6 +92,28 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
       message:
         "worktreePath must be one of the project's git worktrees. t3_worktree_list shows them.",
     });
+});
+
+/** Branches from the checkout's current branch, as the composer does; a checkout without one stays shared. */
+const defaultWorktreeStrategy = Effect.fn("mcp.defaultWorktreeStrategy")(function* (
+  workspaceRoot: string,
+): Effect.fn.Return<
+  OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined,
+  never,
+  GitVcsDriver.GitVcsDriver
+> {
+  const git = yield* GitVcsDriver.GitVcsDriver;
+  const hasCommit = yield* git.resolveCommit({ cwd: workspaceRoot, revision: "HEAD" }).pipe(
+    Effect.as(true),
+    Effect.orElseSucceed(() => false),
+  );
+  const branch = hasCommit
+    ? yield* git.statusDetailsLocal(workspaceRoot).pipe(
+        Effect.map((status) => (status.isRepo ? status.branch : null)),
+        Effect.orElseSucceed(() => null),
+      )
+    : null;
+  return branch === null ? undefined : { type: "worktree" as const, baseRef: branch };
 });
 
 /** A fixed-length id, so a long key fits in the scratch folder name derived from it. */
@@ -207,17 +230,26 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                   (settings) => resolveProjectSettings(settings, projectId, project).settings,
                 ),
               );
+        // An outside caller that names no workspace follows the new-threads-in-a-worktree
+        // default, as the composer does.
+        const requestedStrategy =
+          input.workspaceStrategy === undefined &&
+          caller === undefined &&
+          project !== undefined &&
+          projectSettings?.defaultThreadEnvMode === "worktree"
+            ? yield* defaultWorktreeStrategy(project.workspaceRoot)
+            : input.workspaceStrategy;
         // An omitted startFromOrigin follows the new-worktree setting, as the composer and
         // t3_worktree_handoff do. Otherwise a stale local branch silently becomes the base.
         const strategy =
           projectSettings !== undefined &&
-          input.workspaceStrategy?.type === "worktree" &&
-          input.workspaceStrategy.startFromOrigin === undefined
+          requestedStrategy?.type === "worktree" &&
+          requestedStrategy.startFromOrigin === undefined
             ? {
-                ...input.workspaceStrategy,
+                ...requestedStrategy,
                 startFromOrigin: projectSettings.newWorktreesStartFromOrigin,
               }
-            : input.workspaceStrategy;
+            : requestedStrategy;
         // Reject unresolved base refs and blocked branch names before accepting a launch; worktree provisioning happens later.
         if (!replaying && strategy?.type === "worktree")
           yield* ThreadLaunch.ThreadLaunchService.pipe(
