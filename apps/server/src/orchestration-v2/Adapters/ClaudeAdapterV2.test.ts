@@ -4296,6 +4296,33 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* harness.runtime.startTurn(turn(2, updatedThread));
         assert.equal(harness.processQueues.length, 1);
         assert.equal(harness.offeredMessages.length, 2);
+
+        // A later native /clear must publish the newest ID, not the abandoned
+        // pre-retry identity or the already-recovered process identity.
+        const clearedId = "native-session-after-retry-clear";
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            session_id: clearedId,
+            uuid: "00000000-0000-4000-8000-000000000542",
+          }),
+        );
+        yield* harness.offerAndWait({
+          ...turnOneResult,
+          session_id: clearedId,
+          uuid: "00000000-0000-4000-8000-000000000543",
+        });
+        yield* Queue.take(harness.terminalReceipts);
+        const afterClear = harness.events.findLast(
+          (event) => event.type === "provider_thread.updated",
+        );
+        assert.equal(
+          afterClear?.type === "provider_thread.updated"
+            ? afterClear.providerThread.nativeThreadRef?.nativeId
+            : null,
+          clearedId,
+        );
       }).pipe(
         Effect.scoped,
         Effect.provide(
