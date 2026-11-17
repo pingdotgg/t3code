@@ -94,6 +94,7 @@ import {
   useEnvironmentScope,
   useEnvironmentSessionState,
 } from "~/state/session";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useEnvironmentQuery } from "~/state/query";
 import {
   desktopNetworkAccessStateAtom,
@@ -419,7 +420,12 @@ function ConnectionsSettingsContent({
   );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Re-read external WSL installations when entering Access while the sidebar retains its subscription.
   useEffect(() => {
-    if (showsAccess && canManageLocalBackend && desktopBridge) {
+    if (
+      showsAccess &&
+      canManageLocalBackend &&
+      desktopBridge &&
+      !appAtomRegistry.get(desktopWslStateAtom).waiting
+    ) {
       refreshDesktopWslState();
     }
   }, [showsAccess, canManageLocalBackend, desktopBridge]);
