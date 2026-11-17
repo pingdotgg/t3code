@@ -1,11 +1,13 @@
 import type { LayoutKeybindingCommand } from "@t3tools/contracts";
 import {
   ArrowDownIcon,
+  ArrowDownToLineIcon,
   ArrowLeftIcon,
   ArrowLeftToLineIcon,
   ArrowRightIcon,
   ArrowRightToLineIcon,
   ArrowUpIcon,
+  ArrowUpToLineIcon,
   ChevronFirstIcon,
   ChevronLastIcon,
   Columns2Icon,
@@ -14,6 +16,7 @@ import {
   Maximize2Icon,
   MoveHorizontalIcon,
   RulerIcon,
+  Rows2Icon,
   PanelRightIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -91,7 +94,7 @@ const LAYOUT_ENTRIES: ReadonlyArray<{
   {
     command: "layout.splitDown",
     title: "New pane below",
-    icon: Columns2Icon,
+    icon: Rows2Icon,
     searchTerms: ["split"],
   },
   {
@@ -116,11 +119,16 @@ const LAYOUT_ENTRIES: ReadonlyArray<{
     icon: ArrowRightToLineIcon,
     searchTerms: ["swap"],
   },
-  { command: "layout.moveUp", title: "Move pane up", icon: ArrowUpIcon, searchTerms: ["swap"] },
+  {
+    command: "layout.moveUp",
+    title: "Move pane up",
+    icon: ArrowUpToLineIcon,
+    searchTerms: ["swap"],
+  },
   {
     command: "layout.moveDown",
     title: "Move pane down",
-    icon: ArrowDownIcon,
+    icon: ArrowDownToLineIcon,
     searchTerms: ["swap"],
   },
   { command: "layout.focusFirstColumn", title: "Focus first column", icon: ChevronFirstIcon },

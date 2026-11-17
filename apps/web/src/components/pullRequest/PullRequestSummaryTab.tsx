@@ -685,7 +685,7 @@ export function PullRequestSummaryTab({
         key={`${detail.url}:${comment.id}`}
         data-pr-link-target={matchesLink(comment.url) || undefined}
         tabIndex={matchesLink(comment.url) ? -1 : undefined}
-        className="group data-[pr-link-target=true]:ring-1 data-[pr-link-target=true]:ring-primary/40 rounded-xl surface-panel py-2.5 [contain-intrinsic-block-size:160px] [content-visibility:auto]"
+        className="group data-[pr-link-target=true]:ring-1 data-[pr-link-target=true]:ring-inset data-[pr-link-target=true]:ring-primary/40 rounded-xl surface-panel py-2.5 [contain-intrinsic-block-size:160px] [content-visibility:auto]"
       >
         <div className="flex flex-wrap items-center gap-1.5 px-3">
           <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-2 text-meta text-muted-foreground">
@@ -752,7 +752,7 @@ export function PullRequestSummaryTab({
         key={`${detail.url}:${comment.id}:${matchesLink(comment.url) ? linked?.count : 0}`}
         data-pr-link-target={matchesLink(comment.url) || undefined}
         tabIndex={matchesLink(comment.url) ? -1 : undefined}
-        className="data-[pr-link-target=true]:ring-1 data-[pr-link-target=true]:ring-primary/40"
+        className="data-[pr-link-target=true]:ring-1 data-[pr-link-target=true]:ring-inset data-[pr-link-target=true]:ring-primary/40"
       >
         <PullRequestReviewEntry
           defaultOpen={matchesLink(comment.url)}
