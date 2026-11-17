@@ -694,7 +694,11 @@ export function CommandPalette(props: {
                 contentContainerStyle={{ paddingBottom: 8 }}
                 ListEmptyComponent={
                   <Text className="p-5 text-center text-foreground-muted">
-                    {search.isPending ? "Searching…" : "No results"}
+                    {search.isPending
+                      ? "Searching…"
+                      : search.failed
+                        ? "Couldn't search messages"
+                        : "No results"}
                   </Text>
                 }
                 // Message results from slower environments may still arrive below.
