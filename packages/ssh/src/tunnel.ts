@@ -730,6 +730,11 @@ server_running() {
     *Z*) return 1 ;;
   esac
 }
+# An older client replacing a same-or-newer server would run below the database's migrations.
+keeps_running_server() {
+  [ "$T3_ARCHIVE_MODE" = "1" ] &&
+    "$RUNNER_FILE" __ssh-helper keep-server "$DEFAULT_RUNTIME_FILE" "$REMOTE_PID" >/dev/null 2>&1
+}
 @@T3_MANAGED_SERVER_RUNNING_SCRIPT@@
 # Both are SQLite locks the OS drops with their holder: a server holds
 # server-owner.sqlite, and a boot service holds service-serving.lock from
@@ -899,8 +904,8 @@ if [ "$REMOTE_MANAGED" = "external" ]; then
   fi
 elif [ -n "$REMOTE_PORT" ] && managed_server_running "$REMOTE_PID"; then
   # Reconnect owns the local tunnel, not the lifetime of an already running
-  # server. A changed runner is the update path and still replaces it.
-  if [ "$RUNNER_CHANGED" -eq 1 ]; then
+  # server. A changed runner is the update path and replaces an older server.
+  if [ "$RUNNER_CHANGED" -eq 1 ] && ! keeps_running_server; then
     kill "$REMOTE_PID" 2>/dev/null || true
     wait_for_pid_exit "$REMOTE_PID"
     REMOTE_PID=""
@@ -1136,7 +1141,7 @@ export function buildRemoteNodeEnvScript(input?: RemoteT3RunnerOptions): string 
   );
 }
 
-function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
+export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_LAUNCH_SCRIPT, {
     T3_UPDATE_MARKER_FILE: DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE,
     T3_UPDATE_TTL_MS: String(DESKTOP_UPDATE_IN_PROGRESS_TTL_MS),

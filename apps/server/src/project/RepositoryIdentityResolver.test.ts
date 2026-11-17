@@ -5,6 +5,7 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { vi } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -14,6 +15,14 @@ import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
 const normalizePathSeparators = (value: string) => value.replaceAll("\\", "/");
 const normalizeResolvedPath = (value: string) => normalizePathSeparators(value);
+
+// Windows forbids CR and LF in file names.
+const lineBreakSuffixes = HostProcess.Platform.defaultValue() === "win32" ? [] : ["\r", "\n"];
+const bareLayouts = [
+  "bare clone",
+  "dot-bare",
+  ...lineBreakSuffixes.map((suffix) => `bare clone${suffix}`),
+];
 
 const git = (cwd: string, args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
@@ -138,7 +147,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
-  it.effect.each(["repo", "repo "] as const)(
+  it.effect.each(["repo", "repo ", ...lineBreakSuffixes.map((suffix) => `repo${suffix}`)])(
     "returns the git top-level root path when resolving from a nested workspace in %j",
     (rootName) =>
       Effect.gen(function* () {
@@ -168,8 +177,8 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
-  it.effect.each(["bare clone", "dot-bare"] as const)(
-    "resolves a %s to its Git directory and the same identity as a checkout",
+  it.effect.each(bareLayouts)(
+    "resolves a %j to its Git directory and the same identity as a checkout",
     (layout) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -177,9 +186,11 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         const checkout = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-repository-identity-checkout-",
         });
-        const root = yield* fileSystem.makeTempDirectoryScoped({
+        const parent = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-repository-identity-bare-",
         });
+        const root = path.join(parent, layout);
+        yield* fileSystem.makeDirectory(root);
         const bareGitDir = layout === "dot-bare" ? path.join(root, ".bare") : root;
 
         yield* git(checkout, ["init"]);

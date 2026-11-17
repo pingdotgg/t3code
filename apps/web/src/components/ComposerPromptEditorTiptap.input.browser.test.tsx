@@ -8,7 +8,17 @@ import {
   useRetainedContextPayloads,
 } from "./chat/composerContextUndo";
 
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import {
+  ComposerContextId,
+  type ComposerContextRecord,
+  EnvironmentId,
+  type ServerProviderSkill,
+} from "@t3tools/contracts";
+import {
+  COMPOSER_CONTEXT_CLIPBOARD_MIME,
+  encodeComposerContextFragment,
+} from "@t3tools/shared/composerContextClipboard";
+import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import type { Editor } from "@tiptap/core";
 import { redoDepth, undoDepth } from "@tiptap/pm/history";
 import { NodeSelection } from "@tiptap/pm/state";
@@ -55,12 +65,16 @@ function Composer({
   skills,
   onChange,
   onCommandKeyDown = () => false,
+  importContextFragment,
+  literalText = false,
 }: {
   value: string;
   richTextEnabled: boolean;
   skills: ReadonlyArray<ServerProviderSkill>;
   onChange?: ComposerPromptEditorProps["onChange"] | undefined;
   onCommandKeyDown?: ComposerPromptEditorProps["onCommandKeyDown"] | undefined;
+  importContextFragment?: ComposerPromptEditorProps["importContextFragment"];
+  literalText?: boolean;
 }) {
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
   return (
@@ -80,6 +94,8 @@ function Composer({
       }}
       onPaste={() => {}}
       onCommandKeyDown={onCommandKeyDown}
+      importContextFragment={importContextFragment}
+      literalText={literalText}
     />
   );
 }
@@ -483,6 +499,55 @@ it.each([
   });
   expect(serializeEditorDoc(editor.state.doc).value).toBe(pasted);
 });
+
+it.each([
+  { literalText: false, imports: 1 },
+  { literalText: true, imports: 0 },
+])(
+  "imports a copied snapshot's context over its image file: %o",
+  async ({ literalText, imports }) => {
+    const record = {
+      version: 1,
+      kind: "image",
+      contextId: ComposerContextId.make("image_snapshot"),
+      label: "shot.png",
+      attachmentId: "snapshot",
+      name: "shot.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+    } satisfies ComposerContextRecord;
+    const importContextFragment = vi.fn(() => new Map([[record.contextId, record.contextId]]));
+    await using screen = await render(
+      <Composer
+        value=""
+        richTextEnabled
+        skills={[]}
+        literalText={literalText}
+        importContextFragment={importContextFragment}
+      />,
+    );
+    const editor = editorIn(screen.container);
+    await act(async () => {
+      const clipboardData = new DataTransfer();
+      clipboardData.items.add(
+        new File([new Uint8Array([1, 2, 3])], "shot.png", { type: "image/png" }),
+      );
+      clipboardData.setData("text/plain", formatComposerContextReference(record));
+      clipboardData.setData(
+        COMPOSER_CONTEXT_CLIPBOARD_MIME,
+        encodeComposerContextFragment({
+          version: 1,
+          source: { environmentId: EnvironmentId.make("snapshot-source") },
+          records: [record],
+        })!,
+      );
+      editor.view.dom.dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, cancelable: true }),
+      );
+    });
+    expect(importContextFragment).toHaveBeenCalledTimes(imports);
+  },
+);
 
 it.each(["x\r\n\r\ny", "x\r\ry"])(
   "pastes %j with the same blank line as x\\n\\ny",

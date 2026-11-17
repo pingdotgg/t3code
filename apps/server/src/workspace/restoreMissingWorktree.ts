@@ -108,7 +108,18 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
       worktreePath,
       branch,
     });
-    yield* (leftover ? fileSystem.remove(worktreePath, { recursive: true }) : Effect.void).pipe(
+    // `git worktree add` refuses a non-empty target but accepts an empty one. Keep the folder
+    // itself: Windows cannot remove a folder that is still a terminal's or provider's cwd.
+    const clearLeftovers = Effect.suspend(() => fileSystem.readDirectory(worktreePath)).pipe(
+      Effect.flatMap((entries) =>
+        Effect.forEach(
+          entries,
+          (entry) => fileSystem.remove(path.join(worktreePath, entry), { recursive: true }),
+          { discard: true },
+        ),
+      ),
+    );
+    yield* (leftover ? clearLeftovers : Effect.void).pipe(
       Effect.andThen(
         gitWorkflow.ensureWorkspace({
           cwd: project.workspaceRoot,

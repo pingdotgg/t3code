@@ -89,6 +89,16 @@ describe("the folded web behaviour", () => {
     assert.isFalse(items.find((item) => item.id === "pr")?.disabled);
   });
 
+  it("offers creating a PR after the feature branch has been fully pushed", () => {
+    const pushed = status({ aheadCount: 0, behindCount: 0, aheadOfDefaultCount: 1 });
+    assert.containSubset(resolveQuickAction(pushed, false), {
+      disabled: false,
+      kind: "run_action",
+      action: "create_pr",
+    });
+    assert.isTrue(resolveQuickAction({ ...pushed, isDefaultRef: true }, false, true).disabled);
+  });
+
   it("offers only the commit item when the repository has no primary remote", () => {
     const items = buildMenuItems(
       status({ hasWorkingTreeChanges: true, hasUpstream: false }),

@@ -418,13 +418,26 @@ describe("resolveChangesTotals", () => {
           hasWorkingTreeChanges: true,
           branchChanges: { baseRef: "main", insertions: 0, deletions: 0 },
           workingTree: {
-            files: [{ path: "a.ts", insertions: 5, deletions: 1 }],
+            files: [
+              { path: "a.ts", insertions: 4, deletions: 1 },
+              { path: "README.md", insertions: 1, deletions: 0 },
+            ],
             insertions: 5,
             deletions: 1,
           },
         }),
       ),
-      { insertions: 5, deletions: 1 },
+      {
+        insertions: 5,
+        deletions: 1,
+        breakdown: {
+          code: { additions: 4, deletions: 1 },
+          tests: { additions: 0, deletions: 0 },
+          mocks: { additions: 0, deletions: 0 },
+          generated: { additions: 0, deletions: 0 },
+          docs: { additions: 1, deletions: 0 },
+        },
+      },
     );
   });
 
@@ -440,7 +453,7 @@ describe("resolveChangesTotals", () => {
           },
         }),
       ),
-      { insertions: 20, deletions: 3, baseRef: "origin/master" },
+      { insertions: 20, deletions: 3, baseRef: "origin/master", breakdown: null },
     );
   });
 
@@ -463,15 +476,27 @@ describe("resolveChangesTotals", () => {
         ...source,
         files: [
           { path: "a.ts", previousPath: null, additions: 4, deletions: 1 },
-          { path: "b.ts", previousPath: null, additions: 2, deletions: 0 },
+          { path: "a.test.ts", previousPath: null, additions: 2, deletions: 0 },
         ],
       }),
-      { insertions: 6, deletions: 1, baseRef: "release" },
+      {
+        insertions: 6,
+        deletions: 1,
+        baseRef: "release",
+        breakdown: {
+          code: { additions: 4, deletions: 1 },
+          tests: { additions: 2, deletions: 0 },
+          mocks: { additions: 0, deletions: 0 },
+          generated: { additions: 0, deletions: 0 },
+          docs: { additions: 0, deletions: 0 },
+        },
+      },
     );
     assert.deepEqual(resolveChangesTotals(dirty, source), {
       insertions: 20,
       deletions: 3,
       baseRef: "main",
+      breakdown: null,
     });
   });
 

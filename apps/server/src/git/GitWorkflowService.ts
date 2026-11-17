@@ -708,7 +708,11 @@ export const make = Effect.gen(function* () {
       ) {
         const kind = yield* resolveWorkspaceKind(input);
         yield* ownership.remember({ cwd: input.cwd, path: input.path, kind });
-        if (yield* fileSystem.exists(input.path)) return;
+        if (
+          (yield* fileSystem.exists(input.path)) &&
+          (yield* fileSystem.readDirectory(input.path)).length > 0
+        )
+          return;
         const repositoryCwd = yield* ownership.repositoryCwd(input.cwd);
         yield* workspaceOps[kind].pruneWorktrees({ cwd: repositoryCwd });
         if (kind === "git") {
