@@ -292,9 +292,44 @@ const failure = (status: number, code: string, message: string) =>
 /** A Gateway transport that answers the two Conn Tasks routes from fixtures. */
 export function fixtureOrbitTasksTransport(
   scenario: OrbitTasksFixtureScenario = "default",
+  overrides?: () => {
+    conversation?: { environmentId: string; threadId: string };
+    pullRequest?: { number: number; url: string };
+    tokens?: number;
+  },
 ): OrbitGatewayTransport {
-  const details = scenario === "empty" ? [] : ORBIT_TASK_FIXTURES.map(detailOf);
   return async (request) => {
+    const options = overrides?.();
+    const details =
+      scenario === "empty"
+        ? []
+        : ORBIT_TASK_FIXTURES.map((input) => {
+            const detail = detailOf(input);
+            if (input.id !== 482 || !options) return detail;
+            return {
+              ...detail,
+              agents: options.conversation
+                ? detail.agents.map((agent) => ({
+                    ...(agent as Record<string, unknown>),
+                    conn: {
+                      environment_id: options.conversation!.environmentId,
+                      thread_id: options.conversation!.threadId,
+                    },
+                  }))
+                : detail.agents,
+              workspace:
+                options.conversation && detail.workspace
+                  ? { ...detail.workspace, conn_environment_id: options.conversation.environmentId }
+                  : detail.workspace,
+              pull_request: options.pullRequest
+                ? { ...options.pullRequest, state: "open" }
+                : detail.pull_request,
+              metrics:
+                options.tokens === undefined
+                  ? detail.metrics
+                  : { ...detail.metrics, tokens: options.tokens },
+            };
+          });
     switch (scenario) {
       case "not-a-node":
         return failure(403, "peer.identity_unknown", "This address is not an active Node.");

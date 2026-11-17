@@ -313,7 +313,7 @@ export function observeOrbitTask(
     onResult(result);
   };
   const unsubscribe = client.onInvalidate((target) => {
-    if (target.kind === "list" || target.taskId === taskId) void read();
+    if (target.kind === "list" || target.taskId === taskId) return read();
   });
   void read();
   return () => {

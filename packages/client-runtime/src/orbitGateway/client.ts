@@ -26,8 +26,8 @@ export interface OrbitGatewayRequest {
   /** Sent as `Idempotency-Key`: the same key and input return the same Operation. */
   readonly idempotencyKey?: string;
   /**
-   * Conn: `path` is below `/api/v1`, not `/api/v1/conn`. The desktop allows only an Instance wake
-   * and an Operation read this way.
+   * Conn: `path` is below `/api/v1`, not `/api/v1/conn`. The desktop permits only exact lifecycle
+   * and private Tasks realtime calls.
    */
   readonly root?: true;
 }

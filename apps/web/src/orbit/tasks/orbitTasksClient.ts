@@ -1,6 +1,9 @@
 import {
   createOrbitTasksClient,
+  followOrbitTasks,
+  type OrbitTasksLiveStatus,
   type OrbitTasksClient,
+  type OrbitGatewayTransport,
 } from "@t3tools/client-runtime/orbit-gateway";
 
 import { desktopOrbitGatewayTransport } from "../desktopOrbitGateway";
@@ -41,6 +44,7 @@ export function orbitTasksAvailability():
 }
 
 let client: Promise<OrbitTasksClient | null> | null = null;
+let clientTransport: OrbitGatewayTransport | null = null;
 
 /** One client per window, so slice 3's realtime notices reach every open Tasks tab. */
 export function loadOrbitTasksClient(): Promise<OrbitTasksClient | null> {
@@ -48,10 +52,30 @@ export function loadOrbitTasksClient(): Promise<OrbitTasksClient | null> {
     const scenario = fixtureScenario();
     if (scenario !== null) {
       const { fixtureOrbitTasksTransport } = await import("./orbitTasksFixtures");
-      return createOrbitTasksClient(fixtureOrbitTasksTransport(scenario));
+      clientTransport = fixtureOrbitTasksTransport(scenario, () => {
+        try {
+          return JSON.parse(window.localStorage.getItem("conn:orbit-tasks-fixture-data") ?? "{}");
+        } catch {
+          return {};
+        }
+      });
+      return createOrbitTasksClient(clientTransport);
     }
-    const transport = desktopOrbitGatewayTransport();
-    return transport ? createOrbitTasksClient(transport) : null;
+    clientTransport = desktopOrbitGatewayTransport();
+    return clientTransport ? createOrbitTasksClient(clientTransport) : null;
   })();
   return client;
+}
+
+/** Shares the existing desktop Gateway transport; no browser proxy or replica. */
+export function followTasksUpdates(
+  client: OrbitTasksClient,
+  onStatus: (status: OrbitTasksLiveStatus) => void,
+): () => void {
+  const transport = clientTransport;
+  if (!transport) {
+    onStatus("polling");
+    return () => {};
+  }
+  return followOrbitTasks({ transport, client, onStatus });
 }

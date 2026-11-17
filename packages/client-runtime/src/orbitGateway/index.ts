@@ -22,3 +22,4 @@ export * from "./attachedThreads.ts";
 export * from "./threadIndex.ts";
 export * from "./tasks.ts";
 export * from "./tasksClient.ts";
+export * from "./tasksRealtime.ts";

@@ -9,6 +9,7 @@ import { resolveStorage } from "../../lib/storage";
 export type TasksDetailTab = "brief" | "agents";
 
 export interface TasksNavigation {
+  readonly originThreadKey?: string;
   readonly view: "board" | "task";
   /** Kept while the board shows, so reopening the same task restores its place. */
   readonly taskId: number | null;
@@ -48,6 +49,7 @@ export const DEFAULT_TASKS_NAVIGATION: TasksNavigation = {
 
 interface TasksPanelState {
   readonly byThreadKey: Readonly<Record<string, TasksNavigation>>;
+  readonly handoff: (sourceKey: string, targetKey: string) => void;
   readonly openTask: (threadKey: string, taskId: number) => void;
   /** `tab` switches the content tab too; without it the current tab stays. */
   readonly openSubtask: (threadKey: string, subtaskId: number | null, tab?: TasksDetailTab) => void;
@@ -74,6 +76,22 @@ export const useTasksPanelStore = create<TasksPanelState>()(
         });
       return {
         byThreadKey: {},
+        handoff: (sourceKey, targetKey) =>
+          set((state) => {
+            const source = state.byThreadKey[sourceKey];
+            if (!source || sourceKey === targetKey || source.originThreadKey === targetKey)
+              return state;
+            return {
+              byThreadKey: capThreads({
+                ...state.byThreadKey,
+                [targetKey]: {
+                  ...source,
+                  originThreadKey: source.originThreadKey ?? sourceKey,
+                  updatedAt: Date.now(),
+                },
+              }),
+            };
+          }),
         openTask: (threadKey, taskId) =>
           update(threadKey, (current) =>
             current.taskId === taskId

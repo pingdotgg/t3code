@@ -6,9 +6,9 @@ import { DEFAULT_ORBIT_GATEWAY_URL } from "@t3tools/client-runtime/orbit-gateway
 import * as DesktopIpc from "../DesktopIpc.ts";
 import { ORBIT_GATEWAY_SEND_CHANNEL } from "../channels.ts";
 
-// Calls the Conn layer of the Orbit Gateway for the renderer's profile sync. It runs in the
+// Calls the Orbit Gateway for profile sync and Tasks. It runs in the
 // main process because the Gateway refuses requests that carry a page `Origin`, and Chromium's
-// network stack trusts the Orbit root CA from the keychain. Only paths below /api/v1/conn are sent.
+// network stack trusts the Orbit root CA from the keychain. Root calls use the exact allowlist.
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const CONN_PREFIX = "/api/v1/conn";
@@ -70,19 +70,39 @@ export function resolveConnUrl(path: string): URL | null {
 }
 
 /**
- * Conn: the only calls outside `/api/v1/conn`, each exact: an Instance wake and the read of an
- * Operation (Orbit's Conn Operation read does not serve `instance.wake`). Neither takes a query.
+ * Exact calls outside `/api/v1/conn`: lifecycle reads/wake and the private Tasks summary channel.
+ * None takes a query; channel authentication also restricts its body.
  */
 const ROOT_CALLS: ReadonlyArray<{ readonly method: "GET" | "POST"; readonly pattern: RegExp }> = [
   { method: "POST", pattern: /^\/instances\/[1-9][0-9]{0,15}\/wake$/ },
   { method: "GET", pattern: /^\/operations\/[1-9][0-9]{0,15}$/ },
+  { method: "GET", pattern: /^\/realtime$/ },
+  { method: "POST", pattern: /^\/broadcasting\/auth$/ },
 ];
 
 /** The Gateway URL of an allowed call below `/api/v1`, or null for anything else. */
 export function resolveRootUrl(
-  request: Pick<typeof OrbitGatewayRequest.Type, "method" | "path" | "query">,
+  request: Pick<typeof OrbitGatewayRequest.Type, "method" | "path" | "query"> & {
+    readonly body?: string | null;
+  },
 ): URL | null {
   if (Object.keys(request.query ?? {}).length > 0) return null;
+  if (request.path === "/broadcasting/auth") {
+    try {
+      const body: unknown = JSON.parse(request.body ?? "null");
+      if (body === null || typeof body !== "object" || Array.isArray(body)) return null;
+      const data = body as Record<string, unknown>;
+      if (
+        Object.keys(data).length !== 2 ||
+        data.channel_name !== "private-orbit" ||
+        typeof data.socket_id !== "string" ||
+        !/^[0-9]{1,20}\.[0-9]{1,20}$/.test(data.socket_id)
+      )
+        return null;
+    } catch {
+      return null;
+    }
+  }
   const allowed = ROOT_CALLS.some(
     (call) => call.method === request.method && call.pattern.test(request.path),
   );

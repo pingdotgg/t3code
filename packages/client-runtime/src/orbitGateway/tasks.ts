@@ -187,8 +187,8 @@ export interface OrbitTasksClient {
   readonly listTasks: (query?: OrbitTasksListQuery) => Promise<OrbitTasksResult<OrbitTasksPage>>;
   readonly getTask: (taskId: number) => Promise<OrbitTasksResult<OrbitTaskDetail>>;
   /** Tells subscribers to read again: a Reverb notice, a reconnect, or a poll tick. */
-  readonly invalidate: (target: OrbitTasksInvalidation) => void;
-  readonly onInvalidate: (listener: (target: OrbitTasksInvalidation) => void) => () => void;
+  readonly invalidate: (target: OrbitTasksInvalidation) => Promise<void>;
+  readonly onInvalidate: (listener: (target: OrbitTasksInvalidation) => unknown) => () => void;
 }
 
 export type OrbitTaskLane = "backlog" | "todo" | "in-progress" | "done";

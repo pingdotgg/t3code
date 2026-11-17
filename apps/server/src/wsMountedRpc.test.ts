@@ -31,11 +31,12 @@ describe("mounted server WS RPCs", () => {
     }
   });
 
-  it("adds only desktop relay and authorized feature RPCs beyond upstream 240446e2 and its November 8 auth update", () => {
+  it("mounts only authorized upstream, desktop relay and restored feature RPCs", () => {
     const authorized = new Set([
       ...authorizedUpstreamWsRpcTags,
       ...connMainAlreadyMountedExtras,
       WS_METHODS.providerAuthRemoveMethod,
+      WS_METHODS.serverGetSettings,
       ...restoredFeatureRpcs,
     ]);
     expect(new Set(mountedServerWsRpcTags)).toEqual(authorized);

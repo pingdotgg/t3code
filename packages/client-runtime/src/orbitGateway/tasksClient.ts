@@ -43,7 +43,7 @@ function listQuery(query: OrbitTasksListQuery): Record<string, string> {
 
 /** Orbit's Conn Tasks reads over any Gateway transport (the desktop main process today). */
 export function createOrbitTasksClient(transport: OrbitGatewayTransport): OrbitTasksClient {
-  const listeners = new Set<(target: OrbitTasksInvalidation) => void>();
+  const listeners = new Set<(target: OrbitTasksInvalidation) => unknown>();
 
   const read = async <A>(
     path: string,
@@ -89,8 +89,8 @@ export function createOrbitTasksClient(transport: OrbitGatewayTransport): OrbitT
   return {
     listTasks: (query = {}) => read("/tasks", listQuery(query), decodeOrbitTasksPage),
     getTask: (taskId) => read(`/tasks/${taskId}`, undefined, decodeOrbitTaskDetail),
-    invalidate: (target) => {
-      for (const listener of listeners) listener(target);
+    invalidate: async (target) => {
+      await Promise.allSettled([...listeners].map((listener) => (async () => listener(target))()));
     },
     onInvalidate: (listener) => {
       listeners.add(listener);

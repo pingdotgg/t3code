@@ -4,6 +4,7 @@ import {
   type OrbitTasksPage,
   type OrbitTasksResult,
   type OrbitTaskSummary,
+  type OrbitTasksLiveStatus,
 } from "@t3tools/client-runtime/orbit-gateway";
 import { ListTodoIcon, LockIcon, UnplugIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
@@ -21,7 +22,11 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { cn } from "~/lib/utils";
 
 import { TaskDetail } from "./TaskDetail";
-import { loadOrbitTasksClient, orbitTasksAvailability } from "./orbitTasksClient";
+import {
+  followTasksUpdates,
+  loadOrbitTasksClient,
+  orbitTasksAvailability,
+} from "./orbitTasksClient";
 import { taskCardDetail, tasksBoardLanes, tasksErrorNotice } from "./tasksBoard.logic";
 import { tasksPanelActions, useTasksNavigation } from "./tasksPanelStore";
 
@@ -37,7 +42,7 @@ function useOrbitTaskList(orbitProjectId: number | null) {
       if (request === latestRequest.current) setState(next);
     };
     if (!quiet) settle({ status: "loading" });
-    void loadOrbitTasksClient().then((client) =>
+    return loadOrbitTasksClient().then((client) =>
       client
         ? client
             .listTasks(projectId === null ? { limit: 100 } : { project: projectId, limit: 100 })
@@ -78,12 +83,26 @@ export function TasksPanel(props: { threadKey: string; orbitProjectId: number | 
 function TasksPanelContent(props: { threadKey: string; orbitProjectId: number | null }) {
   const { state, retry } = useOrbitTaskList(props.orbitProjectId);
   const navigation = useTasksNavigation(props.threadKey);
+  const [liveStatus, setLiveStatus] = useState<OrbitTasksLiveStatus>("connecting");
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the summary connection only while this Tasks surface is mounted
+  useEffect(() => {
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    void loadOrbitTasksClient().then((client) => {
+      if (!disposed && client) stop = followTasksUpdates(client, setLiveStatus);
+    });
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  }, []);
 
   if (navigation.view === "task" && navigation.taskId !== null) {
     return (
       <TaskDetail
         key={`${props.threadKey}:${navigation.taskId}`}
         threadKey={props.threadKey}
+        liveStatus={liveStatus}
         navigation={{ ...navigation, taskId: navigation.taskId }}
         listTitle={
           state.status === "ok"

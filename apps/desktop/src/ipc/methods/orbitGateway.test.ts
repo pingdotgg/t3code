@@ -105,17 +105,43 @@ describe("isAllowedConnQuery", () => {
 });
 
 describe("resolveRootUrl", () => {
-  it("allows only an Instance wake and an Operation read below /api/v1", () => {
+  it("allows the exact lifecycle and Tasks realtime routes below /api/v1", () => {
     expect(resolveRootUrl({ method: "POST", path: "/instances/41/wake" })?.toString()).toBe(
       "https://gateway.orbit/api/v1/instances/41/wake",
     );
     expect(resolveRootUrl({ method: "GET", path: "/operations/501" })?.toString()).toBe(
       "https://gateway.orbit/api/v1/operations/501",
     );
+    expect(resolveRootUrl({ method: "GET", path: "/realtime" })?.pathname).toBe("/api/v1/realtime");
+    expect(
+      resolveRootUrl({
+        method: "POST",
+        path: "/broadcasting/auth",
+        body: JSON.stringify({ socket_id: "123.456", channel_name: "private-orbit" }),
+      })?.pathname,
+    ).toBe("/api/v1/broadcasting/auth");
   });
 
   it.each([
     { method: "GET", path: "/instances/41/wake" },
+    { method: "POST", path: "/realtime" },
+    { method: "GET", path: "/broadcasting/auth" },
+    { method: "POST", path: "/broadcasting/auth" },
+    {
+      method: "POST",
+      path: "/broadcasting/auth",
+      body: JSON.stringify({ socket_id: "1.2", channel_name: "private-admin" }),
+    },
+    {
+      method: "POST",
+      path: "/broadcasting/auth",
+      body: JSON.stringify({ socket_id: "bad", channel_name: "private-orbit" }),
+    },
+    {
+      method: "POST",
+      path: "/broadcasting/auth",
+      body: JSON.stringify({ socket_id: "1.2", channel_name: "private-orbit", extra: true }),
+    },
     { method: "POST", path: "/instances/41/sleep" },
     { method: "POST", path: "/instances/41/destroy" },
     { method: "POST", path: "/operations/501" },

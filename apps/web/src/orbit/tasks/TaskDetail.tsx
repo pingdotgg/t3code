@@ -5,6 +5,7 @@ import {
   type OrbitTaskAgent,
   type OrbitTaskDetail,
   type OrbitTasksResult,
+  type OrbitTasksLiveStatus,
 } from "@t3tools/client-runtime/orbit-gateway";
 import {
   BotIcon,
@@ -20,7 +21,15 @@ import {
   ServerIcon,
   UnplugIcon,
 } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  use,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { ProviderInstanceIcon } from "~/components/chat/ProviderInstanceIcon";
@@ -40,7 +49,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
 import { observeOrbitTask } from "./taskDetail.logic";
-import { openOrbitAgentConversation } from "./orbitAgentConversation";
+import { useOrbitTaskNavigation } from "./orbitAgentConversation";
 import { loadOrbitTasksClient } from "./orbitTasksClient";
 import {
   agentStateText,
@@ -59,6 +68,8 @@ import {
 } from "./taskDetail.logic";
 import { tasksErrorNotice } from "./tasksBoard.logic";
 import { tasksPanelActions, type TasksDetailTab, type TasksNavigation } from "./tasksPanelStore";
+
+const NavigationContext = createContext<ReturnType<typeof useOrbitTaskNavigation> | null>(null);
 
 type TaskState = { readonly status: "loading" } | OrbitTasksResult<OrbitTaskDetail>;
 
@@ -127,60 +138,84 @@ const TONE_DOT: Record<StatusTone, string> = {
 
 export function TaskDetail(props: {
   threadKey: string;
+  liveStatus: OrbitTasksLiveStatus;
   navigation: TasksNavigation & { readonly taskId: number };
   /** The board's row, shown in the path while the detail loads. */
   listTitle: string | null;
 }) {
+  const navigation = useOrbitTaskNavigation(props.threadKey);
   const { state, retry } = useOrbitTask(props.navigation.taskId);
   const title = state.status === "ok" ? state.value.title : props.listTitle;
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <nav
-        aria-label="Tasks path"
-        className="flex h-9 shrink-0 items-center gap-1 border-b border-(--shell-divider)! px-2 text-ui"
-      >
-        <Button
-          size="xs"
-          variant="ghost-muted"
-          onClick={() => tasksPanelActions().showBoard(props.threadKey)}
+    <NavigationContext value={navigation}>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <nav
+          aria-label="Tasks path"
+          className="flex h-9 shrink-0 items-center gap-1 border-b border-(--shell-divider)! px-2 text-ui"
         >
-          <ChevronLeftIcon aria-hidden />
-          Tasks
-        </Button>
-        {title ? (
-          <>
-            <span aria-hidden className="text-muted-foreground">
-              /
-            </span>
-            <span className="min-w-0 truncate px-1 text-foreground">{title}</span>
-          </>
-        ) : null}
-      </nav>
-      {state.status === "loading" ? (
-        <div className="flex min-h-0 flex-1 items-center justify-center">
-          <Spinner size="md" tone="muted" />
-        </div>
-      ) : state.status === "error" ? (
-        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-          <UnplugIcon aria-hidden className="size-5 text-muted-foreground" />
-          <div className="flex flex-col gap-1">
-            <span className="text-ui font-medium text-foreground">
-              {tasksErrorNotice(state.reason).title}
-            </span>
-            <span className="text-ui text-muted-foreground">{state.message}</span>
-          </div>
-          <Button size="sm" variant="outline" onClick={retry}>
-            Retry
+          {props.navigation.originThreadKey ? (
+            <Button size="xs" variant="ghost-muted" onClick={navigation.returnToOrigin}>
+              Origin thread
+            </Button>
+          ) : null}
+          <Button
+            size="xs"
+            variant="ghost-muted"
+            onClick={() => tasksPanelActions().showBoard(props.threadKey)}
+          >
+            <ChevronLeftIcon aria-hidden />
+            Tasks
           </Button>
-        </div>
-      ) : (
-        <TaskDetailBody
-          threadKey={props.threadKey}
-          navigation={props.navigation}
-          task={state.value}
-        />
-      )}
-    </div>
+          {title ? (
+            <>
+              <span aria-hidden className="text-muted-foreground">
+                /
+              </span>
+              <span className="min-w-0 truncate px-1 text-foreground">{title}</span>
+            </>
+          ) : null}
+          <span className="ml-auto shrink-0 text-muted-foreground">
+            {props.liveStatus === "live"
+              ? "Live"
+              : props.liveStatus === "polling"
+                ? "Updates every 30s"
+                : "Connecting updates"}
+          </span>
+        </nav>
+        {navigation.error ? (
+          <p
+            role="alert"
+            className="m-1 rounded-lg bg-warning/10 p-2 text-ui text-warning-foreground"
+          >
+            {navigation.error}
+          </p>
+        ) : null}
+        {state.status === "loading" ? (
+          <div className="flex min-h-0 flex-1 items-center justify-center">
+            <Spinner size="md" tone="muted" />
+          </div>
+        ) : state.status === "error" ? (
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+            <UnplugIcon aria-hidden className="size-5 text-muted-foreground" />
+            <div className="flex flex-col gap-1">
+              <span className="text-ui font-medium text-foreground">
+                {tasksErrorNotice(state.reason).title}
+              </span>
+              <span className="text-ui text-muted-foreground">{state.message}</span>
+            </div>
+            <Button size="sm" variant="outline" onClick={retry}>
+              Retry
+            </Button>
+          </div>
+        ) : (
+          <TaskDetailBody
+            threadKey={props.threadKey}
+            navigation={props.navigation}
+            task={state.value}
+          />
+        )}
+      </div>
+    </NavigationContext>
   );
 }
 
@@ -194,6 +229,7 @@ function TaskDetailBody(props: {
   task: OrbitTaskDetail;
 }) {
   const { task, navigation } = props;
+  const actions = use(NavigationContext);
   const outerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- puts the DOM scroller back where the store says when the shown brief or tab changes
@@ -212,31 +248,46 @@ function TaskDetailBody(props: {
     navigation.subtaskId === null
       ? null
       : (task.subtasks.find((entry) => entry.id === navigation.subtaskId) ?? null);
+  const saveCurrentScroll = () =>
+    tasksPanelActions().saveDetailScroll(
+      props.threadKey,
+      Math.max(outerRef.current?.scrollTop ?? 0, contentRef.current?.scrollTop ?? 0),
+    );
+  const openAgent = async (ref: Parameters<NonNullable<typeof actions>["openAgent"]>[0]) => {
+    saveCurrentScroll();
+    await actions?.openAgent(ref);
+  };
+  const openPullRequest = (url: string) => {
+    saveCurrentScroll();
+    actions?.openPullRequest(url);
+  };
   return (
-    <div className="@container/task flex min-h-0 flex-1">
-      <div
-        ref={outerRef}
-        role="region"
-        aria-label="Task detail"
-        tabIndex={0}
-        onScrollEnd={saveScroll}
-        className="scrollbar-inset flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto @3xl/task:flex-row @3xl/task:overflow-hidden"
-      >
+    <NavigationContext value={actions ? { ...actions, openAgent, openPullRequest } : null}>
+      <div className="@container/task flex min-h-0 flex-1">
         <div
-          ref={contentRef}
+          ref={outerRef}
+          role="region"
+          aria-label="Task detail"
+          tabIndex={0}
           onScrollEnd={saveScroll}
-          className="scrollbar-inset order-2 min-w-0 flex-1 px-6 pt-6 pb-8 @3xl/task:order-1 @3xl/task:overflow-y-auto"
+          className="scrollbar-inset flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto @3xl/task:flex-row @3xl/task:overflow-hidden"
         >
-          <TaskContent
-            threadKey={props.threadKey}
-            task={task}
-            subtask={subtask}
-            tab={navigation.tab}
-          />
+          <div
+            ref={contentRef}
+            onScrollEnd={saveScroll}
+            className="scrollbar-inset order-2 min-w-0 flex-1 px-6 pt-6 pb-8 @3xl/task:order-1 @3xl/task:overflow-y-auto"
+          >
+            <TaskContent
+              threadKey={props.threadKey}
+              task={task}
+              subtask={subtask}
+              tab={navigation.tab}
+            />
+          </div>
+          <TaskSidebar threadKey={props.threadKey} task={task} subtaskId={subtask?.id ?? null} />
         </div>
-        <TaskSidebar threadKey={props.threadKey} task={task} subtaskId={subtask?.id ?? null} />
       </div>
-    </div>
+    </NavigationContext>
   );
 }
 
@@ -403,6 +454,7 @@ function AgentIcon(props: { agent: OrbitTaskAgent; tone: StatusTone }) {
 
 /** One agent. Only an agent with a Conn conversation is a control; the rest are plain rows. */
 function AgentRow(props: { row: AgentRowModel }) {
+  const navigation = use(NavigationContext);
   const { agent, conversation, label } = props.row;
   const interaction = agentRowInteraction(props.row);
   const tone = agentStateTone(agent);
@@ -425,7 +477,7 @@ function AgentRow(props: { row: AgentRowModel }) {
           size="sm"
           variant="ghost"
           part="row"
-          onClick={() => openOrbitAgentConversation(conversation)}
+          onClick={() => void navigation?.openAgent(conversation)}
         >
           {content}
         </ThreadDetailsControl>
@@ -575,11 +627,17 @@ function TaskWorkspaceRows(props: { task: OrbitTaskDetail }) {
 
 /** The task's pull request. Opening it in the PR tab comes with the PR round trip. */
 function PullRequestRow(props: { pr: NonNullable<OrbitTaskDetail["pullRequest"]> }) {
+  const navigation = use(NavigationContext);
   const { pr } = props;
   const state = pr.state ? resolvePullRequestState({ state: pr.state, isDraft: false }) : null;
   const Icon = state?.Icon;
   return (
-    <div className={ROW}>
+    <ThreadDetailsControl
+      part="row"
+      variant="ghost"
+      onClick={() => navigation?.openPullRequest(pr.url)}
+      aria-label={`Open pull request #${pr.number}`}
+    >
       {Icon ? (
         <Icon aria-hidden className={cn("size-4 shrink-0", state?.toneClassName)} />
       ) : (
@@ -589,7 +647,7 @@ function PullRequestRow(props: { pr: NonNullable<OrbitTaskDetail["pullRequest"]>
       <span className="shrink-0 tabular-nums">
         #{pr.number} · {state?.label ?? "State unknown"}
       </span>
-    </div>
+    </ThreadDetailsControl>
   );
 }
 
