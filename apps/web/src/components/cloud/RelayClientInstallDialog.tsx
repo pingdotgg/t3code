@@ -33,6 +33,8 @@ const installSteps: ReadonlyArray<{
   { stage: "activating", label: msg("Activating installation") },
 ];
 
+const formatMegabytes = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+
 export function RelayClientInstallDialog() {
   const state = useSyncExternalStore(
     subscribeRelayClientInstallDialog,
@@ -44,6 +46,7 @@ export function RelayClientInstallDialog() {
   const view = state.status === "closing" ? state.view : state;
   const isConfirming = view.status === "confirming";
   const isInstalling = view.status === "installing";
+  const isDownloading = isInstalling && view.stage === "downloading";
   const activeStepIndex = isInstalling
     ? installSteps.findIndex(({ stage }) => stage === view.stage)
     : -1;
@@ -100,7 +103,16 @@ export function RelayClientInstallDialog() {
                 value={activeStepIndex + 1}
               />
               <p className="text-xs leading-relaxed text-muted-foreground">
-                <T>Keep T3 Code open while the relay client is installed.</T>
+{isDownloading && view.downloadedBytes !== undefined
+                  ? view.totalBytes === undefined
+                    ? gt("{downloaded} MB downloaded", {
+                        downloaded: (view.downloadedBytes / 1024 / 1024).toFixed(1),
+                      })
+                    : gt("{downloaded} MB of {total} MB downloaded", {
+                        downloaded: (view.downloadedBytes / 1024 / 1024).toFixed(1),
+                        total: (view.totalBytes / 1024 / 1024).toFixed(1),
+                      })
+                  : gt("Keep T3 Code open while the relay client is installed.")}
               </p>
             </div>
           ) : (

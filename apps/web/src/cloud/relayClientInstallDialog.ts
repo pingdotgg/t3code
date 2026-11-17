@@ -26,6 +26,8 @@ export type RelayClientInstallDialogState =
       readonly status: "installing";
       readonly version: string;
       readonly stage: RelayClientInstallProgressStage;
+      readonly downloadedBytes?: number;
+      readonly totalBytes?: number;
     }
   | {
       readonly status: "closing";
@@ -35,6 +37,8 @@ export type RelayClientInstallDialogState =
             readonly status: "installing";
             readonly version: string;
             readonly stage: RelayClientInstallProgressStage;
+            readonly downloadedBytes?: number;
+            readonly totalBytes?: number;
           };
     };
 
@@ -101,7 +105,17 @@ export function reportRelayClientInstallProgress(event: RelayClientInstallProgre
   if (state.status !== "installing" || event.type !== "progress") {
     return;
   }
-  publish({ ...state, stage: event.stage });
+  publish({
+    status: "installing",
+    version: state.version,
+    stage: event.stage,
+    ...(event.stage === "downloading" && event.downloadedBytes !== undefined
+      ? {
+          downloadedBytes: event.downloadedBytes,
+          ...(event.totalBytes === undefined ? {} : { totalBytes: event.totalBytes }),
+        }
+      : {}),
+  });
 }
 
 export function finishRelayClientInstall(): void {
