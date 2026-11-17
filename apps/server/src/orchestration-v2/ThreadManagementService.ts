@@ -1288,6 +1288,13 @@ const make = Effect.gen(function* () {
     );
     const targetThreadId = ThreadId.make(`continuation:${key}`);
     const pendingTarget = continuationRequests.get(input.threadId);
+    if (pendingTarget !== undefined && pendingTarget !== targetThreadId)
+      return yield* new Orchestrator.OrchestratorDispatchError({
+        commandId: CommandId.make("continuation:refused"),
+        commandType: "thread.fork",
+        cause:
+          "A continuation request from an earlier turn is still pending. Continue in this thread.",
+      });
     if (pendingTarget !== undefined) return { enabled: true, targetThreadId: pendingTarget };
     continuationRequests.set(input.threadId, targetThreadId);
     const handoff = input.handoff;

@@ -1157,3 +1157,51 @@ it.effect.each(["too-short", "queued", "child", "side-chat", "watch"] as const)(
     );
   },
 );
+
+it.effect("deduplicates continuation requests only within the same run", () => {
+  const threadId = ThreadId.make("continuation:pending");
+  const runs = [
+    { id: RunId.make("run:1"), ordinal: 1, status: "completed" },
+    { id: RunId.make("run:2"), ordinal: 2, status: "completed" },
+    { id: RunId.make("run:3"), ordinal: 3, status: "running" },
+  ];
+  const source = {
+    thread: {
+      id: threadId,
+      projectId: ProjectId.make("continuation:project"),
+      deletedAt: null,
+      lineage: { parentThreadId: null, rootThreadId: threadId, relationshipToParent: null },
+    },
+    messages: [],
+    runs,
+  } as unknown as OrchestrationV2ThreadProjection;
+  return Effect.gen(function* () {
+    const service = yield* ThreadManagementService.ThreadManagementService;
+    const first = yield* service.requestContinuation({ threadId, handoff: "Continue task one." });
+    expect(first.targetThreadId).toBeDefined();
+    expect(yield* service.requestContinuation({ threadId, handoff: "Continue task one." })).toEqual(
+      first,
+    );
+    runs[2]!.status = "completed";
+    runs.push({ id: RunId.make("run:4"), ordinal: 4, status: "running" });
+    const error = yield* Effect.flip(
+      service.requestContinuation({ threadId, handoff: "Continue task two." }),
+    );
+    expect(error._tag).toBe("OrchestratorDispatchError");
+  }).pipe(
+    Effect.provide(
+      ThreadManagementService.layer.pipe(
+        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+        Layer.provide(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            getThreadRecords: () => Effect.succeed(source),
+            getThreadEventSequence: () => Effect.succeed(0),
+            streamStoredEventsFrom: () => Stream.never,
+          }),
+        ),
+        Layer.provide(ServerSettings.layerTest({ autoContinueHeavyThreads: true })),
+        Layer.provide(layerReceiptsTest),
+      ),
+    ),
+  );
+});
