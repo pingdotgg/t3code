@@ -37,6 +37,10 @@ describe("themeCssLoadsRemoteFiles", () => {
     ).toBe(false);
   });
 
+  it.each(['@import "x.css";', "@import url(https://example.com/x.css);"])("refuses %s", (css) => {
+    expect(themeCssLoadsRemoteFiles(css)).toBe(true);
+  });
+
   it("allows a url() inside a data: address", () => {
     expect(
       themeCssLoadsRemoteFiles(`.repro { background-image: url('${SVG_WITH_OWN_GRADIENT}'); }`),
