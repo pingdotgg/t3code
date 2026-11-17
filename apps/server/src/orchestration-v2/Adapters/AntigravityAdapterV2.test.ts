@@ -135,6 +135,35 @@ describe("AntigravityAdapterV2 flavor", () => {
       outcome: { outcome: "selected", optionId: "opt-dev" },
     });
   });
+
+  it("omits additionalDirectories from runtime options so agent cwd remains in workspace", () =>
+    Effect.gen(function* () {
+      let runtimeOptions: Record<string, unknown> | undefined;
+      const testFlavor = makeAntigravityAcpAdapterFlavor({
+        instanceId: ProviderInstanceId.make("antigravity-test"),
+        random: undefined as never,
+        fileSystem: undefined as never,
+        path: undefined as never,
+        host: { paths: { attachmentsDir: "/test/attachments" } } as never,
+        selfInvocation: undefined as never,
+        makeRuntime: (input) => {
+          runtimeOptions = input as unknown as Record<string, unknown>;
+          return Effect.succeed({
+            handleSessionUpdate: () => Effect.void,
+            handleReadTextFile: () => Effect.void,
+          } as never);
+        },
+        withProcess: (_stop, task) => task,
+        defaultModel: Effect.undefined,
+      });
+
+      yield* testFlavor.makeRuntime({
+        cwd: "/test/project",
+        mcpServers: [],
+      } as never).pipe(Effect.scoped);
+
+      assert.isUndefined(runtimeOptions?.additionalDirectories);
+    }));
 });
 
 const layerSession = Layer.mergeAll(
