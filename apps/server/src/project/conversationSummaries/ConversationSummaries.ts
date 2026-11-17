@@ -854,7 +854,6 @@ const make = Effect.gen(function* () {
       const documents = terms.map(() => 0);
       for (const row of rows) {
         const term = terms.indexOf(row.term);
-        if (term === -1) continue;
         documents[term] = row.documents;
         const entry = matches.get(row.summary_id) ?? {
           createdAt: row.created_at,

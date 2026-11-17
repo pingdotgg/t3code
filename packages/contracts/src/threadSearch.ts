@@ -46,7 +46,6 @@ export const OrchestrationThreadSearchMatch = Schema.Struct({
   title: Schema.optionalKey(Schema.String),
   source: OrchestrationThreadSearchSource,
   messageId: Schema.optionalKey(MessageId),
-  /** The timeline item holding the cited message, for reading around it. */
   itemId: Schema.optionalKey(TurnItemId),
   digest: Schema.optionalKey(Schema.String),
   archived: Schema.optionalKey(Schema.Boolean),

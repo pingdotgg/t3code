@@ -77,14 +77,36 @@ function omitBinaryLines(text: string): string {
   return lines.join("\n");
 }
 
+function omitWrappedBase64(text: string): string {
+  const lines = text.split("\n");
+  const output: string[] = [];
+  for (let start = 0; start < lines.length;) {
+    let end = start;
+    while (end < lines.length && /^[A-Za-z0-9+/_=-]+\r?$/.test(lines[end]!)) {
+      const length = lines[end]!.replace(/\r$/, "").length;
+      if (length < 64) break;
+      end++;
+    }
+    if (end - start < 2) {
+      output.push(lines[start++]!);
+      continue;
+    }
+    if (end < lines.length && /^[A-Za-z0-9+/_=-]*\r?$/.test(lines[end]!)) end++;
+    output.push(omitBase64Token(lines.slice(start, end).join("\n")));
+    start = end;
+  }
+  return output.join("\n");
+}
+
 function omitEncodedText(text: string): string {
-  return omitBinaryLines(text)
-    .replace(
+  return omitWrappedBase64(
+    omitBinaryLines(text).replace(
       /\bdata:((?:[\w.+-]+\/[\w.+-]+)?(?:;[^,\s"'<>]*)?),([^\s"'<>\x60)\]\\]+)/gi,
       omitDataUrl,
-    )
-    .replace(/^(?:[A-Za-z0-9+/_=-]{64,}\r?\n){2,}[A-Za-z0-9+/_=-]*$/gm, omitBase64Token)
-    .replace(/[A-Za-z0-9+/_=-]{4096,}/g, omitBase64Token);
+    ),
+  ).replace(/[A-Za-z0-9+/_=-]+/g, (token) =>
+    token.length < 4096 ? token : omitBase64Token(token),
+  );
 }
 
 export function omitConversationPayloads(value: unknown): unknown {

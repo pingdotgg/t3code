@@ -184,7 +184,7 @@ describe("summaryToolText", () => {
     );
     const log = "\u001b[32mPASSED\u001b[0m\n".repeat(300);
     expect(evidenceOutput(log)).toBe(log);
-    expect(evidenceOutput("x".repeat(10_000))).toBe("x".repeat(10_000));
+    expect(evidenceOutput("x".repeat(10_000_000))).toBe("x".repeat(10_000_000));
   });
 
   it("preserves oversized prose, JSON arrays, and long identifiers", () => {
