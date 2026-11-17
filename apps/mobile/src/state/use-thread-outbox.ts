@@ -26,10 +26,15 @@ export const editingQueuedMessageIdsAtom = Atom.make<Readonly<Record<MessageId, 
   Atom.withLabel("mobile:thread-outbox:editing-message-ids"),
 );
 
-export const dispatchingQueuedMessageIdAtom = Atom.make<MessageId | null>(null).pipe(
-  Atom.keepAlive,
-  Atom.withLabel("mobile:thread-outbox:dispatching-message-id"),
-);
+/** Messages being sent now: at most one per thread, the head of its queue. */
+export const dispatchingQueuedMessageIdsAtom = Atom.make<
+  Readonly<Partial<Record<MessageId, true>>>
+>({}).pipe(Atom.keepAlive, Atom.withLabel("mobile:thread-outbox:dispatching-message-ids"));
+
+/** Messages waiting out a retry backoff, which can repeat for as long as the failure lasts. */
+export const retryingQueuedMessageIdsAtom = Atom.make<Readonly<Partial<Record<MessageId, true>>>>(
+  {},
+).pipe(Atom.keepAlive, Atom.withLabel("mobile:thread-outbox:retrying-message-ids"));
 
 export function holdEditingQueuedMessage(messageId: MessageId): void {
   const current = appAtomRegistry.get(editingQueuedMessageIdsAtom);
@@ -63,7 +68,7 @@ export const queuedThreadKeysAtom = Atom.make((get): ReadonlySet<string> => {
     }
   }
   return keys;
-}).pipe(Atom.withLabel("mobile:thread-outbox:queued-thread-keys"));
+}).pipe(Atom.keepAlive, Atom.withLabel("mobile:thread-outbox:queued-thread-keys"));
 
 export function useQueuedThreadKeys(): ReadonlySet<string> {
   return useAtomValue(queuedThreadKeysAtom);

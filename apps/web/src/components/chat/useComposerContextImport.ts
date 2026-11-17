@@ -39,9 +39,11 @@ import {
 import { assetEnvironment } from "~/state/assets";
 import { copiedComposerAttachmentFile } from "~/lib/copiedComposerAttachments";
 import { countQuestionAttachments, questionAttachmentDraftId } from "../../questionAttachments";
+import { collectInlineContextIds } from "../../lib/composerContextReferences";
 import { elementContextToPreviewAnnotation } from "../../lib/elementContext";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { pendingDraftWork } from "./pendingDraftWork";
+import { readComposerImageBytes } from "./composerAttachmentFiles";
 import { randomUUID } from "~/lib/utils";
 import { readPreparedConnection } from "~/state/session";
 import { resolveAssetUrl } from "~/assets/assetUrls";
@@ -87,6 +89,7 @@ export function useComposerContextImport(input: {
   readonly composerContextRecords: ComposerDraftContextRecords;
   readonly composerImages: ReadonlyArray<ComposerImageAttachment>;
   readonly composerFilesRef: ChatComposerProps["composerFilesRef"];
+  readonly promptRef: RefObject<string>;
   readonly pendingThreadImportsRef: RefObject<Map<string, number>>;
   readonly addComposerFilesToDraft: (files: ComposerFileAttachment[]) => string[];
 }) {
@@ -104,6 +107,7 @@ export function useComposerContextImport(input: {
     composerContextRecords,
     composerImages,
     composerFilesRef,
+    promptRef,
     pendingThreadImportsRef,
     addComposerFilesToDraft,
   } = input;
@@ -192,6 +196,21 @@ export function useComposerContextImport(input: {
         return;
       }
       file = new File([blob], record.name, { type: record.mimeType || blob.type });
+      if (record.kind === "image") await readComposerImageBytes(file);
+      // Question attachments have no inline reference; annotations can own their screenshots.
+      const references = new Set(collectInlineContextIds(promptRef.current));
+      if (
+        !questionAttachmentTarget &&
+        !references.has(toKindScopedComposerContextId(record.kind, localId)) &&
+        !(
+          record.kind === "image" &&
+          references.has(previewAnnotationContextId(localId)) &&
+          getComposerDraft(composerDraftTarget)?.previewAnnotations.some(
+            (annotation) => annotation.id === localId,
+          )
+        )
+      )
+        return;
     }
     // The draft these bytes belong to may have been sent or switched away from while they
     // downloaded. Dropping them here keeps them out of whatever draft is open now.
@@ -227,6 +246,7 @@ export function useComposerContextImport(input: {
             sizeBytes: file.size,
             previewUrl: URL.createObjectURL(file),
             file,
+            ...(record.source ? { source: record.source } : {}),
           },
         ],
         {
@@ -287,7 +307,7 @@ export function useComposerContextImport(input: {
     for (const candidate of orderedRecords) {
       // Producer ids fold into context ids, so two different excerpts can collide. Only skip
       // when the draft already holds the same payload; a colliding but different record is
-      // re-minted under a fresh id so both survive the paste.
+      // re-minted under a fresh id so both survive the paste. Threads resolve below.
       const record = asKnownContextRecord(candidate);
       if (!record) continue;
       // A reminted annotation needs its screenshot under the new annotation id.
@@ -328,7 +348,7 @@ export function useComposerContextImport(input: {
       if (
         existingRecord &&
         isSameComposerContextPayload(existingRecord, record) &&
-        (record.kind !== "thread" || threadDraftTarget === attachmentDraftTarget)
+        record.kind !== "thread"
       ) {
         if (record.kind === "preview-annotation" && record.screenshotContextId) {
           skippedDependentAttachmentIds.add(record.screenshotContextId);
@@ -381,10 +401,21 @@ export function useComposerContextImport(input: {
             !linkedEnvironments.has(record.environmentId)
           )
             break;
-          addComposerDraftThreadContexts(threadDraftTarget, [record], {
+          // Threads reuse their destination record by identity, reminting only on an ID collision.
+          const threads = getComposerDraft(threadDraftTarget)?.threadContexts ?? [];
+          const attached = threads.find(
+            (thread) =>
+              thread.environmentId === record.environmentId && thread.threadId === record.threadId,
+          );
+          const imported =
+            attached ??
+            (threads.some((thread) => thread.contextId === record.contextId)
+              ? { ...record, contextId: toKindScopedComposerContextId("thread", randomUUID()) }
+              : record);
+          addComposerDraftThreadContexts(threadDraftTarget, [imported], {
             appendReference: false,
           });
-          rewritten.set(record.contextId, record.contextId);
+          rewritten.set(record.contextId, imported.contextId);
           break;
         }
         case "environment": {

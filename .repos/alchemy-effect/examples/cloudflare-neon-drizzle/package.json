@@ -16,17 +16,19 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@alchemy.run/cloudflare": "workspace:*",
+    "@alchemy.run/drizzle": "workspace:*",
+    "@alchemy.run/neon": "workspace:*",
     "@cloudflare/workers-types": "catalog:",
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/sql-pg": "catalog:",
     "alchemy": "workspace:*",
     "drizzle-orm": "catalog:",
-    "effect": "catalog:",
-    "pg": "catalog:"
+    "effect": "catalog:"
   },
   "devDependencies": {
-    "@types/pg": "catalog:",
+    "@alchemy.run/test": "workspace:*",
     "drizzle-kit": "catalog:"
   }
 }

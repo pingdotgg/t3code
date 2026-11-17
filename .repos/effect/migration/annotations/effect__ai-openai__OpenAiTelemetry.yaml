@@ -1,0 +1,19 @@
+"@effect/ai-openai/OpenAiTelemetry#addGenAIAnnotations":
+  replacement: "OpenAiTelemetry.addGenAIAnnotations"
+  note: "Still exported in v4; update imports and adapt to the revised v4 service and schema types."
+"@effect/ai-openai/OpenAiTelemetry#AllAttributes":
+  replacement: "none"
+  note: "Removed. Use OpenAiTelemetry.OpenAiTelemetryAttributeOptions for the grouped options accepted by OpenAiTelemetry.addGenAIAnnotations, or OpenAiTelemetry.OpenAiTelemetryAttributes for the prefixed span attribute keys."
+"@effect/ai-openai/OpenAiTelemetry#OpenAiTelemetryAttributeOptions":
+  replacement: "OpenAiTelemetry.OpenAiTelemetryAttributeOptions"
+  note: "Still exported in v4; update imports and adapt to the revised v4 service and schema types."
+"@effect/ai-openai/OpenAiTelemetry#RequestAttributes":
+  replacement: "OpenAiTelemetry.RequestAttributes"
+  note: "Attributes are written under openai.request.* instead of gen_ai.openai.request.*. responseFormat was removed; LanguageModel records gen_ai.output.type for every provider."
+"@effect/ai-openai/OpenAiTelemetry#WellKnownResponseFormat":
+  replacement: "Telemetry.WellKnownOutputType"
+  note: "The response format is no longer a telemetry option. LanguageModel records gen_ai.output.type as text or json from the requested response format."
+"@effect/ai-openai/OpenAiTelemetry#OpenAiTelemetryAttributes":
+  include: true
+  replacement: "OpenAiTelemetry.OpenAiTelemetryAttributes"
+  note: "Use openai.request.* for request keys and openai.response.* for response keys instead of gen_ai.openai.*. The response-format attribute was removed; use gen_ai.output.type from LanguageModel instead."

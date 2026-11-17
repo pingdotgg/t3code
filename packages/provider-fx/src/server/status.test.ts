@@ -1,11 +1,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 
 import { FxSettings } from "../settings.ts";
 import { checkFxProviderStatus } from "./status.ts";
@@ -13,15 +16,21 @@ import { checkFxProviderStatus } from "./status.ts";
 const encoder = new TextEncoder();
 const settings = Schema.decodeSync(FxSettings)({ enabled: true });
 
-function processHandle(stdout: string, code: number) {
+/** Holds stdout and the exit back until `answered` completes, like a CLI slow to answer. */
+function processHandle(stdout: string, code: number, answered: Effect.Effect<void> = Effect.void) {
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(900_000_101),
-    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(code)),
+    exitCode: Effect.as(answered, ChildProcessSpawner.ExitCode(code)),
     isRunning: Effect.succeed(false),
     kill: () => Effect.void,
     unref: Effect.succeed(Effect.void),
     stdin: Sink.drain,
-    stdout: stdout.length === 0 ? Stream.empty : Stream.succeed(encoder.encode(stdout)),
+    stdout: Stream.unwrap(
+      Effect.as(
+        answered,
+        stdout.length === 0 ? Stream.empty : Stream.succeed(encoder.encode(stdout)),
+      ),
+    ),
     stderr: Stream.empty,
     all: Stream.empty,
     getInputFd: () => Sink.drain,
@@ -29,28 +38,40 @@ function processHandle(stdout: string, code: number) {
   });
 }
 
+// `fx models --json` from fx 0.0.13, ids trimmed.
+const FX_MODELS_JSON = JSON.stringify({
+  kind: "models",
+  count: 2,
+  shown_count: 2,
+  more_count: 0,
+  private_models_hidden: false,
+  ids: ["anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5"],
+});
+
 /** Answers `fx` invocations by their arguments and records which ran. */
-const check = (statusJson: string) =>
+const check = (
+  statusJson: string,
+  versionDelay: Duration.Input = 0,
+  modelsJson: string = FX_MODELS_JSON,
+) =>
   Effect.gen(function* () {
     const outputs: Record<string, string> = {
       "--version": "fx 0.0.13\n",
       "status --json": statusJson,
-      // `fx models --json` from fx 0.0.13, ids trimmed.
-      "models --json": JSON.stringify({
-        kind: "models",
-        count: 2,
-        shown_count: 2,
-        more_count: 0,
-        private_models_hidden: false,
-        ids: ["anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5"],
-      }),
+      "models --json": modelsJson,
     };
     const invoked: Array<string> = [];
     const spawner = ChildProcessSpawner.make((command) => {
       const args = ChildProcess.isStandardCommand(command) ? command.args.join(" ") : "";
       invoked.push(args);
       const stdout = outputs[args];
-      return Effect.succeed(processHandle(stdout ?? "", stdout === undefined ? 2 : 0));
+      return Effect.succeed(
+        processHandle(
+          stdout ?? "",
+          stdout === undefined ? 2 : 0,
+          args === "--version" ? Effect.sleep(versionDelay) : Effect.void,
+        ),
+      );
     });
     const draft = yield* checkFxProviderStatus(settings, {}).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -59,6 +80,38 @@ const check = (statusJson: string) =>
   }).pipe(Effect.provide(NodeServices.layer));
 
 describe("checkFxProviderStatus", () => {
+  it.effect.each([
+    {
+      label: "answers after 6 s",
+      versionDelay: "6 seconds",
+      status: "ready",
+      version: "0.0.13",
+      message: undefined,
+      invoked: ["--version", "status --json", "models --json"],
+    },
+    {
+      label: "never answers",
+      versionDelay: "Infinity",
+      status: "error",
+      version: null,
+      message: "Failed to run `fx --version`.",
+      invoked: ["--version"],
+    },
+  ] as const)("gives `fx --version` 10 s when it $label", (row) =>
+    Effect.gen(function* () {
+      const fiber = yield* check(
+        JSON.stringify({ kind: "status", model: "anthropic/claude-opus-5.5", auth: "fx login" }),
+        row.versionDelay,
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 seconds");
+      const { draft, invoked } = yield* Fiber.join(fiber);
+      assert.equal(draft.status, row.status);
+      assert.equal(draft.version, row.version);
+      assert.equal(draft.message, row.message);
+      assert.deepEqual(invoked, [...row.invoked]);
+    }),
+  );
+
   // `fx status --json` from fx 0.0.13, trimmed to the fields T3 reads plus a few it ignores.
   it.effect("reports sign-in from `fx status` without opening an ACP session", () =>
     Effect.gen(function* () {
@@ -101,6 +154,22 @@ describe("checkFxProviderStatus", () => {
       const unknown = yield* check("not json");
       assert.equal(unknown.draft.status, "warning");
       assert.equal(unknown.draft.auth.status, "unknown");
+    }),
+  );
+
+  // A ready snapshot drops models it does not list, so only a real listing may report ready.
+  it.effect("treats `fx models` output without ids as a failed listing", () =>
+    Effect.gen(function* () {
+      const signedIn = JSON.stringify({ kind: "status", auth: "fx login" });
+      const reshaped = yield* check(signedIn, 0, JSON.stringify({ kind: "models", models: [] }));
+      assert.equal(reshaped.draft.status, "warning");
+      assert.deepEqual(
+        reshaped.draft.models.map((model) => model.slug),
+        ["default"],
+      );
+
+      const empty = yield* check(signedIn, 0, JSON.stringify({ kind: "models", ids: [] }));
+      assert.equal(empty.draft.status, "ready");
     }),
   );
 });
