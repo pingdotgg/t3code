@@ -188,7 +188,7 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
     withFakeClaudeEnv(
       {
         output: JSON.stringify({ structured_output: { title: "Reconnect failures" } }),
-        stdinMustContain: "Additional instructions:\nUse two to four words.",
+        stdinMustContain: "Title instructions from the user:\nUse two to four words.",
       },
       (textGeneration) =>
         textGeneration.generateThreadTitle({
@@ -232,6 +232,35 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
           }),
       );
     }),
+  );
+
+  it.effect("passes --settings from the instance launch args to Claude text generation", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            title: "Use instance settings",
+          },
+        }),
+        argsMustContain: `"env":{"ANTHROPIC_VERTEX_PROJECT_ID":"vertex-project-a"}`,
+        claudeConfig: {
+          launchArgs: `--settings '{"env":{"ANTHROPIC_VERTEX_PROJECT_ID":"vertex-project-a"}}'`,
+        },
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "thread title",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+            },
+          });
+
+          expect(generated.title).toBe(sanitizeThreadTitle("Use instance settings"));
+        }),
+    ),
   );
 
   it.effect("retries without --no-session-persistence when the Claude CLI rejects it", () =>

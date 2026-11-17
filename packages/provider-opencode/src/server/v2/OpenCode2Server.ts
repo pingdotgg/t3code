@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 // One OpenCode 2 process serves all directories; share it across instance threads.
 import type { OpenCodeClient } from "@opencode/client/effect";
 import * as Context from "effect/Context";
@@ -12,12 +13,14 @@ import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
 import * as OpenCode2Client from "./OpenCode2Client.ts";
 
-const INFO_TIMEOUT = "5 seconds";
+const INFO_TIMEOUT_MS = 5_000;
 
 export interface OpenCode2Connection extends OpenCode2Client.OpenCode2Api {
   readonly url: string;
   readonly version: string;
   readonly external: boolean;
+  /** Only owned processes have an authoritative lifetime signal. */
+  readonly processExit?: Effect.Effect<void>;
 }
 
 export class OpenCode2Server extends Context.Service<
@@ -26,6 +29,8 @@ export class OpenCode2Server extends Context.Service<
     readonly withConnection: <A, E, R>(
       use: (connection: OpenCode2Connection) => Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E | OpenCodeRuntime.OpenCodeRuntimeError, R>;
+    /** Drops a configured server's verified connection, so the next use reads its version again. */
+    readonly forget: Effect.Effect<void>;
   }
 >()("@t3tools/provider-opencode/server/v2/OpenCode2Server") {}
 
@@ -48,7 +53,7 @@ export const serverEnvironment = (
   return { ...rest, OPENCODE_PASSWORD: Redacted.value(password) };
 };
 
-const httpFailureOf = (cause: unknown): HttpClientError.HttpClientError | undefined => {
+export const httpFailureOf = (cause: unknown): HttpClientError.HttpClientError | undefined => {
   if (HttpClientError.isHttpClientError(cause)) return cause;
   if (
     P.isTagged(cause, "ClientError") &&
@@ -75,10 +80,10 @@ const describeInfoFailure = (cause: unknown) => {
 };
 
 /** Only server info proves readiness; keep credential-bearing failure details out of client text. */
-export const verifyServer = (client: OpenCodeClient) =>
+export const verifyServer = (client: OpenCodeClient, environment?: NodeJS.ProcessEnv) =>
   client.server.info().pipe(
     Effect.timeoutOrElse({
-      duration: INFO_TIMEOUT,
+      duration: resolveProviderProbeTimeoutMs("opencode", INFO_TIMEOUT_MS, environment),
       orElse: () =>
         Effect.fail(
           new OpenCodeRuntime.OpenCodeRuntimeError({
@@ -123,7 +128,7 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
     external: boolean,
   ) {
     const api = yield* opencode.connect({ baseUrl: url, password });
-    const version = yield* verifyServer(api.client);
+    const version = yield* verifyServer(api.client, input.environment);
     return { ...api, url, version, external } satisfies OpenCode2Connection;
   });
   let latest: OpenCode2Connection | undefined;
@@ -144,6 +149,9 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
           Effect.flatMap(use),
         );
       }),
+      forget: Effect.sync(() => {
+        latest = undefined;
+      }),
     });
   }
 
@@ -158,9 +166,10 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
     withConnection: Effect.fn("OpenCode2Server.withConnection")(function (use) {
       return owner.withServer((server) =>
         latest?.url === server.url
-          ? use(latest)
+          ? use({ ...latest, processExit: server.exitCode.pipe(Effect.asVoid) })
           : Effect.die(new Error("OpenCode 2 server was lent before verification.")),
       );
     }),
+    forget: Effect.void,
   });
 });
