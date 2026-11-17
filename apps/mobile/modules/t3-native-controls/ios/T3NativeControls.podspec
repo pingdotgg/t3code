@@ -15,6 +15,6 @@ Pod::Spec.new do |s|
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',
   }
-  s.resource_bundles = { 'T3NativeControlIcons' => ['Resources/Icons/pull-request*.png', 'Resources/Icons/bot-face*.png'] }
+  s.resource_bundles = { 'T3NativeControlIcons' => ['Resources/Icons/pull-request*.png', 'Resources/Icons/issue*.png', 'Resources/Icons/bot-face*.png'] }
   s.source_files = '**/*.{h,m,mm,swift,hpp,cpp}'
 end

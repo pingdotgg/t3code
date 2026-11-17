@@ -35,7 +35,6 @@ import {
   ChevronLeft,
   ChevronRight,
   EllipsisIcon,
-  Files,
   Plus,
   Volume2Icon,
   VolumeOffIcon,
@@ -61,6 +60,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Menu, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { useBrowserDefaults } from "~/browser/browserDefaults";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { scrollTabStripFromRow } from "../motion/gesture";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { useTheme } from "~/hooks/useTheme";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
@@ -77,7 +77,6 @@ import {
   PANE_INACTIVE_TAB_TITLE_CLASS,
   PANE_TAB_TITLE_CLASS,
   PaneNotch,
-  useConnectedPaneTabs,
 } from "./PaneNotch";
 import { previewBridge } from "./preview/previewBridge";
 import { dispatchPreviewAction } from "./preview/previewActionBus";
@@ -216,10 +215,12 @@ function tabAudioState(overlay: DesktopPreviewOverlay | null): TabAudioState {
  */
 function PanelTabStrip({
   notched,
+  noDrag,
   ref,
   children,
 }: {
   notched: boolean;
+  noDrag: boolean;
   ref: Ref<HTMLDivElement>;
   children: ReactNode;
 }) {
@@ -240,7 +241,7 @@ function PanelTabStrip({
       ref={ref}
       hideScrollbars
       scrollFade
-      className="min-w-0 flex-1"
+      className={cn("min-w-0 flex-1", noDrag && "[-webkit-app-region:no-drag]")}
       data-right-panel-tab-list
     >
       <div className="flex h-full w-max min-w-full items-center gap-1">{children}</div>
@@ -250,8 +251,6 @@ function PanelTabStrip({
 
 function PanelTabsNotch(props: {
   notched: boolean;
-  /** The active tab's breadcrumb slot, on the bar after the tabs (connected pane tabs). */
-  breadcrumb: ReactNode;
   /** A pane's second strip, beside its own (the pull request beside its list). */
   secondStrip: boolean;
   addButton: ReactNode;
@@ -265,7 +264,6 @@ function PanelTabsNotch(props: {
       <LayoutPaneTabStrip role={props.secondStrip ? "panel" : undefined}>
         {props.children}
       </LayoutPaneTabStrip>
-      {props.breadcrumb}
       {props.addButton ? (
         <span data-pane-notch-add="" className="flex shrink-0">
           {props.addButton}
@@ -477,9 +475,6 @@ function RightPanelTab(
     notched: boolean;
     layoutTabId: string | null;
     threadTitle: string | null;
-    onBreadcrumbSlotChange: (element: HTMLSpanElement | null) => void;
-    /** The breadcrumb sits on the pane's bar, outside the tab. */
-    breadcrumbOnBar: boolean;
   },
 ) {
   const {
@@ -492,8 +487,6 @@ function RightPanelTab(
     renaming,
     canRename,
     threadTitle,
-    onBreadcrumbSlotChange,
-    breadcrumbOnBar,
     surface,
     audio,
     audioRuntimeTabId,
@@ -530,8 +523,6 @@ function RightPanelTab(
     : [title, threadTitle, previewUrl, surface.kind === "file" ? surface.relativePath : null]
         .filter(Boolean)
         .join("\n");
-  // An open workspace file reads "Files › file.tsx": its breadcrumb names it.
-  const filesCrumb = active && surface.kind === "file" && !surface.attachment;
   return (
     <div
       ref={setNodeRef}
@@ -539,7 +530,6 @@ function RightPanelTab(
       data-active-tab={active}
       data-tab-key={surface.id}
       data-layout-pane-tab={layoutTabId ?? undefined}
-      data-layout-tab-reveal={filesCrumb ? "end" : undefined}
       onPointerDown={
         layoutTabId !== null ? (event) => beginLayoutTabDrag(event, layoutTabId) : undefined
       }
@@ -556,7 +546,7 @@ function RightPanelTab(
         notched
           ? "h-7 gap-1.75 rounded-control px-2.5 text-label"
           : "h-6 gap-0.5 rounded-item pr-2 pl-1.5 text-xs",
-        // The active tab grows with its breadcrumb; its title caps below.
+        // The active tab title caps below.
         !active && !notched && "max-w-36",
         ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
         active
@@ -570,9 +560,7 @@ function RightPanelTab(
           onClick={() => onClose(surface)}
           showOnPhone={notched}
         >
-          {filesCrumb ? (
-            <Files className="size-3.5 shrink-0 text-foreground" />
-          ) : surface.kind === "terminal" && layoutTab ? (
+          {surface.kind === "terminal" && layoutTab ? (
             layoutLabel.icon
           ) : (
             <SurfaceIcon
@@ -648,7 +636,6 @@ function RightPanelTab(
                   }}
                   className={cn(
                     "cursor-pointer flex min-w-0 items-center outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-ring",
-                    filesCrumb && notched && "max-md:hidden",
                     active && surface.kind === "diff" && "shrink-0",
                   )}
                   aria-label={
@@ -667,7 +654,7 @@ function RightPanelTab(
                         : cn("truncate", active && "max-w-60")
                     }
                   >
-                    {filesCrumb ? "Files" : title}
+                    {title}
                   </span>
                 </button>
               }
@@ -689,17 +676,6 @@ function RightPanelTab(
             </TooltipPopup>
           </Tooltip>
         )}
-        {active && !breadcrumbOnBar ? (
-          <span
-            ref={onBreadcrumbSlotChange}
-            className={cn(
-              "flex min-w-0 items-center empty:hidden",
-              filesCrumb && "min-w-[8ch] max-md:min-w-0",
-              filesCrumb && notched && "max-md:[&>svg:first-child]:hidden",
-              notched ? "gap-1" : "gap-0.5",
-            )}
-          />
-        ) : null}
       </>
     </div>
   );
@@ -731,22 +707,16 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const [renamingDevice, setRenamingDevice] = useState<string | null>(null);
   const renameRequested = useLayoutTabRenameRequested(layoutTabId);
   const renamingDeviceId = renamingDevice ?? (renameRequested ? props.activeSurfaceId : null);
-  // The active tab's breadcrumb and the row's actions slot; its surface
-  // portals its header into them (PanelTabBreadcrumb, PanelTabActions).
-  const [breadcrumbSlot, setBreadcrumbSlot] = useState<HTMLSpanElement | null>(null);
   const [mobileBreadcrumbSlot, setMobileBreadcrumbSlot] = useState<HTMLSpanElement | null>(null);
   const [actionsSlot, setActionsSlot] = useState<HTMLDivElement | null>(null);
   const { hasActions, registerActions } = usePanelTabActionsHost();
   const mobileDiff = isMobile && props.mode === "embedded" && focusedSurface?.kind === "diff";
   // A layout pane's tabs sit in its notch (pen JiaZk), like a chat's.
   const notched = props.mode === "embedded" || props.pane === true;
-  // On the connected bar the tab names its kind and its breadcrumb sits beside it.
-  const breadcrumbOnBar = useConnectedPaneTabs() && notched;
   const tabSlots = {
-    breadcrumb: mobileDiff ? mobileBreadcrumbSlot : breadcrumbSlot,
+    breadcrumb: mobileDiff ? mobileBreadcrumbSlot : null,
     actions: actionsSlot,
     registerActions,
-    breadcrumbOnBar,
   };
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
   const [tabScrollState, setTabScrollState] = useState({
@@ -965,7 +935,15 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     const viewport = tabScrollViewport(root);
     if (!viewport) return;
 
-    const update = () => updateTabScrollState(viewport);
+    const row = root?.closest<HTMLElement>("[data-right-panel-tabbar]");
+    const update = () => {
+      updateTabScrollState(viewport);
+      const overflow = viewport.scrollWidth > viewport.clientWidth;
+      if (row && row.hasAttribute("data-tab-row-overflow") !== overflow) {
+        row.toggleAttribute("data-tab-row-overflow", overflow);
+      }
+    };
+    const rowWheel = (event: WheelEvent) => scrollTabStripFromRow(event, viewport);
     // Only a vertical mouse wheel is translated. Horizontal input scrolls natively, since
     // consuming it keeps Chromium from starting the gesture scroll that swipe navigation tracks.
     const handleWheel = (event: WheelEvent) => {
@@ -985,6 +963,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     const stopObserving = observeResize(content ? [viewport, content] : viewport, update);
     viewport.addEventListener("scroll", update, { passive: true });
     viewport.addEventListener("wheel", handleWheel, { passive: false });
+    row?.addEventListener("wheel", rowWheel, { passive: false });
     update();
 
     return () => {
@@ -992,6 +971,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       stopObserving();
       viewport.removeEventListener("scroll", update);
       viewport.removeEventListener("wheel", handleWheel);
+      row?.removeEventListener("wheel", rowWheel);
+      row?.removeAttribute("data-tab-row-overflow");
     };
   };
 
@@ -1076,15 +1057,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       >
         <PanelTabsNotch
           notched={notched}
-          breadcrumb={
-            breadcrumbOnBar ? (
-              <span
-                ref={setBreadcrumbSlot}
-                data-pane-bar-crumb=""
-                className="flex min-w-0 shrink-100 items-center gap-1 ps-1 empty:hidden"
-              />
-            ) : null
-          }
           secondStrip={props.mode !== "embedded"}
           addButton={addSurfaceMenu}
           pinnedTab={
@@ -1100,7 +1072,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 .filter((tab) => tab.id !== pinnedChatTab?.id)
                 .map((tab) => <LayoutPaneTab key={tab.id} tab={tab} />)
             : null}
-          <PanelTabStrip notched={notched} ref={attachTabList}>
+          <PanelTabStrip
+            notched={notched}
+            // A scrolling strip in the title bar leaves the drag region, so trackpad scrolls reach it.
+            noDrag={ownsDesktopTitleBar && tabScrollState.hasOverflow}
+            ref={attachTabList}
+          >
             <SortableTabList surfaces={props.surfaces} onMove={props.onMoveSurface}>
               {props.surfaces.map((surface) => {
                 const previewTabId = previewTabIdOf(surface, props.previewSessions);
@@ -1139,8 +1116,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     notched={notched}
                     layoutTabId={layoutTabId}
                     threadTitle={props.threadTitle ?? null}
-                    onBreadcrumbSlotChange={setBreadcrumbSlot}
-                    breadcrumbOnBar={breadcrumbOnBar}
                     onActivate={onActivateTab}
                     onClose={onCloseTab}
                     onAuxClick={onTabAuxClick}

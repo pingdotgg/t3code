@@ -36,7 +36,10 @@ import {
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Link } from "@tanstack/react-router";
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
-import { toolGroupAction } from "@t3tools/client-runtime/work-log/presentation";
+import {
+  toolGroupAction,
+  workEntryViewedImagePath,
+} from "@t3tools/client-runtime/work-log/presentation";
 import { turnItemNeedsDetailFetch } from "@t3tools/client-runtime/work-log/item-detail";
 import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
 import { memo, use, useState, type KeyboardEvent } from "react";
@@ -46,6 +49,8 @@ import {
   workLogEntryIsToolLike,
 } from "../../session-logic";
 import ChatMarkdown from "../ChatMarkdown";
+import type { ExpandedImagePreview } from "./ExpandedImagePreview";
+import { workGroupImageGallery } from "./markdownImageGallery";
 import { CircleAlertIcon, XIcon, RotateCcwIcon } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
 import { useAssetUrls } from "../../assets/assetUrls";
@@ -176,7 +181,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     severeFailure = false,
   } = props;
   const ctx = use(TimelineRowCtx);
-  const { timestampFormat } = ctx;
+  const { onImageExpand, timestampFormat } = ctx;
   const { retryableWorkspacePreparationRunIds, onRetryWorkspacePreparation } = ctx;
   const threadTarget = useThreadReadTarget(workEntry, ctx.activeThreadEnvironmentId);
   const createdThread =
@@ -318,6 +323,14 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       : skill
         ? (skill.args ?? null)
         : undefined;
+  const groupViewedImages = groupView?.viewedImages;
+  // Images in this entry's expanded body page through the group's viewed images, like its strip.
+  const expandImage = groupViewedImages
+    ? (preview: ExpandedImagePreview) =>
+        onImageExpand(
+          workGroupImageGallery(groupViewedImages, workEntryViewedImagePath(workEntry), preview),
+        )
+    : onImageExpand;
   const inspectedItem =
     plainOutput === undefined &&
     workEntry.projectedItem &&
@@ -446,7 +459,10 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               {workEntry.itemType === "command_execution" &&
               workEntry.command?.trim() &&
               workEntry.toolLifecycleStatus === "inProgress" ? (
-                <RunningFor startedAt={workEntry.createdAt} />
+                <RunningFor
+                  startedAt={workEntry.createdAt}
+                  environmentId={ctx.activeThreadEnvironmentId}
+                />
               ) : null}
             </span>
             {editCounts ? (
@@ -529,7 +545,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               cwd={ctx.markdownCwd}
               workspaceRoot={workspaceRoot}
               onOpenToolDiff={ctx.onOpenToolDiff}
-              onImageExpand={ctx.onImageExpand}
+              onImageExpand={expandImage}
               source={ctx.turnItemSource}
             />
           ) : (
@@ -542,7 +558,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                   onInitialOutputReady={onInitialOutputReady}
                   projectedItem={workEntry.projectedItem}
                   environmentId={ctx.activeThreadEnvironmentId}
-                  onImageExpand={ctx.onImageExpand}
+                  onImageExpand={expandImage}
                   source={ctx.turnItemSource}
                   showImages={toolGroupAction(workEntry) !== "read"}
                 />

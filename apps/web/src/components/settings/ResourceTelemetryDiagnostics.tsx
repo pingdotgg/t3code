@@ -54,6 +54,8 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import {
+  formatCpuTime,
+  formatSamplingStatus,
   processIdentityKey,
   resourceHistoryBarHeight,
   resourceHistoryCpuScaleMax,
@@ -73,26 +75,10 @@ function formatRate(value: number): string {
   return `${formatBytes(value)}/s`;
 }
 
-function formatCpuTime(valueMs: number): string {
-  const seconds = valueMs / 1_000;
-  if (seconds < 60) return `${seconds.toFixed(seconds >= 10 ? 1 : 2).replace(/\.0+$/, "")}s`;
-  const minutes = seconds / 60;
-  if (minutes < 60) return `${minutes.toFixed(minutes >= 10 ? 1 : 2).replace(/\.0+$/, "")}m`;
-  return `${(minutes / 60).toFixed(2).replace(/\.0+$/, "")}h`;
-}
-
 function formatDurationMicros(value: number): string {
   if (value < 1_000) return `${Math.round(value)} µs`;
   if (value < 1_000_000) return `${(value / 1_000).toFixed(2).replace(/\.0+$/, "")} ms`;
   return `${(value / 1_000_000).toFixed(2).replace(/\.0+$/, "")} s`;
-}
-
-function formatSampleInterval(valueMs: number): string {
-  if (valueMs < 1_000) return `${Math.max(0, Math.round(valueMs))} ms`;
-  const seconds = valueMs / 1_000;
-  return `${seconds.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${
-    seconds === 1 ? "second" : "seconds"
-  }`;
 }
 
 function formatProcessName(process: Pick<ResourceTelemetryProcess, "command" | "name">): string {
@@ -658,7 +644,7 @@ function ProcessTable({
                   {process.cpuPercent.toFixed(1)}%
                 </td>
                 <td className="px-3 py-2 text-right font-mono tabular-nums">
-                  {formatCpuTime(process.cpuTimeMs)}
+                  {formatCpuTime(process.cpuTimeMs / 1_000)}
                 </td>
                 <td className="px-3 py-2 text-right font-mono tabular-nums">
                   {formatBytes(process.residentBytes)}
@@ -755,7 +741,7 @@ function HistoryProcessTable({
                   </ProcessDetail>
                 </td>
                 <td className="px-3 py-2 text-right font-mono tabular-nums">
-                  {formatCpuTime(process.cpuTimeMs)}
+                  {formatCpuTime(process.cpuTimeMs / 1_000)}
                 </td>
                 <td className="px-3 py-2 text-right font-mono tabular-nums">
                   {process.maxCpuPercent.toFixed(1)}%
@@ -1058,8 +1044,10 @@ function ResourceTelemetryDiagnosticsBody({
               </div>
             ) : (
               <div className="flex items-center gap-2 text-3xs text-dim-foreground">
-                <StatusDot tone="success" />
-                Sampling every {snapshot ? formatSampleInterval(snapshot.sampleIntervalMs) : "..."}
+                <StatusDot
+                  tone={snapshot && snapshot.sampleIntervalMs > 0 ? "success" : "neutral"}
+                />
+                {snapshot ? formatSamplingStatus(snapshot.sampleIntervalMs) : "Sampling every ..."}
               </div>
             )}
           </div>
@@ -1070,7 +1058,9 @@ function ResourceTelemetryDiagnosticsBody({
               label="Current CPU"
               value={measured ? `${measured.currentCpuPercent.toFixed(1)}%` : pendingValue}
               detail={
-                measured ? `${formatCpuTime(measured.cpuTimeMs)} observed CPU time` : undefined
+                measured
+                  ? `${formatCpuTime(measured.cpuTimeMs / 1_000)} observed CPU time`
+                  : undefined
               }
             />
             <IconStat

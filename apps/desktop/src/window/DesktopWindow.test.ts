@@ -176,6 +176,7 @@ const layerDesktopAssets = Layer.succeed(DesktopAssets.DesktopAssets, {
     png: Option.none<string>(),
   }),
   resolveResourcePath: () => Effect.succeed(Option.none<string>()),
+  resolveAppIconPath: () => Effect.succeed(Option.none<string>()),
 } satisfies DesktopAssets.DesktopAssets["Service"]);
 
 const layerDesktopServerExposure = Layer.succeed(DesktopServerExposure.DesktopServerExposure, {
@@ -246,6 +247,7 @@ function layerTest(input: {
   readonly previewZoomReapplies?: number[];
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
   readonly focusedWindow?: Electron.BrowserWindow;
+  readonly fallbackWindow?: Electron.BrowserWindow;
   readonly platform?: NodeJS.Platform;
   readonly appearanceWindows?: ReadonlyArray<{
     readonly window: Electron.BrowserWindow;
@@ -299,7 +301,9 @@ function layerTest(input: {
         Effect.as(input.window),
       ),
     main: Ref.get(input.mainWindow),
-    currentMainOrFirst: Ref.get(input.mainWindow),
+    currentMainOrFirst: Ref.get(input.mainWindow).pipe(
+      Effect.map(Option.orElse(() => Option.fromNullishOr(input.fallbackWindow ?? null))),
+    ),
     focusedMainOrFirst:
       input.focusedWindow === undefined
         ? Ref.get(input.mainWindow)
@@ -845,7 +849,7 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  it.effect("reloads and inspects the main window even when a popup has focus", () =>
+  it.effect("routes menu commands to the main window even when a popup has focus", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
       const popup = makeFakeBrowserWindow();
@@ -865,7 +869,10 @@ describe("DesktopWindow", () => {
         yield* desktopWindow.runMainContentsCommand("reload");
         yield* desktopWindow.runMainContentsCommand("forceReload");
         yield* desktopWindow.runMainContentsCommand("toggleDevTools");
+        yield* desktopWindow.dispatchMenuAction("open-settings");
 
+        assert.deepEqual(fakeWindow.send.mock.calls, [["desktop:menu-action", "open-settings"]]);
+        assert.equal(popup.send.mock.calls.length, 0);
         assert.equal(fakeWindow.reload.mock.calls.length, 1);
         assert.equal(fakeWindow.reloadIgnoringCache.mock.calls.length, 1);
         assert.equal(fakeWindow.toggleDevTools.mock.calls.length, 1);
@@ -873,6 +880,38 @@ describe("DesktopWindow", () => {
         assert.equal(popup.reloadIgnoringCache.mock.calls.length, 0);
         assert.equal(popup.toggleDevTools.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("recreates main for Settings when only an unregistered popup survives", () =>
+    Effect.gen(function* () {
+      const main = makeFakeBrowserWindow();
+      const auxiliary = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+
+      yield* Effect.gen(function* () {
+        const windows = yield* DesktopWindow.DesktopWindow;
+        yield* windows.dispatchMenuAction("open-settings");
+        assert.deepEqual(main.send.mock.calls, [["desktop:menu-action", "open-settings"]]);
+        assert.equal(auxiliary.send.mock.calls.length, 0);
+        assert.equal(yield* Ref.get(createCount), 1);
+        assert.strictEqual(yield* windows.ensureMain, main.window);
+        assert.equal(yield* Ref.get(createCount), 1);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            window: main.window,
+            createCount,
+            mainWindow,
+            fallbackWindow: auxiliary.window,
+            desktopSettings: {
+              ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+              localEnvironmentEnabled: false,
+            },
+          }),
+        ),
+      );
     }),
   );
 
@@ -1189,6 +1228,38 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect(
+    "brings the window back after the renderer dies more often than the reload budget",
+    () =>
+      Effect.gen(function* () {
+        const fakeWindow = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+          const renderProcessGone = fakeWindow.webContentsListeners.get("render-process-gone");
+          if (!renderProcessGone) {
+            return yield* Effect.die("render-process-gone listener was not registered");
+          }
+          for (let crash = 1; crash <= 4; crash++) {
+            const loadsBefore = fakeWindow.loadURL.mock.calls.length;
+            renderProcessGone({}, { reason: "oom", exitCode: -536870904 });
+            yield* TestClock.adjust(crash < 4 ? 1_000 : 60_000);
+            yield* Effect.promise(() => Promise.resolve());
+            assert.isAbove(
+              fakeWindow.loadURL.mock.calls.length,
+              loadsBefore,
+              `window shows nothing after renderer crash ${crash}`,
+            );
+          }
+        }).pipe(Effect.provide(layer));
+      }),
+  );
+
   it.effect("updates title bar overlays only on windows created with one", () =>
     Effect.gen(function* () {
       const framed = makeFakeBrowserWindow();
@@ -1212,9 +1283,9 @@ describe("DesktopWindow", () => {
         yield* desktopWindow.syncAppearance;
       }).pipe(Effect.provide(layer));
 
-      assert.deepEqual(vi.mocked(framed.window.setBackgroundColor).mock.calls, [["#ffffff"]]);
+      assert.deepEqual(vi.mocked(framed.window.setBackgroundColor).mock.calls, [["#e4e4e4"]]);
       assert.lengthOf(vi.mocked(framed.window.setTitleBarOverlay).mock.calls, 0);
-      assert.deepEqual(vi.mocked(overlay.window.setBackgroundColor).mock.calls, [["#ffffff"]]);
+      assert.deepEqual(vi.mocked(overlay.window.setBackgroundColor).mock.calls, [["#e4e4e4"]]);
       assert.lengthOf(vi.mocked(overlay.window.setTitleBarOverlay).mock.calls, 1);
     }),
   );

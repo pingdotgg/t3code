@@ -18,13 +18,13 @@ export interface EnvironmentConnectionPresentation {
   readonly phase: EnvironmentConnectionPhase;
   readonly error: string | null;
   readonly traceId: string | null;
-  /** Epoch ms of the next automatic attempt while backing off. */
-  readonly retryAt?: number | null;
   /**
    * Set while reconnecting because the host has not approved this device yet. `error` then
    * says where to approve it and shows the code, and is not a failure.
    */
   readonly awaitingApproval?: true;
+  /** Epoch ms of the next automatic attempt while backing off. */
+  readonly retryAt?: number | null;
 }
 
 /**
@@ -38,6 +38,8 @@ export interface EnvironmentPresentation {
   readonly entry: ConnectionCatalogEntry;
   readonly connection: EnvironmentConnectionPresentation;
   readonly serverConfig: EnvironmentServerConfig | null;
+  /** See `SupervisorConnectionState.refusedRouteIds`. */
+  readonly refusedRouteIds: ReadonlyArray<string>;
 }
 
 export function presentConnectionState(

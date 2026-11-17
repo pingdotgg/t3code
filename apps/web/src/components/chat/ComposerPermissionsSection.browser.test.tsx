@@ -99,7 +99,7 @@ it("returns focus to the editor after a pick", async () => {
   await vi.waitFor(() => expect(handle.focusAtEnd).toHaveBeenCalled());
 });
 
-// Mirrors the model picker: a composer popover whose footer nests the Permissions menu.
+// Mirrors a composer popover that nests the Permissions menu, as the redesign's context strip does.
 function PickerWithPermissions() {
   const [mode, setMode] = useState<RuntimeMode>("full-access");
   const composerMenuProps = useComposerMenuProps();
@@ -112,7 +112,6 @@ function PickerWithPermissions() {
           <ComposerFooterModeControls
             runtimeMode={mode}
             runtimeModeOptions={options}
-            accessDisplay="label"
             onRuntimeModeChange={setMode}
           />
         </PopoverPopup>
@@ -159,7 +158,7 @@ it("opens on the checked permission when composer.mode marked the trigger", asyn
 function PermissionsChip() {
   const [mode, setMode] = useState<RuntimeMode>("approval-required");
   return (
-    <div data-slot="composer-shell">
+    <div data-slot="composer-host">
       <button type="button" data-composer-shortcut="composer.effort composer.mode">
         Model
       </button>

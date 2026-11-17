@@ -3,10 +3,11 @@
 // chat and settings routes, the sidebar and the right panel, through the same stores and
 // atoms the app reads. See renderScenarios.renders.tsx for the counting rules.
 import { createMemoryHistory } from "@tanstack/react-router";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { ThreadId } from "@t3tools/contracts";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { NodeId, RuntimeRequestId, TurnItemId, type ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 import { commands, page, userEvent } from "vite-plus/test/browser";
@@ -14,6 +15,7 @@ import { commands, page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
 import { AppRoot } from "~/AppRoot";
+import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { getRouter, type AppRouter } from "~/router";
@@ -21,6 +23,7 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { vcsEnvironment } from "~/state/vcs";
 import {
   ENVIRONMENT_ID,
+  PROJECT_ID,
   assistantItem,
   emitTerminalMetadata,
   emitThreadEvent,
@@ -31,6 +34,7 @@ import {
   threadWithHistory,
   userItem,
   type FakeDriver,
+  type FakeThread,
 } from "./fakeEnvironment";
 import { commitsSoFar, startCounting, stopCounting, type RenderReport } from "./renderCounter";
 import { act, fakeTimers, render } from "./render";
@@ -72,7 +76,70 @@ const [WARM, A, B, LIVE] = THREADS.map((thread) => thread.id) as [
 
 const SIDE_CHAT = { ...threadWithHistory("thread-side", HISTORY_TURNS), sideChatOf: WARM };
 
-installFakeEnvironment([...THREADS, SIDE_CHAT]);
+// The agent waits on two questions: an option to pick, then a typed answer. They take the same
+// height, so moving between them leaves the composer inset that ChatView lays out unchanged.
+const QUESTION_AT = DateTime.makeUnsafe("2026-03-17T19:12:28.000Z");
+const QUESTION_THREAD = threadWithHistory("thread-question", HISTORY_TURNS);
+const QUESTION_REQUEST = RuntimeRequestId.make("thread-question-request");
+const QUESTION = {
+  ...QUESTION_THREAD,
+  items: [
+    ...QUESTION_THREAD.items,
+    {
+      id: TurnItemId.make(QUESTION_REQUEST),
+      threadId: QUESTION_THREAD.id,
+      runId: null,
+      nodeId: NodeId.make(QUESTION_REQUEST),
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: HISTORY_TURNS * 2,
+      status: "completed",
+      title: null,
+      startedAt: QUESTION_AT,
+      completedAt: QUESTION_AT,
+      updatedAt: QUESTION_AT,
+      type: "user_input_request",
+      requestId: QUESTION_REQUEST,
+      questions: [
+        {
+          id: "approach",
+          header: "Approach",
+          question: "Which approach should I take?",
+          options: [
+            { label: "Incremental", description: "One module at a time" },
+            { label: "Rewrite", description: "Everything at once" },
+          ],
+        },
+        {
+          id: "tests",
+          header: "Tests",
+          question: "Which tests should I run?",
+          options: [
+            { label: "Changed", description: "Only what this touches" },
+            { label: "All", description: "The whole suite" },
+          ],
+        },
+      ],
+    },
+  ],
+  runtimeRequests: [
+    {
+      id: QUESTION_REQUEST,
+      nodeId: NodeId.make(QUESTION_REQUEST),
+      providerTurnId: null,
+      nativeRequestRef: null,
+      kind: "user_input",
+      status: "pending",
+      responseCapability: { type: "message" },
+      createdAt: QUESTION_AT,
+      resolvedAt: null,
+    },
+  ],
+} satisfies FakeThread;
+
+installFakeEnvironment([...THREADS, SIDE_CHAT, QUESTION]);
 // Desktop-sized, so the sidebar, composer and right panel lay out as they do in the app.
 await page.viewport(1400, 900);
 __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
@@ -115,6 +182,16 @@ async function openThread(threadId: ThreadId) {
   await quiet();
   return app;
 }
+
+const goToThread = (router: AppRouter, threadId: ThreadId) => async () => {
+  await act(() =>
+    router.navigate({
+      to: "/$environmentId/$threadId",
+      params: { environmentId: ENVIRONMENT_ID, threadId },
+    }),
+  );
+  await expect.element(lastAnswer(threadId)).toBeVisible();
+};
 
 async function measure(action: () => Promise<void>): Promise<RenderReport> {
   await quiet();
@@ -259,26 +336,55 @@ it("app-type-in-composer", async () => {
     await userEvent.type(editor, TYPED_TEXT);
     await expect.element(editor).toHaveTextContent(TYPED_TEXT);
   });
+  // The footer controls re-render for the first character only, not per keystroke.
+  expect(counted.components.ComposerControlsBar).toBe(1);
   await report("app-type-in-composer", [counted]);
+});
+
+it("app-answer-question", async () => {
+  using _clock = frozenClock();
+  await using _app = (await openThread(QUESTION.id)).screen;
+  const pick = await measure(async () => {
+    await userEvent.click(page.getByRole("button", { name: /Incremental/ }));
+    await expect.element(page.getByText("Which tests should I run?")).toBeVisible();
+  });
+  const editor = page.getByTestId("composer-editor");
+  await userEvent.click(editor);
+  const type = await measure(async () => {
+    await userEvent.type(editor, TYPED_TEXT);
+    await expect.element(editor).toHaveTextContent(TYPED_TEXT);
+  });
+  // Answers live in the composer; the chat view renders for the request, not its answers.
+  expect(pick.components.ChatView).toBeUndefined();
+  expect(type.components.ChatView).toBeUndefined();
+  await report("app-answer-question", [pick, type]);
 });
 
 it("app-switch-thread", async () => {
   using _clock = frozenClock();
   const { screen, router } = await openThread(A);
   await using _app = screen;
-  const go = (threadId: ThreadId) => async () => {
-    await act(() =>
-      router.navigate({
-        to: "/$environmentId/$threadId",
-        params: { environmentId: ENVIRONMENT_ID, threadId },
-      }),
-    );
-    await expect.element(lastAnswer(threadId)).toBeVisible();
-  };
-  const windows = [await measure(go(B)), await measure(go(A))];
+  const windows = [await measure(goToThread(router, B)), await measure(goToThread(router, A))];
   // Only the rows losing and gaining the active highlight change.
   for (const window of windows) expect(window.components.SidebarThreadRow).toBe(2);
   await report("app-switch-thread", windows);
+});
+
+// A row reads whether a thread is open only when its PR badge is clicked, so opening a thread
+// from a draft changes only the row that gains the highlight.
+it("app-open-thread-from-draft", async () => {
+  using _clock = frozenClock();
+  const drafts = useComposerDraftStore.getState();
+  const draftId = DraftId.make("draft-render");
+  drafts.setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId);
+  using _draft = { [Symbol.dispose]: () => drafts.clearDraftThread(draftId) };
+  const { screen, router } = await mountApp(`/draft/${draftId}`);
+  await using _app = screen;
+  // The sidebar lists the project once the shell snapshot has arrived.
+  await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
+  const counted = await measure(goToThread(router, A));
+  expect(counted.components.SidebarThreadRow).toBe(1);
+  await report("app-open-thread-from-draft", [counted], { commits: false });
 });
 
 // Through the diff.toggle shortcut, the same handler as the header's diff button.

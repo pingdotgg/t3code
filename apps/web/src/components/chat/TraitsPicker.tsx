@@ -36,7 +36,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
-import { getProviderModelCapabilities } from "../../providerModels";
+import { getProviderModelCapabilities, keepsUnavailableModelOptions } from "../../providerModels";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -138,10 +138,9 @@ function getSelectedTraits(
   includePlanAgent: boolean | undefined,
 ) {
   const caps = getProviderModelCapabilities(models, model, provider, includePlanAgent);
-  const modelIsUnavailable =
-    provider === "opencode"
-      ? !models.some((candidate) => candidate.slug === normalizeModelSlug(model, provider))
-      : resolveSelectableModel(provider, model, models) === null;
+  const modelIsUnavailable = keepsUnavailableModelOptions(provider, model)
+    ? !models.some((candidate) => candidate.slug === normalizeModelSlug(model, provider))
+    : resolveSelectableModel(provider, model, models) === null;
   const descriptors = modelIsUnavailable
     ? buildUnavailableModelOptionDescriptors(
         includePlanAgent

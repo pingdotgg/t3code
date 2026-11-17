@@ -1,21 +1,29 @@
 import { RegistryContext } from "@effect/atom-react";
 import type { EnvironmentThreadState } from "@t3tools/client-runtime/state/threads";
-import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  EnvironmentId,
+  MessageId,
+  OrchestrationV2DispatchCommandError,
+  ThreadId,
+} from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import {
   formatComposerContextReference,
   toComposerContextId,
 } from "@t3tools/shared/composerContextReferences";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { AsyncResult, type Atom, AtomRegistry } from "effect/reactivity";
-import { Profiler, type ComponentProps } from "react";
+import { Profiler, useState, type ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
 const state = vi.hoisted(() => ({
   threadState: null as unknown as Atom.Writable<AsyncResult.AsyncResult<EnvironmentThreadState>>,
   workflow: null as unknown,
+  commandResult: undefined as unknown,
   command: vi.fn(async (_input: unknown) => undefined),
 }));
 
@@ -67,7 +75,10 @@ vi.mock(import("../../state/threads"), async (importOriginal) => {
 
 vi.mock(import("../../state/use-atom-command"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useAtomCommand: (() => state.command) as never,
+  useAtomCommand: (() => async (input: unknown) => {
+    await state.command(input);
+    return state.commandResult;
+  }) as never,
 }));
 
 vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
@@ -81,10 +92,14 @@ import { EMPTY_ENVIRONMENT_THREAD_STATE } from "@t3tools/client-runtime/state/th
 
 import { act, render as renderUi } from "../../../test/render";
 import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "../../test-fixtures";
+import { ToastProvider } from "../ui/toast";
 import { QueuedRunsControl } from "./QueuedRunsControl";
+import { ExpandedImageDialog } from "./ExpandedImageDialog";
+import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 
 function setup() {
   state.workflow = null;
+  state.commandResult = undefined;
   state.command.mockClear();
 }
 
@@ -98,12 +113,79 @@ const baseProps = {
   onCancelEdit: () => undefined,
   timestampFormat: "locale",
   onOpenThread: () => undefined,
+  onImageExpand: () => undefined,
   onRemovePending: () => undefined,
 } satisfies ComponentProps<typeof QueuedRunsControl>;
 
 async function renderQueue(props: Partial<ComponentProps<typeof QueuedRunsControl>> = {}) {
   return renderUi(<QueuedRunsControl {...baseProps} {...props} />);
 }
+
+it.each([false, true])(
+  "opens queued images in the existing gallery, pending=%s",
+  async (pending) => {
+    setup();
+    const attachments = ["first.png", "second.png"].map((name) => ({
+      type: "image" as const,
+      id: name,
+      name,
+      mimeType: "image/png",
+      sizeBytes: 128,
+    }));
+    state.workflow = {
+      activeRun: null,
+      queuedRuns: pending
+        ? []
+        : [
+            {
+              run: { id: "run:queued", userMessageId: "message:queued" },
+              text: "Later",
+              attachments,
+            },
+          ],
+    };
+    function QueueWithGallery() {
+      const [preview, setPreview] = useState<ExpandedImagePreview | null>(null);
+      return (
+        <>
+          <QueuedRunsControl
+            {...baseProps}
+            optimisticMessages={
+              pending
+                ? [
+                    {
+                      id: MessageId.make("message:pending"),
+                      inputIntent: "queued_turn",
+                      text: "Later",
+                      attachments: attachments.map((attachment) => ({
+                        ...attachment,
+                        previewUrl: `https://assets.test/${attachment.id}`,
+                      })),
+                    },
+                  ]
+                : []
+            }
+            onImageExpand={setPreview}
+          />
+          {preview ? (
+            <ExpandedImageDialog preview={preview} onClose={() => setPreview(null)} />
+          ) : null}
+        </>
+      );
+    }
+    await using _screen = await renderUi(<QueueWithGallery />);
+
+    // The redesigned row shows the first image; the gallery pages to the rest.
+    await page.getByRole("button", { name: "Preview first.png", exact: true }).click();
+    await expect.element(page.getByRole("dialog")).toBeVisible();
+    await expect.element(page.getByText("first.png (1/2)", { exact: true })).toBeVisible();
+    await page.getByRole("option", { name: "second.png (2/2)", exact: true }).click();
+    await expect.element(page.getByText("second.png (2/2)", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Back, close image preview", exact: true }).click();
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Later", { exact: true })).toBeVisible();
+  },
+);
 
 it("previews assistant quotes as readable text and preserves the citation when editing", async () => {
   setup();
@@ -311,35 +393,6 @@ it("stays inside the timeline scroller instead of growing the chat column", asyn
   expect(column.scrollHeight).toBe(column.clientHeight);
 });
 
-it("lets a message that is still saving be removed, on the same fill as a saved one", async () => {
-  setup();
-  state.workflow = {
-    activeRun: { id: "run:active" },
-    canPromoteToSteer: true,
-    queuedRuns: [
-      {
-        run: { id: "run:saved", userMessageId: "message:saved" },
-        text: "Saved",
-        attachments: [],
-      },
-    ],
-  };
-  const onRemovePending = vi.fn();
-  await using screen = await renderQueue({
-    optimisticMessages: [
-      { id: MessageId.make("message:saving"), inputIntent: "queued_turn", text: "Saving one" },
-    ],
-    onRemovePending,
-  });
-
-  const [saved, saving] = screen.getByRole("listitem").elements();
-  expect(getComputedStyle(saving!).backgroundColor).toBe(getComputedStyle(saved!).backgroundColor);
-  const remove = screen.getByRole("button", { name: "Remove queued message" }).nth(1);
-  await expect.element(remove).toBeEnabled();
-  await remove.click();
-  expect(onRemovePending).toHaveBeenCalledExactlyOnceWith("message:saving");
-});
-
 it("does not re-render while assistant text streams into the thread", async () => {
   setup();
   state.workflow = {
@@ -398,4 +451,67 @@ it("does not re-render while assistant text streams into the thread", async () =
 
   await act(() => registry.set(state.threadState, thread("Hello there", true)));
   expect(renders).toBeGreaterThan(settled);
+});
+
+it("tells the user why Send now was rejected", async () => {
+  setup();
+  const reason = "Target run run:active is stopping and cannot be steered.";
+  state.workflow = {
+    activeRun: { id: "run:active" },
+    canPromoteToSteer: true,
+    queuedRuns: [
+      {
+        run: { id: "run:queued", userMessageId: "message:queued" },
+        text: "Follow up",
+        attachments: [],
+      },
+    ],
+  };
+  state.commandResult = AsyncResult.failure(
+    Cause.fail(
+      new OrchestrationV2DispatchCommandError({
+        commandId: CommandId.make("command:promote"),
+        commandType: "queued-message.promote-to-steer",
+        message: reason,
+        detail: reason,
+      }),
+    ),
+  );
+  await using _screen = await renderUi(
+    <ToastProvider timeout={0}>
+      <QueuedRunsControl {...baseProps} />
+    </ToastProvider>,
+  );
+
+  await page.getByRole("button", { name: "Steer" }).click();
+  await vi.waitFor(() => expect(page.getByText(reason).element()).toBeVisible());
+});
+
+it("lets a message that is still saving be removed, on the same fill as a saved one", async () => {
+  setup();
+  state.workflow = {
+    activeRun: { id: "run:active" },
+    canPromoteToSteer: true,
+    queuedRuns: [
+      {
+        run: { id: "run:saved", userMessageId: "message:saved" },
+        text: "Saved",
+        attachments: [],
+      },
+    ],
+  };
+  const onRemovePending = vi.fn();
+  await using screen = await renderQueue({
+    optimisticMessages: [
+      { id: MessageId.make("message:saving"), inputIntent: "queued_turn", text: "Saving one" },
+    ],
+    onRemovePending,
+  });
+
+  const [saved, saving] = screen.getByRole("listitem").elements();
+  expect(getComputedStyle(saving!).backgroundColor).toBe(getComputedStyle(saved!).backgroundColor);
+  const remove = screen.getByRole("button", { name: "Remove queued message" }).nth(1);
+  await expect.element(remove).toBeEnabled();
+  await remove.click();
+  expect(onRemovePending).toHaveBeenCalledExactlyOnceWith("message:saving");
 });

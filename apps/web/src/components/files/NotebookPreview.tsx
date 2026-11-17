@@ -101,7 +101,8 @@ export default function NotebookPreview(props: {
       >
         <Tooltip>
           <TooltipTrigger render={<span tabIndex={0} />}>
-            {props.notebook.cells.length.toLocaleString()} cells
+            {props.notebook.cells.length.toLocaleString()}{" "}
+            {props.notebook.cells.length === 1 ? "cell" : "cells"}
           </TooltipTrigger>
           <TooltipPopup>
             <span className="block">{props.notebook.language}</span>

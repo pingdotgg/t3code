@@ -48,6 +48,7 @@ import { useThreadActionMenu } from "../hooks/useThreadActionMenu";
 import { ProjectFavicon } from "../components/ProjectFavicon";
 import { ContentButton } from "../components/ui/button";
 import { cn } from "../lib/utils";
+import { requestSideChatComposerFocus } from "../lib/workspaceFocus";
 import { PANE_GHOST_TAB_TITLE_CLASS, PANE_INACTIVE_TAB_TITLE_CLASS } from "../components/PaneNotch";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import { ThreadSurfaceTabIcon } from "../components/SurfaceTabIcon";
@@ -85,7 +86,7 @@ import { beginLayoutTabDrag } from "./layoutDrag";
 import { useLayoutPane } from "./layoutPaneContext";
 import { isScrollingWorkspacesEnabled } from "./layoutBehavior";
 import { useLayoutStore } from "./layoutStore";
-import { setWheelScroller, wheelDeltaPx } from "../motion/gesture";
+import { scrollTabStripFromRow, setWheelScroller, wheelDeltaPx } from "../motion/gesture";
 import { useClientSettings } from "../hooks/useSettings";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { surfaceTabTitle, terminalTabTitle } from "./surfaceTabLabels";
@@ -163,14 +164,14 @@ function createPaneStrip(): PaneStrip {
   strip.className =
     "relative flex min-w-0 items-center gap-1 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden";
   // The joined tab: two caps (corner, side, ear, rim) and a middle that
-  // scales, so it moves by transform alone; the pill shows it unfocused.
+  // scales, so it moves by transform alone.
   const join = document.createElement("span");
   join.dataset.paneJoin = "";
   join.setAttribute("aria-hidden", "true");
   join.hidden = true;
   const body = joinPiece("data-jb");
   body.append(joinCap("l"), joinPiece("data-jm"), joinCap("r"));
-  join.append(body, joinPiece("data-jp"));
+  join.append(body);
   strip.append(join);
   const entry: PaneStrip = { strip, join, shown: null, joinedId: null, slide: null, motionMs: 0 };
   stripEntries.set(strip, entry);
@@ -204,7 +205,7 @@ function createPaneStrip(): PaneStrip {
     stripPlacers.get(strip)?.(0);
     markStripOverflow(strip);
   });
-  resize.observe(strip);
+  resize.observe(strip, { box: "border-box" });
   new MutationObserver(() => {
     for (const tab of strip.querySelectorAll(":scope > [data-strip-layer] > *")) {
       resize.observe(tab);
@@ -218,10 +219,43 @@ function createPaneStrip(): PaneStrip {
 
 /** How much of the strip is scrolled out at each end, for its edge fade. */
 function markStripOverflow(strip: HTMLElement): void {
+  const row = strip.closest("[data-pane-header]");
+  const overflow = strip.scrollWidth > strip.clientWidth;
+  if (row && row.hasAttribute("data-tab-row-overflow") !== overflow) {
+    row.toggleAttribute("data-tab-row-overflow", overflow);
+  }
   const end = strip.scrollWidth - strip.clientWidth - strip.scrollLeft;
   strip.style.setProperty("--strip-overflow-start", `${Math.max(0, strip.scrollLeft)}px`);
   strip.style.setProperty("--strip-overflow-end", `${Math.max(0, end)}px`);
   strip.style.setProperty("--strip-overflowing-end", end > 0.5 ? "1" : "0");
+  const entry = stripEntries.get(strip);
+  if (entry) markJoinAtStart(entry);
+}
+
+/**
+ * The joined tab is the first, at the pane's edge (no collapsed sidebar's
+ * controls before it): its side runs on down the pane's edge, and the
+ * pane's corner there gives way (index.css, data-pane-join-start).
+ */
+function markJoinAtStart(entry: PaneStrip): void {
+  const { strip, shown } = entry;
+  const row = strip.closest<HTMLElement>("[data-pane-header]");
+  if (!row) return;
+  const atStart =
+    shown !== null &&
+    shown.x <= PANE_JOIN_EAR_PX + 1 &&
+    strip.scrollLeft < 1 &&
+    stripAtPaneEdge(strip, row);
+  if (row.hasAttribute("data-pane-join-start") !== atStart) {
+    row.toggleAttribute("data-pane-join-start", atStart);
+  }
+}
+
+/** The strip starts at its pane's edge, which clips its ear room (index.css, --pane-join-lead). */
+function stripAtPaneEdge(strip: HTMLElement, row: HTMLElement | null): boolean {
+  const notch = strip.closest<HTMLElement>('[data-pane-notch=""]');
+  if (!notch || !row) return false;
+  return Math.abs(notch.getBoundingClientRect().left - row.getBoundingClientRect().left) < 1;
 }
 
 function paneStripFor(key: string): PaneStrip {
@@ -322,10 +356,12 @@ function moveJoin(
   join.style.setProperty("--jx", `${to.x}px`);
   join.style.setProperty("--jw", `${to.w}px`);
   join.style.setProperty("--jm", String(middle(to.w)));
+  markJoinAtStart(entry);
   const land = () => {
     entry.slide = null;
     entry.joinedId = to.tabId;
     markJoinedLabel(entry);
+    markStripOverflow(entry.strip);
   };
   // Under black chrome and on phones the notch draws the tab and no shape shows.
   if (!was || motionMs <= 0 || join.getClientRects().length === 0) {
@@ -385,6 +421,7 @@ function placePaneJoin(entry: PaneStrip, tabId: string | null, motionMs: number)
     entry.shown = null;
     entry.joinedId = null;
     markJoinedLabel(entry);
+    markJoinAtStart(entry);
     return;
   }
   const box = stripBoxOf(strip, active);
@@ -426,8 +463,12 @@ function revealPaneTab(strip: HTMLElement, tabId: string | null): void {
   const bounds = strip.getBoundingClientRect();
   const rect = tab.getBoundingClientRect();
   // Room for the joined tab's ears inside the strip's clip, and at the end for
-  // its rim's tail, which the next control on the bar overlaps.
-  const start = bounds.left + PANE_JOIN_EAR_PX + PANE_STRIP_FADE_PX;
+  // its rim's tail, which the next control on the bar overlaps. At the pane's
+  // edge the pane clips the strip's ear room and the fade starts past it.
+  const clipped = stripAtPaneEdge(strip, strip.closest("[data-pane-header]"))
+    ? PANE_JOIN_EAR_PX
+    : 0;
+  const start = bounds.left + clipped + PANE_JOIN_EAR_PX + PANE_STRIP_FADE_PX;
   const end = bounds.right - PANE_JOIN_EAR_PX - PANE_JOIN_TAIL_PX;
   // A file tab's trailing breadcrumb names the file; reveal it before its thread label.
   if (rect.width > end - start && tab.dataset.layoutTabReveal === "end")
@@ -480,6 +521,21 @@ export function LayoutPaneTabStrip({
       placePaneJoin(entry, tabId, motion);
     };
     holdPaneStrip(entry, place, motionMs);
+    const row = strip.closest<HTMLElement>("[data-pane-header]");
+    const wheel = (event: WheelEvent) => scrollTabStripFromRow(event, strip);
+    row?.addEventListener("wheel", wheel, { passive: false });
+    markStripOverflow(strip);
+    // The collapsed sidebar's inset moves the strip off the pane's edge
+    // without resizing it; the row's content box tracks that inset.
+    // oxlint-disable-next-line t3code/no-raw-resize-observer -- Marks a DOM attribute only, as the strip's own observer does.
+    const inset = new ResizeObserver(() => markJoinAtStart(entry));
+    if (row) inset.observe(row);
+    return () => {
+      inset.disconnect();
+      row?.removeEventListener("wheel", wheel);
+      row?.removeAttribute("data-tab-row-overflow");
+      row?.removeAttribute("data-pane-join-start");
+    };
   }, [entry, holds, layer, motionMs, tabId]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Take this header's tabs out of the pane's strip, and drop the strip once its last header lets go of it.
   useLayoutEffect(
@@ -670,11 +726,8 @@ export function runLayoutTabMenuAction(action: LayoutTabMenuId, tabId: string): 
     case "layout:copy-link": {
       const link = threadLinkFor(location.tab);
       if (!link) return;
-      void writeTextToClipboard(link, "thread link").then(
-        (copied) => {
-          if (copied) toastManager.add({ type: "success", title: "Link copied" });
-        },
-        () => toastManager.add({ type: "error", title: "Could not copy the link" }),
+      void writeTextToClipboard(link, "thread link").catch(() =>
+        toastManager.add({ type: "error", title: "Could not copy the link" }),
       );
       return;
     }
@@ -954,6 +1007,11 @@ function LayoutPaneTabButton({
   const label = useLayoutTabLabel(tab);
   const focusTab = () => {
     useLayoutStore.getState().focusTab(tab.id);
+    // Choosing a side chat's tab puts the keyboard in its message box.
+    const { content } = tab;
+    if (content.kind === "surface" && content.surfaceId.startsWith("side-chat:")) {
+      requestSideChatComposerFocus(content.threadRef, content.surfaceId);
+    }
   };
   const openMenu = (event: ReactMouseEvent) => {
     event.preventDefault();

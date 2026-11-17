@@ -311,12 +311,15 @@ export function SettingsSection({
       {...sectionProps}
       ref={targetRef}
       tabIndex={sectionProps.id ? -1 : sectionProps.tabIndex}
-      className={cn(!hideTitle && "space-y-2", className)}
+      className={cn(hideTitle ? "relative" : "space-y-2", className)}
     >
       {hideTitle ? (
         <h2 className="sr-only">{title}</h2>
       ) : (
-        <div data-settings-scroll-target className="flex items-center justify-between gap-4">
+        <div
+          data-settings-scroll-target
+          className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1"
+        >
           <div className="flex min-w-0 items-center gap-1.5">
             <h2 className="flex items-center gap-2 text-title text-foreground">
               {icon}
@@ -374,7 +377,7 @@ export function SettingsUnavailableGroup({
   if (!unavailable) return children;
 
   return (
-    <div className="rounded-[inherit] [&>*+*]:border-t [&>*+*]:border-divider [&>[data-slot=settings-row]]:rounded-none [&>[data-slot=settings-row]:first-child]:rounded-t-card [&>[data-slot=settings-row]:last-child]:rounded-b-card [&_h3]:opacity-64 [&_p]:opacity-64">
+    <div className="rounded-[inherit] *:not-first:border-t *:not-first:border-divider [&>[data-slot=settings-row]]:rounded-none [&>[data-slot=settings-row]:first-child]:rounded-t-card [&>[data-slot=settings-row]:last-child]:rounded-b-card [&_h3]:opacity-64 [&_p]:opacity-64">
       {children}
     </div>
   );
@@ -418,6 +421,7 @@ export function SettingsRow({
   trailing,
   control,
   serverScoped = false,
+  devicePreference = false,
   settingKeys = EMPTY_SETTING_KEYS,
   managedPaths = EMPTY_MANAGED_PATHS,
   mixed: mixedOverride,
@@ -437,6 +441,8 @@ export function SettingsRow({
   trailing?: ReactNode;
   control?: ReactNode;
   serverScoped?: boolean;
+  /** Saved on this device, so a project cannot override it and the row is read-only there. */
+  devicePreference?: boolean;
   settingKeys?: readonly (keyof ServerSettings)[];
   /** Dot paths inside a setting, such as `storageCleanup.logsAfterDays`, an administrator can lock. */
   managedPaths?: readonly string[];
@@ -487,6 +493,7 @@ export function SettingsRow({
     context !== null && (context.scope.kind === "project" || context.scope.kind === "checkout");
   const scopedKeys = settingKeys.filter(isProjectScopedSettingKey);
   const environmentWide = isProjectScope && serverScoped && scopedKeys.length === 0;
+  const deviceReadOnly = isProjectScope && devicePreference;
   const sectionLock = useContext(SettingsSectionLockContext);
   const registerWithSection = sectionLock?.register;
   const rowScopeKind: SettingsRowScopeKind | null = !isProjectScope
@@ -525,8 +532,10 @@ export function SettingsRow({
   );
   const overridingProjects = isProjectScope ? [] : projectOverrides(context, scopedKeys);
   const renderedReset =
-    unavailable || managedBy !== undefined || managed !== undefined ? null : isProjectScope &&
-      scopedKeys.length > 0 ? (
+    unavailable ||
+    deviceReadOnly ||
+    managedBy !== undefined ||
+    managed !== undefined ? null : isProjectScope && scopedKeys.length > 0 ? (
       source === "project" || source === "mixed" ? (
         <SettingResetButton
           label={typeof title === "string" ? title : "override"}
@@ -579,7 +588,9 @@ export function SettingsRow({
             )
           : environmentWide && control && !sectionLocked
             ? inertControl(ENVIRONMENT_WIDE_MESSAGE)
-            : control;
+            : deviceReadOnly && control
+              ? inertControl("Saved on this device. Select All projects to change it.")
+              : control;
   const customized =
     context !== null &&
     settingKeys.some((key) =>
@@ -828,7 +839,11 @@ const LOADING_ROW_TITLES = [
 /** Placeholder rows inside a settings group while its list loads. `label` is read to screen readers. */
 export function SettingsLoadingRows({ label, count = 3 }: { label: string; count?: 1 | 2 | 3 }) {
   return (
-    <div role="status" aria-label={label} className="[&>*+*]:border-t [&>*+*]:border-divider">
+    <div
+      role="status"
+      aria-label={label}
+      className="*:not-first:border-t *:not-first:border-divider"
+    >
       {LOADING_ROW_TITLES.slice(0, count).map((title) => (
         <div key={title.key} aria-hidden className="flex flex-col gap-2 px-3 py-3.5 sm:px-4">
           {title}

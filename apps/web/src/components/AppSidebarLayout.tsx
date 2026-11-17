@@ -60,7 +60,7 @@ import { selectFocusedTab } from "../layout/layoutModel";
 import { useLayoutStore } from "../layout/layoutStore";
 import { isLayoutDragActive } from "../layout/layoutDrag";
 import { isModalDialogOpen } from "../lib/modalDialog";
-import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
+import { SidebarChromeBrand, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import type { SidebarRouteReveal } from "./sidebar/routeReveal";
 import { WorkspacePlane } from "../layout/WorkspacePlane";
 import { overviewZoomTransition, useOverviewPhase } from "../layout/Overview";
@@ -142,11 +142,10 @@ function readInitialThreadSidebarWidth(): number {
   try {
     return resolveInitialThreadSidebarWidth(
       getLocalStorageItem(THREAD_SIDEBAR_WIDTH_STORAGE_KEY, Schema.Finite),
-      window.innerWidth,
     );
   } catch (error) {
     console.error("Could not read persisted thread sidebar width.", error);
-    return resolveInitialThreadSidebarWidth(null, window.innerWidth);
+    return resolveInitialThreadSidebarWidth(null);
   }
 }
 
@@ -391,11 +390,15 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
         // with just a caret, and everywhere else, it toggles the sidebar.
         return;
       }
-      if (
-        resolveShortcutCommand(event, keybindings, { context: { usagePageOpen } }) !==
-        "sidebar.toggle"
-      )
-        return;
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: isTerminalFocused(),
+          previewFocus: isPreviewFocused(),
+          ...readRoutePanelsOpen(router),
+          usagePageOpen,
+        },
+      });
+      if (command !== "sidebar.toggle") return;
 
       event.preventDefault();
       event.stopPropagation();
@@ -410,7 +413,7 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
       window.removeEventListener("keydown", onKeyDown, true);
       unsubscribe?.();
     };
-  }, [keybindings, showSidebar, toggleSidebar, usagePageOpen]);
+  }, [keybindings, router, showSidebar, toggleSidebar, usagePageOpen]);
 
   // The control lives as long as the shell, so it carries the shell's commands. Created
   // once so re-renders never re-register them.
@@ -457,6 +460,27 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
               Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
             </TooltipPopup>
           </Tooltip>
+        </div>
+      ) : null}
+      {showSidebar ? (
+        <div
+          className={cn(
+            "hidden max-w-[calc(var(--sidebar-width)-var(--workspace-controls-left)-var(--workspace-titlebar-control-size)*3-13px)] shrink-0 grid-cols-[0fr] md:grid",
+            "[[data-panel-animations=true]_&]:transition-[grid-template-columns] [[data-panel-animations=true]_&]:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:ease-out",
+            isSidebarVisible && "grid-cols-[1fr]",
+          )}
+          inert={!isSidebarVisible || overviewShown}
+        >
+          <div
+            className="min-w-0 overflow-hidden"
+            style={{
+              ...overviewZoomTransition(),
+              transitionProperty: "opacity",
+              ...(overviewShown && { opacity: 0 }),
+            }}
+          >
+            <SidebarChromeBrand onBackdrop={onStageBackdrop} />
+          </div>
         </div>
       ) : null}
       {/* Phones keep the header for the page; the system back gesture covers them. */}
@@ -566,7 +590,7 @@ export function AppSidebarLayout({
     } catch (error) {
       console.error("Could not clear persisted thread sidebar width.", error);
     }
-    setSidebarWidth(resolveInitialThreadSidebarWidth(null, viewportWidth));
+    setSidebarWidth(resolveInitialThreadSidebarWidth(null));
   };
   const [sidebarOpenStore] = useState(() =>
     createSidebarOpenStore(true, "chat_thread_sidebar_open"),
@@ -647,7 +671,7 @@ export function AppSidebarLayout({
         >
           {showSidebar ? (
             <>
-              <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
+              <SidebarBrandWidthProbe onWidthChange={setBrandWidth} />
               {chromeArtVariant ? <ChromeChannelArt variant={chromeArtVariant} /> : null}
               <Sidebar
                 side="left"

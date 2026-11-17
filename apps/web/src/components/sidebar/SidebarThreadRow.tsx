@@ -4,6 +4,7 @@ import { formatModelSlugName } from "@t3tools/shared/model";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
+import { contextMenuSourceOf } from "../../contextMenuSource";
 import { requestCustomSnooze } from "../CustomSnoozeDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { useDeadlinePassed } from "~/hooks/useDeadline";
@@ -30,6 +31,7 @@ import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environ
 import { toServerClock } from "@t3tools/client-runtime/clock";
 import {
   AuthOrchestrationOperateScope,
+  type ContextMenuSource,
   type EnvironmentId,
   type EnvironmentMachineKind,
   type ScopedThreadRef,
@@ -89,7 +91,7 @@ import {
   hasUnseenCompletion,
   resolveSidebarRowAccessibility,
   type SidebarDropVerb,
-  resolveSidebarThreadStatus,
+  resolveSidebarRowStatus,
   resolveSidebarV2TopStatus,
   resolveThreadLastVisitedAt,
   shouldRecedeSidebarThread,
@@ -127,6 +129,8 @@ import { Kbd } from "../ui/kbd";
 import { Menu, MenuItem, MenuItemDetail, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
+import { ActivityShimmerOverlay } from "../chat/TimelineRowParts";
+import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
@@ -229,9 +233,9 @@ function SidebarWokeLabel(props: { onDismiss: (event: ReactMouseEvent) => void }
 }
 
 function SidebarStatusLabel(props: {
+  environmentId: EnvironmentId;
   kind: SidebarV2TopStatusKind;
   label?: string | null;
-  environmentId: EnvironmentId;
   workingStartedAt: string | null;
   compact?: boolean;
 }) {
@@ -664,7 +668,8 @@ type SidebarThreadRowProps = {
   // subagent: drafts and PR clicks care about which composer is on screen.
   isRouteThread: boolean;
   isOnScreen: boolean;
-  openPullRequestsInRightPanel: boolean;
+  // Read at click time; a prop would re-render every row on entering or leaving a thread route.
+  readOpensPullRequestsInRightPanel: () => boolean;
   jumpLabel: string | null;
   currentEnvironmentId: string | null;
   environmentLabel: string | null;
@@ -682,7 +687,11 @@ type SidebarThreadRowProps = {
   onCancelRename: () => void;
   isRenaming: boolean;
   renamingTitle: string;
-  onContextMenu: (threadRef: ScopedThreadRef, position: { x: number; y: number }) => void;
+  onContextMenu: (
+    threadRef: ScopedThreadRef,
+    position: { x: number; y: number },
+    source: ContextMenuSource,
+  ) => void;
   onSettle: (threadRef: ScopedThreadRef) => void;
   onActionSweepStart: (
     threadRef: ScopedThreadRef,
@@ -756,7 +765,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     onUnsettle,
     onUnsnooze,
     onUnpin,
-    openPullRequestsInRightPanel,
+    readOpensPullRequestsInRightPanel,
     renamingTitle,
     thread,
     variant,
@@ -827,7 +836,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     : null;
 
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
-  const status = resolveSidebarThreadStatus(thread);
+  const status = resolveSidebarRowStatus({ ...thread, lastVisitedAt });
   const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
   const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
   const isWoke =
@@ -923,7 +932,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   };
   const handleContextMenu = (event: ReactMouseEvent) => {
     event.preventDefault();
-    onContextMenu(threadRef, { x: event.clientX, y: event.clientY });
+    onContextMenu(threadRef, { x: event.clientX, y: event.clientY }, contextMenuSourceOf(event));
   };
   const handleKeyDown = (event: ReactKeyboardEvent) => {
     if (event.target !== event.currentTarget) return;
@@ -1028,7 +1037,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   const handlePrClick = (event: ReactMouseEvent<HTMLElement>, targetUrl?: string) => {
     const url = targetUrl ?? pr?.url ?? currentLinkedPr?.url;
     if (!url) return;
-    const showInRightPanel = targetUrl !== undefined || openPullRequestsInRightPanel;
+    const showInRightPanel = targetUrl !== undefined || readOpensPullRequestsInRightPanel();
     const openedInRightPanel = openPrLink(event, url, showInRightPanel ? threadRef : undefined);
     if (openedInRightPanel && showInRightPanel && !props.isRouteThread) {
       onThreadActivate(threadRef);
@@ -1039,7 +1048,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
     variantAction === "unsettle" &&
       !props.isActive &&
-      "[&:not(:hover):not(:focus-within)_*]:text-secondary-label",
+      "[&:not(:hover):not(:focus-within)_*:not(.live-activity-focus_*)]:text-secondary-label",
     isRenaming
       ? "bg-transparent sidebar-rename-ring ring-inset ring-ring"
       : props.isActive
@@ -1113,33 +1122,38 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
       />
     ) : (
       <span
+        ref={isRegeneratingTitle ? observeVisibleAnimation : undefined}
         className={cn(
           "min-w-0 flex-1 text-start text-body leading-5 transition-opacity motion-reduce:transition-none",
           shouldRecede ? "font-normal" : "font-medium",
-          variant !== "slim"
-            ? cn(
-                "truncate",
-                shouldRecede
-                  ? "text-(--sidebar-thread-title-foreground)/75 group-hover/sidebar-row:text-(--sidebar-thread-title-foreground) group-focus-visible/sidebar-row:text-(--sidebar-thread-title-foreground)"
-                  : status === "failed" && !isUnread && !isWoke
-                    ? "text-(--sidebar-thread-title-foreground)/95"
-                    : "text-(--sidebar-thread-title-foreground)",
-              )
-            : cn(
-                "truncate group-focus-within/sidebar-row:text-(--sidebar-thread-title-foreground) group-hover/sidebar-row:text-(--sidebar-thread-title-foreground)",
-                shouldRecede
-                  ? "text-secondary-label"
-                  : props.isActive || isWoke || status === "input" || status === "request"
-                    ? "text-(--sidebar-thread-title-foreground)"
-                    : isUnread
-                      ? "text-muted-foreground"
-                      : "text-secondary-label/70",
-              ),
-          isRegeneratingTitle && "opacity-55",
+          isRegeneratingTitle
+            ? "relative truncate text-muted-foreground"
+            : variant !== "slim"
+              ? cn(
+                  "truncate",
+                  shouldRecede
+                    ? "text-(--sidebar-thread-title-foreground)/75 group-hover/sidebar-row:text-(--sidebar-thread-title-foreground) group-focus-visible/sidebar-row:text-(--sidebar-thread-title-foreground)"
+                    : status === "failed" && !isUnread && !isWoke
+                      ? "text-(--sidebar-thread-title-foreground)/95"
+                      : "text-(--sidebar-thread-title-foreground)",
+                )
+              : cn(
+                  "truncate group-focus-within/sidebar-row:text-(--sidebar-thread-title-foreground) group-hover/sidebar-row:text-(--sidebar-thread-title-foreground)",
+                  shouldRecede
+                    ? "text-secondary-label"
+                    : props.isActive || isWoke || status === "input" || status === "request"
+                      ? "text-(--sidebar-thread-title-foreground)"
+                      : isUnread
+                        ? "text-muted-foreground"
+                        : "text-secondary-label/70",
+                ),
         )}
         dir={textDirection(thread.title)}
       >
         {thread.title}
+        {isRegeneratingTitle ? (
+          <ActivityShimmerOverlay className="truncate">{thread.title}</ActivityShimmerOverlay>
+        ) : null}
       </span>
     );
 
@@ -1367,6 +1381,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                 title
               ) : (
                 <span
+                  aria-hidden
                   className={cn(
                     "min-w-0 flex-1 truncate text-start text-meta @min-[12rem]/sidebar-tile:text-label",
                     shouldRecede
@@ -1404,7 +1419,10 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
           sortable?.isDragging && "relative z-20",
         )}
       >
-        <Tooltip disabled={sortable?.isDragging} onOpenChange={holdDetailsWhileSorting}>
+        <Tooltip
+          disabled={isRenaming || sortable?.isDragging}
+          onOpenChange={holdDetailsWhileSorting}
+        >
           <TooltipTrigger
             render={
               <div
@@ -1489,10 +1507,10 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                       <SidebarWokeLabel onDismiss={handleAcknowledgeWokeClick} />
                     ) : inFolder && topStatus ? (
                       <SidebarStatusLabel
+                        environmentId={thread.environmentId}
                         compact
                         kind={topStatus}
                         label={topStatusLabel}
-                        environmentId={thread.environmentId}
                         workingStartedAt={
                           topStatus === "working" || topStatus === "preparing"
                             ? resolveWorkingStartedAt(thread)
@@ -1605,7 +1623,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
       )}
     >
       <Tooltip
-        disabled={snoozeMenuOpen || sortable?.isDragging}
+        disabled={isRenaming || snoozeMenuOpen || sortable?.isDragging}
         onOpenChange={holdDetailsWhileSorting}
       >
         <TooltipTrigger
@@ -1678,9 +1696,9 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                       <SidebarWokeLabel onDismiss={handleAcknowledgeWokeClick} />
                     ) : (
                       <SidebarStatusLabel
+                        environmentId={thread.environmentId}
                         kind={topStatus}
                         label={topStatusLabel}
-                        environmentId={thread.environmentId}
                         workingStartedAt={
                           topStatus === "working" || topStatus === "preparing"
                             ? resolveWorkingStartedAt(thread)
@@ -1820,6 +1838,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
   const { leaseLiveStatus, rowRef: leaseRowRef } = useSidebarRowSubscriptionLease(
     props.isHighlighted || props.isRouteActive,
   );
+  const isRegeneratingTitle = thread.titleRegeneration != null;
   const rowRef = (row: HTMLElement | null) => {
     setDragNodeRef(row);
     return leaseRowRef(row);
@@ -1930,16 +1949,23 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="flex min-w-0 items-center gap-2.5">
               <span
+                ref={isRegeneratingTitle ? observeVisibleAnimation : undefined}
                 className={cn(
                   "min-w-0 flex-1 truncate",
-                  props.isSettled
-                    ? "font-normal text-secondary-label/70 group-hover/sidebar-row:text-foreground"
-                    : "font-medium text-foreground",
-                  (props.isHighlighted || props.isRouteActive) && "text-foreground",
-                  thread.titleRegeneration != null && "opacity-55",
+                  props.isSettled ? "font-normal" : "font-medium",
+                  isRegeneratingTitle
+                    ? "relative text-muted-foreground"
+                    : props.isSettled && !props.isHighlighted && !props.isRouteActive
+                      ? "text-secondary-label/70 group-hover/sidebar-row:text-foreground"
+                      : "text-foreground",
                 )}
               >
                 {thread.title}
+                {isRegeneratingTitle ? (
+                  <ActivityShimmerOverlay className="truncate">
+                    {thread.title}
+                  </ActivityShimmerOverlay>
+                ) : null}
               </span>
               <span id={`${props.resultId}-pr`} className="contents">
                 <ThreadSearchPullRequestNumber

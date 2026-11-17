@@ -3,6 +3,9 @@
 Customize shortcuts in **Settings → Keybindings** on web and desktop. That page
 also lists the command IDs and defaults available in your version.
 
+To free a default shortcut for another command, choose **Unassign** from its row's
+actions menu. **Reset to default** brings it back.
+
 ## Composer controls
 
 `mod+shift+d` starts dictation in the focused editor, or the composer, and finishes it on the next press;
@@ -128,7 +131,7 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
 `previewOpen`, `rightPanelOpen`, `modelPickerOpen`, `usagePageOpen`, `composerFocus`,
 `draftThreadRoute`, `turnRunning`, `assistantSelection`, `editableFocus`, `isWeb`, `isDesktop`, and `isMac`.
-`rightPanelOpen` is true while a side pane is open. `mod+t` opens a new tab in the
+In a thread, `rightPanelOpen` is true while a side pane is open. `mod+t` opens a new tab in the
 focused pane.
 `draftThreadRoute` is true on a draft thread, including a restored draft, until it is first sent.
 `assistantSelection` is true while a citable passage of an assistant response is selected.

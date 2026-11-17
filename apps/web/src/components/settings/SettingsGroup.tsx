@@ -22,7 +22,7 @@ export function SettingsGroup({
         // search pulse ring on them stays concentric with the card.
         variant === "grouped" &&
           divided &&
-          "[&>*+*]:border-t [&>*+*]:border-divider [&>[data-slot=settings-row]]:rounded-none [&>[data-slot=settings-row]:first-child]:rounded-t-card [&>[data-slot=settings-row]:last-child]:rounded-b-card",
+          "*:not-first:border-t *:not-first:border-divider [&>[data-slot=settings-row]]:rounded-none [&>[data-slot=settings-row]:first-child]:rounded-t-card [&>[data-slot=settings-row]:last-child]:rounded-b-card",
         className,
       )}
     />

@@ -29,6 +29,8 @@ vi.mock(import("../state/server"), async (original) => {
   ]);
   return { ...actual, primaryServerKeybindingsAtom: Atom.make(compiled) };
 });
+// Like main's AppRouteModal test: the dictation indicator reads environments not set up here.
+vi.mock("./chat/GlobalVoiceInputIndicator", () => ({ GlobalVoiceInputIndicator: () => null }));
 vi.mock(import("@tanstack/react-router"), async (original) => ({
   ...(await original()),
   useNavigate: (() => state.navigate) as never,
@@ -96,7 +98,7 @@ describe("usage route modal", () => {
       });
     }
 
-    await expect.poll(() => state.navigate.mock.calls).toEqual([[{ href: "/" }]]);
+    await expect.poll(() => state.navigate.mock.calls).toEqual([[{ href: "/", replace: true }]]);
     await expect.element(dialog).not.toBeInTheDocument();
   });
 });

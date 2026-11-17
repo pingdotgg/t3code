@@ -1,6 +1,7 @@
 import {
   composerFileAttachmentMimeType,
   composerImageDedupKey,
+  rememberComposerImageBytes,
 } from "./components/chat/composerAttachmentFiles";
 import { layoutDraftIds } from "./layout/layoutModel";
 import { useLayoutStore } from "./layout/layoutStore";
@@ -1346,23 +1347,32 @@ export function deriveEffectiveComposerModelState(input: {
         baseSelection?.instanceId ?? activeSelectionInstanceId,
         baseSelection?.model,
       );
-  // Draft options win; otherwise an existing thread's options, even none, outrank the project's.
-  // Selections stay with them, so a fallback instance can check which model the options belong to.
-  const optionSelections =
-    [
-      draft?.modelSelectionByProvider,
-      draftPicksOtherModel ? null : selectionsByInstance(baseSelection),
-    ].find((selections) => modelSelectionByProviderToOptions(selections) !== null) ?? null;
-  const modelOptions = modelSelectionByProviderToOptions(optionSelections);
+  // An existing thread's options, even none, outrank the project's. Next to draft options, they
+  // fill in only for the model they were stored with. Each source keeps its selections so a
+  // fallback instance can check which model its options belong to.
+  const optionsFrom = (optionSelections: Partial<Record<string, ModelSelection>> | null) =>
+    withFallbackInstanceOptions({
+      ...input,
+      modelOptions: modelSelectionByProviderToOptions(optionSelections),
+      optionSelections,
+      selectedModel,
+    });
+  const draftOptions = optionsFrom(draft?.modelSelectionByProvider ?? null);
+  const storedIsShownModel =
+    baseSelection != null &&
+    isSameModel(input, baseSelection, {
+      instanceId: input.selectedInstanceId ?? baseSelection.instanceId,
+      model: selectedModel,
+    });
+  const storedOptions = optionsFrom(
+    !draftPicksOtherModel && (draftOptions === null || storedIsShownModel)
+      ? selectionsByInstance(baseSelection)
+      : null,
+  );
 
   return {
     selectedModel,
-    modelOptions: withFallbackInstanceOptions({
-      ...input,
-      modelOptions,
-      optionSelections,
-      selectedModel,
-    }),
+    modelOptions: draftOptions || storedOptions ? { ...storedOptions, ...draftOptions } : null,
   };
 }
 
@@ -1395,15 +1405,39 @@ function withFallbackInstanceOptions(input: {
   const requestedProvider = input.providers.find(
     (provider) => provider.instanceId === requestedInstanceId,
   );
-  const requestedModel = input.optionSelections?.[requestedInstanceId]?.model;
-  const sameModel =
-    requestedModel === input.selectedModel ||
-    composerModelIdentity(input, requestedInstanceId, requestedModel) ===
-      composerModelIdentity(input, selectedInstanceId, input.selectedModel);
+  const sameModel = isSameModel(
+    input,
+    {
+      instanceId: requestedInstanceId,
+      model: input.optionSelections?.[requestedInstanceId]?.model,
+    },
+    { instanceId: selectedInstanceId, model: input.selectedModel },
+  );
   if (!requestedOptions || requestedProvider?.driver !== input.selectedProvider || !sameModel) {
     return modelOptions;
   }
   return { ...modelOptions, [selectedInstanceId]: requestedOptions };
+}
+
+interface InstanceModel {
+  readonly instanceId: ProviderInstanceId;
+  readonly model: string | undefined;
+}
+
+export function isSameModel(
+  input: {
+    readonly providers: ReadonlyArray<ServerProvider>;
+    readonly selectedProvider: ProviderDriverKind;
+    readonly settings: UnifiedSettings;
+  },
+  a: InstanceModel,
+  b: InstanceModel,
+): boolean {
+  return (
+    a.model === b.model ||
+    composerModelIdentity(input, a.instanceId, a.model) ===
+      composerModelIdentity(input, b.instanceId, b.model)
+  );
 }
 
 function revokeObjectPreviewUrl(previewUrl: string): void {
@@ -1632,6 +1666,27 @@ function getComposerDraftState(
     return null;
   }
   return state.draftsByThreadKey[threadKey] ?? null;
+}
+
+/** Where a draft lives now: its thread once promoted, or null once it was discarded. */
+export function resolveLiveComposerDraftTarget(
+  target: ComposerThreadTarget,
+): ComposerThreadTarget | null {
+  if (typeof target !== "string") return target;
+  const state = composerDraftStore.getState();
+  const promoted = state.promotedDraftRedirects[target];
+  if (promoted) return promoted;
+  return state.draftThreadsByThreadKey[target] || state.draftsByThreadKey[target] ? target : null;
+}
+
+/** The stored prompt for a target, empty when it has no draft, or null when the target is gone. */
+export function readComposerDraftPrompt(target: ComposerThreadTarget): string | null {
+  const live = resolveLiveComposerDraftTarget(target);
+  if (live === null) return null;
+  const state = composerDraftStore.getState();
+  const threadKey = resolveComposerDraftKey(state, live);
+  if (!threadKey) return null;
+  return state.draftsByThreadKey[threadKey]?.prompt ?? "";
 }
 
 function draftThreadHasOpenPreview(draftThread: DraftThreadState | undefined): boolean {
@@ -2606,16 +2661,21 @@ function hydratePersistedComposerImageAttachment(
         header.startsWith("data:") && header.includes(";")
           ? header.slice("data:".length, header.indexOf(";"))
           : attachment.mimeType;
-      return new File([decodedText], attachment.name, {
+      const textBytes = new TextEncoder().encode(decodedText);
+      const textFile = new File([textBytes], attachment.name, {
         type: inferredMimeType || attachment.mimeType,
       });
+      rememberComposerImageBytes(textFile, textBytes);
+      return textFile;
     }
     const binary = atob(payload);
     const bytes = new Uint8Array(binary.length);
     for (let index = 0; index < binary.length; index += 1) {
       bytes[index] = binary.charCodeAt(index);
     }
-    return new File([bytes], attachment.name, { type: attachment.mimeType });
+    const file = new File([bytes], attachment.name, { type: attachment.mimeType });
+    rememberComposerImageBytes(file, bytes);
+    return file;
   } catch {
     return null;
   }

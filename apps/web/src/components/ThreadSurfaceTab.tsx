@@ -10,6 +10,8 @@ import {
   AuthPreviewOperateScope,
   AuthTerminalOperateScope,
   AuthTerminalReadScope,
+  type EnvironmentId,
+  type IssueTrackerKind,
   type PreviewAnnotationPayload,
   type ProjectId,
   type ScopedThreadRef,
@@ -85,6 +87,7 @@ import { knownTerminalSessionsAtom, useKnownTerminalSessions } from "../state/te
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironmentQuery } from "../state/query";
 import { focusActivePanelTerminal, focusTerminal } from "../lib/terminalFocus";
+import { requestSideChatComposerFocus } from "../lib/workspaceFocus";
 import type { TerminalContextSelection } from "../lib/terminalContext";
 import { useAtomCommand } from "../state/use-atom-command";
 import { vcsEnvironment } from "../state/vcs";
@@ -104,6 +107,7 @@ import { addBrowserSurface } from "./preview/addBrowserSurface";
 import { closePreviewSession } from "./preview/closePreviewSession";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
+import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import {
   pullRequestPanelContext,
   threadPullRequestPanelTarget,
@@ -131,6 +135,12 @@ const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
 const PullRequestDetailPanel = lazy(() =>
   import("./pullRequest/PullRequestDetailPanel").then((module) => ({
     default: module.PullRequestDetailPanel,
+  })),
+);
+
+const IssueDetailPanel = lazy(() =>
+  import("./issue/IssueDetailPanel").then((module) => ({
+    default: module.IssueDetailPanel,
   })),
 );
 
@@ -427,16 +437,13 @@ function useTerminalIdAllocator(threadRef: ScopedThreadRef): () => string {
   };
 }
 
-/** The terminal keys' labels for its tooltips (split, new, close), as a focused terminal hears them. */
+/** The terminal keys' labels for its tooltips (new, close), as a focused terminal hears them. */
 function useTerminalShortcutLabels() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const options = { context: { terminalFocus: true, terminalOpen: true } };
-  const label = (
-    command: "terminal.split" | "terminal.splitVertical" | "terminal.new" | "terminal.close",
-  ) => shortcutLabelForCommand(keybindings, command, options) ?? undefined;
+  const label = (command: "terminal.new" | "terminal.close") =>
+    shortcutLabelForCommand(keybindings, command, options) ?? undefined;
   return {
-    splitShortcutLabel: label("terminal.split"),
-    splitVerticalShortcutLabel: label("terminal.splitVertical"),
     newShortcutLabel: label("terminal.new"),
     closeShortcutLabel: label("terminal.close"),
   };
@@ -560,7 +567,10 @@ function ThreadSurfacePane({
       previewRuntimeTabId={resolveRuntimeTabId}
       terminalLabelsById={terminalLabels}
       threadTitle={threadTitle}
-      onActivate={noop}
+      onActivate={(active) => {
+        // Choosing a side chat's tab puts the keyboard in its message box, even when it shows.
+        if (active.kind === "side-chat") requestSideChatComposerFocus(threadRef, active.id);
+      }}
       onCloseSurface={close}
       onRenameDevice={(id, title) =>
         useRightPanelStore.getState().renameDevice(threadRef, id, title)
@@ -807,6 +817,42 @@ function ThreadSurfaceContent({
               visibleThreadPullRequests(shell?.pullRequests ?? []).length > 1
                 ? () => openInPane("pull-requests")
                 : undefined
+            }
+          />
+        </Suspense>
+      );
+    case "issue":
+      if (!context.serverConfig) return <PullRequestDetailGhost />;
+      if (context.serverConfig.environment.capabilities.issues !== true) {
+        return (
+          <PullRequestsUnavailableState
+            title="Issues unavailable"
+            error="Update this environment's T3 Code server to browse issues."
+          />
+        );
+      }
+      return (
+        <Suspense fallback={<PullRequestDetailGhost />}>
+          <IssueDetailPanel
+            key={surface.id}
+            environmentId={
+              (surface.environmentId as EnvironmentId | undefined) ?? threadRef.environmentId
+            }
+            reference={{
+              projectId: surface.projectId as ProjectId,
+              tracker: surface.tracker as IssueTrackerKind,
+              ...(surface.host ? { host: surface.host } : {}),
+              scope: surface.scope,
+              key: surface.key,
+            }}
+            threadRef={context.threadless ? null : threadRef}
+            onSelectPullRequest={(reference) =>
+              useRightPanelStore.getState().openPullRequest(threadRef, {
+                projectId: reference.projectId,
+                repository: reference.repository,
+                number: reference.number,
+                ...(reference.host ? { host: reference.host } : {}),
+              })
             }
           />
         </Suspense>

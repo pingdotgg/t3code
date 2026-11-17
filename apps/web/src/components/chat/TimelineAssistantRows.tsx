@@ -5,7 +5,7 @@ import {
 } from "./TimelineRowParts";
 import { type TimelineRow, TimelineRowActivityCtx, TimelineRowCtx } from "./timelineRowContext";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
-import { type RunId, type TurnItemId } from "@t3tools/contracts";
+import { MessageId, type RunId, type TurnItemId } from "@t3tools/contracts";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { agentWorkingDirectories } from "@t3tools/client-runtime/workspace-basename-lookup";
 import { memo, use, useState } from "react";
@@ -36,6 +36,11 @@ import { useUiStateStore } from "~/uiStateStore";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 import { readThreadTurnItems } from "../../state/entities";
 import { useV2ItemSupport } from "../../state/v2ItemSupport";
+import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { vcsEnvironment } from "../../state/vcs";
+
+const NO_VCS_STATUS = Atom.make(AsyncResult.initial());
 
 export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
@@ -119,17 +124,26 @@ export function SentMessageTimelineRow({
   return (
     <div className="min-w-0 px-1 py-0.5">
       <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
-      <ChatMarkdown
-        text={row.text}
-        cwd={ctx.markdownCwd}
-        threadRef={ctx.threadRef ?? undefined}
-        lineBreaks={shouldPreserveAssistantLineBreaks(row.text)}
-        skills={ctx.skills}
-        headingLevelOffset={MESSAGE_HEADING_LEVEL}
-        onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-        onRunShellCommand={ctx.onRunShellCommand}
-        onImageExpand={ctx.onImageExpand}
-      />
+      {/* Sent messages have no message id; citations name their turn item instead. */}
+      <AssistantCitationSource
+        messageId={MessageId.make(row.id)}
+        {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
+        itemKey={row.id}
+        request={ctx.citationRequest}
+        listRef={ctx.listRef}
+      >
+        <ChatMarkdown
+          text={row.text}
+          cwd={ctx.markdownCwd}
+          threadRef={ctx.threadRef ?? undefined}
+          lineBreaks={shouldPreserveAssistantLineBreaks(row.text)}
+          skills={ctx.skills}
+          headingLevelOffset={MESSAGE_HEADING_LEVEL}
+          onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+          onRunShellCommand={ctx.onRunShellCommand}
+          onImageExpand={ctx.onImageExpand}
+        />
+      </AssistantCitationSource>
     </div>
   );
 }
@@ -459,6 +473,15 @@ function AssistantChangedFilesSectionInner({
       : null,
   );
   const onFileContextMenu = useFileContextMenuHandler(ctx.activeThreadEnvironmentId);
+  const repositoryRoot = useAtomValue(
+    ctx.workspaceRoot
+      ? vcsEnvironment.status({
+          environmentId: ctx.activeThreadEnvironmentId,
+          input: { cwd: ctx.workspaceRoot },
+        })
+      : NO_VCS_STATUS,
+    (status) => AsyncResult.getOrElse(status, () => null)?.workingTree.rootPath,
+  );
 
   return (
     <ChangedFilesCard
@@ -478,9 +501,10 @@ function AssistantChangedFilesSectionInner({
             filePath,
             workspaceRoot: ctx.workspaceRoot,
             repositoryRoot:
-              thread?.worktreePath == null
+              repositoryRoot ??
+              (thread?.worktreePath == null
                 ? activeProject?.repositoryIdentity?.rootPath
-                : undefined,
+                : undefined),
           },
           event,
         )

@@ -1,25 +1,11 @@
 /** Shared by the sidebar slide and pane motion: elements that go straight from where they showed
  * to where they land while the box around them changes size. */
 
-/** `end` follows a right-anchored element, `center` a centered lane, anything else its left edge. */
-export function slideTrackEdge(
-  element: HTMLElement,
-  track = element.dataset.sidebarSlideTrack,
-): number {
-  const rect = element.getBoundingClientRect();
-  if (track === "end") return rect.right;
-  return track === "center" ? (rect.left + rect.right) / 2 : rect.left;
-}
-
-let sidebarSlidePending = false;
+const sidebarSlidePending = false;
 
 /** Between a sidebar toggle's commit and the slide it starts: the panes' width change is the
  * sidebar's, which they animate with instead of following it 1:1. */
 export const sidebarSlideStarting = () => sidebarSlidePending;
-
-export function markSidebarSlide(pending: boolean): void {
-  sidebarSlidePending = pending;
-}
 
 /** After the app's resize observers commit what the new width moves (the chat lanes), before paint.
  * Called from inside a resize observer, it must watch `targets` deeper than what that one reported,

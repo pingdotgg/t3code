@@ -16,7 +16,6 @@ import {
   countLayoutTabs,
   findLayoutPane,
   findLayoutTab,
-  findLayoutTabByContent,
   selectFocusedChatTab,
   selectFocusedWorkspace,
   type LayoutDirection,
@@ -47,7 +46,6 @@ export interface LayoutDragPane {
   paneId: string;
   rect: LayoutDragRect;
   tabs?: readonly { id: string; rect: LayoutDragRect }[];
-  tabRow?: LayoutDragRect;
   /** A side panel or terminal pane: splits beside it, but no tabs into it. */
   companion: boolean;
 }
@@ -62,8 +60,6 @@ export interface LayoutDragState {
   composers: readonly LayoutDragRect[];
   /** The composer under the pointer. It takes the drop, so there is no target. */
   composer: LayoutDragRect | null;
-  /** The open tab this drag moves: the dragged tab, or a dragged thread's existing chat. */
-  movingTabId: string | null;
 }
 
 /** The chrome row at the top of a pane: dropping there adds a tab (pen: zones start 48px down). */
@@ -103,20 +99,6 @@ function toRect(rect: DOMRect): LayoutDragRect {
   return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
 }
 
-function unionRect(elements: readonly (Element | null)[]): LayoutDragRect | undefined {
-  const rects = elements.flatMap((element) => {
-    const rect = element?.getBoundingClientRect();
-    return rect && rect.width > 0 && rect.height > 0 ? [rect] : [];
-  });
-  if (rects.length === 0) return undefined;
-  return {
-    left: Math.min(...rects.map((rect) => rect.left)),
-    top: Math.min(...rects.map((rect) => rect.top)),
-    right: Math.max(...rects.map((rect) => rect.right)),
-    bottom: Math.max(...rects.map((rect) => rect.bottom)),
-  };
-}
-
 function measure(): { panes: LayoutDragPane[]; strip: LayoutDragRect } | null {
   const strip = document.querySelector<HTMLElement>("[data-layout-strip]");
   if (!strip) return null;
@@ -128,18 +110,8 @@ function measure(): { panes: LayoutDragPane[]; strip: LayoutDragRect } | null {
       const tabs = [...element.querySelectorAll<HTMLElement>("[data-layout-pane-tab]")].map(
         (tab) => ({ id: tab.dataset.layoutPaneTab!, rect: toRect(tab.getBoundingClientRect()) }),
       );
-      const tabRow = unionRect([
-        element.querySelector("[data-layout-tab-strip]"),
-        element.querySelector("[data-pane-notch-add]"),
-      ]);
       return [
-        {
-          paneId,
-          rect: toRect(rect),
-          tabs,
-          ...(tabRow ? { tabRow } : {}),
-          companion: element.dataset.layoutCompanion != null,
-        },
+        { paneId, rect: toRect(rect), tabs, companion: element.dataset.layoutCompanion != null },
       ];
     },
   );
@@ -323,18 +295,11 @@ export function moveLayoutDrag(
           .map((composer) => toRect(composer.getBoundingClientRect()));
   const composer = options.composer ? toRect(options.composer.getBoundingClientRect()) : null;
   let raw = composer ? null : resolveLayoutDropTarget(point, measured.panes, measured.strip);
-  const movingTabId =
-    source.kind === "tab"
-      ? source.tabId
-      : (findLayoutTabByContent(layout, {
-          kind: "chat",
-          target: { kind: "server", threadRef: source.threadRef },
-        })?.tab.id ?? null);
   if (raw?.kind === "into") {
     const paneId = raw.paneId;
     const tabs = measured.panes
       .find((pane) => pane.paneId === paneId)
-      ?.tabs?.filter((tab) => tab.id !== movingTabId);
+      ?.tabs?.filter((tab) => source.kind !== "tab" || tab.id !== source.tabId);
     if (tabs) {
       const before = tabs.findIndex((tab) => point.x < (tab.rect.left + tab.rect.right) / 2);
       raw = { ...raw, index: before === -1 ? tabs.length : before };
@@ -360,7 +325,6 @@ export function moveLayoutDrag(
     target,
     composers,
     composer,
-    movingTabId,
   });
 }
 

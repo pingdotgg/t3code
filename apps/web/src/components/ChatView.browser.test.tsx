@@ -1,8 +1,10 @@
+import "~/index.css";
 import { createMemoryHistory } from "@tanstack/react-router";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   AgentSessionImportProjectChangedError,
   EnvironmentId,
+  ORCHESTRATION_V2_WS_METHODS,
   NodeId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   RunId,
@@ -13,6 +15,10 @@ import {
   type AgentSessionImportInput,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import {
+  compileResolvedKeybindingsConfig,
+  mergeWithDefaultKeybindings,
+} from "@t3tools/shared/keybindings";
 import type * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -27,20 +33,23 @@ import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "~/diffPanelStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { environmentContextRecord } from "~/lib/composerContextRecords";
+import { startWorkspaceFocus } from "~/lib/workspaceFocus";
 import { usePromptStashStore } from "~/promptStashStore";
-import { useRightPanelStore } from "~/rightPanelStore";
+import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
+import { useLayoutStore } from "~/layout/layoutStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentThreadDetails } from "~/state/threads";
 import {
   ENVIRONMENT_ID,
   PROJECT_ID,
   answerAssetUrls,
+  answerRpc,
   assistantItem,
   dispatchedCommands,
-  fakeDriver,
   emitThreadEvent,
   hasPendingAssetUrl,
+  fakeDriver,
   installFakeEnvironment,
   rejectPendingCommand,
   threadWithHistory,
@@ -48,6 +57,52 @@ import {
   type FakeDriver,
 } from "../../test/fakeEnvironment";
 import { act, fakeTimers, render } from "../../test/render";
+
+const PNG = Uint8Array.from(
+  atob(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+  ),
+  (char) => char.charCodeAt(0),
+);
+
+/** Accepts every attachment upload without sending its bytes, until disposed. */
+function acceptAttachmentUploads(): Disposable {
+  const mint = answerRpc(WS_METHODS.attachmentsCreateUploadUrl, () =>
+    Effect.succeed({ attachmentId: "upload-1", relativeUrl: "/upload", expiresAt: 0 }),
+  );
+  // Sending verifies each ready upload still exists on the server.
+  const verify = answerRpc(WS_METHODS.assetsCreateUrl, () =>
+    Effect.succeed({ relativeUrl: "/upload-1", expiresAt: 0 }),
+  );
+  const status = vi.spyOn(XMLHttpRequest.prototype, "status", "get").mockReturnValue(200);
+  const send = vi.spyOn(XMLHttpRequest.prototype, "send").mockImplementation(function (
+    this: XMLHttpRequest,
+  ) {
+    queueMicrotask(() => this.dispatchEvent(new ProgressEvent("load")));
+  });
+  return {
+    [Symbol.dispose]: () => {
+      send.mockRestore();
+      status.mockRestore();
+      mint[Symbol.dispose]();
+      verify[Symbol.dispose]();
+    },
+  };
+}
+
+/** Holds every call to `method` until `release`, then ends it with `end`, until disposed. */
+function holdRpc<Input>(method: string, end: Effect.Effect<never, Error>) {
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const calls: Input[] = [];
+  const answer = answerRpc(method, (input: Input) => {
+    calls.push(input);
+    return Effect.promise(() => held).pipe(Effect.andThen(end));
+  });
+  return { calls, release, [Symbol.dispose]: () => answer[Symbol.dispose]() };
+}
 
 // The socket is the only fake layer; see test/appScenarios.renders.tsx.
 vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (importOriginal) => {
@@ -64,7 +119,140 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   trackRpcRequestSent: () => {},
 }));
 
+async function appViewport(width = 1400, height = 900) {
+  const previous = { width: window.innerWidth, height: window.innerHeight };
+  await page.viewport(width, height);
+  return {
+    [Symbol.asyncDispose]: () => page.viewport(previous.width, previous.height),
+  };
+}
+
+function appContainer() {
+  const container = document.createElement("div");
+  container.style.cssText = "height: 100dvh; width: 100%;";
+  return container;
+}
+
+it("a machine chip stashed in one thread restores with its machine in another", async () => {
+  await using _viewport = await appViewport();
+  const other = threadWithHistory("thread-stash-restore", 1);
+  const asking = threadWithQuestion("thread-stash-question", "Which file should change?");
+  using _environment = installFakeEnvironment([other, asking]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make("draft-stash-machine");
+  const machine = environmentContextRecord(EnvironmentId.make("environment-build"), "Build box");
+  const drafts = useComposerDraftStore.getState();
+  drafts.setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
+    threadId: ThreadId.make("thread-stash-machine"),
+  });
+  drafts.setPrompt(draftId, "Deploy on ");
+  drafts.addEnvironmentContexts(draftId, [machine]);
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    container: appContainer(),
+    router: false,
+  });
+  const editor = page.getByTestId("composer-editor");
+  const pressStashShortcut = async () => {
+    await userEvent.click(editor);
+    await userEvent.keyboard("{ControlOrMeta>}s{/ControlOrMeta}");
+  };
+  await vi.waitFor(() => expect(editor.element().textContent).toContain("Deploy on"));
+  // A draft can't stash until the shell snapshot lists its project.
+  await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
+  await pressStashShortcut();
+  await vi.waitFor(() => expect(usePromptStashStore.getState().entries).toHaveLength(1));
+
+  // An answer carries no machines, so an open question refuses the restore and keeps the entry.
+  await router.navigate({ to: `/${ENVIRONMENT_ID}/${asking.id}` });
+  await expect.element(page.getByText("Which file should change?")).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: /^Stashed prompts/ }));
+  await userEvent.click(page.getByRole("button", { name: /^Restore stashed prompt/ }));
+  await vi.waitFor(() =>
+    expect(document.body.textContent).toContain("Stashed machines can't go in an answer"),
+  );
+  expect(usePromptStashStore.getState().entries).toHaveLength(1);
+
+  await router.navigate({ to: `/${ENVIRONMENT_ID}/${other.id}` });
+  await expect.element(page.getByText("Answer 0 for thread-stash-restore.")).toBeVisible();
+  await pressStashShortcut();
+
+  await vi.waitFor(() => expect(editor.element().textContent).toContain("Deploy on"));
+  expect(
+    useComposerDraftStore.getState().getComposerDraft(scopeThreadRef(ENVIRONMENT_ID, other.id))
+      ?.environmentContexts,
+  ).toEqual([machine]);
+  expect(
+    useComposerDraftStore.getState().getComposerDraft(draftId)?.environmentContexts ?? [],
+  ).toEqual([]);
+});
+
+it("a question that opens while a stashed file is checked keeps a machine stash", async () => {
+  await using _viewport = await appViewport();
+  const thread = threadWithHistory("thread-stash-late-question", 1);
+  const asking = threadWithQuestion("thread-stash-late-question", "Which file should change?");
+  const [request] = asking.runtimeRequests ?? [];
+  const question = asking.items.at(-1);
+  if (!request || !question) throw new Error("threadWithQuestion has no question");
+  using _environment = installFakeEnvironment([thread]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  usePromptStashStore.getState().stashEntry({
+    id: "stash-late-question",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    prompt: "Deploy on ",
+    attachments: [],
+    files: [
+      {
+        id: "file-notes",
+        name: "notes.txt",
+        mimeType: "text/plain",
+        sizeBytes: 5,
+        attachmentId: "attachment-notes",
+        environmentId: ENVIRONMENT_ID,
+      },
+    ],
+    droppedImageNames: [],
+    records: [environmentContextRecord(EnvironmentId.make("environment-build"), "Build box")],
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    container: appContainer(),
+    router: false,
+  });
+  await expect.element(page.getByText("Answer 0 for thread-stash-late-question.")).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: /^Stashed prompts/ }));
+  await userEvent.click(page.getByRole("button", { name: /^Restore stashed prompt/ }));
+
+  // The question opens while the restore still waits on the server's file check.
+  await vi.waitFor(() => expect(hasPendingAssetUrl()).toBe(true));
+  await emitThreadEvent(thread.id, { type: "turn-item.updated", payload: question });
+  await emitThreadEvent(thread.id, { type: "runtime-request.updated", payload: request });
+  await expect.element(page.getByText("Which file should change?")).toBeVisible();
+  await answerAssetUrls();
+
+  await vi.waitFor(() =>
+    expect(document.body.textContent).toContain("Stashed machines can't go in an answer"),
+  );
+  expect(usePromptStashStore.getState().entries).toHaveLength(1);
+  usePromptStashStore.getState().takeEntry("stash-late-question");
+});
+
 it("imports Pi conversations through the environment RPC and can retry a changed project", async () => {
+  await using _viewport = await appViewport();
+  useLayoutStore.getState().reset();
+  using _layout = { [Symbol.dispose]: () => useLayoutStore.getState().reset() };
   using _environment = installFakeEnvironment([], { acceptCommands: true });
   const scan = vi.fn(() =>
     Effect.succeed({
@@ -115,10 +303,20 @@ it("imports Pi conversations through the environment RPC and can retry a changed
       })),
     ),
   );
+  // Reconnect with this test's import handlers rather than a previous app's live lease.
+  appAtomRegistry.reset();
+  using _registry = { [Symbol.dispose]: () => appAtomRegistry.reset() };
   __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
   const router = getRouter(createMemoryHistory({ initialEntries: ["/welcome"] }));
   await router.load();
-  await using _app = await render(<AppRoot router={router} />, { router: false });
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    container: appContainer(),
+    router: false,
+  });
+  await expect
+    .element(page.getByRole("button", { name: "Review all 1", exact: true }))
+    .toBeVisible();
   await page.getByRole("button", { name: "Review all 1", exact: true }).click();
   await expect.element(page.getByRole("img", { name: "Pi", exact: true })).toBeVisible();
   await expect.element(page.getByRole("img", { name: "Claude Code", exact: true })).toBeVisible();
@@ -134,6 +332,7 @@ it("imports Pi conversations through the environment RPC and can retry a changed
   await expect
     .element(page.getByRole("heading", { name: "Welcome to T3 Code" }))
     .not.toBeInTheDocument();
+  await vi.waitFor(() => expect(router.state.location.pathname).not.toBe("/welcome"));
   changed = false;
   await router.navigate({ to: "/welcome" });
   await expect.element(page.getByRole("heading", { name: "Welcome to T3 Code" })).toBeVisible();
@@ -152,119 +351,8 @@ it("imports Pi conversations through the environment RPC and can retry a changed
     .not.toBeInTheDocument();
 });
 
-it("a machine chip stashed in one thread restores with its machine in another", async () => {
-  const other = threadWithHistory("thread-stash-restore", 1);
-  const asking = threadWithQuestion("thread-stash-question", "Which file should change?");
-  using _environment = installFakeEnvironment([other, asking]);
-  __setClientSettingsForTests({
-    ...DEFAULT_CLIENT_SETTINGS,
-    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
-  });
-  const draftId = DraftId.make("draft-stash-machine");
-  const machine = environmentContextRecord(EnvironmentId.make("environment-build"), "Build box");
-  const drafts = useComposerDraftStore.getState();
-  drafts.setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
-    threadId: ThreadId.make("thread-stash-machine"),
-  });
-  drafts.setPrompt(draftId, "Deploy on ");
-  drafts.addEnvironmentContexts(draftId, [machine]);
-  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
-  await router.load();
-  await using _app = await render(<AppRoot router={router} />, {
-    // AppRoot brings its own router.
-    router: false,
-  });
-  const editor = page.getByTestId("composer-editor");
-  const pressStashShortcut = async () => {
-    await userEvent.click(editor);
-    await userEvent.keyboard("{ControlOrMeta>}s{/ControlOrMeta}");
-  };
-  await vi.waitFor(() => expect(editor.element().textContent).toContain("Deploy on"));
-  // A draft can't stash until the shell snapshot lists its project.
-  await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
-  await pressStashShortcut();
-  await vi.waitFor(() => expect(usePromptStashStore.getState().entries).toHaveLength(1));
-
-  // An answer carries no machines, so an open question refuses the restore and keeps the entry.
-  await router.navigate({ to: `/${ENVIRONMENT_ID}/${asking.id}` });
-  await expect.element(page.getByText("Which file should change?")).toBeVisible();
-  await userEvent.click(page.getByRole("button", { name: /^Stashed prompts/ }));
-  await userEvent.click(page.getByRole("button", { name: /^Restore stashed prompt/ }));
-  await vi.waitFor(() =>
-    expect(document.body.textContent).toContain("Stashed machines can't go in an answer"),
-  );
-  expect(usePromptStashStore.getState().entries).toHaveLength(1);
-
-  await router.navigate({ to: `/${ENVIRONMENT_ID}/${other.id}` });
-  await expect.element(page.getByText("Answer 0 for thread-stash-restore.")).toBeVisible();
-  await pressStashShortcut();
-
-  await vi.waitFor(() => expect(editor.element().textContent).toContain("Deploy on"));
-  expect(
-    useComposerDraftStore.getState().getComposerDraft(scopeThreadRef(ENVIRONMENT_ID, other.id))
-      ?.environmentContexts,
-  ).toEqual([machine]);
-  expect(
-    useComposerDraftStore.getState().getComposerDraft(draftId)?.environmentContexts ?? [],
-  ).toEqual([]);
-});
-
-it("a question that opens while a stashed file is checked keeps a machine stash", async () => {
-  const thread = threadWithHistory("thread-stash-late-question", 1);
-  const asking = threadWithQuestion("thread-stash-late-question", "Which file should change?");
-  const [request] = asking.runtimeRequests ?? [];
-  const question = asking.items.at(-1);
-  if (!request || !question) throw new Error("threadWithQuestion has no question");
-  using _environment = installFakeEnvironment([thread]);
-  __setClientSettingsForTests({
-    ...DEFAULT_CLIENT_SETTINGS,
-    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
-  });
-  usePromptStashStore.getState().stashEntry({
-    id: "stash-late-question",
-    createdAt: "2026-01-01T00:00:00.000Z",
-    prompt: "Deploy on ",
-    attachments: [],
-    files: [
-      {
-        id: "file-notes",
-        name: "notes.txt",
-        mimeType: "text/plain",
-        sizeBytes: 5,
-        attachmentId: "attachment-notes",
-        environmentId: ENVIRONMENT_ID,
-      },
-    ],
-    droppedImageNames: [],
-    records: [environmentContextRecord(EnvironmentId.make("environment-build"), "Build box")],
-  });
-  const router = getRouter(
-    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
-  );
-  await router.load();
-  await using _app = await render(<AppRoot router={router} />, {
-    // AppRoot brings its own router.
-    router: false,
-  });
-  await expect.element(page.getByText("Answer 0 for thread-stash-late-question.")).toBeVisible();
-  await userEvent.click(page.getByRole("button", { name: /^Stashed prompts/ }));
-  await userEvent.click(page.getByRole("button", { name: /^Restore stashed prompt/ }));
-
-  // The question opens while the restore still waits on the server's file check.
-  await vi.waitFor(() => expect(hasPendingAssetUrl()).toBe(true));
-  await emitThreadEvent(thread.id, { type: "turn-item.updated", payload: question });
-  await emitThreadEvent(thread.id, { type: "runtime-request.updated", payload: request });
-  await expect.element(page.getByText("Which file should change?")).toBeVisible();
-  await answerAssetUrls();
-
-  await vi.waitFor(() =>
-    expect(document.body.textContent).toContain("Stashed machines can't go in an answer"),
-  );
-  expect(usePromptStashStore.getState().entries).toHaveLength(1);
-  usePromptStashStore.getState().takeEntry("stash-late-question");
-});
-
 it("a new draft does not load its reserved thread before the server lists it", async () => {
+  await using _viewport = await appViewport();
   using _environment = installFakeEnvironment([]);
   using fetchSpy = vi.spyOn(globalThis, "fetch");
   __setClientSettingsForTests({
@@ -281,6 +369,7 @@ it("a new draft does not load its reserved thread before the server lists it", a
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
+    container: appContainer(),
     router: false,
   });
   await expect.element(page.getByTestId("composer-editor")).toBeVisible();
@@ -294,7 +383,53 @@ it("a new draft does not load its reserved thread before the server lists it", a
   expect(threadRequests).toEqual([]);
 });
 
+it("an interrupted image-only first send of a new thread says it may not have been sent", async () => {
+  using _environment = installFakeEnvironment([]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make("draft-image-only-interrupted");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
+      threadId: ThreadId.make("thread-image-only-interrupted"),
+    });
+  // A dropped connection interrupts a new thread's launch, which is not resent.
+  using launch = holdRpc(ORCHESTRATION_V2_WS_METHODS.launchThread, Effect.interrupt);
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  using _uploads = acceptAttachmentUploads();
+  const editor = page.getByTestId("composer-editor");
+  await expect.element(editor).toBeVisible();
+  // The send needs the project, which arrives with the shell snapshot.
+  await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
+
+  await userEvent.click(editor);
+  const clipboardData = new DataTransfer();
+  clipboardData.items.add(new File([PNG], "shot.png", { type: "image/png" }));
+  editor
+    .element()
+    .dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+  await expect.element(page.getByRole("img", { name: "shot.png" })).toBeVisible();
+  await userEvent.keyboard("{Enter}");
+  await vi.waitFor(() => expect(launch.calls).toHaveLength(1));
+  await userEvent.keyboard("next draft");
+  await expect.element(editor).toHaveTextContent("next draft");
+  launch.release();
+
+  await expect.element(page.getByText("Message may not have been sent")).toBeVisible();
+  await expect.element(editor).toHaveTextContent("next draft");
+  // With no text there is nothing to copy.
+  expect(page.getByText("Copy message", { exact: true }).query()).toBeNull();
+});
+
 it("answers a pending question while an oversized message draft is set aside", async () => {
+  await using _viewport = await appViewport();
   const thread = threadWithHistory("oversized-question-draft", 0);
   using _environment = installFakeEnvironment([thread]);
   __setClientSettingsForTests({
@@ -308,7 +443,10 @@ it("answers a pending question while an oversized message draft is set aside", a
   );
   await router.load();
   // AppRoot owns the router.
-  await using _app = await render(<AppRoot router={router} />, { router: false });
+  await using _app = await render(<AppRoot router={router} />, {
+    container: appContainer(),
+    router: false,
+  });
   await expect.element(page.getByTestId("composer-editor")).toBeVisible();
 
   const requestId = RuntimeRequestId.make("oversized-draft-question");
@@ -371,6 +509,7 @@ it("answers a pending question while an oversized message draft is set aside", a
 });
 
 it("opens the thread actions menu for an older settled thread the shell leaves out", async () => {
+  await using _viewport = await appViewport();
   const thread = { ...threadWithHistory("older-settled", 1), olderSettled: true as const };
   using _environment = installFakeEnvironment([thread]);
   __setClientSettingsForTests({
@@ -384,6 +523,7 @@ it("opens the thread actions menu for an older settled thread the shell leaves o
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
+    container: appContainer(),
     router: false,
   });
   await expect.element(page.getByText("older-settled: question 0")).toBeVisible();
@@ -396,6 +536,7 @@ it("opens the thread actions menu for an older settled thread the shell leaves o
 });
 
 it("retains each thread's diff selection when returning from another thread or Settings", async () => {
+  await using _viewport = await appViewport();
   const a = threadWithHistory("diff-selection-a", 1);
   const b = threadWithHistory("diff-selection-b", 1);
   using _environment = installFakeEnvironment([a, b]);
@@ -412,6 +553,7 @@ it("retains each thread's diff selection when returning from another thread or S
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
+    container: appContainer(),
     router: false,
   });
   await expect.element(page.getByText(`Answer 0 for ${a.id}.`)).toBeVisible();
@@ -460,6 +602,7 @@ it("retains each thread's diff selection when returning from another thread or S
 });
 
 it("a stashed prompt ending in a file chip restores with the chip", async () => {
+  await using _viewport = await appViewport();
   using _environment = installFakeEnvironment([]);
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
@@ -475,6 +618,7 @@ it("a stashed prompt ending in a file chip restores with the chip", async () => 
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
+    container: appContainer(),
     router: false,
   });
   const chip = page.getByRole("button", { name: "Preview package.json" });
@@ -494,6 +638,7 @@ it("a stashed prompt ending in a file chip restores with the chip", async () => 
 });
 
 it("a rejected send leaves the timeline when a new draft was typed meanwhile", async () => {
+  await using _viewport = await appViewport();
   const thread = threadWithHistory("rejected-send", 1);
   using _environment = installFakeEnvironment([thread], {
     acceptCommands: true,
@@ -509,6 +654,7 @@ it("a rejected send leaves the timeline when a new draft was typed meanwhile", a
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
+    container: appContainer(),
     router: false,
   });
   await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
@@ -530,6 +676,7 @@ it("a rejected send leaves the timeline when a new draft was typed meanwhile", a
 });
 
 it("Enter on an empty prompt resumes an interrupted thread", async () => {
+  await using _viewport = await appViewport();
   const history = threadWithHistory("interrupted", 1);
   const interruptedRun = { ...history.runs[0]!, status: "interrupted" as const };
   const thread = { ...history, runs: [interruptedRun] };
@@ -544,6 +691,7 @@ it("Enter on an empty prompt resumes an interrupted thread", async () => {
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
+    container: appContainer(),
     router: false,
   });
   await expect.element(page.getByRole("button", { name: "Resume thread" })).toBeVisible();
@@ -559,6 +707,7 @@ it("Enter on an empty prompt resumes an interrupted thread", async () => {
 });
 
 it("opening a thread or returning to the window on a touch tablet does not focus the composer", async () => {
+  await using _viewport = await appViewport();
   const realMatchMedia = window.matchMedia.bind(window);
   using _touch = vi
     .spyOn(window, "matchMedia")
@@ -578,6 +727,7 @@ it("opening a thread or returning to the window on a touch tablet does not focus
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
+    container: appContainer(),
     router: false,
   });
   const composer = page.getByTestId("composer-editor");
@@ -604,6 +754,7 @@ it("opening a thread or returning to the window on a touch tablet does not focus
 });
 
 it("a mounted thread view lets go of the thread structures it has replaced", async () => {
+  await using _viewport = await appViewport();
   // Items are shared with the fixture, so a reopen's snapshot also carries the earlier updates.
   const history = threadWithHistory("updated", 3);
   const items = [...history.items];
@@ -616,7 +767,10 @@ it("a mounted thread view lets go of the thread structures it has replaced", asy
   });
   const router = getRouter(createMemoryHistory({ initialEntries: ["/"] }));
   await router.load();
-  await using _app = await render(<AppRoot router={router} />, { router: false });
+  await using _app = await render(<AppRoot router={router} />, {
+    container: appContainer(),
+    router: false,
+  });
   const open = async (threadId: ThreadId, text: string) => {
     await act(() =>
       router.navigate({
@@ -653,4 +807,104 @@ it("a mounted thread view lets go of the thread structures it has replaced", asy
   // The thread keeps its latest structure, and the timeline may remember the one before it.
   const kept = shown.slice(0, -2).flatMap((structure, round) => (structure.deref() ? [round] : []));
   expect(kept).toEqual([]);
+});
+
+it("a shortcut conditioned on rightPanelOpen sees the thread's open right panel", async () => {
+  await page.viewport(1280, 800);
+  const thread = threadWithHistory("thread-panel-shortcut", 1);
+  using _environment = installFakeEnvironment([thread], {
+    keybindings: mergeWithDefaultKeybindings(
+      compileResolvedKeybindingsConfig([
+        { key: "ctrl+t", command: "threadPanel.toggle", when: "rightPanelOpen && !terminalFocus" },
+        { key: "ctrl+t", command: "rightPanel.toggle", when: "!rightPanelOpen" },
+      ]),
+    ),
+  });
+  // Reconnect so this test's keybindings replace a previous app's live config.
+  appAtomRegistry.reset();
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  // Panes retired rightPanel.new; the side pane is the thread's right panel.
+  const threadRef = scopeThreadRef(ENVIRONMENT_ID, thread.id);
+  const sidePaneOpen = () =>
+    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef).isOpen;
+  const composer = page.getByTestId("composer-editor");
+  const details = page.getByRole("button", { name: "Toggle thread details panel", exact: true });
+  await expect.element(details).toBeVisible();
+  // As clicking the panel toggle and its Files tab did.
+  await act(() => useRightPanelStore.getState().open(threadRef, "files"));
+  await vi.waitFor(() => expect(sidePaneOpen()).toBe(true));
+  const detailsOpen = details.element().getAttribute("aria-expanded");
+  await composer.click();
+  await userEvent.keyboard("{Control>}t{/Control}");
+  await expect
+    .element(details)
+    .toHaveAttribute("aria-expanded", detailsOpen === "true" ? "false" : "true");
+  expect(sidePaneOpen()).toBe(true);
+});
+
+it("selecting a side-chat tab focuses that side chat's composer", async () => {
+  const parent = threadWithHistory("focus-parent", 1);
+  // The shell loaded by the file's first test stays; a family read serves side chats added later.
+  const sideChat = (name: string) => ({
+    ...threadWithHistory(name, 1),
+    sideChatOf: parent.id,
+    olderSettled: true as const,
+  });
+  const side = sideChat("focus-side");
+  const otherSide = sideChat("focus-other-side");
+  await page.viewport(1400, 900);
+  using _environment = installFakeEnvironment([parent, side, otherSide]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${parent.id}`] }),
+  );
+  await router.load();
+  await using screen = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  using _focus = { [Symbol.dispose]: startWorkspaceFocus(router) };
+  await act(() => {
+    useRightPanelStore.getState().openSideChat(parentRef, otherSide.id);
+    useRightPanelStore.getState().openSideChat(parentRef, side.id);
+  });
+  const mainEditor = screen.getByRole("textbox", { name: `Message ${parent.title}`, exact: true });
+  const sideEditor = screen.getByRole("textbox", { name: `Message ${side.title}`, exact: true });
+  await expect.element(sideEditor).toBeVisible();
+  await userEvent.click(mainEditor);
+  await userEvent.keyboard("main draft");
+
+  await userEvent.click(screen.getByRole("button", { name: otherSide.title, exact: true }));
+  const otherEditor = screen.getByRole("textbox", {
+    name: `Message ${otherSide.title}`,
+    exact: true,
+  });
+  await expect.element(otherEditor).toHaveFocus();
+  await userEvent.keyboard("other draft");
+  await expect.element(otherEditor).toHaveTextContent("other draft");
+
+  await userEvent.click(screen.getByRole("button", { name: side.title, exact: true }));
+  await expect.element(sideEditor).toHaveFocus();
+  await expect.element(mainEditor).toHaveTextContent("main draft");
+
+  // Shift+F6 goes straight back to the main chat; its tab, already showing, brings the box back.
+  await userEvent.keyboard("{Shift>}{F6}{/Shift}");
+  await expect.element(mainEditor).toHaveFocus();
+  await userEvent.click(screen.getByRole("button", { name: side.title, exact: true }));
+  await expect.element(sideEditor).toHaveFocus();
 });

@@ -20,10 +20,14 @@ import {
   NO_PROJECTS_DRAFT_ID,
   useComposerDraftStore,
 } from "../../composerDraftStore";
+import { isElectron } from "../../env";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { useTheme } from "../../hooks/useTheme";
+import type { ShortcutMatchContext } from "../../keybindings";
 import { hasExplicitComposerModelSelection } from "../../lib/chatThreadActions";
+import { isEditableFocused } from "../../lib/editableFocus";
 import type { TerminalContextDraft } from "../../lib/terminalContext";
+import { isModelPickerOpen } from "../../modelPickerVisibility";
 import { resolveAppModelSelectionForInstance } from "../../modelSelection";
 import { useEnvironment } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
@@ -36,6 +40,18 @@ const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_ENTRIES = [] as const;
 const NO_PROJECT_REASON = "Add a project first";
 const noop = () => {};
+// This page opens no terminal, preview or side pane, so only focus decides how Enter resolves.
+const getNoProjectsShortcutContext = (eventTarget: EventTarget | null): ShortcutMatchContext => ({
+  terminalFocus: false,
+  terminalOpen: false,
+  previewFocus: false,
+  previewOpen: false,
+  rightPanelOpen: false,
+  editableFocus: isEditableFocused(eventTarget),
+  modelPickerOpen: isModelPickerOpen(),
+  isWeb: !isElectron,
+  isDesktop: isElectron,
+});
 
 /** Sending needs a project or an environment that offers scratch threads. */
 export function NoProjectsComposer({
@@ -175,11 +191,7 @@ export function NoProjectsComposer({
           pendingApprovals={[]}
           onHeldRequestIdsChange={noop}
           pendingUserInputs={[]}
-          activePendingProgress={null}
-          activePendingResolvedAnswers={null}
           activePendingIsResponding={false}
-          activePendingDraftAnswers={{}}
-          activePendingQuestionIndex={0}
           respondingRequestIds={[]}
           workspaceFileDragActive={false}
           runtimeMode={runtimeMode}
@@ -194,6 +206,7 @@ export function NoProjectsComposer({
           resolvedTheme={resolvedTheme}
           settings={settings}
           keybindings={keybindings}
+          getShortcutContext={getNoProjectsShortcutContext}
           terminalOpen={false}
           gitCwd={null}
           pullRequestProjectId={null}

@@ -90,14 +90,14 @@ export function UsageModelDialog({
         </DialogHeader>
         <DialogPanel>
           <div className="flex flex-col gap-8">
-            <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4">
+            <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4">
               {stats.map((stat) => (
                 <div key={stat.label} className="flex min-w-0 flex-col gap-0.5">
-                  <span className="text-caption text-muted-foreground">{stat.label}</span>
-                  <span className="text-title text-foreground">{stat.value}</span>
+                  <dt className="text-caption text-muted-foreground">{stat.label}</dt>
+                  <dd className="text-title text-foreground">{stat.value}</dd>
                 </div>
               ))}
-            </div>
+            </dl>
 
             {/* Unpriced cost is unknown, not zero, so its trend shows tokens. */}
             <UsageProviderChart

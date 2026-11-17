@@ -1,5 +1,6 @@
 import type { AnyRouter } from "@tanstack/react-router";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { dismissContextMenu } from "../contextMenuFallback";
 import { findLayoutTab, selectFocusedTab } from "../layout/layoutModel";
 import { selectIntendedLayout, useLayoutStore } from "../layout/layoutStore";
@@ -45,6 +46,34 @@ function workspaceAreaKey(area: HTMLElement) {
 
 function paneId(element: Element | null | undefined): string | undefined {
   return element?.closest<HTMLElement>(PANE_SELECTOR)?.dataset.layoutTabId;
+}
+
+/** The message box of the main chat a side chat area belongs to, when that chat is on screen. */
+function sideChatParentComposer(area: HTMLElement, areas: HTMLElement[]) {
+  if (!area.closest("[data-side-chat-pane]")) return undefined;
+  const { layout } = useLayoutStore.getState();
+  const tabContent = (element: HTMLElement) => {
+    const id = paneId(element);
+    return id === undefined
+      ? undefined
+      : findLayoutTab(layout, (tab) => tab.id === id)?.tab.content;
+  };
+  const sideChat = tabContent(area);
+  if (sideChat?.kind !== "surface") return undefined;
+  const parentKey = scopedThreadKey(sideChat.threadRef);
+  return areas.find((candidate) => {
+    if (
+      candidate.dataset.workspaceArea !== "composer" ||
+      candidate.closest("[data-side-chat-pane]")
+    )
+      return false;
+    const content = tabContent(candidate);
+    return (
+      content?.kind === "chat" &&
+      content.target.kind === "server" &&
+      scopedThreadKey(content.target.threadRef) === parentKey
+    );
+  });
 }
 
 function claimWorkspacePane(area: HTMLElement) {
@@ -113,6 +142,58 @@ export function canReturnFocusTo(element: HTMLElement) {
   return (
     workspaceArea(element) !== null && isWorkspaceElementVisible(element) && isInScrollView(element)
   );
+}
+
+let returnedSurfaceFocus: HTMLElement | null = null;
+
+export function isReturnedSurfaceFocus() {
+  return returnedSurfaceFocus !== null && document.activeElement === returnedSurfaceFocus;
+}
+
+export function holdSurfaceFocusOrigin(host: HTMLElement, initialOrigin: Element | null) {
+  const doc = host.ownerDocument;
+  let origin = initialOrigin instanceof HTMLElement ? initialOrigin : null;
+  // A pane's tab strip is portalled outside its content slot.
+  const contains = (target: EventTarget | null) =>
+    target instanceof Element &&
+    (host.contains(target) ||
+      (host.dataset.layoutTabId !== undefined &&
+        target.closest<HTMLElement>("[data-layout-pane-tab]")?.dataset.layoutPaneTab ===
+          host.dataset.layoutTabId));
+  let ownsFocus = contains(doc.activeElement);
+  const remember = (event: FocusEvent) => {
+    const entered = contains(event.target);
+    const from = event.relatedTarget;
+    if (
+      entered &&
+      !ownsFocus &&
+      from instanceof HTMLElement &&
+      !contains(from) &&
+      canReturnFocusTo(from)
+    ) {
+      origin = from;
+    }
+    ownsFocus = entered;
+  };
+  doc.addEventListener("focusin", remember);
+  return () => {
+    doc.removeEventListener("focusin", remember);
+    if (!ownsFocus || !origin || !canReturnFocusTo(origin)) {
+      return;
+    }
+    const tabId = paneId(origin);
+    if (tabId) useLayoutStore.getState().focusTab(tabId);
+    const target = origin;
+    returnedSurfaceFocus = target;
+    target.addEventListener(
+      "blur",
+      () => {
+        if (returnedSurfaceFocus === target) returnedSurfaceFocus = null;
+      },
+      { once: true },
+    );
+    origin.focus({ preventScroll: true });
+  };
 }
 
 /**
@@ -350,9 +431,18 @@ export function createWorkspaceFocusController(doc: Document) {
         ) ?? areas.find((area) => area.dataset.workspaceArea === fromArea))
       : (activeArea ?? lastArea);
     const currentKey = activeArea ? workspaceAreaKey(activeArea) : lastAreaKey;
-    const current = areas.findIndex(
-      (area) => area === currentArea || (!fromArea && workspaceAreaKey(area) === currentKey),
-    );
+    // A side chat nests areas with the main chat's names, so the focused area itself wins.
+    const exact = currentArea ? areas.indexOf(currentArea) : -1;
+    const current =
+      exact === -1
+        ? areas.findIndex((area) => !fromArea && workspaceAreaKey(area) === currentKey)
+        : exact;
+    // Shift+F6 leaves a side chat for its main chat's message box in one press, as on main.
+    const parentComposer =
+      direction === -1 && current !== -1
+        ? sideChatParentComposer(areas[current]!, areas)
+        : undefined;
+    if (parentComposer && focusArea(parentComposer, true, false)) return true;
     const index =
       current === -1
         ? direction === 1
@@ -535,6 +625,15 @@ export function moveWorkspaceFocus(direction: 1 | -1, fromArea?: string): boolea
 export function requestWorkspaceFocus(target: WorkspaceFocusTarget) {
   focusRequestVersion++;
   controller?.request(target);
+}
+
+/** Puts the keyboard in the message box of the side chat a surface tab shows. */
+export function requestSideChatComposerFocus(threadRef: ScopedThreadRef, surfaceId: string) {
+  requestWorkspaceFocus({
+    area: "panel",
+    surface: { threadKey: scopedThreadKey(threadRef), surfaceId },
+    selector: `[data-side-chat-pane="${CSS.escape(surfaceId.slice("side-chat:".length))}"] [data-workspace-area="composer"] [contenteditable="true"]`,
+  });
 }
 
 export function requestWorkspaceContentFocus() {

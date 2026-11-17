@@ -26,7 +26,12 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
-import { ALL_ENVIRONMENTS_VALUE, selectEnvironmentAxis } from "./settingsScopeAxis";
+import {
+  ALL_ENVIRONMENTS_VALUE,
+  projectScopeMenuGroups,
+  selectEnvironmentAxis,
+  selectProjectAxis,
+} from "./settingsScopeAxis";
 
 export function ProjectsSettings() {
   const { search: value, scope, selectScope } = useSettingsScope();
@@ -94,8 +99,8 @@ function AddProjectButton({ primary = false }: { primary?: boolean }) {
 
 /** With no project in scope: every project to pick from, or what a project holds when there are none. */
 function ProjectChooser() {
-  const { selectScope } = useSettingsScope();
-  const groups = useSettingsProjectGroups();
+  const { search, selectScope } = useSettingsScope();
+  const groups = projectScopeMenuGroups(useSettingsProjectGroups(), search);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { scratchEnvironmentId, startScratchThread } = useScratchProject();
   const scratchTarget = scratchEnvironmentId(primaryEnvironmentId);
@@ -171,7 +176,7 @@ function ProjectChooser() {
                       variant="ghost"
                       className="w-full justify-start"
                       aria-label={`Open ${group.displayName} settings`}
-                      onClick={() => selectScope({ project: group.projectKey })}
+                      onClick={() => selectScope(selectProjectAxis(search, group.projectKey))}
                     />
                   }
                 >

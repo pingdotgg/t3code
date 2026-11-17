@@ -20,7 +20,7 @@ import { act, fakeTimers, render } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { toastManager } from "../ui/toast";
-import { usePendingThreadRequests } from "./usePendingThreadRequests";
+import { usePendingThreadRequests, usePendingUserInputDraft } from "./usePendingThreadRequests";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 
@@ -184,7 +184,7 @@ interface ProbeProps {
 function useProbeRequests({ environmentId, projection, loading = false, draftTarget }: ProbeProps) {
   const promptRef = useRef("");
   const composerRef = useRef(null);
-  return usePendingThreadRequests({
+  const requests = usePendingThreadRequests({
     environmentId,
     activeThreadId: projection.thread.id,
     serverProjection: loading ? null : projection,
@@ -196,9 +196,16 @@ function useProbeRequests({ environmentId, projection, loading = false, draftTar
     composerRef,
     setThreadError: () => {},
   });
+  const draft = usePendingUserInputDraft({
+    environmentId,
+    activeThreadId: projection.thread.id,
+    activePendingUserInput: requests.activePendingUserInput,
+    supportsQuestionAttachments: false,
+  });
+  return { ...requests, ...draft };
 }
 
-let requests: ReturnType<typeof usePendingThreadRequests>;
+let requests: ReturnType<typeof useProbeRequests>;
 
 function PendingRequestsProbe(props: ProbeProps) {
   const state = useProbeRequests(props);

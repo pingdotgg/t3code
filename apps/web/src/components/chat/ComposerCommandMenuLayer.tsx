@@ -27,18 +27,19 @@ export function ComposerCommandMenuLayer(props: {
   anchor: HTMLElement | null;
   maxWidth?: number;
   children: ReactNode;
+  /** Keeps the 96px floor past the window top: the stash then loses its header, not its entries. */
+  canOverflowTop?: boolean;
 }) {
-  const { maxWidth } = props;
+  const { anchor, canOverflowTop = false, maxWidth } = props;
   const [position, setPosition] = useState<ComposerCommandMenuPosition | null>(null);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- positions the menu from the composer's DOM rect, tracking window resize, scroll and ancestor resizes
   useLayoutEffect(() => {
-    const anchor = props.anchor;
     if (!anchor) return;
 
     const updatePosition = () => {
       const tray =
-        anchor.closest<HTMLElement>('[data-slot="composer-shell"]') ??
+        anchor.closest<HTMLElement>('[data-slot="composer-host"]') ??
         anchor.closest<HTMLElement>('[data-chat-composer-form="true"]') ??
         anchor;
       const rect = tray.getBoundingClientRect();
@@ -47,10 +48,15 @@ export function ComposerCommandMenuLayer(props: {
         setPosition(null);
         return;
       }
+      const spaceAbove = rect.top - COMPOSER_MENU_GAP_PX;
+      const bottom = window.innerHeight - spaceAbove;
+      const floorHeight = Math.max(96, spaceAbove - 24);
+      const maxHeight = canOverflowTop ? floorHeight : Math.min(floorHeight, window.innerHeight);
       const next = {
-        bottom: window.innerHeight - rect.top + COMPOSER_MENU_GAP_PX,
+        // With too little room above, the menu slides down over the composer instead of past the window top.
+        bottom: canOverflowTop ? bottom : Math.min(bottom, window.innerHeight - maxHeight),
         left: rect.left,
-        maxHeight: Math.max(96, rect.top - 24 - COMPOSER_MENU_GAP_PX),
+        maxHeight,
         width,
       };
       setPosition((current) =>
@@ -73,9 +79,9 @@ export function ComposerCommandMenuLayer(props: {
       window.removeEventListener("resize", updatePosition);
       window.removeEventListener("scroll", updatePosition, true);
     };
-  }, [props.anchor, maxWidth]);
+  }, [anchor, canOverflowTop, maxWidth]);
 
-  if (!props.anchor || !position) return null;
+  if (!anchor || !position) return null;
 
   return createPortal(
     <div

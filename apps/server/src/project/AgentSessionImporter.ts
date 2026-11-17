@@ -44,12 +44,12 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 import * as ProjectService from "./ProjectService.ts";
 
-/** Onboarding import counts are a label; a few updates a second is plenty. */
-const IMPORT_PROGRESS_INTERVAL_MS = 250;
 const isProjectionStoreThreadNotFoundError = Schema.is(
   ProjectionStore.ProjectionStoreThreadNotFoundError,
 );
 
+/** Onboarding import counts are a label; a few updates a second is plenty. */
+const IMPORT_PROGRESS_INTERVAL_MS = 250;
 const IMPORT_EVENT_PREFIX = "agent-session-import:v2";
 const CLAUDE_SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -296,7 +296,6 @@ const make = Effect.gen(function* () {
         );
         if (outcome._tag === "AlreadyImported") {
           importedThreadIds.add(threadId);
-          importedCount += 1;
           return;
         }
         if (outcome._tag === "Duplicate") {
@@ -367,7 +366,8 @@ const make = Effect.gen(function* () {
             }
             yield* persistRuntime;
             yield* runtimes.recordImportedTranscript({ threadId, source });
-            return true;
+            importedThreadIds.add(threadId);
+            return null;
           }
 
           const model = thread.model ?? DEFAULT_MODEL_BY_PROVIDER[driver] ?? DEFAULT_MODEL;

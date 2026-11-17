@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
 import { render } from "../../test/render";
@@ -75,16 +75,6 @@ const inSecondPane = (selector: string) => {
 async function clickHeld(element: HTMLElement) {
   const strip = document.querySelector<HTMLElement>("[data-layout-strip]")!;
   const held = strip.scrollLeft;
-  const geometry = () => ({
-    scrollLeft: strip.scrollLeft,
-    viewportWidth: strip.clientWidth,
-    scrollWidth: strip.scrollWidth,
-    tabLeft: element.getBoundingClientRect().left,
-    focusedTabId: focusedTabId(),
-    behavior: useLayoutBehaviorStore.getState().behavior.whenNoRoom,
-    workspace: useLayoutStore.getState().layout.workspaces[0],
-  });
-  const beforePress = geometry();
   const pointer = { bubbles: true, button: 0, pointerType: "mouse" } as const;
   element.dispatchEvent(new PointerEvent("pointerdown", pointer));
   await expect
@@ -92,14 +82,8 @@ async function clickHeld(element: HTMLElement) {
     .toHaveAttribute("data-layout-pane-focused", "true");
   expect(strip.scrollLeft).toBe(held);
   element.dispatchEvent(new PointerEvent("pointerup", pointer));
-  const afterRelease = geometry();
-  await page.elementLocator(element).click();
-  await vi.waitFor(() =>
-    expect(
-      strip.scrollLeft,
-      JSON.stringify({ beforePress, afterRelease, afterClick: geometry() }),
-    ).toBeGreaterThan(held),
-  );
+  element.click();
+  await vi.waitFor(() => expect(strip.scrollLeft).toBeGreaterThan(held));
 }
 
 it("shows a tab in an unfocused pane that runs off screen with one click on it", async () => {
@@ -119,6 +103,46 @@ const tabOffset = (strip: HTMLElement, tabId: string) => {
   const left = tab.getBoundingClientRect().left - strip.getBoundingClientRect().left;
   return left + strip.scrollLeft;
 };
+
+it("scrolls overflowing pane tabs from the add button without moving the workspace", async () => {
+  using _tabs = setup();
+  for (let index = 0; index < 12; index++) {
+    useLayoutStore
+      .getState()
+      .openTab(createLayoutLauncherContent(null), { placement: "active-pane" });
+  }
+  await using screen = await renderHost({ insetSidebar: true });
+  const strip = screen.container.querySelector<HTMLElement>("[data-layout-tab-strip]")!;
+  const header = strip.closest<HTMLElement>("[data-pane-header]")!;
+  const workspace = screen.container.querySelector<HTMLElement>("[data-layout-strip]")!;
+  await vi.waitFor(() => expect(strip.scrollWidth).toBeGreaterThan(strip.clientWidth + 200));
+  strip.scrollLeft = 100;
+  const before = workspace.scrollLeft;
+
+  await userEvent.wheel(header.querySelector('button[aria-label="New tab"]')!, {
+    delta: { x: 40 },
+  });
+
+  await vi.waitFor(() => expect(strip.scrollLeft).toBe(140));
+  expect(workspace.scrollLeft).toBe(before);
+  const active = strip.querySelector<HTMLElement>("[data-joined]")!;
+  expect(
+    Math.abs(joinOffset(strip) - tabOffset(strip, active.dataset.layoutPaneTab!)),
+  ).toBeLessThanOrEqual(1);
+
+  await userEvent.wheel(header.querySelector('button[aria-label="New tab"]')!, {
+    delta: { x: -140 },
+  });
+  await vi.waitFor(() => expect(strip.scrollLeft).toBe(0));
+  const tabs = [...strip.querySelectorAll<HTMLElement>("[data-layout-pane-tab]")];
+  for (const tab of tabs) {
+    if (tab !== active) useLayoutStore.getState().closeTab(tab.dataset.layoutPaneTab!);
+  }
+  await vi.waitFor(() => expect(strip.scrollWidth).toBe(strip.clientWidth));
+  await vi.waitFor(() =>
+    expect(strip.closest("[data-pane-header]")?.hasAttribute("data-tab-row-overflow")).toBe(false),
+  );
+});
 
 it("keeps a pane's tab strip and moves its joined tab when the pane switches tabs", async () => {
   using tabs = setup();
@@ -151,24 +175,31 @@ it("keeps a pane's tab strip and moves its joined tab when the pane switches tab
   expect(strip.isConnected).toBe(true);
 });
 
-it("shows an unfocused pane's active tab as a pill, and black chrome keeps the notch", async () => {
-  using tabs = setup();
+it("keeps an unfocused pane's joined tab with a dim rim, and black chrome keeps the notch", async () => {
+  using _tabs = setup();
   await using _screen = await renderHost({ insetSidebar: true });
   const notch = inSecondPane('[data-pane-notch=""]');
   expect(notch.hasAttribute("data-pane-notch-unfocused")).toBe(true);
   // The bar runs the pane's whole width; the notch ends at its tabs.
   expect(getComputedStyle(notch, "::before").right).not.toBe("0px");
   const join = inSecondPane("[data-pane-join]");
-  // Focus moving between panes cross-fades the joined tab and the pill.
+  const position = join.style.getPropertyValue("--jx");
+  const width = join.style.getPropertyValue("--jw");
   await vi.waitFor(() => {
-    expect(getComputedStyle(join.querySelector("[data-jp]")!).opacity).toBe("1");
-    expect(getComputedStyle(join.querySelector("[data-jb]")!).opacity).toBe("0");
+    expect(getComputedStyle(join.querySelector("[data-jb]")!).opacity).toBe("1");
+    expect(getComputedStyle(join.querySelector("[data-jr]")!).opacity).toBe("0.45");
+    expect(getComputedStyle(join.querySelector("[data-jm]")!, "::after").opacity).toBe("0.45");
   });
 
-  useLayoutStore.getState().focusTab(tabs.second.id);
+  useLayoutStore
+    .getState()
+    .focusPane(notch.closest<HTMLElement>("[data-layout-pane-id]")!.dataset.layoutPaneId!);
   await vi.waitFor(() =>
-    expect(getComputedStyle(join.querySelector("[data-jb]")!).opacity).toBe("1"),
+    expect(getComputedStyle(join.querySelector("[data-jr]")!).opacity).toBe("1"),
   );
+  expect(getComputedStyle(join.querySelector("[data-jb]")!).opacity).toBe("1");
+  expect(join.style.getPropertyValue("--jx")).toBe(position);
+  expect(join.style.getPropertyValue("--jw")).toBe(width);
 
   document.documentElement.classList.add("black-chrome");
   try {

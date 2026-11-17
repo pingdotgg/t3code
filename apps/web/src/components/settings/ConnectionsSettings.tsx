@@ -1357,7 +1357,7 @@ function ConnectionsSettingsContent({
                       onPairingLinkCreated={handlePairingLinkCreated}
                       clientSessions={desktopClientSessions}
                       isRevokingOtherClients={isRevokingOtherDesktopClients}
-                      onRevokeOtherClients={handleRevokeOtherDesktopClients}
+                      onRevokeOtherClients={requestRevokeOtherClients}
                     />
                   ) : undefined
                 }

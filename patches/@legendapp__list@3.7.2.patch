@@ -1,5 +1,5 @@
 diff --git a/react-native.js b/react-native.js
-index 4af685dfb961eb0c8a4bf1ae9132c9304cf4fa4d..df4ead7ae4f03cd0fbcd99a3df7d95e15b1852b1 100644
+index 4af685dfb961eb0c8a4bf1ae9132c9304cf4fa4d..a50466b8fc8509db2d097b85a09d2109a20530cb 100644
 --- a/react-native.js
 +++ b/react-native.js
 @@ -1795,7 +1795,35 @@ function resolvePendingNativeMVCPAdjust(ctx, newScroll) {
@@ -38,8 +38,20 @@ index 4af685dfb961eb0c8a4bf1ae9132c9304cf4fa4d..df4ead7ae4f03cd0fbcd99a3df7d95e1
    var _a3, _b, _c;
    const state = ctx.state;
    const { idsInView, positions, props } = state;
+@@ -5422,6 +5450,11 @@ function updateItemSizesBatch(ctx, measurements) {
+   const result = {};
+   const previousTotalSize = state.totalSize;
+   for (const measurement of measurements) {
++    // T3 patch: Fabric's measure() reports NaN for a container with no layout yet. A NaN size makes
++    // totalSize NaN, and since NaN !== NaN, useArr$ returns a new snapshot on every read until React
++    // throws "Maximum update depth exceeded". The container's onLayout reports its real size later.
++    const measuredSize = state.props.horizontal ? measurement.size.width : measurement.size.height;
++    if (!Number.isFinite(measuredSize)) continue;
+     const ownsMeasuredItem = measurement.containerId === void 0 || isContainerItemCurrent(ctx, measurement.containerId, measurement.itemKey);
+     if (ownsMeasuredItem) {
+       const index = state.indexByKey.get(measurement.itemKey);
 diff --git a/react-native.mjs b/react-native.mjs
-index 9ebfddc183a9b202d35c990a387c9b628feeb185..c414a49e866ecab1393645101fb67d55530a7d00 100644
+index 9ebfddc183a9b202d35c990a387c9b628feeb185..489050190144997ac72de8f4f7c6219479216dba 100644
 --- a/react-native.mjs
 +++ b/react-native.mjs
 @@ -1774,7 +1774,35 @@ function resolvePendingNativeMVCPAdjust(ctx, newScroll) {
@@ -78,6 +90,18 @@ index 9ebfddc183a9b202d35c990a387c9b628feeb185..c414a49e866ecab1393645101fb67d55
    var _a3, _b, _c;
    const state = ctx.state;
    const { idsInView, positions, props } = state;
+@@ -5401,6 +5429,11 @@ function updateItemSizesBatch(ctx, measurements) {
+   const result = {};
+   const previousTotalSize = state.totalSize;
+   for (const measurement of measurements) {
++    // T3 patch: Fabric's measure() reports NaN for a container with no layout yet. A NaN size makes
++    // totalSize NaN, and since NaN !== NaN, useArr$ returns a new snapshot on every read until React
++    // throws "Maximum update depth exceeded". The container's onLayout reports its real size later.
++    const measuredSize = state.props.horizontal ? measurement.size.width : measurement.size.height;
++    if (!Number.isFinite(measuredSize)) continue;
+     const ownsMeasuredItem = measurement.containerId === void 0 || isContainerItemCurrent(ctx, measurement.containerId, measurement.itemKey);
+     if (ownsMeasuredItem) {
+       const index = state.indexByKey.get(measurement.itemKey);
 diff --git a/react.d.ts b/react.d.ts
 index 358fcd7faa598af8a4382719b7e7198b3ce04588..e3c7de6545578ee9dfd323064f02db7e783729a3 100644
 --- a/react.d.ts
@@ -91,7 +115,7 @@ index 358fcd7faa598af8a4382719b7e7198b3ce04588..e3c7de6545578ee9dfd323064f02db7e
       * Maintains visibility of content.
       * - size (default: true) stabilizes during size/layout changes while scrolling.
 diff --git a/react.js b/react.js
-index 515545471e08426fc90856256db9491db0ca4b92..b63bce6b29f79218daa3f30217fd604c55cdbe88 100644
+index 515545471e08426fc90856256db9491db0ca4b92..3ff1576fa5ce3522c7c34dcd905e36e231da3a8e 100644
 --- a/react.js
 +++ b/react.js
 @@ -3489,6 +3489,12 @@ function abortBootstrapInitialScroll(ctx) {
@@ -107,16 +131,44 @@ index 515545471e08426fc90856256db9491db0ca4b92..b63bce6b29f79218daa3f30217fd604c
  function getContainerLayoutBaseline(element) {
    return containerLayoutBaselines.get(element);
  }
-@@ -5646,7 +5652,7 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+@@ -5635,6 +5641,19 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem, notif
+ }
+ 
+ // src/core/measureContainersInLayoutEffect.ts
++// T3 patch: measure rows by their layout box, as ResizeObserver does. getBoundingClientRect
++// includes ancestor transforms, so rows that mount while a dialog scales in measure short and
++// stay packed too tightly until they re-render.
++function measureContainerLayoutSize(element) {
++  const rect = element.getBoundingClientRect();
++  if (Math.abs(rect.width - element.offsetWidth) < 1 && Math.abs(rect.height - element.offsetHeight) < 1) {
++    return { height: rect.height, width: rect.width };
++  }
++  const style = getComputedStyle(element);
++  const height = Number.parseFloat(style.height);
++  const width = Number.parseFloat(style.width);
++  return Number.isFinite(height) && Number.isFinite(width) ? { height, width } : { height: rect.height, width: rect.width };
++}
+ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+   var _a3, _b, _c;
+   const dataChangeEpoch = ctx.state.dataChangeEpoch;
+@@ -5646,13 +5665,13 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
      const element = viewRef == null ? void 0 : viewRef.current;
      if (itemKey !== void 0 && element && isContainerItemCurrent(ctx, containerId, itemKey)) {
        const generation = (_b = ctx.state.containerItemGenerations[containerId]) != null ? _b : 0;
 -      const rect = element.getBoundingClientRect();
-+      const rect = measureLayoutRect(element);
-       setContainerLayoutBaseline(element, rect);
+-      setContainerLayoutBaseline(element, rect);
++      const size = measureContainerLayoutSize(element);
++      setContainerLayoutBaseline(element, size);
        measurements.push({
          containerId,
-@@ -6214,7 +6220,7 @@ function useOnLayoutSync({
+         generation,
+         itemKey,
+-        size: { height: rect.height, width: rect.width }
++        size
+       });
+     }
+   }
+@@ -6214,7 +6233,7 @@ function useOnLayoutSync({
      };
      let prevRect;
      if (measureInLayoutEffect) {
@@ -125,7 +177,7 @@ index 515545471e08426fc90856256db9491db0ca4b92..b63bce6b29f79218daa3f30217fd604c
        emit(toLayout(rect), true);
        prevRect = rect;
      }
-@@ -6227,7 +6233,7 @@ function useOnLayoutSync({
+@@ -6227,7 +6246,7 @@ function useOnLayoutSync({
          left: entry.contentRect.left,
          top: entry.contentRect.top,
          width: borderBoxSize.inlineSize
@@ -134,7 +186,7 @@ index 515545471e08426fc90856256db9491db0ca4b92..b63bce6b29f79218daa3f30217fd604c
        const previousRect = prevRect != null ? prevRect : getContainerLayoutBaseline(element);
        const didSizeChange = previousRect === void 0 || rectObserved.width !== previousRect.width || rectObserved.height !== previousRect.height;
        prevRect = rectObserved;
-@@ -6290,13 +6296,13 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+@@ -6290,15 +6309,14 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
        size: layout
      });
    };
@@ -146,11 +198,14 @@ index 515545471e08426fc90856256db9491db0ca4b92..b63bce6b29f79218daa3f30217fd604c
        if (state.itemKey === currentItemKey) {
          const element = ref.current;
 -        const rect = (_a4 = element == null ? void 0 : element.getBoundingClientRect) == null ? void 0 : _a4.call(element);
-+        const rect = element == null ? void 0 : measureLayoutRect(element);
-         if (rect) {
-           layout = { height: rect.height, width: rect.width };
+-        if (rect) {
+-          layout = { height: rect.height, width: rect.width };
++        if (element) {
++          layout = measureContainerLayoutSize(element);
          }
-@@ -9133,6 +9139,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+         applyLayout();
+       }
+@@ -9133,6 +9151,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      getFixedItemSize,
      getItemType,
      horizontal,
@@ -158,7 +213,7 @@ index 515545471e08426fc90856256db9491db0ca4b92..b63bce6b29f79218daa3f30217fd604c
      rtl,
      estimatedHeaderSize,
      initialScrollAtEnd = false,
-@@ -9431,6 +9438,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -9431,6 +9450,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      hasExternalScroll,
      hideItemsUntilMeasured: experimental_hideItemsUntilMeasured,
      horizontal: !!horizontal,
@@ -167,7 +222,7 @@ index 515545471e08426fc90856256db9491db0ca4b92..b63bce6b29f79218daa3f30217fd604c
      keyExtractor: useWrapIfItem(keyExtractor),
      maintainScrollAtEnd: maintainScrollAtEndConfig,
 diff --git a/react.mjs b/react.mjs
-index ce08abe7ee62e8940f9c6ff169829244bd6bb736..294988d8e079e0190e739edbf3340ebb0b4f8318 100644
+index ce08abe7ee62e8940f9c6ff169829244bd6bb736..2e62bbbb6b729f300b61fd878805d89ffc158d20 100644
 --- a/react.mjs
 +++ b/react.mjs
 @@ -3468,6 +3468,12 @@ function abortBootstrapInitialScroll(ctx) {
@@ -183,16 +238,44 @@ index ce08abe7ee62e8940f9c6ff169829244bd6bb736..294988d8e079e0190e739edbf3340ebb
  function getContainerLayoutBaseline(element) {
    return containerLayoutBaselines.get(element);
  }
-@@ -5625,7 +5631,7 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+@@ -5614,6 +5620,19 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem, notif
+ }
+ 
+ // src/core/measureContainersInLayoutEffect.ts
++// T3 patch: measure rows by their layout box, as ResizeObserver does. getBoundingClientRect
++// includes ancestor transforms, so rows that mount while a dialog scales in measure short and
++// stay packed too tightly until they re-render.
++function measureContainerLayoutSize(element) {
++  const rect = element.getBoundingClientRect();
++  if (Math.abs(rect.width - element.offsetWidth) < 1 && Math.abs(rect.height - element.offsetHeight) < 1) {
++    return { height: rect.height, width: rect.width };
++  }
++  const style = getComputedStyle(element);
++  const height = Number.parseFloat(style.height);
++  const width = Number.parseFloat(style.width);
++  return Number.isFinite(height) && Number.isFinite(width) ? { height, width } : { height: rect.height, width: rect.width };
++}
+ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+   var _a3, _b, _c;
+   const dataChangeEpoch = ctx.state.dataChangeEpoch;
+@@ -5625,13 +5644,13 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
      const element = viewRef == null ? void 0 : viewRef.current;
      if (itemKey !== void 0 && element && isContainerItemCurrent(ctx, containerId, itemKey)) {
        const generation = (_b = ctx.state.containerItemGenerations[containerId]) != null ? _b : 0;
 -      const rect = element.getBoundingClientRect();
-+      const rect = measureLayoutRect(element);
-       setContainerLayoutBaseline(element, rect);
+-      setContainerLayoutBaseline(element, rect);
++      const size = measureContainerLayoutSize(element);
++      setContainerLayoutBaseline(element, size);
        measurements.push({
          containerId,
-@@ -6193,7 +6199,7 @@ function useOnLayoutSync({
+         generation,
+         itemKey,
+-        size: { height: rect.height, width: rect.width }
++        size
+       });
+     }
+   }
+@@ -6193,7 +6212,7 @@ function useOnLayoutSync({
      };
      let prevRect;
      if (measureInLayoutEffect) {
@@ -201,7 +284,7 @@ index ce08abe7ee62e8940f9c6ff169829244bd6bb736..294988d8e079e0190e739edbf3340ebb
        emit(toLayout(rect), true);
        prevRect = rect;
      }
-@@ -6206,7 +6212,7 @@ function useOnLayoutSync({
+@@ -6206,7 +6225,7 @@ function useOnLayoutSync({
          left: entry.contentRect.left,
          top: entry.contentRect.top,
          width: borderBoxSize.inlineSize
@@ -210,7 +293,7 @@ index ce08abe7ee62e8940f9c6ff169829244bd6bb736..294988d8e079e0190e739edbf3340ebb
        const previousRect = prevRect != null ? prevRect : getContainerLayoutBaseline(element);
        const didSizeChange = previousRect === void 0 || rectObserved.width !== previousRect.width || rectObserved.height !== previousRect.height;
        prevRect = rectObserved;
-@@ -6269,13 +6275,13 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+@@ -6269,15 +6288,14 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
        size: layout
      });
    };
@@ -222,11 +305,14 @@ index ce08abe7ee62e8940f9c6ff169829244bd6bb736..294988d8e079e0190e739edbf3340ebb
        if (state.itemKey === currentItemKey) {
          const element = ref.current;
 -        const rect = (_a4 = element == null ? void 0 : element.getBoundingClientRect) == null ? void 0 : _a4.call(element);
-+        const rect = element == null ? void 0 : measureLayoutRect(element);
-         if (rect) {
-           layout = { height: rect.height, width: rect.width };
+-        if (rect) {
+-          layout = { height: rect.height, width: rect.width };
++        if (element) {
++          layout = measureContainerLayoutSize(element);
          }
-@@ -9112,6 +9118,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+         applyLayout();
+       }
+@@ -9112,6 +9130,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      getFixedItemSize,
      getItemType,
      horizontal,
@@ -234,7 +320,7 @@ index ce08abe7ee62e8940f9c6ff169829244bd6bb736..294988d8e079e0190e739edbf3340ebb
      rtl,
      estimatedHeaderSize,
      initialScrollAtEnd = false,
-@@ -9410,6 +9417,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -9410,6 +9429,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      hasExternalScroll,
      hideItemsUntilMeasured: experimental_hideItemsUntilMeasured,
      horizontal: !!horizontal,

@@ -26,12 +26,14 @@ import {
   withStreamedText,
 } from "../../test-fixtures";
 import type { TurnDiffSummary } from "../../types";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { MessageId, RunId } from "@t3tools/contracts";
 import {
   applyWorkingWindow,
   attachSwitchHandoffs,
   applyBackgroundActivityGroups,
+  wakeUpsRailKey,
+  wakeUpsRailRows,
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
   timelineTurnFoldRunIdsByEntryId,
@@ -39,14 +41,55 @@ import {
   withRunGroupsOpen,
   withTurnFoldOpen,
   deriveMessagesTimelineRowsWithState,
-  deriveStableTimelineRows,
+  isTimelineMinimapTurnVisible,
   pendingApprovalSlotLabel,
   resolveAssistantMessageCopyState,
   type MessagesTimelineRow,
   workEntryDisplayLabel,
 } from "./MessagesTimeline.logic";
-import { presentSlashCommand } from "./timelineSlashCommands";
 import { workEntryIconName } from "./TimelineWorkEntryRow.logic";
+import { presentSlashCommand } from "./timelineSlashCommands";
+
+it.each([null, "0", "1", "true", "blocked"])(
+  "reads the production gap recorder switch once with stored value %s",
+  async (value) => {
+    const getItem = vi.fn(() => {
+      if (value === "blocked") throw new Error("Storage blocked");
+      return value;
+    });
+    vi.stubEnv("DEV", false);
+    vi.stubGlobal("localStorage", { getItem });
+    vi.resetModules();
+    try {
+      const first = await import("./timelineGapRecorderEnabled");
+      expect(first.timelineGapRecorderEnabled).toBe(value === "1");
+      getItem.mockReturnValue(value === "1" ? null : "1");
+      const second = await import("./timelineGapRecorderEnabled");
+      expect(second.timelineGapRecorderEnabled).toBe(first.timelineGapRecorderEnabled);
+      expect(getItem).toHaveBeenCalledExactlyOnceWith("t3:timeline-gap-recorder");
+    } finally {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
+  },
+);
+
+it("always enables gap diagnostics in dev without reading storage", async () => {
+  const getItem = vi.fn();
+  vi.stubEnv("DEV", true);
+  vi.stubGlobal("localStorage", { getItem });
+  vi.resetModules();
+  try {
+    const { timelineGapRecorderEnabled } = await import("./timelineGapRecorderEnabled");
+    expect(timelineGapRecorderEnabled).toBe(true);
+    expect(getItem).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  }
+});
 
 it.each([
   "prompt",
@@ -765,7 +808,7 @@ describe("deriveMessagesTimelineRows", () => {
           active: true,
           label: "Compacting before the cache expires…",
         },
-        "Context automatically compacted before cache expiry",
+        "Auto-compacted before cache expiry",
       ],
       ["onReturn", { kind: "working", compacting: true }, "Context compacted before sending"],
     ] as const) {
@@ -1089,6 +1132,7 @@ describe("deriveMessagesTimelineRows", () => {
         },
         turnDiffSummaries: [],
         supportsConversationRollback: false,
+        turnWorkFold: true,
       });
       return rows.slice(rows.findIndex((row) => row.id.includes("history-assistant")) + 1);
     };
@@ -1212,6 +1256,7 @@ describe("deriveMessagesTimelineRows", () => {
       activeTurnStartedAt: null,
       turnDiffSummaries: [assistantTurnDiffSummary],
       supportsConversationRollback: true,
+      turnWorkFold: true,
       threadStartCheckpointAvailable: true,
     });
 
@@ -1275,6 +1320,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: true,
       turnDiffSummaries: [],
       supportsConversationRollback: false,
+      turnWorkFold: true,
     };
     for (const streaming of [true, false]) {
       const running = {
@@ -1644,6 +1690,7 @@ describe("deriveMessagesTimelineRows", () => {
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
       supportsConversationRollback: false,
+      turnWorkFold: true,
     });
 
     expect(rows).toEqual([
@@ -1783,6 +1830,7 @@ describe("deriveMessagesTimelineRows", () => {
             expandedRunIds: expanded ? new Set([runId]) : new Set(),
             turnDiffSummaries: [],
             supportsConversationRollback: false,
+            turnWorkFold: true,
           });
           expect(rows.slice(0, 3).map((row) => row.id)).toEqual(
             isWorking
@@ -1845,6 +1893,7 @@ describe("deriveMessagesTimelineRows", () => {
     const rows = (
       status: "completed" | "interrupted",
       expandedRunIds: ReadonlySet<RunId> = new Set(),
+      turnWorkFold = true,
     ) =>
       deriveMessagesTimelineRows({
         timelineEntries: [
@@ -1873,6 +1922,7 @@ describe("deriveMessagesTimelineRows", () => {
           },
         ],
         supportsConversationRollback: false,
+        turnWorkFold,
       });
 
     const collapsed = rows("completed");
@@ -1906,6 +1956,22 @@ describe("deriveMessagesTimelineRows", () => {
       "final",
     ]);
     expect(expanded[6]).toMatchObject({ hiddenCount: 3 });
+
+    // Without the Labs fold, main's rows: each steer folds the work after it under its own row.
+    expect(
+      rows("completed", new Set(), false).map((row) =>
+        row.kind === "turn-fold" ? [row.id, row.label, row.diff] : row.id,
+      ),
+    ).toEqual([
+      "prompt",
+      [`turn-fold:${runId}`, "Worked for 30s", null],
+      "first-steer",
+      "second-steer",
+      [`turn-fold:${runId}:steer:second-steer`, "Continued for 8s", null],
+      "third-steer",
+      [`turn-fold:${runId}:steer:third-steer`, "Continued for 5s", null],
+      "final",
+    ]);
   });
 
   it("stacks back-to-back steers under their prompt as one burst", () => {
@@ -1947,6 +2013,7 @@ describe("deriveMessagesTimelineRows", () => {
         expandedRunIds: new Set(),
         turnDiffSummaries: [],
         supportsConversationRollback: false,
+        turnWorkFold: true,
       });
     // The second steer arrives while the first message object is reused, as live updates do.
     const before = computeStableMessagesTimelineRows(deriveRows([prompt, work, firstSteer]), {
@@ -2414,6 +2481,7 @@ describe("deriveMessagesTimelineRows", () => {
         activeTurnStartedAt: input.working ? DateTime.formatIso(at(72)) : null,
         turnDiffSummaries: [],
         supportsConversationRollback: false,
+        turnWorkFold: true,
       });
     const shape = (timeline: ReadonlyArray<MessagesTimelineRow>) =>
       timeline.map((row) =>
@@ -3586,6 +3654,7 @@ describe("v2 run and attempt history", () => {
       isWorking: false,
       turnDiffSummaries: [],
       supportsConversationRollback: false,
+      turnWorkFold: true,
     };
 
     const completedInput = {
@@ -3896,6 +3965,7 @@ describe("v2 run and attempt history", () => {
       isWorking: false,
       turnDiffSummaries: [],
       supportsConversationRollback: false,
+      turnWorkFold: true,
     } satisfies Parameters<typeof deriveMessagesTimelineRows>[0];
     const rows = deriveMessagesTimelineRows(input);
 
@@ -3907,6 +3977,10 @@ describe("v2 run and attempt history", () => {
       expandedRunIds: new Set([runId]),
     });
     expect(expandedRows.map((row) => row.id)).toEqual(["turn-fold:turn-1", "work-entry"]);
+    // Main keeps a stopped turn open, with its interrupt result as the last row.
+    const mainRows = deriveMessagesTimelineRows({ ...input, turnWorkFold: false });
+    expect(mainRows.some((row) => row.kind === "turn-fold")).toBe(false);
+    expect(mainRows.at(-1)?.id).toBe("interrupt-result");
     const stoppedRows = deriveMessagesTimelineRows({
       timelineEntries: [
         {
@@ -3940,6 +4014,7 @@ describe("v2 run and attempt history", () => {
       isWorking: false,
       turnDiffSummaries: [],
       supportsConversationRollback: false,
+      turnWorkFold: true,
       expandedRunIds: new Set([runId]),
     });
     expect(stoppedRows.map((row) => row.id)).toEqual(["turn-fold:turn-1", "stopped-command-entry"]);
@@ -4085,42 +4160,6 @@ it("hands the list rows whose spacing, wake-up span or setup placement changed",
   expect(computeStableMessagesTimelineRows(next, previous).result).toEqual(next);
 });
 
-// The input the timeline gives the passes after row derivation, as MessagesTimeline builds it.
-function stableInput(rowsInput: Parameters<typeof deriveMessagesTimelineRows>[0]) {
-  return {
-    timelineEntries: rowsInput.timelineEntries,
-    pendingApprovalRequestIds: new Set<RuntimeRequestId>(),
-    latestRun: rowsInput.latestRun ?? null,
-    runningRunId: rowsInput.runningRunId ?? null,
-    expandedWorkGroupIds: new Set<string>(),
-    hasPendingRequest: false,
-    hasThreadError: false,
-    isWorking: rowsInput.isWorking,
-    runlessWorkActive: false,
-    toolCallVisibility: "showAll" as const,
-    revealedMessageId: null,
-    workingHistoryKey: null,
-    windowlessCitation: false,
-    activeFindEntryId: null,
-  };
-}
-
-/** The passes patched for a streamed update give what running them again gives. */
-function expectStableParity(
-  previous: {
-    input: Parameters<typeof deriveMessagesTimelineRows>[0];
-    rows: MessagesTimelineRow[];
-  },
-  next: { input: Parameters<typeof deriveMessagesTimelineRows>[0]; rows: MessagesTimelineRow[] },
-) {
-  const before = deriveStableTimelineRows(previous.rows, stableInput(previous.input), null);
-  const after = deriveStableTimelineRows(next.rows, stableInput(next.input), before);
-  expect(after.stable.result).toEqual(
-    deriveStableTimelineRows(next.rows, stableInput(next.input), null).stable.result,
-  );
-  return { before: before.stable.result, after: after.stable.result };
-}
-
 describe("streaming v2 row projection", () => {
   function fixture(text = "") {
     const source = makeStreamingTimelineFixture(text);
@@ -4217,57 +4256,6 @@ describe("streaming v2 row projection", () => {
         expect(next.rows[index]).toBe(row);
       }
     }
-    const stable = expectStableParity(previous, next);
-    for (const [index, row] of stable.before.entries()) {
-      if (
-        (row.kind === "message" || row.kind === "assistant-meta") &&
-        row.message.id === "live-assistant"
-      ) {
-        expect(stable.after[index]).toMatchObject({ message: { text: after } });
-      } else {
-        expect(stable.after[index]).toBe(row);
-      }
-    }
-  });
-
-  it("keeps a streamed message the working window holds up to date", () => {
-    const initial = fixture("Checking");
-    // A tool call after the streaming text makes it commentary inside the window.
-    const tool = initial.visibleTurnItems.find((row) => row.item.type === "dynamic_tool")!;
-    const later = {
-      ...tool,
-      position: tool.position + 100,
-      sourceItemId: TurnItemId.make("later-tool"),
-      item: { ...tool.item, id: TurnItemId.make("later-tool"), ordinal: 8, status: "running" },
-    } as OrchestrationV2ProjectedTurnItem;
-    const timelineInput = {
-      ...initial.timelineInput,
-      visibleTurnItems: [...initial.visibleTurnItems, later],
-    };
-    const timeline = deriveTimelineEntriesFromVisibleTurnItemsWithState(timelineInput);
-    const previous = deriveMessagesTimelineRowsWithState({
-      ...initial.input,
-      timelineEntries: timeline.entries,
-    });
-    const nextTimeline = deriveTimelineEntriesFromVisibleTurnItemsWithState(
-      {
-        ...timelineInput,
-        visibleTurnItems: updateText(timelineInput.visibleTurnItems, "Checking more"),
-      },
-      timeline,
-    );
-    const next = deriveMessagesTimelineRowsWithState(
-      { ...previous.input, timelineEntries: nextTimeline.entries },
-      previous,
-    );
-    const { after } = expectStableParity(previous, next);
-    const working = after.find((row) => row.kind === "working");
-    expect(working?.kind === "working" && working.window?.items).toContainEqual(
-      expect.objectContaining({
-        kind: "text",
-        message: expect.objectContaining({ text: "Checking more" }),
-      }),
-    );
   });
 
   it.each(["file", "image", "handoff", "streaming-image"] as const)(
@@ -4898,6 +4886,7 @@ describe("linked timeline resources", () => {
         ...common,
         timelineEntries,
         expandedRunIds: new Set(expanded),
+        turnWorkFold: true,
       }).map((row) => row.id);
     expect(rowIds([])).not.toContain("created");
     expect(rowIds([runId])).toEqual([
@@ -5027,6 +5016,7 @@ it("keeps the working header in place across worktree setup handoff", () => {
     activeTurnStartedAt: "2026-01-01T00:00:00Z",
     turnDiffSummaries: [],
     supportsConversationRollback: false,
+    turnWorkFold: true,
     worktreeSetup: snapshot,
   });
   // The working row draws a running setup's stages itself.
@@ -5040,6 +5030,7 @@ it("keeps the working header in place across worktree setup handoff", () => {
     activeTurnStartedAt: "2026-01-01T00:00:00Z",
     turnDiffSummaries: [],
     supportsConversationRollback: false,
+    turnWorkFold: true,
     worktreeSetup: { ...snapshot, phase: "failed" },
   });
   expect(withMessages.map((row) => row.kind)).toEqual([
@@ -5077,6 +5068,7 @@ it("keeps the working header in place across worktree setup handoff", () => {
     activeTurnStartedAt: "2026-01-01T00:00:00Z",
     turnDiffSummaries: [],
     supportsConversationRollback: false,
+    turnWorkFold: true,
     worktreeSetup: asyncSnapshot,
   });
   expect(asyncRows.map((row) => row.kind)).toEqual(["message", "working", "thinking"]);
@@ -5087,6 +5079,7 @@ it("keeps the working header in place across worktree setup handoff", () => {
     activeTurnStartedAt: "2026-01-01T00:00:00Z",
     turnDiffSummaries: [],
     supportsConversationRollback: false,
+    turnWorkFold: true,
     worktreeSetup: asyncSnapshot,
   });
   expect(handoffRows.map((row) => row.kind)).toEqual(["message", "working"]);
@@ -5097,6 +5090,7 @@ it("keeps the working header in place across worktree setup handoff", () => {
     activeTurnStartedAt: "2026-01-01T00:00:00Z",
     turnDiffSummaries: [],
     supportsConversationRollback: false,
+    turnWorkFold: true,
     worktreeSetup: {
       ...snapshot,
       phase: "done",
@@ -5112,6 +5106,7 @@ it("keeps the working header in place across worktree setup handoff", () => {
     activeTurnStartedAt: "2026-01-01T00:00:00Z",
     turnDiffSummaries: [],
     supportsConversationRollback: false,
+    turnWorkFold: true,
     worktreeSetup: {
       ...asyncSnapshot,
       stages: [stage("setup-script", "done"), stage("agent", "done")],
@@ -5132,6 +5127,7 @@ it("keeps the working header in place across worktree setup handoff", () => {
     activeTurnStartedAt: preparedTurn.startedAt,
     turnDiffSummaries: [],
     supportsConversationRollback: false,
+    turnWorkFold: true,
   });
   expect(preparedRows.find((row) => row.kind === "working")?.createdAt).toBe(
     preparedTurn.requestedAt,
@@ -5144,6 +5140,7 @@ it("keeps the working header in place across worktree setup handoff", () => {
     activeTurnStartedAt: preparedTurn.startedAt,
     turnDiffSummaries: [],
     supportsConversationRollback: false,
+    turnWorkFold: true,
   });
   expect(queuedRows.find((row) => row.kind === "working")?.createdAt).toBe(preparedTurn.startedAt);
   const doneEntry = {
@@ -5169,6 +5166,7 @@ it("keeps the working header in place across worktree setup handoff", () => {
     isWorking: false,
     turnDiffSummaries: [],
     supportsConversationRollback: false,
+    turnWorkFold: true,
   }).find((row) => row.kind === "turn-fold");
   expect(preparedFold).toMatchObject({ label: "Worked for 20s" });
 });
@@ -5254,7 +5252,7 @@ describe("failed turn transcript", () => {
           },
         },
       ];
-      const rows = deriveMessagesTimelineRows({
+      const input = {
         timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
           visibleTurnItems: items,
           optimisticMessages: [],
@@ -5283,7 +5281,15 @@ describe("failed turn transcript", () => {
         isWorking: false,
         turnDiffSummaries: [],
         supportsConversationRollback: false,
-      });
+        turnWorkFold: true,
+      } satisfies Parameters<typeof deriveMessagesTimelineRows>[0];
+      const rows = deriveMessagesTimelineRows(input);
+      // Main leaves a failed turn unfolded.
+      expect(
+        deriveMessagesTimelineRows({ ...input, turnWorkFold: false }).some(
+          (row) => row.kind === "turn-fold" || row.kind === "attempt-fold",
+        ),
+      ).toBe(false);
       expect(rows.some((row) => row.kind === "attempt-fold")).toBe(false);
       expect(rows.find((row) => row.kind === "work-toggle")).toEqual(
         isLatest ? expect.objectContaining({ hiddenCount: 3, expanded: false }) : undefined,
@@ -5322,6 +5328,7 @@ describe("failed turn transcript", () => {
         isWorking: false,
         turnDiffSummaries: [],
         supportsConversationRollback: false,
+        turnWorkFold: true,
       });
       // With nothing else to fold, the fold only names the failure; the text keeps its footer.
       expect(compactRows.map((row) => row.kind)).toEqual(["message", "turn-fold", "message"]);
@@ -5464,6 +5471,7 @@ describe("working window", () => {
       activeTurnStartedAt,
       turnDiffSummaries: [],
       supportsConversationRollback: false,
+      turnWorkFold: true,
     };
     return applyWorkingWindow(deriveMessagesTimelineRows(input), input);
   };
@@ -5598,6 +5606,7 @@ describe("working window", () => {
       isWorking: false,
       turnDiffSummaries: [],
       supportsConversationRollback: false,
+      turnWorkFold: true,
     });
     expect(rows.map((row) => row.id)).toEqual([
       "prompt",
@@ -5843,6 +5852,7 @@ describe("turn fold endings", () => {
       isWorking: false,
       turnDiffSummaries: [],
       supportsConversationRollback: false,
+      turnWorkFold: true,
     };
   };
 
@@ -5945,6 +5955,7 @@ describe("turn fold endings", () => {
         },
       ],
       supportsConversationRollback: false,
+      turnWorkFold: true,
     });
     expect(rows).toEqual([
       expect.objectContaining({
@@ -5975,33 +5986,29 @@ it.each([
   [false, "failed"],
 ] as const)("groups consecutive notification responses (%s, %s)", (active, outcome) => {
   const fixture = makeStreamingTimelineFixture("Update received");
-  const visibleTurnItems = fixture.visibleTurnItems.map(
-    (row): OrchestrationV2ProjectedTurnItem =>
-      ({
-        ...row,
-        item:
-          row.item.type === "user_message"
-            ? {
-                ...row.item,
-                type: "notification",
-                source: { kind: outcome === "failed" ? "monitor" : "background_task" },
-                outcome: active && row.item.runId === fixture.runId ? "updated" : outcome,
-                summary:
-                  outcome === "failed" ? "#28844: checks failed" : "Background activity updated",
-              }
-            : row.item.type === "command_execution"
-              ? { ...row.item, status: "completed", exitCode: 0, output: "Passed" }
-              : row.item.type === "assistant_message"
-                ? {
-                    ...row.item,
-                    streaming: active && row.item.runId === fixture.runId,
-                    status: active && row.item.runId === fixture.runId ? "running" : "completed",
-                  }
-                : row.item,
-      }) as OrchestrationV2ProjectedTurnItem,
-  );
   const entries = deriveTimelineEntriesFromVisibleTurnItems({
-    visibleTurnItems,
+    visibleTurnItems: fixture.visibleTurnItems.map((row) => ({
+      ...row,
+      item:
+        row.item.type === "user_message"
+          ? {
+              ...row.item,
+              type: "notification",
+              source: { kind: outcome === "failed" ? "monitor" : "background_task" },
+              outcome: active && row.item.runId === fixture.runId ? "updated" : outcome,
+              summary:
+                outcome === "failed" ? "#28844: checks failed" : "Background activity updated",
+            }
+          : row.item.type === "command_execution"
+            ? { ...row.item, status: "completed", exitCode: 0, output: "Passed" }
+            : row.item.type === "assistant_message"
+              ? {
+                  ...row.item,
+                  streaming: active && row.item.runId === fixture.runId,
+                  status: active && row.item.runId === fixture.runId ? "running" : "completed",
+                }
+              : row.item,
+    })),
     optimisticMessages: [],
   });
   const input = {
@@ -6036,37 +6043,6 @@ it.each([
     const streaming = deriveMessagesTimelineRows(input);
     expect(keptAnswer(streaming)).toMatchObject([{ message: { streaming: true } }]);
     expect(applyBackgroundActivityGroups(streaming, input).slice(1)).toEqual(keptAnswer(streaming));
-    // A streamed delta into the answer a collapsed group keeps.
-    const timeline = deriveTimelineEntriesFromVisibleTurnItemsWithState({
-      visibleTurnItems,
-      optimisticMessages: [],
-    });
-    const previous = deriveMessagesTimelineRowsWithState({
-      ...input,
-      timelineEntries: timeline.entries,
-    });
-    const nextTimeline = deriveTimelineEntriesFromVisibleTurnItemsWithState(
-      {
-        visibleTurnItems: visibleTurnItems.map((row) =>
-          row.item.type === "assistant_message" && row.item.streaming
-            ? { ...row, item: { ...row.item, text: "Update received and read" } }
-            : row,
-        ),
-        optimisticMessages: [],
-      },
-      timeline,
-    );
-    const next = deriveMessagesTimelineRowsWithState(
-      { ...previous.input, timelineEntries: nextTimeline.entries },
-      previous,
-    );
-    const { after } = expectStableParity(previous, next);
-    expect(after[0]).toMatchObject({ kind: "background-activity", expanded: false });
-    expect(after).toContainEqual(
-      expect.objectContaining({
-        message: expect.objectContaining({ text: "Update received and read" }),
-      }),
-    );
   }
   expect(collapsed[0]).toMatchObject({
     kind: "background-activity",
@@ -6116,6 +6092,13 @@ it.each([
   });
   expect(expanded.slice(1)).toEqual(original);
   expect(expanded.slice(1).every((row, index) => row === original[index])).toBe(true);
+  const railKey = wakeUpsRailKey(expanded);
+  const rail = wakeUpsRailRows(railKey);
+  expect(rail.size).toBeGreaterThan(0);
+  expect([...rail.values()].every((part) => part.foldId === collapsed[0]!.id)).toBe(true);
+  expect([...rail.values()].at(-1)?.position).toBe("end");
+  expect(rail.has(collapsed[0]!.id)).toBe(false);
+  expect(wakeUpsRailKey(expanded.map((row) => ({ ...row })))).toBe(railKey);
   expect(expanded[0]).toMatchObject({
     revealedRowIds: original
       .filter((row) => !keptAnswer(original).includes(row))
@@ -6501,8 +6484,8 @@ describe("parent run waiting on foreground subagents", () => {
   };
 
   it("names the running children while the open run has done nothing since launching them", () => {
-    expect(liveRow([])).toEqual({ ...thinking, label: "Waiting on 2 subagents" });
-    expect(liveRow([], "hideAll")).toEqual({ ...thinking, label: "Waiting on 2 subagents" });
+    expect(liveRow([])).toEqual({ ...thinking, label: "Waiting on subagents" });
+    expect(liveRow([], "hideAll")).toEqual({ ...thinking, label: "Waiting on subagents" });
   });
 
   it("keeps Thinking when a hidden newer parent command follows the children", () => {
@@ -6622,6 +6605,17 @@ describe("subagent continued by a later turn", () => {
       `turn-fold:${run2}`,
       "closing-2",
     ]);
+  });
+});
+
+describe("isTimelineMinimapTurnVisible", () => {
+  it("keeps a turn lit while only its reply is on screen", () => {
+    // Turn rows 10..499, viewport inside the reply.
+    expect(isTimelineMinimapTurnVisible(10, 500, 200, 210)).toBe(true);
+    expect(isTimelineMinimapTurnVisible(500, undefined, 600, 610)).toBe(true);
+    expect(isTimelineMinimapTurnVisible(500, undefined, 200, 210)).toBe(false);
+    expect(isTimelineMinimapTurnVisible(10, 500, 500, 510)).toBe(false);
+    expect(isTimelineMinimapTurnVisible(10, 500, null, null)).toBe(false);
   });
 });
 

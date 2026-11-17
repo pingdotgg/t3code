@@ -156,23 +156,26 @@ function useStopPhase(input: {
   return [stopPhase, setStopPhase] as const;
 }
 
-/** The stop square, one slot of the send pill so the pill never changes shape. */
-function StopGenerationButton({
-  stopPhase,
-  canOperateThread,
-  insidePendingAction,
-  preserveComposerFocusOnPointerDown,
-  onStopRequested,
-  onInterrupt,
-}: {
+interface StopGenerationSlotProps {
   stopPhase: StopPhase;
   canOperateThread: boolean;
   insidePendingAction: boolean;
   preserveComposerFocusOnPointerDown: boolean;
   onStopRequested: () => void;
   onInterrupt: () => void;
-}) {
+}
+
+/** The stop square; it sits in its own pill or at the end of the send pill. */
+function StopGenerationSlot({
+  stopPhase,
+  canOperateThread,
+  insidePendingAction,
+  preserveComposerFocusOnPointerDown,
+  onStopRequested,
+  onInterrupt,
+}: StopGenerationSlotProps) {
   const isStopDisabled = stopPhase === "pending";
+  const stopLabel = stopPhase === "pending" ? "Stopping" : "Stop generation";
   return (
     <Tooltip>
       <TooltipTrigger
@@ -187,7 +190,7 @@ function StopGenerationButton({
               onStopRequested();
               onInterrupt();
             }}
-            aria-label={stopPhase === "pending" ? "Stopping" : "Stop generation"}
+            aria-label={stopLabel}
           />
         }
       >
@@ -195,6 +198,24 @@ function StopGenerationButton({
       </TooltipTrigger>
       <TooltipPopup>{stopPhase === "pending" ? "Stopping…" : "Interrupt"}</TooltipPopup>
     </Tooltip>
+  );
+}
+
+function StopGenerationButton({
+  leading = null,
+  showStop = true,
+  ...props
+}: StopGenerationSlotProps & {
+  /** The dictation mic slot that shares the pill. */
+  leading?: ReactNode;
+  /** False while dictation records with no turn to stop: the mic's own controls fill the pill. */
+  showStop?: boolean;
+}) {
+  return (
+    <ComposerSendPill className={cn(props.insidePendingAction && "sm:h-7")}>
+      {leading}
+      {showStop ? <StopGenerationSlot {...props} /> : null}
+    </ComposerSendPill>
   );
 }
 
@@ -230,16 +251,14 @@ export function CollapsedComposerStopAction({
       data-chat-composer-collapsed-controls="true"
       className="flex shrink-0"
     >
-      <ComposerSendPill>
-        <StopGenerationButton
-          stopPhase={stopPhase}
-          canOperateThread={canOperateThread}
-          insidePendingAction={false}
-          preserveComposerFocusOnPointerDown
-          onStopRequested={() => setStopPhase("pending")}
-          onInterrupt={onInterrupt}
-        />
-      </ComposerSendPill>
+      <StopGenerationButton
+        stopPhase={stopPhase}
+        canOperateThread={canOperateThread}
+        insidePendingAction={false}
+        preserveComposerFocusOnPointerDown
+        onStopRequested={() => setStopPhase("pending")}
+        onInterrupt={onInterrupt}
+      />
     </span>
   );
 }
@@ -290,22 +309,19 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const alternateAction = alternateComposerDispatchAction(followUpBehavior);
   const isSendDisabled = !canOperateThread || sendDisabledReason !== null;
 
-  const stopShown = stopPhase === "pending" || stopPhase === "timedOut";
-  const renderStopSlot = (insidePendingAction: boolean) => (
+  // The stop square sits in the same pill as send, so the pill never changes shape.
+  const renderStopGenerationButton = (insidePendingAction: boolean) => (
     <StopGenerationButton
+      key="interrupt"
       stopPhase={stopPhase}
       canOperateThread={canOperateThread}
       insidePendingAction={insidePendingAction}
       preserveComposerFocusOnPointerDown={preserveComposerFocusOnPointerDown}
       onStopRequested={() => setStopPhase("pending")}
       onInterrupt={onInterrupt}
+      leading={insidePendingAction ? null : renderSpeechAction?.(true)}
+      showStop={!voiceInputActive || canInterrupt || stopPhase !== null}
     />
-  );
-  const renderStopGenerationButton = (insidePendingAction: boolean) => (
-    <ComposerSendPill key="interrupt" className={cn(insidePendingAction && "sm:h-7")}>
-      {insidePendingAction ? null : renderSpeechAction?.(true)}
-      {!voiceInputActive || canInterrupt || stopShown ? renderStopSlot(insidePendingAction) : null}
-    </ComposerSendPill>
   );
 
   if (pendingAction) {
@@ -362,7 +378,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             questionIndex: pendingAction.questionIndex,
           })}
         </MessageActionPill>
-        {canInterrupt || stopShown ? renderStopGenerationButton(true) : null}
+        {canInterrupt || stopPhase === "pending" || stopPhase === "timedOut"
+          ? renderStopGenerationButton(true)
+          : null}
       </div>
     );
   }
@@ -492,7 +510,16 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         <TooltipPopup>{submitTooltip}</TooltipPopup>
       </Tooltip>
       {/* Keep the clicked stop at the right edge of the same pill when typing changes the action. */}
-      {stopShown ? renderStopSlot(false) : null}
+      {stopPhase === "pending" || stopPhase === "timedOut" ? (
+        <StopGenerationSlot
+          stopPhase={stopPhase}
+          canOperateThread={canOperateThread}
+          insidePendingAction={false}
+          preserveComposerFocusOnPointerDown={preserveComposerFocusOnPointerDown}
+          onStopRequested={() => setStopPhase("pending")}
+          onInterrupt={onInterrupt}
+        />
+      ) : null}
     </ComposerSendPill>
   );
   return (

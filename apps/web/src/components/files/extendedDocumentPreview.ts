@@ -28,19 +28,24 @@ const namespacePrefixes: Record<string, string> = {
   "urn:oasis:names:tc:opendocument:xmlns:table:1.0": "table",
   "urn:oasis:names:tc:opendocument:xmlns:text:1.0": "text",
   "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0": "draw",
+  "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0": "presentation",
   "http://www.w3.org/1999/xlink": "xlink",
   "http://www.w3.org/1999/xhtml": "",
   "http://www.idpf.org/2007/opf": "",
   "urn:oasis:names:tc:opendocument:xmlns:container": "",
 };
 function parseXml(source: string): XmlNode {
-  // EPUB XHTML commonly declares an external DTD. Discard it without resolving it.
-  source = source.replaceAll(/<!DOCTYPE\s+[^<>[\]]*>/gi, "");
-  if (
-    source.length > 8 * 1024 * 1024 ||
-    /<!\s*(DOCTYPE|ENTITY)/i.test(source) ||
-    XMLValidator.validate(source) !== true
-  )
+  // EPUB XHTML commonly declares an external DTD: discard it without resolving it. Any other
+  // declaration is rejected; CDATA, comments and processing instructions pass through untouched.
+  let declares = false;
+  source = source.replaceAll(
+    /<\?[\s\S]*?(?:\?>|$)|<!\[CDATA\[[\s\S]*?(?:]]>|$)|<!--[\s\S]*?(?:-->|$)|(<!DOCTYPE\s+[^<>[\]]*>)|(<!\s*(?:DOCTYPE|ENTITY))/gi,
+    (markup, externalDoctype?: string, declaration?: string) => {
+      if (declaration) declares = true;
+      return externalDoctype ? " " : markup;
+    },
+  );
+  if (source.length > 8 * 1024 * 1024 || declares || XMLValidator.validate(source) !== true)
     throw new Error("This document contains invalid or unsupported XML.");
   const parser = new XMLParser({
     preserveOrder: true,
@@ -70,10 +75,13 @@ function parseXml(source: string): XmlNode {
         return { name: "#text", attrs: {}, children: [], text: literal };
       }
       const attrs = Object.fromEntries(
-        Object.entries((item[":@"] ?? {}) as Record<string, string>).map(([key, value]) => [
-          key,
-          decodeEntities(value),
-        ]),
+        Object.entries((item[":@"] ?? {}) as Record<string, string>).map(([key, value]) => {
+          // fast-xml-parser accepts raw '<' in element attributes, which can mask declarations
+          // above. Processing instructions end at their first '?>', so their data may hold '<'.
+          if (!name.startsWith("?") && value.includes("<"))
+            throw new Error("This document contains invalid or unsupported XML.");
+          return [key, decodeEntities(value)];
+        }),
       );
       const namespaces = Object.create(inherited) as Record<string, string>;
       for (const [key, value] of Object.entries(attrs)) {
@@ -275,6 +283,7 @@ async function odfHtml(node: XmlNode, archive: JSZip): Promise<string> {
   if (
     [
       "office:annotation",
+      "presentation:notes",
       "text:tracked-changes",
       "office:scripts",
       "draw:object",
@@ -417,8 +426,9 @@ export async function openEpub(archive: JSZip): Promise<OfficeWorkerResult> {
     const chapter = parseXml(await entry.async("string"));
     pages.push({
       title:
-        text(find(chapter, "title")[0] ?? find(chapter, "h1")[0] ?? chapter).slice(0, 120) ||
-        `Chapter ${pages.length + 1}`,
+        text(find(chapter, "title")[0] ?? find(chapter, "h1")[0] ?? chapter)
+          .trim()
+          .slice(0, 120) || `Chapter ${pages.length + 1}`,
       html: await epubHtml(chapter, archive, path),
     });
   }
@@ -491,6 +501,31 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
   });
   return { type: "notebook", language, cells };
 }
+
+// Characters RTF writes as control symbols (`\~`) and control words (`\emspace`).
+const RTF_CHARACTERS = new Map([
+  ["~", "\u00a0"],
+  ["_", "\u2011"],
+  ["-", "\u00ad"],
+  ["tab", "\t"],
+  ["cell", "\t"],
+  ["endash", "–"],
+  // oxlint-disable-next-line t3code/no-em-dash-copy -- Preserve the RTF document's punctuation.
+  ["emdash", "—"],
+  ["bullet", "•"],
+  ["lquote", "‘"],
+  ["rquote", "’"],
+  ["ldblquote", "“"],
+  ["rdblquote", "”"],
+  ["enspace", "\u2002"],
+  ["emspace", "\u2003"],
+  ["qmspace", "\u2005"],
+  ["zwbo", "\u200b"],
+  ["zwnj", "\u200c"],
+  ["zwj", "\u200d"],
+  ["ltrmark", "\u200e"],
+  ["rtlmark", "\u200f"],
+]);
 
 export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
   if (bytes.byteLength > 8 * 1024 * 1024)
@@ -593,7 +628,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       }
       const match = /^([a-z]+)(-?\d+)? ?/i.exec(source.slice(i));
       if (!match) {
-        if (next === "~") emit("\u00a0");
+        const character = RTF_CHARACTERS.get(next!);
+        if (character) emit(character);
         // A backslash before a line break is \par; TextEdit ends paragraphs this way.
         else if ((next === "\n" || next === "\r") && !state.skip) html += "<br>";
         i++;
@@ -686,15 +722,10 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         fallback = state.uc;
       } else if (!state.skip && word === "page") finishPage();
       else if (!state.skip && (word === "par" || word === "line" || word === "row")) html += "<br>";
-      else if (word === "tab" || word === "cell") emit("\t");
-      else if (word === "endash") emit("–");
-      // oxlint-disable-next-line t3code/no-em-dash-copy -- Preserve the RTF document's punctuation.
-      else if (word === "emdash") emit("—");
-      else if (word === "bullet") emit("•");
-      else if (word === "lquote") emit("‘");
-      else if (word === "rquote") emit("’");
-      else if (word === "ldblquote") emit("“");
-      else if (word === "rdblquote") emit("”");
+      else {
+        const character = RTF_CHARACTERS.get(word!);
+        if (character) emit(character);
+      }
     } else if (char !== "\r" && char !== "\n" && char) emitByte(char.charCodeAt(0));
   }
   if (stack.length) throw new Error("This rich text document is damaged.");

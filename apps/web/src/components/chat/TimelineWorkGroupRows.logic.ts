@@ -21,19 +21,31 @@ export function formatWorkingDuration(elapsedMs: number): string {
   return formatDuration(elapsedSeconds * 1_000);
 }
 
-/** Server timestamps measured against the environment's clock, so a skewed device reads true. */
 export function formatWorkingTimerNow(
   startIso: string,
   environmentId: EnvironmentId,
   clock = false,
 ): string {
-  const startedAtMs = Date.parse(startIso);
-  const elapsedMs = Number.isFinite(startedAtMs)
-    ? toServerClock(environmentId, Date.now()) - startedAtMs
-    : 0;
   if (clock) {
-    const seconds = Math.max(0, Math.floor(elapsedMs / 1000));
+    const seconds =
+      Math.max(
+        0,
+        Math.floor((toServerClock(environmentId, Date.now()) - Date.parse(startIso)) / 1000),
+      ) || 0;
     return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   }
-  return formatWorkingDuration(elapsedMs);
+  const startedAtMs = Date.parse(startIso);
+  if (!Number.isFinite(startedAtMs)) {
+    return "0s";
+  }
+
+  const elapsedSeconds = Math.max(
+    0,
+    Math.floor((toServerClock(environmentId, Date.now()) - startedAtMs) / 1000),
+  );
+  if (elapsedSeconds < 60) {
+    return `${elapsedSeconds}s`;
+  }
+
+  return formatDuration(elapsedSeconds * 1_000);
 }

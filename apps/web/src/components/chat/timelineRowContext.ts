@@ -22,9 +22,13 @@ import { type LegendListRef } from "@legendapp/list/react";
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import type { PendingApproval } from "../../session-logic";
 import { type ChatFileAttachment } from "../../types";
-import { ExpandedImagePreview } from "./ExpandedImagePreview";
+import { type ExpandedImageItem, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { type AssistantCitationTarget } from "./AssistantCitationSource";
-import { type MessagesTimelineRow, type WorkGroupScrollAnchor } from "./MessagesTimeline.logic";
+import {
+  type MessagesTimelineRow,
+  type WorkGroupScrollAnchor,
+  type wakeUpsRailRows,
+} from "./MessagesTimeline.logic";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import type { TurnItemDetailSource } from "../../state/queries";
 import { type HandoffTimelineRun } from "./V2LifecycleRow";
@@ -134,15 +138,28 @@ export const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
 export const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 
 /** Rows an open wake-ups fold reveals, by id. Its own context: it changes only when a fold does. */
-export const TimelineWakeUpsRailCtx = createContext<ReadonlyMap<string, "body" | "end">>(new Map());
+export const TimelineWakeUpsRailCtx = createContext<ReturnType<typeof wakeUpsRailRows>>(new Map());
+
+export const TimelineWakeUpsRailInteractionCtx = createContext<{
+  hoveredFoldId: string | null;
+  onHover: (foldId: string | null) => void;
+  onCollapse: (foldId: string) => void;
+}>(null!);
 
 export interface WorkGroupViewState {
   scrollPositions: Map<string, WorkGroupScrollAnchor>;
   expandedEntries: Set<string>;
 }
 
+/** One image the group's agent viewed; `item` is null until its URL resolves. */
+export interface WorkGroupViewedImage {
+  readonly path: string;
+  readonly item: ExpandedImageItem | null;
+}
+
 export const WorkGroupViewCtx = createContext<{
   state: WorkGroupViewState;
+  viewedImages: ReadonlyArray<WorkGroupViewedImage>;
   onToggleEntry: (collapsed: boolean, entryId: string) => void;
   onContentReady?: ((entryId: string) => void) | undefined;
 } | null>(null);

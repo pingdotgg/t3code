@@ -162,7 +162,7 @@ function TooltipPopup({
       <TooltipPositioner align={align} anchor={anchor} side={side} sideOffset={sideOffset}>
         <TooltipPrimitive.Popup
           className={cn(
-            "kbd-in-popover relative flex origin-(--transform-origin) text-balance rounded-item font-normal text-popover-foreground text-xs transition-[scale,opacity] data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0 data-instant:duration-0 motion-reduce:transition-none",
+            "kbd-in-popover relative flex origin-(--transform-origin) rounded-item font-normal text-popover-foreground text-xs transition-[scale,opacity] data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0 data-instant:duration-0 motion-reduce:transition-none",
             // popover floats over media with the popover recipe.
             variant === "popover" || variant === "thread" ? "surface-popover" : "surface-tooltip",
             variant === "thread" && "rounded-card",

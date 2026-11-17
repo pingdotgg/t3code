@@ -6,7 +6,11 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { DraftId } from "../composerDraftStore";
 import { selectFocusedTab } from "../layout/layoutModel";
 import { useLayoutStore } from "../layout/layoutStore";
-import { createWorkspaceFocusController } from "./workspaceFocus";
+import {
+  createWorkspaceFocusController,
+  holdSurfaceFocusOrigin,
+  isReturnedSurfaceFocus,
+} from "./workspaceFocus";
 
 function setup() {
   const root = document.createElement("div");
@@ -48,6 +52,28 @@ function conversationScroller(height: number) {
 }
 
 describe("workspace area focus", () => {
+  it("returns a closing surface to its origin and leaves focus elsewhere alone", () => {
+    using fixture = setup();
+    const sidebar = fixture.area("sidebar", 0);
+    const composer = fixture.area("composer", 2);
+    const panel = fixture.area("panel", 4);
+    sidebar.button.focus();
+    const release = holdSurfaceFocusOrigin(panel.element, document.activeElement);
+    // Opening another pane can blur the original control before the new pane takes focus.
+    sidebar.button.blur();
+    panel.button.focus();
+    release();
+    expect(document.activeElement).toBe(sidebar.button);
+    expect(isReturnedSurfaceFocus()).toBe(true);
+
+    const releaseAgain = holdSurfaceFocusOrigin(panel.element, document.activeElement);
+    panel.button.focus();
+    composer.button.focus();
+    expect(isReturnedSurfaceFocus()).toBe(false);
+    releaseAgain();
+    expect(document.activeElement).toBe(composer.button);
+  });
+
   it("cycles through matching areas in separate panes and remembers each control", () => {
     using fixture = setup();
     const sidebar = fixture.area("sidebar", 0);
@@ -143,6 +169,49 @@ describe("workspace area focus", () => {
     expect(document.activeElement).toBe(sidebar.button);
     fixture.controller.move(-1);
     expect(document.activeElement).toBe(panel.button);
+  });
+
+  it("moves back out of a side chat whose areas reuse the main chat's names", () => {
+    using fixture = setup();
+    const composer = fixture.area("composer", 2);
+    const panel = fixture.area("panel", 4);
+    const sideComposer = fixture.area("composer", 2, panel.element);
+    composer.button.focus();
+    fixture.controller.move(1);
+    expect(document.activeElement).toBe(sideComposer.button);
+    fixture.controller.move(-1);
+    expect(document.activeElement).toBe(composer.button);
+
+    // A side chat in its own pane goes back to its main chat in one press from either area.
+    const original = useLayoutStore.getState().layout;
+    using _restore = { [Symbol.dispose]: () => useLayoutStore.setState({ layout: original }) };
+    const parentRef = scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("parent"));
+    useLayoutStore
+      .getState()
+      .openTab({ kind: "chat", target: { kind: "server", threadRef: parentRef } });
+    const chatTab = selectFocusedTab(useLayoutStore.getState().layout)!;
+    useLayoutStore
+      .getState()
+      .openTab(
+        { kind: "surface", threadRef: parentRef, surfaceId: "side-chat:side" },
+        { placement: "new-column" },
+      );
+    const sideTab = selectFocusedTab(useLayoutStore.getState().layout)!;
+    const chatPane = fixture.append(`<div data-layout-tab-id="${chatTab.id}"></div>`);
+    fixture.area("conversation", 1, chatPane);
+    const chatComposer = fixture.area("composer", 2, chatPane);
+    const sidePane = fixture.append(`<div data-layout-tab-id="${sideTab.id}"></div>`);
+    const sidePanel = fixture.area("panel", 4, sidePane);
+    const sideChat = document.createElement("div");
+    sideChat.dataset.sideChatPane = "side";
+    sidePanel.element.append(sideChat);
+    const sideConversation = fixture.area("conversation", 1, sideChat);
+    const sideChatComposer = fixture.area("composer", 2, sideChat);
+    for (const start of [sideChatComposer.button, sideConversation.button]) {
+      start.focus();
+      fixture.controller.move(-1);
+      expect(document.activeElement).toBe(chatComposer.button);
+    }
   });
 
   it("skips hidden, inert, and maximized-away areas", () => {

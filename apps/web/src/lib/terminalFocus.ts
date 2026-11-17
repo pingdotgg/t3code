@@ -126,10 +126,7 @@ export function focusTerminalOnNavigation(threadRef: ScopedThreadRef, terminalId
   focusTerminal(threadRef, terminalId);
 }
 
-/**
- * Restores composer or terminal focus; explicit terminal navigation takes precedence, and
- * `preserveFocus` keeps focus the user already placed inside the pane.
- */
+/** Restores composer or terminal focus; explicit terminal navigation takes precedence. */
 export function restoreFocusOnThreadEnter(
   threadRef: ScopedThreadRef,
   content: {
@@ -163,6 +160,7 @@ export function restoreFocusOnThreadEnter(
     }
   };
   content.root.ownerDocument.addEventListener("focusin", remember);
+  if (content.preserveFocus) remember();
   if (!requestedByHandler && !content.preserveFocus) {
     const drawer = selectThreadTerminalUiState(
       useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
@@ -188,7 +186,7 @@ export function restoreFocusOnThreadEnter(
       focusTerminal(threadRef, drawer.activeTerminalId);
     } else content.focusComposer();
   }
-  if (requestedByHandler || content.preserveFocus) remember();
+  if (requestedByHandler) remember();
   return () => {
     content.root.ownerDocument.removeEventListener("focusin", remember);
     // A handler navigating elsewhere marks its target before this cleanup runs.
@@ -239,4 +237,60 @@ export function focusTerminalViewport(input: {
   input.mount.focus({ preventScroll: true });
   input.surface?.focus();
   return input.mount.contains(document.activeElement);
+}
+
+interface TerminalSplitTarget {
+  readonly threadKey: string;
+  readonly contains: (element: Element) => boolean;
+  /** Shown in the layout pane that holds keyboard focus. */
+  readonly inFocusedPane: () => boolean;
+  readonly visible: () => boolean;
+  readonly hasTerminal: () => boolean;
+  /** False without operate access or at the per-group limit, as the split keys. */
+  readonly canSplit: () => boolean;
+  readonly split: (direction: "horizontal" | "vertical") => void;
+  /** Focuses the group's active terminal, as the split keys leave it. */
+  readonly focusActive: () => void;
+}
+
+const splitTargets = new Set<TerminalSplitTarget>();
+
+/** A mounted terminal's own split, for the command palette to reach. */
+export function registerTerminalSplitTarget(target: TerminalSplitTarget): () => void {
+  splitTargets.add(target);
+  return () => {
+    splitTargets.delete(target);
+  };
+}
+
+/**
+ * The terminal the split keys would act on: the one holding `element` (focus
+ * when the palette opened), else the one in the focused pane, else the focused
+ * thread's. Null when there is no terminal to split.
+ */
+export function findTerminalSplitTarget(
+  element: Element | null,
+  threadKey: string | null,
+): TerminalSplitTarget | null {
+  const targets = Array.from(splitTargets).filter((candidate) => candidate.hasTerminal());
+  const target =
+    (element?.isConnected ? targets.find((candidate) => candidate.contains(element)) : null) ??
+    targets.find((candidate) => candidate.inFocusedPane()) ??
+    targets.find((candidate) => candidate.threadKey === threadKey && candidate.visible());
+  return target ?? null;
+}
+
+let focusAfterPalette: (() => void) | null = null;
+/** A palette command's terminal takes focus once the palette has closed. */
+export function queueTerminalFocusFromPalette(focus: () => void): void {
+  focusAfterPalette = focus;
+}
+
+/** Runs at the palette's focus restoration milestone; true when a terminal takes focus. */
+export function restoreTerminalFocusFromPalette(): boolean {
+  const focus = focusAfterPalette;
+  focusAfterPalette = null;
+  if (focus === null) return false;
+  window.requestAnimationFrame(focus);
+  return true;
 }

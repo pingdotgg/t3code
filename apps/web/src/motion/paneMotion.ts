@@ -3,6 +3,8 @@
 import { Component, useEffectEvent, useLayoutEffect, useRef } from "react";
 
 import { useClientSettings } from "../hooks/useSettings";
+import { closedLayoutTabIds } from "../layout/layoutModel";
+import { useLayoutStore } from "../layout/layoutStore";
 import { MotionAnimation, playMotion, toDevicePixel, type MotionRun } from "./animation";
 import { takePaneDrop } from "./paneDrop";
 import { configureMotion } from "./registry";
@@ -99,24 +101,6 @@ function holdCoveredCards(cards: Shown["cards"], box: Box, edge: HTMLElement) {
   };
 }
 
-/** Before a sidebar toggle commits: what its split panes show now. */
-export function holdPaneContent(): void {
-  for (const stage of document.querySelectorAll<HTMLElement>("[data-layout-stage]")) {
-    snapshot(stage, true);
-  }
-}
-
-/** Once the sidebar slide starts, a held snapshot no pane motion took is stale. */
-export function releasePaneContent(): void {
-  for (const stage of document.querySelectorAll<HTMLElement>("[data-layout-stage]")) {
-    if (shownBefore.get(stage)?.held) shownBefore.delete(stage);
-  }
-}
-
-/** A closing pane's elements and their children before the commit that unmounts it, whose portals
- * (its tabs and breadcrumb in the bar) React empties as it goes. */
-const closingChildren = new WeakMap<HTMLElement, [Element, Node[]][]>();
-
 type Slots = ReadonlyMap<string, { slot: { paneId: string } }>;
 
 /** Measures the tracked elements before React writes a new pane layout to the DOM. */
@@ -128,18 +112,6 @@ export class PaneMotionSnapshot extends Component<{
     const stage = this.props.stageRef.current;
     if (!stage || previous.slots === this.props.slots) return null;
     if (!shownBefore.get(stage)?.held) snapshot(stage, false);
-    const panes = new Set([...this.props.slots.values()].map(({ slot }) => slot.paneId));
-    for (const [tabId, { slot }] of previous.slots) {
-      if (this.props.slots.has(tabId) || panes.has(slot.paneId)) continue;
-      const pane = stage.querySelector<HTMLElement>(
-        `:scope > [data-layout-surface][data-layout-tab-id="${CSS.escape(tabId)}"]`,
-      );
-      if (!pane) continue;
-      closingChildren.set(
-        pane,
-        [pane, ...pane.querySelectorAll("*")].map((element) => [element, [...element.childNodes]]),
-      );
-    }
     return null;
   }
 
@@ -566,27 +538,6 @@ function makeEdge(
   };
 }
 
-/** A ghost draws nothing of its own, so a closed surface's pane, which React has already detached
- * and unmounted, rides inside it as it was until the ghost goes. */
-function holdClosedPane(ghost: HTMLElement, pane: HTMLElement | undefined): void {
-  if (!pane || pane.isConnected || ghost.childElementCount > 0) return;
-  for (const [element, children] of closingChildren.get(pane) ?? []) {
-    const now = element.childNodes;
-    if (now.length !== children.length || children.some((child, i) => now[i] !== child)) {
-      element.replaceChildren(...children);
-    }
-  }
-  closingChildren.delete(pane);
-  // Inserted again, a frame would load its page again.
-  for (const frame of pane.querySelectorAll("iframe, webview")) frame.remove();
-  for (const animation of pane.getAnimations({ subtree: true })) animation.cancel();
-  // Nothing may find it as a live pane.
-  delete pane.dataset.layoutTabId;
-  delete pane.dataset.layoutPaneFocused;
-  Object.assign(pane.style, { left: "0", top: "0", width: "100%", height: "100%" });
-  ghost.append(pane);
-}
-
 /** A pane sliding past the strip's visible end while it rests there keeps the window's end corner
  * (the curve under its bar, or under its right notch with black chrome) where it rests, instead of
  * carrying it off or in from off screen. */
@@ -636,6 +587,69 @@ function resized(side: Side, before: Box, now: Box): boolean {
     : Math.abs(before.height - now.height) > 1;
 }
 
+interface PaneCopy {
+  pane: HTMLElement;
+  scrolls: [Element, number, number][];
+}
+
+const closingCopies = new Map<string, PaneCopy>();
+
+function copyPainted(from: Element | ShadowRoot, to: Element | ShadowRoot, copy: PaneCopy): void {
+  const twins = to.querySelectorAll("*");
+  from.querySelectorAll("*").forEach((element, index) => {
+    const twin = twins[index];
+    if (!twin) return;
+    if (element.scrollTop !== 0 || element.scrollLeft !== 0) {
+      copy.scrolls.push([twin, element.scrollTop, element.scrollLeft]);
+    }
+    if (
+      element instanceof HTMLCanvasElement &&
+      twin instanceof HTMLCanvasElement &&
+      element.width > 0 &&
+      element.height > 0
+    ) {
+      twin.getContext("2d")?.drawImage(element, 0, 0);
+    }
+    if (element.shadowRoot) {
+      let shadow;
+      try {
+        shadow = twin.shadowRoot ?? twin.attachShadow({ mode: "open" });
+      } catch {
+        return;
+      }
+      shadow.replaceChildren(
+        ...[...element.shadowRoot.childNodes].map((node) => node.cloneNode(true)),
+      );
+      copyPainted(element.shadowRoot, shadow, copy);
+    }
+  });
+}
+
+function keepClosingPane(tabId: string, pane: HTMLElement): void {
+  if (MotionAnimation.start("window-movement", 0, 1).durationMs <= 0) return;
+  const copy: PaneCopy = { pane: pane.cloneNode(true) as HTMLElement, scrolls: [] };
+  copyPainted(pane, copy.pane, copy);
+  for (const name of copy.pane.getAttributeNames()) {
+    if (name !== "class") copy.pane.removeAttribute(name);
+  }
+  Object.assign(copy.pane.style, { inset: "0", width: "100%", height: "100%" });
+  for (const media of copy.pane.querySelectorAll("iframe, webview, video, audio, object, embed")) {
+    media.remove();
+  }
+  closingCopies.set(tabId, copy);
+}
+
+useLayoutStore.subscribe(({ layout }, previous) => {
+  // The store also runs without a page, where there is no pane to copy.
+  if (layout === previous.layout || typeof document === "undefined") return;
+  for (const tabId of closedLayoutTabIds(previous.layout, layout)) {
+    const pane = document.querySelector<HTMLElement>(
+      `[data-layout-tab-id="${CSS.escape(tabId)}"]:is([data-layout-surface], [data-layout-page])`,
+    );
+    if (pane) keepClosingPane(tabId, pane);
+  }
+});
+
 /** The stage must be a stacking context. Workspace or viewport changes move panes 1:1, except a
  * sidebar toggle's; unframed lone panes never animate independently. */
 export function usePaneMotion(
@@ -680,6 +694,7 @@ export function usePaneMotion(
     const drop = takePaneDrop();
     const stage = stageRef.current;
     if (!stage || key === null) {
+      closingCopies.clear();
       previous.current = null;
       return;
     }
@@ -702,6 +717,12 @@ export function usePaneMotion(
       boxes.set(tabId, { element: child, paneId, ...boxOf(child) });
       // Every pane shares the pane radius.
       if (radius === null) radius = radiusOf(child);
+    }
+    const copies = new Map<string, PaneCopy>();
+    for (const [tabId, copy] of closingCopies) {
+      if (boxes.has(tabId)) continue;
+      copies.set(tabId, copy);
+      closingCopies.delete(tabId);
     }
     const before = previous.current;
     previous.current = { key, viewportWidth, placement, boxes };
@@ -775,7 +796,14 @@ export function usePaneMotion(
       }
       const motion = MotionAnimation.start("window-movement", 0, 1);
       const keyframe = (progress: number) => translate(offset.dx * progress, offset.dy * progress);
-      if (motion.durationMs > 0) holdClosedPane(ghost, before?.boxes.get(tabId)?.element);
+      const copy = copies.get(tabId);
+      if (copy && motion.durationMs > 0) {
+        ghost.append(copy.pane);
+        for (const [element, top, left] of copy.scrolls) {
+          element.scrollTop = top;
+          element.scrollLeft = left;
+        }
+      }
       if (edge) playMotion(edge.element, motion, keyframe, undefined, undefined, true);
       if (camera === 0 && passesEnd(box, offset.dx, viewEnd)) {
         for (const corner of ghost.querySelectorAll<HTMLElement>(END_CORNERS)) {

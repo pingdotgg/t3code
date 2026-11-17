@@ -22,6 +22,16 @@ Android uses **Material You Layout** by default unless you have turned it off in
 It changes shapes, spacing, and controls independently
 of the selected theme.
 
+## App icon
+
+On web and desktop, open **Settings → Appearance** and choose **App icon**, or use **Change app
+icon** in the command palette, to pick the black, Sunrise, or Blueprint icon or an older T3 Code
+icon. Desktop shows it in the Dock or taskbar, and the browser shows it in the tab. **Default**
+returns to your build's own icon. The choice is saved separately on each device.
+
+On macOS, the chosen icon shows in the Dock while T3 Code runs; when it is closed, the Dock and
+Finder show the default icon.
+
 ## Style
 
 On web and desktop, **Style** in **Settings → Appearance** sets how buttons and controls are
@@ -65,7 +75,7 @@ the theme, applies after T3 Code's own styles on web and desktop, and is include
 
 Custom CSS cannot load files. `@import`, `image-set()`, and `url()` are ignored, except `url()`
 with a `data:` address or an `#id`. This keeps an imported theme from sending what is on your screen
-to another site.
+to another site. For a full-size image, use a [background image](#background-image).
 
 Class names in the app change between releases. For rules that keep working, target `data-slot`
 and other `data-` attributes, such as `[data-chat-header]` or `[data-slot="button"]`.
@@ -135,3 +145,18 @@ view. An optional `css` string adds [custom CSS](#custom-css).
 
 Write updates to a temporary file and rename it into place so clients never read a partial theme.
 Invalid files are not published.
+
+### Background image
+
+A published theme can have a full-size background image. Ask an agent, for example "use
+~/Pictures/wallpaper.jpg as T3 Code's background", or save a JPEG, PNG, or WebP file of up to
+16 MB beside the theme file: `nightfall.jpg` beside `nightfall.json`. The theme's CSS decides
+where the image shows:
+
+```css
+[data-workspace-area="conversation"] {
+  background: var(--theme-background-image) center / cover no-repeat;
+}
+```
+
+Delete the image file to remove it.

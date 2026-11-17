@@ -112,7 +112,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/browser": msg("Browser"),
   "/settings/devices": msg("Devices"),
   "/settings/scheduled-tasks": msg("Scheduled tasks"),
-  "/settings/source-control": msg("Source control"),
+  "/settings/source-control": msg("Source control & issues"),
   "/settings/worktrees": msg("Worktrees"),
   "/settings/connections": msg("Environments"),
   "/settings/access": msg("Sharing & access"),
@@ -411,6 +411,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["reasoning effort thinking bars graph word label level composer"],
   },
   {
+    id: "app-icon",
+    title: "App icon",
+    to: "/settings/appearance",
+    searchTerms: ["dock taskbar favicon logo nightly blueprint sunrise orbital black classic"],
+  },
+  {
     id: "math-rendering",
     title: "Render math",
     to: "/settings/appearance",
@@ -550,6 +556,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     // Shown inside the boring sidebar row only while it is on, so search lands on the parent.
     targetId: "boring-sidebar",
     searchTerms: ["beta boring sidebar folder rows multiline branch pull request details"],
+  },
+  {
+    id: "turn-work-fold",
+    title: "Fold each turn's work",
+    to: "/settings/labs",
+    searchTerms: [
+      "beta labs redesign working section window fold collapse turn tool calls open worked for wake-ups timeline",
+    ],
   },
   {
     id: "tool-call-visibility",
@@ -696,6 +710,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Transcription hardware and model unloading",
     to: "/settings/voice",
     searchTerms: ["speech voice stt advanced gpu cpu acceleration memory unload idle"],
+  },
+  {
+    id: "speech-streaming",
+    title: "Streaming transcription",
+    to: "/settings/voice",
+    searchTerms: ["speech voice stt advanced native live preview batch after stopping slow lag"],
   },
   {
     id: "microphone-test",
@@ -925,6 +945,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Delete confirmation"),
     to: "/settings/general",
     searchTerms: ["ask before thread chat history"],
+  },
+  {
+    id: "terminal-close-confirmation",
+    title: msg("Terminal close confirmation"),
+    to: "/settings/general",
+    searchTerms: ["ask before delete stop process shell console history"],
   },
   {
     id: "quit-confirmation",
@@ -1235,6 +1261,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/source-control",
     scope: "project-defaults",
     searchTerms: ["pull request merge squash rebase last selected most recently this device"],
+  },
+  {
+    id: "issue-trackers",
+    title: "Issue trackers",
+    to: "/settings/source-control",
+    scope: "environment-defaults",
+    searchTerms: ["linear jira issues tracker team api key connect bind project"],
   },
   {
     id: "source-control",

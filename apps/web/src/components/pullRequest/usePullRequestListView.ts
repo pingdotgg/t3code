@@ -1,3 +1,4 @@
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
 import {
@@ -57,6 +58,12 @@ export interface PullRequestsSearch extends PullRequestListPreferences {
 }
 
 const SEARCH_DEBOUNCE_MS = 250;
+const UNREACHABLE_PHASES: ReadonlySet<EnvironmentConnectionPhase> = new Set([
+  "offline",
+  "reconnecting",
+  "error",
+  "unsupported",
+]);
 
 /** Which servers and projects the page reads, from the URL and what this client knows. */
 export function usePullRequestScope(
@@ -138,6 +145,11 @@ export function usePullRequestScope(
           environmentId: scopedProject?.environmentId ?? search.projectEnvironmentId,
         },
   );
+  const unreachable = new Set(
+    environments.flatMap((environment) =>
+      UNREACHABLE_PHASES.has(environment.connection.phase) ? [environment.environmentId] : [],
+    ),
+  );
   const queryEnvironmentIds = selectedQueries.map((query) => query.environmentId);
   const queriesFor = (
     availability?: PullRequestHostAvailability,
@@ -148,7 +160,7 @@ export function usePullRequestScope(
     const plain = queryEnvironmentIds.map((environmentId) => ({ environmentId }));
     if (!projectsKnown) return plain;
     if (scopedProjectId !== undefined) return selectedQueries;
-    return pullRequestProjectQueries(projects, queryEnvironmentIds, availability);
+    return pullRequestProjectQueries(projects, queryEnvironmentIds, availability, unreachable);
   };
   const environmentQueries = queriesFor(hostAvailability);
   // What the page reads once a refresh forgets host reads; refresh must refetch these too.

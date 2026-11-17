@@ -1,6 +1,7 @@
 /** Shared with turn playback so paragraph boundaries match server streaming. */
 // List fences can open at any indentation; closers may be at most three spaces deeper.
-const MARKDOWN_FENCE_PATTERN = /^( *)(`{3,}|~{3,})/;
+// A backtick fence's info string cannot contain a backtick, so "```npm test``` runs" is inline code.
+const MARKDOWN_FENCE_PATTERN = /^( *)(`{3,}(?![^`\r\n]*`)|~{3,})/;
 // CommonMark blank lines contain only spaces and tabs.
 const BLANK_LINE_PATTERN = /^[ \t]*$/;
 // Require trailing space so partial list markers cannot match during streaming.

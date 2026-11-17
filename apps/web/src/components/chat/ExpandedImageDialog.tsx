@@ -1,6 +1,7 @@
 import { memo, useRef, useState, type ReactNode, type KeyboardEvent } from "react";
 import { cn } from "~/lib/utils";
 import {
+  ArrowLeftIcon,
   CopyIcon,
   DownloadIcon,
   ExternalLinkIcon,
@@ -8,7 +9,6 @@ import {
   MinusIcon,
   PlusIcon,
   VideoIcon,
-  XIcon,
   Image as ImageGlyphIcon,
   Text as TextGlyphIcon,
 } from "lucide-react";
@@ -26,6 +26,7 @@ import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { isContextMenuOpen } from "../../contextMenuFallback";
 import {
   SnapShotAccessibilityData,
+  SnapShotCopyButton,
   SnapShotContentsButton,
   snapShotAccessibilityDetails,
 } from "./SnapShotAttachmentDetails";
@@ -300,6 +301,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
       <DialogPopup
         {...composerFloatingLayerProps}
         variant="media"
+        mediaControlsPlacement="inside"
         showCloseButton={false}
         bottomStickOnMobile={false}
         // --media-height keeps ZoomableImage's reserved 200px for the bar and thumbnails.
@@ -328,8 +330,26 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
           <div
             role="toolbar"
             aria-label={`${item.name} actions`}
-            className="flex h-10 w-0 min-w-full items-center gap-2 rounded-card surface-popover pr-1.5 pl-3"
+            className="flex h-10 w-0 min-w-full items-center gap-2 rounded-card surface-popover px-1.5"
           >
+            {/* Back sits first, away from where the window's own close button is. */}
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    ref={closeButtonRef}
+                    size="icon-sm"
+                    variant="secondary"
+                    onClick={close}
+                    aria-label={`Back, close ${mediaLabel} preview`}
+                  />
+                }
+              >
+                <ArrowLeftIcon aria-hidden="true" />
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">Back</TooltipPopup>
+            </Tooltip>
             <ImageIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
             <span
               className="min-w-0 truncate text-label text-foreground"
@@ -389,6 +409,9 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             ) : item.source ? (
               <SnapShotContentsButton source={item.source} side="bottom" />
             ) : null}
+            {item.onCopySnapshot ? (
+              <SnapShotCopyButton onCopy={item.onCopySnapshot} side="bottom" />
+            ) : null}
             {zoomable ? (
               <div className="flex h-7 shrink-0 items-center rounded-control surface-well px-0.5 max-sm:hidden">
                 {/* aria-disabled keeps focus in the dialog when a click reaches a zoom limit, so arrow keys still navigate. */}
@@ -445,23 +468,6 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                 <ExternalLinkIcon aria-hidden="true" />
               </MediaBarButton>
             ) : null}
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    ref={closeButtonRef}
-                    size="icon-sm"
-                    variant="secondary"
-                    onClick={close}
-                    aria-label={`Close ${mediaLabel} preview`}
-                  />
-                }
-              >
-                <XIcon aria-hidden="true" />
-              </TooltipTrigger>
-              <TooltipPopup side="bottom">Close</TooltipPopup>
-            </Tooltip>
           </div>
           <MediaActions source={actionsSource} showTooltip={false}>
             <div className="max-w-[var(--media-width)]">

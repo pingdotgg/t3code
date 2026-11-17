@@ -3,6 +3,7 @@ import * as Cause from "effect/Cause";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render, type Screen } from "../../../test/render";
+import { makeThreadProjectionFixture } from "../../test-fixtures";
 
 const { read, toast } = vi.hoisted(() => ({
   read: vi.fn<(input: unknown) => Promise<unknown>>(),
@@ -12,8 +13,8 @@ const { read, toast } = vi.hoisted(() => ({
 const childEnvironmentId = EnvironmentId.make("child-environment");
 const childThreadId = ThreadId.make("child-thread");
 const parentEnvironmentId = EnvironmentId.make("parent-environment");
-// The panel reads only identity, lineage and delegation from the current thread.
 const child = {
+  ...makeThreadProjectionFixture().thread,
   id: childThreadId,
   title: "Child",
   lineage: { rootThreadId: childThreadId, parentThreadId: null, relationshipToParent: null },

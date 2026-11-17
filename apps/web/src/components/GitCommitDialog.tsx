@@ -50,9 +50,9 @@ export function GitCommitDialog({
   canWriteSourceControl,
   canChangeThreadBranch,
   canOpenFiles,
-  restoredCommitMessage,
   onSubmit,
   onOpenFile,
+  retainedMessage = "",
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -62,10 +62,10 @@ export function GitCommitDialog({
   /** A new branch also moves the thread onto it. */
   canChangeThreadBranch: boolean;
   canOpenFiles: boolean;
-  /** A message from a commit that failed, offered again for the retry. */
-  restoredCommitMessage: string | null;
   onSubmit: (submission: GitCommitDialogSubmission) => void;
   onOpenFile: (path: string) => void;
+  /** A message a failed commit left behind, offered again when the dialog reopens. */
+  retainedMessage?: string;
 }) {
   const branchFieldId = useId();
   const messageFieldId = useId();
@@ -78,7 +78,7 @@ export function GitCommitDialog({
   if (openSeen !== open) {
     setOpenSeen(open);
     if (open) {
-      setCommitMessage(restoredCommitMessage ?? "");
+      setCommitMessage(retainedMessage);
       setExcludedFiles(new Set());
       setBranchTarget("current");
     }

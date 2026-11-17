@@ -21,6 +21,8 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2ProjectedTurnItem,
 } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
   createRef,
@@ -41,10 +43,11 @@ import { environmentThreadDetails } from "../../state/threads";
 import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
+import { timelineGapDevApi } from "./TimelineGapRecorder";
+import { createWorkspaceFocusController, workspaceAreaProps } from "../../lib/workspaceFocus";
 import { ComposerApprovalPanel } from "./ComposerApprovalPanel";
 import { usePendingThreadRequests } from "./usePendingThreadRequests";
 import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "../../test-fixtures";
-import { createWorkspaceFocusController, workspaceAreaProps } from "../../lib/workspaceFocus";
 import {
   type PendingApproval,
   deriveTimelineEntriesFromVisibleTurnItems,
@@ -52,6 +55,8 @@ import {
 import type { Root } from "mdast";
 import { remarkThoughtPreview, THOUGHT_PREVIEW_MAX_LENGTH } from "./TimelineWorkEntryRow.logic";
 import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
+import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
+import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import { collectThreadFindRanges } from "./threadFindHighlights";
 import { toastManager } from "../ui/toast";
 import type { CitedHistory } from "./citationProcedure";
@@ -89,6 +94,10 @@ vi.mock(import("~/assets/assetUrls"), async (original) => {
       stubbedAsset.url
         ? { _tag: "Success", url: stubbedAsset.url }
         : actual.useAssetUrlState(...args)) as typeof actual.useAssetUrlState,
+    useAssetUrls: ((...args: Parameters<typeof actual.useAssetUrls>) =>
+      stubbedAsset.url
+        ? args[1].map(() => stubbedAsset.url)
+        : actual.useAssetUrls(...args)) as typeof actual.useAssetUrls,
   };
 });
 
@@ -217,6 +226,12 @@ function renderTimeline(entries: ReadonlyArray<Entry>, props: Partial<TimelinePr
 
 async function click(element: HTMLElement) {
   await act(async () => element.click());
+}
+
+/** The redesign's turn fold is a Labs option; these cases switch it on. */
+function withTurnWorkFold() {
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, turnWorkFoldEnabled: true });
+  return { [Symbol.dispose]: () => __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS) };
 }
 
 function setup({ scheduledTasks = [] as ReadonlyArray<{ id: string; title: string }> } = {}) {
@@ -520,6 +535,7 @@ describe("MessagesTimeline work rows", () => {
   });
 
   it("keeps live assistant text citable and expands the work window below a fixed bar", async () => {
+    using _turnWorkFold = withTurnWorkFold();
     const runId = RunId.make("history-run");
     const navigations: TimelineNavigation[] = [];
     await using screen = await renderTimeline(
@@ -632,6 +648,7 @@ describe("MessagesTimeline work rows", () => {
   });
 
   it("hides Jump to latest once a collapsed work row leaves nothing below", async () => {
+    using _turnWorkFold = withTurnWorkFold();
     const runId = RunId.make("thought-run");
     const thought = (id: string, detail: string) =>
       work(id, {
@@ -674,6 +691,7 @@ describe("MessagesTimeline work rows", () => {
   });
 
   it("keeps following the end while the work history opens and collapses", async () => {
+    using _turnWorkFold = withTurnWorkFold();
     const runId = RunId.make("collapse-run");
     const navigations: TimelineNavigation[] = [];
     const props = {
@@ -994,6 +1012,45 @@ describe("MessagesTimeline messages", () => {
     await expectHeadingInView("Last turn", "Turn 118:");
   });
 
+  it("reports missing slots even when no buffered rows remain mounted", async () => {
+    setup();
+    const props = baseProps();
+    const entries = Array.from({ length: 120 }, (_, index) =>
+      message(`Turn ${index}:\n\n${"x ".repeat(200)}`, {}, `gap-${index}`),
+    );
+    await using screen = await renderElement(
+      <MessagesTimeline {...props} timelineEntries={entries} />,
+    );
+    const snapshot = () =>
+      timelineGapDevApi.checkGapsNow().find((report) => report.threadKey === props.routeThreadKey)!;
+    await vi.waitFor(() => expect(screen.text()).toContain("Turn 119:"));
+    const state = props.listRef.current!.getState();
+    const slots = Array.from({ length: state.endBuffered - state.startBuffered + 1 }, (_, i) => {
+      const index = state.startBuffered + i;
+      const slot = state.elementAtIndex(index)!;
+      return { index, slot, parent: slot.parentNode!, next: slot.nextSibling };
+    });
+    expect(snapshot().findings).toEqual([]);
+    try {
+      for (const { slot } of slots) slot.remove();
+      const report = snapshot();
+      expect(report.rows).toEqual([]);
+      expect(report.findings!.filter((finding) => finding.type === "missing-slot")).toHaveLength(
+        slots.length,
+      );
+      expect(report.missingRows!.map((row) => row.index)).toEqual(slots.map(({ index }) => index));
+      expect(report.missingRows![0]).toMatchObject({
+        reason: "no slot mounted for a row in range",
+        inBufferedRange: true,
+        key: state.data[state.startBuffered].id,
+      });
+      expect(report.slots!.some((slot) => slot.key === state.data[0].id)).toBe(true);
+    } finally {
+      for (const { slot, parent, next } of slots.toReversed()) parent.insertBefore(slot, next);
+    }
+    expect(snapshot().findings).toEqual([]);
+  });
+
   it("scrolls from the keyboard once F6 moves into the conversation", async () => {
     setup();
     const props = baseProps();
@@ -1287,6 +1344,30 @@ describe("MessagesTimeline messages", () => {
     expect(screen.text()).toContain(source);
     expect(screen.container.querySelector("script, img")).toBeNull();
     expect((globalThis as { __t3Xss?: number }).__t3Xss).toBeUndefined();
+  });
+
+  it("shows the spaces typed at the start of user lines, where find also matches them", async () => {
+    const source = "Plan\n   Step one\n\tDetail";
+    await using screen = await renderTimeline([
+      message(source),
+      message(source, { role: "assistant" }, "assistant-1"),
+    ]);
+    const [user, assistant] = screen.container.querySelectorAll<HTMLElement>(
+      "[data-timeline-row-kind=message]",
+    );
+    expect(user?.querySelector<HTMLElement>("[data-user-message-body]")?.innerText).toBe(source);
+    expect(assistant?.querySelector<HTMLElement>(".chat-markdown")?.innerText).toBe(
+      "Plan Step one Detail",
+    );
+    const query = "   Step one";
+    const indexed = searchableMessageSegments({ role: "user", text: source, streaming: false });
+    const ranges = collectThreadFindRanges(screen.container, query);
+    expect(ranges.map(({ rowId, range }) => [rowId, range.toString()])).toEqual([
+      [user?.closest("[data-timeline-row-id]")?.getAttribute("data-timeline-row-id"), query],
+    ]);
+    expect(
+      indexed?.reduce((count, segment) => count + countThreadSearchOccurrences(segment, query), 0),
+    ).toBe(ranges.length);
   });
 
   it("keeps single tildes in user paths literal without changing double tildes or assistant text", async () => {
@@ -1633,16 +1714,41 @@ const CITATION_REQUEST = {
 } satisfies NonNullable<TimelineProps["citationRequest"]>;
 
 describe("MessagesTimeline citations", () => {
-  it("lands a citation present at mount under StrictMode", async () => {
+  it("offers Cite for text an agent sent with send_to_user", async () => {
+    const text = "The draft the next question refers to";
+    await using screen = await renderTimeline(
+      [
+        {
+          id: "sent",
+          kind: "sent-message",
+          createdAt: CREATED_AT,
+          runId: RunId.make("run-sent"),
+          text,
+        },
+      ],
+      { onCiteAssistantText: () => true },
+    );
+    await expect.element(screen.getByText(text)).toHaveStyle({ pointerEvents: "auto" });
+    await userEvent.tripleClick(screen.getByText(text));
+    await expect
+      .element(page.getByRole("button", { name: "Cite selection in composer" }))
+      .toBeVisible();
+  });
+
+  it.each(["passage", "response"] as const)("lands a %s target under StrictMode", async (scope) => {
     await using _screen = await renderElement(
       <StrictMode>
         <MessagesTimeline
           {...baseProps()}
           timelineEntries={[
             message("A question", {}, "question"),
-            message("the cited answer", { role: "assistant" }, "cited"),
+            message(
+              "the cited answer\n\nAnother paragraph.\n\n- A list item\n\n```ts\nconst value = 1;\n```\n\n| header |\n| --- |\n| cell |",
+              { role: "assistant" },
+              "cited",
+            ),
           ]}
-          citationRequest={CITATION_REQUEST}
+          citationRequest={{ ...CITATION_REQUEST, scope }}
           citationHistory={{ _tag: "found" }}
         />
       </StrictMode>,
@@ -1655,9 +1761,38 @@ describe("MessagesTimeline citations", () => {
         "the cited answer",
       ),
     );
+    const source = document.querySelector<HTMLElement>("[data-citation-highlighted]")!;
+    if (scope === "response") {
+      expect(source.dataset.citationHighlighted).toBe("response");
+      expect(getComputedStyle(source, "::after").content).toBe('""');
+      expect(source.querySelector("p")?.textContent).toBe("the cited answer");
+      expect(source.querySelector("li")?.textContent).toBe("A list item");
+      expect(source.querySelector("pre")?.textContent).toContain("const value = 1;");
+      expect(source.querySelector("td")?.textContent).toBe("cell");
+    } else {
+      expect([...CSS.highlights.get("t3-assistant-citation")!][0]?.toString()).toBe(
+        "the cited answer",
+      );
+      expect(getComputedStyle(source, "::after").content).toBe("none");
+    }
   });
 
-  it("opens the superseded attempt that folds the cited response", async () => {
+  it("moves focus to the cited response so screen readers follow it", async () => {
+    await using _screen = await renderTimeline(
+      [
+        message("A question", {}, "question"),
+        message("the cited answer", { role: "assistant" }, "cited"),
+      ],
+      { citationRequest: CITATION_REQUEST, citationHistory: { _tag: "found" } },
+    );
+    await vi.waitFor(() => {
+      const cited = document.querySelector("[data-citation-highlighted]");
+      expect(cited?.textContent).toContain("the cited answer");
+      expect(cited?.contains(document.activeElement)).toBe(true);
+    });
+  });
+
+  it("opens the superseded attempt that folds the replied-to response", async () => {
     const runId = RunId.make("run-steered");
     const attempt = (id: string, ordinal: number, status: "superseded" | "running") => ({
       id: RunAttemptId.make(id),
@@ -1683,7 +1818,7 @@ describe("MessagesTimeline citations", () => {
       ],
       {
         latestRun: { runId, status: "running", startedAt: CREATED_AT, completedAt: null },
-        citationRequest: CITATION_REQUEST,
+        citationRequest: { ...CITATION_REQUEST, scope: "response" },
         citationHistory: { _tag: "found" },
       },
     );
@@ -2455,7 +2590,7 @@ it("renders automatic compaction as one live divider that finishes with its reas
   await expect
     .element(
       screen.getByRole("separator", {
-        name: "Context automatically compacted before cache expiry 899K → 19K tokens",
+        name: "Auto-compacted before cache expiry 899K → 19K tokens",
       }),
     )
     .toBeVisible();
@@ -2797,6 +2932,7 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
 
 describe("MessagesTimeline work rows", () => {
   it("keeps working through an async question and pauses only when it blocks", async () => {
+    using _turnWorkFold = withTurnWorkFold();
     const runId = RunId.make("async-question-run");
     const pendingRequest = {
       kind: "question" as const,
@@ -2831,6 +2967,7 @@ describe("MessagesTimeline work rows", () => {
   it.each(["run-backed", "runless"] as const)(
     "folds the %s working history once it outgrows the collapsed window and keeps it open as the turn fold",
     async (kind) => {
+      using _turnWorkFold = withTurnWorkFold();
       const runId = kind === "runless" ? null : RunId.make("growing-run");
       const entries = (count: number) => [
         message("Build it", { runId }),
@@ -2887,6 +3024,7 @@ describe("MessagesTimeline work rows", () => {
   );
 
   it("updates reset labels across midnight and expires snooze at the deadline", async () => {
+    using _turnWorkFold = withTurnWorkFold();
     const now = new Date(2026, 9, 18, 23, 59, 30);
     const resetAt = new Date(2026, 9, 19, 0, 0, 15).toISOString();
     const runId = RunId.make("limited-run");
@@ -2923,7 +3061,8 @@ describe("MessagesTimeline work rows", () => {
     expect(screen.buttons("Snooze")).toHaveLength(0);
   });
 
-  it("expands every background group for a cited run and allows collapsing them again", async () => {
+  it("expands every background group for a replied-to run and allows collapsing them again", async () => {
+    using _turnWorkFold = withTurnWorkFold();
     const fixture = makeStreamingTimelineFixture("Cited response after the second update.");
     const entries = deriveTimelineEntriesFromVisibleTurnItems({
       visibleTurnItems: fixture.visibleTurnItems
@@ -2958,6 +3097,7 @@ describe("MessagesTimeline work rows", () => {
     const props = { ...baseProps(), timelineEntries };
     const citationRequest = {
       key: "second-background-group",
+      scope: "response" as const,
       citation: {
         version: 1 as const,
         environmentId: ENVIRONMENT_ID,
@@ -2994,5 +3134,91 @@ describe("MessagesTimeline work rows", () => {
     );
     expect(screen.text()).toContain("Cited response");
     expect(screen.text()).toContain(feedback.message.text);
+
+    const rail = screen.container.querySelector<HTMLElement>("[data-wake-ups-rail]");
+    expect(rail).not.toBeNull();
+    await act(async () => {
+      rail!.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 10, clientY: 10 }),
+      );
+      rail!.dispatchEvent(
+        new PointerEvent("pointermove", { bubbles: true, clientX: 30, clientY: 30 }),
+      );
+      rail!.dispatchEvent(
+        new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: 10, clientY: 10 }),
+      );
+    });
+    expect(groups()[0]!.getAttribute("aria-expanded")).toBe("true");
+    const headerTop = groups()[0]!.getBoundingClientRect().top;
+    await act(async () => {
+      rail!.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 10, clientY: 10 }),
+      );
+      rail!.dispatchEvent(
+        new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: 10, clientY: 10 }),
+      );
+    });
+    await vi.waitFor(() =>
+      expect(groups().map((node) => node.getAttribute("aria-expanded"))).toEqual([
+        "false",
+        "false",
+      ]),
+    );
+    await vi.waitFor(() => expect(groups()[0]!.getBoundingClientRect().top).toBe(headerTop));
+  });
+
+  it("reveals the wake-up header when its rail collapses below the viewport", async () => {
+    using _turnWorkFold = withTurnWorkFold();
+    const fixture = makeStreamingTimelineFixture("Latest result stays outside the fold.");
+    const timelineEntries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: fixture.visibleTurnItems.map((row): OrchestrationV2ProjectedTurnItem => ({
+        ...row,
+        item:
+          row.item.type === "user_message"
+            ? {
+                ...row.item,
+                type: "notification",
+                source: { kind: "monitor" },
+                outcome: "updated",
+                summary: "Pull request updated",
+              }
+            : row.item.type === "assistant_message"
+              ? {
+                  ...row.item,
+                  status: "completed",
+                  streaming: false,
+                  text:
+                    row.item.runId === fixture.historyRunId
+                      ? "Review details.\n\n".repeat(45)
+                      : row.item.text,
+                }
+              : row.item.type === "command_execution"
+                ? { ...row.item, status: "completed", exitCode: 0, output: "Passed" }
+                : row.item,
+      })),
+      optimisticMessages: [],
+    });
+    await using screen = await renderTimeline(timelineEntries);
+    screen.container.style.height = "320px";
+    const header = screen.getByRole("button", { name: /^2 wake-ups:/ });
+    await header.click();
+    const rails = () => [...screen.container.querySelectorAll<HTMLElement>("[data-wake-ups-rail]")];
+    await vi.waitFor(() => expect(rails().length).toBeGreaterThan(1));
+    await act(async () => rails().at(-1)!.scrollIntoView({ block: "center" }));
+    const viewport = screen.container.querySelector<HTMLElement>(".messages-timeline-scroll")!;
+    await vi.waitFor(() =>
+      expect(
+        screen.buttons(/^2 wake-ups:/)[0]?.getBoundingClientRect().top ?? -Infinity,
+      ).toBeLessThan(viewport.getBoundingClientRect().top),
+    );
+    await userEvent.click(rails().at(-1)!);
+    await expect.element(header).toHaveAttribute("aria-expanded", "false");
+    await vi.waitFor(() => {
+      const bounds = header.element().getBoundingClientRect();
+      const visible = viewport.getBoundingClientRect();
+      expect(bounds.top).toBeGreaterThanOrEqual(visible.top);
+      expect(bounds.bottom).toBeLessThanOrEqual(visible.bottom);
+    });
+    expect(screen.text()).toContain("Latest result stays outside the fold.");
   });
 });

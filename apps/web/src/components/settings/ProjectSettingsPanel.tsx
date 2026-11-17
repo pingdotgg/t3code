@@ -402,7 +402,6 @@ function ProjectDetail({
         projectRef,
         memberThreads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)),
       );
-      // Move the open draft first: closing the project's layout discards its drafts.
       const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
       if (projectDraftThread && remainingMember) {
         draftStore.setDraftThreadContext(projectDraftThread.draftId, {
@@ -413,11 +412,11 @@ function ProjectDetail({
       } else if (projectDraftThread) {
         draftStore.clearDraftThread(projectDraftThread.draftId);
       }
-      draftStore.clearProjectDraftThreadId(projectRef);
       closeLayoutProject(
         projectRef,
         memberThreads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)),
       );
+      draftStore.clearProjectDraftThreadId(projectRef);
     }
 
     if (isWholeGroup && !hasOtherMembers) {

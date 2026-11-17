@@ -1,5 +1,7 @@
 import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area";
+import { useLayoutEffect, useRef } from "react";
 
+import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 
 function getVirtualizedScrollFadeClassName({ top, bottom }: { top: boolean; bottom: boolean }) {
@@ -41,6 +43,60 @@ function ScrollArea({
   radius?: "inherit" | "none";
   viewportTabIndex?: number;
 }) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const fadeWatch = useRef<{ watched: Element[]; orientation: string; stop: () => void } | null>(
+    null,
+  );
+  // Measuring forces layout, so a render that keeps the same content elements does nothing here;
+  // the resize observer reports their growth.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the DOM mask in sync when content resizes without a scroll event
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    if (!scrollFade || !viewport) {
+      fadeWatch.current?.stop();
+      fadeWatch.current = null;
+      return;
+    }
+    const watched = [viewport, ...viewport.children];
+    const current = fadeWatch.current;
+    if (
+      current?.orientation === orientation &&
+      current.watched.length === watched.length &&
+      current.watched.every((el, i) => el === watched[i])
+    ) {
+      return;
+    }
+    fadeWatch.current?.stop();
+    const measureFade = () => {
+      const maxX =
+        orientation === "vertical" ? 0 : Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+      const maxY =
+        orientation === "horizontal"
+          ? 0
+          : Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+      const rtl = getComputedStyle(viewport).direction === "rtl";
+      const x = Math.max(0, Math.min(maxX, rtl ? -viewport.scrollLeft : viewport.scrollLeft));
+      const y = Math.max(0, Math.min(maxY, viewport.scrollTop));
+      for (const [edge, value] of Object.entries({
+        "x-start": x,
+        "x-end": maxX - x,
+        "y-start": y,
+        "y-end": maxY - y,
+      })) {
+        viewport.style.setProperty(`--scroll-area-overflow-${edge}`, `${value}px`);
+      }
+    };
+    measureFade();
+    fadeWatch.current = { watched, orientation, stop: observeResize(watched, measureFade) };
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- stops observing the viewport when the scroll area unmounts
+  useLayoutEffect(
+    () => () => {
+      fadeWatch.current?.stop();
+      fadeWatch.current = null;
+    },
+    [],
+  );
   return (
     <ScrollAreaPrimitive.Root
       className={cn(
@@ -51,6 +107,7 @@ function ScrollArea({
       {...props}
     >
       <ScrollAreaPrimitive.Viewport
+        ref={scrollFade ? viewportRef : undefined}
         {...(viewportTabIndex === undefined ? {} : { tabIndex: viewportTabIndex })}
         style={
           orientation === "vertical"

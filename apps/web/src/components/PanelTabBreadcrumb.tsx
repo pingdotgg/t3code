@@ -1,33 +1,21 @@
-import { ChevronRightIcon } from "lucide-react";
 import { createContext, useContext, useLayoutEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
-/**
- * Where the active panel tab hosts its surface's header (pen JiaZk): the
- * breadcrumb after the tab's title and the actions at the row's end.
- * RightPanelTabs provides it; the elements are null until the row mounts.
- */
+/** Header action slots shared by terminal and side chat surfaces. */
 export interface PanelTabSlots {
   readonly breadcrumb: HTMLElement | null;
   readonly actions: HTMLElement | null;
   readonly registerActions: () => () => void;
-  /** The breadcrumb sits on the pane's bar beside the tabs, not in the tab. */
-  readonly breadcrumbOnBar?: boolean;
 }
 
 export const PanelTabSlotsContext = createContext<PanelTabSlots | null>(null);
 
 /**
  * Whether the surface renders inside a panel tab bar, which then carries its
- * breadcrumb and actions. A surface drops its own header row when it does.
+ * actions. A surface drops its own header row when it does.
  */
 export function useInPanelTabBar(): boolean {
   return useContext(PanelTabSlotsContext) !== null;
-}
-
-/** The breadcrumb shares the pane's bar with its tabs, so it gives up room first. */
-export function usePanelTabBreadcrumbOnBar(): boolean {
-  return useContext(PanelTabSlotsContext)?.breadcrumbOnBar === true;
 }
 
 export function usePanelTabActionsHost(): {
@@ -56,23 +44,7 @@ function PanelTabPortal({
 }
 
 /**
- * A surface's breadcrumb, shown in its tab after the title (pen JiaZk:
- * "Diff › Latest turn"). Outside a panel tab bar it renders in place.
- */
-export function PanelTabBreadcrumb({ children }: { children: ReactNode }) {
-  if (!useInPanelTabBar()) return children;
-  return (
-    <PanelTabPortal slot="breadcrumb">
-      <ChevronRightIcon aria-hidden className="size-3 shrink-0 text-dim-foreground" />
-      {children}
-    </PanelTabPortal>
-  );
-}
-
-/**
- * A surface's header actions, shown at the end of the panel tab row (pen
- * JiaZk: collapse, layout, wrap, whitespace, file tree). Outside a panel tab
- * bar they render in place.
+ * Surface actions render at the end of the tab row, or in place outside it.
  */
 export function PanelTabActions({ children }: { children: ReactNode }) {
   const registerActions = useContext(PanelTabSlotsContext)?.registerActions;

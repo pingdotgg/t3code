@@ -8,6 +8,7 @@ import {
 import { toastManager } from "../ui/toast";
 import { readTimelineTopInset } from "./timelineScrollAnchoring";
 import { observeResize } from "~/lib/observeResize";
+import type { AssistantCitationScope } from "~/lib/assistantCitationNavigation";
 
 const CITATION_PULSE_DURATION_MS = 650;
 const CITATION_HIGHLIGHT_HOLD_MS = 1575;
@@ -86,6 +87,7 @@ export function observeAssistantCitationCommentSource({
 
 export interface AssistantCitationRequest {
   citation: AssistantCitation;
+  scope?: AssistantCitationScope;
   key: string;
 }
 
@@ -164,7 +166,8 @@ function observeAssistantCitationSource({
     const state = list.getState();
     const index = state.indexByKey(itemKey);
     if (index === undefined || !(state.sizeAtIndex(index) > 0)) return;
-    const range = resolveAssistantCitationRange(root, request.citation);
+    const wholeResponse = request.scope === "response";
+    const range = wholeResponse ? null : resolveAssistantCitationRange(root, request.citation);
     const rect = (range ?? root).getBoundingClientRect();
     if (rect.height <= 0 || scrollNode.clientHeight <= 0) {
       clear();
@@ -209,7 +212,15 @@ function observeAssistantCitationSource({
       if (rect.bottom <= scrollRect.top || rect.top >= scrollRect.bottom) return;
       activation.scrolled = true;
       request.onComplete();
-      if (!range) {
+      // Screen readers follow focus, not scroll; leave someone already typing alone.
+      const active = root.ownerDocument.activeElement;
+      if (
+        !(active instanceof HTMLElement) ||
+        !(active.isContentEditable || active.matches("input, textarea, select"))
+      ) {
+        root.focus({ preventScroll: true });
+      }
+      if (!range && !wholeResponse) {
         toastManager.add({
           type: "warning",
           title: "The quoted text has changed",
@@ -217,18 +228,25 @@ function observeAssistantCitationSource({
         });
       }
     }
-    if (!range) {
+    if (!range && !wholeResponse) {
       finishHighlight();
       return;
     }
-    if (typeof Highlight !== "undefined" && typeof CSS !== "undefined" && CSS.highlights) {
+    if (wholeResponse) {
+      root.dataset.citationHighlighted = "response";
+    } else if (
+      range &&
+      typeof Highlight !== "undefined" &&
+      typeof CSS !== "undefined" &&
+      CSS.highlights
+    ) {
       highlighted = new Highlight(range);
       CSS.highlights.set("t3-assistant-citation", highlighted);
       ownedRange = range;
       root.dataset.citationHighlighted = "true";
     } else {
       const selection = root.ownerDocument.getSelection();
-      if (selection && (canReplaceSelection || ownsSelection(selection))) {
+      if (range && selection && (canReplaceSelection || ownsSelection(selection))) {
         selection.removeAllRanges();
         selection.addRange(range);
         selected = { range: selection.getRangeAt(0), snapshot: range.cloneRange() };
@@ -364,6 +382,8 @@ export function AssistantCitationSource({
   return (
     <div
       ref={rootRef}
+      tabIndex={-1}
+      className="outline-none"
       data-assistant-citation-source={messageId}
       data-assistant-citation-environment={threadRef?.environmentId}
       data-assistant-citation-thread={threadRef?.threadId}

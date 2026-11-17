@@ -1383,7 +1383,7 @@ export function ThemeEditorPanel({
               {!isAdvanced ? renderAppearanceButtons() : null}
               {isAdvanced ? renderAdvancedColors() : renderSimpleColors()}
               {renderAdvancedSwitch()}
-              <div className="flex flex-col items-start gap-2">
+              <div className="space-y-2">
                 <Button
                   aria-expanded={cssOpen}
                   size="xs"

@@ -12,6 +12,7 @@ import type {
 } from "@t3tools/contracts";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
+import { useLiveRefresh } from "../../hooks/useLiveRefresh";
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -33,6 +34,7 @@ import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 import { GitIcon, JujutsuIcon, type Icon } from "../Icons";
+import { IssueTrackerSettings } from "./IssueTrackerSettings";
 import { SourceControlHostSettings } from "./SourceControlHostSettings";
 import { SourceControlAccountSettings } from "./SourceControlAccountSettings";
 import { SourceControlAppSignInSettings } from "./SourceControlAppSignInSettings";
@@ -366,6 +368,18 @@ export function SourceControlSettingsPanel() {
   const handleScan = () => {
     discovery.refresh();
   };
+  // A CLI login on the server host changes nothing the client reads, so returning to the window
+  // asks again. Discovery runs every hosting CLI, too costly for a timer nobody asked for.
+  useLiveRefresh(
+    () => {
+      if (!discovery.isPending) discovery.refresh();
+    },
+    {
+      enabled: environmentId !== null,
+      key: `source-control-discovery:${environmentId}`,
+      intervalMs: null,
+    },
+  );
   const offeredProviders = environment?.serverConfig?.settings.offeredSourceControlProviders;
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: "save source control providers",
@@ -451,14 +465,14 @@ export function SourceControlSettingsPanel() {
     </Tooltip>
   );
 
-  const providersTitle = "Source Control Providers";
+  const providersTitle = "Source control providers";
   return (
     <SettingsPageContainer className="max-w-[688px]">
       <ProjectDefaultsSettings category="source-control" />
       {environmentId === null ? (
         <SettingsSection
           id={searchableSetting("source-control").id}
-          title="Source Control Providers"
+          title="Source control providers"
         >
           <p className="px-4 py-3 text-sm text-muted-foreground">
             Connect an environment to inspect its version control tools and hosting integrations.
@@ -471,7 +485,7 @@ export function SourceControlSettingsPanel() {
           {hasVersionControlSystems ? (
             <SettingsSection
               id={searchableSetting("source-control").id}
-              title="Version Control"
+              title="Version control"
               titleAction={environmentContext}
               headerAction={scanButton}
             >
@@ -484,7 +498,7 @@ export function SourceControlSettingsPanel() {
           {result.sourceControlProviders.length > 0 ? (
             <SettingsSection
               id={hasVersionControlSystems ? undefined : searchableSetting("source-control").id}
-              title="Source Control Providers"
+              title="Source control providers"
               titleAction={hasVersionControlSystems ? null : environmentContext}
               headerAction={hasVersionControlSystems ? null : scanButton}
             >
@@ -516,6 +530,9 @@ export function SourceControlSettingsPanel() {
           isPending={discovery.isPending}
           onScan={handleScan}
         />
+      )}
+      {environmentId === null ? null : (
+        <IssueTrackerSettings key={environmentId} environmentId={environmentId} />
       )}
 
       <SourceControlWritingSettingsSection />

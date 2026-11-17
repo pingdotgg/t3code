@@ -33,7 +33,12 @@ const state = vi.hoisted(() => ({
     projectId: ProjectId;
     title: string;
     worktreePath: string | null;
-    lineage: { parentThreadId: ThreadId | null; sideChat?: boolean };
+    lineage: {
+      parentThreadId: ThreadId | null;
+      relationshipToParent: "fork" | null;
+      rootThreadId: ThreadId;
+      sideChat?: boolean;
+    };
     session: { status: "ready" | "stopped" } | null;
     latestTurn: null;
   }[],
@@ -137,6 +142,7 @@ vi.mock("../state/entities", () => ({
       .filter((thread) => thread.environmentId === environmentId)
       .map((thread) => ({ environmentId, threadId: thread.id })),
   readProject: () => ({ workspaceRoot: "/project" }),
+  readDelegatedUnderParent: () => new Set(),
 }));
 vi.mock("../components/Sidebar.logic", () => ({
   getFallbackThreadIdAfterDelete: () => null,
@@ -272,7 +278,7 @@ beforeEach(() => {
       projectId: ProjectId.make("project"),
       title: "Thread",
       worktreePath: null,
-      lineage: { parentThreadId: null },
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: target.threadId },
       session: null,
       latestTurn: null,
     },
@@ -427,6 +433,32 @@ describe("thread action permissions", () => {
     expect(threadPanelStatePresence(target)).toEqual(panelStateCleared);
   });
 
+  it("offers to delete the worktree that only its side chats share", async () => {
+    state.scopes
+      .get(secondary)!
+      .add(AuthOrchestrationOperateScope)
+      .add(AuthSourceControlWriteScope);
+    state.threads[0]!.worktreePath = "/worktrees/thread";
+    state.threads.push({
+      ...state.threads[0]!,
+      id: ThreadId.make("side-chat"),
+      lineage: {
+        parentThreadId: target.threadId,
+        relationshipToParent: "fork",
+        rootThreadId: target.threadId,
+        sideChat: true,
+      },
+    });
+    expect((await useThreadActions().deleteThread(target))._tag).toBe("Success");
+    expect(state.confirm).toHaveBeenCalledOnce();
+    expect(state.requests.map((request) => request.action)).toEqual([
+      "stopSession",
+      "delete",
+      "removeWorktree",
+      "refreshStatus",
+    ]);
+  });
+
   it("clears the drafts of the side chats deleted with it", async () => {
     state.scopes.get(secondary)!.add(AuthOrchestrationOperateScope);
     const parent = state.threads[0]!;
@@ -434,9 +466,13 @@ describe("thread action permissions", () => {
       {
         ...parent,
         id: ThreadId.make("side-chat"),
-        lineage: { parentThreadId: parent.id, sideChat: true },
+        lineage: { ...parent.lineage, parentThreadId: parent.id, sideChat: true },
       },
-      { ...parent, id: ThreadId.make("fork"), lineage: { parentThreadId: parent.id } },
+      {
+        ...parent,
+        id: ThreadId.make("fork"),
+        lineage: { ...parent.lineage, parentThreadId: parent.id },
+      },
     );
     expect((await useThreadActions().deleteThread(target))._tag).toBe("Success");
     expect(state.localEffects).toEqual(

@@ -58,6 +58,7 @@ function setup() {
   state.timestampFormat = "locale";
 }
 
+import "~/index.css";
 import { act, fakeTimers, render as renderUi } from "../../../test/render";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 
@@ -169,6 +170,55 @@ it("updates comment ages without another panel render", async () => {
   expect(time.textContent).toBe("6m ago");
 });
 
+it("grows a collapsed description into the room a sparse summary leaves", async () => {
+  const sparse = {
+    ...detail,
+    body: Array.from({ length: 40 }, (_, index) => `Description paragraph ${index + 1}.`).join(
+      "\n\n",
+    ),
+  };
+  const sized = (value: PullRequestDetailView) => <div style={{ height: 600 }}>{tab(value)}</div>;
+  await using screen = await renderUi(sized(sparse));
+  const clip = () =>
+    screen.container.querySelector<HTMLElement>("[data-pr-description] [data-comment-clip]")!;
+  const scroller = screen.container.querySelector<HTMLElement>(
+    "[data-pull-request-summary-scroll]",
+  )!;
+  await expect
+    .element(screen.getByRole("button", { name: "Read more", exact: true }))
+    .toBeVisible();
+  await vi.waitFor(() => expect(clip().getBoundingClientRect().height).toBeGreaterThan(300));
+  expect(scroller.scrollHeight).toBeLessThanOrEqual(scroller.clientHeight);
+  await userEvent.click(screen.getByRole("button", { name: "Read more", exact: true }));
+  await expect
+    .element(screen.getByText("Description paragraph 40.", { exact: true }))
+    .toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Show less", exact: true }));
+  await expect
+    .element(screen.getByRole("button", { name: "Read more", exact: true }))
+    .toBeVisible();
+  await screen.rerender(
+    sized({
+      ...sparse,
+      commentCount: 12,
+      comments: Array.from({ length: 12 }, (_, index) => ({
+        id: `comment-${index}`,
+        kind: "issue-comment",
+        author: detail.author,
+        body: `Conversation entry ${index + 1}`,
+        createdAt: detail.createdAt,
+        url: null,
+        path: null,
+        reviewState: null,
+      })),
+    }),
+  );
+  await vi.waitFor(() => expect(clip().getBoundingClientRect().height).toBe(64));
+  await expect
+    .element(screen.getByRole("button", { name: "Read more", exact: true }))
+    .toBeVisible();
+});
+
 it("keeps an unsaved description when collapsed and reopened, and after a failed save", async () => {
   setup();
   state.update.mockResolvedValue({ _tag: "Failure", cause: new Error("offline") });
@@ -196,7 +246,9 @@ it("ticks a description checkbox placed after an attachment and edits from the t
   state.update.mockReturnValueOnce(new Promise((resolve) => (finishSave = resolve)));
   const body = "Intro\n\nhttps://example.com/shot.png\n\n## Test plan\n- [ ] First\n- [ ] Second";
   const ticked = body.replace("- [ ] Second", "- [x] Second");
-  await using screen = await render({ ...detail, body, observedAt: 1 });
+  await using screen = await renderUi(
+    <div style={{ height: 1000 }}>{tab({ ...detail, body, observedAt: 1 })}</div>,
+  );
   const boxes = () => screen.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
   expect([...boxes()].map((box) => box.disabled)).toEqual([false, false]);
 
@@ -275,6 +327,29 @@ it("fixes an overview thread as its opening remark, since it has no line to atta
 
   await userEvent.click(screen.getByRole("button", { name: "Fix in a thread" }));
   expect(onFixFinding).toHaveBeenCalledWith({ kind: "comment", comment: remark });
+});
+
+it("shows a comment's exact time in the chosen 24-hour clock", async () => {
+  setup();
+  state.timestampFormat = "24-hour";
+  const createdAt = "2026-09-01T17:30:00Z";
+  const comment = {
+    id: "10",
+    kind: "review-comment" as const,
+    body: "A remark",
+    author: { login: "reviewer", name: null, avatarUrl: null },
+    createdAt,
+    url: null,
+    path: null,
+    reviewState: null,
+  };
+  await using screen = await render({ ...detail, comments: [comment], commentCount: 1 });
+
+  await userEvent.hover(screen.container.querySelector(`time[datetime="${createdAt}"]`)!);
+  const expected = new Date(createdAt).toLocaleString(undefined, { hour12: false });
+  await vi.waitFor(() =>
+    expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toBe(expected),
+  );
 });
 
 function openThread(id: string, bot = false): PullRequestReviewThread {
@@ -408,27 +483,4 @@ it("adds promoted review conversations to chat without requiring review permissi
   );
   await userEvent.click(screen.getByRole("button", { name: "Add to chat", exact: true }));
   expect(onAddToChat).toHaveBeenCalledWith({ kind: "thread", thread });
-});
-
-it("shows a comment's exact time in the chosen 24-hour clock", async () => {
-  setup();
-  state.timestampFormat = "24-hour";
-  const createdAt = "2026-09-01T17:30:00Z";
-  const comment = {
-    id: "10",
-    kind: "review-comment" as const,
-    body: "A remark",
-    author: { login: "reviewer", name: null, avatarUrl: null },
-    createdAt,
-    url: null,
-    path: null,
-    reviewState: null,
-  };
-  await using screen = await render({ ...detail, comments: [comment], commentCount: 1 });
-
-  await userEvent.hover(screen.container.querySelector(`time[datetime="${createdAt}"]`)!);
-  const expected = new Date(createdAt).toLocaleString(undefined, { hour12: false });
-  await vi.waitFor(() =>
-    expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toBe(expected),
-  );
 });

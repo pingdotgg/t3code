@@ -2,12 +2,12 @@ import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react
 import type { ReactNode } from "react";
 import { memo } from "react";
 import { useAtom, useAtomValue } from "@effect/atom-react";
-import { useLocation, useNavigate, useRouter } from "@tanstack/react-router";
+import { Link, useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { observeResize } from "../../lib/observeResize";
-import { usePullRequestsSupported } from "../../state/environments";
+import { useIssuesSupported, usePullRequestsSupported } from "../../state/environments";
 import { botListAtom, sidebarModeAtom, unreadBotAtom } from "../../state/bots";
 import { isThreadRoutePathname } from "../../threadRoutes";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
@@ -32,18 +32,20 @@ import {
 } from "../ui/sidebar";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { useOpenLayoutPage } from "../../layout/pageNavigation";
+import { readIssueListPreferences } from "../issue/issueListPreferences";
+import { IssueGlyph } from "../issue/issuePresentation";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarHeaderIconButton } from "./SidebarThreadHeader";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 
-// Preserve main's measured minimum even though the redesign omits its wordmark.
+const SIDEBAR_BRAND_OFFSET = "ml-[var(--workspace-titlebar-content-left)]";
+
+// The pill yields first; the minimum always reserves both history buttons.
 export function SidebarBrandWidthProbe({
-  isElectron,
   onWidthChange,
 }: {
-  isElectron: boolean;
   onWidthChange: (width: number) => void;
 }) {
   const observeWidth = (probe: HTMLDivElement) =>
@@ -57,16 +59,42 @@ export function SidebarBrandWidthProbe({
       className="pointer-events-none invisible fixed top-0 left-0 flex w-max border-r border-transparent pr-3"
       ref={observeWidth}
     >
-      <div className="ml-[var(--workspace-titlebar-content-left)] flex gap-1">
-        <span className="inline-flex min-w-0 items-baseline gap-1 text-label tracking-tight">
-          <T3Wordmark className="h-[1cap] w-auto shrink-0" />
-          <span className="truncate [text-box:trim-both_cap_alphabetic] supports-[text-box:trim-both_cap_alphabetic]:py-1">
-            Code
-          </span>
-        </span>
-        {isElectron ? <div className="w-[calc(2*var(--workspace-titlebar-control-size))]" /> : null}
+      <div className={cn(SIDEBAR_BRAND_OFFSET, "flex gap-2")}>
+        <SidebarBrandMark onBackdrop={false} />
+        <div className="w-[calc(var(--workspace-titlebar-control-size)*2)]" />
       </div>
     </div>
+  );
+}
+
+function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
+  return (
+    <Link
+      aria-label="T3 Code home"
+      className={cn(
+        "pointer-events-auto relative z-10 hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring [-webkit-app-region:no-drag] focus-visible:ring-2 focus-visible:ring-inset md:flex",
+        onBackdrop ? "text-white light:text-foreground" : "text-foreground",
+      )}
+      to="/"
+    >
+      <SidebarBrandMark onBackdrop={onBackdrop} />
+    </Link>
+  );
+}
+
+function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
+  return (
+    <span className="inline-flex min-w-0 items-baseline gap-1 text-label tracking-tight">
+      <T3Wordmark aria-label="T3" className="h-[1cap] w-auto shrink-0" />
+      <span
+        className={cn(
+          "truncate [text-box:trim-both_cap_alphabetic] supports-[text-box:trim-both_cap_alphabetic]:py-1",
+          onBackdrop ? "text-white/70 light:text-muted-foreground" : "text-muted-foreground",
+        )}
+      >
+        Code
+      </span>
+    </span>
   );
 }
 
@@ -75,19 +103,12 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
 }: {
   isElectron: boolean;
 }) {
-  const stageLabel = useEnvironmentStageLabel();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const backdropVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);
-  const pillLabel =
-    environmentIdentificationMode === "pill"
-      ? resolveEnvironmentIdentificationPillLabel(stageLabel)
-      : null;
 
   return (
     // The sidebar's share of the window chrome row, not a padded SidebarHeader.
-    // On desktop the fixed toggle (and later back/forward) sit over it. In the
-    // inset sidebar it spans the edge padding, and the content below starts
-    // 4px under the row (pen s8qVFu), so it overlaps the first group's inset.
+    // Fixed controls sit over it; the inset content starts 4px under the row (pen s8qVFu).
     <div
       className={cn(
         "@container/sidebar-header relative flex h-(--workspace-chrome-row-height) shrink-0 flex-row items-center gap-2 pr-3 md:px-0",
@@ -104,20 +125,37 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           aria-label="Toggle main sidebar"
         />
       </div>
-      {pillLabel ? (
-        // Right of the toggle and the two back/forward slots on the chrome row.
-        <Badge
-          className="relative z-10 ml-1 hidden md:ml-[calc(var(--workspace-controls-left)+var(--workspace-titlebar-control-size)*3+(--spacing(2)))] @[15rem]/sidebar-header:inline-flex"
-          data-environment-identification="pill"
-          size="sm"
-          variant="secondary"
-        >
-          {pillLabel}
-        </Badge>
-      ) : null}
+      <div className="relative z-10 flex h-8 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 overflow-hidden py-0.5 md:hidden">
+        <SidebarStagePill className="ml-1 hidden @[15rem]/sidebar-header:flex" />
+      </div>
     </div>
   );
 });
+
+export function SidebarChromeBrand({ onBackdrop }: { onBackdrop: boolean }) {
+  return (
+    <div className="-ml-px flex h-7 flex-wrap content-start items-center gap-x-2 overflow-hidden pl-(--workspace-titlebar-control-gap) pr-2">
+      <SidebarBrand onBackdrop={onBackdrop} />
+      <SidebarStagePill />
+    </div>
+  );
+}
+
+function SidebarStagePill({ className }: { className?: string }) {
+  const stageLabel = useEnvironmentStageLabel();
+  const environmentIdentificationMode = useEnvironmentIdentificationMode();
+  const pillLabel =
+    environmentIdentificationMode === "pill"
+      ? resolveEnvironmentIdentificationPillLabel(stageLabel)
+      : null;
+  return pillLabel ? (
+    <div className={cn("flex h-7 shrink-0 items-center", className)}>
+      <Badge data-environment-identification="pill" size="sm" variant="secondary">
+        {pillLabel}
+      </Badge>
+    </div>
+  ) : null;
+}
 
 // The footer uses 32px icon-only controls with 16px glyphs (pen C0J52w).
 function SidebarUtilityItem({
@@ -186,6 +224,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
   const pullRequestsSupported = usePullRequestsSupported();
+  const issuesSupported = useIssuesSupported();
   const closeMobileSidebar = () => {
     if (isMobile) {
       setOpenMobile(false);
@@ -194,6 +233,10 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const handlePullRequestsClick = () => {
     closeMobileSidebar();
     void openLayoutPage("pull-requests");
+  };
+  const handleIssuesClick = () => {
+    closeMobileSidebar();
+    void navigate({ to: "/issues", search: readIssueListPreferences() });
   };
   const handleSettingsClick = () => {
     closeMobileSidebar();
@@ -236,6 +279,13 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
                   icon={<PullRequestGlyph.pullRequest className="size-4" />}
                   label="Pull Requests"
                   onClick={handlePullRequestsClick}
+                />
+              ) : null}
+              {issuesSupported ? (
+                <SidebarUtilityItem
+                  icon={<IssueGlyph.issue className="size-4" />}
+                  label="Issues"
+                  onClick={handleIssuesClick}
                 />
               ) : null}
               <SidebarUtilityItem

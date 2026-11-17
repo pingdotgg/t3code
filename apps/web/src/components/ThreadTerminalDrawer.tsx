@@ -13,13 +13,8 @@ import {
   type TerminalOutputUpdate,
   type TerminalSessionState,
 } from "@t3tools/client-runtime/state/terminal";
-import {
-  Plus,
-  SquareSplitHorizontal,
-  SquareSplitVertical,
-  SquareTerminal,
-  Trash2,
-} from "lucide-react";
+import { Plus, SquareTerminal } from "lucide-react";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   AuthPreviewOperateScope,
   AuthFilesystemReadScope,
@@ -33,7 +28,6 @@ import {
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import { terminalTabTitle } from "../layout/surfaceTabLabels";
-import { PanelTabActions, useInPanelTabBar } from "./PanelTabBreadcrumb";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import {
@@ -53,6 +47,7 @@ import { Button } from "~/components/ui/button";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { PaneNotch } from "~/components/PaneNotch";
 import { beginLayoutTabDrag } from "~/layout/layoutDrag";
+import { useLayoutStore } from "~/layout/layoutStore";
 import { useLayoutPane, useLayoutPaneFocusedRef } from "~/layout/layoutPaneContext";
 import { LayoutPaneTab, LayoutPaneTabStrip, useLayoutPaneSiblingTabs } from "~/layout/PaneTabs";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -68,6 +63,7 @@ import {
 } from "~/terminal/ghostty/surface";
 import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
 import { useOpenInPreferredEditor } from "../editorPreferences";
+import { useStableCallback } from "../hooks/useStableCallback";
 import { isTerminalUrl, resolveTerminalLinkTarget } from "../terminal-links";
 import {
   isDiffToggleShortcut,
@@ -76,8 +72,8 @@ import {
   isTerminalSplitShortcut,
   isTerminalSplitVerticalShortcut,
   isTerminalToggleShortcut,
-  resolveShortcutCommand,
   isThreadNavigationShortcut,
+  resolveShortcutCommand,
   terminalDeleteShortcutData,
   terminalNavigationShortcutData,
 } from "../keybindings";
@@ -88,7 +84,7 @@ import {
 } from "../types";
 import { readLocalApi } from "~/localApi";
 import { confirmTerminalClose, isTerminalCloseConfirmPending } from "~/lib/terminalCloseConfirm";
-import { getTerminalFocusOwner } from "~/lib/terminalFocus";
+import { getTerminalFocusOwner, registerTerminalSplitTarget } from "~/lib/terminalFocus";
 import { useClientSettings } from "../hooks/useSettings";
 import { getFileMetadataQueryAtom } from "../hooks/useFileMetadata";
 import { FileMetadataThreadContext } from "../hooks/FileMetadataThreadProvider";
@@ -102,6 +98,7 @@ import { readEnvironmentScope } from "../state/session";
 import { terminalEnvironment } from "../state/terminal";
 import { useEnvironmentScope } from "../state/session";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
+import { terminalInputWriter } from "./terminal/terminalInputWriter";
 import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { observeResize } from "../lib/observeResize";
@@ -205,7 +202,7 @@ export function synchronizeTerminalOutput(
   return update.cursor;
 }
 
-/** Writes what changed between two session notifications: new output, then a new error. */
+/** Writes what changed between two session notifications: new output, then the error, again after a reset. */
 export function synchronizeTerminalSession(
   terminal: Parameters<typeof synchronizeTerminalOutput>[0],
   previous: Pick<TerminalSessionState, "output" | "version" | "error">,
@@ -217,7 +214,12 @@ export function synchronizeTerminalSession(
       ? cursor
       : synchronizeTerminalOutput(terminal, session, cursor);
   // An attach failure can change only the error, keeping the last buffer.
-  if (session.error !== null && session.error !== previous.error) {
+  if (
+    session.error !== null &&
+    (session.error !== previous.error ||
+      nextCursor.generation !== cursor.generation ||
+      nextCursor.resetVersion !== cursor.resetVersion)
+  ) {
     writeSystemMessage(terminal, session.error);
   }
   return nextCursor;
@@ -538,11 +540,14 @@ function TerminalSessionViewport({
   const canReadFilesystem = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const [linkPath, setLinkPath] = useState<string | null>(null);
   const metadataThreadRef = useContext(FileMetadataThreadContext);
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const hostname = serverConfig?.hostname;
+  const readHostname = useEffectEvent(() => hostname);
   const linkMetadataQuery =
     linkPath !== null && canOpenHostEditor && canReadFilesystem
       ? getFileMetadataQueryAtom(
           environmentId,
-          resolveTerminalLinkTarget(linkPath, cwd),
+          resolveTerminalLinkTarget(linkPath, cwd, hostname),
           cwd,
           metadataThreadRef,
         )
@@ -563,7 +568,7 @@ function TerminalSessionViewport({
       return false;
     const query = getFileMetadataQueryAtom(
       environmentId,
-      resolveTerminalLinkTarget(text, cwd),
+      resolveTerminalLinkTarget(text, cwd, hostname),
       cwd,
       metadataThreadRef,
     );
@@ -574,7 +579,6 @@ function TerminalSessionViewport({
       (result.value?.kind === "file" || result.value?.kind === "directory")
     );
   });
-  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
     environmentId,
     serverConfig?.availableEditors ?? [],
@@ -587,6 +591,8 @@ function TerminalSessionViewport({
   const runTerminalWrite = useAtomCommand(terminalEnvironment.write, {
     reportFailure: false,
   });
+  // Recovery keeps the original registry-bound command after this viewport unmounts.
+  const retainedTerminalWrite = useRef(runTerminalWrite);
   const runTerminalResize = useAtomCommand(terminalEnvironment.resize, {
     reportFailure: false,
   });
@@ -634,20 +640,22 @@ function TerminalSessionViewport({
     (listener: (session: TerminalSessionState) => void) =>
       appAtomRegistry.subscribe(terminalSessionAtom, listener),
   );
-  const writeTerminal = useEffectEvent((data: string) =>
-    runTerminalWrite({
-      environmentId,
-      input: { threadId, terminalId, data },
-    }),
-  );
-  const resizeTerminal = useEffectEvent((cols: number, rows: number) => {
-    if (writableSessionGeneration(readTerminalSession(), hasTerminalWriteAccess()) === null) {
-      return;
-    }
-    return runTerminalResize({
+  // The surface reports a resent grid like any other, so the next report is the retry.
+  const resizeRetryGenerationRef = useRef<number | null>(null);
+  const resizeTerminal = useEffectEvent(async (cols: number, rows: number) => {
+    const generation = writableSessionGeneration(readTerminalSession(), hasTerminalWriteAccess());
+    const retry = generation !== null && generation === resizeRetryGenerationRef.current;
+    resizeRetryGenerationRef.current = null;
+    if (generation === null) return;
+    const result = await runTerminalResize({
       environmentId,
       input: { threadId, terminalId, cols, rows },
     });
+    // Resend the current grid, not this one: a newer resize may already be queued behind it.
+    if (!retry && result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      resizeRetryGenerationRef.current = generation;
+      terminalRef.current?.resendSize();
+    }
   });
   const outputCursorRef = useRef<TerminalOutputCursor>(INITIAL_TERMINAL_OUTPUT_CURSOR);
   const synchronizedStatusRef = useRef<TerminalSessionState["status"]>("closed");
@@ -728,6 +736,8 @@ function TerminalSessionViewport({
         theme: terminalThemeFromApp(mount),
         font: terminalFontOptions(setupFont.family, setupFont.size),
         onData: (data) => handleData(data),
+        onBinary: (data) => void sendTerminalInput(data, "Terminal write failed", "binary"),
+        onReply: (data) => void sendTerminalInput(data, "Terminal write failed", "reply"),
         onResize: (cols, rows) => void resizeTerminal(cols, rows),
         onSelectionChange: () => {},
         beforeKey: (event) => handleBeforeKey(event),
@@ -939,18 +949,73 @@ function TerminalSessionViewport({
         }
       };
 
-      const sendTerminalInput = async (data: string, fallbackError: string) => {
-        if (!hasTerminalWriteAccess()) return;
-        const activeTerminal = terminalRef.current;
-        if (!activeTerminal) return;
-        const result = await writeTerminal(data);
-        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          writeSystemMessage(
-            activeTerminal,
-            error instanceof Error ? error.message : fallbackError,
-          );
-        }
+      const readInputSession = () => appAtomRegistry.get(terminalSessionAtom);
+      const canWriteInput = () => readEnvironmentScope(environmentId, AuthTerminalOperateScope);
+      const writeInputChunk = (data: string, kind?: "binary" | "reply") =>
+        retainedTerminalWrite.current({
+          environmentId,
+          input: kind
+            ? { threadId, terminalId, data, [kind]: true }
+            : { threadId, terminalId, data },
+        });
+      const sendTerminalInput = (
+        data: string,
+        fallbackError: string,
+        kind?: "binary" | "reply",
+      ) => {
+        // The server rejects input until the shell runs, and each rejection would print an error.
+        // Input belongs to the shell and surface it was typed into; a restart the client has seen drops what is left.
+        const session = readTerminalSession();
+        const generation = writableSessionGeneration(session, hasTerminalWriteAccess());
+        const lifecycleVersion = session.lifecycleVersion;
+        if (generation === null) return;
+        const writeInput = terminalInputWriter(
+          JSON.stringify([environmentId, threadId, terminalId]),
+          () => appAtomRegistry.mount(terminalSessionAtom),
+        );
+        let reported = false;
+        const report = (message: string) => {
+          if (reported || terminalRef.current !== terminal) return;
+          reported = true;
+          writeSystemMessage(terminal, message);
+        };
+        return writeInput(
+          data,
+          async (chunk) => {
+            const currentSession = readInputSession();
+            if (
+              terminalRef.current !== terminal ||
+              currentSession.lifecycleVersion !== lifecycleVersion ||
+              writableSessionGeneration(currentSession, canWriteInput()) !== generation
+            ) {
+              return "not-dispatched";
+            }
+            const result = await writeInputChunk(chunk, kind);
+            if (result._tag === "Success") return true;
+            if (terminalRef.current === terminal && !isAtomCommandInterrupted(result)) {
+              const error = squashAtomCommandFailure(result);
+              report(error instanceof Error ? error.message : fallbackError);
+            }
+            return false;
+          },
+          // Close the bracket only for the process that saw it open; wait while its pid is unknown.
+          async () => {
+            const pid = session.summary?.pid ?? null;
+            const current = readInputSession();
+            const currentPid = current.summary?.pid ?? null;
+            if (currentPid === null) return false;
+            if (pid !== null && currentPid !== pid) return true;
+            if (writableSessionGeneration(current, canWriteInput()) === null) return false;
+            const result = await writeInputChunk("\x1b[201~");
+            if (result._tag === "Success") return true;
+            if (!isAtomCommandInterrupted(result)) {
+              const error = squashAtomCommandFailure(result);
+              report(error instanceof Error ? error.message : "Failed to close interrupted paste");
+            }
+            return false;
+          },
+          () => report("Terminal paste interrupted. Paste again when the terminal is ready."),
+        );
       };
 
       function handleBeforeKey(event: KeyboardEvent): boolean {
@@ -1037,7 +1102,7 @@ function TerminalSessionViewport({
           );
           return;
         }
-        const target = resolveTerminalLinkTarget(text, cwd);
+        const target = resolveTerminalLinkTarget(text, cwd, readHostname());
         void (async () => {
           const result = await openTerminalPath(target);
           if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
@@ -1052,16 +1117,7 @@ function TerminalSessionViewport({
       }
 
       function handleData(data: string): void {
-        if (!hasTerminalWriteAccess()) return;
-        void (async () => {
-          const result = await writeTerminal(data);
-          if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
-          const error = squashAtomCommandFailure(result);
-          writeSystemMessage(
-            terminal,
-            error instanceof Error ? error.message : "Terminal write failed",
-          );
-        })();
+        void sendTerminalInput(data, "Terminal write failed");
       }
 
       const themeObserver = new MutationObserver(() => {
@@ -1124,7 +1180,7 @@ function TerminalSessionViewport({
         mount.focus({ preventScroll: true });
       }
     };
-  }, [cwd, environmentId, terminalId]);
+  }, [cwd, environmentId, terminalId, terminalSessionAtom, threadId]);
 
   const attachContainer = (mount: HTMLDivElement) => {
     containerRef.current = mount;
@@ -1184,8 +1240,6 @@ interface ThreadTerminalDrawerProps {
   onSplitTerminal: () => void;
   onSplitTerminalVertical: () => void;
   onNewTerminal: () => void;
-  splitShortcutLabel?: string | undefined;
-  splitVerticalShortcutLabel?: string | undefined;
   newShortcutLabel?: string | undefined;
   closeShortcutLabel?: string | undefined;
   onActiveTerminalChange: (terminalId: string) => void;
@@ -1293,43 +1347,33 @@ function TerminalSplitPanes({
 interface TerminalActionButtonProps {
   label: string;
   onClick: () => void;
-  /** Keeps the tooltip reachable (it explains the limit), unlike `disabled`. */
   unavailable?: boolean;
   children: ReactNode;
-  disabled?: boolean;
   /** "bare" for the notch's "+", which matches the chat tab strip's. */
   variant?: "ghost-muted" | "bare";
 }
 
 /**
  * The terminal pane's tabs: in a layout pane they sit in the pane's notch with
- * "+" as its last child, like a chat's tabs, and the split and close actions
- * sit in the mirrored right notch. The drawer keeps a plain row.
+ * "+" as its last child, like a chat's tabs. The drawer keeps a plain row.
  */
 function TerminalTabsNotch({
   notch,
   newTerminalButton,
-  actions,
   children,
 }: {
   notch: boolean;
   newTerminalButton: ReactNode;
-  actions: ReactNode;
   children: ReactNode;
 }) {
   if (!notch) return children;
   return (
-    <>
-      <PaneNotch>
-        <LayoutPaneTabStrip>{children}</LayoutPaneTabStrip>
-        <span data-pane-notch-add="" className="flex shrink-0">
-          {newTerminalButton}
-        </span>
-      </PaneNotch>
-      <PaneNotch side="right" className="ms-auto shrink-0">
-        {actions}
-      </PaneNotch>
-    </>
+    <PaneNotch>
+      <LayoutPaneTabStrip>{children}</LayoutPaneTabStrip>
+      <span data-pane-notch-add="" className="flex shrink-0">
+        {newTerminalButton}
+      </span>
+    </PaneNotch>
   );
 }
 
@@ -1425,8 +1469,6 @@ export default function ThreadTerminalDrawer({
   onSplitTerminal,
   onSplitTerminalVertical,
   onNewTerminal,
-  splitShortcutLabel,
-  splitVerticalShortcutLabel,
   newShortcutLabel,
   closeShortcutLabel,
   onActiveTerminalChange,
@@ -1442,7 +1484,6 @@ export default function ThreadTerminalDrawer({
   const canOperateTerminal = useEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope);
   const terminalArea = workspaceAreaProps("terminal", 5, "Terminal");
   const isPanel = mode === "panel";
-  const inPanelTabBar = useInPanelTabBar();
   const fillsContainer = mode !== "drawer";
   const terminalOwner = mode === "panel" ? "right-panel" : "drawer";
   // As a pane, this is a layout tab: dragging one of its terminals moves it.
@@ -1595,31 +1636,9 @@ export default function ThreadTerminalDrawer({
       ...(worktreePath !== undefined ? { worktreePath } : {}),
       ...(runtimeEnv ? { runtimeEnv } : {}),
     };
-  const hasReachedSplitLimit = visibleTerminalIds.length >= MAX_TERMINALS_PER_GROUP;
-  const splitTerminalActionLabel = hasReachedSplitLimit
-    ? `Split Terminal Horizontally (max ${MAX_TERMINALS_PER_GROUP} per group)`
-    : splitShortcutLabel
-      ? `Split Terminal Horizontally (${splitShortcutLabel})`
-      : "Split Terminal Horizontally";
-  const splitTerminalVerticalActionLabel = hasReachedSplitLimit
-    ? `Split Terminal Vertically (max ${MAX_TERMINALS_PER_GROUP} per group)`
-    : splitVerticalShortcutLabel
-      ? `Split Terminal Vertically (${splitVerticalShortcutLabel})`
-      : "Split Terminal Vertically";
-  const onSplitTerminalAction = () => {
-    if (!canOperateTerminal || hasReachedSplitLimit) return;
-    onSplitTerminal();
-  };
-  const onSplitTerminalVerticalAction = () => {
-    if (!canOperateTerminal || hasReachedSplitLimit) return;
-    onSplitTerminalVertical();
-  };
   const newTerminalActionLabel = newShortcutLabel
     ? `New Terminal (${newShortcutLabel})`
     : "New Terminal";
-  const closeTerminalActionLabel = closeShortcutLabel
-    ? `Close Terminal (${closeShortcutLabel})`
-    : "Close Terminal";
   const onNewTerminalAction = () => {
     if (!canOperateTerminal) return;
     onNewTerminal();
@@ -1658,6 +1677,52 @@ export default function ThreadTerminalDrawer({
       confirmCloseTerminal(resolvedActiveTerminalId);
     }
   };
+
+  const hasTerminal = useStableCallback(() => visibleTerminalIds.length > 0);
+  const canSplitTerminal = useStableCallback(
+    () => canOperateTerminal && visibleTerminalIds.length < MAX_TERMINALS_PER_GROUP,
+  );
+  const paneFocusedRef = useLayoutPaneFocusedRef();
+  const threadKey = scopedThreadKey(threadRef);
+  const splitTerminalFromPalette = useStableCallback((direction: "horizontal" | "vertical") => {
+    if (direction === "vertical") onSplitTerminalVertical();
+    else onSplitTerminal();
+  });
+  // A terminal takes focus only in the focused pane, so a terminal pane claims it first.
+  const focusActiveTerminalNow = useStableCallback(() => {
+    if (resolvedActiveTerminalId) focusTerminal(threadRef, resolvedActiveTerminalId);
+  });
+  const focusActiveTerminal = useStableCallback(() => {
+    if (layoutTabId === null || paneFocusedRef.current) {
+      focusActiveTerminalNow();
+      return;
+    }
+    useLayoutStore.getState().focusTab(layoutTabId);
+    window.requestAnimationFrame(focusActiveTerminalNow);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- The command palette reaches this pane's split, the one its keys run, while the pane is mounted.
+  useEffect(
+    () =>
+      registerTerminalSplitTarget({
+        threadKey,
+        contains: (element) => drawerRef.current?.contains(element) ?? false,
+        inFocusedPane: () => visible && paneFocusedRef.current,
+        visible: () => visible,
+        hasTerminal,
+        canSplit: canSplitTerminal,
+        split: splitTerminalFromPalette,
+        focusActive: focusActiveTerminal,
+      }),
+    [
+      canSplitTerminal,
+      focusActiveTerminal,
+      hasTerminal,
+      paneFocusedRef,
+      splitTerminalFromPalette,
+      threadKey,
+      visible,
+    ],
+  );
 
   const handleResizePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
@@ -1808,42 +1873,6 @@ export default function ThreadTerminalDrawer({
     </TerminalActionButton>
   );
 
-  const splitButtons = (
-    <>
-      <TerminalActionButton
-        label={splitTerminalActionLabel}
-        onClick={onSplitTerminalAction}
-        unavailable={!canOperateTerminal || hasReachedSplitLimit}
-      >
-        <SquareSplitHorizontal className="size-3.5" />
-      </TerminalActionButton>
-      <TerminalActionButton
-        label={splitTerminalVerticalActionLabel}
-        onClick={onSplitTerminalVerticalAction}
-        unavailable={!canOperateTerminal || hasReachedSplitLimit}
-      >
-        <SquareSplitVertical className="size-3.5" />
-      </TerminalActionButton>
-    </>
-  );
-  const closeButton = (
-    <TerminalActionButton
-      label={closeTerminalActionLabel}
-      onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
-      unavailable={!canOperateTerminal}
-    >
-      <Trash2 className="size-3.5" />
-    </TerminalActionButton>
-  );
-  // Keep every terminal action in the header so controls never cover shell output.
-  const terminalActions = (
-    <div className="flex items-center gap-0.5">
-      {splitButtons}
-      {newTerminalButton}
-      {closeButton}
-    </div>
-  );
-
   return (
     <aside
       ref={drawerRef}
@@ -1856,22 +1885,12 @@ export default function ThreadTerminalDrawer({
     >
       {resizeHandle}
 
-      {isPanel ? (
-        inPanelTabBar ? (
-          <PanelTabActions>{terminalActions}</PanelTabActions>
-        ) : (
-          <div className="flex h-8 shrink-0 items-center justify-end border-b border-border surface-card px-1.5">
-            {terminalActions}
-          </div>
-        )
-      ) : (
+      {isPanel ? null : (
         // The terminal pane's header (pen bKxd4): one tab per terminal, "+"
         // after the last tab.
         <div
           className={cn(
             "flex h-11 shrink-0 items-center gap-1",
-            // A layout pane's tabs sit in its notch (pen hRbzg) from the pane's
-            // left edge, its actions in the mirrored notch, as a panel pane's do.
             mode === "pane" ? "relative ps-1.5 pe-2 md:ps-0" : "px-1.5 pt-1",
             mode === "pane" && leadingEdge && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
             mode === "pane" && trailingEdge && "wco:pr-(--workspace-native-controls-inset)",
@@ -1892,12 +1911,6 @@ export default function ThreadTerminalDrawer({
               >
                 <Plus />
               </TerminalActionButton>
-            }
-            actions={
-              <div className="flex items-center gap-0.5">
-                {splitButtons}
-                {closeButton}
-              </div>
             }
           >
             {mode === "pane"
@@ -1991,7 +2004,7 @@ export default function ThreadTerminalDrawer({
                   );
                 }),
               )}
-              {mode === "pane" ? null : terminalActions}
+              {mode === "pane" ? null : newTerminalButton}
             </TerminalTabStrip>
             {mode === "pane"
               ? siblingTabs.after.map((tab) => <LayoutPaneTab key={tab.id} tab={tab} />)

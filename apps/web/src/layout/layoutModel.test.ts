@@ -3,6 +3,9 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  closeLayoutTab,
+  closedLayoutTabIds,
+  moveLayoutTabToNewWorkspace,
   createLayoutState,
   ghostLoneLayoutChats,
   layoutChatSwaps,
@@ -18,6 +21,7 @@ import {
   selectFocusedTab,
   selectFocusedWorkspace,
   selectLayoutPaneSlots,
+  selectLayoutStripSize,
   shareLayoutBeside,
   showLayoutContent,
   THREAD_TERMINAL_SURFACE_ID,
@@ -556,6 +560,43 @@ describe("resizeLayoutColumnEdge", () => {
   });
 });
 
+describe("selectLayoutStripSize", () => {
+  it("gives the strip width the slots are drawn at, for any viewport width", () => {
+    const workspaces = [
+      { cameraWidth: null, widths: [1] },
+      { cameraWidth: null, widths: [0.66, 0.34] },
+      { cameraWidth: null, widths: [0.5, 0.5, 0.5] },
+      { cameraWidth: 1650, widths: [0.66, 0.34] },
+      { cameraWidth: 1490, widths: [0.4, 0.3, 0.3] },
+      { cameraWidth: 1200, widths: [0.5, 0.55] },
+      { cameraWidth: 1400, widths: [0.4, 0.4] },
+      { cameraWidth: 900, widths: [1] },
+      { cameraWidth: 1600, widths: [1, 0.5] },
+      { cameraWidth: 1700, widths: [0.5, 0.5, 0.5] },
+    ];
+    const modes: LayoutWhenNoRoom[] = ["shrink-then-scroll", "always-scroll", "always-shrink"];
+    for (const { cameraWidth, widths } of workspaces) {
+      const workspace = {
+        id: "workspace",
+        name: null,
+        focusedPaneId: null,
+        cameraWidth,
+        columns: widths.map((width, index) => column(`c${index}`, width)),
+      };
+      for (const whenNoRoom of modes) {
+        const { share, minPx, maxShare } = selectLayoutStripSize(workspace, whenNoRoom);
+        for (let width = 700; width <= 2200; width += 25) {
+          const { stripWidth } = selectLayoutPaneSlots(workspace, { width, whenNoRoom });
+          expect(Math.min(maxShare * width, Math.max(share * width, minPx))).toBeCloseTo(
+            stripWidth * width,
+            6,
+          );
+        }
+      }
+    }
+  });
+});
+
 describe("moveLayoutTabToWorkspace", () => {
   it("moves the top workspace's tab into a new workspace above it", () => {
     const first = chatFor("first");
@@ -648,5 +689,19 @@ describe("moveLayoutTab", () => {
       ["chat-pane", expect.closeTo(0.55)],
       ["other-pane", expect.closeTo(0.45)],
     ]);
+  });
+});
+
+describe("closedLayoutTabIds", () => {
+  it("lists a tab that left the layout, not one that moved to another workspace", () => {
+    const layout = openLayoutTab(openLayoutTab(createLayoutState(), chat), diff, {
+      placement: "new-column",
+    });
+    const diffTabId = selectFocusedTab(layout)!.id;
+
+    expect(closedLayoutTabIds(layout, closeLayoutTab(layout, diffTabId))).toEqual([diffTabId]);
+    expect(closedLayoutTabIds(layout, moveLayoutTabToNewWorkspace(layout, diffTabId, 1))).toEqual(
+      [],
+    );
   });
 });

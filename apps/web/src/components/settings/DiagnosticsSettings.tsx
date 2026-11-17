@@ -41,8 +41,10 @@ import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
+import { formatDiagnosticsDuration } from "./DiagnosticsSettings.logic";
 import { ExpandableText } from "./ExpandableText";
 import { ResourceTelemetryDiagnostics } from "./ResourceTelemetryDiagnostics";
+import { formatCpuTime } from "./ResourceTelemetryDiagnostics.logic";
 import {
   SettingsPageContainer,
   SettingsNote,
@@ -60,11 +62,6 @@ const UNAVAILABLE_VALUE = "-";
 
 function formatCount(value: number): string {
   return NUMBER_FORMAT.format(value);
-}
-
-function formatDuration(value: number): string {
-  if (value < 1_000) return `${Math.round(value)} ms`;
-  return `${(value / 1_000).toFixed(value >= 10_000 ? 1 : 2).replace(/\.0+$/, "")} s`;
 }
 
 function RelativeTimeNoWrap(props: { value: DateTime.Utc }) {
@@ -471,13 +468,6 @@ const RESOURCE_HISTORY_WINDOWS = [
   { label: "30m", windowMs: 30 * 60_000, bucketMs: 2 * 60_000 },
   { label: "1h", windowMs: 60 * 60_000, bucketMs: 5 * 60_000 },
 ] as const;
-
-function formatCpuTime(seconds: number): string {
-  if (seconds < 60) return `${seconds.toFixed(seconds >= 10 ? 1 : 2).replace(/\.0+$/, "")}s`;
-  const minutes = seconds / 60;
-  if (minutes < 60) return `${minutes.toFixed(minutes >= 10 ? 1 : 2).replace(/\.0+$/, "")}m`;
-  return `${(minutes / 60).toFixed(2).replace(/\.0+$/, "")}h`;
-}
 
 function formatShortProcessName(command: string): string {
   const name = formatProcessName(command);
@@ -1082,7 +1072,7 @@ function DiagnosticsSettingsBody() {
           title="Slow spans"
           description={
             data
-              ? `Spans that took ${formatDuration(data.slowSpanThresholdMs)} or longer.`
+              ? `Spans that took ${formatDiagnosticsDuration(data.slowSpanThresholdMs)} or longer.`
               : "Spans at or above the slow-span threshold."
           }
           control={
@@ -1143,7 +1133,7 @@ function DiagnosticsSettingsBody() {
                   <RowDetail>
                     <Tooltip>
                       <TooltipTrigger render={<span tabIndex={0} />}>
-                        {formatDuration(failure.durationMs)}
+                        {formatDiagnosticsDuration(failure.durationMs)}
                       </TooltipTrigger>
                       <TooltipPopup side="top">
                         Ended <RelativeTimeNoWrap value={failure.endedAt} />
@@ -1217,7 +1207,7 @@ function DiagnosticsSettingsBody() {
                   </div>
                 </td>
                 <td className="px-3 py-3 text-right align-top font-mono tabular-nums">
-                  {formatDuration(span.durationMs)}
+                  {formatDiagnosticsDuration(span.durationMs)}
                 </td>
                 <td className="py-3 pr-4 pl-3 text-right align-top font-mono tabular-nums whitespace-nowrap text-muted-foreground sm:pr-5">
                   <RelativeTimeNoWrap value={span.endedAt} />
@@ -1298,10 +1288,10 @@ function DiagnosticsSettingsBody() {
                   {formatCount(span.failureCount)}
                 </td>
                 <td className="whitespace-nowrap px-3 py-3 text-right align-top font-mono tabular-nums">
-                  {formatDuration(span.averageDurationMs)}
+                  {formatDiagnosticsDuration(span.averageDurationMs)}
                 </td>
                 <td className="whitespace-nowrap py-3 pr-4 pl-3 text-right align-top font-mono tabular-nums sm:pr-5">
-                  {formatDuration(span.maxDurationMs)}
+                  {formatDiagnosticsDuration(span.maxDurationMs)}
                 </td>
               </tr>
             ))}
@@ -1352,7 +1342,7 @@ function DiagnosticsSettingsBody() {
               resourceData
                 ? resourceData.sampleIntervalMs === 0
                   ? "On demand"
-                  : formatDuration(resourceData.sampleIntervalMs)
+                  : formatDiagnosticsDuration(resourceData.sampleIntervalMs)
                 : "..."
             }
           />

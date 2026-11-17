@@ -23,7 +23,6 @@ export function PullRequestTitleEditor({
   reference,
   detail,
   canWriteSourceControl,
-  onSaved,
   value: titleDraft,
   onValueChange,
 }: {
@@ -31,7 +30,6 @@ export function PullRequestTitleEditor({
   reference: PullRequestRef;
   detail: PullRequestDetail;
   canWriteSourceControl: boolean;
-  onSaved: () => void;
   value: string | null;
   onValueChange: (value: string | null) => void;
 }) {
@@ -46,9 +44,12 @@ export function PullRequestTitleEditor({
       return;
     }
     setTitleSaving(true);
+    // The new title shows while the host takes it, so the editor closes at once.
+    onValueChange(null);
     const result = await update({ environmentId, input: { ...reference, title } });
     setTitleSaving(false);
     if (result._tag === "Failure") {
+      onValueChange(title);
       toastManager.add({
         type: "error",
         title: "The title could not be saved",
@@ -57,10 +58,7 @@ export function PullRequestTitleEditor({
           "The host refused the new title.",
         ),
       });
-      return;
     }
-    onValueChange(null);
-    onSaved();
   };
 
   if (titleDraft === null) {

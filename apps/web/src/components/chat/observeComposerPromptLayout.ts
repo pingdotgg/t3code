@@ -10,7 +10,8 @@ function placeholderSuffixOverflows(placeholder: HTMLElement): boolean {
   if (!lastLine) return false;
   const corner = getComputedStyle(placeholder.parentElement ?? placeholder, "::before");
   const box = placeholder.getBoundingClientRect();
-  const besideCorner = lastLine.top - box.top < (Number.parseFloat(corner.height) || 0);
+  const besideCorner =
+    corner.display !== "none" && lastLine.top - box.top < (Number.parseFloat(corner.height) || 0);
   const lineEnd = box.right - (besideCorner ? Number.parseFloat(corner.width) || 0 : 0);
   return content.getBoundingClientRect().right > lineEnd + 0.5;
 }

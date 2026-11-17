@@ -34,6 +34,7 @@ import {
   SettingsSearchTarget,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { AppIconRow } from "./AppIconSettings";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { TypographySection } from "./TypographySettings";
 import { ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
@@ -344,6 +345,7 @@ export function AppearanceSettingsPanel() {
             />
           }
         />
+        <AppIconRow />
         <SettingsRow
           {...searchableSetting("environment-identification")}
           description={environmentIdentificationDescription}

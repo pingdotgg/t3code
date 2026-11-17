@@ -274,6 +274,13 @@ interface MetadataReadBudget {
   readonly multiplier: number;
 }
 
+function splitOperationBudget(budget: number, count: number): Array<number> {
+  return Array.from(
+    { length: count },
+    (_, index) => Math.floor(budget / count) + (index < budget % count ? 1 : 0),
+  );
+}
+
 function selectMetadataTranscripts(
   transcripts: ReadonlyArray<TranscriptCandidate>,
   limit = MAX_TRANSCRIPTS_PER_SOURCE,
@@ -373,7 +380,7 @@ function foldClaudeFields(fields: ClaudeFields, record: DecodedTranscriptRecord)
 // Codex records setup context as user text ahead of the real request. Skip
 // these leading blocks when deriving a title; imported messages keep them.
 const CODEX_TITLE_PREAMBLE =
-  /^(?:\s*(?:<(recommended_plugins|environment_context|user_instructions|INSTRUCTIONS|in-app-browser-context)(?:\s[^>]*)?>[\s\S]*?<\/\1>|# AGENTS\.md instructions\b[^\n]*|## My request for Codex:))+/;
+  /^(?:\s*(?:<(recommended_plugins|environment_context|user_instructions|INSTRUCTIONS|in-app-browser-context|external_codex_apps_open_page)(?:\s[^>]*)?>[\s\S]*?<\/\1>|# AGENTS\.md instructions\b[^\n]*|## My request for Codex:))+/;
 
 // Codex appends an entry per rename; like Codex, the newest nonempty name wins.
 function parseCodexThreadNames(contents: string): ReadonlyMap<string, string> {
@@ -401,8 +408,15 @@ function codexHistoryBase(records: ReadonlyArray<DecodedTranscriptRecord>) {
     : undefined;
 }
 
+// Agent-started sessions wrap the prompt in a `<wake reason=… current-time=…>`
+// envelope; title them after the prompt inside it.
+const WAKE_ENVELOPE = /^\s*<wake(?:\s[^>]*)?>([\s\S]*?)(?:<\/wake>|$)/;
+
 function deriveTitle(source: AgentSessionSource, text: string): string | undefined {
-  const request = source === "codex" ? text.replace(CODEX_TITLE_PREAMBLE, "") : text;
+  const request = (source === "codex" ? text.replace(CODEX_TITLE_PREAMBLE, "") : text).replace(
+    WAKE_ENVELOPE,
+    "$1",
+  );
   return request.trim().split("\n")[0]?.slice(0, 100).trim() || undefined;
 }
 
@@ -451,7 +465,8 @@ export function parseAgentSessionTranscript(
     input.source === "claudeAgent"
       ? records.reduce(foldClaudeFields, emptyClaudeFields)
       : emptyClaudeFields;
-  return parseAgentSessionRecords(input, records, claudeFields, 0);
+  const thread = parseAgentSessionRecords(input, records, claudeFields, 0);
+  return thread === "empty" ? null : thread;
 }
 
 function parseAgentSessionRecords(
@@ -459,7 +474,7 @@ function parseAgentSessionRecords(
   records: ReadonlyArray<DecodedTranscriptRecord>,
   claudeFields: ClaudeFields,
   droppedMessageCount: number,
-): AgentSessionThread | null {
+): AgentSessionThread | "empty" | null {
   const fallbackTimestamp = DateTime.formatIso(DateTime.makeUnsafe(input.lastActiveAtMs));
   // Claude filenames are session IDs. Codex rollout filenames include extra
   // timestamp text, so only transcript metadata can provide a resumable ID.
@@ -652,6 +667,7 @@ function parseAgentSessionRecords(
     });
   }
 
+  if (messages.length === 0 && droppedMessageCount === 0) return "empty";
   const visibleMessages = messages.map(
     ({ codexResponseUser: _codexResponseUser, ...message }) => message,
   );
@@ -1230,7 +1246,6 @@ export const make = Effect.gen(function* () {
             let claudeFields = emptyClaudeFields;
             let historyBytes = prefix?.historyBytes ?? 0;
             let recordBytes = 0;
-            let recordCount = 0;
             let bytesRead = 0;
             const reserve = (bytes: number) => {
               recordBytes += bytes;
@@ -1246,9 +1261,6 @@ export const make = Effect.gen(function* () {
 
             const finishRecord = () => {
               reader.write(decoder.decode());
-              recordCount += 1;
-              // Claude keeps a bounded window, so only the byte budgets limit its length.
-              if (recordCount > MAX_IMPORT_RECORDS && source !== "claudeAgent") return false;
               const value = reader.finish();
               const decoded = decodeTranscriptValue(value);
               if (Option.isNone(decoded) && source === "pi") {
@@ -1280,7 +1292,7 @@ export const make = Effect.gen(function* () {
               reader = createTranscriptJsonReader(reserve, selectTranscriptPath);
               decoder = new TextDecoder();
               recordStarted = false;
-              return true;
+              return records.length <= MAX_IMPORT_RECORDS;
             };
 
             while (bytesRead < readBytes) {
@@ -1390,7 +1402,35 @@ export const make = Effect.gen(function* () {
         operationsRemaining -= 1;
         return listDirectory(directory);
       };
-      const projectDirectories = yield* readDirectory(projectsDir);
+      // Folder names carry no date, so read the newest folders first: a budget that runs out
+      // then drops the oldest sessions. Dating has its own allowance, apart from the reads.
+      let datesRemaining = operationBudget;
+      const dated: Array<{ readonly name: string; readonly mtimeMs: number }> = [];
+      const undated: Array<string> = [];
+      for (const name of yield* readDirectory(projectsDir)) {
+        if (datesRemaining <= 0) {
+          undated.push(name);
+          continue;
+        }
+        datesRemaining -= 1;
+        const stats = yield* statOption(path.join(projectsDir, name));
+        if (Option.isNone(stats) || stats.value.type !== "Directory") continue;
+        dated.push({
+          name,
+          mtimeMs: Option.match(stats.value.mtime, {
+            onNone: () => 0,
+            onSome: (mtime) => mtime.getTime(),
+          }),
+        });
+      }
+      const projectDirectories = [
+        ...dated
+          .toSorted(
+            (left, right) => right.mtimeMs - left.mtimeMs || left.name.localeCompare(right.name),
+          )
+          .map((entry) => entry.name),
+        ...undated,
+      ];
       const transcripts: Array<TranscriptCandidate> = [];
 
       for (const projectDirectory of projectDirectories) {
@@ -1426,7 +1466,7 @@ export const make = Effect.gen(function* () {
           });
         }
       }
-      return { transcripts, truncated };
+      return { transcripts, truncated, operationsUsed: operationBudget - operationsRemaining };
     },
   );
 
@@ -1545,6 +1585,7 @@ export const make = Effect.gen(function* () {
           return roots === undefined ? transcript : { ...transcript, projectRoots: roots };
         }),
         truncated,
+        operationsUsed: operationBudget - operationsRemaining,
       };
     },
   );
@@ -1600,7 +1641,7 @@ export const make = Effect.gen(function* () {
         }
       }
     }
-    return { transcripts, truncated };
+    return { transcripts, truncated, operationsUsed: operationBudget - operationsRemaining };
   });
 
   const groupTranscriptsByCwd = Effect.fn("AgentSessionScanner.groupTranscriptsByCwd")(function* (
@@ -1770,26 +1811,48 @@ export const make = Effect.gen(function* () {
       }
 
       const transcriptCandidates: Array<TranscriptCandidate> = [];
-      const baseOperationBudget = Math.floor(
-        (MAX_DISCOVERY_OPERATIONS_PER_SOURCE * multiplier) / Math.max(1, homes.length),
-      );
-      const extraOperationBudgets =
-        (MAX_DISCOVERY_OPERATIONS_PER_SOURCE * multiplier) % Math.max(1, homes.length);
+      const discover =
+        source === "claudeAgent"
+          ? discoverClaudeTranscripts
+          : source === "codex"
+            ? discoverCodexTranscripts
+            : discoverPiTranscripts;
+      const discoveryBudget = MAX_DISCOVERY_OPERATIONS_PER_SOURCE * multiplier;
+      const shares = splitOperationBudget(discoveryBudget, homes.length);
+      const discovered: Array<{
+        readonly transcripts: ReadonlyArray<TranscriptCandidate>;
+        readonly truncated: boolean;
+        readonly operationsUsed: number;
+      }> = [];
       for (const [index, home] of homes.entries()) {
-        const operationBudget = baseOperationBudget + (index < extraOperationBudgets ? 1 : 0);
-        if (operationBudget === 0) {
-          truncated = true;
-          continue;
+        const operationBudget = shares[index] ?? 0;
+        discovered.push(
+          operationBudget === 0
+            ? { transcripts: [], truncated: true, operationsUsed: 0 }
+            : yield* discover(home.homePath, home.providerInstanceId, operationBudget),
+        );
+      }
+      // Budget that small homes left unused goes to the homes that ran out, which rescan with it.
+      // Each takes an even split of what is still unused; a pass in which no home finishes spends
+      // it all, so every repeat has fewer starved homes.
+      let unused =
+        discoveryBudget - discovered.reduce((total, result) => total + result.operationsUsed, 0);
+      let starved = discovered.flatMap((result, index) => (result.truncated ? [index] : []));
+      while (unused > 0 && starved.length > 0) {
+        for (const [position, index] of starved.entries()) {
+          if (unused <= 0) break;
+          const home = homes[index]!;
+          const before = discovered[index]!.operationsUsed;
+          const extra = Math.ceil(unused / (starved.length - position));
+          const result = yield* discover(home.homePath, home.providerInstanceId, before + extra);
+          discovered[index] = result;
+          unused -= result.operationsUsed - before;
         }
-        const discover =
-          source === "claudeAgent"
-            ? discoverClaudeTranscripts
-            : source === "codex"
-              ? discoverCodexTranscripts
-              : discoverPiTranscripts;
-        const discovered = yield* discover(home.homePath, home.providerInstanceId, operationBudget);
-        truncated ||= discovered.truncated;
-        transcriptCandidates.push(...discovered.transcripts);
+        starved = starved.filter((index) => discovered[index]!.truncated);
+      }
+      for (const result of discovered) {
+        truncated ||= result.truncated;
+        transcriptCandidates.push(...result.transcripts);
       }
 
       transcriptCandidates.sort(
@@ -2154,6 +2217,15 @@ export const make = Effect.gen(function* () {
             snapshot.claudeFields,
             snapshot.droppedMessageCount,
           );
+          if (parsedThread === "empty") {
+            // null means an unreadable history base, which may hold the conversation.
+            if (candidate.source === "codex" && inheritedRecords === null) {
+              return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+            }
+            // Never recorded as imported, so charging them would starve real sessions every run.
+            transcriptsRemaining += 1;
+            return Option.none<AgentSessionRecentThread>();
+          }
           if (parsedThread === null) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }

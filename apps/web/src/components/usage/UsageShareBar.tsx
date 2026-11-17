@@ -30,11 +30,8 @@ export function UsageShareBar({
         <h3 className="text-meta text-foreground">{label}</h3>
         {aside}
       </div>
-      <div
-        role="img"
-        aria-label={`${label}: ${visible.map((segment) => `${segment.label} ${format(segment.value)}`).join(", ")}`}
-        className="flex h-2 gap-0.5"
-      >
+      {/* The legend below carries every figure; the bar's tooltips are pointer-only. */}
+      <div aria-hidden className="flex h-2 gap-0.5">
         {visible.map((segment) => (
           <Tooltip key={segment.label}>
             <TooltipTrigger
@@ -55,19 +52,20 @@ export function UsageShareBar({
           </Tooltip>
         ))}
       </div>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-caption">
+      <ul aria-label={label} className="flex flex-wrap gap-x-4 gap-y-1 text-caption">
         {visible.map((segment) => (
-          <span key={segment.label} className="flex items-center gap-1.5">
+          <li key={segment.label} className="flex items-center gap-1.5">
             <span
               aria-hidden
               className="size-2 rounded-xs"
               style={{ backgroundColor: segment.color }}
             />
-            <span className="text-muted-foreground">{segment.label}</span>
+            <span className="text-muted-foreground">{segment.label}</span>{" "}
             <span className="text-foreground tabular-nums">{format(segment.value)}</span>
-          </span>
+            <span className="sr-only">, {formatPercent(segment.value / total)}</span>
+          </li>
         ))}
-      </div>
+      </ul>
     </div>
   );
 }

@@ -394,6 +394,10 @@ export function readThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
 }
 
+export function readDelegatedUnderParent(): ReadonlySet<string> {
+  return appAtomRegistry.get(environmentThreadShells.delegatedUnderParentAtom);
+}
+
 function shellParentThreadId(
   thread: Pick<OrchestrationV2ThreadShell, "forkedFrom" | "lineage">,
 ): ThreadId | null {

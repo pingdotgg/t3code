@@ -16,6 +16,7 @@ import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import { RESETTABLE_PROJECT_OVERRIDE_KEYS, summarizeProjectOverrides } from "./scopedSettings";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 import {
+  ALL_CHECKOUTS_VALUE,
   ALL_ENVIRONMENTS_VALUE,
   ALL_PROJECTS_VALUE,
   environmentAxisValue,
@@ -103,21 +104,17 @@ function ScopePopover({
     : environmentValue !== ALL_ENVIRONMENTS_VALUE
       ? "Unavailable environment"
       : null;
-  // Only offered when the selection spans several checkouts of one environment.
+  const triggerLabel =
+    projectLabel && environmentLabel
+      ? `${projectLabel} on ${environmentLabel}`
+      : (projectLabel ?? environmentLabel ?? "All");
   const checkouts = selectedProject ? settingsScopeCheckoutChoices(selectedProject, value) : [];
   const selectedCheckout = checkouts.find((member) => member.physicalProjectKey === value.checkout);
   const checkoutLabel = selectedCheckout
     ? settingsScopeCheckoutLabel(selectedCheckout, checkouts)
-    : value.checkout && checkouts.length > 0
+    : value.checkout
       ? "Unavailable checkout"
       : null;
-  const projectEnvironmentLabel =
-    projectLabel && environmentLabel
-      ? `${projectLabel} on ${environmentLabel}`
-      : (projectLabel ?? environmentLabel ?? "All");
-  const triggerLabel = checkoutLabel
-    ? `${projectEnvironmentLabel} in ${checkoutLabel}`
-    : projectEnvironmentLabel;
 
   const clearOverrides = useClearProjectOverridesOn();
   // Overrides on the environments the selection covers: one, or every connected one.
@@ -179,9 +176,6 @@ function ScopePopover({
     .filter(({ environment, label, secondary }) =>
       matches(`${label} ${secondary} ${environment.environmentId}`),
     );
-  const visibleCheckouts = checkouts.filter((member) =>
-    matches(`${fileBasename(member.workspaceRoot)} ${member.workspaceRoot}`),
-  );
 
   const choose = (next: SettingsScopeSearch) => {
     setOpen(false);
@@ -213,19 +207,22 @@ function ScopePopover({
       }}
     >
       <PopoverTrigger
-        aria-label={`Settings scope: ${triggerLabel}`}
+        aria-label={`Settings scope: ${triggerLabel}${checkoutLabel ? ` in ${checkoutLabel}` : ""}`}
         render={<ContentButton variant="breadcrumb" className="-ms-2.5" />}
       >
         {trigger}
         {projectLabel || environmentLabel ? (
-          <span className="min-w-0 truncate text-meta text-muted-foreground">{triggerLabel}</span>
+          <span className="min-w-0 truncate text-meta text-muted-foreground">
+            {triggerLabel}
+            {checkoutLabel ? ` in ${checkoutLabel}` : ""}
+          </span>
         ) : null}
       </PopoverTrigger>
       <PopoverPopup align="start" alignOffset={48} padding="none" initialFocus={searchRef}>
         <div
           className={cn(
             "flex max-w-[calc(100vw-2rem)] flex-col [-webkit-app-region:no-drag]",
-            checkouts.length > 0 ? "w-[40rem]" : "w-[28.75rem]",
+            checkouts.length > 0 ? "w-[43rem]" : "w-[28.75rem]",
           )}
         >
           <div className="p-2">
@@ -301,19 +298,21 @@ function ScopePopover({
                   <ScopeRow
                     icon={<LayersIcon aria-hidden className="size-3.5" />}
                     label="All checkouts"
-                    selected={value.checkout === undefined}
+                    selected={(value.checkout ?? ALL_CHECKOUTS_VALUE) === ALL_CHECKOUTS_VALUE}
                     onSelect={() => choose(selectCheckoutAxis(value, null))}
                   />
-                  {visibleCheckouts.map((member) => (
-                    <ScopeRow
-                      key={member.physicalProjectKey}
-                      icon={<FolderIcon aria-hidden className="size-3.5" />}
-                      label={fileBasename(member.workspaceRoot)}
-                      secondary={member.workspaceRoot}
-                      selected={value.checkout === member.physicalProjectKey}
-                      onSelect={() => choose(selectCheckoutAxis(value, member))}
-                    />
-                  ))}
+                  {checkouts
+                    .filter((member) => matches(member.workspaceRoot))
+                    .map((member) => (
+                      <ScopeRow
+                        key={member.physicalProjectKey}
+                        icon={<FolderIcon aria-hidden className="size-3.5" />}
+                        label={fileBasename(member.workspaceRoot)}
+                        secondary={member.workspaceRoot}
+                        selected={value.checkout === member.physicalProjectKey}
+                        onSelect={() => choose(selectCheckoutAxis(value, member))}
+                      />
+                    ))}
                 </ScopeColumn>
               </>
             ) : null}

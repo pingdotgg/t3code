@@ -48,8 +48,8 @@ export function ConnectCliAuthorizeSurface() {
   const [request] = useState(() => readConnectAuthorizeRequest(new URL(window.location.href)));
   const clerk = useClerk();
   const { isLoaded, isSignedIn } = useAuth();
-  const [redirecting, setRedirecting] = useState(false);
   const loadFailed = useClerkLoadFailed();
+  const [redirecting, setRedirecting] = useState(false);
 
   const authorize = () => {
     if (!request || !isLoaded || redirecting) {
@@ -131,7 +131,7 @@ export function ConnectCliAuthorizeSurface() {
           Cancel
         </Button>
         {loadFailed ? (
-          <Button onClick={retryClerkLoad} size="sm" type="button">
+          <Button size="sm" type="button" onClick={retryClerkLoad}>
             Retry sign-in
           </Button>
         ) : (

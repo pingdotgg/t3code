@@ -660,6 +660,35 @@ describe("project settings scope", () => {
     await expect.element(remoteOption()).toBeVisible();
   });
 
+  it("lists only the selected environment's projects and keeps it when one is opened", async () => {
+    setup();
+    const [primaryProject, remoteProject] = state.projects;
+    state.projects = [
+      primaryProject!,
+      {
+        ...remoteProject!,
+        title: "Remote only",
+        repositoryIdentity: null,
+      },
+    ];
+    await using screen = await mountSettings({ machine: primaryId });
+
+    await expect
+      .element(page.getByRole("button", { name: "Open Shared repo settings" }))
+      .toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: "Open Remote only settings" }))
+      .not.toBeInTheDocument();
+
+    await userEvent.click(page.getByRole("button", { name: "Open Shared repo settings" }));
+    await vi.waitFor(() =>
+      expect(screen.router.state.location.search).toEqual({
+        project: projectKey(),
+        machine: primaryId,
+      }),
+    );
+  });
+
   it("offers only the selected project's checkout environments", async () => {
     setup();
     state.projects = state.projects.filter((project) => project.environmentId === primaryId);
@@ -682,10 +711,14 @@ describe("project settings scope", () => {
     await using screen = await mountSettings({ project: key, machine: primaryId });
 
     await userEvent.click(scopeMenu());
-    await userEvent.click(page.getByRole("button", { name: /^clone-b/ }));
+    await userEvent.click(
+      page.getByRole("group", { name: "Checkout" }).getByRole("button", { name: /^clone-b/ }),
+    );
 
     await expect
-      .element(page.getByRole("button", { name: /^Settings scope: .* in clone-b$/ }))
+      .element(
+        page.getByRole("button", { name: "Settings scope: Shared repo on primary in clone-b" }),
+      )
       .toBeVisible();
     expect(screen.router.state.location.search).toMatchObject({
       project: key,
@@ -694,7 +727,11 @@ describe("project settings scope", () => {
     });
 
     await userEvent.click(scopeMenu());
-    await userEvent.click(page.getByRole("button", { name: /^All checkouts/ }));
+    const checkouts = page.getByRole("group", { name: "Checkout" });
+    await expect
+      .element(checkouts.getByRole("button", { name: /^clone-b/ }))
+      .toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(checkouts.getByRole("button", { name: "All checkouts" }));
 
     await vi.waitFor(() =>
       expect(screen.router.state.location.search).toEqual({ project: key, machine: primaryId }),
@@ -736,7 +773,11 @@ describe("project settings scope", () => {
 
     await expect.element(page.getByText(message, { exact: true })).toBeVisible();
     await expect
-      .element(page.getByRole("button", { name: "Settings scope: Shared repo on remote" }))
+      .element(
+        page.getByRole("button", {
+          name: `Settings scope: Shared repo on remote${checkout ? " in Unavailable checkout" : ""}`,
+        }),
+      )
       .toBeVisible();
     await userEvent.click(page.getByRole("button", { name: "Show all environments" }));
 

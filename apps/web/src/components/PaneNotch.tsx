@@ -23,7 +23,7 @@ export const PANE_TAB_TITLE_CLASS = "max-w-68 truncate";
 export const PANE_INACTIVE_TAB_TITLE_CLASS =
   "max-w-[var(--pane-inactive-tab-title-max,10rem)] truncate";
 /** A ghost tab's title (`LayoutTab.ghostOf`): italic until the tab is kept, as preview tabs are. */
-export const PANE_GHOST_TAB_TITLE_CLASS = "italic";
+export const PANE_GHOST_TAB_TITLE_CLASS = "italic pe-0.5 -me-0.5";
 
 /** The thread tab opens its action menu while keeping the notch's tab geometry. */
 export function PaneTabButton({ className, render, ...props }: useRender.ComponentProps<"button">) {
@@ -143,7 +143,7 @@ function observeNotchGap(notch: HTMLDivElement, side: "left" | "right"): () => v
  * connected pane tabs): from md up, except under light, black chrome, which
  * keeps the notch.
  */
-export function useConnectedPaneTabs(): boolean {
+function useConnectedPaneTabs(): boolean {
   const isMobile = useMediaQuery("max-md");
   const { blackChrome, resolvedTheme } = useTheme();
   return !isMobile && !(blackChrome && resolvedTheme === "light");
@@ -198,11 +198,10 @@ export function PaneNotch({
         aria-hidden
         ref={side === "right" ? holdEndCornerWhileSliding : undefined}
         data-pane-notch-corner={side === "left" ? "" : side}
-        data-sidebar-slide-stay={side === "left" ? "" : undefined}
       />
       {side === "left" ? (
         <>
-          <span aria-hidden data-pane-bar-corner="start" data-sidebar-slide-stay="" />
+          <span aria-hidden data-pane-bar-corner="start" />
           <span
             aria-hidden
             ref={holdEndCornerWhileSliding}

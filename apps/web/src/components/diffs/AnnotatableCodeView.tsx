@@ -103,7 +103,7 @@ interface AnnotatableCodeViewProps {
   ) => ReactNode;
   /** Told each time a comment from this view lands in the composer draft. */
   onCommentAdded?: (commentId: string) => void;
-  onRevealSearchMatch: (fileKey: string) => void;
+  onFileCollapsedChange: (fileKey: string, collapsed: boolean) => void;
 }
 
 interface DiffSelectionContext {
@@ -129,7 +129,7 @@ export function AnnotatableCodeView({
   renderHeaderFilenameSuffix,
   renderHeaderPrefix,
   onCommentAdded,
-  onRevealSearchMatch,
+  onFileCollapsedChange,
 }: AnnotatableCodeViewProps) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
@@ -292,7 +292,8 @@ export function AnnotatableCodeView({
         enableGutterUtility: composerDraftTarget !== undefined && draft === null,
         enableLineSelection: draft === null,
         onGutterUtilityClick: beginComment,
-        onRevealSearchMatch: (item) => onRevealSearchMatch(item.id),
+        onItemCollapsedChange: (_item, nextItem) =>
+          onFileCollapsedChange(nextItem.id, nextItem.collapsed === true),
       }}
       renderHeaderFilenameSuffix={(item) =>
         item.type === "diff" ? renderHeaderFilenameSuffix(item.fileDiff) : null

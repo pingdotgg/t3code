@@ -1,4 +1,5 @@
-import type { WorktreeSetupSnapshot, WorktreeSetupStage } from "@t3tools/contracts";
+import { toServerClock } from "@t3tools/client-runtime/clock";
+import type { EnvironmentId, WorktreeSetupSnapshot, WorktreeSetupStage } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import {
   BrainIcon,
@@ -25,17 +26,36 @@ function elapsed(startedAt: string | null, endMs: number): string | null {
   return Number.isFinite(ms) ? formatDuration(Math.max(0, ms)) : null;
 }
 
-/** Mounted only while a stage runs, so finished rows never subscribe to the tick. */
-function LiveElapsed({ startedAt }: { startedAt: string }) {
-  return <>{formatWorkingTimer(startedAt, new Date(useNowSecond()).toISOString())}</>;
+/**
+ * Mounted only while a stage runs, so finished rows never subscribe to the tick.
+ * It counts on the host's clock, like the working line.
+ */
+function LiveElapsed({
+  startedAt,
+  environmentId,
+}: {
+  startedAt: string;
+  environmentId: EnvironmentId | undefined;
+}) {
+  const now = useNowSecond();
+  const hostNow = environmentId ? toServerClock(environmentId, now) : now;
+  return <>{formatWorkingTimer(startedAt, new Date(hostNow).toISOString())}</>;
 }
 
-function Elapsed({ startedAt, endedAt }: { startedAt: string | null; endedAt: string | null }) {
+function Elapsed({
+  startedAt,
+  endedAt,
+  environmentId,
+}: {
+  startedAt: string | null;
+  endedAt: string | null;
+  environmentId: EnvironmentId | undefined;
+}) {
   if (!startedAt) return null;
   const text = endedAt ? (
     elapsed(startedAt, Date.parse(endedAt))
   ) : (
-    <LiveElapsed startedAt={startedAt} />
+    <LiveElapsed startedAt={startedAt} environmentId={environmentId} />
   );
   return <span className="shrink-0 text-meta text-dim-foreground tabular-nums">{text}</span>;
 }
@@ -217,10 +237,12 @@ function SettledRow({
 }
 
 function StageRow({
+  environmentId,
   stage,
   snapshot,
   onOpenTerminal,
 }: {
+  environmentId: EnvironmentId | undefined;
   stage: WorktreeSetupStage;
   snapshot: WorktreeSetupSnapshot;
   onOpenTerminal: (() => void) | null;
@@ -254,7 +276,7 @@ function StageRow({
                 </span>
               ) : null}
               {terminal}
-              <Elapsed startedAt={stage.startedAt} endedAt={null} />
+              <Elapsed startedAt={stage.startedAt} endedAt={null} environmentId={environmentId} />
             </>
           }
         />
@@ -273,7 +295,11 @@ function StageRow({
       trailing={
         <>
           {terminal}
-          <Elapsed startedAt={stage.startedAt} endedAt={stage.endedAt ?? snapshot.endedAt} />
+          <Elapsed
+            startedAt={stage.startedAt}
+            endedAt={stage.endedAt ?? snapshot.endedAt}
+            environmentId={environmentId}
+          />
         </>
       }
     />
@@ -290,10 +316,13 @@ const shownStage = (stage: WorktreeSetupStage, snapshot: WorktreeSetupSnapshot) 
  * they start; a setup that finished cleanly folds to one row that opens again on click.
  */
 export function WorktreeSetupRows({
+  environmentId,
   snapshot,
   startingLabel = null,
   onOpenTerminal,
 }: {
+  /** The thread's environment, whose clock live timers count on. */
+  environmentId?: EnvironmentId | undefined;
   snapshot: WorktreeSetupSnapshot;
   /** The provider still launching after setup, shown as the turn's live row. */
   startingLabel?: string | null;
@@ -307,7 +336,13 @@ export function WorktreeSetupRows({
       ? (startingLabel ?? (agent?.status === "running" ? "Starting agent" : null))
       : null;
   const stageRows = stages.map((stage) => (
-    <StageRow key={stage.id} stage={stage} snapshot={snapshot} onOpenTerminal={onOpenTerminal} />
+    <StageRow
+      key={stage.id}
+      environmentId={environmentId}
+      stage={stage}
+      snapshot={snapshot}
+      onOpenTerminal={onOpenTerminal}
+    />
   ));
   return (
     <section
@@ -320,7 +355,13 @@ export function WorktreeSetupRows({
           data-worktree-setup-stage="summary"
           icon={FolderGit2Icon}
           label={snapshot.branch ? `Set up worktree ${snapshot.branch}` : "Set up worktree"}
-          trailing={<Elapsed startedAt={snapshot.startedAt} endedAt={snapshot.endedAt} />}
+          trailing={
+            <Elapsed
+              startedAt={snapshot.startedAt}
+              endedAt={snapshot.endedAt}
+              environmentId={environmentId}
+            />
+          }
         >
           {stageRows.length > 0 ? (
             <div className="flex min-w-0 flex-col gap-1">{stageRows}</div>

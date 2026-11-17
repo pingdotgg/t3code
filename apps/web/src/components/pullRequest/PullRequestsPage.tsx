@@ -1,3 +1,5 @@
+import { heldPullRequestListEntriesAtom } from "@t3tools/client-runtime/state/pull-requests";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { cn } from "~/lib/utils";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { applyPullRequestDraftFilterChange } from "@t3tools/client-runtime/pull-request-query";
@@ -16,13 +18,12 @@ import type {
   PullRequestListCursors,
   PullRequestListInput,
   PullRequestListResult,
-  PullRequestListState,
   PullRequestSummary,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 import { ArrowDownUpIcon, CircleAlertIcon, LayersIcon, Plug2Icon } from "lucide-react";
-import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import {
   collectPullRequestListFacets,
@@ -55,10 +56,11 @@ import {
   type PullRequestListPreferencePatch,
   writePullRequestListPreferences,
 } from "./pullRequestListPreferences";
+import { SavedViewsMenu } from "../SavedViewsMenu";
+import { PULL_REQUEST_SAVED_VIEWS, pullRequestSavedViewPatch } from "./pullRequestSavedViews";
 import { environmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 import {
-  PullRequestFilterRadioSubmenu,
   PullRequestFiltersMenu,
   describePullRequestListFilters,
   PullRequestSearchInput,
@@ -93,12 +95,13 @@ import { registerCommands } from "~/shortcuts/dispatcher";
 import { isTerminalFocused } from "~/lib/terminalFocus";
 import { RightPanelMaximizeControl } from "../chat/PanelLayoutControls";
 import { Button } from "../ui/button";
-import { MenuItem } from "../ui/menu";
 import { RefreshIcon } from "../ui/refresh-icon";
 import { SidebarInset, useMobileSidebarSheetMounted } from "../ui/sidebar";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useOpenPanelPullRequestUrl } from "~/hooks/useOpenPanelPullRequestUrl";
+import { PREVIEW_PANEL_SPLIT_MIN_ROW_WIDTH } from "~/hooks/usePreviewPanelInlineSize";
+import { observeResize } from "~/lib/observeResize";
 import { copyThreadReference } from "~/lib/copyThreadReference";
 import { useLayoutPageLocation } from "~/layout/pageNavigation";
 import { useLayoutPane, useLayoutPaneFocusedRef } from "~/layout/layoutPaneContext";
@@ -113,7 +116,7 @@ import {
 } from "~/rightPanelStore";
 import {
   pullRequestEnvironment,
-  usePullRequestList,
+  usePullRequestHostList,
   usePullRequestListStats,
   restoredPullRequestList,
   usePullRequestTurnRefreshes,
@@ -155,6 +158,35 @@ const EMPTY_PREVIEW_SESSIONS = {};
 const EMPTY_PREVIEW_DESKTOP_STATE = {};
 const EMPTY_TERMINAL_LABELS = new Map<string, string>();
 const EMPTY_PENDING_SURFACES = new Set<string>();
+const heldRowReaders = new WeakMap<
+  EnvironmentPullRequestEntry,
+  Map<string, ReturnType<typeof heldPullRequestListEntriesAtom<EnvironmentPullRequestEntry>>>
+>();
+
+function usePendingListEntries(
+  input: PullRequestListInput,
+  entries: ReadonlyArray<EnvironmentPullRequestEntry> | undefined,
+) {
+  const key = JSON.stringify(input);
+  return useAtomValue(
+    Atom.make((get) =>
+      (entries ?? []).flatMap((entry) => {
+        let readers = heldRowReaders.get(entry);
+        if (readers === undefined) {
+          readers = new Map();
+          heldRowReaders.set(entry, readers);
+        }
+        let reader = readers.get(key);
+        if (reader === undefined) {
+          reader = heldPullRequestListEntriesAtom(entry.environmentId, input, [entry]);
+          readers.set(key, reader);
+        }
+        return AsyncResult.getOrElse(get(reader), () => []);
+      }),
+    ),
+  );
+}
+
 export function PullRequestsPage() {
   const { visible } = useLayoutPane();
   const location = useLayoutPageLocation();
@@ -354,7 +386,7 @@ export function PullRequestsPage() {
       ];
     });
   const listTargets = listTargetsFor(environmentQueries);
-  const listQuery = usePullRequestList(listTargets);
+  const listQuery = usePullRequestHostList(listTargets);
 
   /**
    * Kept as its own read rather than remembered from an earlier answer because an answer cannot
@@ -374,7 +406,7 @@ export function PullRequestsPage() {
       } satisfies PullRequestListInput,
     }));
   const baselineTargets = baselineTargetsFor(environmentQueries);
-  const baselineQuery = usePullRequestList(baselineTargets);
+  const baselineQuery = usePullRequestHostList(baselineTargets);
   const observedHosts = rememberPullRequestHosts(
     rememberPullRequestHosts(hostReads, baselineQuery.observations),
     listQuery.observations,
@@ -398,7 +430,7 @@ export function PullRequestsPage() {
       } satisfies PullRequestListInput,
     }));
   })();
-  const facetQuery = usePullRequestList(facetTargets);
+  const facetQuery = usePullRequestHostList(facetTargets);
   const filterOptionScope = environmentQueries.map(({ environmentId, projectIds }) => ({
     environmentId,
     input: {
@@ -432,8 +464,8 @@ export function PullRequestsPage() {
       }));
     return { authored: targetsFor("authored"), reviewing: targetsFor("reviewing") };
   })();
-  const authoredQuery = usePullRequestList(partitionTargets.authored);
-  const reviewingQuery = usePullRequestList(partitionTargets.reviewing);
+  const authoredQuery = usePullRequestHostList(partitionTargets.authored);
+  const reviewingQuery = usePullRequestHostList(partitionTargets.reviewing);
   const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
   const [detailRefreshToken, setDetailRefreshToken] = useState(0);
   const [invalidating, setInvalidating] = useState(false);
@@ -722,6 +754,23 @@ export function PullRequestsPage() {
     search.state,
   );
 
+  const heldEntries = ordered?.key === filterKey ? ordered.entries : (listData?.entries ?? []);
+  const overlayInput = { state: search.state, filters };
+  const shownEntries = usePendingListEntries(overlayInput, heldEntries);
+  const shownBaseline = usePendingListEntries(
+    overlayInput,
+    typedParsed.filters.checks === undefined ? baselineQuery.data?.entries : undefined,
+  );
+  const shownAuthored = usePendingListEntries(
+    overlayInput,
+    partitionsWanted ? authoredQuery.data?.entries : undefined,
+  );
+  const shownReviewing = usePendingListEntries(
+    overlayInput,
+    partitionsWanted ? reviewingQuery.data?.entries : undefined,
+  );
+  const shownHeldAuthored = usePendingListEntries(overlayInput, heldPartitions?.authored);
+  const shownHeldReviewing = usePendingListEntries(overlayInput, heldPartitions?.reviewing);
   const scrollRef = useRef<HTMLDivElement>(null);
   const {
     entries,
@@ -730,9 +779,12 @@ export function PullRequestsPage() {
     entriesByStatsKey,
     heldPullRequestsBySurface,
   } = pullRequestGroups({
-    known: ordered?.key === filterKey ? ordered.entries : (listData?.entries ?? []),
+    known: shownEntries,
     // The baseline was read without typed qualifiers, and rows cannot be checked for `checks:`.
-    baseline: typedParsed.filters.checks === undefined ? baselineQuery.data?.entries : undefined,
+    baseline:
+      typedParsed.filters.checks === undefined && baselineQuery.data !== null
+        ? shownBaseline
+        : undefined,
     providers: baselineQuery.data?.providers ?? listData?.providers ?? [],
     viewers,
     involvement: search.involvement,
@@ -742,11 +794,14 @@ export function PullRequestsPage() {
     answeredLocally: querySettled && !showingCarried,
     baselineEmpty,
     held:
-      loaded !== null && loaded.environmentKey === environmentKey && loaded.scope === scopeKey
-        ? loaded.partitions
-        : undefined,
-    authored: partitionsWanted ? authoredQuery.data?.entries : undefined,
-    reviewing: partitionsWanted ? reviewingQuery.data?.entries : undefined,
+      heldPartitions === undefined
+        ? undefined
+        : {
+            authored: shownHeldAuthored,
+            reviewing: shownHeldReviewing,
+          },
+    authored: partitionsWanted && authoredQuery.data !== null ? shownAuthored : undefined,
+    reviewing: partitionsWanted && reviewingQuery.data !== null ? shownReviewing : undefined,
     partitionsWanted,
   });
 
@@ -1097,7 +1152,14 @@ export function PullRequestsPage() {
   const rightPanelAvailable = selectedPullRequestSurface !== null;
   const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
   const [maximized, setMaximized] = useState(false);
-  const rightPanelMaximized = rightPanelState.isOpen && maximized;
+  // A pane too narrow for the list and the review at their minimums shows the review alone.
+  const [tooNarrowToSplit, setTooNarrowToSplit] = useState(false);
+  const observeSplitRow = useStableCallback((row: HTMLDivElement) =>
+    observeResize(row, () =>
+      setTooNarrowToSplit(row.clientWidth < PREVIEW_PANEL_SPLIT_MIN_ROW_WIDTH),
+    ),
+  );
+  const rightPanelMaximized = rightPanelState.isOpen && (maximized || tooNarrowToSplit);
   if (!rightPanelState.isOpen && maximized) setMaximized(false);
   const toggleRightPanelMaximized = () => {
     if (rightPanelState.isOpen) setMaximized((value) => !value);
@@ -1190,25 +1252,31 @@ export function PullRequestsPage() {
   const searchInput = (
     <PullRequestSearchInput
       value={search.q ?? ""}
+      label="Search pull requests"
+      placeholder="Search pull requests, or label:bug"
       busy={typedQuery.length > 0 && (!querySettled || showingCarried)}
       onChange={(query) => updateListScope({ q: query || undefined })}
       onSubmit={submitQuery}
     />
   );
-  const openPanelControls = rightPanelState.isOpen ? (
-    <div
-      className={cn(
-        "absolute top-[var(--workspace-pane-local-controls-top)] right-[var(--workspace-pane-local-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
-        mobileSidebarSheetMounted && "hidden",
-      )}
-      data-workspace-titlebar-controls
-    >
-      <RightPanelMaximizeControl
-        maximized={rightPanelMaximized}
-        onToggle={toggleRightPanelMaximized}
-      />
-    </div>
-  ) : null;
+  const openPanelControls =
+    rightPanelState.isOpen && !tooNarrowToSplit ? (
+      <div
+        className={cn(
+          "absolute top-[var(--workspace-pane-local-controls-top)] right-[var(--workspace-pane-local-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
+          mobileSidebarSheetMounted && "hidden",
+        )}
+        data-workspace-titlebar-controls
+      >
+        <RightPanelMaximizeControl
+          maximized={rightPanelMaximized}
+          onToggle={toggleRightPanelMaximized}
+        />
+      </div>
+    ) : null;
+  const listError = listQuery.error
+    ? `${environmentLabels.get(listQuery.error.environmentId) || "Environment"}: ${listQuery.error.message}`
+    : null;
   // Said in the empty list, so a list narrowed to nothing names what narrowed it.
   const hostFilterEntries = hosts.length > 0 ? hosts : expectedHosts;
   const hostFilterEntry = hostFilterEntries.find((entry) => entry.host === search.host);
@@ -1277,9 +1345,6 @@ export function PullRequestsPage() {
       : listErrors.length === 1
         ? `${firstListError.projectTitle}: ${firstListError.message}`
         : `${listErrors.length} repositories could not be read. ${firstListError.projectTitle}: ${firstListError.message}`;
-  const listError = listQuery.error
-    ? `${environmentLabels.get(listQuery.error.environmentId) || "Environment"}: ${listQuery.error.message}`
-    : null;
   const carriedToNothing =
     shownCount === 0 &&
     typedQuery.length === 0 &&
@@ -1426,15 +1491,18 @@ export function PullRequestsPage() {
   const sortMenu = (
     <PullRequestCompactFilterMenu
       label="Sort pull requests"
-      triggerIcon={<ArrowDownUpIcon aria-hidden className="size-3.5 shrink-0" />}
+      triggerIcon={<ArrowDownUpIcon aria-hidden className="size-4" />}
+      triggerLabel="Sort"
       value={sort}
       options={SORT_OPTIONS}
       onChange={(next) => updateListScope({ sort: next })}
     />
   );
-  const renderFiltersMenu = (compactItems?: ReactNode) => (
+  const filtersMenu = (
     <PullRequestFiltersMenu
-      {...(compactItems ? { compactItems } : {})}
+      state={search.state}
+      stateOptions={STATE_TABS}
+      onState={(state) => updateListScope({ state })}
       onOpenChange={setFiltersOpen}
       involvement={search.involvement}
       involvementOptions={INVOLVEMENT_TABS}
@@ -1480,42 +1548,22 @@ export function PullRequestsPage() {
       }
     />
   );
-  const filtersMenu = renderFiltersMenu();
-  const compactMenu = renderFiltersMenu(
-    <>
-      <PullRequestFilterRadioSubmenu
-        label="State"
-        icon={PullRequestGlyph.pullRequest}
-        value={search.state}
-        options={STATE_TABS}
-        onChange={(state) => updateListScope({ state })}
-      />
-      <PullRequestFilterRadioSubmenu
-        label="Sort"
-        icon={ArrowDownUpIcon}
-        value={sort}
-        options={SORT_OPTIONS}
-        onChange={(next) => updateListScope({ sort: next })}
-      />
-      <MenuItem disabled={refreshing} onClick={() => void refreshFromHost()}>
-        <RefreshIcon size="sm" refreshing={refreshing} />
-        Refresh
-      </MenuItem>
-    </>,
-  );
   const columnProps = {
     refreshing,
     onRefresh: () => void refreshFromHost(),
-    searchValue: search.q ?? "",
-    state: search.state,
     host: search.host,
     hostMenuOptions,
-    onState: (state: PullRequestListState) => updateListScope({ state }),
     onHost: (host: string | undefined) => updateListScope({ host }),
     searchInput,
     sortMenu,
     filtersMenu,
-    compactMenu,
+    savedViewsMenu: (
+      <SavedViewsMenu
+        kind={PULL_REQUEST_SAVED_VIEWS}
+        preferences={search}
+        onApply={(preferences) => updateListScope(pullRequestSavedViewPatch(preferences))}
+      />
+    ),
     maximizedAway: rightPanelMaximized,
     listBody,
     scrollRef,
@@ -1616,7 +1664,7 @@ export function PullRequestsPage() {
       variant={splitPanes ? "split" : "pane"}
       className="h-full min-h-0 overflow-hidden overscroll-y-none"
     >
-      <div className="relative flex min-h-0 flex-1">
+      <div ref={observeSplitRow} className="relative flex min-h-0 flex-1">
         {pullRequestsSupported && rightPanelPresent ? openPanelControls : null}
         <PullRequestsColumn {...columnProps} split={splitPanes} />
 
@@ -1688,6 +1736,7 @@ export function PullRequestsPage() {
                   .settlePullRequestReveal(rightPanelRef, renderedPullRequestSurface.id, revealUrl);
               }}
               environmentId={panelEnvironmentId}
+              onBack={tooNarrowToSplit ? toggleRightPanel : undefined}
               onGuideShown={onGuideShown}
               onSelectPullRequest={(reference) => {
                 if (rightPanelRef === null) return;

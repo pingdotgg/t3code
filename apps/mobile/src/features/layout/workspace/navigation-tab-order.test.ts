@@ -5,6 +5,7 @@ import {
   moveNavigationTab,
   overflowNavigationTabs,
   enabledNavigationTabs,
+  sharedSlotAbsentee,
   toggleNavigationTabVisibility,
   resolveSelectedNavigationTab,
   resolveNavigationTabOrder,
@@ -22,10 +23,20 @@ describe("navigation tab order", () => {
   });
 
   it("fills missing sections and drops removed placeholders, duplicates, and Settings", () => {
-    expect(resolveNavigationTabOrder(["bots", "home", "issues", "settings", "bots", null])).toEqual(
-      ["bots", "threads", "pullRequests"],
-    );
+    expect(resolveNavigationTabOrder(["bots", "home", "usage", "settings", "bots", null])).toEqual([
+      "bots",
+      "threads",
+      "pullRequests",
+      "issues",
+    ]);
     expect(resolveNavigationTabOrder()).toEqual(NAVIGATION_TAB_ORDER);
+  });
+
+  it("gives the shared slot to the open list, or else the one opened last", () => {
+    expect(sharedSlotAbsentee("issues", "pullRequests")).toBe("pullRequests");
+    expect(sharedSlotAbsentee("pullRequests", "issues")).toBe("issues");
+    expect(sharedSlotAbsentee("threads", "issues")).toBe("pullRequests");
+    expect(sharedSlotAbsentee("bots", undefined)).toBe("issues");
   });
 
   it("moves a section without changing the relative order of the others", () => {
@@ -51,10 +62,10 @@ describe("navigation tab order", () => {
   it("removes hidden sections from navigation and restores their saved positions", () => {
     const order = moveNavigationTab(undefined, "pullRequests", 0);
     const hidden = toggleNavigationTabVisibility([], "pullRequests");
-    expect(enabledNavigationTabs(order, hidden)).toEqual(["threads", "bots"]);
+    expect(enabledNavigationTabs(order, hidden)).toEqual(["threads", "bots", "issues"]);
     expect(toggleNavigationTabVisibility(hidden, "pullRequests")).toEqual([]);
     expect(visibleNavigationTabs(order, [], 5)).toEqual(order);
-    expect(enabledNavigationTabs(undefined, ["home", "issues", "settings"])).toEqual(
+    expect(enabledNavigationTabs(undefined, ["home", "inbox", "settings"])).toEqual(
       NAVIGATION_TAB_ORDER,
     );
   });

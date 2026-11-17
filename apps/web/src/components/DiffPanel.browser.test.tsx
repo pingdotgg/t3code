@@ -6,6 +6,7 @@ import {
   ProjectId,
   RunId,
   ThreadId,
+  TurnItemId,
   type ClientSettings,
   type ReviewBranchCommitsResult,
   type ReviewDiffPreviewResult,
@@ -31,6 +32,11 @@ const state = vi.hoisted(() => ({
   previews: new Map<string | null, ResultAtom<ReviewDiffPreviewResult>>(),
   patch: null as unknown as ResultAtom<ReviewDiffPreviewSource>,
   diffFilesCollapsed: false,
+  project: {
+    workspaceRoot: "/project",
+    repositoryIdentity: null as { rootPath: string } | null,
+  },
+  toolCallItem: null as unknown,
   config: null as unknown as Atom.Atom<null>,
   status: null as unknown as ResultAtom<VcsStatusResult>,
   localRefs: null as unknown as ResultAtom<VcsListRefsResult>,
@@ -61,7 +67,7 @@ vi.mock("~/state/vcs", () => ({
 }));
 vi.mock("~/state/entities", () => ({
   useQuietThreadShell: () => state.thread,
-  useProject: () => ({ workspaceRoot: "/project", repositoryIdentity: null }),
+  useProject: () => state.project,
   useThreadCheckpointSummaries: () => state.checkpoints,
   useQuietThreadVisibleTurnItems: () => [],
 }));
@@ -81,7 +87,11 @@ vi.mock("~/hooks/useTheme", () => ({
 }));
 vi.mock("~/state/queries", () => ({
   useCheckpointDiff: () => ({ data: state.checkpointDiff, error: null, isPending: false }),
-  useTurnItemDetail: () => ({ data: null, error: null, isPending: false }),
+  useTurnItemDetail: () => ({
+    data: state.toolCallItem ? { item: state.toolCallItem } : null,
+    error: null,
+    isPending: false,
+  }),
   useDebouncedValue: <A,>(value: A) => value,
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => async () => {} }));
@@ -93,7 +103,9 @@ vi.mock("./diffs/DiffFileTree", () => ({ DiffFileTree: () => null }));
 vi.mock("./DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null }));
 
 import DiffPanel from "./DiffPanel";
+import { PanelTabSlotsContext } from "./PanelTabBreadcrumb";
 import { useDiffPanelSessionStore, useDiffPanelStore } from "~/diffPanelStore";
+import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 
 const cwd = "/project-worktree";
 const errorMessage = "Could not find a common commit between 'origin/orphan' and HEAD.";
@@ -126,9 +138,12 @@ function setup(failedBaseRef: string | null) {
       branchBaseRefByThreadKey: {},
     });
     useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
+    useRightPanelStore.setState({ byThreadKey: {}, threadPanelVisibilityByThreadKey: {} });
   };
   reset();
   state.diffFilesCollapsed = false;
+  state.project = { workspaceRoot: "/project", repositoryIdentity: null };
+  state.toolCallItem = null;
   state.checkpoints = [];
   state.checkpointDiff = null;
   const patch = Atom.make<AsyncResult.AsyncResult<ReviewDiffPreviewSource, Error>>(
@@ -214,10 +229,17 @@ it.each([
     using context = setup(failedBaseRef);
     await using screen = await render(
       <RegistryContext.Provider value={context.registry}>
-        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+        <PanelTabSlotsContext
+          value={{ breadcrumb: null, actions: null, registerActions: () => () => {} }}
+        >
+          <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+        </PanelTabSlotsContext>
       </RegistryContext.Provider>,
     );
     await expect.element(screen.getByText(errorMessage, { exact: true })).toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: "Diff scope: Branch changes" }))
+      .toBeVisible();
     const selector = screen.getByRole("combobox", { name: /Change comparison target/ });
     await vi.waitFor(() => expect(selector.query()).not.toBeNull());
     await userEvent.click(selector);
@@ -234,6 +256,37 @@ it.each([
     });
   },
 );
+
+it("opens a repository-relative file from a nested project without a remote", async () => {
+  using context = setup("origin/orphan");
+  state.thread = { ...state.thread!, worktreePath: null };
+  const path = "project/back\\slash.txt";
+  const metadata = preview();
+  const source = {
+    ...metadata.sources[0]!,
+    files: [{ path, previousPath: null, additions: 1, deletions: 0 }],
+  };
+  state.previews.set("main", Atom.make(AsyncResult.success({ ...metadata, sources: [source] })));
+  state.status = Atom.make(
+    AsyncResult.success({
+      ...AsyncResult.getOrElse(context.registry.get(state.status), () => {
+        throw new Error("Missing status");
+      }),
+      workingTree: { rootPath: "/", files: [], insertions: 0, deletions: 0 },
+    }),
+  );
+  useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, "main");
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+    </RegistryContext.Provider>,
+  );
+  // A narrow header shows the redesign's basename, which carries the full path.
+  await userEvent.click(screen.getByText("back\\slash.txt", { exact: true }));
+  expect(
+    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, context.threadRef),
+  ).toMatchObject({ activeSurfaceId: "file:back\\slash.txt" });
+});
 
 it.each([false, true])(
   "expands an unloaded file on the first click with default collapse %s",
@@ -305,10 +358,10 @@ it("says a turn diff cut off at the server's size limit is incomplete", async ()
     .toBeVisible();
 });
 
-// Paths as git's numstat reports them; the parsed patch trims the trailing space from its name.
+// Paths as git's numstat reports them; the parsed patch keeps their edge whitespace.
 it.each([
   { path: " leading.ts", name: " leading.ts" },
-  { path: "src/trailing.ts ", name: "src/trailing.ts" },
+  { path: "src/trailing.ts ", name: "src/trailing.ts " },
 ])("reveals the turn file $path picked from the changed files", async ({ path, name }) => {
   using context = setup("origin/orphan");
   state.diffFilesCollapsed = true;
@@ -337,4 +390,40 @@ it.each([
   await expect
     .element(screen.getByRole("button", { name: `Collapse ${name}`, exact: true }))
     .toHaveAttribute("aria-expanded", "true");
+});
+
+it("opens a file from a tool call's diff by the path its agent recorded", async () => {
+  using context = setup("origin/orphan");
+  // A local thread in a project that is the repository's apps/web folder.
+  state.thread = { ...state.thread!, worktreePath: null };
+  state.project = { workspaceRoot: "/repo/apps/web", repositoryIdentity: { rootPath: "/repo" } };
+  const status = AsyncResult.getOrThrow(context.registry.get(state.status));
+  state.status = Atom.make(
+    AsyncResult.success({ ...status, workingTree: { ...status.workingTree, rootPath: "/repo" } }),
+  );
+  // Claude's Edit can record a path relative to the workspace, unlike the repository's diffs.
+  state.toolCallItem = {
+    type: "file_change",
+    fileName: "src/a.ts",
+    diffStr: "--- src/a.ts\n+++ src/a.ts\n@@ -1 +1 @@\n-before\n+after\n",
+  };
+  useDiffPanelStore.getState().selectToolCall(context.threadRef, {
+    threadId: context.threadRef.threadId,
+    itemId: TurnItemId.make("edit"),
+    revision: "1",
+  });
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <div className="flex h-[600px] flex-col">
+        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+      </div>
+    </RegistryContext.Provider>,
+  );
+  // A narrow header shows the redesign's basename, which carries the full path.
+  await userEvent.click(screen.getByText("a.ts", { exact: true }));
+  await vi.waitFor(() =>
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, context.threadRef),
+    ).toMatchObject({ activeSurfaceId: "file:src/a.ts" }),
+  );
 });

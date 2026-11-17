@@ -1,10 +1,4 @@
 import { useAtomValue } from "@effect/atom-react";
-import {
-  PanelTabActions,
-  PanelTabBreadcrumb,
-  useInPanelTabBar,
-  usePanelTabBreadcrumbOnBar,
-} from "./PanelTabBreadcrumb";
 import type { FileDiffContentsLoader, FileDiffMetadata } from "@pierre/diffs";
 import {
   isAtomCommandInterrupted,
@@ -57,8 +51,7 @@ import { useHideTestFiles } from "./diffs/useHideTestFiles";
 import { useRenderedAppearance } from "../hooks/useTheme";
 import { useStableCallback } from "../hooks/useStableCallback";
 import {
-  buildFileDiffContentVersion,
-  buildFileDiffIdentityKey,
+  buildFileDiffEntries,
   getDiffCollapseIconClassName,
   getDiffLineStat,
   getRenderablePatch,
@@ -85,6 +78,7 @@ import { DiffFileTree } from "./diffs/DiffFileTree";
 import { FileExplorerPane } from "./files/FileExplorerPane";
 import { DiffViewControls } from "./diffs/DiffViewControls";
 import { diffFileTreeEntries } from "./diffs/diffFileTree.logic";
+import { getDiffHeaderClickAction } from "./diffs/diffHeaderClick";
 import { Button, InlineButton } from "./ui/button";
 import { Switch } from "./ui/switch";
 import {
@@ -136,22 +130,6 @@ import {
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
 const DIFF_FILE_TREE_STORAGE_KEY = "t3code.diffFileTreeOpen";
-const fileEntryCache = new WeakMap<
-  FileDiffMetadata,
-  { fileDiff: FileDiffMetadata; fileKey: string; fileVersion: number }
->();
-
-function getCachedFileEntry(fileDiff: FileDiffMetadata) {
-  const cached = fileEntryCache.get(fileDiff);
-  if (cached) return cached;
-  const entry = {
-    fileDiff,
-    fileKey: buildFileDiffIdentityKey(fileDiff),
-    fileVersion: buildFileDiffContentVersion(fileDiff),
-  };
-  fileEntryCache.set(fileDiff, entry);
-  return entry;
-}
 
 const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
 
@@ -190,6 +168,7 @@ function DiffFileCollapseToggle({
                 { rootMargin: "600px" },
               );
             }}
+            data-diff-file-key={fileKey}
             onClick={(event) => {
               event.stopPropagation();
               onToggle(fileKey);
@@ -210,12 +189,14 @@ function DiffFileCollapseToggle({
 
 function DiffFileHeaderSuffix({
   filePath,
+  workspaceRoot,
   hasStat,
   error,
   truncated,
   onRetry,
 }: {
   filePath: string;
+  workspaceRoot: string | undefined;
   hasStat: boolean;
   error: boolean;
   truncated: boolean;
@@ -224,7 +205,7 @@ function DiffFileHeaderSuffix({
   return (
     <>
       <span data-diff-copy-path className="inline-flex">
-        <DiffFilePathCopyButton filePath={filePath} />
+        <DiffFilePathCopyButton filePath={filePath} workspaceRoot={workspaceRoot} />
       </span>
       {hasStat ? (
         <DiffFileStatus error={error} truncated={truncated} retry={() => onRetry(filePath)} />
@@ -268,9 +249,6 @@ export default function DiffPanel({
     timestampFormat: settings.timestampFormat,
     wordWrap: settings.wordWrap,
   }));
-  const inPanelTabBar = useInPanelTabBar();
-  // On the pane's bar the breadcrumb also shares the row with the pane's tabs.
-  const crumbOnBar = usePanelTabBreadcrumbOnBar();
   const diffLayout = settings.diffLayout;
   const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
   const wordWrap = wordWrapOverride ?? settings.wordWrap;
@@ -285,7 +263,6 @@ export default function DiffPanel({
   const [baseRefQuery, setBaseRefQuery] = useState("");
   // The open commit menu keeps the list it opened with, so rows do not move under the pointer.
   const [openCommitMenu, setOpenCommitMenu] = useState<ReviewBranchCommitsResult | null>(null);
-  const [codeViewRevision, setCodeViewRevision] = useState(0);
   // The comments written here since the review tray was last dismissed, for its one-press Undo.
   // Tied to the draft they went into, so switching threads does not carry a batch across.
   const composerDraftKey =
@@ -334,9 +311,6 @@ export default function DiffPanel({
       : null,
   );
   const activeCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot;
-  const activeRepositoryRoot = activeThread?.worktreePath
-    ? undefined
-    : activeProject?.repositoryIdentity?.rootPath;
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(activeThread?.environmentId ?? null),
   );
@@ -354,6 +328,9 @@ export default function DiffPanel({
         })
       : null,
   );
+  const activeRepositoryRoot =
+    gitStatusQuery.data?.workingTree.rootPath ??
+    (activeThread?.worktreePath ? undefined : activeProject?.repositoryIdentity?.rootPath);
   const diffSelection = useDiffPanelStore((state) =>
     selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),
   );
@@ -361,6 +338,9 @@ export default function DiffPanel({
     selectThreadBranchBaseRef(state, routeThreadRef),
   );
   const toolCallSelection = diffSelection.kind === "tool-call" ? diffSelection : null;
+  // Turn and git diffs name files from the repository root; a tool call's diff names them as
+  // its provider recorded them, absolute or relative to the workspace.
+  const diffPathRepositoryRoot = toolCallSelection ? undefined : activeRepositoryRoot;
   const isGitSelection =
     diffSelection.kind === "branch" ||
     diffSelection.kind === "unstaged" ||
@@ -403,9 +383,7 @@ export default function DiffPanel({
     diffSelection.kind === "branch" || diffSelection.kind === "commit"
       ? diffSelection.baseRef
       : null;
-  // @pierre/diffs trims trailing whitespace from parsed file names; leading whitespace survives.
-  const selectedFilePath =
-    diffSelection.kind === "turn" ? diffSelection.filePath?.trimEnd() || null : null;
+  const selectedFilePath = diffSelection.kind === "turn" ? (diffSelection.filePath ?? null) : null;
   const selectedFileRevealRequestId =
     diffSelection.kind === "turn" ? diffSelection.revealRequestId : 0;
   const selectedTurn =
@@ -425,7 +403,7 @@ export default function DiffPanel({
   const collapseScopeKey = routeThreadRef
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}:${reviewSectionId}`
     : null;
-  const codeViewMountKey = `${collapseScopeKey ?? reviewSectionId}:${codeViewRevision}`;
+  const codeViewMountKey = collapseScopeKey ?? reviewSectionId;
   const selectedCheckpointRange =
     typeof selectedCheckpointTurnCount === "number"
       ? {
@@ -708,10 +686,10 @@ export default function DiffPanel({
 
   const isRefreshingDiff = branchDiffPreview.isPending || areFilePatchesPending;
   const pathOccurrences = new Map<string, number>();
-  const renderableFileEntries = renderableFiles.map((fileDiff) => {
-    const entry = getCachedFileEntry(fileDiff);
+  const renderableFileEntries = buildFileDiffEntries(renderableFiles).map((entry) => {
     if (!isGitSelection) return entry;
-    // Metadata has no change type; keep each path's identity when its patch arrives.
+    const { fileDiff } = entry;
+    // Metadata's change type can be missing or differ from the patch's; key each path's identity by path.
     const pathKey = JSON.stringify([fileDiff.prevName ?? fileDiff.name, fileDiff.name]);
     const occurrence = pathOccurrences.get(pathKey) ?? 0;
     pathOccurrences.set(pathKey, occurrence + 1);
@@ -813,7 +791,7 @@ export default function DiffPanel({
       threadRef: routeThreadRef,
       filePath,
       activeCwd,
-      repositoryRoot: activeRepositoryRoot,
+      repositoryRoot: diffPathRepositoryRoot,
       openInEditor: (targetPath) => {
         void (async () => {
           const result = await openInPreferredEditor(targetPath);
@@ -847,19 +825,18 @@ export default function DiffPanel({
       return next;
     });
   });
-  // Find can ask again before the unfolded file reaches the viewer, so this must never fold.
-  const unfoldDiffFile = useStableCallback((fileKey: string) => {
+  const setDiffFileCollapsed = useStableCallback((fileKey: string, collapsed: boolean) => {
     updateCollapsedDiffFiles((current) => {
-      if (!current.has(fileKey)) return current;
+      if (current.has(fileKey) === collapsed) return current;
       const next = new Set(current);
-      next.delete(fileKey);
+      if (collapsed) next.add(fileKey);
+      else next.delete(fileKey);
       return next;
     });
   });
 
   const toggleDiffFileCollapse = () => {
     codeViewScroll.discard();
-    setCodeViewRevision((current) => current + 1);
     updateCollapsedDiffFiles((current) => toggleAllDiffFiles(shownFileKeys, current));
   };
 
@@ -901,344 +878,315 @@ export default function DiffPanel({
     }
   };
 
-  // In tab headers, fold view controls before refs and scope labels as room shrinks.
-  // Keep the comparison picker reachable even when the labels truncate.
-  const crowdedTab =
-    inPanelTabBar &&
-    (crumbOnBar ||
-      (selectedRunId === null && selectedGitScope === "branch" && !!selectedGitSource?.baseRef));
   const scopeCrumb = (
-    <PanelTabBreadcrumb>
-      <span className="flex min-w-0 items-center gap-3">
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={<Button size="xs" variant="ghost" />}
-            className="min-w-0 max-w-full shrink"
-            aria-label={`Diff scope: ${selectedScopeLabel}`}
-            data-workspace-focus-default
-          >
-            <span className="truncate">{selectedScopeLabel}</span>
-            <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
-          </DropdownMenuTrigger>
-          {headerCommitSha !== null ? (
-            selectedCommitUrl ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <InlineButton
-                      tone="muted"
-                      className="shrink-0"
-                      render={
-                        <a href={selectedCommitUrl} target="_blank" rel="noopener noreferrer" />
-                      }
-                      onClick={(event) => openCommitUrl(event, selectedCommitUrl)}
-                    />
-                  }
-                >
-                  <Text variant="meta" mono>
-                    {headerCommitSha.slice(0, 7)}
-                  </Text>
-                </TooltipTrigger>
-                <TooltipPopup side="top">{selectedCommitUrl}</TooltipPopup>
-              </Tooltip>
-            ) : (
-              <span className="shrink-0 font-mono text-meta text-muted-foreground">
-                {headerCommitSha.slice(0, 7)}
-              </span>
-            )
-          ) : null}
-          <DropdownMenuContent align="start" className="w-49">
-            <DropdownMenuRadioGroup value={selectedScopeValue} onValueChange={selectScopeValue}>
-              <DropdownMenuRadioItem value="unstaged" closeOnClick>
-                <span>Working tree</span>
-              </DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="branch" closeOnClick>
-                <span>Branch changes</span>
-              </DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="latest" closeOnClick>
-                <span>Latest turn</span>
-              </DropdownMenuRadioItem>
-            </DropdownMenuRadioGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>Turn</DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="w-50">
-                <DropdownMenuRadioGroup value={selectedTurnValue} onValueChange={selectScopeValue}>
-                  {orderedTurnDiffSummaries.map((summary) => {
-                    const turnCount = summary.checkpointTurnCount;
-                    return (
-                      <DropdownMenuRadioItem
-                        key={summary.runId}
-                        value={`turn:${summary.runId}`}
-                        closeOnClick
-                      >
-                        <span className="flex items-center gap-2">
-                          <span>Turn {turnCount}</span>
-                          <span className="ml-auto text-meta tabular-nums text-muted-foreground">
-                            {formatShortTimestamp(summary.completedAt, settings.timestampFormat)}
-                          </span>
-                        </span>
-                      </DropdownMenuRadioItem>
-                    );
-                  })}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-            <DropdownMenuSub
-              onOpenChange={(open) => {
-                setOpenCommitMenu(open ? (branchCommitsQuery.data ?? null) : null);
-                if (!open) return;
-                // The menu keeps the list it opened with; the refreshed one shows next time.
-                branchCommitsQuery.refresh();
-              }}
-            >
-              <DropdownMenuSubTrigger>Commits</DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="max-h-80 max-w-96">
-                <DropdownMenuRadioGroup
-                  value={selectedCommitValue}
-                  onValueChange={selectScopeValue}
-                >
-                  {branchCommits?.commits.map((commit) => {
-                    const commitUrl = projectCommitUrl(
-                      activeProject?.repositoryIdentity,
-                      commit.sha,
-                    );
-                    return (
-                      <div
-                        key={commit.sha}
-                        className={cn(
-                          "flex items-center rounded-item hover:surface-selected-soft has-data-highlighted:surface-selected-soft has-focus-visible:surface-selected-soft [&_[data-checked]]:bg-transparent [&_[data-highlighted]]:bg-transparent",
-                          selectedCommitSha === commit.sha && "surface-selected-soft",
-                        )}
-                      >
-                        <Tooltip>
-                          <TooltipTrigger
-                            render={
-                              <DropdownMenuRadioItem
-                                className="min-w-0 flex-1"
-                                value={`commit:${commit.sha}`}
-                                closeOnClick
-                              />
-                            }
-                          >
-                            <span className="flex items-center gap-3">
-                              <span className="min-w-0 flex-1 truncate">{commit.subject}</span>
-                              <span className="shrink-0 text-meta tabular-nums text-muted-foreground">
-                                {formatRelativeTimeLabel(commit.committedAt, Date.parse(now))}
-                              </span>
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipPopup side="right" className="max-w-80">
-                            {commit.subject}
-                          </TooltipPopup>
-                        </Tooltip>
-                        {commitUrl ? (
-                          <DropdownMenuItem
-                            className="shrink-0"
-                            render={
-                              <a
-                                href={commitUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                aria-label={`Open commit ${commit.sha.slice(0, 7)}`}
-                              />
-                            }
-                            onClick={(event) => openCommitUrl(event, commitUrl)}
-                          >
-                            <span className="font-mono text-meta text-muted-foreground underline underline-offset-4">
-                              {commit.sha.slice(0, 7)}
-                            </span>
-                          </DropdownMenuItem>
-                        ) : (
-                          <span className="shrink-0 px-2 font-mono text-meta text-muted-foreground">
-                            {commit.sha.slice(0, 7)}
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </DropdownMenuRadioGroup>
-                {branchCommitsQuery.error ? (
-                  <DropdownMenuItem disabled>{branchCommitsQuery.error}</DropdownMenuItem>
-                ) : !canReadFiles ? (
-                  <DropdownMenuItem disabled>
-                    {fileAccess.isPending
-                      ? "Checking file access..."
-                      : (fileAccess.error ?? "This connection cannot read local diffs.")}
-                  </DropdownMenuItem>
-                ) : branchCommits === null ? (
-                  <DropdownMenuItem disabled>Loading commits...</DropdownMenuItem>
-                ) : branchCommits.commits.length === 0 ? (
-                  <DropdownMenuItem disabled>No commits on this branch.</DropdownMenuItem>
-                ) : branchCommits.truncated ? (
-                  <DropdownMenuItem disabled>
-                    {`Showing latest ${branchCommits.commits.length} commits`}
-                  </DropdownMenuItem>
-                ) : null}
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        {canSelectBranchBase && (
-          <div
-            className={cn(
-              "min-w-0 max-w-full items-center gap-2 overflow-hidden text-meta text-muted-foreground",
-              crowdedTab ? "flex min-w-16" : "flex",
-            )}
-            aria-label={`Comparing ${comparisonHeadRef} against ${comparisonBaseRef}`}
-          >
+    <span className="flex min-w-0 flex-1 items-center gap-3">
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={<Button size="xs" variant="ghost" />}
+          className={headerCommitSha === null ? "shrink-0" : "min-w-0 shrink"}
+          title={selectedScopeLabel}
+          aria-label={`Diff scope: ${selectedScopeLabel}`}
+          data-workspace-focus-default
+        >
+          <span className="truncate">{selectedScopeLabel}</span>
+          <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+        </DropdownMenuTrigger>
+        {headerCommitSha !== null ? (
+          selectedCommitUrl ? (
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <span
-                    className={cn(
-                      "min-w-[min(3rem,calc(100%-2.75rem))] items-center gap-2 overflow-hidden",
-                      crowdedTab ? "hidden @xl/diff-toolbar:flex" : "flex",
-                    )}
+                  <InlineButton
+                    tone="muted"
+                    className="shrink-0"
+                    render={
+                      <a href={selectedCommitUrl} target="_blank" rel="noopener noreferrer" />
+                    }
+                    onClick={(event) => openCommitUrl(event, selectedCommitUrl)}
                   />
                 }
               >
-                <span className="min-w-0 max-w-48 truncate">{comparisonHeadRef}</span>
-                <ArrowRightIcon className="size-3.5 shrink-0 opacity-70" />
+                <Text variant="meta" mono>
+                  {headerCommitSha.slice(0, 7)}
+                </Text>
               </TooltipTrigger>
-              <TooltipPopup side="top">
-                {`${comparisonHeadRef} → ${comparisonBaseRef}`}
-              </TooltipPopup>
+              <TooltipPopup side="top">{selectedCommitUrl}</TooltipPopup>
             </Tooltip>
-            <Tooltip>
-              <TooltipTrigger render={<span aria-hidden className="hidden" />}>vs</TooltipTrigger>
-              <TooltipPopup side="top">
-                {`${comparisonHeadRef} → ${comparisonBaseRef}`}
-              </TooltipPopup>
-            </Tooltip>
-            <Combobox
-              items={baseRefItems}
-              filteredItems={filteredBaseRefItems}
-              value={selectedBaseRef ?? AUTOMATIC_BASE_REF}
-              onOpenChange={(open) => {
-                if (!open) setBaseRefQuery("");
-              }}
-              onValueChange={(value) => {
-                if (!value) return;
-                selectBranchBaseRef(value === AUTOMATIC_BASE_REF ? null : value);
-              }}
+          ) : (
+            <span className="shrink-0 font-mono text-meta text-muted-foreground">
+              {headerCommitSha.slice(0, 7)}
+            </span>
+          )
+        ) : null}
+        <DropdownMenuContent align="start" className="w-49">
+          <DropdownMenuRadioGroup value={selectedScopeValue} onValueChange={selectScopeValue}>
+            <DropdownMenuRadioItem value="unstaged" closeOnClick>
+              <span>Working tree</span>
+            </DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="branch" closeOnClick>
+              <span>Branch changes</span>
+            </DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="latest" closeOnClick>
+              <span>Latest turn</span>
+            </DropdownMenuRadioItem>
+          </DropdownMenuRadioGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>Turn</DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-50">
+              <DropdownMenuRadioGroup value={selectedTurnValue} onValueChange={selectScopeValue}>
+                {orderedTurnDiffSummaries.map((summary) => {
+                  const turnCount = summary.checkpointTurnCount;
+                  return (
+                    <DropdownMenuRadioItem
+                      key={summary.runId}
+                      value={`turn:${summary.runId}`}
+                      closeOnClick
+                    >
+                      <span className="flex items-center gap-2">
+                        <span>Turn {turnCount}</span>
+                        <span className="ml-auto text-meta tabular-nums text-muted-foreground">
+                          {formatShortTimestamp(summary.completedAt, settings.timestampFormat)}
+                        </span>
+                      </span>
+                    </DropdownMenuRadioItem>
+                  );
+                })}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+          <DropdownMenuSub
+            onOpenChange={(open) => {
+              setOpenCommitMenu(open ? (branchCommitsQuery.data ?? null) : null);
+              if (!open) return;
+              // The menu keeps the list it opened with; the refreshed one shows next time.
+              branchCommitsQuery.refresh();
+            }}
+          >
+            <DropdownMenuSubTrigger>Commits</DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="max-h-80 max-w-96">
+              <DropdownMenuRadioGroup value={selectedCommitValue} onValueChange={selectScopeValue}>
+                {branchCommits?.commits.map((commit) => {
+                  const commitUrl = projectCommitUrl(activeProject?.repositoryIdentity, commit.sha);
+                  return (
+                    <div
+                      key={commit.sha}
+                      className={cn(
+                        "flex items-center rounded-item hover:surface-selected-soft has-data-highlighted:surface-selected-soft has-focus-visible:surface-selected-soft [&_[data-checked]]:bg-transparent [&_[data-highlighted]]:bg-transparent",
+                        selectedCommitSha === commit.sha && "surface-selected-soft",
+                      )}
+                    >
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <DropdownMenuRadioItem
+                              className="min-w-0 flex-1"
+                              value={`commit:${commit.sha}`}
+                              closeOnClick
+                            />
+                          }
+                        >
+                          <span className="flex items-center gap-3">
+                            <span className="min-w-0 flex-1 truncate">{commit.subject}</span>
+                            <span className="shrink-0 text-meta tabular-nums text-muted-foreground">
+                              {formatRelativeTimeLabel(commit.committedAt, Date.parse(now))}
+                            </span>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipPopup side="right" className="max-w-80">
+                          {commit.subject}
+                        </TooltipPopup>
+                      </Tooltip>
+                      {commitUrl ? (
+                        <DropdownMenuItem
+                          className="shrink-0"
+                          render={
+                            <a
+                              href={commitUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              aria-label={`Open commit ${commit.sha.slice(0, 7)}`}
+                            />
+                          }
+                          onClick={(event) => openCommitUrl(event, commitUrl)}
+                        >
+                          <span className="font-mono text-meta text-muted-foreground underline underline-offset-4">
+                            {commit.sha.slice(0, 7)}
+                          </span>
+                        </DropdownMenuItem>
+                      ) : (
+                        <span className="shrink-0 px-2 font-mono text-meta text-muted-foreground">
+                          {commit.sha.slice(0, 7)}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </DropdownMenuRadioGroup>
+              {branchCommitsQuery.error ? (
+                <DropdownMenuItem disabled>{branchCommitsQuery.error}</DropdownMenuItem>
+              ) : !canReadFiles ? (
+                <DropdownMenuItem disabled>
+                  {fileAccess.isPending
+                    ? "Checking file access..."
+                    : (fileAccess.error ?? "This connection cannot read local diffs.")}
+                </DropdownMenuItem>
+              ) : branchCommits === null ? (
+                <DropdownMenuItem disabled>Loading commits...</DropdownMenuItem>
+              ) : branchCommits.commits.length === 0 ? (
+                <DropdownMenuItem disabled>No commits on this branch.</DropdownMenuItem>
+              ) : branchCommits.truncated ? (
+                <DropdownMenuItem disabled>
+                  {`Showing latest ${branchCommits.commits.length} commits`}
+                </DropdownMenuItem>
+              ) : null}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {canSelectBranchBase && (
+        <div
+          className="flex min-w-16 max-w-full items-center gap-2 overflow-hidden text-meta text-muted-foreground"
+          aria-label={`Comparing ${comparisonHeadRef} against ${comparisonBaseRef}`}
+        >
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span className="hidden min-w-[min(3rem,calc(100%-2.75rem))] items-center gap-2 overflow-hidden @xl/diff-toolbar:flex" />
+              }
             >
-              <ComboboxTrigger
-                render={<Button variant="ghost-muted" size="xs" />}
-                className="min-w-9 max-w-48 shrink"
-                aria-label={`Change comparison target. Currently ${comparisonBaseRef}`}
-              >
-                <span className="min-w-0 truncate font-normal">{comparisonBaseRef}</span>
-                <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
-              </ComboboxTrigger>
-              <ComboboxPopup
-                align="start"
-                className="w-72 min-w-0 max-w-[calc(100vw-1rem)] overflow-hidden"
-              >
-                <ComboboxSearchInput
-                  placeholder="Search refs..."
-                  value={baseRefQuery}
-                  onChange={(event) => setBaseRefQuery(event.target.value)}
-                />
-                <div className="grid shrink-0 grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 border-b border-border ps-3 pe-6.5 pt-2 pb-1.5 text-micro text-muted-foreground">
-                  <span aria-hidden="true" />
-                  <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_2rem] items-center">
-                    <span>Branch</span>
-                    <span className="text-right">Remote</span>
-                  </div>
+              <span className="min-w-0 max-w-48 truncate">{comparisonHeadRef}</span>
+              <ArrowRightIcon className="size-3.5 shrink-0 opacity-70" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">{`${comparisonHeadRef} → ${comparisonBaseRef}`}</TooltipPopup>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger render={<span aria-hidden className="hidden" />}>vs</TooltipTrigger>
+            <TooltipPopup side="top">{`${comparisonHeadRef} → ${comparisonBaseRef}`}</TooltipPopup>
+          </Tooltip>
+          <Combobox
+            items={baseRefItems}
+            filteredItems={filteredBaseRefItems}
+            value={selectedBaseRef ?? AUTOMATIC_BASE_REF}
+            onOpenChange={(open) => {
+              if (!open) setBaseRefQuery("");
+            }}
+            onValueChange={(value) => {
+              if (!value) return;
+              selectBranchBaseRef(value === AUTOMATIC_BASE_REF ? null : value);
+            }}
+          >
+            <ComboboxTrigger
+              render={<Button variant="ghost-muted" size="xs" />}
+              className="min-w-9 max-w-48 shrink"
+              aria-label={`Change comparison target. Currently ${comparisonBaseRef}`}
+            >
+              <span className="min-w-0 truncate font-normal">{comparisonBaseRef}</span>
+              <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+            </ComboboxTrigger>
+            <ComboboxPopup
+              align="start"
+              className="w-72 min-w-0 max-w-[calc(100vw-1rem)] overflow-hidden"
+            >
+              <ComboboxSearchInput
+                placeholder="Search refs..."
+                value={baseRefQuery}
+                onChange={(event) => setBaseRefQuery(event.target.value)}
+              />
+              <div className="grid shrink-0 grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 border-b border-border ps-3 pe-6.5 pt-2 pb-1.5 text-micro text-muted-foreground">
+                <span aria-hidden="true" />
+                <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_2rem] items-center">
+                  <span>Branch</span>
+                  <span className="text-right">Remote</span>
                 </div>
-                <ComboboxEmpty>No matching refs.</ComboboxEmpty>
-                <ComboboxList className="max-h-64 min-w-0 overflow-x-hidden">
-                  <ComboboxItem
-                    className="w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)]"
-                    value={AUTOMATIC_BASE_REF}
-                  >
-                    <span className="block min-w-0 truncate">Automatic</span>
-                  </ComboboxItem>
-                  {baseRefChoices.map((choice) => {
-                    const item = valueForBaseRefChoice(choice);
-                    const hasBoth = choice.local !== null && choice.remote !== null;
-                    const useRemote = choice.remote?.name === item;
-                    return (
-                      <ComboboxItem
-                        key={choice.id}
-                        className="w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)]"
-                        value={item}
-                      >
-                        <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_2rem] items-center overflow-hidden">
-                          <span className="block min-w-0 truncate pe-2">{choice.label}</span>
-                          {hasBoth ? (
-                            <div
-                              className="flex justify-end"
-                              onClick={(event) => event.stopPropagation()}
-                              onPointerDown={(event) => event.stopPropagation()}
-                            >
-                              <Switch
-                                aria-label={`Use remote version of ${choice.label}`}
-                                checked={useRemote}
-                                className="[--thumb-size:--spacing(3)]"
-                                onCheckedChange={(checked) => {
-                                  const nextRef = checked
-                                    ? choice.remote?.name
-                                    : choice.local?.name;
-                                  if (nextRef) selectBranchBaseRef(nextRef);
-                                }}
-                              />
-                            </div>
-                          ) : choice.remote ? (
-                            <Tooltip>
-                              <TooltipTrigger
-                                render={
-                                  <span className="flex justify-end text-muted-foreground">
-                                    <CheckIcon
-                                      role="img"
-                                      aria-label="Remote only"
-                                      className="size-3"
-                                    />
-                                  </span>
-                                }
-                              />
-                              <TooltipPopup side="top">Remote only</TooltipPopup>
-                            </Tooltip>
-                          ) : null}
-                        </div>
-                      </ComboboxItem>
-                    );
-                  })}
-                </ComboboxList>
-              </ComboboxPopup>
-            </Combobox>
-          </div>
-        )}
-      </span>
-    </PanelTabBreadcrumb>
+              </div>
+              <ComboboxEmpty>No matching refs.</ComboboxEmpty>
+              <ComboboxList className="max-h-64 min-w-0 overflow-x-hidden">
+                <ComboboxItem
+                  className="w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)]"
+                  value={AUTOMATIC_BASE_REF}
+                >
+                  <span className="block min-w-0 truncate">Automatic</span>
+                </ComboboxItem>
+                {baseRefChoices.map((choice) => {
+                  const item = valueForBaseRefChoice(choice);
+                  const hasBoth = choice.local !== null && choice.remote !== null;
+                  const useRemote = choice.remote?.name === item;
+                  return (
+                    <ComboboxItem
+                      key={choice.id}
+                      className="w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)]"
+                      value={item}
+                    >
+                      <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_2rem] items-center overflow-hidden">
+                        <span className="block min-w-0 truncate pe-2">{choice.label}</span>
+                        {hasBoth ? (
+                          <div
+                            className="flex justify-end"
+                            onClick={(event) => event.stopPropagation()}
+                            onPointerDown={(event) => event.stopPropagation()}
+                          >
+                            <Switch
+                              aria-label={`Use remote version of ${choice.label}`}
+                              checked={useRemote}
+                              className="[--thumb-size:--spacing(3)]"
+                              onCheckedChange={(checked) => {
+                                const nextRef = checked ? choice.remote?.name : choice.local?.name;
+                                if (nextRef) selectBranchBaseRef(nextRef);
+                              }}
+                            />
+                          </div>
+                        ) : choice.remote ? (
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <span className="flex justify-end text-muted-foreground">
+                                  <CheckIcon
+                                    role="img"
+                                    aria-label="Remote only"
+                                    className="size-3"
+                                  />
+                                </span>
+                              }
+                            />
+                            <TooltipPopup side="top">Remote only</TooltipPopup>
+                          </Tooltip>
+                        ) : null}
+                      </div>
+                    </ComboboxItem>
+                  );
+                })}
+              </ComboboxList>
+            </ComboboxPopup>
+          </Combobox>
+        </div>
+      )}
+    </span>
   );
   const viewControls = (
-    <PanelTabActions>
-      <DiffViewControls
-        diffLayout={diffLayout}
-        wordWrap={wordWrap}
-        onWordWrapChange={setWordWrapOverride}
-        ignoreWhitespace={diffIgnoreWhitespace}
-        onIgnoreWhitespaceChange={(value) =>
-          useDiffPanelSessionStore.getState().setIgnoreWhitespace(value)
-        }
-        hasFiles={diffFileKeys.length > 0}
-        testFileCount={testFileCount}
-        hideTestFiles={hideTestFiles}
-        onHideTestFilesChange={setHideTestFiles}
-        foldBelow={crowdedTab ? "2xl" : "sm"}
-        fileTreeOpen={fileTreeOpen}
-        onFileTreeOpenChange={setFileTreeOpen}
-        allFilesCollapsed={allDiffFilesCollapsed}
-        onToggleAllFiles={toggleDiffFileCollapse}
-        refresh={
-          canRefreshGitDiff
-            ? { refreshing: isRefreshingDiff, onRefresh: refreshDiffFromUserAction }
-            : undefined
-        }
-      />
-    </PanelTabActions>
+    <DiffViewControls
+      diffLayout={diffLayout}
+      wordWrap={wordWrap}
+      onWordWrapChange={setWordWrapOverride}
+      ignoreWhitespace={diffIgnoreWhitespace}
+      onIgnoreWhitespaceChange={(value) =>
+        useDiffPanelSessionStore.getState().setIgnoreWhitespace(value)
+      }
+      hasFiles={diffFileKeys.length > 0}
+      testFileCount={testFileCount}
+      hideTestFiles={hideTestFiles}
+      onHideTestFilesChange={setHideTestFiles}
+      foldBelow="2xl"
+      fileTreeOpen={fileTreeOpen}
+      onFileTreeOpenChange={setFileTreeOpen}
+      allFilesCollapsed={allDiffFilesCollapsed}
+      onToggleAllFiles={toggleDiffFileCollapse}
+      refresh={
+        canRefreshGitDiff
+          ? { refreshing: isRefreshingDiff, onRefresh: refreshDiffFromUserAction }
+          : undefined
+      }
+    />
   );
   const headerRow = (
     <>
@@ -1252,13 +1200,7 @@ export default function DiffPanel({
   );
 
   return (
-    <DiffPanelShell mode={mode} header={inPanelTabBar ? null : headerRow}>
-      {inPanelTabBar ? (
-        <>
-          {scopeCrumb}
-          {viewControls}
-        </>
-      ) : null}
+    <DiffPanelShell mode={mode} header={headerRow}>
       {!activeThread ? (
         <PanelEmptyState
           icon={<FileDiffIcon />}
@@ -1402,29 +1344,12 @@ export default function DiffPanel({
                 <div
                   className="min-h-0 min-w-0 flex-1"
                   onClickCapture={(event) => {
-                    const composedPath = event.nativeEvent.composedPath?.() ?? [];
-                    for (const node of composedPath) {
-                      if (!(node instanceof HTMLElement)) continue;
-                      // Header buttons own their clicks; bubbling a chevron click would toggle twice.
-                      if (node instanceof HTMLButtonElement || node instanceof HTMLAnchorElement) {
-                        return;
-                      }
-                    }
-                    const filePath = diffHeaderTitlePath(composedPath);
-                    if (filePath) {
-                      openDiffFile(filePath);
-                      return;
-                    }
-                    const header = composedPath.find(
-                      (node): node is HTMLElement =>
-                        node instanceof HTMLElement && node.hasAttribute("data-diffs-header"),
-                    );
-                    const headerFilePath = header?.querySelector("[data-title]")?.textContent;
-                    if (!headerFilePath) return;
-                    const file = codeViewFiles.find(
-                      (candidate) => candidate.filePath === headerFilePath,
-                    );
-                    if (file) toggleDiffFileCollapsed(file.fileKey);
+                    const action = getDiffHeaderClickAction(event.nativeEvent);
+                    if (!action) return;
+                    // The redesign's basename in the header prefix names its file for Open.
+                    const filePath = diffHeaderTitlePath(event.nativeEvent.composedPath());
+                    if (filePath) openDiffFile(filePath);
+                    else if (action.type === "toggle") toggleDiffFileCollapsed(action.fileKey);
                   }}
                   onContextMenuCapture={(event) => {
                     const composedPath = event.nativeEvent.composedPath?.() ?? [];
@@ -1436,7 +1361,7 @@ export default function DiffPanel({
                         environmentId: activeThread?.environmentId ?? null,
                         filePath,
                         workspaceRoot: activeCwd,
-                        repositoryRoot: activeRepositoryRoot,
+                        repositoryRoot: diffPathRepositoryRoot,
                       },
                       event,
                     );
@@ -1463,6 +1388,7 @@ export default function DiffPanel({
                       return (
                         <DiffFileHeaderSuffix
                           filePath={path}
+                          workspaceRoot={activeCwd}
                           hasStat={fileStats.has(path)}
                           error={state?.error ?? false}
                           truncated={state?.truncated ?? false}
@@ -1479,7 +1405,7 @@ export default function DiffPanel({
                         <DiffFileHeaderStat additions={stat.additions} deletions={stat.deletions} />
                       ) : null;
                     }}
-                    onRevealSearchMatch={unfoldDiffFile}
+                    onFileCollapsedChange={setDiffFileCollapsed}
                     renderHeaderPrefix={(fileDiff, fileKey, collapsed) => {
                       const filePath = resolveFileDiffPath(fileDiff);
                       // One flex row: the slot wraps it in a block div, and bare svgs would stack.

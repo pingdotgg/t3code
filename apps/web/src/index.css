@@ -190,8 +190,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   @variant dark {
     --appearance-contrast-target: white;
-    --app-scrollbar-thumb: rgb(255 255 255 / 8%);
-    --app-scrollbar-thumb-hover: rgb(255 255 255 / 12%);
+    /* Keeps the idle thumb above 3:1 (WCAG 1.4.11) on #000; 35% renders as gray 89, just under. */
+    --app-scrollbar-thumb: rgb(255 255 255 / 36%);
+    --app-scrollbar-thumb-hover: rgb(255 255 255 / 45%);
   }
 }
 
@@ -825,6 +826,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --radius-card-list-row: calc(var(--radius-card) - 8px);
   --radius-card-thumbnail: calc(var(--radius-card) - 9px);
   --radius-row-card: 10px;
+  /* A user message corner that touches the bubble, media or message next to it. */
+  --radius-joined: 4px;
   --radius-pane: 14px;
   /* The composer, 1px inside the rounded-2xl tray, and the send pill 8px inside it. */
   --radius-composer: calc(var(--radius-2xl) - 1px);
@@ -1186,11 +1189,17 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 :root:is(:not([data-surface-style]), [data-surface-style="gradient-rim"])
-  :where([data-slot="select-trigger"], [data-slot="combobox-trigger"]).surface-well:not(
-    [data-surface-preview] *
-  ),
+  :where(
+    [data-slot="select-trigger"],
+    [data-slot="combobox-trigger"],
+    [data-settings-picker]
+  ).surface-well:not([data-surface-preview] *),
 [data-surface-preview="gradient-rim"]
-  :where([data-slot="select-trigger"], [data-slot="combobox-trigger"]).surface-well {
+  :where(
+    [data-slot="select-trigger"],
+    [data-slot="combobox-trigger"],
+    [data-settings-picker]
+  ).surface-well {
   --well-fill: var(--raised-fill);
   --well-rim: var(--raised-rim);
   --well-shadow: var(--raised-shadow);
@@ -1403,9 +1412,13 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 :root:not([data-theme-id]:not([data-theme-id=""])) .thread-details-stack {
   --foreground: #18181b;
 }
-:root.dark:not([data-theme-id]:not([data-theme-id=""])) .thread-details-stack {
-  --foreground: #f5f5f5;
-  --muted-foreground: #a3a3a3;
+:root {
+  @variant dark {
+    &:not([data-theme-id]:not([data-theme-id=""])) .thread-details-stack {
+      --foreground: #f5f5f5;
+      --muted-foreground: #a3a3a3;
+    }
+  }
 }
 
 /* Details use the snapshot's lower raised surfaces without repainting the composer. */
@@ -1419,15 +1432,19 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --tray-shadow: 0 1px 2px #00000010, 0 2px 8px #0000000e;
   --composer-shadow: 0 1px 2px #00000010, 0 2px 5px #0000000b;
 }
-:root.dark:not([data-theme-id]:not([data-theme-id=""])):is(
-    :not([data-surface-style]),
-    [data-surface-style="gradient-rim"]
-  )
-  .thread-details-stack {
-  --tray-fill: linear-gradient(180deg, #1c1c1c, #191919);
-  --composer-fill: linear-gradient(180deg, #202020, #1c1c1c);
-  --tray-shadow: 0 1px 2px #0000004d, 0 2px 8px #00000027;
-  --composer-shadow: 0 1px 2px #0000004d, 0 2px 5px #0000001f;
+:root {
+  @variant dark {
+    &:not([data-theme-id]:not([data-theme-id=""])):is(
+        :not([data-surface-style]),
+        [data-surface-style="gradient-rim"]
+      )
+      .thread-details-stack {
+      --tray-fill: linear-gradient(180deg, #1c1c1c, #191919);
+      --composer-fill: linear-gradient(180deg, #202020, #1c1c1c);
+      --tray-shadow: 0 1px 2px #0000004d, 0 2px 8px #00000027;
+      --composer-shadow: 0 1px 2px #0000004d, 0 2px 5px #0000001f;
+    }
+  }
 }
 
 /* The composer: tray around it, text box inside, and the user's prompt. */
@@ -1520,6 +1537,20 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 @utility surface-bubble {
   background: var(--bubble-fill);
+}
+
+@utility surface-bubble-quote {
+  @apply surface-well;
+  --bubble-quote-tint: light-dark(rgb(0 0 0 / 10%), rgb(0 0 0 / 36%));
+  background:
+    linear-gradient(var(--bubble-quote-tint), var(--bubble-quote-tint)) padding-box,
+    var(--bubble-fill) padding-box,
+    var(--surface-rim) border-box,
+    var(--bubble-fill) border-box;
+
+  &:hover {
+    --bubble-quote-tint: light-dark(rgb(0 0 0 / 14%), rgb(0 0 0 / 50%));
+  }
 }
 
 /* Key hints. The popover variant is a step darker for key hints inside
@@ -1921,39 +1952,6 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   transition: translate var(--panel-animation-duration) ease-out;
 }
 
-[data-slot="sidebar-slide-frame"] {
-  --sidebar-slide-corner: 14px;
-
-  & > [data-corner] {
-    position: absolute;
-    right: 100%;
-    width: var(--sidebar-slide-corner);
-    height: var(--sidebar-slide-corner);
-    background: inherit;
-    mask: radial-gradient(
-      circle var(--sidebar-slide-corner) at var(--sidebar-slide-corner-center),
-      transparent var(--sidebar-slide-corner),
-      #000 calc(var(--sidebar-slide-corner) + 0.5px)
-    );
-  }
-
-  & > [data-corner="top"] {
-    --sidebar-slide-corner-center: 0 100%;
-  }
-
-  & > [data-corner="bottom"] {
-    --sidebar-slide-corner-center: 0 0;
-    translate: 0 -100%;
-  }
-}
-
-[data-chrome-art] [data-slot="sidebar-slide-frame"],
-[data-chrome-art] [data-slot="sidebar-slide-frame"] > [data-corner] {
-  background: var(--chrome-art-paint);
-  background-attachment: fixed;
-  background-blend-mode: var(--chrome-art-blend, normal);
-}
-
 /* Over the art the sidebar goes transparent and its secondary text takes the
    art's tint, as alpha over the image instead of fixed grays. */
 @media (width >= 48rem) {
@@ -2090,7 +2088,7 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
 
 @utility live-activity-focus-aligned {
   width: calc(100% - var(--live-activity-focus-width) - var(--live-activity-focus-width));
-  margin-left: var(--live-activity-focus-width);
+  margin-inline-start: var(--live-activity-focus-width);
 }
 
 @property --assistant-citation-highlight-opacity {
@@ -2100,6 +2098,23 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
 }
 
 @layer base {
+  [data-citation-highlighted="response"] {
+    position: relative;
+    isolation: isolate;
+  }
+  [data-citation-highlighted="response"]::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    border-radius: var(--radius-row);
+    background-color: color-mix(
+      in oklab,
+      var(--primary) calc(var(--assistant-citation-highlight-opacity) * 100%),
+      transparent
+    );
+  }
   ::highlight(t3-assistant-citation) {
     background-color: color-mix(
       in oklab,
@@ -3238,8 +3253,8 @@ html[data-theme-id]:not([data-theme-id=""]) {
   @variant dark {
     --well-shade: 16%;
     --well-switch-shade: 30%;
-    --app-scrollbar-thumb: color-mix(in srgb, var(--foreground) 8%, transparent);
-    --app-scrollbar-thumb-hover: color-mix(in srgb, var(--foreground) 12%, transparent);
+    --app-scrollbar-thumb: color-mix(in srgb, var(--foreground) 36%, transparent);
+    --app-scrollbar-thumb-hover: color-mix(in srgb, var(--foreground) 45%, transparent);
   }
 }
 
@@ -3859,8 +3874,8 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --merged-foreground: oklch(from var(--merged) max(l, 0.75) c h);
 }
 
-/* Preserve the default pill; other styles inherit their card's pill recipe. */
-:root:is(
+/* Preserve the default pill; other styles and named themes inherit their card's pill recipe. */
+:root:not([data-theme-id]:not([data-theme-id=""])):is(
     :not([data-surface-style]),
     [data-surface-style="gradient-rim"],
     [data-surface-style="flat"]
@@ -3874,17 +3889,21 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --error-foreground: #f85149;
 }
 
-:root:not(.dark):is(
-    :not([data-surface-style]),
-    [data-surface-style="gradient-rim"],
-    [data-surface-style="flat"]
-  )
-  [data-composer-send-pill] {
-  --pill-fill: var(--composer-pill-fill, linear-gradient(#efefef, #efefef));
-  --pill-foreground: #252525;
-  --pill-icon: #525252;
-  --pill-rim: var(--composer-pill-rim, linear-gradient(180deg, #00000022, #00000003));
-  --pill-shadow: var(--composer-pill-shadow, 0 1px 3px #00000011);
+:root {
+  @variant light {
+    &:not([data-theme-id]:not([data-theme-id=""])):is(
+        :not([data-surface-style]),
+        [data-surface-style="gradient-rim"],
+        [data-surface-style="flat"]
+      )
+      [data-composer-send-pill] {
+      --pill-fill: var(--composer-pill-fill, linear-gradient(#efefef, #efefef));
+      --pill-foreground: #252525;
+      --pill-icon: #525252;
+      --pill-rim: var(--composer-pill-rim, linear-gradient(180deg, #00000022, #00000003));
+      --pill-shadow: var(--composer-pill-shadow, 0 1px 3px #00000011);
+    }
+  }
 }
 
 :root[data-surface-style="flat"] [data-chat-composer-compact-send] [data-variant="pill"] {
@@ -4479,50 +4498,64 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --destructive-foreground: oklch(from var(--destructive) max(l, 0.88) calc(c * 0.6) h);
 }
 
-:root:not(.dark)[data-theme-id]:not([data-theme-id=""])[data-surface-style="flat"] > body,
-:root:not(.dark)[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="flat"] {
-  --flat-primary: var(--primary);
+:root {
+  @variant light {
+    &[data-theme-id]:not([data-theme-id=""])[data-surface-style="flat"] > body,
+    &[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="flat"] {
+      --flat-primary: var(--primary);
+    }
+  }
 }
 
-:root.dark[data-theme-id]:not([data-theme-id=""])[data-surface-style="flat"] > body,
-:root.dark[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="flat"] {
-  --destructive-foreground: oklch(from var(--destructive) max(l, 0.85) calc(c * 0.75) h);
+:root {
+  @variant dark {
+    &[data-theme-id]:not([data-theme-id=""])[data-surface-style="flat"] > body,
+    &[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="flat"] {
+      --destructive-foreground: oklch(from var(--destructive) max(l, 0.85) calc(c * 0.75) h);
+    }
+  }
 }
 
-:root:not(.dark)[data-theme-id]:not([data-theme-id=""])[data-surface-style]:not(
-    [data-surface-style="gradient-rim"],
-    [data-surface-style="flat"]
-  )
-  > body,
-:root:not(.dark)[data-theme-id]:not([data-theme-id=""])
-  [data-surface-preview]:not([data-surface-preview="gradient-rim"], [data-surface-preview="flat"]) {
-  --contrast-muted-foreground: color-mix(in srgb, var(--muted-foreground) 90%, var(--foreground));
-}
+:root {
+  @variant light {
+    &[data-theme-id]:not([data-theme-id=""])[data-surface-style]:not(
+        [data-surface-style="gradient-rim"],
+        [data-surface-style="flat"]
+      )
+      > body,
+    &[data-theme-id]:not([data-theme-id=""])
+      [data-surface-preview]:not(
+        [data-surface-preview="gradient-rim"],
+        [data-surface-preview="flat"]
+      ) {
+      --contrast-muted-foreground: color-mix(
+        in srgb,
+        var(--muted-foreground) 90%,
+        var(--foreground)
+      );
+    }
 
-/* Named light palettes already pair action and hover colors with their label. */
-:root:not(.dark)[data-theme-id]:not([data-theme-id=""])[data-surface-style="soft-gradient"] > body,
-:root:not(.dark)[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="soft-gradient"] {
-  --lit-fill: linear-gradient(var(--primary), var(--message-action-hover)) !important;
-}
+    /* Named light palettes already pair action and hover colors with their label. */
+    &[data-theme-id]:not([data-theme-id=""])[data-surface-style="soft-gradient"] > body,
+    &[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="soft-gradient"] {
+      --lit-fill: linear-gradient(var(--primary), var(--message-action-hover)) !important;
+    }
 
-:root:not(.dark)[data-theme-id]:not([data-theme-id=""])[data-surface-style="aqua-gloss-full"]
-  > body,
-:root:not(.dark)[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="aqua-gloss-full"] {
-  --lit-fill: linear-gradient(
-    var(--primary) 0%,
-    color-mix(in srgb, var(--primary) 75%, var(--message-action-hover)) 50%,
-    var(--message-action-hover) 50%,
-    color-mix(in srgb, var(--primary) 50%, var(--message-action-hover)) 100%
-  ) !important;
-}
+    &[data-theme-id]:not([data-theme-id=""])[data-surface-style="aqua-gloss-full"] > body,
+    &[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="aqua-gloss-full"] {
+      --lit-fill: linear-gradient(
+        var(--primary) 0%,
+        color-mix(in srgb, var(--primary) 75%, var(--message-action-hover)) 50%,
+        var(--message-action-hover) 50%,
+        color-mix(in srgb, var(--primary) 50%, var(--message-action-hover)) 100%
+      ) !important;
+    }
 
-:root:not(.dark)[data-theme-id]:not(
-    [data-theme-id=""]
-  )[data-surface-style="gradient-rim-everywhere"]
-  > body,
-:root:not(.dark)[data-theme-id]:not([data-theme-id=""])
-  [data-surface-preview="gradient-rim-everywhere"] {
-  --lit-fill: linear-gradient(var(--primary), var(--primary)) !important;
+    &[data-theme-id]:not([data-theme-id=""])[data-surface-style="gradient-rim-everywhere"] > body,
+    &[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="gradient-rim-everywhere"] {
+      --lit-fill: linear-gradient(var(--primary), var(--primary)) !important;
+    }
+  }
 }
 
 /* Every other surface follows the style too (pen I71Cep): wells (inputs,
@@ -4536,16 +4569,20 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
    style can still override a shared role. */
 
 /* Tinted warning labels need a darker amber on the light recipes. */
-:root:not(.dark)[data-surface-style]:not(
-    [data-surface-style="gradient-rim"],
-    [data-surface-style="flat"]
-  )
-  > body,
-:root:not(.dark)
-  [data-surface-preview]:not([data-surface-preview="gradient-rim"], [data-surface-preview="flat"]) {
-  --warning-foreground: oklch(
-    from var(--ss-default-warning-foreground) min(l, 0.48) c h
-  ) !important;
+:root {
+  @variant light {
+    &[data-surface-style]:not([data-surface-style="gradient-rim"], [data-surface-style="flat"])
+      > body,
+    &
+      [data-surface-preview]:not(
+        [data-surface-preview="gradient-rim"],
+        [data-surface-preview="flat"]
+      ) {
+      --warning-foreground: oklch(
+        from var(--ss-default-warning-foreground) min(l, 0.48) c h
+      ) !important;
+    }
+  }
 }
 
 :root[data-surface-style]:not(
@@ -4962,19 +4999,19 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 }
 
 /* On the near-black sidebar the well's split sits close to the chrome, or its top half glares. */
-:root:is(.dark, .black-chrome):is(
-    [data-surface-style="aqua-gloss-full"],
-    [data-surface-style="aqua-blue"]
-  )
+/* The sidebar is a [data-chrome-scope], so the dark variant also covers light, black chrome. */
+:root:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"])
   [data-app-sidebar] {
-  --contrast-placeholder: color-mix(in oklab, var(--foreground) 85%, var(--background));
-  --well-fill: linear-gradient(
-    180deg in srgb,
-    oklch(from var(--ss-background) calc(l + 0.045) c h) 0%,
-    oklch(from var(--ss-background) calc(l + 0.03) c h) 50%,
-    oklch(from var(--ss-background) calc(l - 0.01) c h) 50%,
-    oklch(from var(--ss-background) calc(l + 0.005) c h) 100%
-  ) !important;
+  @variant dark {
+    --contrast-placeholder: color-mix(in oklab, var(--foreground) 85%, var(--background));
+    --well-fill: linear-gradient(
+      180deg in srgb,
+      oklch(from var(--ss-background) calc(l + 0.045) c h) 0%,
+      oklch(from var(--ss-background) calc(l + 0.03) c h) 50%,
+      oklch(from var(--ss-background) calc(l - 0.01) c h) 50%,
+      oklch(from var(--ss-background) calc(l + 0.005) c h) 100%
+    ) !important;
+  }
 }
 
 /* Rim surfaces use the secondary face and its fading edge, with no drop shadow. */
@@ -5071,12 +5108,19 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
    and the chrome row controls) take the dark tokens above plus these, which
    outrank the per-theme sidebar mapping so every theme gets the same black
    chrome. Portaled popovers and tooltips live outside the scope and stay light.
-   :not(.dark) only lifts specificity past the per-theme chrome mapping. */
-:root.black-chrome:not(.dark) {
-  --app-chrome-background: #000000;
-  /* The light scrim barely dims a black window, so modals take the dark one
-     (pen FWF4P) and the sidebar and chrome read as under it too. */
-  --scrim: #00000099;
+   The light variant only lifts specificity past the per-theme chrome mapping. */
+:root.black-chrome {
+  @variant light {
+    --app-chrome-background: #000000;
+    /* The light scrim barely dims a black window, so modals take the dark one
+       (pen FWF4P) and the sidebar and chrome read as under it too. */
+    --scrim: #00000099;
+  }
+}
+
+/* Thread titles otherwise read a theme's text color, which is dark on a light theme. */
+:root.black-chrome [data-app-sidebar]:where([data-chrome-scope], [data-chrome-scope] *) {
+  --sidebar-thread-title-foreground: #f1f3f7;
 }
 
 /* Light surfaces the default theme derives from its chrome color keep the
@@ -5088,8 +5132,8 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 
 :root.black-chrome [data-chrome-scope] {
   --appearance-contrast-target: white;
-  --app-scrollbar-thumb: rgb(255 255 255 / 8%);
-  --app-scrollbar-thumb-hover: rgb(255 255 255 / 12%);
+  --app-scrollbar-thumb: rgb(255 255 255 / 36%);
+  --app-scrollbar-thumb-hover: rgb(255 255 255 / 45%);
   --background: var(--app-chrome-background);
   --muted-foreground: #8a8a8a;
   --dim-foreground: #666666;
@@ -5371,6 +5415,10 @@ body {
   -webkit-app-region: drag;
 }
 
+[data-tab-row-overflow] {
+  -webkit-app-region: no-drag;
+}
+
 /* Electron 44 inherits app-region. Reset children to the initial value so they
    do not add drag rectangles over fixed controls. Explicit `none` is treated
    as `no-drag` and breaks titlebar dragging; `initial` emits no rectangle.
@@ -5575,6 +5623,14 @@ body {
   list-style-type: decimal;
 }
 
+/* Spaces a user typed at the start of a line, which Markdown would otherwise drop. pre-wrap, not
+   pre, so an indent wider than the bubble wraps instead of pushing the line's text out of view.
+   Not selectable, so a selection, a drag or a copy carries the text as it did before. */
+.chat-markdown.user-message-markdown [data-leading-whitespace] {
+  white-space: pre-wrap;
+  user-select: none;
+}
+
 .chat-markdown li + li {
   margin-top: 0.25rem;
 }
@@ -5628,12 +5684,14 @@ body {
   a:not(
     .chat-markdown-file-link,
     :has([data-slot="context-chip-label"]),
+    [data-response-card],
     [data-markdown-image-link]
   ):hover,
 .chat-markdown
   a:not(
     .chat-markdown-file-link,
     :has([data-slot="context-chip-label"]),
+    [data-response-card],
     [data-markdown-image-link]
   ):focus-visible {
   background-image: radial-gradient(circle, currentcolor 0.75px, transparent 1px);
@@ -6230,46 +6288,22 @@ body {
   height: 1lh;
 }
 
+/* Past one line the actions drop to the bottom corner, so the text keeps their column clear
+   (the first line's width is unchanged); a float can't follow the last line there. */
 .composer-prompt-body[data-composer-multiline]
-  :is(
-    [data-composer-empty="false"] [data-testid="composer-editor"],
-    [data-composer-placeholder]
-  )::before {
-  height: calc(var(--composer-actions-height, 2rem) + var(--composer-actions-gap));
-}
+  :is([data-composer-empty="false"] [data-testid="composer-editor"], [data-composer-placeholder]) {
+  padding-inline-end: calc(
+    var(--composer-actions-width, 100px) + var(--composer-actions-gap) + var(--spacing)
+  );
 
-/* The float scrolls away with the text, so a scrolled prompt fades out under the
-   buttons' corner instead of running beneath them. */
-.composer-prompt-body[data-composer-overflow] [data-testid="composer-editor"] {
-  --composer-corner-w: calc(var(--composer-actions-width, 100px) + var(--composer-actions-gap));
-  --composer-corner-h: calc(var(--composer-actions-height, 2rem) + var(--composer-actions-gap));
-  mask-image:
-    linear-gradient(
-      to right,
-      black calc(100% - var(--composer-corner-w)),
-      transparent calc(100% - var(--composer-corner-w) + 0.75rem)
-    ),
-    linear-gradient(
-      to bottom,
-      transparent calc(var(--composer-corner-h) - 0.75rem),
-      black var(--composer-corner-h)
-    );
+  &::before {
+    display: none;
+  }
 }
 
 .composer-prompt-body[data-composer-overflow]
   [data-testid="composer-editor"]::-webkit-scrollbar-track {
-  margin-top: var(--composer-corner-h);
-}
-
-@media (width < 40rem) {
-  .composer-prompt-body[data-composer-overflow] [data-testid="composer-editor"] {
-    padding-inline-end: var(--composer-corner-w);
-    mask-image: none;
-  }
-
-  .composer-prompt-body[data-composer-overflow] [data-testid="composer-editor"]::before {
-    display: none;
-  }
+  margin-bottom: calc(var(--composer-actions-height, 2rem) + var(--composer-actions-gap));
 }
 
 /* A suffix that would run under the actions or past the edge stays hidden, as text never wraps for it. */
@@ -6470,8 +6504,10 @@ body {
 }
 
 /* The board draws the working bar rule white, which vanishes on a light pane. */
-:root:not(.dark) {
-  --timeline-working-rule: var(--border);
+:root {
+  @variant light {
+    --timeline-working-rule: var(--border);
+  }
 }
 
 /* Rich answers (board FC7yK): a 15px h3 and 12.5px inline code. */
@@ -6522,10 +6558,10 @@ body {
 }
 
 /* ── Connected pane tabs ──
-   Each pane's top is a bar in the chrome's color; the focused pane's active
+   Each pane's top is a bar in the chrome's color; the active
    tab is a piece of the pane rising into it, joined by concave ears, with
    one lit rim from its top round the ears and out along the pane's edge,
-   where it fades. An unfocused pane's active tab is a soft pill on the bar.
+   where it fades. An unfocused pane keeps the shape with a quieter rim.
    [data-pane-join] (PaneTabs.tsx) is that tab: one shape per pane strip that
    slides to the active tab. Light, black chrome keeps the notch instead. */
 [data-slot="sidebar-inset"] {
@@ -6549,7 +6585,9 @@ body {
     --pane-join-radius: 10px;
     /* The tabs and the bar's controls sit this much lower, centred in the joined tab. */
     --pane-join-shift: 5px;
-    /* From the pane edge to the first tab: the pane's 14px corner, the ear, 2px. */
+    /* The first tab starts at the pane's edge, where the pane clips its ear.
+       After the collapsed sidebar's controls (--pane-titlebar-inset) it keeps
+       room for the pane's 14px corner, the ear and 2px. */
     --pane-join-lead: calc(14px + var(--pane-join-ear) + 2px);
     /* How far down the rim's gradient runs past the shape's height, so it
        still lights the sides and the ears. */
@@ -6580,7 +6618,7 @@ body {
     & [data-pane-notch=""] {
       --pane-bar-fg: var(--foreground);
       --pane-bar-muted: var(--muted-foreground);
-      padding-inline-start: var(--pane-join-lead);
+      padding-inline-start: calc(var(--pane-join-lead) * var(--pane-titlebar-inset, 0));
 
       &::before {
         content: "";
@@ -6613,6 +6651,15 @@ body {
       inset-inline-start: 0;
       mask: radial-gradient(circle 14px at 100% 100%, transparent 13.5px, #000 14.5px);
     }
+    /* The joined first tab's side runs straight down the pane's edge, so the
+       pane's corner under it gives way (data-pane-join-start, PaneTabs.tsx). */
+    & :is([data-pane-bar-corner="start"], [data-pane-cut="start-notch"]) {
+      transition: opacity var(--panel-animation-duration, 150ms) ease-out;
+    }
+    & [data-pane-join-start] [data-pane-bar-corner="start"],
+    & [data-layout-pane-id]:has([data-pane-join-start]) > [data-pane-cut="start-notch"] {
+      opacity: 0;
+    }
     & [data-pane-bar-corner="end"] {
       inset-inline-end: 0;
       mask: radial-gradient(circle 14px at 0 100%, transparent 13.5px, #000 14.5px);
@@ -6635,14 +6682,16 @@ body {
       --pane-inactive-tab-title-max: 17rem;
       /* Where tabs are scrolled out, the strip fades as scroll areas do
          (ScrollArea's scrollFade); its end fades before the control that
-         overlaps the rim's tail. PaneTabs sets the overflow. */
+         overlaps the rim's tail. PaneTabs sets the overflow. At the pane's
+         edge its start begins past the ear room the pane clips. */
+      --strip-fade-lead: calc(var(--pane-join-ear) * (1 - var(--pane-titlebar-inset, 0)));
       --strip-fade-start: min(1.5rem, var(--strip-overflow-start, 0px));
       --strip-fade-end: min(1.5rem, var(--strip-overflow-end, 0px));
       --strip-fade-end-at: calc(100% - var(--pane-join-tail) * var(--strip-overflowing-end, 0));
       mask-image: linear-gradient(
         to right,
-        transparent,
-        #000 var(--strip-fade-start),
+        transparent var(--strip-fade-lead),
+        #000 calc(var(--strip-fade-lead) + var(--strip-fade-start)),
         #000 calc(var(--strip-fade-end-at) - var(--strip-fade-end)),
         transparent var(--strip-fade-end-at)
       );
@@ -6699,7 +6748,7 @@ body {
       }
     }
 
-    /* An unfocused pane's tab sits on the bar, in the bar's colors. */
+    /* Keep the unfocused tab's existing label and icon contrast. */
     & [data-pane-notch-unfocused] [data-layout-tab-strip] [data-joined] {
       color: var(--pane-bar-fg);
       --contrast-strong-foreground: var(--pane-bar-fg);
@@ -6772,12 +6821,13 @@ body {
         scale: -1 1;
       }
 
-      /* Body fill, 1px past the cap into the middle and 1px below the edge.
+      /* Body fill, 1px past the cap into the middle. It stops at the bar's
+         foot, so content scrolled under the bar meets one straight edge.
          The overlap column skips the top row, where the middle's rim is. */
       & [data-jf] {
         inset-inline-start: var(--e);
         width: calc(var(--r) + 1px);
-        height: calc(100% + 1px);
+        height: 100%;
         border-start-start-radius: var(--r);
         background:
           linear-gradient(var(--pane-join-fill), var(--pane-join-fill)) 0 0 / calc(100% - 1px) 100%
@@ -6811,6 +6861,7 @@ body {
         height: calc(var(--e) + 1px);
       }
       & [data-je] {
+        height: var(--e);
         background: radial-gradient(
           circle var(--e) at 0 0,
           transparent calc(var(--e) - 0.5px),
@@ -6843,7 +6894,7 @@ body {
       /* A stretched 1px layer fades on the Windows compositor. */
       & [data-jm] {
         width: calc(var(--jm) * 1px);
-        height: calc(100% + 1px);
+        height: 100%;
         transform-origin: 0 0;
         translate: calc(var(--jx) + var(--r)) 0;
         background: var(--pane-join-fill);
@@ -6856,29 +6907,16 @@ body {
         background: var(--pane-join-rim) 0 0 / var(--pane-join-rim-size) no-repeat;
       }
 
-      /* An unfocused pane's active tab: a soft pill on the bar. */
-      & [data-jp] {
-        inset-block-start: var(--pane-join-rise);
-        height: 1.75rem;
-        width: var(--jw);
-        translate: var(--jx) 0;
-        border-radius: var(--radius-control);
-        background: color-mix(in srgb, currentColor 10%, transparent);
-        opacity: 0;
-      }
-
-      /* Focus moving between panes cross-fades the joined tab and the pill. */
-      & :is([data-jb], [data-jp]) {
+      & :is([data-jr], [data-jer], [data-jt]),
+      & [data-jm]::after {
         transition: opacity var(--panel-animation-duration, 150ms) ease-out;
       }
     }
 
     & [data-pane-notch-unfocused] [data-pane-join] {
-      & [data-jb] {
-        opacity: 0;
-      }
-      & [data-jp] {
-        opacity: 1;
+      & :is([data-jr], [data-jer], [data-jt]),
+      & [data-jm]::after {
+        opacity: 0.45;
       }
     }
   }
@@ -6898,6 +6936,16 @@ body {
   @media (prefers-reduced-motion: reduce) {
     :root:not(.black-chrome) [data-pane-notch=""] [data-pane-join] * {
       transition: none;
+    }
+  }
+
+  /* The first tab's lead eases with the collapsed sidebar's inset. */
+  @media (prefers-reduced-motion: no-preference) {
+    :root:not(.black-chrome)
+      [data-panel-animations="true"]
+      [data-slot="sidebar-inset"]
+      [data-pane-notch=""] {
+      transition: padding-inline-start var(--panel-animation-duration, 150ms) ease-out;
     }
   }
 }

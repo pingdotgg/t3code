@@ -64,6 +64,7 @@ export function settingsScopeProjectMachines(
 
 export const ALL_ENVIRONMENTS_VALUE = "all";
 export const ALL_PROJECTS_VALUE = "all";
+export const ALL_CHECKOUTS_VALUE = "all";
 
 export function environmentAxisValue(
   search: SettingsScopeSearch,

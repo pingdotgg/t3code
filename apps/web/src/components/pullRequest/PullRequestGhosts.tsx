@@ -29,7 +29,7 @@ import {
   resolvePullRequestState,
 } from "./pullRequestPresentation";
 
-function GhostBar({ className }: { className?: string | undefined }) {
+export function GhostBar({ className }: { className?: string | undefined }) {
   return <div aria-hidden className={cn("h-3 rounded bg-muted-foreground/15", className)} />;
 }
 

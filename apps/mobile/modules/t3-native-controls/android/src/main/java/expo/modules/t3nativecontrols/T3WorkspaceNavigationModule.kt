@@ -126,7 +126,7 @@ class T3WorkspaceNavigationView(
   private val onTabSelected by EventDispatcher()
   private val onNewThread by EventDispatcher()
   private val onOverlayChange by EventDispatcher()
-  var tabs by mutableStateOf(listOf("threads", "bots", "pullRequests", "settings"))
+  var tabs by mutableStateOf(listOf("threads", "bots", "pullRequests", "issues", "settings"))
   var selectedTab by mutableStateOf("threads")
   var rail by mutableStateOf(false)
   var floating by mutableStateOf(false)
@@ -416,6 +416,7 @@ class T3WorkspaceNavigationView(
     "threads" -> "Chats"
     "bots" -> "Bots"
     "pullRequests" -> "Pulls"
+    "issues" -> "Issues"
     else -> "Settings"
   }
 
@@ -428,6 +429,7 @@ class T3WorkspaceNavigationView(
       "threads" -> R.drawable.t3_chats
       "bots" -> R.drawable.t3_bots
       "pullRequests" -> R.drawable.t3_pull_requests
+      "issues" -> R.drawable.t3_issues
       else -> R.drawable.t3_settings
     }
   )

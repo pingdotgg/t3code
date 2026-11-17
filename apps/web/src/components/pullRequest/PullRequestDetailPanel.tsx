@@ -471,10 +471,28 @@ export function PullRequestDetailPanel({
   } else if (!tabMountState.tabs.has(tab)) {
     setTabMountState({ key: tabScopeKey, tabs: new Set(tabMountState.tabs).add(tab) });
   }
+  // A pointer on the Code tab reads the page it opens on; only intent costs the host a read.
+  const [codeIntentKey, setCodeIntentKey] = useState<string | null>(null);
+  useEnvironmentQuery(
+    codeIntentKey === pullRequestKey && !mountedTabs.has("code")
+      ? pullRequestEnvironment.diff({ environmentId, input: { ...reference } })
+      : null,
+  );
+  // A pointer passing over the Code tab is not intent; it must rest like a list row does.
+  const codeIntentTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- A rest timer still pending when the panel unmounts must not read for a closed panel.
+  useEffect(() => () => clearTimeout(codeIntentTimer.current), []);
+  const intendCodeTab = () => {
+    void loadCodeTab();
+    setCodeIntentKey(pullRequestKey);
+  };
   const [condensedByTab, setCondensedByTab] = useState<
     Partial<Record<PullRequestDetailTab, boolean>>
   >({});
   const condensed = condensedByTab[tab] ?? false;
+  const [scrolledByTab, setScrolledByTab] = useState<
+    Partial<Record<PullRequestDetailTab, boolean>>
+  >({});
   const scrollerByTab = useRef<Partial<Record<PullRequestDetailTab, HTMLElement | null>>>({});
   const [scrollerRefs] = useState(() => ({
     summary: (node: HTMLElement | null) => {
@@ -1554,7 +1572,7 @@ export function PullRequestDetailPanel({
     );
 
   const headerBranches = detail ? (
-    <span className="ml-auto flex min-w-0 flex-1 basis-full items-center justify-end gap-1.5 font-mono text-caption text-dim-foreground @md/pr-header:basis-0">
+    <span className="flex min-w-0 flex-1 basis-full items-center gap-1.5 font-mono text-caption text-dim-foreground @md/pr-header:ml-auto @md/pr-header:basis-0 @md/pr-header:justify-end">
       <PullRequestBaseBranch
         baseBranch={detail.baseBranch}
         freshness={freshness}
@@ -1608,7 +1626,6 @@ export function PullRequestDetailPanel({
       <div
         className={cn(
           "@container/pr-header grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2",
-          detail && "border-b border-(--detail-separator)",
           !detail && !onClose && "hidden",
         )}
       >
@@ -1622,15 +1639,17 @@ export function PullRequestDetailPanel({
           {detail ? (
             <>
               {stackMenuProps !== null ? (
-                <PullRequestStackMenu {...stackMenuProps} display="trigger" />
+                <span className="inline-flex shrink-0 @max-2xs/pr-header:hidden">
+                  <PullRequestStackMenu {...stackMenuProps} display="trigger" />
+                </span>
               ) : supportsStackActions && nativeStackQuery.error ? (
                 <Button variant="ghost" size="micro" onClick={nativeStackQuery.refresh}>
                   Retry stack lookup
                 </Button>
               ) : null}
-              <span className="ml-auto inline-flex shrink-0 items-baseline gap-1.5 text-caption text-muted-foreground">
+              <span className="ml-auto inline-flex shrink-0 items-baseline gap-1.5 text-caption text-muted-foreground @max-[30rem]/pr-header:hidden">
                 <span
-                  className="inline-flex items-baseline gap-1 tabular-nums @max-sm/pr-header:hidden"
+                  className="inline-flex items-baseline gap-1 tabular-nums @max-[34rem]/pr-header:hidden"
                   aria-label={`${detail.changedFiles.toLocaleString()} changed ${detail.changedFiles === 1 ? "file" : "files"}`}
                 >
                   <FileDiffIcon aria-hidden className="size-3 self-center" />
@@ -1820,7 +1839,6 @@ export function PullRequestDetailPanel({
                   onValueChange={(text) =>
                     setTitleScope(text === null ? null : { pullRequestKey, text })
                   }
-                  onSaved={refreshDetail}
                 />
                 <div className="flex min-h-5 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-meta text-muted-foreground">
                   <PullRequestActorLabel actor={detail.author} profileUrl={authorProfileUrl} />
@@ -1869,8 +1887,18 @@ export function PullRequestDetailPanel({
                   key={item.value}
                   value={item.value}
                   className="@container/pr-tab flex-1"
-                  onPointerEnter={item.value === "code" ? () => void loadCodeTab() : undefined}
-                  onFocus={item.value === "code" ? () => void loadCodeTab() : undefined}
+                  onPointerEnter={
+                    item.value === "code"
+                      ? () => {
+                          clearTimeout(codeIntentTimer.current);
+                          codeIntentTimer.current = setTimeout(intendCodeTab, 150);
+                        }
+                      : undefined
+                  }
+                  onPointerLeave={
+                    item.value === "code" ? () => clearTimeout(codeIntentTimer.current) : undefined
+                  }
+                  onFocus={item.value === "code" ? intendCodeTab : undefined}
                 >
                   <item.icon aria-hidden className="hidden @max-[4.25em]/pr-tab:block" />
                   <span className="@max-[4.25em]/pr-tab:sr-only">{item.label}</span>
@@ -1887,7 +1915,7 @@ export function PullRequestDetailPanel({
         )}
       >
         <div className="min-h-0 overflow-hidden" inert={tab !== "code" || !detail}>
-          <div ref={setCodeToolbarContainer} className="flex px-4 pt-3 pb-2.5" />
+          <div ref={setCodeToolbarContainer} className="flex px-4 pt-1 pb-2.5" />
         </div>
       </div>
 
@@ -1899,11 +1927,17 @@ export function PullRequestDetailPanel({
         className="border-b border-(--detail-separator)"
       />
       <div
-        className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
+        className={cn(
+          "relative flex min-h-0 flex-1 flex-col overflow-hidden border-t",
+          detail && scrolledByTab[tab] ? "border-(--detail-separator)" : "border-transparent",
+        )}
         onScrollCapture={(event) => {
           const scroller = scrollerByTab.current[tab];
           if (event.target !== scroller || scroller === null || scroller === undefined) return;
           const top = scroller.scrollTop;
+          if (top > 0 !== (scrolledByTab[tab] ?? false)) {
+            setScrolledByTab({ ...scrolledByTab, [tab]: top > 0 });
+          }
           const previous = condensedByTab[tab] ?? false;
           const foldHeight = foldRef.current?.scrollHeight ?? 0;
           let next = previous;

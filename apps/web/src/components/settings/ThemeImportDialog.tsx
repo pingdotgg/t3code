@@ -1,6 +1,7 @@
 import { FileUpIcon, FileXIcon, PlusIcon, SearchIcon, XIcon } from "lucide-react";
 import type { ChangeEvent, DragEvent, UIEvent } from "react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { formatBytes } from "../../lib/formatBytes";
 import { cn } from "../../lib/utils";
 import {
   getCustomThemes,
@@ -41,15 +42,13 @@ const MAX_THEME_FILE_BYTES = 256 * 1024;
 /** Highlighting rebuilds markup per keystroke; fall back to plain text for oversized pastes. */
 const MAX_HIGHLIGHTED_JSON_LENGTH = 20_000;
 
-function formatByteSize(bytes: number): string {
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${bytes} bytes`;
-}
-
 function describeOversizedThemeFile(bytes: number): string | null {
   if (bytes <= MAX_THEME_FILE_BYTES) return null;
-  return `That file is ${formatByteSize(bytes)}. Theme files are only a few KB, so this one was not read (limit ${formatByteSize(MAX_THEME_FILE_BYTES)}).`;
+  return `That file is ${formatBytes(bytes)}. Theme files are only a few KB, so this one was not read (limit ${formatBytes(MAX_THEME_FILE_BYTES)}).`;
+}
+
+function isThemeIdTaken(themeId: string): boolean {
+  return getCustomThemes().some((existing) => existing.id === themeId);
 }
 
 function escapeJsonHtml(value: string): string {
@@ -181,32 +180,27 @@ async function stageThemeFile(file: ImportableThemeFile): Promise<StagedThemeFil
   }
 }
 
-const isInstalledTheme = (theme: ThemeDefinition) =>
-  getCustomThemes().some((existing) => existing.id === theme.id);
+const isInstalledTheme = (theme: ThemeDefinition) => isThemeIdTaken(theme.id);
 
 function versionedCopy(theme: ThemeDefinition, preferredName?: string | null): ThemeDefinition {
-  if (preferredName && preferredName.toLowerCase() !== theme.label.toLowerCase()) {
-    const candidate = parseThemeFile({
+  // The collection stays behind: updating a collection replaces every theme in it.
+  const copyNamed = (name: string) =>
+    parseThemeFile({
       version: THEME_FILE_VERSION,
-      name: preferredName.slice(0, 48),
+      name,
       appearance: theme.appearance,
       colors: theme.colors,
       ...(theme.variants ? { variants: theme.variants } : {}),
       ...(theme.managed ? { managed: true } : {}),
+      ...(theme.css ? { css: theme.css } : {}),
     });
-    if (!isInstalledTheme(candidate)) return candidate;
+  if (preferredName && preferredName.toLowerCase() !== theme.label.toLowerCase()) {
+    const candidate = copyNamed(preferredName.slice(0, 48));
+    if (!isThemeIdTaken(candidate.id)) return candidate;
   }
   for (let copy = 1; copy < 100; copy += 1) {
-    const candidate = parseThemeFile({
-      version: THEME_FILE_VERSION,
-      name: `${theme.label.slice(0, 48 - ` (${copy})`.length)} (${copy})`,
-      appearance: theme.appearance,
-      colors: theme.colors,
-      ...(theme.variants ? { variants: theme.variants } : {}),
-      ...(theme.managed ? { managed: true } : {}),
-    });
-    if (isInstalledTheme(candidate)) continue;
-    return candidate;
+    const candidate = copyNamed(`${theme.label.slice(0, 48 - ` (${copy})`.length)} (${copy})`);
+    if (!isThemeIdTaken(candidate.id)) return candidate;
   }
   throw new Error(`Too many copies of "${theme.label}".`);
 }
@@ -287,6 +281,20 @@ export function ThemeImportDialog({
     session.controller.abort();
     onOpenChange(false);
   };
+  // Leaving the page ends the session as closing does. The abort waits a microtask
+  // so StrictMode's replayed cleanup, undone by its replayed setup, keeps it alive.
+  const { controller } = session;
+  const mountedController = useRef<AbortController | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- unmounting must abort in-flight Open VSX installs
+  useEffect(() => {
+    mountedController.current = controller;
+    return () => {
+      mountedController.current = null;
+      queueMicrotask(() => {
+        if (mountedController.current !== controller) controller.abort();
+      });
+    };
+  }, [controller]);
 
   return (
     <Dialog

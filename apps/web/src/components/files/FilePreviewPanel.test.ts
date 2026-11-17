@@ -5,7 +5,7 @@ import { ProjectReadFileError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { remapFileCommentAnnotations } from "./fileCommentAnnotations";
+import { promptFileCommentEntries, remapFileCommentAnnotations } from "./fileCommentAnnotations";
 import {
   filePreviewReadErrorMessage,
   isMarkdownPreviewFile,
@@ -62,6 +62,22 @@ describe("file comment annotations", () => {
         },
       },
     ]);
+  });
+
+  it("shows only drafts and comments still in the prompt", () => {
+    const entry = (id: string, kind: "draft" | "comment") => ({
+      id,
+      kind,
+      startLine: 3,
+      endLine: 3,
+      text: "",
+    });
+    expect(
+      promptFileCommentEntries(
+        [entry("sent", "comment"), entry("new", "draft"), entry("kept", "comment")],
+        new Set(["kept"]),
+      ),
+    ).toEqual([entry("new", "draft"), entry("kept", "comment")]);
   });
 });
 
@@ -134,6 +150,20 @@ describe("workspaceAssetResource", () => {
 describe("document preview contents", () => {
   const bytes = (text: string) => new TextEncoder().encode(text).buffer;
 
+  it.each([
+    ["control symbols", String.raw`{\rtf1 Jean\_Luc\-X\~Y}`, "Jean\u2011Luc\u00adX\u00a0Y"],
+    [
+      "named spaces, joiners and direction marks",
+      String.raw`{\rtf1 A\tab B\emspace C\enspace D\qmspace E\zwj F\zwnj G\zwbo H\ltrmark I\rtlmark J}`,
+      "A\tB\u2003C\u2002D\u2005E\u200dF\u200cG\u200bH\u200eI\u200fJ",
+    ],
+    ["a Unicode fallback", String.raw`{\rtf1 Jean\u8209\_Luc}`, "Jean\u2011Luc"],
+  ])("keeps the text of %s", (_name, source, expected) => {
+    const result = openRtf(bytes(source));
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html.replaceAll(/<[^>]*>/g, "")).toBe(expected);
+  });
+
   it.each(["?", String.raw`\'3f`, String.raw`\\`])(
     "consumes skipped rich text Unicode fallback %s",
     (fallback) => {
@@ -162,7 +192,7 @@ describe("document preview contents", () => {
   it("decodes rich text formatting and Unicode without showing hidden destinations", () => {
     const result = openRtf(
       bytes(
-        String.raw`{\rtf1\ansi{\fonttbl{\f0 Hidden font;}}Hello \b bold\b0\par Unicode: \u945?{\*\unknown hidden}{\field{\*\fldinst HYPERLINK "https://example.com"}{\fldrslt visible}}}`,
+        String.raw`{\rtf1\ansi{\fonttbl{\f0 Hidden font;}}Hello \b bold\b0\par Unicode: \u945?{\*\unknown hidden\_\emspace\zwj}{\field{\*\fldinst HYPERLINK "https://example.com"}{\fldrslt visible}}}`,
       ),
     );
     expect(result.type).toBe("document");
@@ -328,7 +358,7 @@ Third}`;
                   output_type: "error",
                   traceback: [
                     "\u001b[31mTraceback (most recent call last):\n\u001b[0m",
-                    "\u001b[32mCell In[3], line 1\n----> 1 fail()\n\u001b[0m\u001b[39m",
+                    "\u001b[38:2::255:0:0mCell In[3], line 1\n----> 1 fail()\n\u001b[0m\u001b[39m",
                     "\u001b[31mValueError: preview proof\u001b[0m",
                     "final entry",
                   ],
@@ -440,20 +470,29 @@ Third}`;
     expect(result.pages[0]!.html).toBe(`<table>${html}</table>`);
   });
 
-  it.each(["odt", "odp"] as const)("reads %s text and rejects XML entities", async (kind) => {
+  it.each(["odt", "odp"] as const)("reads %s text and rejects unsupported XML", async (kind) => {
     const archive = new JSZip().file(
       "content.xml",
-      `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"><office:body>${kind === "odt" ? "<office:text><text:p>Field notes</text:p></office:text>" : '<draw:page draw:name="Overview"><text:h>Launch plan</text:h></draw:page>'}</office:body></office:document-content>`,
+      `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"><office:body>${kind === "odt" ? "<office:text><text:p>Field notes</text:p></office:text>" : '<draw:page draw:name="Overview"><text:h>Launch plan</text:h><presentation:notes><draw:frame><draw:text-box><text:p>Speaker only</text:p></draw:text-box></draw:frame></presentation:notes></draw:page>'}</office:body></office:document-content>`,
     );
     const result = await openDocument(archive, kind);
     expect(result.type).toBe("document");
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.pages[0]!.html).toContain(kind === "odt" ? "Field notes" : "Launch plan");
-    archive.file(
-      "content.xml",
+    expect(result.pages[0]!.html).not.toContain("Speaker only");
+    for (const source of [
       '<!DOCTYPE x [<!ENTITY external SYSTEM "file:///etc/passwd">]><x>&external;</x>',
-    );
-    await expect(openDocument(archive, kind)).rejects.toThrow("unsupported XML");
+      '<html><body><p title="<!--">x</p><!DOCTYPE x [<!ENTITY e "boom">]><b title="-->">&e;</b></body></html>',
+      '<html><body><p title="<![CDATA[">x</p><!DOCTYPE x [<!ENTITY e "boom">]><b title="]]>">&e;</b></body></html>',
+      '<!DOC<!DOCTYPE a>TYPE x [<!EN<!DOCTYPE a>TITY e "boom">]><x>&e;</x>',
+      '<?test <![CDATA[ ?><!DOCTYPE html [<!ENTITY e "boom">]><html><body><pre><![CDATA[x]]></pre></body></html>',
+      '<?test <!-- ?><!DOCTYPE html [<!ENTITY e "boom">]><html><body><!-- x --></body></html>',
+      "<html><body>" + "<!--".repeat(80_000) + "</body></html>",
+      "<html><body>" + "<![CDATA[".repeat(80_000) + "</body></html>",
+    ]) {
+      archive.file("content.xml", source);
+      await expect(openDocument(archive, kind)).rejects.toThrow("unsupported XML");
+    }
   });
 
   it("reads EPUB chapters in spine order and removes active and remote content", async () => {
@@ -472,7 +511,7 @@ Third}`;
       )
       .file(
         "Book/two&&&.xhtml",
-        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><head><title>Second</title></head><body><h1>Second chapter</h1><p>A&nbsp;B &copy; &mdash; &NotEqualTilde; &amp;lt;</p><pre><![CDATA[Use &amp; and &lt; literally]]></pre><img src="cover.png" alt="&copy; &NotEqualTilde;"/></body></html>',
+        '<?xml-stylesheet href="a<b.css"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><head><title>Second</title></head><body><h1>Second chapter</h1><p>A&nbsp;B &copy; &mdash; &NotEqualTilde; &amp;lt;</p><pre><![CDATA[Use &amp; and &lt; literally]]></pre><pre><![CDATA[<!DOCTYPE html><!ENTITY author "Ada">]]></pre><!-- <!ENTITY note "x"> --><img src="cover.png" alt="&lt; &copy; &NotEqualTilde;"/></body></html>',
       )
       .file(
         "Book/cover.png",
@@ -487,7 +526,10 @@ Third}`;
     expect(result.pages.map((page) => page.title)).toEqual(["Second", "First"]);
     expect(result.pages[0]!.html).toContain("A\u00a0B © — ≂̸ &amp;lt;");
     expect(result.pages[0]!.html).toContain("<pre>Use &amp;amp; and &amp;lt; literally</pre>");
-    expect(result.pages[0]!.html).toContain('alt="© ≂̸"');
+    expect(result.pages[0]!.html).toContain(
+      "<pre>&lt;!DOCTYPE html&gt;&lt;!ENTITY author &quot;Ada&quot;&gt;</pre>",
+    );
+    expect(result.pages[0]!.html).toContain('alt="&lt; © ≂̸"');
     expect(result.pages[1]!.html).toContain('src="data:image/png;base64,');
     expect(result.pages[1]!.html).not.toMatch(/https:|script|alert/);
   });

@@ -101,7 +101,7 @@ export function FoldedSettingsSection({
           <div className="border-t border-border/50 empty:hidden">{collapsedContent}</div>
         ) : null}
         <CollapsiblePanel>
-          <div className="border-t border-divider [&>*+*]:border-t [&>*+*]:border-divider">
+          <div className="border-t border-divider *:not-first:border-t *:not-first:border-divider">
             {children}
           </div>
         </CollapsiblePanel>

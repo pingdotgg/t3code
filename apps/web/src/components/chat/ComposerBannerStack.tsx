@@ -222,7 +222,7 @@ function NoticeCard({
     >
       <ComposerBanner.Row layout="wrap-actions">
         <ComposerBanner.Icon>{item.icon}</ComposerBanner.Icon>
-        <ComposerBanner.Content className="whitespace-nowrap">
+        <ComposerBanner.Content className="items-baseline whitespace-nowrap">
           <NoticeText
             detailsLabel={
               typeof item.title === "string"

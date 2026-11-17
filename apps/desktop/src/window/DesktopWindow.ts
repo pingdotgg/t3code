@@ -10,7 +10,11 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as Electron from "electron";
 
-import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
+import {
+  type ClientSettings,
+  type DesktopSnapShotEvent,
+  DEFAULT_CLIENT_SETTINGS,
+} from "@t3tools/contracts";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -153,13 +157,17 @@ const { logInfo: logWindowInfo, logWarning: logWindowWarning } =
 function getIconOption(
   iconPaths: DesktopAssets.DesktopIconPaths,
   platform: NodeJS.Platform,
+  appIconPath: Option.Option<string>,
 ): { icon: string } | Record<string, never> {
   if (platform === "darwin") return {};
   const ext = platform === "win32" ? "ico" : "png";
-  return Option.match(iconPaths[ext], {
-    onNone: () => ({}),
-    onSome: (icon) => ({ icon }),
-  });
+  return Option.match(
+    Option.orElse(appIconPath, () => iconPaths[ext]),
+    {
+      onNone: () => ({}),
+      onSome: (icon) => ({ icon }),
+    },
+  );
 }
 
 // The default theme's window chrome (--app-chrome-background), so the first
@@ -425,7 +433,6 @@ export const make = Effect.gen(function* () {
     );
 
   const currentMainWindow = electronWindow.currentMainOrFirst.pipe(Effect.flatMap(withoutSplash));
-  const focusedMainWindow = electronWindow.focusedMainOrFirst.pipe(Effect.flatMap(withoutSplash));
 
   const zoomWindow = Effect.fn("desktop.window.zoomWindow")(function* (
     window: Electron.BrowserWindow,
@@ -448,7 +455,15 @@ export const make = Effect.gen(function* () {
     yield* previewManager.getBrowserSession();
     const applicationUrl = getDesktopUrl(environment.isDevelopment);
     const iconPaths = yield* assets.iconPaths;
-    const iconOption = getIconOption(iconPaths, environment.platform);
+    const appIcon = Option.match(
+      yield* clientSettings.get.pipe(Effect.orElseSucceed(() => Option.none<ClientSettings>())),
+      { onNone: () => DEFAULT_CLIENT_SETTINGS.appIcon, onSome: (settings) => settings.appIcon },
+    );
+    const iconOption = getIconOption(
+      iconPaths,
+      environment.platform,
+      yield* assets.resolveAppIconPath(appIcon),
+    );
     // The native background and caption symbols follow the chrome, which stays
     // dark in the light, black chrome appearance.
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkChrome;
@@ -960,20 +975,33 @@ export const make = Effect.gen(function* () {
           rendererRecoveryTimestamps = rendererRecoveryTimestamps.filter(
             (timestamp) => now - timestamp < RENDERER_RECOVERY_WINDOW_MS,
           );
-          const shouldRecover =
-            recoverable &&
-            !window.isDestroyed() &&
-            rendererRecoveryTimestamps.length < RENDERER_RECOVERY_MAX_ATTEMPTS;
+          const shouldRecover = recoverable && !window.isDestroyed();
+          // Past the budget, wait for the oldest attempt to leave the window instead of
+          // giving up, so a crash loop backs off but never leaves the window blank.
+          const oldestAttempt =
+            rendererRecoveryTimestamps.length >= RENDERER_RECOVERY_MAX_ATTEMPTS
+              ? rendererRecoveryTimestamps[
+                  rendererRecoveryTimestamps.length - RENDERER_RECOVERY_MAX_ATTEMPTS
+                ]
+              : undefined;
+          const reloadInMs =
+            oldestAttempt === undefined
+              ? RENDERER_RECOVERY_RELOAD_DELAY_MS
+              : Math.max(
+                  RENDERER_RECOVERY_RELOAD_DELAY_MS,
+                  oldestAttempt + RENDERER_RECOVERY_WINDOW_MS - now,
+                );
           yield* logWindowWarning("main window render process gone", {
             reason: details.reason,
             exitCode: details.exitCode,
             recovering: shouldRecover,
+            ...(shouldRecover ? { reloadInMs } : {}),
           });
           if (!shouldRecover) {
             return;
           }
-          rendererRecoveryTimestamps.push(now);
-          yield* Effect.sleep(RENDERER_RECOVERY_RELOAD_DELAY_MS);
+          rendererRecoveryTimestamps.push(now + reloadInMs);
+          yield* Effect.sleep(reloadInMs);
           if (!window.isDestroyed()) {
             loadApplication();
           }
@@ -1036,7 +1064,7 @@ export const make = Effect.gen(function* () {
 
   const ensureMain = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return Option.none<Electron.BrowserWindow>();
-    const existingWindow = yield* currentMainWindow;
+    const existingWindow = yield* electronWindow.main;
     if (Option.isSome(existingWindow)) {
       return existingWindow;
     }
@@ -1123,7 +1151,8 @@ export const make = Effect.gen(function* () {
     { reveal = true }: { readonly reveal?: boolean } = {},
   ) {
     if (yield* Ref.get(desktopState.quitting)) return;
-    const existingWindow = yield* reveal ? focusedMainWindow : electronWindow.main;
+    // Only the main renderer loads the app preload that listens on these channels.
+    const existingWindow = yield* electronWindow.main;
     if (Option.isNone(existingWindow) && (!reveal || (yield* waitingForBackend))) return;
     const window = Option.isSome(existingWindow) ? existingWindow : yield* ensureMain;
     if (Option.isNone(window) || window.value.isDestroyed()) return;

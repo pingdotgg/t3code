@@ -35,6 +35,7 @@ function emptyTab(): WorkspaceTabState {
 
 /** The list a workspace page belongs to. */
 export function workspaceTabOf(routeName: string | undefined): WorkspaceTab {
+  if (routeName === "Issue") return "issues";
   return routeName === "PullRequest" ? "pullRequests" : "threads";
 }
 
@@ -48,6 +49,7 @@ export function initialWorkspaceTabsState(
       threads: emptyTab(),
       bots: emptyTab(),
       pullRequests: emptyTab(),
+      issues: emptyTab(),
       settings: emptyTab(),
     },
   };
@@ -58,7 +60,7 @@ export type WorkspaceTabsAction =
   | { readonly type: "search"; readonly tab?: WorkspaceSearchTab }
   | { readonly type: "query"; readonly query: string; readonly tab?: WorkspaceSearchTab }
   | { readonly type: "expand"; readonly tab?: WorkspaceSearchTab }
-  | { readonly type: "cancel"; readonly tab?: WorkspaceSearchTab }
+  | { readonly type: "cancel"; readonly tab?: WorkspaceSearchTab; readonly scrollToTop?: boolean }
   | { readonly type: "scroll"; readonly tab: WorkspaceSearchTab; readonly offset: number };
 
 export function workspaceTabsReducer(
@@ -74,7 +76,7 @@ export function workspaceTabsReducer(
           selectionRevision: state.selectionRevision + 1,
         };
   const tab = action.tab ?? state.selectedTab;
-  if (tab !== "threads" && tab !== "pullRequests" && tab !== "settings") return state;
+  if (tab === "bots") return state;
   const current = state.tabs[tab];
   let next: WorkspaceTabState;
   switch (action.type) {
@@ -98,7 +100,8 @@ export function workspaceTabsReducer(
         ...current,
         query: "",
         searchMode: "resting",
-        scrollOffset: current.searchEntryOffset,
+        scrollOffset: action.scrollToTop ? 0 : current.searchEntryOffset,
+        searchEntryOffset: action.scrollToTop ? 0 : current.searchEntryOffset,
       };
       break;
     case "scroll":

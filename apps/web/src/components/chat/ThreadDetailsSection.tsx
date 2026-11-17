@@ -39,7 +39,8 @@ export function ThreadDetailsSection({
     <section
       {...props}
       aria-label={title}
-      className={cn(card && "surface-tray rounded-pane p-1")}
+      data-thread-details-card={card || undefined}
+      className={cn(card && "surface-tray rounded-pane p-1", variant === "usage" && "contents")}
       style={card ? { order: Math.max(0, order.indexOf(title)) + 1 } : undefined}
       onDragOver={
         card
@@ -94,7 +95,7 @@ export function ThreadDetailsSection({
           ref={contentRef}
           hidden={card && isCollapsed}
           className={cn(
-            "flex flex-col",
+            variant === "usage" ? "contents" : "flex flex-col",
             card && "surface-composer rounded-lg p-0.5",
             card && isCollapsed && "hidden",
           )}

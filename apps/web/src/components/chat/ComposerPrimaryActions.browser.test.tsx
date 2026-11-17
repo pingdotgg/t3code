@@ -245,21 +245,28 @@ it.each(["resume", "draft", "question"] as const)(
     await act(() => target()?.click());
     expect(props.onResume).not.toHaveBeenCalled();
     expect(props.onSubmitMessage).not.toHaveBeenCalled();
+    if (mode !== "question") {
+      expect(screen.container.querySelectorAll("[data-composer-send-pill]")).toHaveLength(1);
+      const compactToggle = screen.container.querySelector<HTMLButtonElement>(
+        '[aria-label="Compact 436k tokens of history before sending"]',
+      );
+      if (mode === "draft") {
+        expect(compactToggle).toHaveAttribute("aria-pressed", "true");
+        expect(compactToggle?.closest("[data-composer-send-pill]")).toContainElement(
+          screen.getByRole("button", { name: action, exact: true }).element(),
+        );
+        await act(() => compactToggle?.click());
+        expect(props.onToggleKeepFullHistory).toHaveBeenCalledOnce();
+      } else {
+        expect(compactToggle).toBeNull();
+      }
+    }
     expect(submit).not.toHaveBeenCalled();
     await act(() => vi.advanceTimersByTime(1));
     await act(() => target()?.click());
     expect(
       { resume: props.onResume, draft: props.onSubmitMessage, question: submit }[mode],
     ).toHaveBeenCalledTimes(1);
-    const compactToggle = screen.container.querySelector<HTMLButtonElement>(
-      '[aria-label="Compact 436k tokens of history before sending"]',
-    );
-    if (mode === "draft") {
-      expect(compactToggle).toHaveAttribute("aria-pressed", "true");
-      expect(compactToggle?.closest("[data-composer-send-pill]")).toContainElement(target()!);
-    } else {
-      expect(compactToggle).toBeNull();
-    }
     await screen.rerender(view());
     expect(screen.getByRole("button", { name: "Stop generation" }).element()).toBeEnabled();
   },

@@ -37,6 +37,9 @@ type Archive = Extract<BinaryWorkerResult, { type: "archive" }>;
 type Database = Extract<BinaryWorkerResult, { type: "sqlite" }>;
 type Rows = Extract<BinaryWorkerResult, { type: "rows" }>;
 
+const countLabel = (count: number, one: string, many: string) =>
+  `${count.toLocaleString()} ${count === 1 ? one : many}`;
+
 function ArchiveFile(props: { readonly path: string; readonly bytes: Uint8Array<ArrayBuffer> }) {
   const [url, setUrl] = useState<string | null>(null);
   const kind = filePreviewKind({ name: props.path });
@@ -214,7 +217,7 @@ export default function BinaryViewer(props: {
           <span className="shrink-0 text-muted-foreground">
             <Tooltip>
               <TooltipTrigger render={<span tabIndex={0} />}>
-                {archive.entries.length.toLocaleString()} entries
+                {countLabel(archive.entries.length, "entry", "entries")}
               </TooltipTrigger>
               <TooltipPopup>
                 {sizeBytes !== null ? formatAttachmentSize(sizeBytes) : "Size unavailable"}
@@ -235,13 +238,13 @@ export default function BinaryViewer(props: {
               >
                 <SelectTrigger aria-label="Table" aria-disabled={busy} aria-busy={busy} size="xs">
                   <SelectValue>
-                    {table.name} ({table.count.toLocaleString()} rows)
+                    {table.name} ({countLabel(table.count, "row", "rows")})
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
                   {database.tables.map((item) => (
                     <SelectItem key={item.name} value={item.name}>
-                      {item.name} ({item.count.toLocaleString()} rows)
+                      {item.name} ({countLabel(item.count, "row", "rows")})
                     </SelectItem>
                   ))}
                 </SelectPopup>
@@ -273,10 +276,12 @@ export default function BinaryViewer(props: {
           >
             <Tooltip>
               <TooltipTrigger render={<span tabIndex={0} />}>
-                {table.count.toLocaleString()} rows
+                {countLabel(table.count, "row", "rows")}
               </TooltipTrigger>
               <TooltipPopup>
-                <span className="block">{rows?.columns.length ?? "…"} columns</span>
+                <span className="block">
+                  {rows ? countLabel(rows.columns.length, "column", "columns") : "… columns"}
+                </span>
                 {sizeBytes !== null ? (
                   <span className="block">{formatAttachmentSize(sizeBytes)}</span>
                 ) : null}

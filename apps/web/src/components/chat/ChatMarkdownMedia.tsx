@@ -344,7 +344,7 @@ type ChatMarkdownAssetResource = Extract<
   }
 >;
 
-function assetMediaActionsSource(input: {
+export function assetMediaActionsSource(input: {
   readonly environmentId: EnvironmentId;
   readonly resource: ChatMarkdownAssetResource;
   readonly kind: "image" | "video";

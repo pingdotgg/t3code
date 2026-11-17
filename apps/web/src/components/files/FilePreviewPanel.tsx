@@ -95,7 +95,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { buildFileReviewComment } from "~/reviewCommentContext";
+import { buildFileReviewComment, type ReviewCommentContext } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
 import { usePreviewAvailable } from "~/browser/previewRuntime";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
@@ -117,11 +117,6 @@ import { FileExplorerPane } from "./FileExplorerPane";
 import { FileMediaDetails } from "./FileMediaDetails";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
 import { breadcrumbPathOf, retainedBreadcrumbTrail, trailChildOf } from "./filePath";
-import {
-  PanelTabActions,
-  PanelTabBreadcrumb,
-  useInPanelTabBar,
-} from "~/components/PanelTabBreadcrumb";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import {
   type FileCommentAnnotationEntry,
@@ -131,6 +126,7 @@ import {
   nextFileCommentId,
   normalizeFileCommentRange,
   remapFileCommentAnnotations,
+  promptFileCommentEntries,
 } from "./fileCommentAnnotations";
 import { installFileEditorDismissal } from "./fileEditorDismissal";
 import {
@@ -460,28 +456,6 @@ function WorkspaceAudioPreview(props: {
   );
 }
 
-/** Below this surface width the file actions fold into the More menu. */
-const FILE_ACTIONS_FOLD_WIDTH_PX = 600;
-
-/**
- * Below this surface width the tree no longer sits beside the preview: the
- * preview fills the surface and Back swaps it for the tree (pen r7Vc3).
- */
-const FILE_EXPLORER_SIDE_WIDTH_PX = 760;
-
-/** Whether the element renders narrower than `width`, kept current as it resizes. */
-function useElementNarrowerThan(element: HTMLElement | null, width: number): boolean {
-  const [narrow, setNarrow] = useState(false);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Observe the preview viewport width to choose its responsive file layout.
-  useEffect(() => {
-    if (!element) return;
-    const measure = () => setNarrow(element.clientWidth > 0 && element.clientWidth < width);
-    measure();
-    return observeResize(element, measure);
-  }, [element, width]);
-  return narrow;
-}
-
 function WorkspaceDocumentPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
@@ -540,6 +514,28 @@ function WorkspaceDocumentPreview(props: {
   );
 }
 
+/** Below this surface width the file actions fold into the More menu. */
+const FILE_ACTIONS_FOLD_WIDTH_PX = 600;
+
+/**
+ * Below this surface width the tree no longer sits beside the preview: the
+ * preview fills the surface and Back swaps it for the tree (pen r7Vc3).
+ */
+const FILE_EXPLORER_SIDE_WIDTH_PX = 760;
+
+/** Whether the element renders narrower than `width`, kept current as it resizes. */
+function useElementNarrowerThan(element: HTMLElement | null, width: number): boolean {
+  const [narrow, setNarrow] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Observe the preview viewport width to choose its responsive file layout.
+  useEffect(() => {
+    if (!element) return;
+    const measure = () => setNarrow(element.clientWidth > 0 && element.clientWidth < width);
+    measure();
+    return observeResize(element, measure);
+  }, [element, width]);
+  return narrow;
+}
+
 function clampFileLine(contents: string, requestedLine: number): number {
   let lineCount = 1;
   for (let index = 0; index < contents.length; index += 1) {
@@ -579,9 +575,27 @@ interface FileRevealState {
   cancelGuard: (() => void) | null;
   handledRequestId: number | null;
   latestRequestId: number | null;
+  /** The path's code view offset when it last unmounted, restored when it is shown again. */
+  scrollTop: number;
+  scrollContainer: HTMLElement | null;
+  restoreFrameId: number | null;
+}
+
+// A file pane tab unmounts while another tab of its pane shows, so its offset outlives the panel.
+const savedFileScrollTops = new Map<string, number>();
+const SAVED_FILE_SCROLL_TOPS_LIMIT = 200;
+
+function saveFileScrollTop(key: string, scrollTop: number) {
+  savedFileScrollTops.delete(key);
+  savedFileScrollTops.set(key, scrollTop);
+  if (savedFileScrollTops.size > SAVED_FILE_SCROLL_TOPS_LIMIT) {
+    const oldest = savedFileScrollTops.keys().next().value;
+    if (oldest !== undefined) savedFileScrollTops.delete(oldest);
+  }
 }
 
 function useFileLineReveal(
+  scrollScope: string,
   relativePath: string | null,
   revealLine: number | null,
   revealRequestId: number,
@@ -591,12 +605,16 @@ function useFileLineReveal(
   return (fileContainer, instance, phase) => {
     if (relativePath === null) return;
 
+    const scrollKey = `${scrollScope}\u0000${relativePath}`;
     const existingState = revealStatesByPath.get(relativePath);
     const state: FileRevealState = existingState ?? {
       frameId: null,
       cancelGuard: null,
       handledRequestId: null,
       latestRequestId: null,
+      scrollTop: savedFileScrollTops.get(scrollKey) ?? 0,
+      scrollContainer: null,
+      restoreFrameId: null,
     };
     if (!existingState) revealStatesByPath.set(relativePath, state);
 
@@ -606,10 +624,21 @@ function useFileLineReveal(
         state.frameId = null;
       }
       state.cancelGuard?.();
+      if (state.restoreFrameId !== null) {
+        cancelAnimationFrame(state.restoreFrameId);
+        state.restoreFrameId = null;
+      }
     };
 
+    const scrollContainer = fileContainer.closest<HTMLElement>(".file-preview-virtualizer");
+
     if (phase === "unmount") {
+      // A view torn down before its restore ran never showed the saved offset, so keep it.
+      const restorePending = state.restoreFrameId !== null;
       cancelPendingReveal();
+      if (scrollContainer && !restorePending) state.scrollTop = scrollContainer.scrollTop;
+      saveFileScrollTop(scrollKey, state.scrollTop);
+      state.scrollContainer = null;
       return;
     }
 
@@ -626,12 +655,37 @@ function useFileLineReveal(
       state.handledRequestId = null;
     }
 
+    if (scrollContainer && state.scrollContainer !== scrollContainer) {
+      state.scrollContainer = scrollContainer;
+      const savedScrollTop = state.scrollTop;
+      // A pending line reveal owns the scroll position.
+      if (
+        savedScrollTop > 0 &&
+        (revealLine === null || state.handledRequestId === revealRequestId)
+      ) {
+        const restoreScroll = (attempt: number) => {
+          state.restoreFrameId = requestAnimationFrame(() => {
+            state.restoreFrameId = null;
+            if (!scrollContainer.isConnected || scrollContainer.scrollTop !== 0) return;
+            // Wait for the virtualizer to size the file so the offset is not clamped.
+            const fits =
+              scrollContainer.scrollHeight - scrollContainer.clientHeight >= savedScrollTop;
+            if (fits || attempt >= REVEAL_MAX_ATTEMPTS) {
+              scrollContainer.scrollTop = savedScrollTop;
+              return;
+            }
+            restoreScroll(attempt + 1);
+          });
+        };
+        restoreScroll(0);
+      }
+    }
+
     if (revealLine === null) {
       fileContainer.style.minHeight = "";
       return;
     }
 
-    const scrollContainer = fileContainer.closest<HTMLElement>(".file-preview-virtualizer");
     if (!scrollContainer) return;
     fileContainer.style.minHeight = `${Math.ceil(
       Math.max(instance.height, scrollContainer.clientHeight),
@@ -744,6 +798,8 @@ function useFileLineReveal(
   };
 }
 
+const EMPTY_REVIEW_COMMENTS: ReadonlyArray<ReviewCommentContext> = [];
+
 const createFileEditor: EditorFactory<FileCommentAnnotationGroup, undefined> = (
   editorType,
   options,
@@ -838,6 +894,13 @@ function EditableFileSurface({
 }: EditableFileSurfaceProps) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
+  const promptCommentIds = new Set(
+    useComposerDraftStore((store) =>
+      composerDraftTarget
+        ? (store.getComposerDraft(composerDraftTarget)?.reviewComments ?? EMPTY_REVIEW_COMMENTS)
+        : EMPTY_REVIEW_COMMENTS,
+    ).map((comment) => comment.id),
+  );
   const [lineAnnotations, setLineAnnotations] = useState<FileCommentLineAnnotation[]>([]);
   const [selectionOverride, setSelectionOverride] = useState<FileSelectionOverride | null>(null);
   const selectedRange =
@@ -886,7 +949,7 @@ function EditableFileSurface({
     setLineAnnotations((current) => (current === nextLineAnnotations ? current : remapped));
     for (const annotation of remapped) {
       for (const entry of annotation.metadata.entries) {
-        if (entry.kind !== "comment") continue;
+        if (entry.kind !== "comment" || !promptCommentIds.has(entry.id)) continue;
         addReviewComment(composerDraftTarget, {
           ...buildFileReviewComment({
             id: entry.id,
@@ -1054,33 +1117,41 @@ function EditableFileSurface({
             }}
             selectedLines={selectedRange}
             lineAnnotations={lineAnnotations}
-            renderAnnotation={(annotation) => (
-              <div className="flex flex-col gap-2 pt-1.5 pr-3 pb-2 pl-10">
-                {annotation.metadata.entries.map((entry) => (
-                  <DiffCommentAnnotation
-                    key={entry.id}
-                    environmentId={environmentId}
-                    projectId={projectId}
-                    ownerKey={JSON.stringify([
-                      environmentId,
-                      composerDraftTarget,
-                      relativePath,
-                      entry.id,
-                    ])}
-                    kind={entry.kind}
-                    rangeLabel={formatFileCommentRange(entry.startLine, entry.endLine)}
-                    createdAt={entry.createdAt}
-                    // A saved file comment is the composer's context entry for it.
-                    stateLabel={entry.kind === "comment" ? "In composer" : undefined}
-                    submitLabel="Done"
-                    text={entry.text}
-                    onCancel={() => removeAnnotationEntry(entry.id)}
-                    onComment={(text) => submitAnnotationEntry(entry.id, text)}
-                    onDelete={() => removeAnnotationEntry(entry.id)}
-                  />
-                ))}
-              </div>
-            )}
+            renderAnnotation={(annotation) => {
+              // Sent comments stay annotated so a failed send can restore them at remapped lines.
+              const entries = promptFileCommentEntries(
+                annotation.metadata.entries,
+                promptCommentIds,
+              );
+              if (entries.length === 0) return null;
+              return (
+                <div className="flex flex-col gap-2 pt-1.5 pr-3 pb-2 pl-10">
+                  {entries.map((entry) => (
+                    <DiffCommentAnnotation
+                      key={entry.id}
+                      environmentId={environmentId}
+                      projectId={projectId}
+                      ownerKey={JSON.stringify([
+                        environmentId,
+                        composerDraftTarget,
+                        relativePath,
+                        entry.id,
+                      ])}
+                      kind={entry.kind}
+                      rangeLabel={formatFileCommentRange(entry.startLine, entry.endLine)}
+                      createdAt={entry.createdAt}
+                      // A saved file comment is the composer's context entry for it.
+                      stateLabel={entry.kind === "comment" ? "In composer" : undefined}
+                      submitLabel="Done"
+                      text={entry.text}
+                      onCancel={() => removeAnnotationEntry(entry.id)}
+                      onComment={(text) => submitAnnotationEntry(entry.id, text)}
+                      onDelete={() => removeAnnotationEntry(entry.id)}
+                    />
+                  ))}
+                </div>
+              );
+            }}
             className="min-h-full"
           />
         </Virtualizer>
@@ -1278,10 +1349,8 @@ export default function FilePreviewPanel({
   const [handledReveal, setHandledReveal] = useState<{ path: string; requestId: number } | null>(
     null,
   );
-  const breadcrumbRef = useRef<HTMLDivElement>(null);
-  const inPanelTabBar = useInPanelTabBar();
-  // A narrow pane shares one row between the tabs and these actions, so the
-  // view toggle shrinks to a source icon and Add to chat moves into the More menu.
+  const [breadcrumbElement, setBreadcrumbElement] = useState<HTMLDivElement | null>(null);
+  // Narrow rows use a source icon and move Add to chat into the More menu.
   const [surfaceElement, setSurfaceElement] = useState<HTMLDivElement | null>(null);
   const foldActions = useElementNarrowerThan(surfaceElement, FILE_ACTIONS_FOLD_WIDTH_PX);
   const stackExplorer = useElementNarrowerThan(surfaceElement, FILE_EXPLORER_SIDE_WIDTH_PX);
@@ -1330,22 +1399,6 @@ export default function FilePreviewPanel({
     !renderBrowserFile &&
     file.data?.truncated === true &&
     (draft || isMarkdown || isMermaid || isHtml);
-  const noticeAbove = readOnlyNotice || truncatedNotice;
-  // Source, rendered markdown and the file tree scroll up under a pane's tab
-  // row (--surface-top-inset); a notice above them, and other previews, keep
-  // everything below it.
-  const scrollsUnderTabRow =
-    inPanelTabBar &&
-    !noticeAbove &&
-    (showPreview
-      ? attachment === undefined &&
-        !isMedia &&
-        !renderBrowserFile &&
-        !renderTable &&
-        !renderMermaid &&
-        !isDocument &&
-        file.data != null
-      : showExplorer);
   const renderedMode = isMermaid
     ? ("mermaid" as const)
     : isMarkdown
@@ -1453,7 +1506,12 @@ export default function FilePreviewPanel({
   // Mentions resolve against the workspace, so only workspace files can be added.
   const canAddToChat =
     previewPath !== null && relativePath !== null && !isHostFile && composerRef !== null;
-  const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
+  const onFilePostRender = useFileLineReveal(
+    `${environmentId}\u0000${cwd}`,
+    relativePath,
+    revealLine,
+    revealRequestId,
+  );
   // Mounting the file read under the workspace mutation id refetches it after each mutation.
   useAtomMount(
     canReadFiles &&
@@ -1469,16 +1527,22 @@ export default function FilePreviewPanel({
       : NO_FILE_REVISION_ATOM,
   );
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the breadcrumb DOM so the deepest and current crumbs are in view after commit
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the current breadcrumb in view as its path or available width changes
   useEffect(() => {
-    const crumbs = breadcrumbRef.current?.querySelectorAll<HTMLElement>("[data-file-crumb]");
-    // Show the deepest crumb when it fits, but never at the cost of the current one.
-    crumbs?.[crumbs.length - 1]?.scrollIntoView({ block: "nearest", inline: "end" });
-    breadcrumbRef.current
-      ?.querySelector<HTMLElement>("[data-current-file-crumb='true']")
-      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    const element = breadcrumbElement;
+    if (!element) return;
+    const revealCurrentCrumb = () => {
+      const crumbs = element.querySelectorAll<HTMLElement>("[data-file-crumb]");
+      // Show the deepest crumb when it fits, but never at the cost of the current one.
+      crumbs[crumbs.length - 1]?.scrollIntoView({ block: "nearest", inline: "end" });
+      element
+        .querySelector<HTMLElement>("[data-current-file-crumb='true']")
+        ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    };
+    revealCurrentCrumb();
+    return observeResize(element, revealCurrentCrumb);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A new path or trail re-renders the crumbs, so the current one scrolls back into view.
-  }, [breadcrumbPath, breadcrumbTrail]);
+  }, [breadcrumbElement, breadcrumbPath, breadcrumbTrail]);
 
   const toggleExplorer = () => {
     setExplorerOpen((current) => {
@@ -1543,15 +1607,13 @@ export default function FilePreviewPanel({
   const addToChat = () => {
     if (relativePath) addFileMentionToChat(composerRef, relativePath);
   };
-  // The file's crumbs and actions: their own row, or in a panel tab bar the
-  // tab's breadcrumb ("Files › file.tsx") and the row's end (pen r7Vc3).
   const fileHeader =
     breadcrumbPath !== null && breadcrumbTrail !== null
       ? {
           crumbs: (
             <ScrollArea
               radius="none"
-              ref={breadcrumbRef}
+              ref={setBreadcrumbElement}
               hideScrollbars
               scrollFade
               className="min-w-0 flex-1"
@@ -1571,20 +1633,6 @@ export default function FilePreviewPanel({
                 />
               </div>
             </ScrollArea>
-          ),
-          tabCrumb: (
-            <FileBreadcrumbs
-              compact
-              cwd={cwd}
-              environmentId={environmentId}
-              isFolder={isFolder}
-              onNavigateFolder={navigateToFolder}
-              onOpenFile={openFileFromSurface}
-              projectName={projectName}
-              relativePath={breadcrumbPath}
-              trail={breadcrumbTrail}
-              workspaceMutationId={workspaceMutationId}
-            />
           ),
           actions: (
             <>
@@ -1697,19 +1745,12 @@ export default function FilePreviewPanel({
     <div
       ref={setSurfaceElement}
       className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
-      data-surface-reaches-under-header={scrollsUnderTabRow ? "" : undefined}
     >
-      {fileHeader && !inPanelTabBar ? (
+      {fileHeader ? (
         <div className={FILE_SURFACE_SUBHEADER_CLASS} data-surface-subheader>
           {fileHeader.crumbs}
           {fileHeader.actions}
         </div>
-      ) : null}
-      {fileHeader && inPanelTabBar ? (
-        <>
-          <PanelTabBreadcrumb>{fileHeader.tabCrumb}</PanelTabBreadcrumb>
-          <PanelTabActions>{fileHeader.actions}</PanelTabActions>
-        </>
       ) : null}
       {readOnlyNotice ? (
         <div className="shrink-0 border-b px-3 py-1.5 text-caption text-muted-foreground">
@@ -1932,7 +1973,6 @@ export default function FilePreviewPanel({
                 }
                 selectedPathRevealId={revealRequestId}
                 visible={showExplorer}
-                underPaneHeader={scrollsUnderTabRow}
                 onOpenFile={openFileFromSurface}
                 answersPanelFind={!previewPath}
                 workspaceMutationId={workspaceMutationId}

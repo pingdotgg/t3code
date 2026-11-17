@@ -10,9 +10,9 @@ import {
   useRef,
   useState,
 } from "react";
+import { create } from "zustand";
 import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { create } from "zustand";
 
 import { useChatCanvas } from "../chat/ChatCanvasContext";
 import type { ChatCanvasPreview } from "../chat/chatCanvasLayout";
@@ -97,19 +97,18 @@ const RESIZE_HANDLES: ReadonlyArray<{
 const BROWSER_MINI_PLAYER_FRAME_SIZE = { width: 320, height: 200 } as const;
 
 // The source size a resize in progress lays the frame out from, so a source that changes shape
-// under a held handle cannot resize the player by itself. One slot is enough, since only the
-// shown thread renders a player.
+// under a held handle cannot resize the player by itself. Same single slot as above.
 const useHeldSourceSize = create<{
   readonly key: string;
   readonly source: PreviewMiniPlayerSize;
 } | null>(() => null);
 
+const streamedSourceKey = (threadRef: ScopedThreadRef, sourceKey: string) =>
+  `${scopedThreadKey(threadRef)}\u0000${sourceKey}`;
+
 const NO_DEVICE_SCREEN_ATOM = Atom.make<DeviceScreenSize | null>(null).pipe(
   Atom.withLabel("device-stream-screen:none"),
 );
-
-const streamedSourceKey = (threadRef: ScopedThreadRef, sourceKey: string) =>
-  `${scopedThreadKey(threadRef)}\u0000${sourceKey}`;
 
 // The mini player's device stream view, named so the canvas can read the
 // screen size that view reports.

@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { parseUrl } from "@t3tools/shared/url";
 import { Globe, Link } from "lucide-react";
 
 import type { BrowserHistoryEntry } from "~/browserHistoryStore";
@@ -35,7 +36,7 @@ export function PreviewEmptyState({
     environmentId,
     configuredUrls,
   });
-  const recents = recentEntries.filter((entry) => URL.canParse(entry.url)).slice(0, 8);
+  const recents = recentEntries.filter((entry) => parseUrl(entry.url) !== null).slice(0, 8);
 
   return (
     <div className="scrollbar-gutter-both flex h-full min-h-0 overflow-y-auto px-4 pt-4 pb-6">

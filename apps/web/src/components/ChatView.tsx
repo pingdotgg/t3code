@@ -1,6 +1,6 @@
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { ComposerTaskStatus } from "./chat/ComposerTaskStatus";
-import { workspaceAreaProps } from "../lib/workspaceFocus";
+import { isReturnedSurfaceFocus, workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
@@ -131,8 +131,8 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   type ComponentProps,
   type CSSProperties,
-  type ReactNode,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
   type SetStateAction,
   use,
   useEffect,
@@ -145,6 +145,7 @@ import { WorkspaceMutationIdContext } from "./chat/ChatMarkdownMedia";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   assistantCitationFromLocation,
+  assistantCitationScopeFromLocation,
   useSideChatCitationReveal,
 } from "../lib/assistantCitationNavigation";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
@@ -212,7 +213,11 @@ import { cn } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { projectScriptIdFromCommand } from "~/projectScripts";
 import { newMessageId } from "~/lib/utils";
-import { isInSideChatPane, type SideChatParentPanel } from "~/lib/sideChatPane";
+import {
+  isInSideChatPane,
+  resolveThreadOpenRoute,
+  type SideChatParentPanel,
+} from "~/lib/sideChatPane";
 import {
   NO_PROVIDER_MODEL_SELECTION,
   providerInstanceEntriesFor,
@@ -632,8 +637,12 @@ export default function ChatView(props: ChatViewProps) {
     : null;
   const citationActivation = citationLocation?.key ?? "";
   const citationRequest = (
-    locationCitation && locationCitation.threadId === threadId
-      ? { citation: locationCitation, key: citationActivation }
+    citationLocation && locationCitation && locationCitation.threadId === threadId
+      ? {
+          citation: locationCitation,
+          scope: assistantCitationScopeFromLocation(citationLocation.href),
+          key: citationActivation,
+        }
       : null
   ) as AssistantCitationRequest | null;
   useSideChatCitationReveal(
@@ -779,7 +788,7 @@ export default function ChatView(props: ChatViewProps) {
   const isMobileViewport = useMediaQuery("max-sm");
   // Focusing the composer without a tap raises the on-screen keyboard on touch devices.
   const isCoarsePointer = useMediaQuery({ pointer: "coarse" });
-  const [chatViewRootElement, setChatViewRootElement] = useState<HTMLDivElement | null>(null);
+  const [workspaceLayoutElement, setWorkspaceLayoutElement] = useState<HTMLDivElement | null>(null);
   const threadPanelPopoverAnchorRef = useRef<HTMLElement | null>(null);
   const [terminalUiLaunchContext, setTerminalUiLaunchContext] =
     useState<TerminalLaunchContext | null>(null);
@@ -983,7 +992,9 @@ export default function ChatView(props: ChatViewProps) {
         open: (): void => {
           void navigate({
             to: "/$environmentId/$threadId",
-            params: buildThreadRouteParams(parentSubagentThreadRef),
+            params: buildThreadRouteParams(
+              resolveThreadOpenRoute(parentSubagentThreadRef, parentSubagentThread),
+            ),
           });
         },
       };
@@ -1424,10 +1435,6 @@ export default function ChatView(props: ChatViewProps) {
     pendingUserInputs,
     activePendingApproval,
     activePendingUserInput,
-    activePendingDraftAnswers,
-    activePendingQuestionIndex,
-    activePendingProgress,
-    activePendingResolvedAnswers,
     activePendingIsResponding,
     respondingRequestIds,
     onRespondToApproval: onRespondToApprovalStable,
@@ -2209,31 +2216,31 @@ export default function ChatView(props: ChatViewProps) {
     setTimelineAnchor,
   });
 
-  const focusOpenedThreadComposer = useStableCallback(() => {
-    if (!isCoveredByModal(composerOverlayElement)) focusComposerStable();
-  });
-  // Moving between panes keeps the workspace control the user chose inside this pane.
-  const paneWasFocusedRef = useRef(layoutPane.focused);
-  const preserveEnteredPaneFocus = useStableCallback(() => {
-    if (paneWasFocusedRef.current || layoutPane.tabId === null) return false;
+  // Moving between panes keeps the workspace control the user chose in the pane it enters.
+  const threadEntryPaneFocusedRef = useRef(layoutPane.focused);
+  const keepsEnteredPaneFocus = useStableCallback(() => {
+    if (isReturnedSurfaceFocus()) return true;
+    if (threadEntryPaneFocusedRef.current || layoutPane.tabId === null) return false;
     const activeArea = document.activeElement?.closest<HTMLElement>("[data-workspace-area]");
     return (
       activeArea?.closest<HTMLElement>("[data-layout-tab-id]")?.dataset.layoutTabId ===
       layoutPane.tabId
     );
   });
-
+  const focusOpenedThreadComposer = useStableCallback(() => {
+    if (!isCoveredByModal(composerOverlayElement)) focusComposerStable();
+  });
   useFocusComposerOnThreadOpen(
     activeThreadRef,
-    chatViewRootElement,
+    workspaceLayoutElement,
     !embedded && layoutPane.focused && !backgroundThread,
     terminalUiState.terminalOpen,
     isCoarsePointer ? ignoreComposerFocus : focusOpenedThreadComposer,
-    preserveEnteredPaneFocus,
+    keepsEnteredPaneFocus,
   );
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records pane focus after the thread-entry effect above reads it
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records pane focus after thread entry reads it, so the next entry knows it moved between panes
   useEffect(() => {
-    paneWasFocusedRef.current = layoutPane.focused;
+    threadEntryPaneFocusedRef.current = layoutPane.focused;
   }, [layoutPane.focused]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window focus listener that refocuses the composer after the window regains focus on a fine pointer
@@ -2258,7 +2265,7 @@ export default function ChatView(props: ChatViewProps) {
           if (document.querySelector("[data-mcp-app-fullscreen]") !== null) return;
           if (
             !isInSideChatPane(document.activeElement) &&
-            shouldRefocusComposerOnWindowFocus(document.activeElement)
+            shouldRefocusComposerOnWindowFocus(document.activeElement, document.getSelection())
           ) {
             focusComposerStable();
           }
@@ -2882,6 +2889,7 @@ export default function ChatView(props: ChatViewProps) {
     // browser keeps the keys it shares with them (mod+l).
     previewFocus: isBrowserFocused(),
     previewOpen: previewPanelOpen,
+    rightPanelOpen,
     editableFocus: isEditableFocused(eventTarget),
     modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
     composerFocus:
@@ -2894,6 +2902,7 @@ export default function ChatView(props: ChatViewProps) {
     isWeb: !isElectron,
     isDesktop: isElectron,
   });
+  const getShortcutContextStable = useStableCallback(getShortcutContext);
   const timelineSkills = activeProviderStatus
     ? resolveProviderSkillsForCwd(activeProviderStatus, gitCwd)
     : EMPTY_PROVIDER_SKILLS;
@@ -3101,6 +3110,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadKey,
     activeThreadBranch,
     activeProject,
+    activeProjectIsScratch,
     activeProjectDefaultModelSelection,
     activeMessageCount,
     isServerThread,
@@ -3144,7 +3154,7 @@ export default function ChatView(props: ChatViewProps) {
     readPendingEnvironmentChange,
     pendingApprovals,
     respondingRequestIds,
-    activePendingProgress,
+    activePendingUserInput,
     onAdvanceActivePendingUserInput,
     onRespondToApproval: onRespondToApprovalStable,
     beginLocalDispatch,
@@ -3263,6 +3273,10 @@ export default function ChatView(props: ChatViewProps) {
       .some((id) => id !== "" && !previousIds.has(id));
     if (hasNewMessage && timelineLiveFollowEnabled) scrollToEnd(true);
   }, [routeThreadKey, pendingGuestMessageKey, timelineLiveFollowEnabled, scrollToEnd]);
+  const onExpandTimelineImage = (preview: ExpandedImagePreview) => {
+    openExpandedImagePreview(routeThreadKey, preview);
+  };
+  const onExpandTimelineImageStable = useStableCallback(onExpandTimelineImage);
   const queuedRunsControl =
     isServerThread && activeThread ? (
       <>
@@ -3286,6 +3300,7 @@ export default function ChatView(props: ChatViewProps) {
           onRemovePending={withdrawQueuedSendStable}
           timestampFormat={timestampFormat}
           onOpenThread={onOpenRelatedThreadStable}
+          onImageExpand={onExpandTimelineImageStable}
         />
       </>
     ) : null;
@@ -3297,7 +3312,7 @@ export default function ChatView(props: ChatViewProps) {
     clientSettingsHydrated &&
     !needsLoadBalancing &&
     !activeEnvironmentUnavailable &&
-    !activePendingProgress &&
+    !activePendingUserInput &&
     !feedbackUploading;
   // The thread's surface tabs reach this chat through its bridge: diffs and
   // files refresh on its workspace changes, browser annotations send from its
@@ -3379,10 +3394,6 @@ export default function ChatView(props: ChatViewProps) {
     onComposerSendStable,
   ]);
 
-  const onExpandTimelineImage = (preview: ExpandedImagePreview) => {
-    openExpandedImagePreview(routeThreadKey, preview);
-  };
-  const onExpandTimelineImageStable = useStableCallback(onExpandTimelineImage);
   const shownThreadSyncPhase = activeEnvironmentUnavailable ? null : delayedThreadSyncPhase;
   const hasThreadNow =
     attentionNow !== null || workNow !== null || goalNow !== null || shownThreadSyncPhase !== null;
@@ -3503,7 +3514,7 @@ export default function ChatView(props: ChatViewProps) {
 
   const content = (
     <div
-      ref={setChatViewRootElement}
+      ref={setWorkspaceLayoutElement}
       className="@container/header-actions relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
     >
       {embedded ? null : (
@@ -3807,7 +3818,7 @@ export default function ChatView(props: ChatViewProps) {
                         inert={queuedRunEdit.isSaving}
                         aria-busy={queuedRunEdit.isSaving}
                       >
-                        <div className="relative z-10">
+                        <div className="relative z-10 rounded-[inherit]">
                           {showProviderSubagentBar ? (
                             <ProviderSubagentBar
                               provider={selectedProviderEntry ?? null}
@@ -3917,11 +3928,7 @@ export default function ChatView(props: ChatViewProps) {
                               pendingApprovals={pendingApprovals}
                               onHeldRequestIdsChange={onHeldRequestIdsChange}
                               pendingUserInputs={pendingUserInputs}
-                              activePendingProgress={activePendingProgress}
-                              activePendingResolvedAnswers={activePendingResolvedAnswers}
                               activePendingIsResponding={activePendingIsResponding}
-                              activePendingDraftAnswers={activePendingDraftAnswers}
-                              activePendingQuestionIndex={activePendingQuestionIndex}
                               respondingRequestIds={respondingRequestIds}
                               workspaceFileDragActive={isWorkspaceFileDragActive}
                               runtimeMode={runtimeMode}
@@ -3940,6 +3947,7 @@ export default function ChatView(props: ChatViewProps) {
                               resolvedTheme={resolvedTheme}
                               settings={settings}
                               keybindings={keybindings}
+                              getShortcutContext={getShortcutContextStable}
                               terminalOpen={Boolean(terminalUiState.terminalOpen)}
                               gitCwd={gitCwd}
                               pullRequestProjectId={
@@ -4208,6 +4216,12 @@ export default function ChatView(props: ChatViewProps) {
   );
 }
 
+// Chromium on Linux pastes PRIMARY into the focused editable unless the middle mouseup is cancelled.
+function preventMiddleClickPasteOutsideEditable(event: ReactMouseEvent) {
+  if (event.button !== 1 || isEditableFocused(event.target)) return;
+  event.preventDefault();
+}
+
 // A new footer element re-renders the whole timeline. Reading the providers and resolving
 // the handoff here keeps the element memoized; the compiler leaves it unmemoized when it
 // depends on either from the chat view.
@@ -4246,12 +4260,6 @@ function TimelineFooter(props: {
       )}
     </>
   );
-}
-
-// Chromium on Linux pastes PRIMARY into the focused editable unless the middle mouseup is cancelled.
-function preventMiddleClickPasteOutsideEditable(event: ReactMouseEvent) {
-  if (event.button !== 1 || isEditableFocused(event.target)) return;
-  event.preventDefault();
 }
 
 function PreviewSessionSync(props: { readonly threadRef: ScopedThreadRef }) {

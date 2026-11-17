@@ -29,7 +29,6 @@ export function ChatPaneHeader({
       ref={ref}
       {...workspaceAreaProps("tabs", 0.5, "Thread tabs")}
       data-chat-header
-      data-sidebar-slide-children=""
       data-pane-header
       className={chatPaneHeaderClassName({
         leadingEdge,
@@ -66,7 +65,7 @@ export function chatPaneHeaderClassName({
   return cn(
     // Keep tab menus above the timeline. Ease the collapsed-sidebar inset with the sidebar so the
     // tab moves with its pane.
-    "relative z-10 bg-background md:pl-0",
+    "relative z-10 bg-background md:pl-0 [[data-panel-animations=true]_&]:motion-safe:transition-[padding-left] [[data-panel-animations=true]_&]:motion-safe:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:motion-safe:ease-out",
     isElectron
       ? cn(
           "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center px-3 sm:px-5",
@@ -112,8 +111,6 @@ export function ChatPaneHeaderControls({
         (split || local) && !trailingEdge && "md:pe-2",
       )}
       data-workspace-titlebar-controls
-      // The window's right edge holds still as the sidebar slides, and so does a pane's run to it.
-      data-sidebar-slide-hold={local || (split && !trailingEdge) ? undefined : ""}
     >
       <PaneNotch side="right" marksHost={marksHost}>
         <div className="pointer-events-auto flex h-full items-center gap-1.5">{children}</div>

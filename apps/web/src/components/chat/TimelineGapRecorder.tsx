@@ -1,6 +1,5 @@
-// Temporary investigation aid for the blank timeline gap (a row's slot taller or lower than
-// its content). Dev builds only. Remove this file and its hook-ups once the cause is fixed.
-// It only reads layout; it never calls into the list in a way that re-measures rows.
+// Investigation aid; reads layout without asking the list to remeasure or repair it.
+// Enable in production: localStorage.setItem("t3:timeline-gap-recorder", "1"), then reload.
 import type { LegendListRef } from "@legendapp/list/react";
 import { useEffect, useRef } from "react";
 
@@ -15,24 +14,34 @@ const CONFIRM_CHECK_MS = 4000;
 const OPEN_RECHECK_MS = 10_000;
 const MAX_EVENTS = 8;
 
-interface MeasuredRow {
+interface RowLayout {
   index: number;
   key: string;
   kind: string;
   lastTurn: boolean;
-  domTop: number;
-  domHeight: number;
-  contentHeight: number | null;
   storedTop: number;
   storedSize: number;
 }
 
+interface MeasuredRow extends RowLayout {
+  domTop: number;
+  domHeight: number;
+  contentHeight: number | null;
+}
+
+interface MissingRow extends RowLayout {
+  reason: "no slot mounted for a row in range";
+  inBufferedRange: boolean;
+  inViewport: boolean;
+}
+
 interface GapFinding {
   id: string;
-  type: "hole" | "overlap" | "size-mismatch" | "empty-slot";
+  type: "hole" | "overlap" | "size-mismatch" | "empty-slot" | "missing-slot";
   px: number;
   top: number;
   rows: MeasuredRow[];
+  missingRow?: MissingRow;
 }
 
 interface GapSnapshot {
@@ -46,6 +55,12 @@ interface GapSnapshot {
   dataLength: number;
   isFollowingEnd: boolean;
   isAtEnd: boolean;
+  startBuffered: number;
+  endBuffered: number;
+  viewportTop: number;
+  viewportBottom: number;
+  slots: { key: string | null; top: number; height: number; contentHeight: number | null }[];
+  missingRows: MissingRow[];
   findings: GapFinding[];
   rows: MeasuredRow[];
 }
@@ -152,7 +167,7 @@ function measure(monitor: Monitor): GapSnapshot | null {
   if (!list || !(viewport instanceof HTMLElement) || !viewport.checkVisibility()) return null;
   const state = list.getState();
   const content = viewport.firstElementChild;
-  if (!content) return null;
+  if (!(content instanceof HTMLElement)) return null;
   const sized =
     [...content.children].find(
       (child): child is HTMLElement =>
@@ -162,25 +177,60 @@ function measure(monitor: Monitor): GapSnapshot | null {
     ? viewport.getBoundingClientRect().height / viewport.offsetHeight
     : 1;
   const base = sized.getBoundingClientRect().top;
+  const viewportTop = (viewport.getBoundingClientRect().top - base) / zoom;
+  const viewportBottom = viewportTop + viewport.clientHeight;
+  const slots: GapSnapshot["slots"] = [];
+  const mounted = new Map<string, HTMLElement>();
+  for (const child of sized.children) {
+    if (!(child instanceof HTMLElement) || child.style.position !== "absolute") continue;
+    const inner = child.querySelector<HTMLElement>("[data-timeline-row-id]");
+    const key = inner?.dataset.timelineRowId ?? null;
+    if (key !== null) mounted.set(key, child);
+    slots.push({
+      key,
+      top: r1((child.getBoundingClientRect().top - base) / zoom),
+      height: child.offsetHeight,
+      contentHeight: inner?.offsetHeight ?? null,
+    });
+  }
+  slots.sort((a, b) => a.top - b.top);
   const rows: MeasuredRow[] = [];
-  const first = Math.max(0, state.startBuffered - 2);
-  const last = Math.min(state.data.length - 1, state.endBuffered + 2);
-  for (let index = first; index <= last; index++) {
-    let slot = state.elementAtIndex(index);
-    while (slot && slot.parentElement && slot.parentElement !== sized) slot = slot.parentElement;
-    if (!(slot instanceof HTMLElement) || slot.parentElement !== sized) continue;
+  const missingRows: MissingRow[] = [];
+  for (let index = 0; index < state.data.length; index++) {
+    const storedTop = state.positionAtIndex(index) ?? -1;
+    const storedSize = state.sizeAtIndex(index) ?? -1;
+    const bottom =
+      storedSize >= 0
+        ? storedTop + storedSize
+        : (state.positionAtIndex(index + 1) ?? sized.offsetHeight);
+    const inBufferedRange = index >= state.startBuffered && index <= state.endBuffered;
+    const inViewport = storedTop >= 0 && bottom > viewportTop && storedTop < viewportBottom;
+    if (!inBufferedRange && !inViewport) continue;
     const row: unknown = state.data[index];
-    const inner = slot.querySelector<HTMLElement>("[data-timeline-row-id]");
-    rows.push({
+    const layout: RowLayout = {
       index,
       key: String(field(row, "id") ?? index),
       kind: String(field(row, "kind") ?? "?"),
       lastTurn: monitor.latestRunId !== null && rowRunId(row) === monitor.latestRunId,
+      storedTop: r1(storedTop),
+      storedSize: r1(storedSize),
+    };
+    const slot = mounted.get(layout.key);
+    if (!slot) {
+      missingRows.push({
+        ...layout,
+        reason: "no slot mounted for a row in range",
+        inBufferedRange,
+        inViewport,
+      });
+      continue;
+    }
+    const inner = slot.querySelector<HTMLElement>("[data-timeline-row-id]");
+    rows.push({
+      ...layout,
       domTop: r1((slot.getBoundingClientRect().top - base) / zoom),
       domHeight: slot.offsetHeight,
       contentHeight: inner ? inner.offsetHeight : null,
-      storedTop: r1(state.positionAtIndex(index) ?? -1),
-      storedSize: r1(state.sizeAtIndex(index) ?? -1),
     });
   }
   return {
@@ -194,7 +244,23 @@ function measure(monitor: Monitor): GapSnapshot | null {
     dataLength: state.data.length,
     isFollowingEnd: state.isFollowingEnd,
     isAtEnd: state.isAtEnd,
-    findings: findTimelineGaps(rows),
+    startBuffered: state.startBuffered,
+    endBuffered: state.endBuffered,
+    viewportTop: r1(viewportTop),
+    viewportBottom: r1(viewportBottom),
+    slots,
+    missingRows,
+    findings: [
+      ...findTimelineGaps(rows),
+      ...missingRows.map((row): GapFinding => ({
+        id: `missing-slot:${row.key}`,
+        type: "missing-slot",
+        px: Math.max(0, row.storedSize),
+        top: row.storedTop,
+        rows: rows.filter((neighbor) => Math.abs(neighbor.index - row.index) <= 2),
+        missingRow: row,
+      })),
+    ],
     rows,
   };
 }
@@ -241,7 +307,12 @@ function confirm(monitor: Monitor, trigger: string, firstIds: Set<string>) {
   if (known && lasting.every((finding) => known.has(finding.id))) return;
   monitor.open = {
     ids: new Set(lasting.map((finding) => finding.id)),
-    rowKeys: new Set(lasting.flatMap((finding) => finding.rows.map((row) => row.key))),
+    rowKeys: new Set(
+      lasting.flatMap((finding) => [
+        ...finding.rows.map((row) => row.key),
+        ...(finding.missingRow ? [finding.missingRow.key] : []),
+      ]),
+    ),
     trigger,
   };
   report(monitor, "appeared", trigger, { ...snapshot, findings: lasting });
@@ -250,7 +321,7 @@ function confirm(monitor: Monitor, trigger: string, firstIds: Set<string>) {
   toastedThreads.add(monitor.threadKey);
   const id = toastManager.add({
     type: "warning",
-    title: "timeline gap recorded",
+    title: "timeline gap diagnostic recorded",
     timeout: 0,
     actionProps: {
       children: "copy report",
@@ -329,7 +400,7 @@ export function TimelineGapRecorder(props: {
     foldCollapsing: boolean;
   } | null>(null);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this list with the dev-only gap recorder and listens for the window becoming visible
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this list with the gap recorder and listens for the window becoming visible
   useEffect(() => {
     const monitor: Monitor = {
       threadKey,
@@ -354,7 +425,7 @@ export function TimelineGapRecorder(props: {
     };
   }, [listRef, threadKey]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules the dev-only gap check after a turn status, fold or row count change
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules the gap check after a turn status, fold or row count change
   useEffect(() => {
     const monitor = monitorRef.current;
     if (!monitor) return;

@@ -9,10 +9,11 @@ import {
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { act, render } from "../../../test/render";
+import { act, fakeTimers, render } from "../../../test/render";
 
-const { permissions } = vi.hoisted(() => ({
+const { permissions, reads } = vi.hoisted(() => ({
   permissions: { checkout: true, operate: true },
+  reads: { diff: [] as unknown[] },
 }));
 
 vi.mock(import("~/state/session"), async (original) => ({
@@ -52,6 +53,28 @@ vi.mock(import("~/state/usePullRequestStack"), async (original) => ({
     refresh: vi.fn(),
   })) as never,
 }));
+vi.mock(import("~/state/pullRequests"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    usePullRequestList: () => ({
+      data: null,
+      error: null,
+      isPending: false,
+      observations: [],
+      refresh: vi.fn(),
+    }),
+    usePullRequestListStats: () => ({ stats: null, isPending: false, refresh: vi.fn() }),
+    usePullRequestTurnRefreshes: () => [],
+    pullRequestEnvironment: {
+      ...actual.pullRequestEnvironment,
+      diff: ((target: unknown) => {
+        reads.diff.push(target);
+        return actual.pullRequestEnvironment.diff(target as never);
+      }) as never,
+    },
+  };
+});
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: (() => vi.fn()) as never,
@@ -92,19 +115,6 @@ vi.mock(import("~/hooks/useSidebarProjectGroups"), () => ({
     },
   ]) as never,
 }));
-vi.mock(import("~/state/pullRequests"), async (original) => ({
-  ...(await original()),
-  usePullRequestList: () => ({
-    data: null,
-    error: null,
-    isPending: false,
-    observations: [],
-    refresh: vi.fn(),
-  }),
-  usePullRequestListStats: () => ({ stats: null, isPending: false, refresh: vi.fn() }),
-  usePullRequestTurnRefreshes: () => [],
-}));
-
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 import { PullRequestsPage } from "./PullRequestsPage";
 import { SidebarProvider } from "../ui/sidebar";
@@ -192,6 +202,7 @@ const panel = (attach = false, shortcutsEnabled = false) => (
 function setup() {
   permissions.checkout = true;
   permissions.operate = true;
+  reads.diff = [];
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
   useRightPanelStore.setState({ byThreadKey: {} });
 }
@@ -223,6 +234,24 @@ it("can still add conflict resolution to an existing composer without checkout s
   expect(draft?.prompt).toContain(detail.url);
 });
 
+it("reads the first diff page once the pointer rests on the Code tab", async () => {
+  setup();
+  await using screen = await render(panel());
+  using _timers = fakeTimers({ now: 0 });
+  const code = screen.getByRole("button", { name: "Code", exact: true });
+  await expect.element(code).toBeVisible();
+
+  await userEvent.hover(code);
+  await act(() => vi.advanceTimersByTime(149));
+  expect(reads.diff).toEqual([]);
+  await act(() => vi.advanceTimersByTime(1));
+  // The page the Code tab reads first, keyed as the tab keys it, so a click paints from it.
+  expect(reads.diff).toContainEqual({
+    environmentId,
+    input: { projectId: detail.projectId, repository: detail.repository, number: detail.number },
+  });
+});
+
 it("copies the pull request's link from the copy link shortcut", async () => {
   setup();
   await using screen = await render(panel(false, true));
@@ -234,6 +263,7 @@ it("copies the pull request's link from the copy link shortcut", async () => {
 
 it("opens a URL-selected pull request without repeatedly reopening its detail", async () => {
   setup();
+  await page.viewport(1400, 900);
   await using screen = await render(
     <SidebarProvider>
       <PullRequestsPage />
@@ -244,8 +274,26 @@ it("opens a URL-selected pull request without repeatedly reopening its detail", 
     },
   );
   await expect.element(screen.getByText("Original description", { exact: true })).toBeVisible();
+  await userEvent.type(screen.getByRole("searchbox", { name: "Search pull requests" }), "missing");
+  await userEvent.click(screen.getByRole("button", { name: "Clear pull request search" }));
+  await expect
+    .element(screen.getByRole("searchbox", { name: "Search pull requests" }))
+    .toHaveValue("");
+  await userEvent.click(screen.getByRole("button", { name: "Filters", exact: true }));
+  await userEvent.hover(page.getByRole("menuitem", { name: /^State/ }));
+  await userEvent.click(page.getByRole("menuitemradio", { name: "Closed", exact: true }));
+  await expect.element(screen.getByRole("button", { name: "Filters, 1 active" })).toBeVisible();
+  await userEvent.keyboard("{Escape}{Escape}");
+  await expect.element(screen.getByText("Original description", { exact: true })).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: "Timeline", exact: true }));
   await expect.element(screen.getByText("Later commit", { exact: true })).toBeVisible();
+  // Too narrow for the list beside the review: the review fills the page and goes back to the list.
+  await page.viewport(600, 900);
+  const back = screen.getByRole("button", { name: /^Back to/ });
+  await userEvent.click(back);
+  await expect.element(back).not.toBeInTheDocument();
+  await expect.element(screen.getByText("Later commit", { exact: true })).not.toBeInTheDocument();
+  await page.viewport(414, 896);
 });
 
 it("switches the timeline between newest and oldest activity first", async () => {

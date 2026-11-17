@@ -8,6 +8,7 @@ import type { ClientSettings } from "@t3tools/contracts/settings";
 import { createBrowserHistory, createHashHistory } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 
+import { applyAppIconFavicon } from "./appIcon";
 import { applyAppearanceContrast } from "./appearanceContrast";
 import { applyAppearanceFontVariables, TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "./appearanceFonts";
 import { startElectronBrowserHost } from "./browser/ElectronBrowserHost";
@@ -37,6 +38,7 @@ import {
 } from "./composerDraftStore";
 import { startDefaultThemeAdoption } from "./hooks/useDefaultTheme";
 import { startEnvironmentThemeRepaint } from "./hooks/useEnvironmentTheme";
+import { startThemeBackground } from "./themeBackground";
 import { readLocalStorageValue, subscribeLocalStorageKey } from "./hooks/useLocalStorage";
 import { startHostEnvironmentLookup } from "./state/primaryEnvironment";
 import {
@@ -104,6 +106,9 @@ function startClientAppearance(): void {
     }
     if (previous?.appearanceContrast !== settings.appearanceContrast) {
       applyAppearanceContrast(root, settings.appearanceContrast);
+    }
+    if (previous?.appIcon !== settings.appIcon) {
+      applyAppIconFavicon(settings.appIcon);
     }
     if (
       previous?.fontFamilySans !== settings.fontFamilySans ||
@@ -276,6 +281,7 @@ export function startAppServices(): AppRouter {
   startDocumentTitle(router);
   startHostEnvironmentLookup();
   startEnvironmentThemeRepaint();
+  startThemeBackground();
   startBrowserChromeThemeSync(router);
   startDefaultThemeAdoption();
   startModelPreferencesMigration();

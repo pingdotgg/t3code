@@ -7,6 +7,7 @@ import { ThreadRouteView } from "../components/ThreadRouteView";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { launcherFocusTarget } from "../components/SurfaceLauncher";
 import { observeResize } from "../lib/observeResize";
+import { holdSurfaceFocusOrigin } from "../lib/workspaceFocus";
 import { SidebarInset } from "../components/ui/sidebar";
 import { useAtomValue } from "@effect/atom-react";
 import { shortcutLabelForCommand } from "../keybindings";
@@ -15,7 +16,7 @@ import { StatusDot } from "../components/ui/status-dot";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
 import { cn, isMacPlatform } from "../lib/utils";
-import { sidewaysWheelDelta, sidewaysWheelScrollsStrip, wheelDeltaPx } from "../motion/gesture";
+import { scrollTabStripFromRow, sidewaysWheelScrollsStrip, wheelDeltaPx } from "../motion/gesture";
 import { PaneMotionSnapshot, usePaneMotion } from "../motion/paneMotion";
 import {
   ChatPanelAnimationSuppressionProvider,
@@ -72,6 +73,7 @@ import {
   selectFocusedTab,
   selectFocusedWorkspace,
   selectLayoutPaneSlots,
+  selectLayoutStripSize,
   selectWindowEndPanes,
   selectWindowStartPaneId,
   type LayoutColumn,
@@ -276,7 +278,7 @@ function selectShownSlots(
 ): {
   slots: LayoutPaneSlot[];
   stripWidth: number;
-  fits: boolean;
+  stripSize: ReturnType<typeof selectLayoutStripSize>;
   unitWidth: number;
   paneCount: number;
 } {
@@ -287,7 +289,9 @@ function selectShownSlots(
     maximizedTabId === null
       ? null
       : (all.slots.find((slot) => slot.activeTabId === maximizedTabId) ?? null);
-  if (paneCount < 2 || (!narrow && !maximizedSlot)) return { ...all, paneCount };
+  if (paneCount < 2 || (!narrow && !maximizedSlot)) {
+    return { ...all, paneCount, stripSize: selectLayoutStripSize(workspace, viewport.whenNoRoom) };
+  }
   const onlySlot =
     (narrow ? null : maximizedSlot) ??
     all.slots.find((slot) => slot.paneId === workspace.focusedPaneId) ??
@@ -305,7 +309,7 @@ function selectShownSlots(
       },
     ],
     stripWidth: 1,
-    fits: true,
+    stripSize: { share: 1, minPx: 0, maxShare: 1 },
     unitWidth: viewport.width,
   };
 }
@@ -342,15 +346,33 @@ function selectStackRows(
  */
 const LAYOUT_INLINE_RIGHT_PANEL_MIN_PX = 981;
 
-/** The strip's visible width in px, kept current as the window or sidebar resizes. */
-function useElementWidth(ref: React.RefObject<HTMLElement | null>): number {
+/** The strip's visible width in px, taken once a window or sidebar resize has settled. */
+function useSettledWidth(ref: React.RefObject<HTMLElement | null>): number {
   const [width, setWidth] = useState(() => (typeof window === "undefined" ? 0 : window.innerWidth));
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the strip DOM width so pane geometry follows window and sidebar resizes
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Observes the strip DOM width; pane geometry follows a resize in CSS and React learns the width a frame after it stops.
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
     setWidth(element.clientWidth);
-    return observeResize(element, () => setWidth(element.clientWidth));
+    let resized = false;
+    let frame: number | null = null;
+    const settle = () => {
+      if (resized) {
+        resized = false;
+        frame = window.requestAnimationFrame(settle);
+        return;
+      }
+      frame = null;
+      setWidth(element.clientWidth);
+    };
+    const stopObserving = observeResize(element, () => {
+      resized = true;
+      if (frame === null) frame = window.requestAnimationFrame(settle);
+    });
+    return () => {
+      stopObserving();
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
   }, [ref]);
   return width;
 }
@@ -440,7 +462,7 @@ function useSurfacePlacement(
   const overviewPhase = useOverviewPhase();
   const workspaceStack = useWorkspaceStack();
   const viewport = { width: viewportWidth, whenNoRoom };
-  const { slots, stripWidth, fits, unitWidth, paneCount } = selectShownSlots(
+  const { slots, stripWidth, stripSize, unitWidth, paneCount } = selectShownSlots(
     workspace,
     viewport,
     narrow,
@@ -535,7 +557,7 @@ function useSurfacePlacement(
   return {
     slots,
     stripWidth,
-    fits,
+    stripSize,
     unitWidth,
     paneCount,
     chatTabsById,
@@ -582,7 +604,7 @@ export function LayoutSurfaceHost({
       element.focus({ preventScroll: true });
     }
   }, [active]);
-  const viewportWidth = useElementWidth(scrollerRef);
+  const viewportWidth = useSettledWidth(scrollerRef);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Publish the measured desktop strip width for imperative pane placement.
   useEffect(() => {
     // Below md one pane fills the window; columns stay arranged for the last
@@ -596,7 +618,7 @@ export function LayoutSurfaceHost({
   const {
     slots,
     stripWidth,
-    fits,
+    stripSize,
     unitWidth,
     paneCount,
     chatTabsById,
@@ -889,6 +911,72 @@ export function LayoutSurfaceHost({
     moveStripCamera(scroller, element, target);
   }, [centerRequest, focusedLeft, focusedWidth, stripPx]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Extend strip wheel input into the window chrome above the workspace.
+  useEffect(() => {
+    const root = rootRef.current;
+    const scroller = scrollerRef.current;
+    const stage = stageRef.current;
+    if (!active || staged || stacked || !root || !scroller || !stage) return;
+    const chrome = document.createElement("div");
+    chrome.dataset.layoutStripChrome = "";
+    chrome.setAttribute("aria-hidden", "true");
+    chrome.className = "drag-region fixed top-0 hidden md:block";
+    const update = () => {
+      const box = scroller.getBoundingClientRect();
+      chrome.style.left = `${box.left}px`;
+      chrome.style.width = `${box.width}px`;
+      chrome.style.height = `${Math.max(0, box.top)}px`;
+      chrome.toggleAttribute(
+        "data-tab-row-overflow",
+        (scrollingWorkspaces && scroller.scrollWidth > scroller.clientWidth) ||
+          root.querySelector("[data-tab-row-overflow]") !== null,
+      );
+    };
+    const wheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const delta = event.shiftKey && event.deltaX === 0 ? event.deltaY : event.deltaX;
+      if (!delta || (!event.shiftKey && Math.abs(delta) <= Math.abs(event.deltaY))) return;
+      const header = [...scroller.querySelectorAll<HTMLElement>("[data-pane-header]")].find(
+        (row) => {
+          const box = row.getBoundingClientRect();
+          return (
+            box.height > 0 &&
+            box.top <= scroller.getBoundingClientRect().top + 1 &&
+            box.left <= event.clientX &&
+            box.right > event.clientX
+          );
+        },
+      );
+      const tabs = header?.querySelector<HTMLElement>("[data-layout-tab-strip]");
+      if (tabs) scrollTabStripFromRow(event, tabs);
+      if (
+        event.defaultPrevented ||
+        !scrollingWorkspaces ||
+        scroller.scrollWidth <= scroller.clientWidth
+      )
+        return;
+      event.preventDefault();
+      settleStripCamera();
+      noteUserStripScroll();
+      scroller.scrollLeft += wheelDeltaPx(delta, event);
+    };
+    root.parentElement?.append(chrome);
+    const stop = observeResize([root, scroller, stage], update);
+    const observer = new MutationObserver(update);
+    observer.observe(root, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-tab-row-overflow"],
+    });
+    chrome.addEventListener("wheel", wheel, { passive: false });
+    update();
+    return () => {
+      stop();
+      observer.disconnect();
+      chrome.remove();
+    };
+  }, [active, scrollingWorkspaces, staged, stacked]);
+
   // Hold alt+cmd and the strip follows the wheel sideways and a middle-button
   // drag, wherever the pointer is (pen ZlxmK). Up and down switch workspaces
   // (motion/workspaceSwitch.ts). Any sideways scroll of the user's takes the
@@ -900,22 +988,24 @@ export function LayoutSurfaceHost({
     const mac = isMacPlatform(navigator.platform);
     const held = (event: MouseEvent) =>
       mac ? event.metaKey && event.altKey : event.ctrlKey && event.altKey;
-    const moveStrip = (event: WheelEvent, deltaX: number) => {
+    const moveStrip = (event: WheelEvent, delta: number) => {
       event.preventDefault();
       settleStripCamera();
       noteUserStripScroll();
-      scroller.scrollLeft += wheelDeltaPx(deltaX, event);
+      scroller.scrollLeft += wheelDeltaPx(delta, event);
     };
     const onWheel = (event: WheelEvent) => {
-      if (held(event) && Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+      if (held(event) && Math.abs(event.deltaX) > Math.abs(event.deltaY))
         moveStrip(event, event.deltaX);
-      }
     };
     const onSidewaysWheel = (event: WheelEvent) => {
       if (event.defaultPrevented) return;
-      const deltaX = sidewaysWheelDelta(event);
-      if (deltaX !== 0 && sidewaysWheelScrollsStrip(event.composedPath(), scroller, deltaX, 0)) {
-        moveStrip(event, deltaX);
+      const shifted = event.shiftKey && event.deltaX === 0;
+      const delta = shifted ? event.deltaY : event.deltaX;
+      if (
+        sidewaysWheelScrollsStrip(event.composedPath(), scroller, delta, shifted ? 0 : event.deltaY)
+      ) {
+        moveStrip(event, delta);
       }
     };
     const onPointerDown = (event: PointerEvent) => {
@@ -971,8 +1061,11 @@ export function LayoutSurfaceHost({
   useEffect(() => {
     if (!active) {
       useLayoutStore.getState().setOnScreenThreadKeys(new Set());
+      useLayoutStore.getState().setScrolledOffTabIds(new Set());
       return;
     }
+    // Staged and stacked panes do not sit on a scrolled strip.
+    if (staged || stacked) useLayoutStore.getState().setScrolledOffTabIds(new Set());
     if (dragging || staged || stacked) return;
     const scroller = scrollerRef.current;
     // Focus follows the view, as in niri: once a sideways scroll of the
@@ -1019,6 +1112,7 @@ export function LayoutSurfaceHost({
         followView(viewStart, viewEnd);
       }
       const keys = new Set<string>();
+      const scrolledOff = new Set<string>();
       const seen: string[] = [];
       const peeks: UnseenPeeks = { left: null, right: null };
       for (const slot of slots) {
@@ -1027,6 +1121,7 @@ export function LayoutSurfaceHost({
           Math.min(slot.rect.left + slot.rect.width, viewEnd) - Math.max(slot.rect.left, viewStart);
         const unseen = unseenTabIds.has(slot.activeTabId);
         if (inside < slot.rect.width * ON_SCREEN_MIN_SHARE) {
+          scrolledOff.add(slot.activeTabId);
           if (unseen) {
             const side = slot.rect.left < viewStart ? "left" : "right";
             if (peeks[side] === null) peeks[side] = slot.activeTabId;
@@ -1043,6 +1138,7 @@ export function LayoutSurfaceHost({
         }
       }
       useLayoutStore.getState().setOnScreenThreadKeys(keys);
+      useLayoutStore.getState().setScrolledOffTabIds(scrolledOff);
       useLayoutStore.getState().markTabsSeen(seen);
       setUnseenPeeks((current) =>
         current.left === peeks.left && current.right === peeks.right ? current : peeks,
@@ -1098,7 +1194,13 @@ export function LayoutSurfaceHost({
     unseenTabIds,
   ]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the shared on-screen thread registry when the strip unmounts
-  useEffect(() => () => useLayoutStore.getState().setOnScreenThreadKeys(new Set()), []);
+  useEffect(
+    () => () => {
+      useLayoutStore.getState().setOnScreenThreadKeys(new Set());
+      useLayoutStore.getState().setScrolledOffTabIds(new Set());
+    },
+    [],
+  );
 
   const surfaceSlots = [...slotByTabId].flatMap(([tabId, placed]) => {
     const content = surfaceTabsById.get(tabId);
@@ -1322,11 +1424,11 @@ export function LayoutSurfaceHost({
           style={
             staged
               ? undefined
-              : stacked || fits
+              : stacked
                 ? { width: "100%" }
-                : // At least the window: a window that grew past the strip's end
-                  // stretches it before React learns the new width.
-                  { width: `${stripPx}px`, minWidth: "100%" }
+                : {
+                    width: `min(${stripSize.maxShare * 100}%, max(${stripSize.share * 100}%, ${stripSize.minPx}px))`,
+                  }
           }
         >
           <PaneMotionSnapshot stageRef={stageRef} slots={slotByTabId} />
@@ -1838,6 +1940,12 @@ function LayoutSurfaceTabSurface({
   } satisfies LayoutPaneState;
   const tab = { id: tabId, content } satisfies LayoutTab;
   const slotRef = useRef<HTMLDivElement | null>(null);
+  const focusOrigin = useRef(document.activeElement);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the control that gave the surface keyboard focus when its pane unmounts.
+  useLayoutEffect(() => {
+    const host = slotRef.current;
+    if (host) return holdSurfaceFocusOrigin(host, focusOrigin.current);
+  }, []);
   // Focus that lands on the pane (cmd+J, alt+cmd+B, a launcher's letter, a
   // click on its tab) moves the keyboard in.
   usePaneKeyboard(slotRef, focused && !staged, surfaceKeyboardTarget);

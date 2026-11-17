@@ -32,6 +32,7 @@ import { resolveDiscoveredServerUrl } from "../../browser/browserTargetResolver"
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { confirmTerminalClose } from "../../lib/terminalCloseConfirm";
 import { findReusableProjectScriptTerminal } from "../../lib/projectScriptTerminal";
+import { closingTerminalIds } from "../terminal/closingTerminals";
 import { type TerminalContextSelection } from "../../lib/terminalContext";
 import { focusActiveDrawerTerminal, focusTerminal } from "../../lib/terminalFocus";
 import { useTerminalUiStateStore } from "../../terminalUiStateStore";
@@ -136,16 +137,16 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     )
       return;
     if (nextOpen && hasTerminalWriteAccess() && terminalUiState.terminalIds.length === 0) {
+      // The server lists a closing terminal until its close finishes, which would end the reopen.
+      const closingIds = new Set(closingTerminalIds(activeThreadRef));
+      const isReusable = (id: string) => !panelTerminalIds.has(id) && !closingIds.has(id);
       // Reattach the thread's existing sessions before allocating another PTY.
-      const existingTerminalIds = activeServerOrderedTerminalIds.filter(
-        (terminalId) => !panelTerminalIds.has(terminalId),
-      );
+      const existingTerminalIds = activeServerOrderedTerminalIds.filter(isReusable);
       if (existingTerminalIds.length > 0) {
         storeReconcileTerminalIds(activeThreadRef, existingTerminalIds);
       }
       // A server-created setup terminal may arrive before the ordered session list.
-      const existingTerminalId =
-        runningTerminalIds.find((id) => !panelTerminalIds.has(id)) ?? existingTerminalIds[0];
+      const existingTerminalId = runningTerminalIds.find(isReusable) ?? existingTerminalIds[0];
       if (existingTerminalId !== undefined) {
         storeEnsureTerminal(activeThreadRef, existingTerminalId, { open: true, active: true });
         focusActiveDrawerTerminal(activeThreadRef);
@@ -227,6 +228,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
             activeTerminalId: terminalUiState.activeTerminalId,
             panelTerminalIds,
             runningTerminalIds,
+            closingTerminalIds: activeThreadRef ? closingTerminalIds(activeThreadRef) : [],
           });
     const targetWorktreePath = options?.worktreePath ?? activeThread.worktreePath ?? null;
 

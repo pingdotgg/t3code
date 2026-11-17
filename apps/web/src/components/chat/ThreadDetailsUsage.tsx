@@ -12,19 +12,21 @@ import {
   formatDuration,
   type LimitPace,
   type LimitPoolWindow,
+  limitPoolNotice,
   limitsNotice,
   paceOf,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
-import { CalendarRangeIcon, GaugeIcon, Minimize2Icon, TimerIcon } from "lucide-react";
+import { BoxIcon, CalendarRangeIcon, GaugeIcon, Minimize2Icon, TimerIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
-import type { CSSProperties, ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import { formatContextWindowTokens } from "../../lib/contextWindow";
 import { cn } from "../../lib/utils";
+import { observeResize } from "../../lib/observeResize";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
@@ -34,10 +36,8 @@ import { ContextWindowSegments } from "./ContextWindowMeter";
 import { contextWindowSegments } from "./compaction.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
-// The canvas reserves the same icon, label, meter, percent and trailing columns in every row.
-// The trailing column is only as wide as the section's longest reset label, so meters fill the row.
 const USAGE_ROW_CLASS =
-  "grid grid-cols-[1rem_3.625rem_minmax(0,1fr)_var(--usage-value,2.25rem)_var(--usage-trailing,1.5rem)] items-center gap-x-2 ps-3 pe-2 text-meta";
+  "col-span-full grid min-w-0 grid-cols-subgrid items-center gap-x-1.5 text-meta";
 
 const PACE_LABEL: Record<LimitPace, string> = {
   ahead: "Ahead of pace",
@@ -52,7 +52,7 @@ export interface ThreadDetailsUsageInput {
 }
 type UsageTone = "error" | "warning" | null;
 
-/** Provider limits share the canvas's icon, label, meter, percentage and reset columns. */
+/** Provider limits share the canvas's icon and label columns. */
 export function ThreadDetailsUsage({
   providerInstanceId,
   providers,
@@ -75,7 +75,11 @@ export function ThreadDetailsUsage({
         accounts: pooled.members.length,
       }))
     : (limits?.windows ?? []).map((window) => ({ window, accounts: 1 }));
-  const notice = pool ? null : ownNotice;
+  const poolNotice =
+    providerInstanceId !== null && ownNotice !== null && !pool
+      ? limitPoolNotice(providerInstanceId, providers, sources)
+      : null;
+  const notice = pool ? null : (poolNotice ?? ownNotice);
   return (
     <ThreadDetailsSection title="Usage limits" variant="usage">
       {notice || !rows.length ? (
@@ -84,25 +88,17 @@ export function ThreadDetailsUsage({
           icon={<TimerIcon />}
           fill={null}
           tone={null}
-          value="Unavailable"
+          value={
+            poolNotice && !sources.some((source) => source.error) ? "Not linked" : "Unavailable"
+          }
           tooltip={notice ?? "No usage windows reported."}
         />
       ) : (
-        <div
-          className="contents"
-          style={
-            {
-              "--usage-trailing": `${Math.max(
-                0,
-                ...rows.map(({ window }) => resetLabel(window, now)?.length ?? 0),
-              )}ch`,
-            } as CSSProperties
-          }
-        >
+        <>
           {rows.map(({ window, accounts }) => (
             <LimitRow key={window.id} window={window} now={now} pooledAccounts={accounts} />
           ))}
-        </div>
+        </>
       )}
     </ThreadDetailsSection>
   );
@@ -146,21 +142,28 @@ export function ThreadDetailsContext({
       : `${formatContextWindowTokens(usage.usedTokens)} tokens`;
   return (
     <ThreadDetailsSection title="Context window" variant="usage">
-      <Collapsible open={!collapsed} onOpenChange={(open) => setCollapsed(!open)}>
-        {/* One row, so the percentage hugs its text and the bar takes the rest. */}
-        <div className={cn(USAGE_ROW_CLASS, "h-8 [--usage-value:max-content]")}>
+      <Collapsible
+        className="col-span-full grid grid-cols-subgrid"
+        open={!collapsed}
+        onOpenChange={(open) => setCollapsed(!open)}
+      >
+        <div className={cn(USAGE_ROW_CLASS, "h-8")}>
           <CollapsibleTrigger
             render={<ThreadDetailsControl part="usage" />}
             aria-label={`Context: ${tokens}${maxTokens !== null ? " tokens" : ""}${used !== null ? `, ${Math.round(used)}% used` : " used"}`}
           >
             <GaugeIcon className="size-4 shrink-0" />
             <span className="flex h-6 items-center text-foreground">Context</span>
-            {used !== null ? <ContextWindowSegments usage={usage} minSegmentWidth={2} /> : <span />}
-            <span className="text-end tabular-nums text-muted-foreground">
-              {used !== null ? `${Math.round(used)}%` : ""}
+            <span className={cn("flex items-center gap-1.5", onCompact && "pe-7.5")}>
+              <span className="min-w-12 flex-1">
+                {used !== null ? <ContextWindowSegments usage={usage} minSegmentWidth={2} /> : null}
+              </span>
+              <span className="shrink-0 text-end tabular-nums text-muted-foreground">
+                {used !== null ? `${Math.round(used)}%` : ""}
+              </span>
             </span>
           </CollapsibleTrigger>
-          <span className="flex">
+          <span className="col-start-3 row-start-1 flex justify-self-end">
             {onCompact ? (
               <Tooltip>
                 <TooltipTrigger
@@ -183,7 +186,7 @@ export function ThreadDetailsContext({
             ) : null}
           </span>
         </div>
-        <CollapsiblePanel>
+        <CollapsiblePanel className="col-span-full">
           <div className="px-0.5 pb-0.5">
             <div className="surface-composer rounded-lg p-0.5">
               <dl className="text-meta">
@@ -260,11 +263,16 @@ function LimitRow({
   const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
   const remainingMs = resetsAt - now;
   const weekly = isWeeklyWindow(window);
+  const modelLabel =
+    weekly && window.id.startsWith("seven_day_")
+      ? /^Weekly\s*·\s*(.+)$/i.exec(window.label)?.[1]
+      : undefined;
   const reset = resetLabel(window, now);
   return (
     <UsageRow
-      label={window.label}
-      icon={weekly ? <CalendarRangeIcon /> : <TimerIcon />}
+      label={modelLabel ?? window.label}
+      shortLabel={weekly && !modelLabel ? window.label.replace(/\s*·\s*Weekly$/i, "") : undefined}
+      icon={modelLabel ? <BoxIcon /> : weekly ? <CalendarRangeIcon /> : <TimerIcon />}
       fill={left}
       tick={elapsed === null ? null : (1 - elapsed) * 100}
       tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
@@ -272,7 +280,7 @@ function LimitRow({
       ariaValue={`${left}% left`}
       trailing={
         reset ? (
-          <span className="truncate text-caption text-dim-foreground">{reset}</span>
+          <span className="whitespace-nowrap text-caption text-dim-foreground">{reset}</span>
         ) : undefined
       }
       tooltip={
@@ -300,6 +308,7 @@ function LimitRow({
 
 function UsageRow({
   label,
+  shortLabel,
   icon,
   fill,
   tone,
@@ -310,6 +319,7 @@ function UsageRow({
   trailing,
 }: {
   readonly label: string;
+  readonly shortLabel?: string | undefined;
   readonly icon: ReactNode;
   readonly fill: number | null;
   readonly tone: UsageTone;
@@ -327,55 +337,85 @@ function UsageRow({
             <div
               tabIndex={0}
               aria-label={`${label}: ${ariaValue}`}
-              className={cn(
-                "grid min-w-0 cursor-default grid-cols-subgrid items-center gap-x-2 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                fill === null ? "col-span-5" : "col-span-4",
-              )}
+              className="col-span-full grid min-w-0 cursor-default grid-cols-subgrid items-center gap-x-1.5 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             />
           }
         >
           <span className="shrink-0 text-muted-foreground [&>svg]:size-4">{icon}</span>
-          <span className="truncate">{label}</span>
-          {fill !== null ? (
-            <span className="relative h-1 min-w-0 flex-1 rounded-full bg-muted-foreground/20">
-              {fill > 0 ? (
-                <span
-                  className={cn(
-                    "absolute inset-y-0 left-0 rounded-full",
-                    tone === "error"
-                      ? "bg-error"
-                      : tone === "warning"
-                        ? "bg-warning"
-                        : "bg-foreground/80",
-                  )}
-                  style={{ width: `max(${fill}%, 2px)` }}
-                />
-              ) : null}
-              {tick !== null ? (
-                <span
-                  aria-hidden
-                  className="absolute -top-[3px] h-2.5 w-0.5 rounded-sm bg-muted-foreground"
-                  style={{ left: `${tick}%` }}
-                />
-              ) : null}
+          {shortLabel && shortLabel !== label ? (
+            <UsageLabel key={label} label={label} shortLabel={shortLabel} />
+          ) : (
+            <span className="truncate">{label}</span>
+          )}
+          <span className="flex items-center justify-end gap-1.5">
+            {fill !== null ? (
+              <span className="relative h-1 min-w-12 flex-1 rounded-full bg-muted-foreground/20">
+                {fill > 0 ? (
+                  <span
+                    className={cn(
+                      "absolute inset-y-0 left-0 rounded-full",
+                      tone === "error"
+                        ? "bg-error"
+                        : tone === "warning"
+                          ? "bg-warning"
+                          : "bg-foreground/80",
+                    )}
+                    style={{ width: `max(${fill}%, 2px)` }}
+                  />
+                ) : null}
+                {tick !== null ? (
+                  <span
+                    aria-hidden
+                    className="absolute -top-[3px] h-2.5 w-0.5 rounded-sm bg-muted-foreground"
+                    style={{ left: `${tick}%` }}
+                  />
+                ) : null}
+              </span>
+            ) : null}
+            <span
+              className={cn(
+                "shrink-0 whitespace-nowrap text-end tabular-nums text-muted-foreground",
+                tone === "error" && "text-error-foreground",
+                tone === "warning" && "text-warning-foreground",
+              )}
+            >
+              {value}
             </span>
-          ) : null}
-          <span
-            className={cn(
-              "text-end tabular-nums text-muted-foreground",
-              fill === null && "col-span-3",
-              tone === "error" && "text-error-foreground",
-              tone === "warning" && "text-warning-foreground",
-            )}
-          >
-            {value}
+            {fill !== null && trailing ? <span className="shrink-0">{trailing}</span> : null}
           </span>
         </TooltipTrigger>
-        {fill !== null ? <span className="flex justify-end">{trailing}</span> : null}
       </div>
       <TooltipPopup side="left" sideOffset={16}>
         <div className="flex flex-col gap-0.5 text-muted-foreground">{tooltip}</div>
       </TooltipPopup>
     </Tooltip>
+  );
+}
+
+function UsageLabel({
+  label,
+  shortLabel,
+}: {
+  readonly label: string;
+  readonly shortLabel: string;
+}) {
+  const fullLabel = useRef<HTMLSpanElement>(null);
+  const [shortened, setShortened] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- chooses the shorter label only when the grid's measured space cannot fit the full label
+  useLayoutEffect(() => {
+    const element = fullLabel.current;
+    if (!element) return;
+    const measure = () => setShortened(element.scrollWidth > element.clientWidth);
+    measure();
+    return observeResize(element, measure);
+  }, []);
+  return (
+    <span className="relative min-w-0">
+      {/* The full label retains its intrinsic width so shortening cannot oscillate the grid. */}
+      <span ref={fullLabel} className={cn("block truncate", shortened && "invisible")}>
+        {label}
+      </span>
+      {shortened ? <span className="absolute inset-0 truncate">{shortLabel}</span> : null}
+    </span>
   );
 }

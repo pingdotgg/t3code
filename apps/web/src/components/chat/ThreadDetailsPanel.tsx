@@ -249,6 +249,7 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
                 <section
                   ref={workspaceSectionRef}
                   aria-label="Workspace"
+                  data-thread-details-card
                   className="surface-tray rounded-pane p-1"
                 >
                   <div className="surface-composer rounded-lg p-0.5">
@@ -341,14 +342,16 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
                       />
                     ) : null}
                   </div>
-                  {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
-                  {visible.context ? (
-                    <ThreadDetailsContext
-                      usage={props.usage.contextWindow}
-                      onCompact={props.onCompactContext}
-                      compactUnavailableReason={props.compactUnavailableReason}
-                    />
-                  ) : null}
+                  <div className="grid grid-cols-[1rem_minmax(0,max-content)_minmax(min-content,1fr)] gap-x-1.5 ps-3 pe-2">
+                    {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
+                    {visible.context ? (
+                      <ThreadDetailsContext
+                        usage={props.usage.contextWindow}
+                        onCompact={props.onCompactContext}
+                        compactUnavailableReason={props.compactUnavailableReason}
+                      />
+                    ) : null}
+                  </div>
                 </section>
               ) : null}
 

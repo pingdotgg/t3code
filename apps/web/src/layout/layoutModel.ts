@@ -352,6 +352,28 @@ export function selectLayoutPaneSlots(
   return { slots, stripWidth, fits, unitWidth };
 }
 
+export function selectLayoutStripSize(
+  workspace: LayoutWorkspace,
+  whenNoRoom: LayoutWhenNoRoom,
+): { share: number; minPx: number; maxShare: number } {
+  const lone = workspace.columns.length === 1;
+  const weights = lone ? [1] : workspace.columns.map((column) => column.width);
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  const arranged = workspace.cameraWidth;
+  // Match the slot width cap so the widest column fits while CSS follows a resize.
+  const widest = Math.max(...weights);
+  const maxShare = widest > 0 ? Math.max(1, total / widest) : 1;
+  if (whenNoRoom === "always-shrink") return { share: 1, minPx: 0, maxShare };
+  if (arranged === null) return { share: Math.max(1, total), minPx: 0, maxShare };
+  if (total * arranged > arranged + 0.5) return { share: 1, minPx: total * arranged, maxShare };
+  const narrowest = Math.min(...weights);
+  const readableUnit =
+    lone || narrowest <= 0
+      ? 0
+      : Math.min(LAYOUT_READABLE_COLUMN_PX, narrowest * arranged) / narrowest;
+  return { share: Math.max(1, total), minPx: total * readableUnit, maxShare };
+}
+
 /**
  * A top pane starting this close to the strip's left edge shares its row with
  * the collapsed sidebar's toggle and arrows, so its header makes room for them.
@@ -409,6 +431,18 @@ export function findLayoutPane(
   paneId: string,
 ): { workspace: LayoutWorkspace; column: LayoutColumn; pane: LayoutPane } | null {
   return findPane(state, paneId);
+}
+
+const layoutTabIds = (state: LayoutState): string[] =>
+  state.workspaces.flatMap((workspace) =>
+    workspace.columns.flatMap((column) =>
+      column.panes.flatMap((pane) => pane.tabs.map((tab) => tab.id)),
+    ),
+  );
+
+export function closedLayoutTabIds(before: LayoutState, after: LayoutState): string[] {
+  const open = new Set(layoutTabIds(after));
+  return layoutTabIds(before).filter((tabId) => !open.has(tabId));
 }
 
 /** How many tabs the layout holds across every workspace. */

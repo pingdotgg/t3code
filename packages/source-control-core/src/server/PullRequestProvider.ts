@@ -76,6 +76,8 @@ export class PullRequestProviderError extends Schema.TaggedError<PullRequestProv
 export interface ProviderChangeRequestWatchFingerprint {
   readonly status: string;
   readonly remarks: string;
+  /** True when `status` changes with every check and mergeability change, so pending work needs no detail read. */
+  readonly coversDetail?: boolean;
 }
 
 export interface PullRequestProviderFailure {
@@ -96,6 +98,7 @@ export interface ProviderChangeRequest {
   readonly state: PullRequestState;
   readonly isDraft: boolean;
   readonly mergeability: PullRequestMergeability;
+  readonly rebaseRequired?: boolean | undefined;
   readonly additions: number;
   readonly deletions: number;
   readonly createdAt: string;
@@ -126,6 +129,7 @@ export interface ProviderChangeRequestSummary {
   readonly reviewDecision?: PullRequestReviewDecision | null | undefined;
   readonly checksState?: PullRequestChecksState | null | undefined;
   readonly mergeability?: PullRequestMergeability | undefined;
+  readonly rebaseRequired?: boolean | undefined;
   /** Null means no stack; absent means not requested. */
   readonly stack?: PullRequestStackMembership | null | undefined;
   readonly headSha?: string | undefined;
@@ -175,6 +179,16 @@ export interface ProviderListCursor {
    */
   readonly seenAt?: ReadonlyArray<number> | undefined;
   readonly resumeAfter?: string | undefined;
+}
+
+/** One search spans several repositories, so the rows seen at the boundary name theirs. */
+export interface ProviderAcrossListCursor extends Omit<ProviderListCursor, "seenAt"> {
+  readonly seenAt?: ReadonlyArray<ProviderRepositoryNumber> | undefined;
+}
+
+export interface ProviderRepositoryNumber {
+  readonly repository: string;
+  readonly number: number;
 }
 
 export interface ProviderBatchedChangeRequest extends ProviderChangeRequest {
@@ -238,6 +252,7 @@ export interface ProviderDiffSlice {
   readonly truncated: boolean;
   readonly nextCursor: string | null;
   readonly omittedFileStats?: ReadonlyArray<PullRequestOmittedFileStat>;
+  readonly withheldFilesReadable?: boolean;
 }
 
 export interface ProviderDiffFileContents {
@@ -360,7 +375,7 @@ export interface PullRequestProviderApi {
     readonly viewer: string;
     readonly limit: number;
     readonly query?: string | undefined;
-    readonly cursor?: ProviderListCursor | undefined;
+    readonly cursor?: ProviderAcrossListCursor | undefined;
     readonly filters?: PullRequestListFilters | undefined;
   }) => Effect.Effect<ProviderBatchedChangeRequestPage, PullRequestProviderError>;
 
@@ -444,6 +459,7 @@ export interface PullRequestProviderApi {
       readonly number: number;
       readonly cursor?: string | undefined;
       readonly commit?: string | undefined;
+      readonly path?: string | undefined;
     },
   ) => Effect.Effect<ProviderDiffSlice, PullRequestProviderError>;
 

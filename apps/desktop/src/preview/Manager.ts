@@ -916,7 +916,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const update = Effect.fn("PreviewManager.update")(function* (
     tabId: string,
     patch: Partial<PreviewTabState>,
-    humanPoint?: { readonly x: number; readonly y: number },
   ) {
     const updatedAt = yield* currentIso;
     const next = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
@@ -932,17 +931,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
     // syncTabAudible can commit after this update; emitIfCurrent prevents publishing a stale snapshot.
     if (Option.isSome(next)) {
-      if (patch.controller !== undefined && next.value.webContentsId != null) {
-        const capture = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(tabId);
-        const webContentsId = next.value.webContentsId;
-        if (capture?.consumers.has("recording")) {
-          yield* attempt({ operation: "recording.controller", tabId }, () => {
-            const contents = webContents.fromId(webContentsId);
-            if (contents && !contents.isDestroyed())
-              contents.send(RECORDING_CONTROLLER_CHANNEL, patch.controller, humanPoint);
-          }).pipe(Effect.ignore);
-        }
-      }
       yield* emitIfCurrent(tabId, next.value);
     }
   });
@@ -1135,28 +1123,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             ),
             scope,
           );
-          const handleDebuggerMessage = Effect.fnUntraced(function* (
-            method: string,
-            params: Record<string, unknown>,
-          ) {
-            if (method === "Page.screencastFrame") {
-              const sessionId = params["sessionId"];
-              if (typeof sessionId === "number") {
-                yield* attemptPromise(
-                  {
-                    operation: "ackScreencastFrame",
-                    webContentsId: wc.id,
-                  },
-                  () => wcDebugger.sendCommand("Page.screencastFrameAck", { sessionId }),
-                ).pipe(Effect.ignore);
-              }
-            }
+          const handleDebuggerMessage = Effect.fnUntraced(function* (method: string) {
             if (method === "Runtime.consoleAPICalled" || method === "Runtime.exceptionThrown") {
               yield* Queue.offer(consoleReleases, undefined);
             }
           });
-          const onMessage: BrowserControlSession["onMessage"] = (_event, method, params) => {
-            runFork(handleDebuggerMessage(method, params));
+          const onMessage: BrowserControlSession["onMessage"] = (_event, method) => {
+            runFork(handleDebuggerMessage(method));
           };
           const control: BrowserControlSession = {
             webContentsId: wc.id,
@@ -1471,21 +1444,75 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }),
       );
     };
+    let humanInputWorker = false;
+    let humanInputDeadline = 0;
+    let listening = true;
+    const publishHumanController = Effect.fn("PreviewManager.publishHumanController")(function* (
+      controller: "human" | "none",
+      humanPoint?: { readonly x: number; readonly y: number },
+    ) {
+      const now = yield* currentMillis;
+      const updatedAt = yield* currentIso;
+      const result = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
+        const current = tabs.get(tabId);
+        if (
+          !current ||
+          current.webContentsId !== wc.id ||
+          (controller === "human"
+            ? !listening || webContents.fromId(wc.id) !== wc
+            : current.controller !== "human" || humanInputDeadline > now)
+        )
+          return [undefined, tabs] as const;
+        const changed = current.controller !== controller;
+        const state = changed ? { ...current, controller, updatedAt } : current;
+        return [
+          { state, changed },
+          changed
+            ? replaceMap(tabs, (copy) => {
+                copy.set(tabId, state);
+              })
+            : tabs,
+        ] as const;
+      });
+      if (!result) return;
+      const capture = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(tabId);
+      if (capture?.consumers.has("recording")) {
+        yield* attempt({ operation: "recording.controller", tabId }, () => {
+          if (!wc.isDestroyed()) wc.send(RECORDING_CONTROLLER_CHANNEL, controller, humanPoint);
+        }).pipe(Effect.ignore);
+      }
+      if (result.changed) yield* emitIfCurrent(tabId, result.state);
+    });
+    yield* Scope.addFinalizer(
+      scope,
+      Effect.gen(function* () {
+        listening = false;
+        humanInputDeadline = 0;
+        yield* publishHumanController("none");
+      }),
+    );
     const handleHumanInput = Effect.fn("PreviewManager.handleHumanInput")(function* (
       rawSignal?: unknown,
     ) {
-      yield* update(
-        tabId,
-        { controller: "human" },
+      if (!listening) return;
+      humanInputDeadline = (yield* currentMillis) + 750;
+      if (!humanInputWorker) {
+        humanInputWorker = true;
+        yield* Effect.gen(function* () {
+          let remaining: number;
+          while ((remaining = humanInputDeadline - (yield* currentMillis)) > 0) {
+            yield* Effect.sleep(remaining);
+          }
+          humanInputWorker = false;
+          yield* publishHumanController("none");
+        }).pipe(Effect.forkIn(scope));
+      }
+      yield* publishHumanController(
+        "human",
         isPreviewInputSignal(rawSignal) && rawSignal.kind === "pointer"
           ? { x: rawSignal.x, y: rawSignal.y }
           : undefined,
       );
-      yield* Effect.sleep(750);
-      const tabs = yield* SynchronizedRef.get(tabsRef);
-      if (tabs.get(tabId)?.controller === "human") {
-        yield* update(tabId, { controller: "none" });
-      }
     });
     const recordingInput = (_event: unknown, input: unknown) => {
       if (!isRecordingInput(input)) return;
@@ -1848,7 +1875,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
     if (Option.isNone(tab)) return;
     const closedTab = tab.value;
-    if (closedTab.serverTab) browserHost.setShown(closedTab.serverTab, undefined);
+    if (closedTab.serverTab) {
+      browserHost.setShown(closedTab.serverTab, undefined);
+      browserHost.setCaptureDrawn(closedTab.serverTab, undefined);
+    }
     if (closedTab.webContentsId != null) {
       yield* Effect.all(
         [
@@ -2656,12 +2686,21 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     if (serverTab) browserHost.setShown(serverTab, shown);
   });
 
+  const setCaptureDrawn = Effect.fn("PreviewManager.setCaptureDrawn")(function* (
+    tabId: string,
+    drawn: boolean,
+  ) {
+    const serverTab = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.serverTab;
+    if (serverTab) browserHost.setCaptureDrawn(serverTab, drawn);
+  });
+
   // A window reload or guest crash destroys the guest without the renderer reporting it hidden.
   // The renderer reports again once a new guest registers.
   const hideDestroyedGuest = Effect.fnUntraced(function* (webContentsId: number) {
     for (const tab of (yield* SynchronizedRef.get(tabsRef)).values()) {
       if (tab.webContentsId === webContentsId && tab.serverTab) {
         browserHost.setShown(tab.serverTab, false);
+        browserHost.setCaptureDrawn(tab.serverTab, false);
       }
     }
   });
@@ -3524,7 +3563,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     data: Uint8Array,
   ) {
     const [createdAt, millis] = yield* Effect.all([currentIso, currentMillis]);
-    const id = `browser-recording-${millis.toString(36)}`;
+    const uuid = yield* random.uuidV4();
+    const id = `browser-recording-${millis.toString(36)}-${uuid.slice(0, 8)}`;
     const extension = recordingFileExtension(mimeType);
     const artifactPath = path.join(resolvedArtifactDirectory, `${id}.${extension}`);
     yield* fileSystem.makeDirectory(resolvedArtifactDirectory, { recursive: true }).pipe(
@@ -3538,7 +3578,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           }),
       ),
     );
-    yield* fileSystem.writeFile(artifactPath, data).pipe(
+    yield* fileSystem.writeFile(artifactPath, data, { flag: "wx" }).pipe(
       Effect.mapError(
         (cause) =>
           new PreviewOperationError({
@@ -3736,6 +3776,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     setAnnotationSendEnabled,
     setAudioMuted,
     setShown,
+    setCaptureDrawn,
     setColorScheme,
     setForwardedKeyChords: (shortcuts: ReadonlyArray<DesktopForwardedShortcut>) =>
       Effect.sync(() => {
@@ -3956,6 +3997,7 @@ export class PreviewManager extends Context.Service<
       audioMuted: boolean,
     ) => Effect.Effect<void, PreviewManagerError>;
     readonly setShown: (tabId: string, shown: boolean) => Effect.Effect<void>;
+    readonly setCaptureDrawn: (tabId: string, drawn: boolean) => Effect.Effect<void>;
     readonly openDevTools: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly clearCookies: (
       partitions?: ReadonlyArray<string>,
@@ -4122,6 +4164,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     setZoomFactor: operations.setZoomFactor,
     setAudioMuted: operations.setAudioMuted,
     setShown: operations.setShown,
+    setCaptureDrawn: operations.setCaptureDrawn,
     openDevTools: operations.openDevTools,
     clearCookies: Effect.fn("PreviewManager.clearCookies")(function* (partitions) {
       yield* browserSession

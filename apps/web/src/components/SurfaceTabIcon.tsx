@@ -10,6 +10,7 @@ import {
 } from "@t3tools/client-runtime/thread-pull-requests";
 import type {
   EnvironmentId,
+  IssueTrackerKind,
   PreviewSessionSnapshot,
   ProjectId,
   PullRequestState,
@@ -18,10 +19,20 @@ import type {
 } from "@t3tools/contracts";
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import { surfaceTabTitle } from "../layout/surfaceTabLabels";
-import { FileDiff, Files, Globe2, MessagesSquare, Smartphone, TerminalSquare } from "lucide-react";
+import {
+  CircleDotIcon,
+  FileDiff,
+  Files,
+  Globe2,
+  MessagesSquare,
+  Smartphone,
+  TerminalSquare,
+} from "lucide-react";
 
 import { AndroidIcon, AppleIcon } from "~/components/Icons";
+import { issueStatePresentation } from "~/components/issue/issuePresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+import { issueEnvironment } from "~/state/issues";
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
 import { useThreadPreviewState, type DesktopPreviewOverlay } from "~/previewStateStore";
@@ -148,6 +159,8 @@ export function SurfaceIcon({
       return (
         <PullRequestGlyph.link className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
       );
+    case "issue":
+      return <IssueSurfaceIcon surface={surface} environmentId={environmentId} />;
     case "side-chat":
       return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
     case "device":
@@ -159,6 +172,45 @@ export function SurfaceIcon({
         <Smartphone className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
       );
   }
+}
+
+/** The issue's own state mark, from the detail its panel already reads; a plain dot until then. */
+function IssueSurfaceIcon({
+  surface,
+  environmentId,
+}: {
+  surface: Extract<RightPanelSurface, { kind: "issue" }>;
+  environmentId: EnvironmentId | null;
+}) {
+  const resolvedEnvironmentId =
+    (surface.environmentId as EnvironmentId | undefined) ?? environmentId;
+  const detail = useEnvironmentQuery(
+    resolvedEnvironmentId === null
+      ? null
+      : issueEnvironment.detail({
+          environmentId: resolvedEnvironmentId,
+          input: {
+            projectId: surface.projectId as ProjectId,
+            tracker: surface.tracker as IssueTrackerKind,
+            ...(surface.host ? { host: surface.host } : {}),
+            scope: surface.scope,
+            key: surface.key,
+          },
+        }),
+  ).data;
+  if (detail === null) {
+    return (
+      <CircleDotIcon className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
+    );
+  }
+  const presentation = issueStatePresentation(detail.state);
+  return (
+    <presentation.Icon
+      role="img"
+      aria-label={presentation.label}
+      className={cn("size-3.5 shrink-0", presentation.toneClassName)}
+    />
+  );
 }
 
 /** What a side chat tab's dot shows and its title's accessible name says. */
@@ -203,18 +255,13 @@ export function resolvePullRequestTabLink(
   reference: { repository: string; number: number },
 ) {
   if (environmentId === null || host === null) return undefined;
+  // Keys are cached per object, so one target normalizes once instead of once per link.
+  const target = { host, repository: reference.repository, number: reference.number };
   let newest: EnvironmentThreadShell["pullRequests"][number] | undefined;
   for (const thread of threads) {
     if (thread.environmentId !== environmentId) continue;
     for (const link of visibleThreadPullRequests(thread.pullRequests)) {
-      if (
-        !threadPullRequestKeysEqual(link, {
-          host,
-          repository: reference.repository,
-          number: reference.number,
-        })
-      )
-        continue;
+      if (!threadPullRequestKeysEqual(link, target)) continue;
       if (
         newest === undefined ||
         (link.snapshot?.syncedAt ?? "") > (newest.snapshot?.syncedAt ?? "")

@@ -162,8 +162,8 @@ export function MediaVideoPlayer({
             <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
             Video unavailable
           </span>
-          {unavailableDetail ? <span>{unavailableDetail}</span> : null}
           {label ? <span>{label}</span> : null}
+          {unavailableDetail ? <span>{unavailableDetail}</span> : null}
           <span className="flex flex-wrap items-center justify-center gap-2">
             {latestSrc !== null || onRetry ? (
               <Button

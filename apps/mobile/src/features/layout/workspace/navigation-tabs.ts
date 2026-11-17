@@ -6,11 +6,13 @@ import {
   navigationCustomizationAvailable,
   resolveHiddenNavigationTabs,
   enabledNavigationTabs,
+  sharedSlotAbsentee,
   type NavigationTab,
 } from "./navigation-tab-order";
 import type { AppSymbolName } from "../../../components/ui/AppSymbol";
 import { mobilePreferencesAtom } from "../../../state/preferences";
 import { PullRequestGlyph } from "../../pull-requests/pullRequestGlyphs";
+import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { resolveWorkspaceTabOrder } from "./workspace-tabs-state";
 
 export const WORKSPACE_TAB_LABELS = {
@@ -22,6 +24,7 @@ export const NAVIGATION_TAB_ICONS = {
   threads: "text.bubble",
   bots: "face.smiling",
   pullRequests: PullRequestGlyph.pullRequest,
+  issues: "git.issue",
 } as const satisfies Readonly<Record<NavigationTab, AppSymbolName>>;
 
 export function useNavigationTabOrder() {
@@ -34,10 +37,14 @@ export function useNavigationTabOrder() {
 
 export function useHiddenNavigationTabs() {
   const preferences = useAtomValue(mobilePreferencesAtom);
-  const saved = AsyncResult.isSuccess(preferences)
-    ? preferences.value.hiddenNavigationTabs
-    : undefined;
-  return navigationCustomizationAvailable() ? resolveHiddenNavigationTabs(saved) : [];
+  const selected = useWorkspaceTabs()?.state.selectedTab ?? "threads";
+  const saved = AsyncResult.isSuccess(preferences) ? preferences.value : undefined;
+  return [
+    ...(navigationCustomizationAvailable()
+      ? resolveHiddenNavigationTabs(saved?.hiddenNavigationTabs)
+      : []),
+    sharedSlotAbsentee(selected, saved?.sharedSlotTab),
+  ];
 }
 
 export function useEnabledNavigationTabs() {

@@ -77,7 +77,7 @@ import { useAtomValue } from "@effect/atom-react";
 import type { RunStopPresentation } from "@t3tools/client-runtime/state/thread-execution";
 import { Atom } from "effect/reactivity";
 import { environmentThreadDetails } from "../../state/threads";
-import { openSideChatTab } from "../../lib/sideChatPane";
+import { resolveThreadOpenRoute } from "../../lib/sideChatPane";
 import { runInNewLayoutTab } from "../../layout/layoutStore";
 import type { useLocalDispatchState } from "./useLocalDispatchState";
 const RELATED_THREAD_SHELL_WAIT_MS = 1_000;
@@ -500,15 +500,17 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       toastManager.add({ type: "info", title: "This thread is no longer available" });
       return;
     }
-    if (activeThreadRef && openSideChatTab(activeThreadRef, shell)) return;
+    const routeRef = resolveThreadOpenRoute(threadRef, shell);
+    if (scopedThreadKey(routeRef) === routeThreadKey) return;
     const open = () =>
       navigate({
         to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(threadRef),
+        params: buildThreadRouteParams(routeRef),
       });
     // This thread's own child opens as a ghost tab beside it, as from the Lineage card.
     const isChild =
       activeThreadRef !== null &&
+      routeRef === threadRef &&
       threadEnvironmentId === activeThreadRef.environmentId &&
       shell?.lineage.parentThreadId === activeThreadRef.threadId;
     void (isChild ? runInNewLayoutTab(open, { ghostOf: activeThreadRef }) : open());

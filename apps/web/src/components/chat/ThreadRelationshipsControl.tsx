@@ -1,5 +1,5 @@
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
-import { openSideChatTab } from "../../lib/sideChatPane";
+import { resolveThreadOpenRoute } from "../../lib/sideChatPane";
 import { runInNewLayoutTab } from "../../layout/layoutStore";
 import { useAtomValue } from "@effect/atom-react";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
@@ -83,6 +83,7 @@ import { serverEnvironment } from "../../state/server";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
+  hasInstanceBadge,
   shouldShowInstanceBadge,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
@@ -283,6 +284,7 @@ function currentSubagent<Agent extends RuntimeSubagent>(
 function RemoteSubagentRow(props: {
   readonly agent: RemoteSubagent;
   readonly provider: ServerProvider | undefined;
+  readonly anyInstanceBadge: boolean;
 }) {
   const navigate = useNavigate();
   const environment = useEnvironment(props.agent.remoteChild.environmentId);
@@ -343,6 +345,7 @@ function RemoteSubagentRow(props: {
             // The task's own driver here is only a "remote" label.
             driver={props.provider?.driver}
             provider={props.provider}
+            anyInstanceBadge={props.anyInstanceBadge}
             fallbackIcon={BotIcon}
             // The machine it runs on rides the logo, so the second line lines up with local rows.
             badge={
@@ -405,6 +408,7 @@ function RemoteSubagentRow(props: {
 function DelegatedFromRow(props: {
   readonly delegatedFrom: OrchestrationV2DelegatedFrom;
   readonly fallbackLabel: string | undefined;
+  readonly anyInstanceBadge: boolean;
 }) {
   const navigate = useNavigate();
   const router = useRouter();
@@ -463,7 +467,11 @@ function DelegatedFromRow(props: {
             />
           }
         >
-          <ThreadRelationshipIcon fallbackIcon={CornerLeftUpIcon} status={null} />
+          <ThreadRelationshipIcon
+            anyInstanceBadge={props.anyInstanceBadge}
+            fallbackIcon={CornerLeftUpIcon}
+            status={null}
+          />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-left text-label text-strong-foreground">
               {title}
@@ -674,16 +682,23 @@ function useThreadLineage(props: {
   // Idle children can be omitted from the shell; opening one loads its own detail.
   // A child opens as a ghost tab beside this thread's tab; the parent opens as any thread does.
   const openThread = (threadId: ThreadId) => {
-    if (openSideChatTab(ref, graph.nodes.get(threadId)?.thread ?? null)) return;
+    const routeRef = resolveThreadOpenRoute(
+      scopeThreadRef(props.environmentId, threadId),
+      graph.nodes.get(threadId)?.thread ?? null,
+    );
+    if (routeRef.threadId === ref.threadId) return;
     const open = () =>
       navigate({
         to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(scopeThreadRef(props.environmentId, threadId)),
+        params: buildThreadRouteParams(routeRef),
       });
     const isParent = relationshipRows.some(
       (row) => row.threadId === threadId && isParentThreadRelationship(row.edge, props.threadId),
     );
-    void (isParent ? open() : runInNewLayoutTab(open, { ghostOf: ref }));
+    // A side chat routes to its parent's tab instead of a ghost of its own.
+    void (isParent || routeRef.threadId !== threadId
+      ? open()
+      : runInNewLayoutTab(open, { ghostOf: ref }));
   };
 
   const merge = async () => {
@@ -1102,7 +1117,7 @@ export function ThreadRelationshipsPanel(props: {
                         ? `Merge back to ${parentTitle}`
                         : "Merge back to source conversation"
                     }
-                    disabled={!canMerge || busyAction !== null}
+                    aria-disabled={!canMerge || busyAction !== null || undefined}
                     onClick={() => void merge()}
                   >
                     {busyAction === "merge" ? (
@@ -1166,6 +1181,7 @@ export function ThreadRelationshipsPanel(props: {
         provider={providersByEnvironment
           .get(row.remote.remoteChild.environmentId)
           ?.find((entry) => entry.instanceId === row.remote.providerInstanceId)}
+        anyInstanceBadge={hasInstanceBadge(providerEntries)}
       />
     ) : (
       renderRelationshipRow(row)
@@ -1209,6 +1225,7 @@ export function ThreadRelationshipsPanel(props: {
                   <DelegatedFromRow
                     delegatedFrom={delegatedFrom}
                     fallbackLabel={currentThread?.linkOrigin?.label}
+                    anyInstanceBadge={hasInstanceBadge(providerEntries)}
                   />
                 </ThreadLineageRowList>
               )}

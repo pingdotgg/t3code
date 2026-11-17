@@ -19,6 +19,7 @@ import {
   getNewProjectPublishTarget,
   getNewProjectPublishTargets,
   getNewProjectRepository,
+  getAddProjectInitialQuery,
   githubIncompleteOwnerRepositoryMessage,
   normalizePastedCloneUrl,
   addProjectRemoteSourceLabel,
@@ -73,6 +74,8 @@ import {
   RotateCcwIcon,
   SettingsIcon,
   MonitorIcon,
+  SquareSplitHorizontalIcon,
+  SquareSplitVerticalIcon,
   PinIcon,
   PinOffIcon,
   PlugIcon,
@@ -139,6 +142,7 @@ import {
 } from "../state/environments";
 import {
   useAnyEnvironmentHiding,
+  useDelegatedUnderParent,
   useHiddenThreadKeys,
   useEnvironmentThreadRefs,
   useProjects,
@@ -146,7 +150,7 @@ import {
   useVisibleThreadShells,
   waitForProject,
 } from "../state/entities";
-import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
+import { isShownUnderParent, visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import {
   resolveThreadActionProjectRef,
   startNewThreadFromContext,
@@ -154,7 +158,6 @@ import {
 } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
-  ensureBrowseDirectoryPath,
   findProjectByPath,
   getBrowseDirectoryPath,
   hasTrailingPathSeparator,
@@ -179,6 +182,7 @@ import {
   useRightPanelStore,
 } from "../rightPanelStore";
 import { getLatestThreadForProject, sortThreads } from "@t3tools/client-runtime/state/thread-sort";
+import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   cn,
   getLocalFileManagerName,
@@ -230,9 +234,13 @@ import {
   type SearchOverlayMode,
 } from "./CommandPalette.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
-import { isSidebarHiddenThread } from "./Sidebar.logic";
 import { CommandPaletteContent, type PendingInputSelection } from "./CommandPaletteContent";
 import { buildLayoutPaletteItems, buildOpenBesidePaletteItem } from "../layout/layoutPaletteItems";
+import {
+  findTerminalSplitTarget,
+  queueTerminalFocusFromPalette,
+  restoreTerminalFocusFromPalette,
+} from "../lib/terminalFocus";
 import {
   selectCommandPaletteClientSettings,
   useEnvironmentLookups,
@@ -280,6 +288,8 @@ import type { ChatComposerHandle } from "./chat/ChatComposer";
 import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import { buildSidebarProjectPickerEntries } from "../sidebarProjectGrouping";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+import { readIssueListPreferences } from "~/components/issue/issueListPreferences";
+import { IssueGlyph } from "~/components/issue/issuePresentation";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
@@ -393,7 +403,7 @@ function CommandPaletteDialog(props: {
       data-testid="command-palette"
       // Focus goes to the composer, or back to what opened the palette (Settings' Add project) when there is none.
       finalFocus={() => {
-        if (restoreWorkspaceFocusFromPalette()) return false;
+        if (restoreWorkspaceFocusFromPalette() || restoreTerminalFocusFromPalette()) return false;
         const returnFocus = getCommandPaletteReturnFocus();
         if (returnFocus === false) return false;
         const opener = commandPaletteFocus.openerRef.current;
@@ -477,6 +487,7 @@ function OpenCommandPaletteDialog(props: {
   const deferredQuery = useDeferredValue(query);
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
+  const [opener] = useState(() => commandPaletteFocus.openerRef.current);
   const resultListRef = useRef<LegendListRef | null>(null);
   // A pushed view drops the typed highlight until the user moves it again.
   const highlightClearedRef = useRef(viewStack.length > 0);
@@ -556,11 +567,20 @@ function OpenCommandPaletteDialog(props: {
     if (activeThreadReferenceCopyTarget === null) return;
     await copyThreadReference(activeThreadReferenceCopyTarget);
   };
-  // Side chats and subagents open inside their parent, so opening a project never lands on one.
-  const threads = useVisibleThreadShells().filter((thread) => !isSidebarHiddenThread(thread));
+  // Threads the sidebar shows under their parent open there, so opening a project never lands on one.
+  const delegatedUnderParent = useDelegatedUnderParent();
+  const threads = useVisibleThreadShells().filter(
+    (thread) =>
+      !isShownUnderParent(
+        { environmentId: thread.environmentId, threadId: thread.id },
+        thread.lineage,
+        delegatedUnderParent,
+      ),
+  );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const providersByEnvironment = useEnvironmentProviders();
-  const { changeThemeItem, changeAppearanceItem, themeEditorItem } = useCommandPaletteThemeItems();
+  const { changeThemeItem, changeAppearanceItem, changeAppIconItem, themeEditorItem } =
+    useCommandPaletteThemeItems();
   const currentView = viewStack.at(-1)?.view ?? null;
   const threadSearchQuery = currentView === null && !isActionsOnly ? deferredQuery : "";
   const [browseGeneration, setBrowseGeneration] = useState(0);
@@ -714,12 +734,7 @@ function OpenCommandPaletteDialog(props: {
   const paletteMode = getCommandPaletteMode({ currentView, isBrowsing });
   const getAddProjectInitialQueryForEnvironment = (environmentId: EnvironmentId | null): string => {
     const environment = environments.find((candidate) => candidate.environmentId === environmentId);
-    const environmentSettings = environment?.serverConfig?.settings ?? null;
-    const baseDirectory = environmentSettings?.addProjectBaseDirectory?.trim() ?? "";
-    if (baseDirectory.length === 0) {
-      return "~/";
-    }
-    return ensureBrowseDirectoryPath(baseDirectory);
+    return getAddProjectInitialQuery(environment?.serverConfig?.settings.addProjectBaseDirectory);
   };
 
   const { projectByKey } = useProjectLookups();
@@ -851,9 +866,14 @@ function OpenCommandPaletteDialog(props: {
           ),
         )
       : null;
+    // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
+    const now = new Date().toISOString();
+    const openableThreads = threads.filter(
+      (thread) => thread.settledOverride !== "settled" && !effectiveSnoozed(thread, { now }),
+    );
     const latestThread = groupedProjectKeys
       ? (sortThreads(
-          threads.filter(
+          openableThreads.filter(
             (thread) =>
               thread.archivedAt === null &&
               groupedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`),
@@ -861,7 +881,7 @@ function OpenCommandPaletteDialog(props: {
           clientSettings.sidebarThreadSortOrder,
         )[0] ?? null)
       : getLatestThreadForProject(
-          threads.filter((thread) => thread.environmentId === project.environmentId),
+          openableThreads.filter((thread) => thread.environmentId === project.environmentId),
           project.id,
           clientSettings.sidebarThreadSortOrder,
         );
@@ -969,7 +989,7 @@ function OpenCommandPaletteDialog(props: {
     rowOrderKey("new-thread-in"),
     true,
   );
-  // Jump shortcuts follow the rows as shown, so a pin cannot move a number to another row.
+  // Root search suggestions copy these numbers; the picker renumbers its shown rows below.
   const projectJumpItems = new Map(
     enumerateCommandPaletteItems(
       openingOrderThreadItems.filter((item) => item.value !== NEW_THREAD_NO_PROJECT_VALUE),
@@ -1186,7 +1206,8 @@ function OpenCommandPaletteDialog(props: {
               }
             />
             <TooltipPopup align="end" side="left">
-              {disabledHint ?? "Open Settings -> Source control to configure this provider."}
+              {disabledHint ??
+                "Open Settings -> Source control & issues to configure this provider."}
             </TooltipPopup>
           </Tooltip>
         </span>
@@ -1627,6 +1648,43 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  // What the terminal's split keys act on, from where focus was when the palette opened.
+  const terminalSplitTarget = findTerminalSplitTarget(
+    opener,
+    previewPanelThreadRef ? scopedThreadKey(previewPanelThreadRef) : null,
+  );
+  if (terminalSplitTarget !== null) {
+    const target = terminalSplitTarget;
+    actionItems.push(
+      {
+        kind: "action",
+        value: "action:terminal-split",
+        searchTerms: ["split terminal", "terminal", "split", "horizontal"],
+        title: "Split terminal",
+        icon: <SquareSplitHorizontalIcon className={ITEM_ICON_CLASS} />,
+        shortcutCommand: "terminal.split",
+        disabled: !target.canSplit(),
+        run: async () => {
+          target.split("horizontal");
+          queueTerminalFocusFromPalette(target.focusActive);
+        },
+      },
+      {
+        kind: "action",
+        value: "action:terminal-split-vertical",
+        searchTerms: ["split terminal vertically", "terminal", "split", "vertical"],
+        title: "Split terminal vertically",
+        icon: <SquareSplitVerticalIcon className={ITEM_ICON_CLASS} />,
+        shortcutCommand: "terminal.splitVertical",
+        disabled: !target.canSplit(),
+        run: async () => {
+          target.split("vertical");
+          queueTerminalFocusFromPalette(target.focusActive);
+        },
+      },
+    );
+  }
+
   // The side pane's tabs and the terminal, beside the focused chat.
   const openBesideItem = activeThread || activeDraftThread ? buildOpenBesidePaletteItem() : null;
   if (openBesideItem) actionItems.push(openBesideItem);
@@ -1723,6 +1781,7 @@ function OpenCommandPaletteDialog(props: {
 
   actionItems.push(changeThemeItem);
   actionItems.push(changeAppearanceItem);
+  actionItems.push(changeAppIconItem);
 
   actionItems.push(themeEditorItem);
 
@@ -1750,6 +1809,23 @@ function OpenCommandPaletteDialog(props: {
       icon: <PullRequestGlyph.pullRequest className={ITEM_ICON_CLASS} />,
       run: async () => {
         await openLayoutPage("pull-requests");
+      },
+    });
+  }
+
+  if (
+    environments.some(
+      (environment) => environment.serverConfig?.environment.capabilities.issues === true,
+    )
+  ) {
+    actionItems.push({
+      kind: "action",
+      value: "action:issues",
+      searchTerms: ["issues", "issue", "bugs", "tracker", "github", "triage"],
+      title: "Open issues",
+      icon: <IssueGlyph.issue className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/issues", search: readIssueListPreferences() });
       },
     });
   }
@@ -1937,11 +2013,13 @@ function OpenCommandPaletteDialog(props: {
             ? changeThemeItem.groups
             : currentView?.groups[0]?.value === "appearance"
               ? changeAppearanceItem.groups
-              : (currentView?.groups ?? rootGroups);
+              : currentView?.groups[0]?.value === "app-icons"
+                ? changeAppIconItem.groups
+                : (currentView?.groups ?? rootGroups);
 
   const isLinkedThreadSearch =
     linkedThreadSearch?.linkedThreads !== undefined && deferredQuery === linkedThreadSearch.query;
-  const filteredGroups = filterCommandPaletteGroups({
+  const searchedGroups = filterCommandPaletteGroups({
     activeGroups,
     query: deferredQuery,
     isInSubmenu: currentView !== null,
@@ -1978,6 +2056,21 @@ function OpenCommandPaletteDialog(props: {
         : allThreadItems,
     threadMessageItems: isLinkedThreadSearch ? [] : threadMessageItems,
     now: searchNow,
+  });
+  // Jump shortcuts number the project rows as shown, so a pin cannot move a number to another row.
+  const filteredGroups = searchedGroups.map((group) => {
+    if (group.value !== NEW_THREAD_IN_GROUP) return group;
+    const jumpItems = new Map(
+      enumerateCommandPaletteItems(
+        group.items.filter(
+          (item): item is CommandPaletteActionItem =>
+            item.kind === "action" &&
+            item.value !== NEW_THREAD_NO_PROJECT_VALUE &&
+            item.value !== addProjectAction.value,
+        ),
+      ).map((item) => [item.value, item] as const),
+    );
+    return { ...group, items: group.items.map((item) => jumpItems.get(item.value) ?? item) };
   });
 
   const handleAddProjectForEnvironment = async (input: {
