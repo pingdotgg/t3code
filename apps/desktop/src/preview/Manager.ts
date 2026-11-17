@@ -109,7 +109,10 @@ export type PreviewNavStatus =
       description: string;
     };
 
-/** Whether a tab other than the given guest's renders this server tab, as after a move between windows. */
+/**
+ * Whether a live guest other than the given one renders this server tab, as after a move between
+ * windows. A closed window's tabs keep their guest id, so a destroyed guest does not count.
+ */
 function rendersServerTabElsewhere(
   tabs: Iterable<PreviewTabState>,
   serverTab: NonNullable<PreviewTabState["serverTab"]>,
@@ -117,13 +120,15 @@ function rendersServerTabElsewhere(
 ): boolean {
   for (const other of tabs) {
     if (
-      other.webContentsId !== null &&
-      other.webContentsId !== exceptWebContentsId &&
-      other.serverTab?.threadId === serverTab.threadId &&
-      other.serverTab.tabId === serverTab.tabId
+      other.webContentsId === null ||
+      other.webContentsId === exceptWebContentsId ||
+      other.serverTab?.threadId !== serverTab.threadId ||
+      other.serverTab.tabId !== serverTab.tabId
     ) {
-      return true;
+      continue;
     }
+    const guest = webContents.fromId(other.webContentsId);
+    if (guest !== undefined && !guest.isDestroyed()) return true;
   }
   return false;
 }
