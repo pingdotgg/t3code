@@ -343,9 +343,11 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                             </Text>
                           </View>
                           <Text className="text-sm text-foreground-muted">
-                            {provider.installed
-                              ? (provider.version ?? "Version unknown")
-                              : "Not installed"}
+                            {provider.status === "checking"
+                              ? "Checking provider status"
+                              : provider.installed
+                                ? (provider.version ?? "Version unknown")
+                                : "Not installed"}
                             {provider.versionAdvisory?.latestVersion
                               ? ` · Latest ${provider.versionAdvisory.latestVersion}`
                               : ""}

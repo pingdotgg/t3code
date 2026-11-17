@@ -111,7 +111,7 @@ export function resolvePromptLinkModelSelection(
   );
   const instance =
     usable.find((provider) => provider.status === "ready") ??
-    usable.find((provider) => provider.status === "warning");
+    usable.find((provider) => provider.status === "warning" || provider.status === "checking");
   if (instance === undefined) return null;
   const requested =
     request.model === null

@@ -248,17 +248,19 @@ function ProviderAccount({
       ? state.message
       : !provider.enabled
         ? "Turned off"
-        : signedIn
-          ? "Signed in"
-          : isDiscovering
-            ? "Discovering sign-in methods…"
-            : needsExternalSetup
-              ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
-              : !provider.installed
-                ? "Not installed"
-                : usesCredentials
-                  ? "Connect to load models"
-                  : "Not signed in";
+        : provider.status === "checking"
+          ? "Checking provider status"
+          : signedIn
+            ? "Signed in"
+            : isDiscovering
+              ? "Discovering sign-in methods…"
+              : needsExternalSetup
+                ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
+                : !provider.installed
+                  ? "Not installed"
+                  : usesCredentials
+                    ? "Connect to load models"
+                    : "Not signed in";
   // A provider with several sign-in methods picks one from a menu on the same control.
   const methodActions: MenuAction[] = methods.map((method) => ({
     id: `method:${method.id}`,

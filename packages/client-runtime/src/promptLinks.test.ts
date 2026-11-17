@@ -129,7 +129,7 @@ describe("resolvePromptLinkModelSelection", () => {
   const provider = (
     instanceId: string,
     driver: string,
-    status: "ready" | "warning" | "error" | "disabled" = "ready",
+    status: "checking" | "ready" | "warning" | "error" | "disabled" = "ready",
   ) => ({
     instanceId: ProviderInstanceId.make(instanceId),
     driver: ProviderDriverKind.make(driver),
@@ -168,5 +168,11 @@ describe("resolvePromptLinkModelSelection", () => {
     expect(
       resolvePromptLinkModelSelection(providers, { provider: "cursor", model: null }),
     ).toBeNull();
+    expect(
+      resolvePromptLinkModelSelection([provider("codex", "codex", "checking")], {
+        provider: "codex",
+        model: "small",
+      }),
+    ).toEqual({ selection: { instanceId: "codex", model: "small" }, exact: true });
   });
 });

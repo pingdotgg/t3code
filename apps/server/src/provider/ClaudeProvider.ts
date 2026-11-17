@@ -947,7 +947,7 @@ export const makePendingClaudeProvider = Effect.fn("ClaudeProvider.makePendingCl
       probe: {
         installed: false,
         version: null,
-        status: "warning",
+        status: "checking",
         auth: { status: "unknown" },
         message: "Claude provider status has not been checked in this session yet.",
       },

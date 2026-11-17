@@ -36,7 +36,31 @@ function shownAfterDismissing(dismissed: ServerProvider, shown: ServerProvider):
   );
 }
 
-describe("compatibility banners", () => {
+describe("provider status banners", () => {
+  it("keeps initial checks quiet without hiding completed probe failures", () => {
+    const { compatibilityAdvisory: _compatibilityAdvisory, ...base } = provider;
+    const checking: ServerProvider = {
+      ...base,
+      installed: false,
+      version: null,
+      status: "checking",
+      auth: { status: "unknown" },
+      message: "Codex provider status has not been checked in this session yet.",
+    };
+    expect(shouldShowProviderStatusBanner(checking, false)).toBe(false);
+    expect(shouldShowProviderStatusBanner({ ...checking, status: "warning" }, false)).toBe(true);
+    expect(shouldShowProviderStatusBanner({ ...checking, status: "error" }, false)).toBe(true);
+    expect(
+      shouldShowProviderStatusBanner(
+        {
+          ...checking,
+          compatibilityAdvisory: { ...provider.compatibilityAdvisory!, status: "broken" },
+        },
+        false,
+      ),
+    ).toBe(true);
+  });
+
   it("shows and dismisses a warning on a healthy provider, then clears it after policy relaxation", () => {
     expect(shouldShowProviderStatusBanner(provider, false)).toBe(true);
     expect(shownAfterDismissing(provider, provider)).toBe(false);
