@@ -151,6 +151,43 @@ const readClaudeCancelledSubagentResumeTranscript = Effect.fn(
     });
   return yield* ClaudeOrchestratorReplayHarness.decodeTranscript({ ...recorded, entries });
 });
+/** The resumed subagent works only after the root's revive turn has ended, as a long revived task does. */
+const readClaudeSubagentRevivedAfterRootTranscript = Effect.fn(
+  "readClaudeSubagentRevivedAfterRootTranscript",
+)(function* () {
+  const recorded = yield* readRawTranscript(
+    new URL(
+      "./fixtures/claude_subagent_resume_after_restart/claude_transcript.ndjson",
+      import.meta.url,
+    ),
+  );
+  const frameOf = (index: number): Record<string, unknown> | undefined => {
+    const entry = recorded.entries[index];
+    return entry?.type === "emit_inbound" && typeof entry.frame === "object" && entry.frame !== null
+      ? (entry.frame as Record<string, unknown>)
+      : undefined;
+  };
+  const indices = recorded.entries.map((_, index) => index);
+  const reopen = indices.find((index) => recorded.entries[index]?.label === "subagent.found");
+  const start = indices.find(
+    (index) =>
+      reopen !== undefined &&
+      index > reopen &&
+      typeof frameOf(index)?.parent_tool_use_id === "string",
+  );
+  const end = indices.findLast((index) => frameOf(index)?.subtype === "task_notification");
+  const rootResult = indices.findLast((index) => frameOf(index)?.type === "result");
+  if (start === undefined || end === undefined || rootResult === undefined || end > rootResult) {
+    throw new Error("Expected the recorded resume run before the root result.");
+  }
+  const entries = [
+    ...recorded.entries.slice(0, start),
+    ...recorded.entries.slice(end + 1, rootResult + 1),
+    ...recorded.entries.slice(start, end + 1),
+    ...recorded.entries.slice(rootResult + 1),
+  ];
+  return yield* ClaudeOrchestratorReplayHarness.decodeTranscript({ ...recorded, entries });
+});
 const readCursorTranscript = Effect.fn("readCursorRecoveryTranscript")(function* () {
   const transcript = yield* readRawTranscript(
     new URL("./fixtures/provider_thread_resume/cursor_transcript.ndjson", import.meta.url),
@@ -382,115 +419,122 @@ describe("orchestrator replay recovery", () => {
         ),
       ),
   );
-  it.effect("keeps a Claude subagent resumed after a server restart in its own thread", () =>
-    Effect.gen(function* () {
-      const transcript = yield* readClaudeSubagentResumeTranscript();
-      const [launchPrompt, resumePrompt] = yield* decodePromptPair(transcript.metadata?.prompts);
-      const workspace = yield* checkpointWorkspace(transcript.scenario);
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const tempDir = yield* Effect.acquireRelease(
-        fs.makeTempDirectory({ prefix: "t3-orchestration-v2-claude-recovery-" }),
-        (directory) => fs.remove(directory, { recursive: true, force: true }).pipe(Effect.orDie),
-      );
-      const materialized = yield* materializeFixtureInput({
-        scenario: transcript.scenario,
-        fixtureInput: {
-          steps: [
-            { type: "message", text: launchPrompt },
-            { type: "message", text: resumePrompt },
-          ],
-        },
-        driver: ProviderDriverKind.make("claudeAgent"),
-        modelSelection: CLAUDE_MODEL_SELECTION,
-      });
-      const { phase1Commands, phase1Steps, phase2Commands, phase2Steps } =
-        splitAfterFirstIdle(materialized);
-      const { harness, assertComplete } = makeClaudeRestartReplayHarness(transcript);
-      const options = {
-        databaseLayer: SqlitePersistence.layerFromPath(path.join(tempDir, "state.sqlite")).pipe(
-          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-        ),
-      };
-
-      yield* Effect.scoped(
-        runOrchestratorV2ProviderReplayScenario(
-          {
-            name: `${transcript.scenario}:first-runtime`,
-            transcript,
-            commands: phase1Commands,
-            steps: phase1Steps,
-            projectionThreadIds: materialized.projectionThreadIds,
-            runtimePolicyOverride: { cwd: workspace },
-          },
-          harness,
-          options,
-        ),
-      );
-      const result = yield* Effect.scoped(
-        runOrchestratorV2ProviderReplayScenario(
-          {
-            name: `${transcript.scenario}:second-runtime`,
-            transcript,
-            commands: phase2Commands,
-            steps: phase2Steps,
-            projectionThreadIds: materialized.projectionThreadIds,
-            runtimePolicyOverride: { cwd: workspace },
-          },
-          harness,
-          { ...options, recoverOnStartup: true },
-        ),
-      );
-      yield* assertComplete;
-
-      const projection = projectionFor(result, transcript.scenario);
-      assertSemanticProjectionIntegrity(projection);
-      assert.lengthOf(projection.subagents, 1);
-      const subagent = projection.subagents[0];
-      assert.equal(subagent?.status, "completed");
-      const childThreads = [...result.projections.values()].filter(
-        (candidate) => candidate.thread.lineage.parentThreadId === projection.thread.id,
-      );
-      assert.lengthOf(childThreads, 1);
-      const child = childThreads[0];
-      assert.equal(child?.thread.id, subagent?.childThreadId);
-      assert.deepEqual(child?.thread.modelSelection, {
-        instanceId: CLAUDE_MODEL_SELECTION.instanceId,
-        model: "claude-sonnet-5",
-      });
-
-      const conversation = (child?.turnItems ?? [])
-        .toSorted((left, right) => left.ordinal - right.ordinal)
-        .flatMap((item) =>
-          item.type === "user_message" || item.type === "assistant_message"
-            ? [`${item.type === "user_message" ? "user" : "assistant"}:${item.text}`]
-            : [],
+  // regression: #38124 a subagent revived after a restart stopped mirroring once the root's turn ended
+  it.effect.each([
+    ["while the root turn runs", readClaudeSubagentResumeTranscript],
+    ["after the root turn ends", readClaudeSubagentRevivedAfterRootTranscript],
+  ] as const)(
+    "keeps a Claude subagent resumed after a server restart in its own thread, working %s",
+    ([, readTranscript]) =>
+      Effect.gen(function* () {
+        const transcript = yield* readTranscript();
+        const [launchPrompt, resumePrompt] = yield* decodePromptPair(transcript.metadata?.prompts);
+        const workspace = yield* checkpointWorkspace(transcript.scenario);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* Effect.acquireRelease(
+          fs.makeTempDirectory({ prefix: "t3-orchestration-v2-claude-recovery-" }),
+          (directory) => fs.remove(directory, { recursive: true, force: true }).pipe(Effect.orDie),
         );
-      const launchTask = conversation[0];
-      assert.deepEqual(
-        conversation.map((entry) => entry.slice(0, entry.indexOf(":"))),
-        ["user", "assistant", "user", "assistant"],
-      );
-      assert.include(launchTask, "Your job is just the file");
-      assert.include(conversation[1], "is 1 line long");
-      assert.include(conversation[2], "Look again at");
-      assert.include(conversation[3], "Bug/edge case found and fixed");
-      const childCommands = (child?.turnItems ?? []).filter(
-        (item) => item.type === "command_execution",
-      );
-      assert.lengthOf(childCommands, 3);
-      assert.isFalse(
-        projection.turnItems.some(
-          (item) => item.type === "assistant_message" && item.text.includes("Bug/edge case found"),
+        const materialized = yield* materializeFixtureInput({
+          scenario: transcript.scenario,
+          fixtureInput: {
+            steps: [
+              { type: "message", text: launchPrompt },
+              { type: "message", text: resumePrompt },
+            ],
+          },
+          driver: ProviderDriverKind.make("claudeAgent"),
+          modelSelection: CLAUDE_MODEL_SELECTION,
+        });
+        const { phase1Commands, phase1Steps, phase2Commands, phase2Steps } =
+          splitAfterFirstIdle(materialized);
+        const { harness, assertComplete } = makeClaudeRestartReplayHarness(transcript);
+        const options = {
+          databaseLayer: SqlitePersistence.layerFromPath(path.join(tempDir, "state.sqlite")).pipe(
+            Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
+        };
+
+        yield* Effect.scoped(
+          runOrchestratorV2ProviderReplayScenario(
+            {
+              name: `${transcript.scenario}:first-runtime`,
+              transcript,
+              commands: phase1Commands,
+              steps: phase1Steps,
+              projectionThreadIds: materialized.projectionThreadIds,
+              runtimePolicyOverride: { cwd: workspace },
+            },
+            harness,
+            options,
+          ),
+        );
+        const result = yield* Effect.scoped(
+          runOrchestratorV2ProviderReplayScenario(
+            {
+              name: `${transcript.scenario}:second-runtime`,
+              transcript,
+              commands: phase2Commands,
+              steps: phase2Steps,
+              projectionThreadIds: materialized.projectionThreadIds,
+              runtimePolicyOverride: { cwd: workspace },
+            },
+            harness,
+            { ...options, recoverOnStartup: true },
+          ),
+        );
+        yield* assertComplete;
+
+        const projection = projectionFor(result, transcript.scenario);
+        assertSemanticProjectionIntegrity(projection);
+        assert.lengthOf(projection.subagents, 1);
+        const subagent = projection.subagents[0];
+        assert.equal(subagent?.status, "completed");
+        const childThreads = [...result.projections.values()].filter(
+          (candidate) => candidate.thread.lineage.parentThreadId === projection.thread.id,
+        );
+        assert.lengthOf(childThreads, 1);
+        const child = childThreads[0];
+        assert.equal(child?.thread.id, subagent?.childThreadId);
+        assert.deepEqual(child?.thread.modelSelection, {
+          instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+          model: "claude-sonnet-5",
+        });
+
+        const conversation = (child?.turnItems ?? [])
+          .toSorted((left, right) => left.ordinal - right.ordinal)
+          .flatMap((item) =>
+            item.type === "user_message" || item.type === "assistant_message"
+              ? [`${item.type === "user_message" ? "user" : "assistant"}:${item.text}`]
+              : [],
+          );
+        const launchTask = conversation[0];
+        assert.deepEqual(
+          conversation.map((entry) => entry.slice(0, entry.indexOf(":"))),
+          ["user", "assistant", "user", "assistant"],
+        );
+        assert.include(launchTask, "Your job is just the file");
+        assert.include(conversation[1], "is 1 line long");
+        assert.include(conversation[2], "Look again at");
+        assert.include(conversation[3], "Bug/edge case found and fixed");
+        const childCommands = (child?.turnItems ?? []).filter(
+          (item) => item.type === "command_execution",
+        );
+        assert.lengthOf(childCommands, 3);
+        assert.isFalse(
+          projection.turnItems.some(
+            (item) =>
+              item.type === "assistant_message" && item.text.includes("Bug/edge case found"),
+          ),
+          "the resumed subagent's reply leaked into the parent thread",
+        );
+      }).pipe(
+        provideDeterministicTestRuntime,
+        Effect.provide(
+          Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
-        "the resumed subagent's reply leaked into the parent thread",
-      );
-    }).pipe(
-      provideDeterministicTestRuntime,
-      Effect.provide(
-        Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       ),
-    ),
   );
   it.effect("reopens the thread of a Claude subagent the restart cancelled when resumed", () =>
     Effect.gen(function* () {
@@ -566,7 +610,10 @@ describe("orchestrator replay recovery", () => {
             name: `${transcript.scenario}:cancelled-second-runtime`,
             transcript,
             commands: phase2Commands,
-            steps: phase2Steps,
+            steps: [
+              ...phase2Steps,
+              { type: "await_no_background_work", threadId: materialized.projectionThreadIds[0]! },
+            ],
             projectionThreadIds: materialized.projectionThreadIds,
             runtimePolicyOverride: { cwd: workspace },
           },
