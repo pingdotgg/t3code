@@ -1,5 +1,5 @@
 import { proposedPlanTitle, stripDisplayedPlanMarkdown } from "@t3tools/shared/proposedPlanText";
-import { T, useGT, Var } from "gt-react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { memo, useState, useId } from "react";
 import { findRevealRef } from "./markdownFindContext";
 import {
@@ -55,6 +55,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   findActive?: boolean;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const [expanded, setExpanded] = useState(false);
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
@@ -81,7 +82,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   const canCollapse = planMarkdown.length > 900 || lineCount > 20;
   const displayedPlanMarkdown = stripDisplayedPlanMarkdown(planMarkdown);
   const collapsedPreview = canCollapse
-    ? buildCollapsedProposedPlanPreviewMarkdown(planMarkdown, { maxLines: 10 })
+    ? buildCollapsedProposedPlanPreviewMarkdown(planMarkdown, { maxLines: 10 }, messages)
     : null;
   const isCollapsed = canCollapse && !expanded;
   // Mount clipped plans during find to count hidden matches without revealing them.

@@ -22,7 +22,7 @@ import type {
   SecretProviderId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { T, Var } from "gt-react";
+import { T, useMessages, Var } from "gt-react";
 import { CheckIcon, ExternalLinkIcon, LockIcon, MinusIcon, ShieldCheckIcon } from "lucide-react";
 import { useId, useRef, useState, type FormEvent } from "react";
 
@@ -40,7 +40,8 @@ export function SecretRequestCard(props: {
   readonly visibility: OrchestrationV2ProjectedTurnItem["visibility"];
 }) {
   const { item } = props;
-  const display = secretRequestDisplay(item, props.visibility);
+  const messages = useMessages();
+  const display = secretRequestDisplay(item, props.visibility, messages);
   if (display.kind === "answered" || display.kind === "pending-elsewhere") {
     const Icon =
       display.kind === "pending-elsewhere"
@@ -77,6 +78,7 @@ function PendingSecretRequestForm(props: {
   readonly item: SecretRequestItem;
 }) {
   const { item } = props;
+  const messages = useMessages();
   const inputId = useId();
   const errorId = useId();
   const privacyId = useId();
@@ -112,7 +114,11 @@ function PendingSecretRequestForm(props: {
       return;
     }
     if (!isAtomCommandInterrupted(result)) {
-      pipe(squashAtomCommandFailure(result), secretRequestFailureMessage, setError);
+      pipe(
+        squashAtomCommandFailure(result),
+        (failure) => secretRequestFailureMessage(failure, messages),
+        setError,
+      );
     }
   };
 
@@ -198,7 +204,7 @@ function PendingSecretRequestForm(props: {
               data-1p-ignore
               data-lpignore="true"
               data-bwignore
-              placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
+              placeholder={item.placeholder ?? messages(SECRET_REQUEST_DEFAULT_PLACEHOLDER)}
               value={secret}
               disabled={submitting}
               aria-invalid={error !== null || undefined}
@@ -240,7 +246,7 @@ function PendingSecretRequestForm(props: {
           className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
         >
           <ShieldCheckIcon className="size-3.5 shrink-0" aria-hidden />
-          {secretRequestPrivacyNote(item)}
+          {secretRequestPrivacyNote(item, messages)}
         </p>
         <Button
           type="button"

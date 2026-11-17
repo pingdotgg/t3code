@@ -106,7 +106,13 @@ export function modelFallbackBannerItem(
       ? resolve(
           msg("{provider} is out of usage · resets {time}", {
             provider: defaultProviderName,
-            time: formatUpcomingTimestamp(resetsAt, timestampFormat),
+            time: formatUpcomingTimestamp(
+              resetsAt,
+              timestampFormat,
+              Date.now(),
+              undefined,
+              resolve,
+            ),
           }),
         )
       : resolve(msg("{provider} is out of usage", { provider: defaultProviderName })),

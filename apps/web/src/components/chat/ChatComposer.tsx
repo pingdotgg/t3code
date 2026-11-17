@@ -9,6 +9,7 @@ import {
   resolveCompatibleRuntimeMode,
   runtimeModeConfig,
   resolveRuntimeModeOptions,
+  runtimeModeDenial,
 } from "./runtimeModeConfig";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
@@ -42,7 +43,6 @@ import {
   EnvironmentRequestInvalidError,
   AuthOrchestrationOperateScope,
   clampManagedRuntimeMode,
-  managedRuntimeModeDenial,
   ProviderDriverKind,
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -799,11 +799,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         : // A plain send waits for its uploads. Answers and approval redirects need them first.
           questionAttachmentTarget ||
             pendingApprovals.some((approval) => !heldRequestIds.has(approval.requestId))
-          ? attachmentUploadBlockReason({
-              imageIds: [...composerImages, ...composerFiles].map((attachment) => attachment.id),
-              uploadsByImageId,
-              environmentId,
-            })
+          ? attachmentUploadBlockReason(
+              {
+                imageIds: [...composerImages, ...composerFiles].map((attachment) => attachment.id),
+                uploadsByImageId,
+                environmentId,
+              },
+              m,
+            )
           : null
       : null);
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
@@ -933,9 +936,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const compatibleRuntimeModeOptions = resolveRuntimeModeOptions(
     compatibleRuntimeModes,
     managedPolicy,
+    m,
   );
   // A thread or draft already above the ceiling would be refused; offer the broadest mode left.
-  const runtimeModeCeilingDenial = managedRuntimeModeDenial(managedPolicy, compatibleRuntimeMode);
+  const runtimeModeCeilingDenial = runtimeModeDenial(managedPolicy, compatibleRuntimeMode, m);
   const runtimeModeCeilingFallback =
     runtimeModeCeilingDenial === undefined
       ? undefined
@@ -944,6 +948,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const providerSendBlockReason = getAntigravitySendBlockReason(
     selectedProviderEntry?.snapshot,
     selectedModel,
+    m,
   );
   const sendDisabledReason =
     externalSendDisabledReason ??
@@ -2615,7 +2620,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       onClick={() => handleRuntimeModeChange(runtimeModeCeilingFallback)}
                     >
                       <T>
-                        Switch to <Var>{runtimeModeConfig[runtimeModeCeilingFallback].label}</Var>
+                        Switch to{" "}
+                        <Var>{m(runtimeModeConfig[runtimeModeCeilingFallback].label)}</Var>
                       </T>
                     </Button>
                   ),
@@ -3732,7 +3738,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             ? gt("Choose a project above to start a thread")
                             : showProviderUnavailable
                               ? gt("Enable a provider in Settings to send a message")
-                              : (offeredPromptSuggestion ?? DEFAULT_COMPOSER_PLACEHOLDER)
+                              : (offeredPromptSuggestion ?? m(DEFAULT_COMPOSER_PLACEHOLDER))
                     }
                     placeholderSuffix={
                       offeredPromptSuggestion !== null ? (

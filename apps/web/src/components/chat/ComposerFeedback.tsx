@@ -16,7 +16,7 @@ export function feedbackBannerItem(
   onDismiss: () => void,
   resolve: MessageResolver = m,
 ): ComposerBannerStackItem | null {
-  const notice = codexFeedbackNotice(submission);
+  const notice = codexFeedbackNotice(submission, resolve);
   if (!notice) return null;
   return {
     id: `feedback:${submission.id}`,

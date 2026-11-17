@@ -1,6 +1,6 @@
 import type { ModelSelection, ProviderInstanceId, RuntimeMode } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-import { T, useGT } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { type ComponentProps, memo, useId, useRef, useState } from "react";
 
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
@@ -11,17 +11,13 @@ import { focusRequestedPermission, useComposerMenuProps } from "./composerEventS
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import { ProviderModelPicker } from "./ProviderModelPicker";
-import { runtimeModeConfig } from "./runtimeModeConfig";
+import { resolveRuntimeModeOption, runtimeModeConfig } from "./runtimeModeConfig";
 import { useComposerMenuState } from "./useComposerMenuState";
 
 export type RuntimeModeOption = {
   mode: RuntimeMode;
   disabledReason?: string;
 } & (typeof runtimeModeConfig)[RuntimeMode];
-const supervisedRuntimeModeOption: RuntimeModeOption = {
-  mode: "approval-required" as const,
-  ...runtimeModeConfig["approval-required"],
-};
 export const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
   runtimeMode: RuntimeMode;
   runtimeModeOptions: ReadonlyArray<RuntimeModeOption>;
@@ -34,6 +30,7 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const size = props.size ?? "sm";
   const accessDisplay = props.accessDisplay ?? "label";
   const composerFloatingLayerProps = useComposerMenuProps();
@@ -41,7 +38,7 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
   const permissionsChipRef = useRef<HTMLButtonElement>(null);
   const runtimeModeOption =
     props.runtimeModeOptions.find((option) => option.mode === props.runtimeMode) ??
-    supervisedRuntimeModeOption;
+    resolveRuntimeModeOption("approval-required", messages);
   const RuntimeModeIcon = runtimeModeOption.icon;
   // The chip opens the same Permissions toggle used in the model picker and the overflow menu.
   const permissionsTooltip = gt("Permissions: {mode}. {description}", {
@@ -113,12 +110,13 @@ export function ComposerPermissionsSection(props: {
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   // Hover or keyboard focus previews a mode's name and description before a pick.
   const [previewMode, setPreviewMode] = useState<RuntimeMode | null>(null);
   const shownMode = previewMode ?? props.runtimeMode;
   const shown =
     props.runtimeModeOptions.find((option) => option.mode === shownMode) ??
-    supervisedRuntimeModeOption;
+    resolveRuntimeModeOption("approval-required", messages);
   const descriptionId = useId();
   return (
     <div data-composer-permissions className="grid w-72 gap-1.5 px-2 py-1.5">

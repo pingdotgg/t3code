@@ -6,13 +6,14 @@ import {
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { T, useGT, Var } from "gt-react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { memo, use, useRef } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { OPEN_FAVORITE_EDITOR_ATTRIBUTE } from "./OpenInPickerShortcut";
 import { usePreferredEditor } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
+import type { MessageResolver } from "../../i18n/messages";
 import {
   openRemoteEditorUrl,
   useRemoteCapableEditors,
@@ -83,7 +84,11 @@ type OpenInOption = {
   kind: "brand" | "generic";
 };
 
-const resolveOpenInOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
+const resolveOpenInOptions = (
+  platform: string,
+  availableEditors: ReadonlyArray<EditorId>,
+  resolve: MessageResolver,
+) => {
   const baseOptions: ReadonlyArray<Omit<OpenInOption, "label">> = [
     {
       Icon: CursorIcon,
@@ -198,7 +203,10 @@ const resolveOpenInOptions = (platform: string, availableEditors: ReadonlyArray<
   const availableEditorSet = new Set(availableEditors);
   return baseOptions
     .filter((option) => availableEditorSet.has(option.value))
-    .map((option) => ({ ...option, label: editorLabelForPlatform(option.value, platform) }));
+    .map((option) => ({
+      ...option,
+      label: editorLabelForPlatform(option.value, platform, resolve),
+    }));
 };
 
 function getOpenInIconClass(kind: OpenInOption["kind"]) {
@@ -229,6 +237,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   revealFileManager?: boolean;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const isPanel = displayMode === "panel";
   const ActionGroup = isPanel ? "div" : Group;
   const panelAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -285,7 +294,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   );
 
   const backgroundThread = use(BackgroundThreadContext);
-  const options = resolveOpenInOptions(navigator.platform, effectiveEditors);
+  const options = resolveOpenInOptions(navigator.platform, effectiveEditors, messages);
   const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
   const primaryLabel = isPanel
     ? primaryOption

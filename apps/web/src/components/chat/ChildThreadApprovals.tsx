@@ -6,7 +6,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { T, useGT, Var } from "gt-react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { useState } from "react";
 import { useEnvironmentScope } from "../../state/session";
 import { childThreadApprovalsAtom, threadEnvironment } from "../../state/threads";
@@ -17,6 +17,7 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
   const canRespond = useEnvironmentScope(entry.thread.environmentId, AuthOrchestrationOperateScope);
   const respond = useAtomCommand(threadEnvironment.respondToApproval, { reportFailure: false });
   const gt = useGT();
+  const messages = useMessages();
   const [responding, setResponding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { approval } = entry;
@@ -42,7 +43,7 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
       {approval.reason ? <p className="mt-2 text-muted-foreground">{approval.reason}</p> : null}
       {approval.fullAccessOverride ? (
         <p className="mt-2 text-muted-foreground">
-          {fullAccessOverrideExplanation(approval.fullAccessOverride)}
+          {fullAccessOverrideExplanation(approval.fullAccessOverride, messages)}
         </p>
       ) : null}
       <div className="mt-2 flex flex-wrap gap-2">

@@ -356,6 +356,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   listFooter?: ReactNode;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const {
     searchInputRef,
     keybindings: providedKeybindings,
@@ -743,7 +744,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     const shown = isSearching
       ? matchesLockedProvider(entry)
       : entry.instanceId === selectedEntry?.instanceId;
-    const notice = shown ? formatProviderUpdateRequiredNotice(entry.snapshot, searchQuery) : null;
+    const notice = shown
+      ? formatProviderUpdateRequiredNotice(entry.snapshot, searchQuery, messages)
+      : null;
     return notice ? [{ instanceId: entry.instanceId, notice }] : [];
   });
 
@@ -880,7 +883,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               ? {
                   disabledInstanceIds: lockedDisabledInstanceIds,
                   getDisabledInstanceTooltip: (entry: ProviderInstanceEntry) =>
-                    `${entry.displayName} is unavailable in this thread. Start a new thread to switch providers.`,
+                    gt(
+                      "{provider} is unavailable in this thread. Start a new thread to switch providers.",
+                      { provider: entry.displayName },
+                    ),
                 }
               : {})}
           />

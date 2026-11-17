@@ -4,6 +4,7 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { msg } from "gt-react";
+import { m, type MessageResolver } from "~/i18n/messages";
 import {
   type LucideIcon,
   LockIcon,
@@ -53,13 +54,51 @@ export function resolveCompatibleRuntimeMode(
   return { modes, mode: modes.includes(runtimeMode) ? runtimeMode : (modes[0] ?? runtimeMode) };
 }
 
+export function resolveRuntimeModeOption(
+  mode: RuntimeMode,
+  resolve: MessageResolver = m,
+): {
+  mode: RuntimeMode;
+  label: string;
+  description: string;
+  icon: LucideIcon;
+  disabledReason?: string;
+} {
+  const config = runtimeModeConfig[mode];
+  return {
+    mode,
+    ...config,
+    label: resolve(config.label),
+    description: resolve(config.description),
+  };
+}
+
+/** Why `mode` is unavailable under `managedPolicy`, or undefined when it is allowed. */
+export function runtimeModeDenial(
+  managedPolicy: ManagedPolicySummary | undefined,
+  mode: RuntimeMode,
+  resolve: MessageResolver = m,
+) {
+  const ceiling = managedPolicy?.limits?.maxRuntimeMode;
+  if (ceiling === undefined || managedRuntimeModeDenial(managedPolicy, mode) === undefined) {
+    return undefined;
+  }
+  return resolve(
+    msg("{organization} limits threads to {mode}.", {
+      organization: managedPolicy!.organization,
+      mode: resolve(runtimeModeConfig[ceiling].label),
+    }),
+  );
+}
+
 export function resolveRuntimeModeOptions(
   modes: ReadonlyArray<RuntimeMode>,
   managedPolicy: ManagedPolicySummary | undefined,
+  resolve: MessageResolver = m,
 ) {
   return modes.map((mode) => {
-    const option = { mode, ...runtimeModeConfig[mode] };
-    const disabledReason = managedRuntimeModeDenial(managedPolicy, mode);
+    const option = resolveRuntimeModeOption(mode, resolve);
+    const disabledReason = runtimeModeDenial(managedPolicy, mode, resolve);
     return disabledReason === undefined ? option : { ...option, disabledReason };
   });
 }

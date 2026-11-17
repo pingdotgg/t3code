@@ -200,12 +200,13 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   onHighlight: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
+  const m = useMessages();
   const skillSourceKind =
     props.item.type === "skill" ? resolveProviderSkillSourceKind(props.item.skill) : null;
   const isSlashSkill =
     props.triggerKind === "slash-command" && props.item.type === "skill" ? props.item.skill : null;
   const pullRequestPresentation =
-    props.item.type === "pull-request" ? resolvePullRequestState(props.item.pullRequest) : null;
+    props.item.type === "pull-request" ? resolvePullRequestState(props.item.pullRequest, m) : null;
   const descriptionRef = useRef<HTMLSpanElement>(null);
   const [descriptionTruncated, setDescriptionTruncated] = useState(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the rendered description so only cut-off text gets a tooltip

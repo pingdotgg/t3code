@@ -7,7 +7,7 @@ import {
 import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
 import { getProviderOptionCurrentLabel } from "@t3tools/shared/model";
-import { msg, T, useGT } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { CheckIcon, ChevronRightIcon, ChevronUpIcon, WorkflowIcon } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, use, useRef, useState } from "react";
 
@@ -90,20 +90,23 @@ export function describeComposerEffort(
   resolve: MessageResolver = m,
 ): { suffix: ReactNode; detail: string | null } {
   if (!traits) return { suffix: null, detail: null };
-  const visibility = getTraitsSectionVisibility(traits);
+  const visibility = getTraitsSectionVisibility({ ...traits, resolve });
   if (!visibility.hasAnyControls) return { suffix: null, detail: null };
   const modelSelection =
     traits.instanceId && traits.model
       ? { instanceId: traits.instanceId, model: traits.model, options: traits.modelOptions ?? [] }
       : null;
   const primary = visibility.primarySelectDescriptor;
-  const display = buildTraitsTriggerDisplay({
-    descriptors: visibility.descriptors,
-    primarySelectDescriptorId: primary?.id ?? null,
-    ultrathinkPromptControlled: visibility.ultrathinkPromptControlled,
-    modelSelection,
-    reportedModelSelection: traits.reportedModelSelection,
-  });
+  const display = buildTraitsTriggerDisplay(
+    {
+      descriptors: visibility.descriptors,
+      primarySelectDescriptorId: primary?.id ?? null,
+      ultrathinkPromptControlled: visibility.ultrathinkPromptControlled,
+      modelSelection,
+      reportedModelSelection: traits.reportedModelSelection,
+    },
+    resolve,
+  );
   // The same reasoning control the column lists, wherever the agent put it among its options.
   const reasoning =
     columnControls(visibility.selectDescriptors, visibility.booleanDescriptors).effort
@@ -313,6 +316,7 @@ type TraitsSelection = ReturnType<typeof useTraitsSelection>;
 
 function EffortRows(props: { control: ColumnControl; traits: TraitsSelection; locked: boolean }) {
   const gt = useGT();
+  const messages = useMessages();
   const { control, traits } = props;
   const { descriptor } = control;
   if (control.kind === "boolean") {
@@ -343,7 +347,7 @@ function EffortRows(props: { control: ColumnControl; traits: TraitsSelection; lo
     <div role="radiogroup" aria-label={descriptor.label} className="flex flex-col gap-0.5">
       {locked ? (
         <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">
-          {ULTRATHINK_IN_BODY_NOTE}
+          {messages(ULTRATHINK_IN_BODY_NOTE)}
         </div>
       ) : null}
       {choices.map((option, index) => (
@@ -520,8 +524,11 @@ function NoEffortRow() {
 /** The model picker's effort column: the selected model's levels and its other options. */
 export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | null }) {
   const gt = useGT();
+  const messages = useMessages();
   const picker = use(DockedPickerContext);
-  const visibility = props.traits ? getTraitsSectionVisibility(props.traits) : null;
+  const visibility = props.traits
+    ? getTraitsSectionVisibility({ ...props.traits, resolve: messages })
+    : null;
   const controls =
     props.traits && visibility
       ? columnControls(visibility.selectDescriptors, visibility.booleanDescriptors)

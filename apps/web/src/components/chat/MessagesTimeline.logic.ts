@@ -54,6 +54,7 @@ import {
 import {
   idleCompactionOf,
   isCompactionCommandMessage,
+  isOrchestrationV2WorkActive,
   type MessageId,
   type OrchestrationV2IdleCompaction,
   type WorktreeSetupSnapshot,
@@ -619,6 +620,8 @@ type MessagesTimelineRowContent =
       active: boolean;
       /** Replaces "Context compacted" when T3 Code compacted without being asked. */
       title?: string;
+      /** The compaction finished, so `title` names it. */
+      compacted?: true;
       failed?: true;
       /** The provider's reason, when a failed compaction gave one. */
       failure?: string;
@@ -1821,7 +1824,7 @@ export function deriveMessagesTimelineRows(
   const compactionTitle = (runId: RunId | null | undefined, entryId: string) => {
     if (runId == null) return undefined;
     const reason = compactionRuns.get(runId);
-    if (reason !== undefined) return IDLE_COMPACTION_TITLES[reason];
+    if (reason !== undefined) return resolve(IDLE_COMPACTION_TITLES[reason]);
     const age = resumeCompactionAgeByEntryId.get(entryId);
     return age ? resolve(msg("Context compacted after {age} idle", { age })) : undefined;
   };
@@ -1995,14 +1998,23 @@ export function deriveMessagesTimelineRows(
       const reason = compactionRunId == null ? undefined : compactionRuns.get(compactionRunId);
       const failed = compaction?.type === "compaction" && compaction.status === "failed";
       const failure = failed ? compaction.summary?.trim() || undefined : undefined;
+      const compacted =
+        !(active && reason) &&
+        compaction?.type === "compaction" &&
+        compaction.status !== "failed" &&
+        compaction.status !== "cancelled" &&
+        compaction.status !== "interrupted" &&
+        !isOrchestrationV2WorkActive(compaction.status);
       nextRows.push({
         kind: "context-compaction",
         id: timelineEntry.id,
         ...(title ? { title } : {}),
+        ...(compacted ? { compacted: true } : {}),
         ...(failed ? { failed: true } : {}),
         ...(failure ? { failure } : {}),
         createdAt: timelineEntry.createdAt,
-        label: active && reason ? IDLE_COMPACTING_LABELS[reason] : timelineEntry.entry.label,
+        label:
+          active && reason ? resolve(IDLE_COMPACTING_LABELS[reason]) : timelineEntry.entry.label,
         tokenCounts:
           compaction?.type === "compaction" ? contextCompactionTokenCounts(compaction) : null,
         active,
@@ -2110,7 +2122,7 @@ export function deriveMessagesTimelineRows(
             isExpandedToolGroup: false,
             displayLabel:
               toolGroupAction(singleEntry) === "edit"
-                ? summarizeToolGroup(visibleGroupedEntries).summary
+                ? summarizeToolGroup(visibleGroupedEntries, resolve).summary
                 : singleToolCallLabel(singleEntry, resolve),
           });
         } else {
@@ -2147,7 +2159,7 @@ export function deriveMessagesTimelineRows(
             summary:
               singleEntry !== null && !workLogEntryIsToolLike(singleEntry)
                 ? singleEntry.label
-                : summarizeToolGroup(visibleGroupedEntries).summary,
+                : summarizeToolGroup(visibleGroupedEntries, resolve).summary,
             summaryKind,
             ...(groupToolSurface ? { toolSurface: groupToolSurface } : {}),
             ...(groupToolIcon ? { toolIcon: groupToolIcon } : {}),
@@ -2257,7 +2269,7 @@ export function deriveMessagesTimelineRows(
           createdAt: timelineEntry.createdAt,
           label: pending
             ? reason
-              ? IDLE_COMPACTING_LABELS[reason]
+              ? resolve(IDLE_COMPACTING_LABELS[reason])
               : resolve(msg("Compacting context"))
             : resolve(msg("Context compaction")),
           tokenCounts: null,
@@ -2382,7 +2394,7 @@ export function deriveMessagesTimelineRows(
         kind: "thinking",
         id: LIVE_ACTIVITY_ROW_ID,
         createdAt: input.activeTurnStartedAt ?? null,
-        ...(waitingOn > 0 ? { label: waitingOnSubagentsLabel(waitingOn) } : {}),
+        ...(waitingOn > 0 ? { label: waitingOnSubagentsLabel(waitingOn, resolve) } : {}),
       });
     }
   }
@@ -2486,6 +2498,7 @@ export type MessagesTimelineRowsInput = Parameters<typeof deriveMessagesTimeline
 interface MessagesTimelineRowsProjection {
   readonly input: MessagesTimelineRowsInput;
   readonly rows: MessagesTimelineRow[];
+  readonly resolve: MessageResolver;
 }
 
 /**
@@ -2708,8 +2721,11 @@ export function deriveMessagesTimelineRowsWithState(
   return {
     input,
     rows:
-      (previous === null ? null : replaceStreamingMessageRows(input, previous)) ??
+      (previous === null || previous.resolve !== resolve
+        ? null
+        : replaceStreamingMessageRows(input, previous)) ??
       deriveMessagesTimelineRows(input, resolve),
+    resolve,
   };
 }
 
