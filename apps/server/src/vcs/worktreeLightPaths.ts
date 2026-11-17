@@ -23,7 +23,7 @@ export interface WorktreeLightPathsInput {
 }
 
 /** One flat folder per shared path, so clearing it never strands another path's links. */
-export const sharedPathFolder = (path: Path.Path, sharedRoot: string, relativePath: string) =>
+const sharedPathFolder = (path: Path.Path, sharedRoot: string, relativePath: string) =>
   path.join(sharedRoot, encodeURIComponent(relativePath));
 
 const reflinkCopy = (source: string, destination: string) =>
