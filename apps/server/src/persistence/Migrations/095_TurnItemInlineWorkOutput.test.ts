@@ -21,6 +21,16 @@ layer("095_TurnItemInlineWorkOutput", (it) => {
         ["sent", "dynamic_tool", { toolName: "execute", output: '{"sentMessage":"Hi"}' }, 1],
         ["plain", "dynamic_tool", { toolName: "mcp__docs__search", output: "ok" }, 0],
         ["command", "command_execution", { output: "htmlRender" }, 0],
+        ...Array.from(
+          { length: 1001 },
+          (_, i) =>
+            [
+              `page-${i}`,
+              "dynamic_tool",
+              { toolName: "x", output: { htmlRender: {} } },
+              1,
+            ] as const,
+        ),
       ];
       for (const [id, type, payload] of rows) {
         yield* sql`
