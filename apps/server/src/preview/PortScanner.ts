@@ -370,8 +370,6 @@ const lsofProcessIds = (raw: string): ReadonlyArray<number> => {
   return [...pids];
 };
 
-const AGENT_THREAD_ASSIGNMENT = new RegExp(`(?:^|\\s)${AGENT_THREAD_ENV}=(\\S+)`);
-
 /** Reads `/proc/<pid>/environ`, whose entries are NUL-separated. */
 const parseProcEnvironThread = (raw: string): ThreadId | null => {
   const prefix = `${AGENT_THREAD_ENV}=`;
@@ -383,19 +381,38 @@ const parseProcEnvironThread = (raw: string): ThreadId | null => {
   return value ? ThreadId.make(value) : null;
 };
 
-/**
- * Reads macOS `ps -E -o pid=,command=`, which appends each process's launch environment to its
- * argv with spaces, so an argument that spells the assignment out also matches.
- */
-const parsePsEnvironmentThreads = (raw: string): ReadonlyMap<number, ThreadId | null> => {
-  const threads = new Map<number, ThreadId | null>();
+const parsePsCommandLines = (raw: string): ReadonlyMap<number, string> => {
+  const lines = new Map<number, string>();
   for (const line of raw.split("\n")) {
     const match = /^\s*(\d+)\s(.*)$/.exec(line);
-    if (!match) continue;
-    const value = AGENT_THREAD_ASSIGNMENT.exec(match[2]!)?.[1];
-    threads.set(Number(match[1]), value ? ThreadId.make(value) : null);
+    if (match) lines.set(Number(match[1]), match[2]!);
   }
-  return threads;
+  return lines;
+};
+
+/**
+ * Each listed process's launch values for `names`, from macOS `ps -E -o pid=,command=`, which
+ * appends the environment to the argv `ps` prints without `-E`. Null when macOS shows no
+ * environment, as for its own binaries such as `/bin/zsh`.
+ */
+export const parsePsEnvironments = (
+  withEnvironment: string,
+  withoutEnvironment: string,
+  names: ReadonlyArray<string>,
+): ReadonlyMap<number, ReadonlyMap<string, string> | null> => {
+  const argv = parsePsCommandLines(withoutEnvironment);
+  const environments = new Map<number, ReadonlyMap<string, string> | null>();
+  for (const [pid, line] of parsePsCommandLines(withEnvironment)) {
+    const args = argv.get(pid);
+    // A different argv is a reused pid.
+    if (args === undefined || !line.startsWith(args)) continue;
+    const environment = line.slice(args.length).trim();
+    environments.set(
+      pid,
+      environment === "" ? null : parseEnvironmentVariables(environment, /\s+/, names),
+    );
+  }
+  return environments;
 };
 
 /** Splits `/proc/<pid>/environ` on NUL, or the environment macOS `ps -E` appends on spaces. */
@@ -423,12 +440,18 @@ const parseEnvironmentVariables = (
 export const agentCommandsInGroup = (
   variables: ReadonlyMap<number, ReadonlyMap<string, string>>,
   leader: ProcessTableRow,
+  members: ReadonlyArray<number>,
 ): ReadonlyMap<string, string> => {
   const commands = new Map<string, string>();
   const parent = variables.get(leader.ppid);
   // An unreadable parent cannot rule out an inherited name.
   if (parent === undefined) return commands;
-  for (const [name, command] of variables.get(leader.pid) ?? []) {
+  // macOS hides the environment of the shell that stays to run a pipeline, so a hidden leader's
+  // name is read from a process it started in the group, which inherited it.
+  const own =
+    variables.get(leader.pid) ??
+    members.map((pid) => variables.get(pid)).find((member) => member !== undefined);
+  for (const [name, command] of own ?? []) {
     if (command !== "" && parent.get(name) !== command) commands.set(name, command);
   }
   return commands;
@@ -535,6 +558,23 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   // servers it left may still run. So does startup, for agents that ran before a restart.
   let agentScanPending = true;
 
+  const runPsCommandLines = (pids: ReadonlyArray<number>, flags: ReadonlyArray<string>) =>
+    processRunner.run({
+      command: "ps",
+      args: [...flags, "-ww", "-o", "pid=,command=", "-p", pids.join(",")],
+      timeout: Duration.millis(PS_TIMEOUT_MS),
+      maxOutputBytes: PS_MAX_OUTPUT_BYTES,
+    });
+
+  const readPsEnvironments = (pids: ReadonlyArray<number>, names: ReadonlyArray<string>) =>
+    Effect.all([runPsCommandLines(pids, ["-E"]), runPsCommandLines(pids, [])], {
+      concurrency: 2,
+    }).pipe(
+      Effect.map(([withEnvironment, withoutEnvironment]) =>
+        parsePsEnvironments(withEnvironment.stdout, withoutEnvironment.stdout, names),
+      ),
+    );
+
   const readAgentThreads = Effect.fn("PortDiscovery.readAgentThreads")(function* (
     pids: ReadonlyArray<number>,
   ) {
@@ -556,20 +596,21 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
                 { concurrency: 16 },
               ),
             )
-          : yield* processRunner
-              .run({
-                command: "ps",
-                args: ["-E", "-ww", "-o", "pid=,command=", "-p", unread.join(",")],
-                timeout: Duration.millis(PS_TIMEOUT_MS),
-                maxOutputBytes: PS_MAX_OUTPUT_BYTES,
-              })
-              .pipe(
-                Effect.map((result) => parsePsEnvironmentThreads(result.stdout)),
-                Effect.orElseSucceed(() => {
-                  agentScanPending = true;
-                  return new Map();
-                }),
-              );
+          : yield* readPsEnvironments(unread, [AGENT_THREAD_ENV]).pipe(
+              Effect.map(
+                (environments) =>
+                  new Map(
+                    Array.from(environments, ([pid, variables]) => {
+                      const value = variables?.get(AGENT_THREAD_ENV);
+                      return [pid, value ? ThreadId.make(value) : null] as const;
+                    }),
+                  ),
+              ),
+              Effect.orElseSucceed(() => {
+                agentScanPending = true;
+                return new Map();
+              }),
+            );
     const next = new Map<number, ThreadId | null>();
     for (const pid of pids) {
       const threadId = cached.has(pid) ? cached.get(pid) : read.get(pid);
@@ -1095,33 +1136,27 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       );
       return new Map(read.flatMap(Option.toArray));
     }
-    const result = yield* processRunner
-      .run({
-        command: "ps",
-        args: ["-E", "-ww", "-o", "pid=,command=", "-p", pids.join(",")],
-        timeout: Duration.millis(PS_TIMEOUT_MS),
-        maxOutputBytes: PS_MAX_OUTPUT_BYTES,
-      })
-      .pipe(Effect.option);
-    const variables = new Map<number, ReadonlyMap<string, string>>();
-    for (const line of Option.isSome(result) ? result.value.stdout.split("\n") : []) {
-      const match = /^\s*(\d+)\s(.*)$/.exec(line);
-      if (match) {
-        variables.set(Number(match[1]), parseEnvironmentVariables(match[2]!, /\s+/, names));
-      }
-    }
-    return variables;
+    const environments = yield* readPsEnvironments(pids, names).pipe(
+      Effect.orElseSucceed(() => new Map()),
+    );
+    return new Map(
+      Array.from(environments).flatMap(([pid, variables]) =>
+        variables === null ? [] : [[pid, variables] as const],
+      ),
+    );
   });
 
   const agentCommandStops = Effect.fn("PortDiscovery.agentCommandStops")(function* (
     leader: ProcessTableRow | undefined,
+    members: ReadonlyArray<number>,
   ) {
     const watchers = [...agentCommandStopWatchers];
     if (leader === undefined || watchers.length === 0) return [];
     const names = [...new Set(watchers.map((watcher) => watcher.variable))];
     const commands = agentCommandsInGroup(
-      yield* readEnvironmentVariables([leader.pid, leader.ppid], names),
+      yield* readEnvironmentVariables([leader.ppid, ...members], names),
       leader,
+      members,
     );
     return watchers.flatMap((watcher) => {
       const command = commands.get(watcher.variable);
@@ -1189,8 +1224,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
             : Effect.fail(new PreviewStopLocalServerError({ reason: "signal-failed", cause }));
         }
       });
+    const members = [...table.values()].filter((row) => row.pgid === group).map((row) => row.pid);
     // Told before the signal, since the CLI can report the exit before a later step runs.
-    const commandStops = yield* agentCommandStops(table.get(group));
+    const commandStops = yield* agentCommandStops(table.get(group), members);
     yield* Effect.forEach(commandStops, ({ watcher, command }) => watcher.onStop(command), {
       discard: true,
     });
@@ -1204,7 +1240,6 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     }
     // While one of the group's original members is still in it, the group has not been reused,
     // so SIGKILL goes only to the job that ignored SIGTERM.
-    const members = [...table.values()].filter((row) => row.pgid === group).map((row) => row.pid);
     const jobRunning = readProcessTable.pipe(
       Effect.map((current) => members.some((pid) => current.get(pid)?.pgid === group)),
       Effect.orElseSucceed(() => false),
