@@ -1307,6 +1307,7 @@ export function LayoutSurfaceHost({
       className="relative h-svh min-h-0 overflow-hidden overscroll-y-none md:h-dvh"
       inert={background}
       ref={rootRef}
+      data-strip-under-controls={active && split && !staged ? "" : undefined}
     >
       <div
         ref={scrollerRef}
