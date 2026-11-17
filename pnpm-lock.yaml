@@ -2362,9 +2362,6 @@ importers:
       '@t3tools/source-control-gitlab':
         specifier: workspace:*
         version: link:../source-control-gitlab
-      gt-i18n:
-        specifier: 1.0.40
-        version: 1.0.40
 
   packages/source-control-forgejo:
     dependencies:

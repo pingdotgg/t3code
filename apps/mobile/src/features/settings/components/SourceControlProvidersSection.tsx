@@ -197,7 +197,7 @@ export function SourceControlTokenForm(props: {
   const gt = useGT();
   const { definition, credentials } = props;
   const { environmentId } = props.environment;
-  // Mirrors hostTokenAccess in source-control-definitions/client, as the web settings do.
+  // Translates the GitHub definition's English `tokenAccess`, as the web settings do.
   const tokenAccess =
     definition.kind === "github"
       ? gt("read and write access to pull requests and contents")

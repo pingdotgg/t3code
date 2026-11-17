@@ -36,7 +36,7 @@ export function SourceControlTokenSettings({
   readonly onSaved: () => void;
 }) {
   const gt = useGT();
-  // Mirrors hostTokenAccess in source-control-definitions/client, which web does not depend on.
+  // Translates the GitHub definition's English `tokenAccess`.
   const tokenAccess =
     definition.kind === "github"
       ? gt("read and write access to pull requests and contents")

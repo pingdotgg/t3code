@@ -6,10 +6,6 @@
     "./registry": {
       "types": "./src/registry.ts",
       "import": "./src/registry.ts"
-    },
-    "./client/changeRequestTerminology": {
-      "types": "./src/client/changeRequestTerminology.ts",
-      "import": "./src/client/changeRequestTerminology.ts"
     }
   },
   "scripts": {
@@ -23,7 +19,6 @@
     "@t3tools/source-control-forgejo": "workspace:*",
     "@t3tools/source-control-gitcafe": "workspace:*",
     "@t3tools/source-control-github": "workspace:*",
-    "@t3tools/source-control-gitlab": "workspace:*",
-    "gt-i18n": "1.0.40"
+    "@t3tools/source-control-gitlab": "workspace:*"
   }
 }
