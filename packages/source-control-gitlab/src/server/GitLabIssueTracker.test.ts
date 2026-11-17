@@ -197,6 +197,49 @@ describe("GitLabIssueTracker", () => {
     }),
   );
 
+  it.effect("keeps system events after the first hundred notes in the issue timeline", () =>
+    Effect.gen(function* () {
+      const firstPage = Array.from({ length: 100 }, (_, index) => ({
+        id: index + 1000,
+        body: "Discussion",
+        author: { username: "julius" },
+        created_at: "2026-07-02T00:00:00Z",
+      }));
+      const api = yield* tracker((args) => {
+        const path = args[1]!;
+        if (path.includes("/notes?")) {
+          const page = new URLSearchParams(path.split("?")[1]).get("page");
+          return encode(
+            page === "1"
+              ? firstPage
+              : page === "2"
+                ? [
+                    {
+                      id: 1100,
+                      body: "closed",
+                      system: true,
+                      author: { username: "theo" },
+                      created_at: "2026-07-03T00:00:00Z",
+                    },
+                  ]
+                : [],
+          );
+        }
+        return answer(path);
+      });
+      const issue = yield* api.getIssue({
+        cwd: "/w",
+        host: "gitlab.com",
+        scope: "acme/web",
+        key: "42",
+      });
+      expect(
+        issue.events,
+        "the issue timeline must retain the close after note 100",
+      ).toContainEqual(expect.objectContaining({ id: "note-1100", kind: "closed" }));
+    }),
+  );
+
   it.effect("pages a listing by GitLab's page number and stops on a short page", () =>
     Effect.gen(function* () {
       const paths: string[] = [];
