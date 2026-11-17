@@ -50,9 +50,9 @@ it.effect("protects unknown desktop visibility until an explicit hidden report a
       yield* channel.awaitAttached({ threadId: key.threadId, tabId: "sentinel-1" }, "5 seconds");
       expect(channel.isShown(key)).toBe(false);
 
+      const shown = yield* channel.awaitShown(key, "5 seconds").pipe(Effect.forkChild);
       yield* send({ type: "shown", ...key, shown: true });
-      yield* send({ type: "attached", threadId: key.threadId, tabId: "sentinel-2" });
-      yield* channel.awaitAttached({ threadId: key.threadId, tabId: "sentinel-2" }, "5 seconds");
+      expect(yield* Fiber.join(shown)).toBe(true);
       expect(channel.isShown(key)).toBe(true);
 
       yield* send({ type: "shown", ...key, shown: false });
@@ -206,6 +206,19 @@ it.layer(layer)("DesktopBrowserChannel over a desktop socket", (it) => {
       expect(yield* channel.isAttached(key)).toBe(true);
       expect(channel.loadFailure(key)).toEqual(loadFailure);
       expect(channel.isShown(key)).toBe(false);
+      const shownResult = yield* Deferred.make<boolean>();
+      const shown = yield* channel.awaitShown(key, "5 seconds").pipe(
+        Effect.tap((result) => Deferred.succeed(shownResult, result)),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Queue.offer(desktop.frames, JSON.stringify({ type: "shown", ...key, shown: false }));
+      yield* desktop.awaitPulls(1);
+      expect(yield* Deferred.isDone(shownResult)).toBe(false);
+      yield* Queue.offer(desktop.frames, JSON.stringify({ type: "shown", ...key, shown: true }));
+      yield* desktop.awaitPulls(1);
+      expect(yield* Deferred.isDone(shownResult)).toBe(true);
+      expect(yield* Fiber.join(shown)).toBe(true);
+      expect(channel.isShown(key)).toBe(true);
       yield* channel.pointer(key, { phase: "click", x: 1, y: 2 });
       expect(desktop.commands()).toContainEqual({
         type: "pointer",

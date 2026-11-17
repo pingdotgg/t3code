@@ -651,11 +651,7 @@ function PullRequestCodeTab({
     parsedSlices,
     loadedFiles: pagedFiles,
     sourceFileStats,
-  } = diffModel(
-    loadedSlices,
-    `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}`,
-    ignoreWhitespace,
-  );
+  } = diffModel(loadedSlices, `pull-request:${scopeKey}:${ignoreWhitespace}`, ignoreWhitespace);
   const withheldResults = useAtomValue(
     withheldFileDiffsAtom(
       JSON.stringify({ environmentId, input: withheldInput, paths: withheldPaths }),
@@ -684,7 +680,7 @@ function PullRequestCodeTab({
         nextCursor: null,
         omittedFileStats: [],
       },
-      `pull-request:${scopeKey}:${resolvedTheme}:withheld:${path}`,
+      `pull-request:${scopeKey}:withheld:${path}`,
       // Cut lines can match up to the cut and differ after it; hiding them would drop changes.
       false,
     );

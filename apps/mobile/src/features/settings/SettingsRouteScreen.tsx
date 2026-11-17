@@ -33,7 +33,8 @@ import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilt
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { filterSettingsSections } from "./settings-search";
 import { usePaneRole } from "../../components/ui/Pane";
-import { I18nProvider, useGT } from "../../i18n/I18nProvider";
+import { useGT } from "gt-react-native";
+import { I18nProvider } from "../../i18n/I18nProvider";
 
 export function SettingsRouteScreen() {
   const list = useSettingsListPlacement();

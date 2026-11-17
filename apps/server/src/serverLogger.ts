@@ -10,6 +10,7 @@ import * as OtlpExporter from "effect/observability/OtlpExporter";
 import * as OtlpLogger from "effect/observability/OtlpLogger";
 
 import * as ServerConfig from "./config.ts";
+import * as OtlpExportFailures from "./observability/OtlpExportFailures.ts";
 
 // HTTP errors logged with --log-ws-events carry the request URL and its connection ticket.
 const redactingCredentials = <Output>(logger: Logger.Logger<unknown, Output>) =>
@@ -73,6 +74,7 @@ export const layer = Effect.gen(function* () {
     { mergeWithExisting: false },
   ).pipe(
     Layer.provide(OtlpExporter.layerFlusher),
+    Layer.provide(OtlpExportFailures.layer("logs")),
     Layer.provide(SharedObservability.layerOtlpSerialization(logs.protocol)),
   );
 

@@ -308,6 +308,11 @@ export const IssueListResult = Schema.Struct({
   errors: Schema.Array(IssueListProjectError),
   /** Where each scope carries on, sent straight back as `cursors`. Absent once a scope is done. */
   nextCursors: IssueListCursors,
+  /**
+   * Every scope the listing covers, matched or not, with one project that reads it. A Linear team
+   * bound in settings is named nowhere else. Absent from servers that predate it.
+   */
+  scopes: Schema.optional(Schema.Array(IssueScopeRef)),
 });
 export type IssueListResult = typeof IssueListResult.Type;
 
