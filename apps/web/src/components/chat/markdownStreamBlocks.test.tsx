@@ -38,6 +38,7 @@ describe("splitMarkdownBlocks", () => {
     ...punctuatedHeadings.map((heading) => `## ${heading}\n\nNext paragraph.`),
     "# Title\n\nFirst paragraph with `code` and **bold**.\n\nSecond [link](https://example.com).",
     "# Setup\n\n# Setup\n\n[Second setup](#setup-1)",
+    "\ufeff# Setup\n\n# Setup\n\n[second](#setup-1)",
     "> Setup\n> ===\n\n> Setup\n> ===",
     "# onetwo\n\none\ntwo\n===",
     "# Setup\n\n# &#83;etup\n\n[second](#setup-1)",

@@ -22,7 +22,9 @@ const SETEXT_UNDERLINE_PATTERN =
  * headings with the same slug, whose ids are numbered across the whole text.
  */
 export function splitMarkdownBlocks(text: string): string[] | null {
-  if (text.includes("\r") || DOCUMENT_WIDE_SYNTAX.test(text)) return null;
+  // remark-parse strips a leading BOM before recognizing the first heading.
+  if (text.startsWith("\ufeff") || text.includes("\r") || DOCUMENT_WIDE_SYNTAX.test(text))
+    return null;
   const blocks: string[] = [];
   let blockStart = 0;
   let lineStart = 0;
