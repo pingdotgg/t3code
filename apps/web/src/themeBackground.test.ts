@@ -38,17 +38,25 @@ vi.mock(
 );
 
 import { applyThemeBackground, startThemeBackground } from "./themeBackground";
+import {
+  CUSTOM_THEMES_STORAGE_KEY,
+  getThemeDefinition,
+  invalidateCustomThemes,
+} from "./themePalette";
 
 const BACKGROUND = "--theme-background-image";
 const image = new Blob(["image"], { type: "image/png" });
 const offline = () => Promise.reject(new TypeError("Failed to fetch"));
 const loaded = async () => ({ ok: true, blob: async () => image });
 
-function setup() {
+function setup(storage: Record<string, string> = {}) {
   vi.useFakeTimers();
   const properties = new Map<string, string>();
-  const browser = new EventTarget();
+  const browser = Object.assign(new EventTarget(), {
+    localStorage: { getItem: (key: string) => storage[key] ?? null },
+  });
   vi.stubGlobal("window", browser);
+  invalidateCustomThemes();
   vi.stubGlobal("document", {
     documentElement: {
       dataset: { themeId: "nightfall" },
@@ -71,6 +79,7 @@ function setup() {
       stop();
       applyThemeBackground(undefined);
       vi.unstubAllGlobals();
+      invalidateCustomThemes();
       vi.useRealTimers();
     },
   };
@@ -128,5 +137,24 @@ describe("theme backgrounds", () => {
     else t.stop();
     await vi.advanceTimersByTimeAsync(30_000);
     expect(t.fetchBackground).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows no published background when a saved theme shares its id", async () => {
+    using t = setup({
+      [CUSTOM_THEMES_STORAGE_KEY]: JSON.stringify([
+        {
+          id: "nightfall",
+          label: "Nightfall",
+          appearance: "dark",
+          colors: { canvas: "#162327", accent: "#cc3344" },
+        },
+      ]),
+    });
+    t.fetchBackground.mockImplementation(loaded);
+    expect(getThemeDefinition("nightfall")?.colors.accent).toBeDefined();
+    applyThemeBackground("nightfall");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.fetchBackground).not.toHaveBeenCalled();
+    expect(t.properties.has(BACKGROUND)).toBe(false);
   });
 });
