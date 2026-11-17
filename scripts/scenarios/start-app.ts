@@ -55,7 +55,15 @@ const encodeSettings = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown)
 export const prepareHome = Effect.fn("startApp.prepareHome")(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  yield* fs.remove(home, { recursive: true, force: true });
+  // The previous run's server is in its own process group, which e2e does not wait for, and can
+  // still hold the database open. Some filesystems refuse the unlink until it lets go.
+  yield* fs.remove(home, { recursive: true, force: true }).pipe(
+    Effect.retry({
+      schedule: Schedule.spaced("500 millis"),
+      times: 60,
+      while: (error) => error.reason._tag === "Busy",
+    }),
+  );
   yield* fs.makeDirectory(path.join(home, "userdata"), { recursive: true });
   yield* fs.makeDirectory(path.join(home, "bin"));
   for (const command of ["hostnamectl", "scutil"]) {

@@ -18,18 +18,19 @@ const removeBusyOnce = Layer.effect(
     let busy = true;
     return FileSystem.FileSystem.of({
       ...fs,
-      remove: (path, options) => {
-        if (!busy) return fs.remove(path, options);
-        busy = false;
-        return Effect.fail(
-          PlatformError.systemError({
-            _tag: "Busy",
-            module: "FileSystem",
-            method: "remove",
-            pathOrDescriptor: `${path}/userdata/statev2.sqlite`,
-          }),
-        );
-      },
+      remove: (path, options) =>
+        Effect.suspend(() => {
+          if (!busy) return fs.remove(path, options);
+          busy = false;
+          return Effect.fail(
+            PlatformError.systemError({
+              _tag: "Busy",
+              module: "FileSystem",
+              method: "remove",
+              pathOrDescriptor: `${path}/userdata/statev2.sqlite`,
+            }),
+          );
+        }),
     });
   }),
 ).pipe(Layer.provideMerge(NodeServices.layer));
@@ -42,7 +43,7 @@ it.effect("recreates a home whose database the previous server has not let go of
     yield* fs.makeDirectory(path.join(home, "userdata"), { recursive: true });
     yield* fs.writeFileString(path.join(home, "userdata/statev2.sqlite"), "previous run");
 
-    const preparing = yield* prepareHome(home).pipe(Effect.forkChild);
+    const preparing = yield* prepareHome(home).pipe(Effect.forkChild({ startImmediately: true }));
     yield* TestClock.adjust("1 second");
     yield* Fiber.join(preparing);
 
