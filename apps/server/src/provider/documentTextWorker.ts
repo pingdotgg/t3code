@@ -738,5 +738,5 @@ export async function extractDocumentText(path: string, extension: string): Prom
   }
   result = result.replaceAll(/\n(?:[ \t]*\n){2,}/g, "\n\n").trim();
   if (!result && !truncated) throw new Error("No text extracted");
-  return result + (truncated ? TRUNCATED : "");
+  return truncated ? result.replace(/[\uD800-\uDBFF]$/, "").trimEnd() + TRUNCATED : result;
 }
