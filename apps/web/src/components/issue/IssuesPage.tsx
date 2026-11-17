@@ -220,10 +220,17 @@ export function IssuesPage() {
 
   // Rows grouped per tracker account, so a tracker that cannot be read says so where its rows
   // would be, and each tracker's rows carry on from their own cursors.
-  const groups = groupIssues(held, debouncedQuery, projects, search.order ?? "updated");
-  const filterScopes = issueFilterScopes(held, projects);
+  const allGroups = groupIssues(held, debouncedQuery, projects, search.order ?? "updated");
+  // The server names every tracker so the menu can switch hosts; only the chosen one was read.
+  const chosenHost = search.host?.toLowerCase();
+  const groups = chosenHost
+    ? allGroups.filter((group) => group.tracker.host.toLowerCase() === chosenHost)
+    : allGroups;
+  const filterScopes = issueFilterScopes(held, projects).filter(
+    (scope) => !chosenHost || scope.input.host?.toLowerCase() === chosenHost,
+  );
 
-  const hostOptions = hostOptionsFor(groups, search.host);
+  const hostOptions = hostOptionsFor(allGroups, search.host);
 
   const updateSearch = (patch: { [Key in keyof IssuesSearch]?: IssuesSearch[Key] | undefined }) => {
     const merged = { ...search, ...patch };
