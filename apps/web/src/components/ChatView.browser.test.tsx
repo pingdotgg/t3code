@@ -617,7 +617,7 @@ it("thread title shortcuts ignore closed dialogs but stop for open dialogs and c
     dialog.removeAttribute("data-closed");
     await composer.click();
     await userEvent.keyboard("{Control>}{Shift>}r{/Shift}{/Control}");
-    expect(document.querySelector('input[aria-label="Thread title"]')).toBeNull();
+    await expect.element(title).not.toBeInTheDocument();
 
     dialog.setAttribute("data-closed", "");
     await userEvent.keyboard("{Control>}{Shift>}r{/Shift}{/Control}");
