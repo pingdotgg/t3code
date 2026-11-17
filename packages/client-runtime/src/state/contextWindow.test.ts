@@ -267,7 +267,7 @@ describe("compactBeforeSendTokens", () => {
     { name: "for a typed /compact", text: "/compact keep the plan", expected: false },
   ] as const)("$name", ({ name: _name, expected, ...overrides }) => {
     expect(compactBeforeSendTokens(sendInput(overrides as Parameters<typeof sendInput>[0]))).toBe(
-      expected ? 293_611 : null,
+      expected ? ("usedTokens" in overrides ? overrides.usedTokens : 293_611) : null,
     );
   });
 });
