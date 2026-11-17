@@ -186,14 +186,30 @@ const GUARD_SELECT_AT_POINT_SCRIPT = `(x, y, optionLimit) => {
     return null;
   if (element.options.length > optionLimit) return null;
   const state = { select: element, pressed: false };
-  const guard = (event) => {
-    if (!event.composedPath().includes(element)) return;
+  let settled = false;
+  const settle = (event) => {
+    if (settled || !event.composedPath().includes(element)) return;
+    settled = true;
     state.pressed = !event.defaultPrevented;
     event.preventDefault();
     if (state.pressed) element.focus({ preventScroll: true });
   };
-  addEventListener("mousedown", guard);
-  state.stop = () => removeEventListener("mousedown", guard);
+  // A page that stops the press keeps it from the bubbling guard, so stopping it settles it.
+  const watch = (event) => {
+    for (const name of ["stopPropagation", "stopImmediatePropagation"]) {
+      const stop = event[name];
+      event[name] = function () {
+        settle(this);
+        return stop.call(this);
+      };
+    }
+  };
+  addEventListener("mousedown", watch, true);
+  addEventListener("mousedown", settle);
+  state.stop = () => {
+    removeEventListener("mousedown", watch, true);
+    removeEventListener("mousedown", settle);
+  };
   return state;
 }`;
 /** Describes a pressed select in viewport CSS px and keeps the offered options. */
