@@ -1,4 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import {
   isAtomCommandInterrupted,
@@ -12,7 +13,8 @@ import {
   type RuntimeMode,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { useGT } from "gt-react-native";
+import { msg, useGT } from "gt-react-native";
+import { m } from "../../i18n/messages";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { uuidv4 } from "../../lib/uuid";
@@ -41,7 +43,7 @@ export function useStartSideChat() {
   ) => {
     if (isAtomCommandInterrupted(failure)) return;
     const error = squashAtomCommandFailure(failure);
-    Dialog.alert(gt("Side chat not started"), error instanceof Error ? error.message : fallback);
+    Dialog.alert(gt("Side chat not started"), errorDisplayMessage(error, m) ?? fallback);
   };
 
   return async (
@@ -55,7 +57,7 @@ export function useStartSideChat() {
       input: {
         sourceThreadId: source.threadId,
         targetThreadId,
-        title: "Side chat",
+        title: m(msg("Side chat")),
         creationSource: "mobile",
       },
     });
@@ -110,7 +112,7 @@ export function useStartSideChat() {
           attachments: [],
         },
         modelSelection: settings.modelSelection,
-        titleSeed: deriveThreadTitleSeed({ text: prompt, attachments: [] }),
+        titleSeed: deriveThreadTitleSeed({ text: prompt, attachments: [] }, m),
         runtimeMode: settings.runtimeMode,
         interactionMode: "default",
         createdAt: new Date().toISOString(),

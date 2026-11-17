@@ -1,5 +1,7 @@
 import { msg, T, useGT, useMessages } from "gt-react-native";
 
+import type { MessageResolver } from "../../i18n/messages";
+
 import { Button } from "../../components/ui/Button";
 import {
   WORKTREE_SETUP_STAGE_ORDER,
@@ -7,7 +9,7 @@ import {
   type WorktreeSetupStage,
 } from "@t3tools/contracts";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
-import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -24,9 +26,9 @@ export interface WorktreeSetupCardProps {
   onWorkLocally: (() => void) | null;
 }
 
-function elapsed(start: string | null, end: string | null, now: number) {
+function elapsed(start: string | null, end: string | null, now: number, resolve: MessageResolver) {
   const duration = (end ? Date.parse(end) : now) - (start ? Date.parse(start) : NaN);
-  return Number.isFinite(duration) ? formatDuration(Math.max(0, duration)) : null;
+  return Number.isFinite(duration) ? formatDuration(Math.max(0, duration), resolve) : null;
 }
 
 const statusLabels = {
@@ -73,6 +75,7 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps & SetupDetailsCo
 function WorktreeSetupHeaderCard(props: WorktreeSetupCardProps & SetupDetailsControl) {
   const { snapshot, detailsOpen } = props;
   const gt = useGT();
+  const messages = useMessages();
   const running = snapshot.phase === "running";
   const now = useVisibleSecondClock(running);
   const failed =
@@ -95,7 +98,7 @@ function WorktreeSetupHeaderCard(props: WorktreeSetupCardProps & SetupDetailsCon
           className="text-2xs text-foreground-secondary"
           style={{ fontVariant: ["tabular-nums"] }}
         >
-          {elapsed(snapshot.startedAt, snapshot.endedAt, now)}
+          {elapsed(snapshot.startedAt, snapshot.endedAt, now, messages)}
         </Text>
         <Pressable
           accessibilityRole="button"
@@ -189,6 +192,7 @@ function setupWentWrong(snapshot: WorktreeSetupSnapshot): boolean {
 function WorktreeSetupSummaryRow(props: WorktreeSetupCardProps & SetupDetailsControl) {
   const { snapshot } = props;
   const gt = useGT();
+  const messages = useMessages();
   const now = useVisibleSecondClock(false);
   const label =
     snapshot.phase === "failed"
@@ -214,7 +218,7 @@ function WorktreeSetupSummaryRow(props: WorktreeSetupCardProps & SetupDetailsCon
         className="text-2xs text-foreground-secondary"
         style={{ fontVariant: ["tabular-nums"] }}
       >
-        {elapsed(snapshot.startedAt, snapshot.endedAt, now)}
+        {elapsed(snapshot.startedAt, snapshot.endedAt, now, messages)}
       </Text>
       <SymbolView name="chevron.right" size={10} tintColorClassName="accent-icon-muted" />
     </Pressable>
@@ -439,7 +443,7 @@ function StageRow({
           className="text-2xs text-foreground-secondary"
           style={{ fontVariant: ["tabular-nums"] }}
         >
-          {elapsed(stage.startedAt, stage.endedAt, now)}
+          {elapsed(stage.startedAt, stage.endedAt, now, m)}
         </Text>
       ) : null}
     </View>

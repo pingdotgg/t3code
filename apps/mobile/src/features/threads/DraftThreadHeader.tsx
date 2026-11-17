@@ -1,7 +1,8 @@
 import { uuidv4 } from "../../lib/uuid";
 import * as Dialog from "../../components/ui/Dialog";
 import { useNavigation } from "@react-navigation/native";
-import { useGT } from "gt-react-native";
+import { vcsActionLabelText } from "@t3tools/client-runtime/state/vcs";
+import { useGT, useMessages } from "gt-react-native";
 import { AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
 import { AuthFilesystemReadScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
@@ -22,6 +23,7 @@ export function DraftThreadHeader(props: {
   readonly cwd: string | null;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const navigation = useNavigation();
   const environmentId = props.thread.environmentId;
   const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
@@ -59,7 +61,7 @@ export function DraftThreadHeader(props: {
         hasThread: false,
         currentBranch: props.thread.branch,
         gitStatus: status.data,
-        gitOperationLabel: progress.currentLabel,
+        gitOperationLabel: vcsActionLabelText(progress, messages),
         canOpenTerminal: false,
         canOperateTerminal: false,
         canOpenFiles: canReadFiles && props.cwd !== null,

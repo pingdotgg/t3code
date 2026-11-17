@@ -1,4 +1,5 @@
 import { ChildThreadApprovals } from "./ChildThreadApprovals";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
 import { useSidebarWorkspaceTabs } from "../layout/workspace/useSystemWorkspaceTabBar";
 import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
@@ -89,6 +90,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { useGT, useMessages } from "gt-react-native";
+import { m } from "../../i18n/messages";
 import {
   AppState,
   Keyboard,
@@ -730,7 +732,7 @@ function ThreadDetailBody(
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
         gt("Could not update thread"),
-        error instanceof Error ? error.message : gt("Try again."),
+        errorDisplayMessage(error, m) ?? gt("Try again."),
       );
     }
   };
@@ -777,14 +779,16 @@ function ThreadDetailBody(
         ? gt("Un-settle", { $context: "verb, thread action" })
         : gt("Dismiss");
     const wake =
-      lifecycleSnoozed && snoozedUntil !== null
-        ? snoozeWakeLabel(snoozedUntil, { now: lifecycleNow })
-        : "now";
+      lifecycleSnoozed &&
+      snoozedUntil !== null &&
+      Date.parse(snoozedUntil) > Date.parse(lifecycleNow)
+        ? snoozeWakeLabel(snoozedUntil, { now: lifecycleNow }, messages)
+        : null;
     return {
       key: "lifecycle",
       icon: settled && !lifecycleSnoozed ? "checkmark.circle" : "alarm",
       label: lifecycleSnoozed
-        ? wake === "now"
+        ? wake === null
           ? gt("Snoozed", { $context: "thread state" })
           : gt("Snoozed, {time} left", { time: wake })
         : settled
@@ -864,7 +868,7 @@ function ThreadDetailBody(
     if (childInput && contentPresentationKind === "ready") {
       return {
         kind: "child-input",
-        label: childThreadInputsTitle(childThreadInputs),
+        label: childThreadInputsTitle(childThreadInputs, messages),
         accessibilityLabel: childInput.hasPendingApprovals
           ? gt("Open approval from {title}", { title: childInput.title })
           : gt("Open question from {title}", { title: childInput.title }),
@@ -961,8 +965,10 @@ function ThreadDetailBody(
   const composerSlotHidden =
     activeUserInputRequestId !== null || props.creationState?.kind === "failed";
   const pendingMessageEditBlocked =
-    queuedRunEditBlockedReason({ openQuestionCount: activeUserInputRequestId === null ? 0 : 1 }) !==
-    null;
+    queuedRunEditBlockedReason(
+      { openQuestionCount: activeUserInputRequestId === null ? 0 : 1 },
+      messages,
+    ) !== null;
   const [usageLimitsPanel, setUsageLimitsPanel] = useState<{
     readonly key: string;
     readonly threadKey: string;
@@ -1357,7 +1363,7 @@ function ThreadDetailBody(
       const error = squashAtomCommandFailure(edited);
       Dialog.alert(
         gt("Could not edit message"),
-        error instanceof Error ? error.message : gt("Please try again."),
+        errorDisplayMessage(error, m) ?? gt("Please try again."),
       );
       return;
     }

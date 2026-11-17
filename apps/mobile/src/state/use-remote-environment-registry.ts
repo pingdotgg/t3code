@@ -1,4 +1,5 @@
 import * as Dialog from "../components/ui/Dialog";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import { Discovery } from "@t3tools/client-runtime/relay";
@@ -72,8 +73,7 @@ export async function pairEnvironment(
     return { ok: true, error: null };
   }
   const error = Cause.squash(result.cause);
-  const message =
-    error instanceof Error ? error.message : m(msg("Failed to pair with the environment."));
+  const message = errorDisplayMessage(error, m) ?? m(msg("Failed to pair with the environment."));
   if (
     error !== null &&
     typeof error === "object" &&

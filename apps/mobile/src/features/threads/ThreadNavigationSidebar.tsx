@@ -178,12 +178,15 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
         : [];
   const projectScopes = useMemo(
     () =>
-      buildHomeProjectScopes({
-        projects,
-        environmentId: options.selectedEnvironmentId,
-        projectGroupingMode: options.projectGroupingMode,
-      }),
-    [projects, options.selectedEnvironmentId, options.projectGroupingMode],
+      buildHomeProjectScopes(
+        {
+          projects,
+          environmentId: options.selectedEnvironmentId,
+          projectGroupingMode: options.projectGroupingMode,
+        },
+        messages,
+      ),
+    [projects, options.selectedEnvironmentId, options.projectGroupingMode, messages],
   );
   const projectFilterOptions = pickableProjectGroups(
     sortHomeProjectScopes({

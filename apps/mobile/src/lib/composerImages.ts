@@ -2,6 +2,7 @@ import {
   clampFileAttachmentUploadBytes,
   fileAttachmentTooLargeMessage,
 } from "@t3tools/client-runtime/state/attachments";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   isProviderSendTurnSupportedImageMimeType,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -282,7 +283,7 @@ export async function pickComposerFiles(input: {
   } catch (cause) {
     return {
       files: [],
-      error: cause instanceof Error ? cause.message : m(msg("Could not open the file picker.")),
+      error: errorDisplayMessage(cause, m) ?? m(msg("Could not open the file picker.")),
     };
   } finally {
     endHandoff();
@@ -350,8 +351,7 @@ export async function pickComposerFiles(input: {
         await removePersistedComposerAttachmentFile(attachment.fileUri);
       }
     } catch (cause) {
-      error =
-        cause instanceof Error ? cause.message : m(msg("Could not read ''{name}''.", { name }));
+      error = errorDisplayMessage(cause, m) ?? m(msg("Could not read ''{name}''.", { name }));
     }
   }
   if (exceededAttachmentLimit) {
@@ -408,10 +408,7 @@ export async function pickComposerMedia(input: {
   } catch (error) {
     return {
       attachments: [],
-      error:
-        error instanceof Error
-          ? error.message
-          : m(msg("The photo library is unavailable right now.")),
+      error: errorDisplayMessage(error, m) ?? m(msg("The photo library is unavailable right now.")),
     };
   }
 
@@ -431,7 +428,7 @@ export async function pickComposerMedia(input: {
   } catch (error) {
     return {
       attachments: [],
-      error: error instanceof Error ? error.message : m(msg("Could not open the photo library.")),
+      error: errorDisplayMessage(error, m) ?? m(msg("Could not open the photo library.")),
     };
   } finally {
     endHandoff();
@@ -476,9 +473,8 @@ export async function pickComposerMedia(input: {
         );
       } catch (cause) {
         error =
-          cause instanceof Error
-            ? cause.message
-            : m(msg("Could not read ''{name}''.", { name: asset.fileName ?? "video" }));
+          errorDisplayMessage(cause, m) ??
+          m(msg("Could not read ''{name}''.", { name: asset.fileName ?? "video" }));
       }
       continue;
     }

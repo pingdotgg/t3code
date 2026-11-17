@@ -555,9 +555,12 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
                                 ? gt("Loading", { $context: "older threads are loading" })
                                 : olderSettledShelf.failed
                                   ? gt("Could not load older threads. Retry")
-                                  : gt("Show more ({count} settled hidden)", {
-                                      count: settledCount - visibleSettled.length,
-                                    })}
+                                  : gt(
+                                      "{count, plural, one {Show more ({count} settled hidden)} other {Show more ({count} settled hidden)}}",
+                                      {
+                                        count: settledCount - visibleSettled.length,
+                                      },
+                                    )}
                             </Text>
                           </Pressable>
                         ) : (

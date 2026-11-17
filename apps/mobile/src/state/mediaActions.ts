@@ -1,4 +1,5 @@
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Dialog from "../components/ui/Dialog";
 import type { MediaActionsSource } from "../lib/mediaActionsSource";
 import { useNavigation } from "@react-navigation/native";
@@ -79,7 +80,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
         if (!request.signal.aborted) {
           Dialog.alert(
             kind === "share" ? m(msg("Could not share file")) : m(msg("Could not save image")),
-            error instanceof Error ? error.message : m(msg("Try again.")),
+            errorDisplayMessage(error, m) ?? m(msg("Try again.")),
           );
         }
       })

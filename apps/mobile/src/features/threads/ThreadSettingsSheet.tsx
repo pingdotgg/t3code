@@ -2,7 +2,7 @@ import {
   getPromptControlledTraits,
   getTraitSelectChange,
 } from "@t3tools/client-runtime/model-traits";
-import { T, useGT, useMessages } from "gt-react-native";
+import { T, useGT, useLocale, useMessages } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
 import { createV5StackNavigator as createNativeStackNavigator } from "../../native/createV5StackNavigator";
 import { useSheetStackOptions } from "../layout/nested-stacks";
@@ -339,6 +339,7 @@ function ThreadSettingsSessionProvider(
   props: ThreadSettingsSessionProps & { readonly children: ReactNode },
 ) {
   const gt = useGT();
+  const messages = useMessages();
   const registry = use(RegistryContext);
   const preferences = useAtomValue(mobilePreferencesAtom);
   const configs = useAtomValue(environmentServerConfigsAtom);
@@ -519,6 +520,7 @@ function ThreadSettingsSessionProvider(
   const runtimeModeChoices = withManagedRuntimeModeLimits(
     runtimeModeChoicesForSupportedModes(displayedModel?.supportedRuntimeModes),
     [config?.managedPolicy],
+    messages,
   );
   const compatibleRuntimeMode = compatibleRuntimeModeForChoices(
     props.runtimeMode,
@@ -775,6 +777,7 @@ function ThreadSettingsProviderListHeader(props: {
 function buildThreadSettingsCatalogItems(
   session: ThreadSettingsSessionValue,
   resolve: MessageResolver,
+  locale: string,
 ): ReadonlyArray<ThreadSettingsCatalogItem> {
   return session.providerGroups.flatMap((group) => {
     if (
@@ -809,7 +812,12 @@ function buildThreadSettingsCatalogItems(
     );
     const updateRequiredNotice =
       group.updateRequired && session.providerFilter !== FAVORITES_PROVIDER_FILTER
-        ? formatProviderUpdateRequiredNotice(group.updateRequired, session.searchQuery, resolve)
+        ? formatProviderUpdateRequiredNotice(
+            group.updateRequired,
+            session.searchQuery,
+            resolve,
+            locale,
+          )
         : null;
     if (visibleModels.length === 0 && !updateRequiredNotice) {
       return [];
@@ -964,6 +972,7 @@ function ThreadSettingsMainContent(props: {
 }) {
   const gt = useGT();
   const m = useMessages();
+  const locale = useLocale();
   const session = useThreadSettingsSession();
   const refreshProvidersCommand = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
@@ -1011,7 +1020,7 @@ function ThreadSettingsMainContent(props: {
   const reducedMotion = useReducedMotion();
   const reduceMotionEnabled = useReduceMotionEnabled();
   const animationsReady = listLoaded && !reducedMotion && !reduceMotionEnabled;
-  const catalogItems = buildThreadSettingsCatalogItems(session, m);
+  const catalogItems = buildThreadSettingsCatalogItems(session, m, locale);
   const hasActiveCatalogFilter =
     session.providerFilter !== null || session.searchQuery.trim().length > 0;
   const listItems = [

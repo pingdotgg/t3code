@@ -201,7 +201,9 @@ function WorkflowScript(props: { readonly script: string }) {
           className="self-start py-1 active:opacity-70"
         >
           <Text className="font-t3-medium text-xs text-foreground-muted">
-            {expanded ? gt("Show less") : gt("Show full script")}
+            {expanded
+              ? gt("Show less", { $context: "collapses the workflow script" })
+              : gt("Show full script")}
           </Text>
         </Pressable>
       ) : null}

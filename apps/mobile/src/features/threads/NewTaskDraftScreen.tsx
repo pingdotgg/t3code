@@ -1,4 +1,5 @@
 import { T, useGT, useMessages } from "gt-react-native";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { DraftEnvironmentControl } from "./DraftEnvironmentControl";
 import { NativeScrollEdgeEffectsContext } from "../../native/NativeScrollViewMarker";
 import { DraftThreadHeader } from "./DraftThreadHeader";
@@ -228,7 +229,7 @@ export function NewTaskDraftScreen(props: {
     const result = await action();
     if (AsyncResult.isFailure(result)) {
       const error = Cause.squash(result.cause);
-      Dialog.alert(title, error instanceof Error ? error.message : gt("An error occurred."));
+      Dialog.alert(title, errorDisplayMessage(error, m) ?? gt("An error occurred."));
     }
   };
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
@@ -243,7 +244,7 @@ export function NewTaskDraftScreen(props: {
       const error = Cause.squash(result.cause);
       Dialog.alert(
         gt("Failed to remove project"),
-        error instanceof Error ? error.message : gt("An error occurred."),
+        errorDisplayMessage(error, m) ?? gt("An error occurred."),
       );
       return;
     }
@@ -686,7 +687,7 @@ export function NewTaskDraftScreen(props: {
       const error = squashAtomCommandFailure(queued);
       Dialog.alert(
         gt("Could not queue task"),
-        error instanceof Error ? error.message : gt("The task could not be saved to the outbox."),
+        errorDisplayMessage(error, m) ?? gt("The task could not be saved to the outbox."),
       );
       return null;
     }

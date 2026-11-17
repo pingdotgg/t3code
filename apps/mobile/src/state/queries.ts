@@ -419,12 +419,15 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
       : environmentSession.sessionStateAtom(debouncedTarget.environmentId),
   );
   const fileEnvironment = useEnvironmentPresentation(debouncedTarget.environmentId);
-  const fileAccess = resolveFilesystemReadAccess({
-    isCatalogReady: fileEnvironment.isReady,
-    connection: fileEnvironment.presentation?.connection ?? null,
-    session: fileAccessSession.data,
-    sessionError: fileAccessSession.error,
-  });
+  const fileAccess = resolveFilesystemReadAccess(
+    {
+      isCatalogReady: fileEnvironment.isReady,
+      connection: fileEnvironment.presentation?.connection ?? null,
+      session: fileAccessSession.data,
+      sessionError: fileAccessSession.error,
+    },
+    resolve,
+  );
   const { canReadFiles } = fileAccess;
   const searchTarget =
     debouncedTarget.environmentId !== null &&

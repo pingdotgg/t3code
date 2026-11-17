@@ -557,6 +557,7 @@ export function threadListV2ListItemsAreEqual(
 function resolveThreadListV2ItemTimeLabel(
   item: ThreadListV2Item,
   showSnoozeWakeLabel: boolean,
+  resolve: MessageResolver,
 ): string {
   const { thread, variant, snoozed } = item;
   if (showSnoozeWakeLabel) return "";
@@ -571,6 +572,8 @@ function resolveThreadListV2ItemTimeLabel(
     variant === "slim" && !snoozed ? resolveSettledThreadTimestamp(thread) : null;
   return relativeTime(
     settledTimestamp ?? resolveThreadActivityTimestamp(thread) ?? thread.createdAt,
+    undefined,
+    resolve,
   );
 }
 
@@ -591,12 +594,14 @@ export function buildThreadListV2ListItems(input: {
   readonly queuedThreadKeys?: ReadonlySet<string>;
   readonly moveAvailability?: ReadonlyMap<string, ThreadMoveAvailability>;
   readonly shelfPreferencesLoading?: boolean;
+  readonly resolve?: MessageResolver;
 }): ThreadListV2ListItem[] {
+  const resolve = input.resolve ?? m;
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
   const threadItems = input.items.map((item): ThreadListV2ListItem => {
     const snoozeWakeLabelText =
       item.snoozed && item.thread.snoozedUntil != null && input.snoozeLabelNow !== undefined
-        ? snoozeWakeLabel(item.thread.snoozedUntil, { now: input.snoozeLabelNow })
+        ? snoozeWakeLabel(item.thread.snoozedUntil, { now: input.snoozeLabelNow }, resolve)
         : undefined;
     // Put the clock on items so recycler equality limits ticks to rows displaying snooze preset times.
     const snoozePresetMinute =
@@ -615,7 +620,7 @@ export function buildThreadListV2ListItems(input: {
       key: `v2-thread:${item.thread.environmentId}:${item.thread.id}`,
       item,
       snoozeWakeLabelText,
-      timeLabel: resolveThreadListV2ItemTimeLabel(item, snoozeWakeLabelText !== undefined),
+      timeLabel: resolveThreadListV2ItemTimeLabel(item, snoozeWakeLabelText !== undefined, resolve),
       snoozePresetMinute,
       showTrailingDivider: false,
       hasQueuedMessages:

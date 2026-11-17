@@ -1,4 +1,5 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTerm } from "../../../lib/changeRequestTerm";
 import { SymbolView } from "../../../components/ui/AppSymbol";
 import { msg } from "gt-react-native";
 import type { ComponentProps } from "react";
@@ -62,17 +63,34 @@ export function statusSummary(
     parts.push(resolve(msg("Clean", { $context: "git working tree has no changes" })));
   }
   if ((gitStatus.aheadCount ?? 0) > 0) {
-    parts.push(resolve(msg("{count} ahead", { count: gitStatus.aheadCount })));
+    parts.push(
+      resolve(
+        msg("{count, plural, one {{count} ahead} other {{count} ahead}}", {
+          count: gitStatus.aheadCount,
+        }),
+      ),
+    );
   }
   if ((gitStatus.behindCount ?? 0) > 0) {
-    parts.push(resolve(msg("{count} behind", { count: gitStatus.behindCount })));
+    parts.push(
+      resolve(
+        msg("{count, plural, one {{count} behind} other {{count} behind}}", {
+          count: gitStatus.behindCount,
+        }),
+      ),
+    );
   }
   if (gitStatus.pr?.state === "open") {
-    const { shortLabel } = sourceControlClients.get(
-      gitStatus.sourceControlProvider?.kind,
-    ).changeRequest;
+    const term = changeRequestTerm(
+      sourceControlClients.get(gitStatus.sourceControlProvider?.kind).changeRequest,
+    );
     parts.push(
-      resolve(msg("{shortLabel} #{number} open", { shortLabel, number: gitStatus.pr.number })),
+      resolve(
+        msg(
+          "{term, select, mergeRequest {MR #{number} open} changeRequest {change request #{number} open} other {PR #{number} open}}",
+          { term, number: gitStatus.pr.number },
+        ),
+      ),
     );
   }
 

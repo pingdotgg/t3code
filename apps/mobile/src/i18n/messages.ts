@@ -31,3 +31,9 @@ function resolve(message: string, variables: Parameters<MessageResolver>[1] = {}
  */
 export const m = ((message, variables) =>
   typeof message === "string" ? resolve(message, variables) : message) as MessageResolver;
+
+/**
+ * Keeps `msg()` text unresolved, for helpers whose result is cached past a language switch.
+ * Only for helpers that pass a whole `msg()` string; display sites resolve the result.
+ */
+export const keepMarked = ((message: string) => message) as MessageResolver;

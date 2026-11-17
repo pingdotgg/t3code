@@ -1,4 +1,5 @@
 import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useAtomValue } from "@effect/atom-react";
 import {
   makeQueuedRunsAtom,
@@ -14,7 +15,7 @@ import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/co
 import { Atom } from "effect/reactivity";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
-import { T, useGT, useMessages } from "gt-react-native";
+import { msg, T, useGT, useMessages } from "gt-react-native";
 import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -219,8 +220,8 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     if (action === "steer" && result?._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Could not send queued message",
-        error instanceof Error ? error.message : "Try again.",
+        m(msg("Could not send queued message")),
+        errorDisplayMessage(error, m) ?? m(msg("Try again.")),
       );
     }
   };
@@ -257,7 +258,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                 const error = squashAtomCommandFailure(result);
                 Dialog.alert(
                   gt("Could not resume queue"),
-                  error instanceof Error ? error.message : gt("Try again."),
+                  errorDisplayMessage(error, m) ?? gt("Try again."),
                 );
               }
             }}

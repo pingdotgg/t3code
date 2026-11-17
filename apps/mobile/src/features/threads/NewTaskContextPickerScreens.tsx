@@ -1,4 +1,5 @@
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -19,6 +20,7 @@ import {
 import * as Haptics from "expo-haptics";
 import { useNavigation } from "@react-navigation/native";
 import { T, useGT, useMessages, Var } from "gt-react-native";
+import { m } from "../../i18n/messages";
 import { useRef, useState, type ReactNode } from "react";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { Platform, Pressable, ScrollView, View } from "react-native";
@@ -62,6 +64,7 @@ function EnvironmentPickerRow(props: {
   onPress: () => void;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const [expanded, setExpanded] = useState(false);
   const { presentation } = useEnvironmentPresentation(props.environmentId);
   const { diagnosis, state } = useConnectionDiagnosis(props.environmentId, presentation);
@@ -69,7 +72,7 @@ function EnvironmentPickerRow(props: {
   const connection = presentation?.connection;
   const status =
     diagnosis?.headline ??
-    (connection ? environmentStatusText({ ...connection, error: null }) : gt("Offline"));
+    (connection ? environmentStatusText({ ...connection, error: null }, messages) : gt("Offline"));
   return (
     <View className={cn("bg-grouped-card", !props.isLast && "border-b border-border-subtle")}>
       <View className="flex-row items-center">
@@ -292,7 +295,7 @@ export function NewTaskBranchPickerRouteScreen() {
         const error = squashAtomCommandFailure(result);
         Dialog.alert(
           gt("Could not switch branch"),
-          error instanceof Error ? error.message : gt("The branch could not be checked out."),
+          errorDisplayMessage(error, m) ?? gt("The branch could not be checked out."),
         );
       }
       return;

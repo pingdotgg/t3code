@@ -393,15 +393,21 @@ export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(pro
       ? gt("Loading", { $context: "older threads are loading" })
       : props.state === "failed"
         ? gt("Could not load older threads. Retry")
-        : gt("Show more ({count} settled hidden)", { count: props.hiddenCount });
+        : gt(
+            "{count, plural, one {Show more ({count} settled hidden)} other {Show more ({count} settled hidden)}}",
+            { count: props.hiddenCount },
+          );
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={
         props.state === undefined
-          ? gt("Show {count} more settled threads", {
-              count: Math.min(props.hiddenCount, THREAD_LIST_V2_SETTLED_PAGE_COUNT),
-            })
+          ? gt(
+              "{count, plural, one {Show {count} more settled threads} other {Show {count} more settled threads}}",
+              {
+                count: Math.min(props.hiddenCount, THREAD_LIST_V2_SETTLED_PAGE_COUNT),
+              },
+            )
           : label
       }
       disabled={props.state === "loading"}
@@ -873,7 +879,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   };
   const recede = shouldRecedeThreadRow({ status, selected });
   const isRegeneratingTitle = thread.titleRegeneration != null;
-  const timeLabel = props.timeLabel;
+  // List items keep marked text so they stay the same objects across a language switch.
+  const timeLabel = props.timeLabel && m(props.timeLabel);
+  const snoozeWakeLabelText =
+    props.snoozeWakeLabelText === undefined ? undefined : m(props.snoozeWakeLabelText);
   const rowAccessibilityLabel = threadListV2RowAccessibilityLabel(
     {
       title: thread.title,
@@ -887,7 +896,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             ? gt("Waiting", { $context: "thread status" })
             : gt("Working", { $context: "thread status" }))),
       timeLabel,
-      snoozeWakeLabel: snoozedRow ? props.snoozeWakeLabelText : undefined,
+      snoozeWakeLabel: snoozedRow ? snoozeWakeLabelText : undefined,
       providerNameLabel,
       hasQueuedMessages: props.hasQueuedMessages === true,
       regeneratingTitle: isRegeneratingTitle,
@@ -1719,9 +1728,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             )}
             style={{ fontFamily: MONO_FONT }}
           >
-            {snoozedRow && props.snoozeWakeLabelText !== undefined
-              ? props.snoozeWakeLabelText
-              : timeLabel}
+            {snoozedRow && snoozeWakeLabelText !== undefined ? snoozeWakeLabelText : timeLabel}
           </Text>
         </View>
       </RowPressable>

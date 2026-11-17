@@ -148,6 +148,7 @@ export function pullRequestComposerContext(
       ? sanitizeComposerContextLabel(path.split("/").at(-1) ?? path, "file")
       : `#${metadata.number}`,
     sectionId: `pull-request:${metadata.number}`,
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- context record sent to the agent
     sectionTitle: `PR #${metadata.number}`,
     filePath: path || `PR #${metadata.number}`,
     startIndex: 0,

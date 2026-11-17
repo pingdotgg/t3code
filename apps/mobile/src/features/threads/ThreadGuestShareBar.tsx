@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -50,7 +51,7 @@ export function useThreadGuestShare(threadRef: ScopedThreadRef | null): ThreadGu
 function alertOnFailure(failureTitle: string, result: AtomCommandResult<unknown, unknown>) {
   if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
     const error = squashAtomCommandFailure(result);
-    Dialog.alert(failureTitle, error instanceof Error ? error.message : m(msg("Try again.")));
+    Dialog.alert(failureTitle, errorDisplayMessage(error, m) ?? m(msg("Try again.")));
   }
 }
 

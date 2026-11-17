@@ -63,13 +63,15 @@ import { idleCompactionOf, isCompactionCommandMessage, RunId, ThreadId } from "@
 import {
   classifyToolActivity,
   collectToolFilePaths,
-  dynamicToolTitle,
   isJavaScriptReplTool,
+} from "@t3tools/shared/toolActivity";
+import {
+  dynamicToolTitle,
   formatReadToolLabel,
   formatSearchToolLabel,
-} from "@t3tools/shared/toolActivity";
+} from "@t3tools/shared/toolActivityCopy";
 import { claudeResumeCompactionAge } from "@t3tools/shared/claudeCompaction";
-import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
 import { truncate } from "@t3tools/shared/String";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import type { McpAppReference } from "@t3tools/shared/mcpApp";
@@ -275,6 +277,7 @@ export interface ThreadFeedLatestRun {
   readonly completedAt: string | null;
   readonly turnEnded?: boolean;
   readonly providerStartingLabel?: string;
+  readonly providerStartingLabelMsg?: string;
 }
 
 /** Long Android headers can ANR despite one-line display; cap labels only, preserving expanded and copied text. */
@@ -294,7 +297,7 @@ export function workEntryRowLabel(
     return entry.toolLifecycleStatus === "inProgress"
       ? resolve(msg("Thinking"))
       : resolve(msg("Thought"));
-  const presentation = resolveWorkEntryToolPresentation(entry);
+  const presentation = resolveWorkEntryToolPresentation(entry, undefined, resolve);
   if (presentation) return presentation.displayName;
   if (entry.command?.trim()) return compactWorkEntryText(commandDisplayText(entry.command));
   const action = toolGroupAction(entry);
@@ -307,13 +310,17 @@ export function workEntryRowLabel(
         ? (entry.toolData as Record<string, unknown>)
         : undefined;
     const searchLabel =
-      entry.itemType === "file_search" ? entry.label : formatSearchToolLabel(toolData);
+      entry.itemType === "file_search" ? entry.label : formatSearchToolLabel(toolData, resolve);
     if (searchLabel) return searchLabel;
   }
   if (isToolRead) {
     const [firstPath] = entry.changedFiles ?? collectToolFilePaths(entry.toolData);
     if (firstPath) {
-      return formatReadToolLabel(firstPath, Math.max(0, (entry.changedFiles?.length ?? 1) - 1));
+      return formatReadToolLabel(
+        firstPath,
+        Math.max(0, (entry.changedFiles?.length ?? 1) - 1),
+        resolve,
+      );
     }
     if (!expanded) return resolve(msg("Read file"));
   }
@@ -632,7 +639,7 @@ function itemSummary(
   if (item.type === "compaction") return contextCompactionLabel(item, resolve);
   const title =
     (item.type === "dynamic_tool"
-      ? dynamicToolTitle(item.toolName, item.input, item.title)
+      ? dynamicToolTitle(item.toolName, item.input, item.title, resolve)
       : undefined) ?? item.title?.trim();
   if (item.type === "subagent")
     return formatSubagentDisplayTitle(title || resolve(msg("Subagent")));
@@ -651,7 +658,9 @@ function itemSummary(
           )
         : resolve(msg("Changed {fileName}", { fileName: item.fileName }));
     case "file_search":
-      return item.title?.trim() || formatSearchToolLabel(item) || resolve(msg("Searched files"));
+      return (
+        item.title?.trim() || formatSearchToolLabel(item, resolve) || resolve(msg("Searched files"))
+      );
     case "web_search":
       return resolve(msg("Searched the web"));
     case "approval_request":
@@ -685,11 +694,13 @@ function itemSummary(
       });
       if (classified === "read") {
         const [path] = collectToolFilePaths({ input: item.input });
-        return formatReadToolLabel(path ?? "");
+        return formatReadToolLabel(path ?? "", 0, resolve);
       }
       if (classified === "search") {
         return (
-          formatSearchToolLabel({ input: item.input }) ?? item.toolName ?? resolve(msg("Tool call"))
+          formatSearchToolLabel({ input: item.input }, resolve) ??
+          item.toolName ??
+          resolve(msg("Tool call"))
         );
       }
       return toolPresentation?.displayName ?? item.toolName ?? resolve(msg("Tool call"));
@@ -933,7 +944,7 @@ function singleToolCallLabel(
     return expanded
       ? resolve(msg("Thought"))
       : compactWorkEntryText(activity.workEntry.detail ?? "") || resolve(msg("Thought"));
-  const presentation = resolveWorkEntryToolPresentation(activity.workEntry, "completed");
+  const presentation = resolveWorkEntryToolPresentation(activity.workEntry, "completed", resolve);
   if (presentation) return presentation.displayName;
   const command = activity.workEntry.command?.trim();
   return command ? truncate(command, WORK_LOG_LABEL_MAX_LENGTH) : activity.summary;
@@ -1321,7 +1332,7 @@ function deriveThreadFeedRunFolds(
               lastEntryEnd,
             ) ?? lastEntryEnd,
           );
-    const duration = elapsedMs === null ? null : formatDuration(elapsedMs);
+    const duration = elapsedMs === null ? null : formatDuration(elapsedMs, resolve);
     const interrupted =
       latestRunMatches && (latestRun.status === "interrupted" || latestRun.status === "cancelled");
     const label = interrupted
@@ -1352,7 +1363,9 @@ function deriveThreadFeedRunFolds(
           entries,
           label:
             segmentMs !== null
-              ? resolve(msg("Continued for {duration}", { duration: formatDuration(segmentMs) }))
+              ? resolve(
+                  msg("Continued for {duration}", { duration: formatDuration(segmentMs, resolve) }),
+                )
               : resolve(msg("Continued")),
         };
       }),
@@ -1459,7 +1472,8 @@ function latestRunsEqual(left: ThreadFeedLatestRun | null, right: ThreadFeedLate
       left.startedAt === right.startedAt &&
       left.completedAt === right.completedAt &&
       left.turnEnded === right.turnEnded &&
-      left.providerStartingLabel === right.providerStartingLabel)
+      left.providerStartingLabel === right.providerStartingLabel &&
+      left.providerStartingLabelMsg === right.providerStartingLabelMsg)
   );
 }
 
@@ -1936,7 +1950,9 @@ export function deriveThreadFeedPresentation(
           : zen
             ? liveAnswerPreview(feed)
             : null,
-        latestRun?.providerStartingLabel,
+        latestRun?.providerStartingLabelMsg === undefined
+          ? latestRun?.providerStartingLabel
+          : resolve(latestRun.providerStartingLabelMsg),
       ),
     );
   }
@@ -2315,7 +2331,7 @@ function appendToolGroupRows(
     activities.findLast((activity) => activity.workEntry.toolIcon !== undefined)?.workEntry
       .toolIcon;
   const summaryToolIcon = live
-    ? resolveWorkEntryToolPresentation(latestActivity.workEntry)?.icon
+    ? resolveWorkEntryToolPresentation(latestActivity.workEntry, undefined, resolve)?.icon
     : undefined;
   result.push({
     type: "work-toggle",
@@ -2372,10 +2388,11 @@ function liveToolActivitySummary(
         (status === "inProgress" ? resolve(msg("Thinking")) : resolve(msg("Thought"))),
     );
   }
-  const presentation = resolveWorkEntryToolPresentation({
-    ...activity.workEntry,
-    toolLifecycleStatus: status,
-  });
+  const presentation = resolveWorkEntryToolPresentation(
+    { ...activity.workEntry, toolLifecycleStatus: status },
+    undefined,
+    resolve,
+  );
   if (presentation) return presentation.displayName;
   const command = activity.workEntry.command?.trim();
   if (command) {

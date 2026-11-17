@@ -10,8 +10,9 @@ import {
   type OrchestrationV2Subagent,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { deriveSubagentElapsedMs, formatDuration } from "@t3tools/shared/orchestrationTiming";
-import { msg, T, useGT, useMessages } from "gt-react-native";
+import { deriveSubagentElapsedMs } from "@t3tools/shared/orchestrationTiming";
+import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
+import { T, useGT, useMessages } from "gt-react-native";
 import { useState, type ReactNode } from "react";
 import { ScrollView, View } from "react-native";
 
@@ -34,14 +35,6 @@ import {
   type WorkflowRailTone,
 } from "./threadAgentsPresentation";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
-
-const RAIL_TONE_LABEL = {
-  working: msg("working", { $context: "workflow phase status" }),
-  completed: msg("completed", { $context: "workflow phase status" }),
-  failed: msg("failed", { $context: "workflow phase status" }),
-  stopped: msg("stopped", { $context: "workflow phase status" }),
-  queued: msg("queued", { $context: "workflow phase status" }),
-} as const satisfies Record<WorkflowRailTone, string>;
 
 const RAIL_ICON = {
   working: "circle.inset.filled",
@@ -122,15 +115,21 @@ export function ThreadWorkflowGroup(props: {
                   selected={item.key === selected}
                   accessibilityLabel={
                     count
-                      ? gt("{title} phase, {tone}, {count} completed", {
-                          title: item.title,
-                          tone: m(RAIL_TONE_LABEL[item.tone]),
-                          count,
-                        })
-                      : gt("{title} phase, {tone}", {
-                          title: item.title,
-                          tone: m(RAIL_TONE_LABEL[item.tone]),
-                        })
+                      ? gt(
+                          "{title} phase, {tone, select, working {working} completed {completed} failed {failed} stopped {stopped} other {queued}}, {count} completed",
+                          {
+                            title: item.title,
+                            tone: item.tone,
+                            count,
+                          },
+                        )
+                      : gt(
+                          "{title} phase, {tone, select, working {working} completed {completed} failed {failed} stopped {stopped} other {queued}}",
+                          {
+                            title: item.title,
+                            tone: item.tone,
+                          },
+                        )
                   }
                   onPress={() => setSelected(nextWorkflowSelection(rail, selected, item.key))}
                 />
@@ -187,7 +186,7 @@ function WorkflowMemberRow(props: {
     m,
   );
   const { detail, error } = workflowMemberDetail(member);
-  const metadata = workflowMemberMetadata(member, props.provider);
+  const metadata = workflowMemberMetadata(member, props.provider, m);
   const labels = [metadata.model, metadata.effort].filter((value) => value !== null);
   return (
     <RowPressable
@@ -313,6 +312,7 @@ type ElapsedTiming = Parameters<typeof deriveSubagentElapsedMs>[0];
 
 function useElapsedLabel(timing: ElapsedTiming): string | null {
   const nowMs = useVisibleSecondClock(isActiveSubagentStatus(timing.status));
+  const messages = useMessages();
   const elapsedMs = deriveSubagentElapsedMs(timing, nowMs);
-  return elapsedMs === null || elapsedMs === 0 ? null : formatDuration(elapsedMs);
+  return elapsedMs === null || elapsedMs === 0 ? null : formatDuration(elapsedMs, messages);
 }

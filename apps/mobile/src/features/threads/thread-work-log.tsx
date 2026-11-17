@@ -15,7 +15,7 @@ import {
   hasQuestionAnswer,
 } from "@t3tools/client-runtime/work-log/user-input";
 import * as Haptics from "expo-haptics";
-import { T, useGT } from "gt-react-native";
+import { T, useGT, useMessages } from "gt-react-native";
 import { Image } from "expo-image";
 import { type AppSymbolName, SymbolView } from "../../components/ui/AppSymbol";
 import { MaskedView } from "@expo/ui/community/masked-view";
@@ -884,6 +884,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
 ) {
   const { row, expanded } = props;
   const gt = useGT();
+  const messages = useMessages();
   const openLinkedThread = useOpenLinkedThread();
   const streamsOutput =
     useCommandOutputStreaming(props.environmentId) &&
@@ -1029,13 +1030,14 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
         exit {failedExitCode}
       </Text>
     );
-  const toolPresentation = resolveWorkEntryToolPresentation(row.workEntry);
-  const previewText = row.groupStandIn?.label ?? workEntryRowLabel(row.workEntry);
+  const toolPresentation = resolveWorkEntryToolPresentation(row.workEntry, undefined, messages);
+  const previewText = row.groupStandIn?.label ?? workEntryRowLabel(row.workEntry, false, messages);
   const answerPreview = row.workEntry.questionAnswer
     ? getQuestionAnswerPreview(row.workEntry.questionAnswer)
     : null;
   const accessiblePreview = [previewText, answerPreview].filter(Boolean).join(": ");
-  const displayText = row.groupStandIn?.label ?? workEntryRowLabel(row.workEntry, expanded);
+  const displayText =
+    row.groupStandIn?.label ?? workEntryRowLabel(row.workEntry, expanded, messages);
   const isSystemNotice = row.projectedItem.item.type === "system_notice";
   const isUsageLimit =
     row.projectedItem.item.type === "error" &&

@@ -1,9 +1,8 @@
+import { managedRuntimeModeDenial } from "@t3tools/client-runtime/contract-labels";
+import type { ManagedPolicySummary, RuntimeMode } from "@t3tools/contracts";
 import { msg } from "gt-react-native";
-import {
-  managedRuntimeModeDenial,
-  type ManagedPolicySummary,
-  type RuntimeMode,
-} from "@t3tools/contracts";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export const RUNTIME_MODE_CHOICES: ReadonlyArray<{
   readonly mode: RuntimeMode;
@@ -52,10 +51,11 @@ export type RuntimeModeChoice = (typeof RUNTIME_MODE_CHOICES)[number] & {
 export function withManagedRuntimeModeLimits(
   choices: ReadonlyArray<RuntimeModeChoice>,
   policies: ReadonlyArray<ManagedPolicySummary | undefined>,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<RuntimeModeChoice> {
   return choices.map((choice) => {
     const reason = policies
-      .map((policy) => managedRuntimeModeDenial(policy, choice.mode))
+      .map((policy) => managedRuntimeModeDenial(policy, choice.mode, resolve))
       .find((denial) => denial !== undefined);
     return reason === undefined ? choice : { ...choice, disabledReason: reason };
   });

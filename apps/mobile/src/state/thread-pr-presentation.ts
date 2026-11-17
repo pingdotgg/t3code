@@ -9,6 +9,7 @@ import {
   sourceControlClients,
   type ChangeRequestTerminology,
 } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTerm } from "../lib/changeRequestTerm";
 
 import {
   legacyThreadPullRequestKey,
@@ -42,12 +43,8 @@ const PR_STATE_TEXT_CLASS: Record<ThreadPr["state"], string> = {
   closed: "text-adaptive-rose-600-400",
 };
 
-function prStateLabel(state: ThreadPr["state"] | "draft" | null, resolve: MessageResolver): string {
-  if (state === null) return resolve(msg("status pending"));
-  if (state === "draft") return resolve(msg("draft", { $context: "pull request state" }));
-  if (state === "open") return resolve(msg("open", { $context: "pull request state" }));
-  if (state === "merged") return resolve(msg("merged", { $context: "pull request state" }));
-  return resolve(msg("closed", { $context: "pull request state" }));
+function prStateKey(state: ThreadPr["state"] | "draft" | null) {
+  return state ?? "pending";
 }
 
 /** Render callers pass `useMessages()` so the label follows a language switch. */
@@ -69,11 +66,14 @@ export function presentThreadPr(
     changeRequest,
     label: String(pr.number),
     accessibilityLabel: resolve(
-      msg("#{number} {changeRequest} {state}", {
-        number: String(pr.number),
-        changeRequest: changeRequest.singular,
-        state: prStateLabel(isDraft ? "draft" : pr.state, resolve),
-      }),
+      msg(
+        "{term, select, mergeRequest {#{number} merge request {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} changeRequest {#{number} change request {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {#{number} pull request {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}",
+        {
+          number: String(pr.number),
+          term: changeRequestTerm(changeRequest),
+          state: prStateKey(isDraft ? "draft" : pr.state),
+        },
+      ),
     ),
     textClassName: isDraft ? "text-foreground-muted" : PR_STATE_TEXT_CLASS[pr.state],
   };
@@ -118,26 +118,35 @@ export function presentThreadLinkedPullRequests(
     accessibilityLabel:
       badge.kind === "stack"
         ? resolve(
-            msg("{count} {changeRequests} in stack, {state}", {
-              count: badge.layers,
-              changeRequests: `${changeRequest.singular}s`,
-              state: prStateLabel(isDraft ? "draft" : state, resolve),
-            }),
+            msg(
+              "{term, select, mergeRequest {{count, plural, one {{count} merge requests in stack, {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {{count} merge requests in stack, {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}} changeRequest {{count, plural, one {{count} change requests in stack, {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {{count} change requests in stack, {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}} other {{count, plural, one {{count} pull requests in stack, {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {{count} pull requests in stack, {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}}}",
+              {
+                count: badge.layers,
+                term: changeRequestTerm(changeRequest),
+                state: prStateKey(isDraft ? "draft" : state),
+              },
+            ),
           )
         : linkedCount !== null
           ? resolve(
-              msg("{count} linked {changeRequests}, overall {state}", {
-                count: linkedCount,
-                changeRequests: changeRequest.plural,
-                state: prStateLabel(badge.state, resolve),
-              }),
+              msg(
+                "{term, select, mergeRequest {{count, plural, one {{count} linked merge requests, overall {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {{count} linked merge requests, overall {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}} changeRequest {{count, plural, one {{count} linked change requests, overall {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {{count} linked change requests, overall {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}} other {{count, plural, one {{count} linked pull requests, overall {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {{count} linked pull requests, overall {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}}}",
+                {
+                  count: linkedCount,
+                  term: changeRequestTerm(changeRequest),
+                  state: prStateKey(badge.state),
+                },
+              ),
             )
           : resolve(
-              msg("#{number} {changeRequest} {state}", {
-                number: String(link.number),
-                changeRequest: changeRequest.singular,
-                state: prStateLabel(state === null ? null : isDraft ? "draft" : state, resolve),
-              }),
+              msg(
+                "{term, select, mergeRequest {#{number} merge request {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} changeRequest {#{number} change request {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {#{number} pull request {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}",
+                {
+                  number: String(link.number),
+                  term: changeRequestTerm(changeRequest),
+                  state: prStateKey(state === null ? null : isDraft ? "draft" : state),
+                },
+              ),
             ),
     textClassName: state === null || isDraft ? "text-foreground-muted" : PR_STATE_TEXT_CLASS[state],
   };

@@ -1,4 +1,5 @@
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { AsyncResult } from "effect/reactivity";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { limitRecoveryOwnsSnooze } from "@t3tools/client-runtime/state/thread-execution";
@@ -11,6 +12,7 @@ import {
 } from "@t3tools/shared/usageLimits";
 import * as Clipboard from "expo-clipboard";
 import { T, useGT } from "gt-react-native";
+import { m } from "../../i18n/messages";
 import { useState } from "react";
 import { Linking, Pressable, View } from "react-native";
 import { ProviderIcon } from "../../components/ProviderIcon";
@@ -105,7 +107,7 @@ export function UsageLimitRecoveryCard({
     setPending(false);
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
-      setError(cause instanceof Error ? cause.message : gt("Could not change limit recovery."));
+      setError(errorDisplayMessage(cause, m) ?? gt("Could not change limit recovery."));
     }
   }
   const action = workspaceLimit

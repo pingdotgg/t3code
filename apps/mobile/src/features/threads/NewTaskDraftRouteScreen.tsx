@@ -1,4 +1,5 @@
 import * as Dialog from "../../components/ui/Dialog";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   CommonActions,
   useRoute,
@@ -70,7 +71,7 @@ const branchCheckouts = makeNewTaskBranchCheckouts({
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
         m(msg("Could not switch branch")),
-        error instanceof Error ? error.message : m(msg("The branch could not be checked out.")),
+        errorDisplayMessage(error, m) ?? m(msg("The branch could not be checked out.")),
       );
     }
     rootNavigationRef.dispatch({

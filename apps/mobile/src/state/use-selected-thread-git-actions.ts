@@ -1,4 +1,5 @@
 import { useAtomMount } from "@effect/atom-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 
 import { EnvironmentProject, EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
@@ -40,7 +41,7 @@ import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
 
 function refreshFailureMessage(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);
-  return error instanceof Error ? error.message : m(msg("Failed to refresh git status."));
+  return errorDisplayMessage(error, m) ?? m(msg("Failed to refresh git status."));
 }
 
 // Selecting a thread or reconnecting its environment refreshes the checkout's
@@ -201,7 +202,7 @@ export function useSelectedThreadGitActions() {
         : await vcsActionManager.track(appAtomRegistry, target, { operation, label }, run);
     if (AsyncResult.isFailure(result)) {
       const error = Cause.squash(result.cause);
-      const message = error instanceof Error ? error.message : m(msg("Git action failed."));
+      const message = errorDisplayMessage(error, m) ?? m(msg("Git action failed."));
       setPendingConnectionError(message);
       showGitActionResult({
         type: "error",
@@ -221,8 +222,7 @@ export function useSelectedThreadGitActions() {
     });
     if (AsyncResult.isFailure(result)) {
       const error = Cause.squash(result.cause);
-      const message =
-        error instanceof Error ? error.message : m(msg("Failed to refresh branches."));
+      const message = errorDisplayMessage(error, m) ?? m(msg("Failed to refresh branches."));
       setPendingConnectionError(message);
       showGitActionResult({
         type: "error",

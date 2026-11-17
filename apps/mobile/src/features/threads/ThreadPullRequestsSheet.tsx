@@ -1,6 +1,7 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { LegendList } from "@legendapp/list/react-native";
 import { useGT } from "gt-react-native";
+import { changeRequestTerm } from "../../lib/changeRequestTerm";
 import { useMemo } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -42,8 +43,11 @@ export function ThreadPullRequestsSheet(
     runtime: selectedEnvironmentRuntime,
   });
   const rowInputs = { lines, actions };
-  const { singular } = actions.terminology;
-  const title = gt("Linked {plural}", { plural: actions.terminology.plural });
+  const term = changeRequestTerm(actions.terminology);
+  const title = gt(
+    "{term, select, mergeRequest {Linked merge requests} changeRequest {Linked change requests} other {Linked pull requests}}",
+    { term },
+  );
 
   const content = (
     <View className="flex-1 bg-screen">
@@ -80,7 +84,10 @@ export function ThreadPullRequestsSheet(
         }
         ListEmptyComponent={
           <Text className="pt-6 text-center text-sm text-foreground-muted">
-            {gt("No linked {plural}.", { plural: actions.terminology.plural })}
+            {gt(
+              "{term, select, mergeRequest {No linked merge requests.} changeRequest {No linked change requests.} other {No linked pull requests.}}",
+              { term },
+            )}
           </Text>
         }
       />
@@ -96,7 +103,10 @@ export function ThreadPullRequestsSheet(
           actions.canLink
             ? [
                 {
-                  accessibilityLabel: gt("Link {singular}", { singular }),
+                  accessibilityLabel: gt(
+                    "{term, select, mergeRequest {Link merge request} changeRequest {Link change request} other {Link pull request}}",
+                    { term },
+                  ),
                   icon: "plus",
                   onPress: actions.promptLink,
                 },

@@ -1,4 +1,5 @@
 import { useComposerAttachmentActions } from "./use-composer-attachment-actions";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Effect from "effect/Effect";
 import * as Dialog from "../components/ui/Dialog";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
@@ -554,7 +555,7 @@ export function useThreadComposerState(input: {
       const error = squashAtomCommandFailure(prepared);
       Dialog.alert(
         m(msg("Could not save the queued message")),
-        error instanceof Error ? error.message : m(msg("Your edit is still in the composer.")),
+        errorDisplayMessage(error, m) ?? m(msg("Your edit is still in the composer.")),
       );
       return;
     }
@@ -761,31 +762,34 @@ export function useThreadComposerState(input: {
         return null;
       }
       const metadata = makeQueuedMessageMetadata();
-      await submitCodexFeedback({
-        submission: {
-          id: MessageId.make(metadata.messageId),
-          command: text,
-          createdAt: metadata.createdAt,
+      await submitCodexFeedback(
+        {
+          submission: {
+            id: MessageId.make(metadata.messageId),
+            command: text,
+            createdAt: metadata.createdAt,
+          },
+          clearDraft: () => clearComposerDraftContent(threadKey),
+          onUpdate: (submission) => {
+            setFeedbackSubmissionsByThreadKey((current) => {
+              const existing = current[threadKey] ?? [];
+              const found = existing.some((entry) => entry.id === submission.id);
+              return {
+                ...current,
+                [threadKey]: found
+                  ? existing.map((entry) => (entry.id === submission.id ? submission : entry))
+                  : [...existing, submission],
+              };
+            });
+          },
+          upload: () =>
+            uploadThreadFeedback({
+              environmentId: thread.environmentId,
+              input: { threadId: thread.id, ...feedbackCommand },
+            }),
         },
-        clearDraft: () => clearComposerDraftContent(threadKey),
-        onUpdate: (submission) => {
-          setFeedbackSubmissionsByThreadKey((current) => {
-            const existing = current[threadKey] ?? [];
-            const found = existing.some((entry) => entry.id === submission.id);
-            return {
-              ...current,
-              [threadKey]: found
-                ? existing.map((entry) => (entry.id === submission.id ? submission : entry))
-                : [...existing, submission],
-            };
-          });
-        },
-        upload: () =>
-          uploadThreadFeedback({
-            environmentId: thread.environmentId,
-            input: { threadId: thread.id, ...feedbackCommand },
-          }),
-      });
+        m,
+      );
       return null;
     }
 
@@ -886,7 +890,7 @@ export function useThreadComposerState(input: {
         if (freshContext) setFreshSessionPending(threadKey, true);
         setThreadComposerError(
           threadKey,
-          error instanceof Error ? error.message : m(msg("Failed to save the queued message.")),
+          errorDisplayMessage(error, m) ?? m(msg("Failed to save the queued message.")),
         );
       },
     );

@@ -8,6 +8,7 @@ import {
 } from "@t3tools/client-runtime/state/vcs";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTerm } from "../../../lib/changeRequestTerm";
 import {
   CommonActions,
   StackActions,
@@ -130,23 +131,35 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           ),
   }));
 
-  const { shortLabel, singular } = sourceControlClients.get(
-    gitStatus.data?.sourceControlProvider?.kind,
-  ).changeRequest;
+  const term = changeRequestTerm(
+    sourceControlClients.get(gitStatus.data?.sourceControlProvider?.kind).changeRequest,
+  );
 
   const openExistingPr = async () => {
     const prUrl = gitStatus.data?.pr?.state === "open" ? gitStatus.data.pr.url : null;
     if (!prUrl) {
       Dialog.alert(
-        gt("No open {shortLabel}", { shortLabel }),
-        gt("This branch does not have an open {singular}.", { singular }),
+        gt(
+          "{term, select, mergeRequest {No open MR} changeRequest {No open change request} other {No open PR}}",
+          { term },
+        ),
+        gt(
+          "{term, select, mergeRequest {This branch does not have an open merge request.} changeRequest {This branch does not have an open change request.} other {This branch does not have an open pull request.}}",
+          { term },
+        ),
       );
       return;
     }
     if (!(await openPullRequest(prUrl))) {
       Dialog.alert(
-        gt("Unable to open {shortLabel}", { shortLabel }),
-        gt("The {singular} could not be opened.", { singular }),
+        gt(
+          "{term, select, mergeRequest {Unable to open MR} changeRequest {Unable to open change request} other {Unable to open PR}}",
+          { term },
+        ),
+        gt(
+          "{term, select, mergeRequest {The merge request could not be opened.} changeRequest {The change request could not be opened.} other {The pull request could not be opened.}}",
+          { term },
+        ),
       );
     }
   };
@@ -230,11 +243,14 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       });
     }
     if (item.kind === "open_pr" && status.pr?.number != null) {
-      return gt("{shortLabel} #{number} {state}", {
-        shortLabel,
-        number: status.pr.number,
-        state: status.pr.state ?? "open",
-      });
+      return gt(
+        "{term, select, mergeRequest {MR #{number} {state, select, open {open} closed {closed} merged {merged} other {{state}}}} changeRequest {change request #{number} {state, select, open {open} closed {closed} merged {merged} other {{state}}}} other {PR #{number} {state, select, open {open} closed {closed} merged {merged} other {{state}}}}}",
+        {
+          term,
+          number: status.pr.number,
+          state: status.pr.state ?? "open",
+        },
+      );
     }
     return undefined;
   };
@@ -326,10 +342,18 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         {linkedPrActions.canLink ? (
           <ListRow
             icon="link"
-            label={gt("Link {term}", { term: linkedPrActions.terminology.singular })}
-            description={gt("Attach a {term} by URL or number", {
-              term: linkedPrActions.terminology.singular,
-            })}
+            label={gt(
+              "{term, select, mergeRequest {Link merge request} changeRequest {Link change request} other {Link pull request}}",
+              {
+                term: changeRequestTerm(linkedPrActions.terminology),
+              },
+            )}
+            description={gt(
+              "{term, select, mergeRequest {Attach a merge request by URL or number} changeRequest {Attach a change request by URL or number} other {Attach a pull request by URL or number}}",
+              {
+                term: changeRequestTerm(linkedPrActions.terminology),
+              },
+            )}
             onPress={linkedPrActions.promptLink}
           />
         ) : null}

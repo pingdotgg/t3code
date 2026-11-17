@@ -1,4 +1,5 @@
 import * as Dialog from "../../components/ui/Dialog";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useRememberThreadProject } from "./useRememberThreadProject";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
@@ -96,7 +97,10 @@ import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { resolveMergeBackTargetThreadId } from "@t3tools/client-runtime/state/thread-relationships";
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
 import { threadEnvironment } from "../../state/threads";
-import { EMPTY_ENVIRONMENT_THREAD_STATE } from "@t3tools/client-runtime/state/threads";
+import {
+  EMPTY_ENVIRONMENT_THREAD_STATE,
+  threadErrorText,
+} from "@t3tools/client-runtime/state/threads";
 import { useProjects } from "../../state/entities";
 import {
   projectThreadContentPresentation,
@@ -446,7 +450,7 @@ function ThreadRouteContent(
     return {
       hasMoreHistory: history.hasMoreHistory,
       loading: history.loading,
-      error: history.error,
+      error: history.error === null ? null : threadErrorText(history.error, m),
       onLoadEarlier: () => {
         void loadEarlierHistory({
           environmentId: selectedThread.environmentId,
@@ -713,7 +717,7 @@ function ThreadRouteContent(
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
         gt("Could not resume thread"),
-        error instanceof Error ? error.message : gt("Try again."),
+        errorDisplayMessage(error, m) ?? gt("Try again."),
       );
     }
   };
@@ -848,10 +852,7 @@ function ThreadRouteContent(
     try {
       await recoverFailedThreadDraft(creation);
     } catch (error) {
-      Dialog.alert(
-        gt("Could not restore draft"),
-        error instanceof Error ? error.message : String(error),
-      );
+      Dialog.alert(gt("Could not restore draft"), errorDisplayMessage(error, m) ?? String(error));
       return;
     }
     clearPendingThreadCreationOutcome(routeThreadIdentity);

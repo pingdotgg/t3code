@@ -1,6 +1,6 @@
+import { managedRuntimeModeDenial } from "@t3tools/client-runtime/contract-labels";
 import {
   clampManagedRuntimeMode,
-  managedRuntimeModeDenial,
   type ManagedPolicySummary,
   type RuntimeMode,
 } from "@t3tools/contracts";
@@ -29,7 +29,7 @@ export function ManagedRuntimeModeNotice(props: {
   const messages = useMessages();
   const draftSettings = useComposerDraftSettings(props.threadKey);
   const runtimeMode = draftSettings.runtimeMode ?? props.threadRuntimeMode;
-  const denial = managedRuntimeModeDenial(props.policy, runtimeMode);
+  const denial = managedRuntimeModeDenial(props.policy, runtimeMode, messages);
   if (denial === undefined) return null;
   const choices = runtimeModeChoicesForSupportedModes(props.supportedRuntimeModes);
   const target = clampManagedRuntimeMode(

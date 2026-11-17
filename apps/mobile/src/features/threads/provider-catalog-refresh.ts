@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import {
   isAtomCommandInterrupted,
@@ -32,5 +33,5 @@ export function providerCatalogRefreshError(
 ): string | null {
   if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return null;
   const error = squashAtomCommandFailure(result);
-  return error instanceof Error ? error.message : m(msg("Provider discovery failed."));
+  return errorDisplayMessage(error, m) ?? m(msg("Provider discovery failed."));
 }

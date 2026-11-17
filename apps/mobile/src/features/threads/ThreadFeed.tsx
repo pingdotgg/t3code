@@ -1,6 +1,8 @@
 import { msg, T, useGT, useMessages } from "gt-react-native";
+import { m } from "../../i18n/messages";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { toServerClock } from "@t3tools/client-runtime/clock";
-import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -88,10 +90,8 @@ import {
 } from "@t3tools/shared/composerContextReferences";
 import { ComposerContextSheet } from "../../components/ComposerContextSheet";
 import { writeComposerContextClipboard } from "../../lib/composerContextClipboard";
-import {
-  codexArtifactTemplatePresentationLabel,
-  type CodexArtifactTemplate,
-} from "@t3tools/shared/codexArtifactTemplates";
+import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
+import { codexArtifactTemplatePresentationLabel } from "@t3tools/shared/codexArtifactTemplatesCopy";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import {
@@ -770,9 +770,7 @@ function MessageAttachmentFile(props: {
       if (controller.signal.aborted) return finish(null);
       if (result._tag === "Failure") {
         const error = squashAtomCommandFailure(result);
-        return finish(
-          error instanceof Error ? error.message : gt("The attachment is unavailable."),
-        );
+        return finish(errorDisplayMessage(error, m) ?? gt("The attachment is unavailable."));
       }
       const url = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
       if (url === null) return finish(gt("The attachment could not be opened."));
@@ -786,9 +784,7 @@ function MessageAttachmentFile(props: {
       );
       if (shared._tag === "Failure") {
         const error = squashAtomCommandFailure(shared);
-        return finish(
-          error instanceof Error ? error.message : gt("The attachment is unavailable."),
-        );
+        return finish(errorDisplayMessage(error, m) ?? gt("The attachment is unavailable."));
       }
       finish(null);
     })();
@@ -1273,6 +1269,7 @@ function ArtifactTemplateCard(props: {
   readonly onUse?: ((template: CodexArtifactTemplate) => void) | undefined;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const direction = textDirection(props.template.displayName);
   return (
     <View
@@ -1292,7 +1289,7 @@ function ArtifactTemplateCard(props: {
           {props.template.displayName}
         </Text>
         <Text className="text-xs text-foreground-muted">
-          {codexArtifactTemplatePresentationLabel(props.template.artifactKind)}
+          {codexArtifactTemplatePresentationLabel(props.template.artifactKind, messages)}
         </Text>
       </View>
       {props.onUse ? (
@@ -1758,6 +1755,7 @@ function RunFoldWorking(props: {
   const nowMs = toServerClock(props.environmentId, useVisibleSecondClock(true));
   const seconds = Math.floor((nowMs - Date.parse(props.startedAt)) / 1_000);
   const gt = useGT();
+  const messages = useMessages();
   return (
     <View
       className="min-h-11 min-w-0 flex-1 flex-row items-center"
@@ -1769,7 +1767,10 @@ function RunFoldWorking(props: {
         className="shrink font-t3-medium text-sm tabular-nums text-foreground-muted"
       >
         {gt("Working for {duration}", {
-          duration: seconds > 0 ? formatDuration(seconds * 1_000) : "0s",
+          duration:
+            seconds > 0
+              ? formatDuration(seconds * 1_000, messages)
+              : gt("{seconds}s", { seconds: 0 }),
         })}
       </Text>
     </View>
@@ -2799,7 +2800,8 @@ function UserMessageContent(props: UserMessageContentProps) {
 function UserMessageMarkdownContent(props: UserMessageContentProps) {
   const text = props.text;
   const models = useModelMentions(props.environmentId, text);
-  const segments = parseReviewCommentMessageSegments(text);
+  const messages = useMessages();
+  const segments = parseReviewCommentMessageSegments(text, messages);
   const hasReviewComment = segments.some((segment) => segment.kind === "review-comment");
   const contextClipboardFragment = props.context
     ? (encodeComposerContextFragment({
@@ -2897,6 +2899,7 @@ function useThreadFeedPresentation(
   revealedMessageId: MessageId | null,
 ) {
   const [feedCache] = useState(createThreadFeedCache);
+  const messages = useMessages();
   return appendPendingThreadMessages(
     deriveThreadFeedPresentation(
       props.feed,
@@ -2911,6 +2914,7 @@ function useThreadFeedPresentation(
       props.runlessWorkActive ?? false,
       feedCache,
       { toolCallVisibility: props.toolCallVisibility ?? "showAll", revealedMessageId },
+      messages,
     ),
     props.feed,
     props.queuedMessages,
@@ -3625,8 +3629,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const reviewCommentColors = useReviewCommentColors();
   const unsettledTurnId = threadFeedRunIsUnsettled(props.latestRun) ? props.latestRun.runId : null;
   const compactionLabelsByEntryId = useMemo(
-    () => threadFeedCompactionLabels(props.feed),
-    [props.feed],
+    () => threadFeedCompactionLabels(props.feed, m),
+    [props.feed, m],
   );
   // LegendList does not invalidate visible rows when only the renderItem closure changes.
   // Include turn completion so unchanged message rows reveal their footer and spacing

@@ -1,8 +1,10 @@
 import * as Dialog from "../../components/ui/Dialog";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { useGT } from "gt-react-native";
+import { m } from "../../i18n/messages";
 import { useEffect, useRef } from "react";
 
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
@@ -51,7 +53,7 @@ export function useFileChipShare(
         if (!request.signal.aborted) {
           Dialog.alert(
             gt("Could not share file"),
-            error instanceof Error ? error.message : gt("Try again."),
+            errorDisplayMessage(error, m) ?? gt("Try again."),
           );
         }
       })

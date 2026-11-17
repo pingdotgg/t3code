@@ -1,4 +1,5 @@
 import * as Dialog from "../components/ui/Dialog";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { msg } from "gt-react-native";
 import { useRef } from "react";
 import { m } from "../i18n/messages";
@@ -121,7 +122,7 @@ export function useComposerAttachmentActions(props: {
       } catch (error) {
         Dialog.alert(
           m(msg("Could not paste images")),
-          error instanceof Error ? error.message : m(msg("Try again.")),
+          errorDisplayMessage(error, m) ?? m(msg("Try again.")),
         );
       }
     });
@@ -152,7 +153,7 @@ export function useComposerAttachmentActions(props: {
       } catch (error) {
         Dialog.alert(
           m(msg("Could not attach pasted text")),
-          error instanceof Error ? error.message : m(msg("Try again.")),
+          errorDisplayMessage(error, m) ?? m(msg("Try again.")),
         );
       }
     });

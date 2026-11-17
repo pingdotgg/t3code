@@ -1,4 +1,5 @@
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
@@ -51,7 +52,7 @@ export function selectThreadModel(
         m(msg("Could not apply model selection")),
         m(
           msg("This model pick was not saved. {detail}", {
-            detail: error instanceof Error ? error.message : m(msg("Try again.")),
+            detail: errorDisplayMessage(error, m) ?? m(msg("Try again.")),
           }),
         ),
       );

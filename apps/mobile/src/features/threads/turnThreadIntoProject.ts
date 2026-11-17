@@ -3,6 +3,7 @@ import {
   runAtomCommand,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import * as Haptics from "expo-haptics";
@@ -44,6 +45,6 @@ export async function turnThreadIntoProject(thread: EnvironmentThreadShell): Pro
   );
   if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
     const error = squashAtomCommandFailure(result);
-    Dialog.alert(title, error instanceof Error ? error.message : m(msg("Try again.")));
+    Dialog.alert(title, errorDisplayMessage(error, m) ?? m(msg("Try again.")));
   }
 }

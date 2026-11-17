@@ -1,6 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import { secondTick } from "@t3tools/client-runtime/clock";
-import { type VcsActionState, type VcsActionTarget } from "@t3tools/client-runtime/state/vcs";
+import {
+  vcsActionLabelText,
+  type VcsActionState,
+  type VcsActionTarget,
+} from "@t3tools/client-runtime/state/vcs";
 import { Atom } from "effect/reactivity";
 import * as Haptics from "expo-haptics";
 import { msg, useMessages } from "gt-react-native";
@@ -111,7 +115,7 @@ export function useGitActionProgress(target: VcsActionTarget): GitActionProgress
       );
     return {
       phase: "running",
-      label: actionState.currentLabel,
+      label: vcsActionLabelText(actionState, resolve),
       description,
     };
   }

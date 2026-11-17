@@ -18,6 +18,7 @@ import {
 } from "@t3tools/client-runtime/state/vcs";
 import { useNavigation } from "@react-navigation/native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTerm } from "../../lib/changeRequestTerm";
 
 import { m, type MessageResolver } from "../../i18n/messages";
 import { useEnvironmentScope } from "../../state/session";
@@ -28,7 +29,7 @@ import {
   projectScriptMenuIcon,
   type TerminalMenuSession,
 } from "../terminal/terminalMenu";
-import { projectScriptMenuLabel } from "@t3tools/shared/projectScripts";
+import { projectScriptMenuLabel } from "@t3tools/shared/projectScriptsCopy";
 
 function truncateMiddle(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
@@ -54,15 +55,33 @@ function compactMenuStatus(gitStatus: VcsStatusResult | null, resolve: MessageRe
 
   const parts: string[] = [];
   if (gitStatus.hasWorkingTreeChanges) {
-    parts.push(resolve(msg("{count} changed", { count: gitStatus.workingTree.files.length })));
+    parts.push(
+      resolve(
+        msg("{count, plural, one {{count} changed} other {{count} changed}}", {
+          count: gitStatus.workingTree.files.length,
+        }),
+      ),
+    );
   } else if (gitStatus.aheadCount === 0 && gitStatus.behindCount === 0) {
     parts.push(resolve(msg("Clean", { $context: "git working tree has no changes" })));
   }
   if (gitStatus.aheadCount > 0) {
-    parts.push(resolve(msg("{count} ahead", { count: gitStatus.aheadCount })));
+    parts.push(
+      resolve(
+        msg("{count, plural, one {{count} ahead} other {{count} ahead}}", {
+          count: gitStatus.aheadCount,
+        }),
+      ),
+    );
   }
   if (gitStatus.behindCount > 0) {
-    parts.push(resolve(msg("{count} behind", { count: gitStatus.behindCount })));
+    parts.push(
+      resolve(
+        msg("{count, plural, one {{count} behind} other {{count} behind}}", {
+          count: gitStatus.behindCount,
+        }),
+      ),
+    );
   }
   if (gitStatus.pr?.state === "open") {
     const { shortLabel } = sourceControlClients.get(
@@ -159,21 +178,33 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   })();
 
   const openExistingPr = async () => {
-    const { shortLabel, singular } = sourceControlClients.get(
-      gitStatus?.sourceControlProvider?.kind,
-    ).changeRequest;
+    const term = changeRequestTerm(
+      sourceControlClients.get(gitStatus?.sourceControlProvider?.kind).changeRequest,
+    );
     const prUrl = gitStatus?.pr?.state === "open" ? gitStatus.pr.url : null;
     if (!prUrl) {
       Dialog.alert(
-        gt("No open {shortLabel}", { shortLabel }),
-        gt("This branch does not have an open {singular}.", { singular }),
+        gt(
+          "{term, select, mergeRequest {No open MR} changeRequest {No open change request} other {No open PR}}",
+          { term },
+        ),
+        gt(
+          "{term, select, mergeRequest {This branch does not have an open merge request.} changeRequest {This branch does not have an open change request.} other {This branch does not have an open pull request.}}",
+          { term },
+        ),
       );
       return;
     }
     if (!(await openPullRequest(prUrl))) {
       Dialog.alert(
-        gt("Unable to open {shortLabel}", { shortLabel }),
-        gt("The {singular} could not be opened.", { singular }),
+        gt(
+          "{term, select, mergeRequest {Unable to open MR} changeRequest {Unable to open change request} other {Unable to open PR}}",
+          { term },
+        ),
+        gt(
+          "{term, select, mergeRequest {The merge request could not be opened.} changeRequest {The change request could not be opened.} other {The pull request could not be opened.}}",
+          { term },
+        ),
       );
     }
   };
@@ -272,7 +303,7 @@ export function threadTerminalMenu(
       ...(props.projectScripts.length > 0
         ? props.projectScripts.map((script) => ({
             id: `script-${script.id}`,
-            title: projectScriptMenuLabel(script),
+            title: projectScriptMenuLabel(script, resolve),
             icon: projectScriptMenuIcon(script.icon),
             subtitle: script.command,
             disabled: !props.canOperateTerminal,

@@ -1,5 +1,6 @@
 import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTerm } from "../../lib/changeRequestTerm";
 import { resolveSendEnvMode } from "@t3tools/shared/projectSettings";
 import { msg } from "gt-react-native";
 
@@ -91,10 +92,13 @@ export function resolveNewTaskBranchLabel(
     const parsed = sourceControlClients.parseChangeRequestUrl(input.pullRequestReference);
     if (parsed)
       return resolve(
-        msg("From {shortLabel} #{number}", {
-          shortLabel: parsed.definition.changeRequest.shortLabel,
-          number: parsed.link.number,
-        }),
+        msg(
+          "{term, select, mergeRequest {From MR #{number}} changeRequest {From change request #{number}} other {From PR #{number}}}",
+          {
+            term: changeRequestTerm(parsed.definition.changeRequest),
+            number: parsed.link.number,
+          },
+        ),
       );
   }
   if (!input.branchName) {

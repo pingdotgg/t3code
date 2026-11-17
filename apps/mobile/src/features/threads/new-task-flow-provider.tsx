@@ -1,5 +1,6 @@
 import { ActiveNewTaskContext } from "../../state/active-new-task";
-import { msg } from "gt-react-native";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { msg, useMessages } from "gt-react-native";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { useNowMinuteMs } from "../../lib/clock";
 import { m, type MessageResolver } from "../../i18n/messages";
@@ -231,16 +232,20 @@ export function NewTaskFlowProvider(
   }>,
 ) {
   const projects = useProjects();
+  const messages = useMessages();
   const threads = useThreadShells();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const groupingSettings = useMobileProjectGroupingSettings();
 
   const projectScopes = sortHomeProjectScopes({
-    scopes: buildHomeProjectScopes({
-      projects,
-      environmentId: null,
-      projectGroupingMode: groupingSettings.sidebarProjectGroupingMode,
-    }),
+    scopes: buildHomeProjectScopes(
+      {
+        projects,
+        environmentId: null,
+        projectGroupingMode: groupingSettings.sidebarProjectGroupingMode,
+      },
+      messages,
+    ),
     threads,
     pendingTasks: [],
     projectSortOrder: "updated_at",
@@ -644,11 +649,10 @@ export function NewTaskFlowProvider(
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
         m(msg("Could not switch machine")),
-        error instanceof Error
-          ? error.message
-          : triage?._tag === "Failure"
+        errorDisplayMessage(error, m) ??
+          (triage?._tag === "Failure"
             ? m(msg("The server could not prepare triage."))
-            : m(msg("The folder for threads without a project could not be created.")),
+            : m(msg("The folder for threads without a project could not be created."))),
       );
     }
     return false;

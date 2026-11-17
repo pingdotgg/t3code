@@ -1,4 +1,5 @@
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { AsyncResult } from "effect/reactivity";
 import * as Dialog from "../../components/ui/Dialog";
 import { TextInputWrapper } from "expo-paste-input";
@@ -15,6 +16,7 @@ import { pickComposerFiles, pickComposerMedia } from "../../lib/composerImages";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useNavigation } from "@react-navigation/native";
 import { useGT } from "gt-react-native";
+import { m } from "../../i18n/messages";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/ui/VideoPreviewModal";
 import { useServerConfigs } from "../../state/entities";
@@ -123,7 +125,7 @@ export function QuestionAttachments(props: {
       .catch((error) =>
         Dialog.alert(
           gt("Could not paste image"),
-          error instanceof Error ? error.message : gt("Try again."),
+          errorDisplayMessage(error, m) ?? gt("Try again."),
         ),
       )
       .finally(() => changeQuestionAttachmentPreparation(key, -1));
@@ -170,10 +172,7 @@ export function QuestionAttachments(props: {
     changeQuestionAttachmentPreparation(key, -1);
     if (AsyncResult.isFailure(picked)) {
       const error = squashAtomCommandFailure(picked);
-      Dialog.alert(
-        gt("Could not attach file"),
-        error instanceof Error ? error.message : gt("Try again."),
-      );
+      Dialog.alert(gt("Could not attach file"), errorDisplayMessage(error, m) ?? gt("Try again."));
     }
   };
   return (

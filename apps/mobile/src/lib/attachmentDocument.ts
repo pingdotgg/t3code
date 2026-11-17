@@ -1,4 +1,5 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Dialog from "../components/ui/Dialog";
@@ -76,7 +77,7 @@ const attachmentTextAtom = Atom.family((key: AttachmentTextKey) =>
       try: (signal) => readAttachmentText(key, signal),
       catch: (cause) =>
         new AttachmentTextReadError({
-          message: cause instanceof Error ? cause.message : m(msg("Could not read this file.")),
+          message: errorDisplayMessage(cause, m) ?? m(msg("Could not read this file.")),
           cause,
         }),
     }),
@@ -173,7 +174,7 @@ export function useAttachmentDocument(input: {
       const cause = squashAtomCommandFailure(result);
       Dialog.alert(
         m(msg("Could not share file")),
-        cause instanceof Error ? cause.message : m(msg("Please try again.")),
+        errorDisplayMessage(cause, m) ?? m(msg("Please try again.")),
       );
     }
   };

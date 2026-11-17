@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { videoMimeType } from "@t3tools/shared/video";
 import * as Effect from "effect/Effect";
 import { msg } from "gt-react-native";
@@ -106,8 +107,7 @@ const localAttachmentPreviewFamily = Atom.family((key: LocalAttachmentPreviewKey
         try: (signal) => loadLocalAttachmentPreview(key.attachment, signal),
         catch: (cause) =>
           new LocalAttachmentPreviewLoadError({
-            message:
-              cause instanceof Error ? cause.message : m(msg("The local file is unavailable.")),
+            message: errorDisplayMessage(cause, m) ?? m(msg("The local file is unavailable.")),
             cause,
           }),
       }).pipe(

@@ -1,4 +1,6 @@
 import { isDraftThreadRoute } from "./thread-route-state";
+import { connectionErrorText } from "@t3tools/client-runtime/connection";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -93,7 +95,15 @@ function deriveProjectEmptyState(
           ? resolve(msg("Client not supported"))
           : resolve(msg("Environment unavailable")),
       detail:
-        catalogState.connectionError ??
+        connectionErrorText(
+          {
+            error: catalogState.connectionError,
+            ...(catalogState.i18nConnectionError === undefined
+              ? {}
+              : { i18nError: catalogState.i18nConnectionError }),
+          },
+          resolve,
+        ) ??
         resolve(
           msg(
             "The saved environment is offline. Check the URL or start the environment, then retry.",
@@ -242,9 +252,8 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       } catch (error) {
         Dialog.alert(
           gt("Could not change project"),
-          error instanceof Error
-            ? error.message
-            : gt("The shared content reservation could not be updated."),
+          errorDisplayMessage(error, m) ??
+            gt("The shared content reservation could not be updated."),
         );
         return;
       }
@@ -302,9 +311,8 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         const error = squashAtomCommandFailure(result);
         Dialog.alert(
           gt("Could not start without a project"),
-          error instanceof Error
-            ? error.message
-            : gt("The folder for threads without a project could not be created."),
+          errorDisplayMessage(error, m) ??
+            gt("The folder for threads without a project could not be created."),
         );
       }
       return;

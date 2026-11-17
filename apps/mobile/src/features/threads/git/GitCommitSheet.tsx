@@ -118,7 +118,11 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           </View>
           {allFiles.length > 0 ? (
             <Button
-              label={allSelected ? gt("Deselect all") : gt("Select all")}
+              label={
+                allSelected
+                  ? gt("Deselect all")
+                  : gt("Select all", { $context: "selects every changed file to commit" })
+              }
               tone="text"
               onPress={() =>
                 setExcludedFiles(

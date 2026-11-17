@@ -2,6 +2,7 @@ import {
   pullRequestLinkProject,
   resolveLinkPullRequestInput,
 } from "@t3tools/client-runtime/pull-request-link-input";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -15,10 +16,8 @@ import {
   canStartThreadPullRequestWatch,
   planThreadPullRequestMutation,
 } from "@t3tools/client-runtime/thread-pull-request-compatibility";
-import {
-  capitalizeTerm,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTerm } from "../../lib/changeRequestTerm";
 import { AuthOrchestrationOperateScope, type ThreadPullRequestLink } from "@t3tools/contracts";
 import * as Clipboard from "expo-clipboard";
 import { useGT } from "gt-react-native";
@@ -61,7 +60,7 @@ export function useLinkedPullRequestActions(input: {
     const result = await pending;
     if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
     const cause = squashAtomCommandFailure(result);
-    Dialog.alert(failureTitle, cause instanceof Error ? cause.message : gt("Try again."));
+    Dialog.alert(failureTitle, errorDisplayMessage(cause, m) ?? gt("Try again."));
   };
 
   const setLinked = (
@@ -79,8 +78,14 @@ export function useLinkedPullRequestActions(input: {
     const environmentId = thread.environmentId;
     void run(
       linked
-        ? gt("Couldn't link this {singular}", { singular: terminology.singular })
-        : gt("Couldn't unlink this {singular}", { singular: terminology.singular }),
+        ? gt(
+            "{term, select, mergeRequest {Couldn't link this merge request} changeRequest {Couldn't link this change request} other {Couldn't link this pull request}}",
+            { term: changeRequestTerm(terminology) },
+          )
+        : gt(
+            "{term, select, mergeRequest {Couldn't unlink this merge request} changeRequest {Couldn't unlink this change request} other {Couldn't unlink this pull request}}",
+            { term: changeRequestTerm(terminology) },
+          ),
       mutation.type === "thread.pull-request.link"
         ? link({ environmentId, input: mutation.input })
         : unlink({ environmentId, input: mutation.input }),
@@ -88,13 +93,20 @@ export function useLinkedPullRequestActions(input: {
   };
 
   const promptLink = () => {
-    const { singular } = terminology;
+    const term = changeRequestTerm(terminology);
     Dialog.prompt({
-      title: gt("Link {singular}", { singular }),
-      message: gt("Paste a {singular} URL, or enter 123 / #123 for this thread's repository.", {
-        singular,
-      }),
-      placeholder: gt("{term} URL or #42", { term: capitalizeTerm(singular) }),
+      title: gt(
+        "{term, select, mergeRequest {Link merge request} changeRequest {Link change request} other {Link pull request}}",
+        { term },
+      ),
+      message: gt(
+        "{term, select, mergeRequest {Paste a merge request URL, or enter 123 / #123 for this thread's repository.} changeRequest {Paste a change request URL, or enter 123 / #123 for this thread's repository.} other {Paste a pull request URL, or enter 123 / #123 for this thread's repository.}}",
+        { term },
+      ),
+      placeholder: gt(
+        "{term, select, mergeRequest {Merge request URL or #42} changeRequest {Change request URL or #42} other {Pull request URL or #42}}",
+        { term },
+      ),
       initialValue: "",
       confirmText: gt("Link", { $context: "verb, confirms linking a pull request" }),
       onConfirm: (reference) => {
@@ -108,13 +120,25 @@ export function useLinkedPullRequestActions(input: {
         );
         if (resolved === null) {
           Dialog.alert(
-            gt("Couldn't link this {singular}", { singular }),
-            gt("Use a {singular} URL, 123, or #123.", { singular }),
+            gt(
+              "{term, select, mergeRequest {Couldn't link this merge request} changeRequest {Couldn't link this change request} other {Couldn't link this pull request}}",
+              { term },
+            ),
+            gt(
+              "{term, select, mergeRequest {Use a merge request URL, 123, or #123.} changeRequest {Use a change request URL, 123, or #123.} other {Use a pull request URL, 123, or #123.}}",
+              { term },
+            ),
           );
           return;
         }
         if ("error" in resolved) {
-          Dialog.alert(gt("Couldn't link this {singular}", { singular }), resolved.error);
+          Dialog.alert(
+            gt(
+              "{term, select, mergeRequest {Couldn't link this merge request} changeRequest {Couldn't link this change request} other {Couldn't link this pull request}}",
+              { term },
+            ),
+            resolved.error,
+          );
           return;
         }
         setLinked(resolved.link, true);
@@ -155,13 +179,21 @@ export function useLinkedPullRequestActions(input: {
     else if (action === "browser")
       void tryOpenExternalUrl(link.url, "pull-request").then((opened) => {
         if (!opened) {
-          const { shortLabel, singular } = (
-            sourceControlClients.findByChangeRequestUrl(link.url) ??
-            sourceControlClients.get(undefined)
-          ).changeRequest;
+          const term = changeRequestTerm(
+            (
+              sourceControlClients.findByChangeRequestUrl(link.url) ??
+              sourceControlClients.get(undefined)
+            ).changeRequest,
+          );
           Dialog.alert(
-            gt("Unable to open {shortLabel}", { shortLabel }),
-            gt("The {singular} could not be opened.", { singular }),
+            gt(
+              "{term, select, mergeRequest {Unable to open MR} changeRequest {Unable to open change request} other {Unable to open PR}}",
+              { term },
+            ),
+            gt(
+              "{term, select, mergeRequest {The merge request could not be opened.} changeRequest {The change request could not be opened.} other {The pull request could not be opened.}}",
+              { term },
+            ),
           );
         }
       });

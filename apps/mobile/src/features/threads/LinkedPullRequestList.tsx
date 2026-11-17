@@ -1,8 +1,6 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import {
-  capitalizeTerm,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTerm } from "../../lib/changeRequestTerm";
 import {
   pullRequestListLines,
   resolveThreadPullRequestChains,
@@ -86,19 +84,23 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
   const watching = open && link.watch !== undefined;
   const additions = snapshot?.additions ?? 0;
   const deletions = snapshot?.deletions ?? 0;
-  const { shortLabel, singular } = (
-    sourceControlClients.findByChangeRequestUrl(link.url) ?? sourceControlClients.get(undefined)
-  ).changeRequest;
+  const term = changeRequestTerm(
+    (sourceControlClients.findByChangeRequestUrl(link.url) ?? sourceControlClients.get(undefined))
+      .changeRequest,
+  );
   const metaLineHeight = useScaledTextRole("label").lineHeight * useWindowDimensions().fontScale;
   const row = (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={[
-        gt("{kind} {number}, {title}", {
-          kind: capitalizeTerm(singular),
-          number: link.number,
-          title: snapshot?.title ?? gt("waiting for host state"),
-        }),
+        gt(
+          "{term, select, mergeRequest {Merge request {number}, {title}} changeRequest {Change request {number}, {title}} other {Pull request {number}, {title}}}",
+          {
+            term,
+            number: link.number,
+            title: snapshot?.title ?? gt("waiting for host state"),
+          },
+        ),
         status?.label,
         conflict === null || snapshot === null
           ? undefined
@@ -106,7 +108,11 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
             ? gt("conflicts with {branch}", { branch: snapshot.baseBranch })
             : gt("has conflicts"),
         link.repository,
-        stack ? gt("stack of {size}", { size: stack.size }) : undefined,
+        stack
+          ? gt("{size, plural, one {stack of {size}} other {stack of {size}}}", {
+              size: stack.size,
+            })
+          : undefined,
         watching ? gt("watching") : undefined,
         checks === null
           ? undefined
@@ -124,8 +130,14 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
         void props.openPullRequest(link.url).then((opened) => {
           if (!opened)
             Dialog.alert(
-              gt("Unable to open {shortLabel}", { shortLabel }),
-              gt("The {singular} could not be opened.", { singular }),
+              gt(
+                "{term, select, mergeRequest {Unable to open MR} changeRequest {Unable to open change request} other {Unable to open PR}}",
+                { term },
+              ),
+              gt(
+                "{term, select, mergeRequest {The merge request could not be opened.} changeRequest {The change request could not be opened.} other {The pull request could not be opened.}}",
+                { term },
+              ),
             );
         });
       }}

@@ -39,7 +39,8 @@ type AgentTiming = Pick<OrchestrationV2Subagent, "status" | "startedAt" | "compl
 function SubagentElapsed({ agents }: { readonly agents: ReadonlyArray<AgentTiming> }) {
   const live = agents.some((agent) => isActiveSubagentStatus(agent.status));
   const nowMs = useVisibleSecondClock(live);
-  const elapsed = subagentCardElapsed(agents, nowMs);
+  const messages = useMessages();
+  const elapsed = subagentCardElapsed(agents, nowMs, messages);
   return elapsed ? (
     <Text className="shrink-0 text-xs tabular-nums text-foreground-muted">{elapsed}</Text>
   ) : null;

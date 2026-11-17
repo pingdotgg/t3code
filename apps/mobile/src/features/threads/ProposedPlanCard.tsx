@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -6,6 +7,7 @@ import {
 import type { EnvironmentId } from "@t3tools/contracts";
 import { proposedPlanTitle, stripDisplayedPlanMarkdown } from "@t3tools/shared/proposedPlanText";
 import { useGT } from "gt-react-native";
+import { m } from "../../i18n/messages";
 import { useRef, useState, type ReactNode } from "react";
 import { View } from "react-native";
 
@@ -51,10 +53,7 @@ export function ProposedPlanCard(props: {
       Dialog.alert(gt("Plan saved to workspace"), result.value.relativePath);
     } else if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
-      Dialog.alert(
-        gt("Could not save plan"),
-        error instanceof Error ? error.message : String(error),
-      );
+      Dialog.alert(gt("Could not save plan"), errorDisplayMessage(error, m) ?? String(error));
     }
   };
 
