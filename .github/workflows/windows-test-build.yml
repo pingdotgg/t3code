@@ -34,6 +34,17 @@ jobs:
       - name: Build Windows x64 installer
         run: vp run dist:desktop:win:x64
 
+      - name: Diagnose staged Windows payload
+        if: always()
+        shell: pwsh
+        run: |
+          $dirs = Get-ChildItem -Path . -Directory -Recurse -Filter '*-unpacked' -ErrorAction SilentlyContinue
+          foreach ($dir in $dirs) {
+            $files = @(Get-ChildItem -LiteralPath $dir.FullName -File -Recurse -ErrorAction SilentlyContinue)
+            Write-Host "PAYLOAD_DIAGNOSTIC directory=$($dir.FullName) file_count=$($files.Count)"
+            $files | ForEach-Object { Write-Host "PAYLOAD_FILE $($_.FullName.Substring($dir.FullName.Length + 1)) [$($_.Length) bytes]" }
+          }
+
       - name: Upload installer
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
