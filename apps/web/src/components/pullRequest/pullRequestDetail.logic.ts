@@ -916,6 +916,16 @@ function terminologyForUrl(url: string): ChangeRequestTerminology {
     .changeRequest;
 }
 
+function reviewThreadText(thread: PullRequestReviewThread): string {
+  return thread.comments
+    .flatMap((comment) => {
+      const body = readableBody(comment.body);
+      return body === null ? [] : [`${comment.author?.login ?? "ghost"}: ${body}`];
+    })
+    .join("\n")
+    .trim();
+}
+
 function reviewThreadContext(
   thread: PullRequestReviewThread,
   pullRequestNumber: number,
@@ -931,14 +941,7 @@ function reviewThreadContext(
     rangeLabel:
       thread.line === null ? "file" : `L${thread.line}${thread.side === "left" ? " (before)" : ""}`,
     // Strip bot bookkeeping comments before bounding finding text.
-    text: bounded(
-      thread.comments
-        .flatMap((comment) => {
-          const body = readableBody(comment.body);
-          return body === null ? [] : [`${comment.author?.login ?? "ghost"}: ${body}`];
-        })
-        .join("\n"),
-    ),
+    text: bounded(reviewThreadText(thread)),
     diff: "",
     fenceLanguage: inferReviewCommentFenceLanguage(thread.path),
   };
@@ -1258,15 +1261,24 @@ export type PullRequestChatSubject = Extract<PullRequestFinding, { kind: "thread
  * URL because host ids are only unique within a repository. Null when there are no words in it.
  */
 export function buildPullRequestCommentContext(
-  pullRequest: { readonly number: number; readonly url: string },
+  pullRequest: {
+    readonly number: number;
+    readonly url: string;
+    readonly reviewThreads: ReadonlyArray<PullRequestReviewThread>;
+  },
   subject: PullRequestChatSubject,
 ): ReviewCommentContext | null {
   const pullRequestNumber = pullRequest.number;
+  // Unlike a batch fix, one remark brought in to talk about travels whole.
   if (subject.kind === "thread") {
-    const context = reviewThreadContext(subject.thread, pullRequestNumber);
-    return context.text === ""
+    const text = reviewThreadText(subject.thread);
+    return text === ""
       ? null
-      : { ...context, id: `pr-comment:${pullRequest.url}:thread:${subject.thread.id}` };
+      : {
+          ...reviewThreadContext(subject.thread, pullRequestNumber),
+          id: `pr-comment:${pullRequest.url}:thread:${subject.thread.id}`,
+          text,
+        };
   }
   const comment = subject.comment;
   const body = readableBody(comment.body);
@@ -1281,12 +1293,41 @@ export function buildPullRequestCommentContext(
     startIndex: 0,
     endIndex: 0,
     rangeLabel: "comment",
-    text: bounded(`${author}: ${body}`),
+    text: [
+      `${author}: ${body}`.trim(),
+      ...reviewLineComments(comment, pullRequest.reviewThreads),
+    ].join("\n\n"),
     diff: "",
     ...(comment.path === null
       ? {}
       : { fenceLanguage: inferReviewCommentFenceLanguage(comment.path) }),
   };
+}
+
+/** A GitHub review summary's link and the line comments it posted, which live in other threads. */
+function reviewLineComments(
+  comment: PullRequestComment,
+  reviewThreads: ReadonlyArray<PullRequestReviewThread>,
+): ReadonlyArray<string> {
+  const anchor = comment.kind === "review" ? parsePullRequestAnchor(comment.url) : null;
+  // Only GitHub links line comments to their review, so no other host can say it posted none.
+  if (anchor?.kind !== "timeline" || !/^pullrequestreview-\d+$/i.test(anchor.anchor)) return [];
+  const posted = reviewThreads.flatMap((thread) =>
+    thread.comments.flatMap((lineComment) => {
+      const body = readableBody(lineComment.body);
+      if (body === null || !pullRequestAnchorMatchesUrl(anchor.anchor, lineComment.reviewUrl)) {
+        return [];
+      }
+      const line = thread.line === null ? "" : ` line ${thread.line}`;
+      return [`${lineComment.author?.login ?? "ghost"} on \`${thread.path}\`${line}: ${body}`];
+    }),
+  );
+  return [
+    `Review: ${comment.url}`,
+    posted.length === 0
+      ? "This review posted no line comments."
+      : `Line comments in this review:\n\n${posted.join("\n\n")}`,
+  ];
 }
 
 const ANSWER_INSTRUCTIONS = [

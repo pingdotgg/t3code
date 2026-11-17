@@ -1109,7 +1109,11 @@ describe("asking about a change rather than working on it", () => {
 });
 
 describe("adding a remark to the chat", () => {
-  const pullRequest = { number: 42, url: "https://github.com/pingdotgg/t3code/pull/42" };
+  const pullRequest = {
+    number: 42,
+    url: "https://github.com/pingdotgg/t3code/pull/42",
+    reviewThreads: [],
+  };
   const remark = (id: string, body: string): PullRequestComment => ({
     id,
     kind: "issue-comment",
@@ -1139,6 +1143,60 @@ describe("adding a remark to the chat", () => {
     });
 
     expect(context?.text).toBe(`octocat: ${summary.trim()}`);
+  });
+
+  it("gives a GitHub review summary its link and the line comments it posted", () => {
+    const url = "https://github.com/pingdotgg/t3code/pull/42";
+    const review: PullRequestComment = {
+      ...remark("r9", "One misplaced doc comment inline."),
+      kind: "review",
+      url: `${url}#pullrequestreview-9`,
+      reviewState: "COMMENTED",
+    };
+    const lineComment = (id: string, reviewUrl: string, body: string) => ({
+      id,
+      author: { login: "octocat", name: null, avatarUrl: null },
+      body,
+      createdAt: "2026-07-03T00:00:00Z",
+      url: `${url}#discussion_${id}`,
+      reviewUrl,
+    });
+    const reviewThreads = [
+      {
+        id: "t1",
+        path: "src/main.rs",
+        line: 12,
+        side: "right" as const,
+        isResolved: false,
+        isOutdated: false,
+        comments: [
+          lineComment("r1", `${url}#pullrequestreview-9`, "This doc comment belongs below."),
+          lineComment("r2", `${url}#pullrequestreview-10`, "Moved."),
+        ],
+      },
+    ];
+
+    expect(
+      buildPullRequestCommentContext(
+        { ...pullRequest, reviewThreads },
+        { kind: "comment", comment: review },
+      )?.text,
+    ).toBe(
+      [
+        "octocat: One misplaced doc comment inline.",
+        `Review: ${url}#pullrequestreview-9`,
+        "Line comments in this review:\n\noctocat on `src/main.rs` line 12: This doc comment belongs below.",
+      ].join("\n\n"),
+    );
+    expect(
+      buildPullRequestCommentContext(pullRequest, { kind: "comment", comment: review })?.text,
+    ).toBe(
+      [
+        "octocat: One misplaced doc comment inline.",
+        `Review: ${url}#pullrequestreview-9`,
+        "This review posted no line comments.",
+      ].join("\n\n"),
+    );
   });
 
   it("keeps every added remark when a later hand-off lands", () => {
@@ -1233,7 +1291,7 @@ describe("adding a remark to the chat", () => {
   });
 
   it("keeps remarks from two repositories apart when their host ids match", () => {
-    const other = { number: 42, url: "https://github.com/octocat/fork/pull/42" };
+    const other = { ...pullRequest, url: "https://github.com/octocat/fork/pull/42" };
     const ids = [pullRequest, other].map(
       (target) =>
         buildPullRequestCommentContext(target, { kind: "comment", comment: remark("c1", "why?") })
