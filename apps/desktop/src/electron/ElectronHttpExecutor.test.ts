@@ -14,6 +14,14 @@ type FakeRequest = NodeEvents.EventEmitter & { abort: () => void };
 
 // electron-updater is CommonJS, so a spy goes on the module object its require() returns.
 const fsModule = NodeModule.createRequire(import.meta.url)("node:fs") as typeof NodeFS;
+const openForReading = fsModule.createReadStream;
+// electron-updater's own dependency, which apps/desktop does not declare.
+const { CancellationToken, CancellationError } = NodeModule.createRequire(
+  NodeModule.createRequire(import.meta.url).resolve("electron-updater"),
+)("builder-util-runtime") as {
+  CancellationToken: new () => DownloadOptions["cancellationToken"];
+  CancellationError: new () => Error;
+};
 const RELEASE = "hello world";
 // Larger than a file stream's buffer, so its "drain" marks a write of it as committed to disk.
 const PREFIX = "a".repeat(1 << 20);
@@ -36,6 +44,7 @@ function startDownload(onDisk: string, release = RELEASE) {
   const destination = NodePath.join(dir, "update.AppImage");
   NodeFS.writeFileSync(destination, onDisk);
   const createWriteStream = vi.spyOn(fsModule, "createWriteStream");
+  const createReadStream = vi.spyOn(fsModule, "createReadStream");
   const created = new NodeEvents.EventEmitter();
   let requestCount = 0;
   const executor = new ElectronHttpExecutor();
@@ -46,16 +55,7 @@ function startDownload(onDisk: string, release = RELEASE) {
     created.emit("request", { request, headers: options.headers });
     return request as unknown as Electron.ClientRequest;
   };
-  const cancellationToken = {
-    cancelled: false,
-    createPromise: (
-      callback: (
-        resolve: (value: unknown) => void,
-        reject: (error: Error) => void,
-        onCancel: () => void,
-      ) => void,
-    ) => new Promise((resolve, reject) => callback(resolve, reject, () => {})),
-  } as unknown as DownloadOptions["cancellationToken"];
+  const cancellationToken = new CancellationToken();
   const first = NodeEvents.EventEmitter.once(created, "request");
   const result = executor.download(new URL("https://example.com/update.AppImage"), destination, {
     cancellationToken,
@@ -94,10 +94,21 @@ function startDownload(onDisk: string, release = RELEASE) {
     nextRequest,
     stallAfterWriting,
     result,
+    cancel: () => cancellationToken.cancel(),
+    // Resolves once the file is open for its digest check, before any of it is read.
+    readOpened: () =>
+      new Promise<void>((resolve) => {
+        createReadStream.mockImplementationOnce((...args) => {
+          const stream = openForReading(...args);
+          stream.once("open", () => resolve());
+          return stream;
+        });
+      }),
     requestCount: () => requestCount,
     read: () => NodeFS.readFileSync(destination, "utf8"),
     [Symbol.dispose]: () => {
       createWriteStream.mockRestore();
+      createReadStream.mockRestore();
       NodeFS.rmSync(dir, { recursive: true, force: true });
     },
   };
@@ -188,6 +199,18 @@ describe("ElectronHttpExecutor idle timeout", () => {
 
     await expect(download.result).resolves.toBe(download.destination);
     expect(download.read()).toBe(LARGE_RELEASE);
+  });
+
+  it("fails a file past the end of the release when the caller cancels its digest check", async () => {
+    using download = startDownload("", LARGE_RELEASE);
+
+    const { request } = await download.stallAfterWriting(LARGE_RELEASE);
+    const opened = download.readOpened();
+    respond(request, 416, { "content-range": `bytes */${LARGE_RELEASE.length}` }, "");
+    await opened;
+    download.cancel();
+
+    await expect(download.result).rejects.toBeInstanceOf(CancellationError);
   });
 
   it("fails a file past the end of the release whose bytes do not match it", async () => {

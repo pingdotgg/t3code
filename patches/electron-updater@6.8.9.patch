@@ -1,8 +1,8 @@
 diff --git a/out/electronHttpExecutor.js b/out/electronHttpExecutor.js
-index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..107ad84e11134deb49712b87f54cde706ebd7d48 100644
+index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..559c2dbd7e2744905a99905e4cc450295651e055 100644
 --- a/out/electronHttpExecutor.js
 +++ b/out/electronHttpExecutor.js
-@@ -3,7 +3,28 @@ Object.defineProperty(exports, "__esModule", { value: true });
+@@ -3,7 +3,34 @@ Object.defineProperty(exports, "__esModule", { value: true });
  exports.ElectronHttpExecutor = exports.NET_SESSION_NAME = void 0;
  exports.getNetSession = getNetSession;
  const builder_util_runtime_1 = require("builder-util-runtime");
@@ -25,13 +25,19 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..107ad84e11134deb49712b87f54cde70
 +    }
 +    return options.sha2 == null ? null : new builder_util_runtime_1.DigestTransform(options.sha2, "sha256", "hex");
 +}
-+function verifyFile(destination, digest) {
-+    return stream_1.promises.pipeline((0, fs_1.createReadStream)(destination), digest, new stream_1.Writable({ write: (chunk, encoding, next) => next() }));
++function verifyFile(destination, digest, cancellationToken) {
++    return cancellationToken.createPromise((resolve, reject, onCancel) => {
++        const controller = new AbortController();
++        onCancel(() => controller.abort());
++        stream_1.promises
++            .pipeline((0, fs_1.createReadStream)(destination, { signal: controller.signal }), digest, new stream_1.Writable({ write: (chunk, encoding, next) => next() }))
++            .then(() => resolve(), reject);
++    });
 +}
  function getNetSession() {
      return require("electron").session.fromPartition(exports.NET_SESSION_NAME, {
          cache: false,
-@@ -16,26 +37,108 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
+@@ -16,26 +43,108 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
          this.cachedSession = null;
      }
      async download(url, destination, options) {
@@ -45,7 +51,7 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..107ad84e11134deb49712b87f54cde70
 +                // A 416 means the file already reaches the end of the release, so its digest decides.
 +                const digest = offset > 0 && isRangeNotSatisfiable(e) ? createDigest(options) : null;
 +                if (digest != null) {
-+                    await verifyFile(destination, digest);
++                    await verifyFile(destination, digest, options.cancellationToken);
 +                    return destination;
 +                }
 +                if (attempt >= DOWNLOAD_STALL_RETRIES || !isDownloadStall(e)) {
@@ -140,7 +146,7 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..107ad84e11134deb49712b87f54cde70
 +                                callback(null);
 +                                return;
 +                            }
-+                            verifyFile(destination, fileDigest).then(() => callback(null), callback);
++                            verifyFile(destination, fileDigest, options.cancellationToken).then(() => callback(null), callback);
 +                        });
 +                    });
                  },
@@ -148,7 +154,7 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..107ad84e11134deb49712b87f54cde70
              }, 0);
          });
      }
-@@ -61,6 +164,35 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
+@@ -61,6 +170,35 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
          }
          return request;
      }
