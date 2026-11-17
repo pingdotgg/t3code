@@ -509,15 +509,22 @@ describe("resolveProjectIconSource", () => {
     expect(resolveProjectIconSource(plain, representative)).toBe(iconed);
   });
 
-  it("shows the group's icon over a checkout's detected favicon", () => {
-    const iconed = makeProject("a", "/work/a", { projectIcon: rocket });
-    const detected = makeProject("b", "/work/b", { faviconPath: "public/favicon.ico" });
+  it("shows the group's icon over a favicon detected in every checkout", () => {
+    const favicon = "public/favicon.ico";
+    const iconed = makeProject("a", "/work/a", { projectIcon: rocket, faviconPath: favicon });
+    const detected = makeProject("b", "/work/b", { faviconPath: favicon });
     expect(resolveProjectIconSource(detected, group(iconed, detected).representative)).toBe(iconed);
   });
 
-  it("keeps a checkout's own icon", () => {
-    const iconed = makeProject("a", "/work/a", { projectIcon: rocket });
-    const own = makeProject("b", "/work/b", { projectIcon: { ...rocket, name: "turtle" } });
+  it.each([
+    ["picked icon", { projectIcon: { ...rocket, name: "turtle" } }],
+    ["picked image", { faviconPath: "brand.svg", projectIcon: null }],
+  ] as const)("keeps a checkout's own %s", (_label, overrides) => {
+    const iconed = makeProject("a", "/work/a", {
+      projectIcon: rocket,
+      faviconPath: "public/favicon.ico",
+    });
+    const own = makeProject("b", "/work/b", overrides);
     expect(resolveProjectIconSource(own, group(iconed, own).representative)).toBe(own);
   });
 
