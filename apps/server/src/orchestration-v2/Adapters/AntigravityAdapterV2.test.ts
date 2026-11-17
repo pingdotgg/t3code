@@ -1,10 +1,13 @@
+import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   ChatFileAttachment,
+  EnvironmentId,
   MessageId,
   NodeId,
+  OrchestratorMcpFailure,
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
@@ -25,7 +28,10 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { Tool, Toolkit } from "effect/ai";
+import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -35,6 +41,12 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import * as McpHttpServer from "../../mcp/McpHttpServer.ts";
+import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
+import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
+import * as McpToolAccess from "../../mcp/McpToolAccess.ts";
+import * as McpToolAccessTestkit from "../../mcp/McpToolAccess.testkit.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
 import { normalizeAntigravitySessionUpdate } from "../../provider/acp/AntigravityProtocol.ts";
 import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../../provider/antigravityAuthSupport.ts";
@@ -153,11 +165,6 @@ describe("AntigravityAdapterV2 flavor", () => {
     assert.deepEqual(question?.respond({ interaction_2: "opt-dev" }), {
       outcome: { outcome: "selected", optionId: "opt-dev" },
     });
-  });
-
-  it("defers T3 MCP tools over HTTP so Antigravity ACP stays under its eager schema cap", () => {
-    assert.strictEqual(flavor.mcpOverHttp, true);
-    assert.strictEqual(flavor.deferMcpTools, true);
   });
 });
 
@@ -318,6 +325,184 @@ describe("AntigravityAdapterV2 harness recovery", () => {
 
   it.live("resumes in a fresh process when the native failure arrives after end_turn", () =>
     recoverHarnessFailure("after-end-turn", ["completed"]),
+  );
+});
+
+describe("AntigravityAdapterV2 MCP exposure", () => {
+  it.live(
+    "configures deferred HTTP MCP exposure through the shared adapter so optional T3 tools stay callable via tool_search",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const path = yield* Path.Path;
+          const crypto = yield* SecureRandom.SecureRandom;
+          const mockAgentPath = yield* path.fromFileUrl(
+            new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+          );
+          const instanceId = ProviderInstanceId.make("antigravity-mcp-exposure-test");
+          const threadId = ThreadId.make("thread-antigravity-mcp-exposure");
+          const providerSessionId = ProviderSessionId.make("provider-session-mcp-exposure");
+          const token = "antigravity-exposure-token";
+          const capturedMcpServers =
+            yield* Deferred.make<ReadonlyArray<EffectAcpSchema.McpServer>>();
+
+          const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+          yield* mcpSessions.set({
+            environmentId: EnvironmentId.make("env-1"),
+            threadId,
+            providerSessionId,
+            providerInstanceId: instanceId,
+            endpoint: "http://127.0.0.1:3773/mcp",
+            authorizationHeader: `Bearer ${token}`,
+            browserToolsAvailable: true,
+          });
+
+          const adapter = yield* makeAntigravityAdapterV2({
+            instanceId,
+            selfInvocation: yield* resolveSelfInvocation(),
+            makeRuntime: (input) =>
+              Deferred.succeed(capturedMcpServers, input.httpMcpServers ?? []).pipe(
+                Effect.andThen(
+                  makeAntigravityAcpRuntime({
+                    ...input,
+                    childProcessSpawner,
+                    spawn: {
+                      command: process.execPath,
+                      args: [mockAgentPath],
+                      cwd: input.cwd,
+                      env: { T3_ACP_ANTIGRAVITY: "1", T3_ACP_MCP_HTTP: "1" },
+                    },
+                  }),
+                ),
+                Effect.provideService(SecureRandom.SecureRandom, crypto),
+              ),
+            withProcess: (_stop, task) => task,
+            defaultModel: Effect.undefined,
+          });
+
+          yield* adapter.openSession({
+            threadId,
+            providerSessionId,
+            modelSelection: { instanceId, model: "gemini-test-low" },
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: process.cwd(),
+            }),
+          });
+
+          const mcpServers = yield* Deferred.await(capturedMcpServers);
+          const t3Server = mcpServers.find(
+            (server): server is Extract<EffectAcpSchema.McpServer, { type: "http" }> =>
+              "type" in server && server.type === "http" && server.name === "t3-code",
+          );
+          assert.isDefined(t3Server);
+
+          const scope: McpInvocationContext.McpThreadInvocationScope = {
+            environmentId: EnvironmentId.make("env-1"),
+            requestNamespace: token,
+            thread: {
+              threadId,
+              providerSessionId,
+              providerInstanceId: instanceId,
+            },
+            client: undefined,
+            capabilities: new Set(["orchestration"]),
+            issuedAt: 1,
+          };
+          const tool = (name: string, description: string) =>
+            Tool.make(name, {
+              description,
+              success: Schema.Struct({}),
+              failure: OrchestratorMcpFailure,
+              failureMode: "return",
+            });
+          const OptionalToolkit = Toolkit.make(
+            tool("delegate_task", "Delegates a task."),
+            tool("preview_open", "Opens a browser preview."),
+            tool("schedule_task", "Schedules a task."),
+          );
+          const reads = McpToolAccess.reads(() => Effect.succeed({}));
+          const serverLayer = McpHttpServer.layerMcpTransport(
+            Layer.mergeAll(
+              McpHttpServer.toolkitRegistration(
+                OptionalToolkit,
+                McpToolAccess.toLayer(OptionalToolkit, {
+                  delegate_task: reads,
+                  preview_open: reads,
+                  schedule_task: reads,
+                }),
+              ),
+              McpHttpServer.layerToolSearch,
+            ),
+          ).pipe(
+            Layer.provide(ServerSettings.layerTest()),
+            Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+            Layer.provide(
+              Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+                resolve: (candidate) => Effect.succeed(candidate === token ? scope : undefined),
+              }),
+            ),
+          );
+          yield* HttpRouter.serve(serverLayer, {
+            disableListenLog: true,
+            disableLogger: true,
+          }).pipe(Layer.build);
+
+          const httpClient = yield* HttpClient.HttpClient;
+          const headers: Record<string, string> = {
+            accept: "application/json, text/event-stream",
+            ...Object.fromEntries(
+              (t3Server?.headers ?? []).map((header) => [header.name.toLowerCase(), header.value]),
+            ),
+          };
+          const initialize = yield* httpClient.post("/mcp", {
+            headers,
+            body: HttpBody.text(
+              `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"antigravity-probe","version":"1.0.0"}}}`,
+              "application/json",
+            ),
+          });
+          const rpc = (method: string, params: object) =>
+            httpClient
+              .post("/mcp", {
+                headers: {
+                  ...headers,
+                  "mcp-session-id": initialize.headers["mcp-session-id"]!,
+                  "mcp-protocol-version": "2025-06-18",
+                },
+                body: HttpBody.text(
+                  JSON.stringify({ jsonrpc: "2.0", id: 2, method, params }),
+                  "application/json",
+                ),
+              })
+              .pipe(
+                Effect.flatMap((response) => response.text),
+                Effect.map((text): unknown =>
+                  text
+                    .split("\n")
+                    .filter((line) => line.startsWith("data: ") || line.startsWith("{"))
+                    .map((line) => JSON.parse(line.replace(/^data: /u, "")) as { id?: number })
+                    .find((message) => message.id === 2),
+                ),
+              );
+
+          const listed = yield* rpc("tools/list", {}).pipe(
+            Effect.map((body) =>
+              (body as { result: { tools: ReadonlyArray<{ name: string }> } }).result.tools
+                .map((listedTool) => listedTool.name)
+                .sort(),
+            ),
+          );
+          assert.deepEqual(listed, ["delegate_task", "tool_search"]);
+
+          const scheduled = yield* rpc("tools/call", { name: "schedule_task", arguments: {} }).pipe(
+            Effect.map((body) => (body as { result: { structuredContent?: unknown } }).result),
+          );
+          assert.deepEqual(scheduled.structuredContent, {});
+        }).pipe(Effect.provide(layerSession), Effect.provide(NodeHttpServer.layerTest)),
+      ),
   );
 });
 
