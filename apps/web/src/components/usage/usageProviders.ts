@@ -1,6 +1,11 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
 
 import { ProviderDriverKind } from "@t3tools/contracts";
+import {
+  providerDriverOrder,
+  sortByProviderOrder,
+  type ProviderOrderSettings,
+} from "@t3tools/shared/providerOrder";
 
 import type { UsageMetric } from "./usageShortcuts";
 
@@ -50,6 +55,18 @@ export const PROVIDER_PRESENTATION = {
 } satisfies Record<UsageProviderKind, UsageProviderPresentation>;
 
 export const PROVIDER_ORDER = Object.keys(PROVIDER_PRESENTATION) as UsageProviderKind[];
+
+export function usageProviderOrder(
+  settings: ProviderOrderSettings | null,
+): readonly UsageProviderKind[] {
+  return settings === null
+    ? PROVIDER_ORDER
+    : sortByProviderOrder(
+        PROVIDER_ORDER,
+        providerDriverOrder(settings),
+        (provider) => PROVIDER_PRESENTATION[provider].driverKind,
+      );
+}
 
 export function providersWithUsage(
   totals: readonly {
