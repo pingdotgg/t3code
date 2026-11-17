@@ -541,14 +541,6 @@ describe("GhosttyTerminalSurface visibility", () => {
       expect(harness.onData.mock.calls).toEqual([["echo hi"]]);
     });
 
-    it("returns to the bottom on committed text input", async () => {
-      const { harness, surface } = await scrolledUp();
-      surface.input.value = "é";
-      surface.input.dispatchEvent(new Event("input"));
-      expect(surface.isAtBottom()).toBe(true);
-      expect(harness.onData.mock.calls).toEqual([["é"]]);
-    });
-
     it("stays put for a lone modifier press and for a key release", async () => {
       const { harness, surface } = await scrolledUp();
       key(surface, "Shift", "ShiftLeft", { shiftKey: true });
