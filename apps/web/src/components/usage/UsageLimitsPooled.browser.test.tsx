@@ -194,6 +194,12 @@ describe("UsageLimitsPooled", () => {
       .element(screen.getByRole("button", { name: "Collapse Codex limits" }))
       .toHaveFocus();
     await screen.getByRole("heading", { name: /Antigravity/ }).hover();
+    await screen.getByRole("button", { name: "Hide Antigravity", exact: true }).click();
+    await expect.element(screen.getByText("Gemini · Weekly")).not.toBeInTheDocument();
+    await screen.getByRole("button", { name: "1 item hidden" }).click();
+    await expect.element(screen.getByText("Gemini · Weekly")).toBeVisible();
+    await screen.getByRole("button", { name: "Show Antigravity", exact: true }).click();
+    await screen.getByRole("heading", { name: /Antigravity/ }).hover();
     await screen.getByRole("button", { name: "Collapse Antigravity limits" }).click();
     const providerHandle = screen.getByRole("button", { name: "Reorder Codex", exact: true });
     await userEvent.keyboard("{Shift}");

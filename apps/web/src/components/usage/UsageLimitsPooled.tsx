@@ -645,7 +645,7 @@ function PoolSection({
   const collapsed = layout.collapsedProviders.includes(pool.driver);
   const keys = windows.map((window) => limitWindowKey(pool.driver, window));
   const hiddenCount = keys.filter((key) => layout.hiddenWindows.includes(key)).length;
-  const showHiddenCount = !hidden && !collapsed && hiddenCount > 0;
+  const showHiddenCount = !collapsed && hiddenCount > 0;
   const shownWindows = revealed
     ? windows
     : windows.filter(
@@ -702,7 +702,7 @@ function PoolSection({
                 }));
               }}
             >
-              {hidden ? null : (
+              {
                 <button
                   type="button"
                   aria-expanded={!collapsed}
@@ -722,7 +722,7 @@ function PoolSection({
                     className={cn("size-4", !collapsed && "rotate-90")}
                   />
                 </button>
-              )}
+              }
             </UsageLimitLayoutControls>
           </div>
           {showHiddenCount ? (
@@ -735,7 +735,7 @@ function PoolSection({
           ) : null}
         </div>
       </div>
-      {hidden || collapsed || shownWindows.length === 0 ? null : (
+      {collapsed || shownWindows.length === 0 ? null : (
         <UsageLimitSortableList
           items={shownWindows.map((window) => limitWindowKey(pool.driver, window))}
           onReorder={(active, over) =>
@@ -745,7 +745,7 @@ function PoolSection({
             }))
           }
         >
-          <div className="flex flex-col gap-3">
+          <div className={cn("flex flex-col gap-3", hidden && "opacity-60")}>
             {shownWindows.map((window) => {
               const details =
                 pool.driver === "cursor" ? cursorUsageWindowDetails(window.id, pool) : undefined;
