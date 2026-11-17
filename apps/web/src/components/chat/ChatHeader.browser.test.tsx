@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
@@ -24,13 +25,16 @@ vi.mock(import("~/hooks/useThreadActionMenu"), () => ({
 import { render, stubGlobal } from "../../../test/render";
 import { ChatHeader } from "./ChatHeader";
 
-function header(title: string) {
+function Header({ title }: { title: string }) {
+  const [renamingTitle, setRenamingTitle] = useState<string | null>(null);
   return (
     <>
       <ChatHeader
         activeThreadEnvironmentId={EnvironmentId.make("environment")}
         activeThreadId={ThreadId.make("thread")}
         activeThreadTitle={title}
+        renamingTitle={renamingTitle}
+        onRenamingTitleChange={setRenamingTitle}
         isServerThread
         activeProject={null}
         parentThreadLink={null}
@@ -41,6 +45,10 @@ function header(title: string) {
       <div tabIndex={0}>Outside rename</div>
     </>
   );
+}
+
+function header(title: string) {
+  return <Header title={title} />;
 }
 
 it.each(["blur", "Enter"] as const)(
