@@ -1,18 +1,21 @@
 name: Fork release
 
 # Signed, notarized macOS arm64 build for this fork, published as a GitHub
-# release whose latest-mac.yml the app's updater reads. Push a plain x.y.z tag
-# (v0.1.902) or run it by hand with a version.
+# release whose latest-mac.yml the app's updater reads. Every push to main
+# releases the next patch version; a plain x.y.z tag or a manual run with a
+# version pins it instead.
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version, plain x.y.z (for example 0.1.902)"
-        required: true
+        description: "Release version, plain x.y.z (empty bumps the latest release's patch)"
+        required: false
         type: string
 
 permissions:
@@ -33,10 +36,25 @@ jobs:
         id: version
         shell: bash
         env:
+          GH_TOKEN: ${{ github.token }}
           INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          version="${INPUT_VERSION:-$GITHUB_REF_NAME}"
+          if [[ -n "$INPUT_VERSION" ]]; then
+            version="$INPUT_VERSION"
+          elif [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            version="$GITHUB_REF_NAME"
+          else
+            # Runs are serialized by the concurrency group, so the latest tag is settled here.
+            latest="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[].tag_name' \
+              | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -n 1)"
+            if [[ -z "$latest" ]]; then
+              echo "::error::No previous vX.Y.Z release to bump; run by hand with a version."
+              exit 1
+            fi
+            IFS=. read -r major minor patch <<< "${latest#v}"
+            version="$major.$minor.$((patch + 1))"
+          fi
           version="${version#v}"
           # The updater only compares plain versions reliably on the stable channel.
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
