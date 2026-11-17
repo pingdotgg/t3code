@@ -2693,6 +2693,48 @@ describe("orchestration v2 provider switching", () => {
       }),
   );
 
+  it.live("stops a Claude turn for a /goal steered into it with another provider", () =>
+    Effect.gen(function* () {
+      const harness = yield* steerProviderSwitchHarness("goal");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* harness.startClaudeTurn;
+        yield* Deferred.await(harness.started);
+        yield* worker.drain();
+        yield* harness.markClaudeTurnRunning;
+        const [claudeRun] = (yield* orchestrator.getThreadProjection(harness.threadId)).runs;
+        // An explicit steer without a delivery intent, as thread tools send it.
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:steer-provider-switch:goal:codex"),
+          threadId: harness.threadId,
+          messageId: MessageId.make("message:steer-provider-switch:goal:codex"),
+          text: "/goal all tests pass",
+          attachments: [],
+          modelSelection: CODEX_MODEL_SELECTION,
+          dispatchMode: { type: "steer_active", targetRunId: claudeRun!.id },
+        });
+        const projection = yield* orchestrator.getThreadProjection(harness.threadId);
+        assert.isTrue(
+          projection.turnItems.some(
+            (item) => item.type === "run_interrupt_request" && item.runId === claudeRun!.id,
+          ),
+        );
+        assert.deepEqual(
+          projection.runs.map((run) => [run.status, run.providerInstanceId]),
+          [
+            ["running", CLAUDE_MODEL_SELECTION.instanceId],
+            ["queued", CODEX_MODEL_SELECTION.instanceId],
+          ],
+        );
+        yield* Deferred.succeed(harness.release, undefined);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
   // regression: #32891 a steer that Stop already reached is refused, not queued
   it.live("refuses a provider switch steered into a Claude turn that Stop reached", () =>
     Effect.gen(function* () {

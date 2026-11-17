@@ -7146,30 +7146,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ) {
       dispatchMode = { type: "queue_after_active" };
     }
-    // A steer that switches provider needs a new turn. A provider that cannot restart its
-    // turn for new input takes it after the turn, like a provider that cannot steer at all.
-    // An explicit steer that Stop reached still fails below.
-    if (dispatchMode.type === "steer_active" && command.modelSelection !== undefined) {
-      const targetRunId = dispatchMode.targetRunId;
-      const target = projection.runs.find((run) => run.id === targetRunId);
-      if (
-        target !== undefined &&
-        isActiveRun(target) &&
-        target.providerInstanceId !== command.modelSelection.instanceId &&
-        !(yield* stopReachedRun(command, command.threadId, target.id))
-      ) {
-        // Before the provider session starts, the adapter's capabilities stand in for its own.
-        const turns =
-          providerTurnCapabilities(projection, target) ??
-          (yield* providerAdapters.get(target.providerInstanceId).pipe(
-            Effect.flatMap((adapter) => adapter.getCapabilities()),
-            mapDispatchError(command),
-          )).turns;
-        if (providerSwitchWaitsForTurn(turns)) {
-          dispatchMode = { type: "queue_after_active" };
-        }
-      }
-    }
     // Native goal commands must not steer an existing turn.
     const parsedGoalCommand = parseGoalCommand(command);
     const goalCommand =
@@ -7264,6 +7240,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         generation: delivery.generation,
         taskIds: delivery.taskIds,
       };
+    }
+    // A steer that switches provider needs a new turn. A provider that cannot restart its
+    // turn for new input takes it after the turn, like a provider that cannot steer at all.
+    // An explicit steer that Stop reached still fails below.
+    if (dispatchMode.type === "steer_active" && command.modelSelection !== undefined) {
+      const targetRunId = dispatchMode.targetRunId;
+      const target = projection.runs.find((run) => run.id === targetRunId);
+      if (
+        target !== undefined &&
+        isActiveRun(target) &&
+        target.providerInstanceId !== command.modelSelection.instanceId &&
+        !(yield* stopReachedRun(command, command.threadId, target.id))
+      ) {
+        // Before the provider session starts, the adapter's capabilities stand in for its own.
+        const turns =
+          providerTurnCapabilities(projection, target) ??
+          (yield* providerAdapters.get(target.providerInstanceId).pipe(
+            Effect.flatMap((adapter) => adapter.getCapabilities()),
+            mapDispatchError(command),
+          )).turns;
+        if (providerSwitchWaitsForTurn(turns)) {
+          dispatchMode = { type: "queue_after_active" };
+        }
+      }
     }
     // A provider that can stop a turn but not restart it with new input runs a
     // restart as the next turn: first in the queue, with the running turn stopped.
