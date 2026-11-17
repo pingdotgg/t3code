@@ -144,3 +144,5 @@ them in the browser.
   flag it. That's a new planning cycle, not a triage fix
 - Don't re-review code that wasn't flagged. Triage is about the findings, not adding more
 - Keep momentum. Most items should take 30 seconds of discussion, not 5 minutes
+
+**Related:** It works on findings from `linus`, `diff-review` or `interrogate`. With none yet, offer `linus` first. Not for GitHub issues: that is `triage-issues`. Ask before switching skills.

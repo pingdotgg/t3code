@@ -118,3 +118,5 @@ Run `gh issue list --label ready-for-agent --state open --search "-is:blocked -l
 - When in doubt about parallel vs sequential, ASK. Wrong dependencies waste time
 - If the plan has no clear phases (just a wall of text), break it into logical chunks and
   confirm the breakdown with the user before creating issues
+
+**Related:** It follows `replan`. After it, offer `maestro` for parallel work or `bcheck` for one issue now. Ask before switching skills.

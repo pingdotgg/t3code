@@ -88,3 +88,5 @@ A change can pass one axis and fail the other:
 - Code that does exactly what the issue asked but breaks the project's conventions → **Spec pass, Standards fail.**
 
 Reporting them separately stops one axis from masking the other.
+
+**Related:** `validate-change` runs it as part of its pass; use it alone to review a branch without fixing. Ask before switching skills.

@@ -144,3 +144,5 @@ gh issue edit <id> --add-label in-progress
 - If the issue has a design doc, notes, or linked issues, read those too before deciding.
 - The threshold is: "Could a competent developer who knows this codebase start coding right now
   without asking any questions?" If yes, start. If no, plan.
+
+**Related:** One issue, in this session. For several in parallel, offer `maestro`. Ask before switching skills.

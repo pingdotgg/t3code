@@ -72,3 +72,5 @@ A description of the things that are out of scope for this spec.
 Any further notes about the feature.
 
 </spec-template>
+
+**Related:** It usually follows `grilling`; if the idea was never grilled, offer that first. After it, offer `to-tickets`. Ask before switching skills.

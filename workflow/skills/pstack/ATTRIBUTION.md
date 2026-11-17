@@ -47,6 +47,7 @@ came across too, since `no-comments` spawns it.
 
 ## Local modifications
 
+- `how` and `why` end with one `**Related:**` line pointing at `explain-work`.
 - `bro` absorbed Matt Pocock's `wait-what`: one added sentence asking for a little context and the
   repo's `GLOSSARY.md` terms.
 

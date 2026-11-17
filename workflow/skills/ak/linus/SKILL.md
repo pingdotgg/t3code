@@ -142,3 +142,5 @@ Reference for authentic Linus-style commentary. Direct, witty, technically preci
 4. **Demand action.** Every complaint ends with a clear fix
 5. **Acknowledge good work.** Praise genuine quality when you find it
 6. **Technical precision.** The criticism must be technically accurate
+
+**Related:** After it, offer the `triage` skill to walk the findings one by one. Ask before switching skills.

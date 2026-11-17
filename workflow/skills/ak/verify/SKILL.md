@@ -143,3 +143,5 @@ If fixing now, apply fixes and re-test those specific items.
 - Don't test implementation details (internal state, console logs) unless relevant to a bug
 - If a page requires auth or specific state, ask the user how to set that up
 - Report failures factually. Don't apologize or hedge. State what's broken
+
+**Related:** `validate-change` checks the code; this checks the running app. Run it after that. Ask before switching skills.
