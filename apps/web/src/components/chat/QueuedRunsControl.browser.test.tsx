@@ -482,6 +482,6 @@ it("tells the user why Send now was rejected", async () => {
     </ToastProvider>,
   );
 
-  await page.getByRole("button", { name: "Send now" }).click();
+  await page.getByRole("button", { name: "Steer" }).click();
   await vi.waitFor(() => expect(page.getByText(reason).element()).toBeVisible());
 });
