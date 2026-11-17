@@ -53,6 +53,56 @@ describe("ResetCreditCoordinator", () => {
     }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
   );
 
+  it.effect("keeps an unanswered claim's key when its retry is refused, until an answer", () =>
+    Effect.gen(function* () {
+      const { redeem } = yield* ResetCreditCoordinator.ResetCreditCoordinator;
+      const keys = yield* Ref.make<ReadonlyArray<string>>([]);
+      const answers = yield* Ref.make<ReadonlyArray<"lost" | "rateLimited" | "reset">>([
+        "lost",
+        "rateLimited",
+        "reset",
+        "reset",
+      ]);
+      const consume = (key: string) =>
+        Effect.gen(function* () {
+          yield* Ref.update(keys, (seen) => [...seen, key]);
+          const [answer] = yield* Ref.getAndUpdate(answers, ([, ...rest]) => rest);
+          return answer === "reset" ? answer : yield* Effect.fail(answer!);
+        });
+      const isSettled = (error: "lost" | "rateLimited") => error === "rateLimited";
+
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        yield* redeem("acct", consume, isSettled).pipe(Effect.result);
+      }
+
+      const [lost, refused, answered, next] = yield* Ref.get(keys);
+      assert.strictEqual(refused, lost);
+      assert.strictEqual(answered, lost);
+      assert.notStrictEqual(next, lost);
+    }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
+  );
+
+  it.effect("never gives one action's unanswered key to another action on the account", () =>
+    Effect.gen(function* () {
+      const { redeem } = yield* ResetCreditCoordinator.ResetCreditCoordinator;
+      const keys = yield* Ref.make<ReadonlyArray<string>>([]);
+      const consume = (outcome: "lost" | "reset") => (key: string) =>
+        Effect.gen(function* () {
+          yield* Ref.update(keys, (seen) => [...seen, key]);
+          if (outcome === "lost") return yield* Effect.fail(outcome);
+          return outcome;
+        });
+
+      yield* redeem("acct", consume("lost"), undefined, "weekly").pipe(Effect.result);
+      yield* redeem("acct", consume("reset"), undefined, "fable");
+      yield* redeem("acct", consume("reset"), undefined, "weekly");
+
+      const [weekly, fable, weeklyRetry] = yield* Ref.get(keys);
+      assert.notStrictEqual(fable, weekly);
+      assert.strictEqual(weeklyRetry, weekly);
+    }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
+  );
+
   it.effect("serialises concurrent redemptions on the same account, not per caller", () =>
     Effect.gen(function* () {
       const { redeem } = yield* ResetCreditCoordinator.ResetCreditCoordinator;

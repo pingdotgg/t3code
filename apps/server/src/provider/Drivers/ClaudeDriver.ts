@@ -357,6 +357,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               : undefined;
         if (!grantId || !current.version) return "noCredit" as const;
         const version = current.version;
+        // The grant was read for this organization; the claim refuses a login that has since moved.
+        const organization = current.auth.workspaceId;
         return yield* resetCreditCoordinator.redeem(
           configDir,
           (requestId) =>
@@ -364,10 +366,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               configDir,
               accountConfigPath,
               version,
+              expectedOrganization: organization,
               grantId,
               requestId,
             }),
           ClaudeResetCredits.isSettledClaudeResetCreditFailure,
+          `${organization ?? ""}\n${grantId}`,
         );
       },
       Effect.provideService(HttpClient.HttpClient, httpClient),

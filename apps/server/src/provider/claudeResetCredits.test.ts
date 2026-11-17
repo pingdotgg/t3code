@@ -184,6 +184,7 @@ const consume = (client: HttpClient.HttpClient, ids = { grantId: "grant_a", requ
     return yield* ClaudeResetCredits.consumeClaudeResetCredit({
       ...login,
       version: "2.1.0",
+      expectedOrganization: "org-1",
       ...ids,
     }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
@@ -244,6 +245,29 @@ effectIt.layer(NodeServices.layer)("consumeClaudeResetCredit", (it) => {
             false,
           );
         }
+      }
+    }),
+  );
+
+  it.effect("confirms only an answer for the claim's organization", () =>
+    Effect.gen(function* () {
+      const answerFor = (organization: string) =>
+        HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json(
+                { result: "reset" },
+                { headers: { "anthropic-organization-id": organization } },
+              ),
+            ),
+          ),
+        );
+      expect(yield* consume(answerFor("org-1"))).toMatchObject({ success: "reset" });
+      const other = yield* consume(answerFor("org-2"));
+      expect(other).toMatchObject({ _tag: "Failure", failure: { reason: "unconfirmed" } });
+      if (other._tag === "Failure") {
+        expect(ClaudeResetCredits.isSettledClaudeResetCreditFailure(other.failure)).toBe(false);
       }
     }),
   );

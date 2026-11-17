@@ -67,6 +67,9 @@ const layerTestHttpClient = Layer.succeed(
 
 // The mock CLIs from makeTildeProviderFixtures are scripts Windows cannot execute.
 const windowsHost = HostProcess.Platform.defaultValue() === "win32";
+const decodeClaimRequest = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ request_id: Schema.String })),
+);
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
@@ -788,6 +791,92 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         });
         expect(outcome).toMatchObject({ _tag: "Success", success: "alreadyRedeemed" });
       }),
+  );
+
+  it.live.skipIf(windowsHost)(
+    "claims a Claude reset only in the organization its grant was read under, even queued",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const fixtures = yield* makeTildeProviderFixtures();
+        const signIn = (organizationUuid: string) =>
+          fs.writeFileString(
+            path.join(fixtures.claudeHomePath, ".claude.json"),
+            JSON.stringify({ oauthAccount: { organizationUuid } }),
+          );
+        yield* fs.writeFileString(
+          path.join(fixtures.claudeHomePath, ".credentials.json"),
+          '{"claudeAiOauth":{"accessToken":"fake-token"}}',
+        );
+        yield* signIn("org-a");
+        const posted = yield* Deferred.make<void>();
+        const answer = yield* Deferred.make<number>();
+        const claims: Array<{ url: string; requestId: string }> = [];
+        const client = HttpClient.make((request) =>
+          Effect.gen(function* () {
+            if (request.url.endsWith("/api/oauth/usage")) {
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  cedar_ember: {
+                    eligible: true,
+                    next_grant_id: "grant_a",
+                    grants: [{ id: "grant_a", resets_left: 2, usable_now: true }],
+                  },
+                }),
+              );
+            }
+            if (request.url.endsWith("/reset_rate_limits")) {
+              const body =
+                request.body._tag === "Uint8Array"
+                  ? new TextDecoder().decode(request.body.body)
+                  : "";
+              claims.push({ url: request.url, requestId: decodeClaimRequest(body).request_id });
+              if (claims.length === 1) yield* Deferred.succeed(posted, undefined);
+              const status = claims.length === 1 ? yield* Deferred.await(answer) : 200;
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json({ result: "reset" }, { status }),
+              );
+            }
+            return HttpClientResponse.fromWeb(request, Response.json({ version: "0.0.0" }));
+          }),
+        );
+        const instanceId = ProviderInstanceId.make("claude_moved");
+        const { registry } = yield* makeProviderInstanceRegistry({
+          drivers: [ClaudeDriver],
+          configMap: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              enabled: true,
+              config: makeClaudeConfig({
+                enabled: true,
+                binaryPath: fixtures.claudeBinaryPath,
+                homePath: fixtures.claudeHomePath,
+              }),
+            },
+          },
+        }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+        const instance = (yield* registry.getInstance(instanceId))!;
+        expect((yield* instance.snapshot.refresh).auth.workspaceId).toBe("org-a");
+        const consume = instance.consumeResetCredit!(undefined).pipe(Effect.result);
+        const unanswered = yield* consume.pipe(Effect.forkChild);
+        yield* Deferred.await(posted);
+        // Claude signs in to another organization while the shown grant's claim waits.
+        yield* signIn("org-b");
+        const queued = yield* consume.pipe(Effect.forkChild);
+        yield* Deferred.succeed(answer, 503);
+        const results = [yield* Fiber.join(unanswered), yield* Fiber.join(queued)];
+        yield* signIn("org-a");
+        const retry = yield* consume;
+
+        const sentTo = "https://api.anthropic.com/api/organizations/org-a/reset_rate_limits";
+        const first = { url: sentTo, requestId: claims[0]?.requestId };
+        expect(claims).toEqual([first, first]);
+        expect(results.map((result) => result._tag)).toEqual(["Failure", "Failure"]);
+        expect(retry).toMatchObject({ _tag: "Success", success: "reset" });
+      }).pipe(Effect.provideService(HostProcess.Platform, "linux"), Effect.provide(layerTest)),
   );
 
   const makeClaudeCacheFixture = Effect.fnUntraced(function* (
