@@ -1,6 +1,7 @@
 import { expect, it } from "vite-plus/test";
 import { type PluggableList, unified } from "unified";
 import rehypeRaw from "rehype-raw";
+import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import type { Link, Root, RootContent } from "mdast";
@@ -8,6 +9,7 @@ import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  CHAT_USER_MARKDOWN_REMARK_PLUGINS,
   remarkAssistantInsights,
   remarkEnableOrderedListNumbers,
 } from "./markdownPipeline.ts";
@@ -635,6 +637,330 @@ it("keeps the number written on each ordered list item only when enabled", () =>
       "3. first\n5. second\n\n-       first block\n\n        3. first\n        5. second",
     ),
   ).toEqual([undefined, undefined, undefined, undefined, undefined]);
+});
+
+type ShownNode = {
+  type: string;
+  tagName?: string;
+  value?: string;
+  properties?: Record<string, unknown>;
+  children?: ShownNode[];
+};
+const SHOWN_BLOCKS = new Set([
+  "p",
+  "li",
+  "blockquote",
+  "ul",
+  "ol",
+  "pre",
+  "h1",
+  "h2",
+  "table",
+  "tr",
+]);
+
+/** The text a browser shows, by line: whitespace collapses except in `pre` and kept whitespace. */
+function shownText(tree: ShownNode): string {
+  let out = "";
+  const visit = (node: ShownNode, keep: boolean) => {
+    if (node.type === "text") {
+      const value = node.value ?? "";
+      // Only spaces, tabs and line endings collapse; a no-break space shows.
+      out += keep
+        ? value.replace(/ /g, "\u0001").replace(/\t/g, "\u0002")
+        : value.replace(/[ \t\r\n]/g, " ");
+    }
+    // An image shows as something, which its alt text stands in for.
+    if (node.properties?.alt !== undefined) out += String(node.properties.alt);
+    if (node.tagName === "br" || SHOWN_BLOCKS.has(node.tagName ?? "")) out += "\n";
+    const inner =
+      keep || node.tagName === "pre" || node.properties?.dataLeadingWhitespace !== undefined;
+    node.children?.forEach((child) => visit(child, inner));
+    if (SHOWN_BLOCKS.has(node.tagName ?? "")) out += "\n";
+  };
+  visit(tree, false);
+  return out
+    .split("\n")
+    .map((line) => line.replace(/ +/g, " ").replace(/^ | $/g, ""))
+    .filter(Boolean)
+    .join("\n")
+    .replace(/\u0001/g, " ")
+    .replace(/\u0002/g, "\t");
+}
+
+const hastRenderer = (plugins: PluggableList) => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(plugins)
+    .use(remarkRehype, { allowDangerousHtml: true });
+  return (markdown: string) => processor.runSync(processor.parse(markdown), markdown) as ShownNode;
+};
+const userMessage = hastRenderer([
+  ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  ...CHAT_USER_MARKDOWN_REMARK_PLUGINS,
+]);
+// The user pipeline as it was before leading whitespace was kept.
+const commonMarkUserMessage = hastRenderer([
+  ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  [remarkGfm, { singleTilde: false }],
+]);
+/** The tree with the restored indentation taken out, with the empty texts and positions it leaves. */
+const withoutRestoredWhitespace = ({
+  position: _position,
+  ...node
+}: ShownNode & { position?: unknown }): ShownNode => ({
+  ...node,
+  ...(node.children && {
+    children: node.children
+      .filter(
+        (child) =>
+          child.properties?.dataLeadingWhitespace === undefined &&
+          !(child.type === "text" && child.value === ""),
+      )
+      .map(withoutRestoredWhitespace),
+  }),
+});
+/** Each link's text and where it goes. */
+const linkTargets = (node: ShownNode): [string, unknown][] =>
+  node.properties?.href === undefined
+    ? (node.children ?? []).flatMap(linkTargets)
+    : [[shownText(node), node.properties.href]];
+
+function seededRandom(seed: number) {
+  let state = seed;
+  return () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
+  };
+}
+// MARKDOWN_PROPERTY_SEED reruns a reported failure.
+const PROPERTY_SEED = Number(process.env.MARKDOWN_PROPERTY_SEED ?? 20261117);
+
+it("shows the spaces and tabs typed at the start of each line of a user message", () => {
+  const shown = (markdown: string) => shownText(userMessage(markdown));
+  const outline = "Plan\n   Step one\n   Step two\n        Detail a\n        Detail b";
+  expect(shown(outline)).toBe(outline);
+  expect(shown(outline.replaceAll("\n", "\r\n"))).toBe(outline);
+  expect(shown("   First line\nnext\n\n  New paragraph")).toBe(
+    "   First line\nnext\n  New paragraph",
+  );
+  expect(shown("Plan\n\tTabbed\n \t Mixed")).toBe("Plan\n\tTabbed\n \t Mixed");
+  expect(shown("Plan  \n   After a hard break\\\n   and an escaped one")).toBe(
+    "Plan\n   After a hard break\n   and an escaped one",
+  );
+  // In a container, only whitespace past its own structure counts.
+  expect(shown("- item\n  continued")).toBe("item\ncontinued");
+  expect(shown("- item\n    more")).toBe("item\n  more");
+  expect(shown("- item\ncontinued")).toBe("item\ncontinued");
+  expect(shown("- item\n continued")).toBe("item\ncontinued");
+  expect(shown("1. one\n      two")).toBe("one\n   two");
+  expect(shown("- item\n\tsplit tab")).toBe("item\n  split tab");
+  expect(shown("- item\n\n     second paragraph")).toBe("item\n   second paragraph");
+  // An item's content starts after its marker and the marker's spacing. A task's checkbox is
+  // content, so it does not move where continuation lines start, however the task begins.
+  expect(shown("- [ ] task\n      under the task")).toBe("task\n    under the task");
+  for (const task of ["task", "**task**", "[task](https://example.com)", "`task`"]) {
+    expect(shown(`- [ ] ${task}\n    detail`), task).toBe("task\n  detail");
+  }
+  expect(shown("-   x\n     y")).toBe("x\n y");
+  expect(shown("-    x\n         y")).toBe("x\n    y");
+  expect(shown("-\tx\n\t  y")).toBe("x\n  y");
+  expect(shown("10.  x\n       y")).toBe("x\n  y");
+  expect(shown("> a\n>    b")).toBe("a\n   b");
+  expect(shown(">    first")).toBe("   first");
+  expect(shown("> a\n   lazy")).toBe("a\nlazy");
+  expect(shown("> - item\n>     more")).toBe("item\n  more");
+  expect(shown("- > a\n  >    b")).toBe("a\n   b");
+  expect(shown("- a\n  - b\n      c")).toBe("a\nb\n  c");
+  // List recovery reparses over-indented content; its first line sets the indentation.
+  expect(shown("-       first block\n        continued\n          deeper")).toBe(
+    "first block\ncontinued\n  deeper",
+  );
+
+  // A space or tab written as a character reference after the indentation is dropped, as it is
+  // without the indentation; only the typed indentation is added.
+  for (const reference of ["&#32;", "&#x20;", "&#9;", "&Tab;"]) {
+    expect(shown(`a\n ${reference}b`), reference).toBe("a\n b");
+    expect(shown(`a  \n\t${reference}b`), reference).toBe("a\n\tb");
+    expect(shown(`a\\\r\n  ${reference}${reference}b`), reference).toBe("a\n  b");
+  }
+  // Converting to HTML also drops the spaces that start code or a link's text after a line break.
+  expect(shown("a\n   ` npm i`")).toBe("a\n   npm i");
+  expect(shown("a\n  [ docs](https://example.com)")).toBe("a\n  docs");
+  // A line whose text starts with whitespace the browser hides keeps no indentation, as without it.
+  expect(shown("  &#32;b")).toBe("b");
+  expect(shown("a\n   ***&#32;b***")).toBe("a\nb");
+
+  // Only the indentation is added: formatting, code, links and alerts render as without it.
+  const inline = "Plan\n   **bold** [link](https://example.com) `code` ~/a and ~~gone~~ /tmp/a.ts";
+  const alert = ">  [!NOTE]\n>    indented body";
+  expect(shown(inline)).toBe("Plan\n   bold link code ~/a and gone /tmp/a.ts");
+  expect(shown(alert)).toBe("   indented body");
+  for (const markdown of [inline, alert]) {
+    expect(withoutRestoredWhitespace(userMessage(markdown)), markdown).toEqual(
+      withoutRestoredWhitespace(commonMarkUserMessage(markdown)),
+    );
+  }
+  expect(linkTargets(userMessage(inline))).toEqual(linkTargets(commonMarkUserMessage(inline)));
+  expect(linkTargets(userMessage(inline)).map(([label]) => label)).toEqual(["link", "/tmp/a.ts"]);
+
+  // A line ending written as a character reference is not a source line: it never takes a typed
+  // line's indentation, and no typed line's indentation moves onto it.
+  const decoded = shown("a &#10; b\n  c").split("\n");
+  expect(decoded.slice(0, 2)).toEqual(["a", "b"]);
+  expect(["c", "  c"]).toContain(decoded[2]);
+
+  // Code, and agent replies, keep CommonMark's reading.
+  for (const markdown of [
+    "```\n   code\n  more\n```",
+    "Plan\n\n    code\n      deeper",
+    "- item\n\n      code",
+  ]) {
+    expect(userMessage(markdown), markdown).toEqual(commonMarkUserMessage(markdown));
+  }
+  for (const plugins of [CHAT_MARKDOWN_REMARK_PLUGINS, CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS]) {
+    expect(shownText(hastRenderer(plugins)(outline)).replaceAll("\n", " ")).toBe(
+      "Plan Step one Step two Detail a Detail b",
+    );
+  }
+});
+
+it("adds only the typed indentation, and renders what follows it as without it", () => {
+  const starts = [
+    "b",
+    "*b*",
+    "`b`",
+    "~~b~~",
+    "[b](https://example.com)",
+    "![b](https://example.com/b.png)",
+    "https://example.com/b",
+    "/tmp/b.ts",
+    "~/b",
+    "@b",
+    "$b",
+    "&amp;b",
+    "&nbsp;b",
+    // Spaces and tabs written as character references, which a line start drops.
+    "&#32;b",
+    "&#x20;b",
+    "&#9;b",
+    "&Tab;b",
+    "&#32;&#9;b",
+    "&#32;* b",
+    "&#32;`b`",
+    "&#32;**b**",
+    // Content whose first character is a space.
+    "` b`",
+    "[ b](https://example.com)",
+    "**&#32;b**",
+    "***&#32;b***",
+    "[ b]",
+  ];
+  const lines = [
+    (indent: string, start: string, join: string) => `a${join}${indent}${start}`,
+    (indent: string, start: string, join: string) => `> a${join}> ${indent}${start}`,
+    (indent: string, start: string, join: string) => `- a${join}  ${indent}${start}`,
+  ];
+  for (const indent of ["", " ", "   ", "\t", " \t"]) {
+    for (const start of starts) {
+      // Without the indentation, an image alone on a CRLF line breaks twice: the image-line break
+      // leaves the CR behind, which breaks again.
+      const joins = start.startsWith("!") ? ["\n", "  \n", "\\\n"] : ["\n", "\r\n", "  \n", "\\\n"];
+      const markdowns = [
+        ...joins.flatMap((join) => lines.map((line) => line(indent, start, join))),
+        // A paragraph's first line takes at most three spaces before it reads as code.
+        ...(indent.includes("\t") ? [] : [`${indent}${start}`, `> ${indent}${start}`]),
+      ];
+      for (const markdown of markdowns) {
+        const label = JSON.stringify(markdown);
+        expect(withoutRestoredWhitespace(userMessage(markdown)), label).toEqual(
+          withoutRestoredWhitespace(commonMarkUserMessage(markdown)),
+        );
+        const shown = shownText(userMessage(markdown)).split("\n");
+        const before = shownText(commonMarkUserMessage(markdown)).split("\n");
+        expect(shown.length, label).toBe(before.length);
+        shown.forEach((line, index) =>
+          expect([before[index], `${indent}${before[index]}`], label).toContain(line),
+        );
+      }
+    }
+  }
+});
+
+it("renders user messages whose whitespace is all structure as CommonMark does", () => {
+  const next = seededRandom(PROPERTY_SEED);
+  const pick = <T>(items: readonly T[]) => items[Math.floor(next() * items.length)]!;
+  const words = [
+    "plan",
+    "3",
+    "*em*",
+    "**strong**",
+    "[link](https://example.com)",
+    "`code`",
+    "~/a/b",
+    "~~old~~",
+    "https://example.com/x_",
+    "/tmp/a.ts",
+    "C:\\work",
+    "@thread",
+    "$skill",
+  ];
+  const text = () =>
+    Array.from({ length: 1 + Math.floor(next() * 3) }, () => pick(words)).join(" ");
+  const indent = (lines: string[], first: string, pad: string) =>
+    lines.map((line, index) => (index === 0 ? first : line ? pad : "") + line);
+  const blocks = (depth: number): string[] => {
+    // Indented code is left out: after a list, CommonMark reads it as the item's continuation.
+    const kinds = depth < 2 ? ["p", "p", "bullet", "ordered", "task", "quote", "fence"] : ["p"];
+    const kind = pick(kinds);
+    const paragraph = () => Array.from({ length: 1 + Math.floor(next() * 3) }, text);
+    if (kind === "p") return paragraph();
+    if (kind === "fence") return ["```", `${pick(["", "  ", "    "])}${text()}`, "```"];
+    if (kind === "quote") return blocks(depth + 1).map((line) => (line ? `> ${line}` : ">"));
+    const marker = kind === "ordered" ? "1. " : kind === "task" ? "- [ ] " : "- ";
+    const pad = " ".repeat(kind === "ordered" ? 3 : 2);
+    // A continuation line is either at the content column or lazy.
+    const lines = paragraph().map((line, index) =>
+      index === 0 || next() < 0.5 ? line : `${pad}${line}`,
+    );
+    const body = indent(lines, marker, "");
+    if (next() < 0.5) body.push(...indent(blocks(depth + 1), pad, pad));
+    return body;
+  };
+  for (let index = 0; index < 400; index++) {
+    const markdown = Array.from({ length: 1 + Math.floor(next() * 3) }, () =>
+      blocks(0).join("\n"),
+    ).join(pick(["\n", "\n\n"]));
+    expect(
+      userMessage(markdown),
+      `seed ${PROPERTY_SEED}, case ${index}: ${JSON.stringify(markdown)}`,
+    ).toEqual(commonMarkUserMessage(markdown));
+  }
+});
+
+it("shows each typed line of a plain user message as typed", () => {
+  const next = seededRandom(PROPERTY_SEED + 1);
+  const pick = <T>(items: readonly T[]) => items[Math.floor(next() * items.length)]!;
+  const word = () =>
+    Array.from({ length: 1 + Math.floor(next() * 5) }, () => pick([..."aZ09xQ7"])).join("");
+  const line = () => Array.from({ length: 1 + Math.floor(next() * 3) }, word).join(" ");
+  const whitespace = (most: number) =>
+    Array.from({ length: Math.floor(next() * (most + 1)) }, () => pick([" ", " ", "\t"])).join("");
+  for (let index = 0; index < 300; index++) {
+    const paragraphs = Array.from({ length: 1 + Math.floor(next() * 3) }, () => [
+      // More than three spaces, or a tab, would start a code block.
+      " ".repeat(Math.floor(next() * 4)) + line(),
+      ...Array.from({ length: Math.floor(next() * 4) }, () => whitespace(9) + line()),
+    ]);
+    const typed = paragraphs.map((lines) => lines.join("\n")).join("\n\n");
+    const markdown = next() < 0.3 ? typed.replaceAll("\n", "\r\n") : typed;
+    expect(
+      shownText(userMessage(markdown)),
+      `seed ${PROPERTY_SEED + 1}, case ${index}: ${JSON.stringify(markdown)}`,
+    ).toBe(paragraphs.flat().join("\n"));
+  }
 });
 
 it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer resolves", () => {
