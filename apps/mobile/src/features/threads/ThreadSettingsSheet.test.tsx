@@ -181,6 +181,7 @@ function mountSheet() {
         <ThreadSettingsPickerScreen
           environmentId={environmentId}
           projectId={null}
+          cwd={null}
           providerInstanceId={codex}
           providerGroups={[]}
           selectedModel={{ instanceId: codex, model: "gpt-6.1" }}
