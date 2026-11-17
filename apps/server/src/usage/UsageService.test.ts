@@ -214,6 +214,7 @@ const layerService = (input: {
     Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(Layer.succeed(HostProcess.Platform, input.platform ?? "linux")),
     Layer.provideMerge(Layer.succeed(HostProcess.Hostname, input.hostname ?? "usage-test-host")),
+    Layer.provideMerge(Layer.succeed(HostProcess.HomeDirectory, input.home)),
     Layer.provideMerge(ServerSettings.layerTest(input.settings)),
     Layer.provideMerge(
       Layer.succeed(
@@ -522,6 +523,73 @@ describe("Codex usage history", () => {
 });
 
 describe("UsageService", () => {
+  it.effect("keeps pricing metadata paired with the rates used during a concurrent refresh", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const sessions = NodePath.join(home, "codex", "sessions");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(sessions, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(sessions, "session.jsonl"),
+          [
+            { type: "session_meta", payload: { id: "session", model_provider: "openai" } },
+            { type: "turn_context", payload: { model: "gpt-6-astra", turn_id: "turn" } },
+            {
+              type: "event_msg",
+              timestamp: "2026-08-01T10:00:00Z",
+              payload: {
+                type: "token_count",
+                info: { last_token_usage: { input_tokens: 0, output_tokens: 1 } },
+              },
+            },
+          ]
+            .map((record) => encodeUnknownJsonString(record))
+            .join("\n") + "\n",
+        );
+      });
+      let rate = 0;
+      yield* Effect.gen(function* () {
+        const resolving = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const service = yield* UsageService.make.pipe(
+          Effect.provideService(CodexUsageHistory.CodexUsageHistory, {
+            resolve: () =>
+              Deferred.succeed(resolving, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.as(new Map()),
+              ),
+          }),
+        );
+        const initialPricing = yield* service.refreshRates;
+        yield* TestClock.adjust(61_000);
+        const pending = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
+        yield* Deferred.await(resolving);
+        yield* service.refreshRates;
+        yield* Deferred.succeed(release, undefined);
+        const original = yield* Fiber.join(pending);
+        assert.strictEqual(original.buckets[0]?.costUsd, 1);
+        assert.strictEqual(original.pricing.fetchedAt, initialPricing.fetchedAt);
+        const updated = yield* service.readSummary(WINDOW);
+        assert.strictEqual(updated.buckets[0]?.costUsd, 2);
+        assert.notStrictEqual(updated.pricing.fetchedAt, initialPricing.fetchedAt);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "concurrent-rates",
+            home,
+            settings,
+            ratesResponse: () =>
+              Effect.succeed(
+                Response.json({
+                  "gpt-6-astra": { input_cost_per_token: 0, output_cost_per_token: ++rate },
+                }),
+              ),
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("counts compressed Codex rollouts across refresh, rewrites, and cache restarts", () =>
     Effect.gen(function* () {
       const { home, settings } = yield* setup;
@@ -1157,6 +1225,76 @@ describe("UsageService", () => {
           ),
         );
       }),
+  );
+
+  it.effect("prices Pi usage mapped onto a Pi model at that model's rate", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const dir = NodePath.join(home, "pi", "sessions", "project");
+      const message = (id: string, model: string) => ({
+        type: "message",
+        id,
+        timestamp: "2026-08-01T10:00:00Z",
+        message: {
+          role: "assistant",
+          provider: "anthropic",
+          model,
+          usage: { input: 10, output: 5 },
+        },
+      });
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(dir, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(dir, "session.jsonl"),
+          [
+            { type: "session", id: "session" },
+            message("released", "actual-model"),
+            message("preview", "actual-model-preview"),
+          ]
+            .map((line) => encodeUnknownJsonString(line))
+            .join("\n") + "\n",
+        );
+      });
+      const summary = yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        return yield* service.readSummary(WINDOW);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerService({
+            prefix: "usage-pi-model-alias",
+            home,
+            ratesDocument: {
+              "actual-model": { input_cost_per_token: 1, output_cost_per_token: 4 },
+            },
+            settings: {
+              ...settings,
+              usageModelAliases: { "anthropic/actual-model-preview": "anthropic/actual-model" },
+            },
+          }),
+        ),
+      );
+      assert.deepStrictEqual(
+        summary.buckets
+          .filter((bucket) => bucket.provider === "pi")
+          .map(({ model, records, unpricedRecords, costUsd, costSource }) => ({
+            model,
+            records,
+            unpricedRecords,
+            costUsd,
+            costSource,
+          })),
+        [
+          {
+            model: "anthropic/actual-model",
+            records: 2,
+            unpricedRecords: 0,
+            costUsd: 60,
+            costSource: "modelPriced",
+          },
+        ],
+      );
+    }),
   );
 
   it.effect(
@@ -2426,6 +2564,34 @@ describe("UsageService", () => {
     }),
   );
 
+  it.effect("keeps default-home history after the default account moves to a custom home", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const defaultHome = NodePath.join(home, "default-claude");
+      const defaultProjects = NodePath.join(defaultHome, "projects", "proj");
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(transcript, claudeLine(1, 5));
+        await NodeFSP.mkdir(defaultProjects, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(defaultProjects, "earlier.jsonl"),
+          claudeLine(2, 7, "claude-fable-5", "earlier-session"),
+        );
+      });
+      const summary = yield* UsageService.make.pipe(
+        Effect.flatMap((service) => service.readSummary(WINDOW)),
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-default-home-test",
+            home,
+            environment: { CLAUDE_CONFIG_DIR: defaultHome },
+            settings,
+          }),
+        ),
+      );
+      assert.strictEqual(totalOutputTokens(summary), 12);
+    }),
+  );
+
   it.effect(
     "uses explicit account settings before environment and default homes, then refreshes them",
     () =>
@@ -3140,7 +3306,7 @@ describe("UsageService", () => {
             60 + 20 * (version === 4 ? 1 : 2),
           );
           yield* upgraded.awaitPersisted;
-          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v16.json");
+          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v17.json");
           assert.deepStrictEqual(
             (yield* Effect.promise(() => NodeFSP.readdir(stateDir)))
               .filter((name) => name.startsWith("usage-scan-cache"))
@@ -3702,6 +3868,56 @@ describe("UsageService", () => {
         assert.deepStrictEqual(cached.buckets, summary.buckets);
         assert.strictEqual(requests.length, 2);
       }),
+  );
+
+  it.effect("refetches cached rates early for a model they do not list", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-08-02T00:00:00Z"));
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          transcript,
+          claudeLine(1, 5, "claude-new-model") + claudeLine(2, 5, "claude-unknown-model"),
+        ),
+      );
+      const requests: string[] = [];
+      let ratesDocument: Record<string, unknown> = {
+        "claude-fable-5": { input_cost_per_token: 1e-5, output_cost_per_token: 5e-5 },
+      };
+      const serviceLayer = layerService({
+        prefix: "usage-service-unlisted-model-test",
+        home,
+        settings,
+        onRatesFetch: (request) => requests.push(request.url),
+        ratesResponse: () => Effect.succeed(Response.json(ratesDocument)),
+      });
+      const newModelCost = (summary: UsageSummary) =>
+        summary.buckets.find((bucket) => bucket.model === "claude-new-model")?.costUsd;
+
+      // Rates fetched for this scan are fresh: no second request for the models they lack.
+      const first = yield* (yield* UsageService.make.pipe(
+        Effect.provide(serviceLayer),
+      )).readSummary(WINDOW);
+      assert.strictEqual(newModelCost(first), 0);
+      assert.strictEqual(requests.length, 1);
+
+      // An hour later LiteLLM lists the new model; a restarted server starts from the cached table.
+      ratesDocument = {
+        ...ratesDocument,
+        "claude-new-model": { input_cost_per_token: 2e-5, output_cost_per_token: 1e-4 },
+      };
+      yield* TestClock.adjust(Duration.hours(1));
+      const service = yield* UsageService.make.pipe(Effect.provide(serviceLayer));
+      const refreshed = yield* service.readSummary(WINDOW);
+      assert.strictEqual(refreshed.pricing.status, "fresh");
+      assert.closeTo(newModelCost(refreshed) ?? -1, 10 * 2e-5 + 5 * 1e-4, 1e-12);
+      assert.strictEqual(requests.length, 2);
+
+      // A model the fresh table still lacks does not refetch again before the TTL.
+      yield* TestClock.adjust(Duration.hours(1));
+      yield* service.readSummary(WINDOW);
+      assert.strictEqual(requests.length, 2);
+    }),
   );
 
   it.effect("does not orphan an in-flight scan when its first caller is interrupted", () =>

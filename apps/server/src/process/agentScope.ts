@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -193,13 +194,13 @@ export const make = Effect.gen(function* () {
           slice,
           ...properties,
         ]);
-        if (result._tag === "None" || result.value.code !== 0) {
-          yield* Effect.logWarning("Could not set resource limits on an agents slice", {
-            slice,
-            properties,
-            stderr: result._tag === "Some" ? result.value.stderr.trim() : undefined,
-          });
-        }
+        if (result._tag === "Some" && result.value.code === 0) return true;
+        yield* Effect.logWarning("Could not set resource limits on an agents slice", {
+          slice,
+          properties,
+          stderr: result._tag === "Some" ? result.value.stderr.trim() : undefined,
+        });
+        return false;
       });
       const memoryPolicy = hostEnvironment.T3CODE_AGENT_SLICE_MEMORY_POLICY;
       if (
@@ -207,18 +208,43 @@ export const make = Effect.gen(function* () {
         memoryPolicy !== "automatic" &&
         memoryPolicy !== "host-managed"
       ) {
-        yield* Effect.logWarning("Unknown agent slice memory policy; using automatic limits");
+        yield* Effect.logWarning("Unknown agent slice memory policy; using automatic limits", {
+          memoryPolicy,
+        });
       }
-      const limits =
-        memoryPolicy === "host-managed" ? undefined : agentSliceMemoryLimits(NodeOS.totalmem());
-      if (limits !== undefined) {
-        yield* setProperties(AGENT_SLICE, [`MemoryHigh=${limits.high}`, `MemoryMax=${limits.max}`]);
-      }
+      const hostManagedMemory = memoryPolicy === "host-managed";
+      // VMs and containers can resize RAM live, so each launch re-checks the total
+      // the limits came from. A failed update is retried by the next launch.
+      let appliedTotal: number | undefined;
+      const memoryLimitsLock = yield* Semaphore.make(1);
+      const applyMemoryLimits = memoryLimitsLock.withPermits(1)(
+        Effect.gen(function* () {
+          if (hostManagedMemory) return;
+          const total = NodeOS.totalmem();
+          if (total === appliedTotal) return;
+          const limits = agentSliceMemoryLimits(total);
+          const applied = yield* setProperties(AGENT_SLICE, [
+            `MemoryHigh=${limits.high}`,
+            `MemoryMax=${limits.max}`,
+          ]);
+          if (!applied) return;
+          if (appliedTotal !== undefined) {
+            yield* Effect.logInfo("Agent memory limits follow a memory change", {
+              slice: AGENT_SLICE,
+              previousTotal: appliedTotal,
+              total,
+              ...limits,
+            });
+          }
+          appliedTotal = total;
+        }),
+      );
+      yield* applyMemoryLimits;
       yield* setProperties(AGENTS_PARENT_SLICE, AGENTS_PARENT_PROPERTIES);
       yield* Effect.logInfo("Agent scopes are on", {
         slice: AGENT_SLICE,
-        memoryPolicy: limits === undefined ? "host-managed" : "automatic",
-        ...limits,
+        memoryPolicy: hostManagedMemory ? "host-managed" : "automatic",
+        ...(hostManagedMemory ? {} : agentSliceMemoryLimits(NodeOS.totalmem())),
         oomPolicy: supportsOomPolicy,
       });
       return {
@@ -226,6 +252,7 @@ export const make = Effect.gen(function* () {
         systemctl,
         runtimeDir,
         supportsOomPolicy,
+        applyMemoryLimits,
       };
     }),
   );
@@ -415,6 +442,7 @@ export const make = Effect.gen(function* () {
       if (resolved === null) return { command, args };
       const scope = yield* systemd;
       if (scope === undefined) return agentScopeCommand({ command: resolved, args });
+      yield* scope.applyMemoryLimits;
       const unit = `t3code-${name}-${NodeCrypto.randomUUID().slice(0, 8)}.scope`;
       // A continuing shared scope cannot attribute a tool's OOM to one thread.
       // Clear the launch thread's previous scope instead.

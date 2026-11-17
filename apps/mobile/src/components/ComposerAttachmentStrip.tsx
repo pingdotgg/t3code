@@ -18,6 +18,7 @@ import {
   type DraftComposerImageAttachment,
 } from "../lib/composerImages";
 import { resolveOwnedComposerAttachmentFileUri } from "../lib/composerAttachmentFiles";
+import { rememberDraftImage } from "../lib/sentImageHandoff";
 import { VideoAttachmentTile } from "./VideoAttachmentTile";
 import { type MediaActionsSource } from "../lib/mediaActionsSource";
 import { PresentationSource } from "./ui/NativePresentation";
@@ -161,6 +162,13 @@ function ComposerImageAttachment(
           style={style}
           className="bg-subtle"
           resizeMode="cover"
+          onLoad={({ nativeEvent: { source } }) => {
+            if (previewUri !== null)
+              rememberDraftImage(attachment.id, {
+                uri: previewUri,
+                aspectRatio: source.width / source.height,
+              });
+          }}
         />
       </Pressable>
     </PresentationSource>
