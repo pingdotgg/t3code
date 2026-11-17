@@ -3127,6 +3127,7 @@ const make = Effect.gen(function* () {
                 initialMessage !== undefined &&
                 !created.storedEvents.some(({ event }) => event.type === "run.created")
               ) {
+                const currentParent = (yield* loadThreadRecords(scope.thread.threadId, [])).thread;
                 const refused = yield* Ref.make<DispatchModeRefusal | undefined>(undefined);
                 yield* threadManagement
                   .dispatch({
@@ -3146,8 +3147,8 @@ const make = Effect.gen(function* () {
                   })
                   .pipe(
                     Effect.provideService(DispatchModeLimit, {
-                      runtimeMode: parent.thread.runtimeMode,
-                      interactionMode: parent.thread.interactionMode,
+                      runtimeMode: currentParent.runtimeMode,
+                      interactionMode: currentParent.interactionMode,
                       refused,
                     }),
                     Effect.mapError((error) =>

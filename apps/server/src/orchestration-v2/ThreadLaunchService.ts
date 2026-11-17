@@ -1334,7 +1334,10 @@ const make = Effect.gen(function* () {
         const threadId =
           claimed.storedEvents.find((stored) => stored.event.type.startsWith("thread."))?.event
             .threadId ?? candidateThreadId;
-        if (project.id !== input.projectId) {
+        const committedThread = yield* threads
+          .getThreadShell(threadId)
+          .pipe(Effect.mapError(mapError(input, "resolve-project", threadId)));
+        if (committedThread?.projectId !== input.projectId) {
           return yield* mapError(input, "resolve-project", threadId)("Project identity changed.");
         }
         let runId: RunId | null = null;
