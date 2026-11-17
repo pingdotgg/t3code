@@ -1,3 +1,5 @@
+import { FilePreviewActions } from "./FilePreviewActions";
+import { ZoomableMediaViewport } from "./ZoomableMediaViewport";
 import { filePreviewDelimiter } from "@t3tools/shared/delimitedPreview";
 import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
@@ -105,6 +107,7 @@ export function AttachmentFilePreview(props: {
   htmlRender?: boolean;
   threadRef?: ScopedThreadRef;
   origin?: string;
+  embedded?: boolean;
   onRemove?: () => void;
   onClose?: () => void;
 }) {
@@ -358,7 +361,7 @@ export function AttachmentFilePreview(props: {
   ) : kind === "audio" ? (
     <AudioPreview src={url} name={props.name} onError={() => setError("Unable to load audio.")} />
   ) : kind === "video" ? (
-    <div className="flex min-h-0 flex-1 items-center justify-center bg-black">
+    <ZoomableMediaViewport>
       <video
         controls
         playsInline
@@ -367,7 +370,7 @@ export function AttachmentFilePreview(props: {
         className="max-h-full max-w-full"
         onError={() => setError("Unable to load video.")}
       />
-    </div>
+    </ZoomableMediaViewport>
   ) : kind === "image" ? (
     <PreviewImage
       key={url}
@@ -386,106 +389,126 @@ export function AttachmentFilePreview(props: {
     </div>
   );
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-      <div className={cn(FILE_SURFACE_SUBHEADER_CLASS)} data-surface-subheader>
-        <div className="flex min-w-0 flex-1 items-center text-xs">
-          <span className="shrink-0 px-0.5 text-muted-foreground">
-            {props.origin ?? "Attachment"}
-          </span>
-          <ChevronRightIcon className="mx-1 size-3.5 shrink-0 text-muted-foreground/60" />
-          <span aria-current="page" className="min-w-0 truncate px-0.5 font-medium text-foreground">
-            {props.name}
-          </span>
-          {props.sizeBytes > 0 ? (
-            <span className="ml-2 shrink-0 text-muted-foreground">
-              {formatAttachmentSize(props.sizeBytes)}
-            </span>
-          ) : null}
-        </div>
-        {renderedMode ? (
-          <FileSurfaceAction
-            label={renderedToggleLabel(renderedMode, rendered)}
-            pressed={rendered}
-            onPress={() => setRendered((value) => !value)}
-          >
-            {rendered ? (
-              <Code2Icon className="size-3.5" />
-            ) : renderedMode === "table" ? (
-              <Table2Icon className="size-3.5" />
-            ) : (
-              <EyeIcon className="size-3.5" />
-            )}
-          </FileSurfaceAction>
-        ) : null}
-        {showsRawText ? (
-          <FileSurfaceAction
-            label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
-            pressed={wordWrap}
-            onPress={() => setWordWrapOverride(!wordWrap)}
-          >
-            <WrapTextIcon className="size-3.5" />
-          </FileSurfaceAction>
-        ) : null}
-        {content || streamsText ? (
-          <FileSurfaceAction
-            label={isCopied ? "Copied" : content?.truncated ? "Copy preview" : "Copy contents"}
-            onPress={() => {
-              if (content) {
-                void copyToClipboard(content.text, undefined);
-                return;
-              }
-              const copy = copyContents.current;
-              if (!copy) {
+  const embeddedToolbar =
+    props.embedded &&
+    ((officeKind !== null && kind !== "ipynb") ||
+      kind === "pdf" ||
+      kind === "image" ||
+      kind === "video" ||
+      (kind === "html" && rendered));
+  const toolbarActions = (
+    <>
+      {renderedMode ? (
+        <FileSurfaceAction
+          label={renderedToggleLabel(renderedMode, rendered)}
+          pressed={rendered}
+          onPress={() => setRendered((value) => !value)}
+        >
+          {rendered ? (
+            <Code2Icon className="size-3.5" />
+          ) : renderedMode === "table" ? (
+            <Table2Icon className="size-3.5" />
+          ) : (
+            <EyeIcon className="size-3.5" />
+          )}
+        </FileSurfaceAction>
+      ) : null}
+      {showsRawText ? (
+        <FileSurfaceAction
+          label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
+          pressed={wordWrap}
+          onPress={() => setWordWrapOverride(!wordWrap)}
+        >
+          <WrapTextIcon className="size-3.5" />
+        </FileSurfaceAction>
+      ) : null}
+      {content || streamsText ? (
+        <FileSurfaceAction
+          label={isCopied ? "Copied" : content?.truncated ? "Copy preview" : "Copy contents"}
+          onPress={() => {
+            if (content) {
+              void copyToClipboard(content.text, undefined);
+              return;
+            }
+            const copy = copyContents.current;
+            if (!copy) {
+              toastManager.add({
+                type: "error",
+                title: "Could not copy file",
+                description: "Wait for the file to finish loading before copying.",
+              });
+              return;
+            }
+            void copy()
+              .then((text) => copyToClipboard(text, undefined))
+              .catch((cause: unknown) =>
                 toastManager.add({
                   type: "error",
                   title: "Could not copy file",
-                  description: "Wait for the file to finish loading before copying.",
-                });
-                return;
-              }
-              void copy()
-                .then((text) => copyToClipboard(text, undefined))
-                .catch((cause: unknown) =>
-                  toastManager.add({
-                    type: "error",
-                    title: "Could not copy file",
-                    description: cause instanceof Error ? cause.message : "Try again.",
-                  }),
-                );
-            }}
-          >
-            {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
-          </FileSurfaceAction>
-        ) : null}
-        {url ? (
-          <FileSurfaceAction
-            label={saving ? "Preparing file…" : "Save file"}
-            disabled={saving}
-            onPress={save}
-          >
-            <DownloadIcon className="size-3.5" />
-          </FileSurfaceAction>
-        ) : null}
-        {props.onRemove ? (
-          <FileSurfaceAction label="Remove from draft" onPress={props.onRemove}>
-            <Trash2Icon className="size-3.5" />
-          </FileSurfaceAction>
-        ) : null}
-        {props.onClose ? (
-          <FileSurfaceAction label="Close" onPress={props.onClose}>
-            <XIcon className="size-3.5" />
-          </FileSurfaceAction>
-        ) : null}
-      </div>
-      {content?.truncated ? (
-        <FileSurfaceNotice>
-          Preview limited to the first 1 MB
-          {props.sizeBytes > 0 ? ` of a ${props.sizeBytes.toLocaleString()} byte file` : ""}. Save
-          the file to read it in full.
-        </FileSurfaceNotice>
+                  description: cause instanceof Error ? cause.message : "Try again.",
+                }),
+              );
+          }}
+        >
+          {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+        </FileSurfaceAction>
       ) : null}
-      {body}
-    </div>
+      {url ? (
+        <FileSurfaceAction
+          label={saving ? "Preparing file…" : "Save file"}
+          disabled={saving}
+          onPress={save}
+        >
+          <DownloadIcon className="size-3.5" />
+        </FileSurfaceAction>
+      ) : null}
+      {props.onRemove ? (
+        <FileSurfaceAction label="Remove from draft" onPress={props.onRemove}>
+          <Trash2Icon className="size-3.5" />
+        </FileSurfaceAction>
+      ) : null}
+      {props.onClose ? (
+        <FileSurfaceAction label="Close" onPress={props.onClose}>
+          <XIcon className="size-3.5" />
+        </FileSurfaceAction>
+      ) : null}
+    </>
+  );
+  const actions = embeddedToolbar ? toolbarActions : null;
+  return (
+    <FilePreviewActions.Provider value={actions}>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+        {!embeddedToolbar ? (
+          <div className={cn(FILE_SURFACE_SUBHEADER_CLASS)} data-surface-subheader>
+            <div className="flex min-w-0 flex-1 items-center text-xs">
+              <span className="shrink-0 px-0.5 text-muted-foreground">
+                {props.origin ?? "Attachment"}
+              </span>
+              <ChevronRightIcon className="mx-1 size-3.5 shrink-0 text-muted-foreground/60" />
+              <span
+                aria-current="page"
+                className="min-w-0 truncate px-0.5 font-medium text-foreground"
+              >
+                {props.name}
+              </span>
+              {props.sizeBytes > 0 ? (
+                <span className="ml-2 shrink-0 text-muted-foreground">
+                  {formatAttachmentSize(props.sizeBytes)}
+                </span>
+              ) : null}
+            </div>
+            {toolbarActions}
+          </div>
+        ) : null}
+        {content?.truncated ? (
+          <FileSurfaceNotice>
+            Preview limited to the first 1 MB
+            {props.sizeBytes > 0 ? ` of a ${props.sizeBytes.toLocaleString()} byte file` : ""}. Save
+            the file to read it in full.
+          </FileSurfaceNotice>
+        ) : null}
+        {body}
+      </div>
+    </FilePreviewActions.Provider>
   );
 }

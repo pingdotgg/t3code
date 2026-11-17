@@ -27,7 +27,11 @@ function DecodedImage({ name, mimeType, src, onError, ...props }: AttachmentImag
 
   // The browser cannot show HEIC or TIFF itself, so its load error starts the decode.
   const decode = (event: SyntheticEvent<HTMLImageElement>) => {
-    if (decodeRef.current !== null || !src) return onError?.(event);
+    if (!src) return onError?.(event);
+    if (decodeRef.current !== null) {
+      if (previewUrl) onError?.(event);
+      return;
+    }
     const attempt: DecodeAttempt = { controller: new AbortController() };
     decodeRef.current = attempt;
     const { signal } = attempt.controller;
@@ -59,5 +63,12 @@ function DecodedImage({ name, mimeType, src, onError, ...props }: AttachmentImag
     [],
   );
 
-  return <img {...props} src={previewUrl ?? src} onError={decode} />;
+  return (
+    <img
+      {...props}
+      style={{ ...props.style, visibility: previewUrl ? props.style?.visibility : "hidden" }}
+      src={previewUrl ?? src}
+      onError={decode}
+    />
+  );
 }

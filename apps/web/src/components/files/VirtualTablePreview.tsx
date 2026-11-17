@@ -1,10 +1,29 @@
 /* oxlint-disable react/no-array-index-key -- Positions identify source rows and columns. */
+import { ZoomableMediaViewport } from "./ZoomableMediaViewport";
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { observeResize } from "~/lib/observeResize";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { PREVIEW_PAGE_ROWS } from "./largeTextProtocol";
 
-export default function VirtualTablePreview(props: {
+// Virtual scroll tracks and DOM scroll offsets use layout pixels, before preview magnification.
+function layoutBounds(node: HTMLElement) {
+  const zoom = Number(node.closest<HTMLElement>("[data-file-zoom]")?.dataset.fileZoom) || 1;
+  const rect = node.getBoundingClientRect();
+  return { top: rect.top / zoom, bottom: rect.bottom / zoom, height: rect.height / zoom };
+}
+
+export default function VirtualTablePreview(props: Parameters<typeof VirtualTableContent>[0]) {
+  if (props.source) return <VirtualTableContent {...props} />;
+  return (
+    <ZoomableMediaViewport minZoom={0.25} layout="table" label="Table preview">
+      <div className="flex h-full w-full min-h-0">
+        <VirtualTableContent {...props} />
+      </div>
+    </ZoomableMediaViewport>
+  );
+}
+
+function VirtualTableContent(props: {
   readonly name: string;
   readonly count: number;
   readonly columns: number;
@@ -42,8 +61,8 @@ export default function VirtualTablePreview(props: {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Read the browser's laid-out table column widths before displaying the virtual table.
   useLayoutEffect(() => {
     if (!width || !props.header || !measureRef.current || measured) return;
-    const widths = [...measureRef.current.querySelectorAll("thead th")].map(
-      (cell) => cell.getBoundingClientRect().width,
+    const widths = [...measureRef.current.querySelectorAll<HTMLElement>("thead th")].map(
+      (cell) => cell.offsetWidth,
     );
     if (widths.length) setMeasured(widths);
   }, [measured, width, props.header]);
@@ -75,6 +94,7 @@ export default function VirtualTablePreview(props: {
   return (
     <div
       ref={ref}
+      data-zoom-scroll
       className="relative min-h-0 flex-1 overflow-x-auto contain-strict"
       onScroll={(event) => {
         event.currentTarget.style.setProperty(
@@ -354,7 +374,7 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
     if (!node) return;
     const update = () => {
       const row = node.querySelector<HTMLElement>(`[data-preview-row="${first}"]`);
-      const offset = row ? row.getBoundingClientRect().top - node.getBoundingClientRect().top : 0;
+      const offset = row ? layoutBounds(row).top - layoutBounds(node).top : 0;
       const height = node.clientHeight;
       const rowHeight = row?.offsetHeight || 29;
       setLayout((old) =>
@@ -385,14 +405,11 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
     if (
       !atStart &&
       (layout.height !== content.clientHeight ||
-        layout.offset !==
-          (firstRow
-            ? firstRow.getBoundingClientRect().top - content.getBoundingClientRect().top
-            : 0))
+        layout.offset !== (firstRow ? layoutBounds(firstRow).top - layoutBounds(content).top : 0))
     )
       return;
-    const bounds = row.getBoundingClientRect();
-    const viewport = node.getBoundingClientRect();
+    const bounds = layoutBounds(row);
+    const viewport = layoutBounds(node);
     const delta =
       bounds.top < viewport.top
         ? bounds.top - viewport.top
@@ -420,19 +437,18 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
       (!atStart &&
         (layout.height !== content.clientHeight ||
           layout.offset !==
-            (firstRow
-              ? firstRow.getBoundingClientRect().top - content.getBoundingClientRect().top
-              : 0)))
+            (firstRow ? layoutBounds(firstRow).top - layoutBounds(content).top : 0)))
     )
       return;
     node.scrollTop = node.scrollHeight;
     setTop(node.scrollTop);
-    if (Math.abs(row.getBoundingClientRect().bottom - node.getBoundingClientRect().bottom) < 1)
+    if (Math.abs(layoutBounds(row).bottom - layoutBounds(node).bottom) < 1)
       pendingEnd.current = false;
   });
   return (
     <div
       ref={ref}
+      data-zoom-scroll
       tabIndex={0}
       className="min-h-0 flex-1 overflow-auto"
       onKeyDown={(event) => {

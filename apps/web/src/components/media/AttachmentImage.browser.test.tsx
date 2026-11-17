@@ -107,3 +107,25 @@ it("discards an old decode when navigating to a different source", async () => {
   expect(URL.createObjectURL).not.toHaveBeenCalled();
   expect(vi.mocked(decodeImagePreview).mock.calls[0]?.[2].aborted).toBe(true);
 });
+
+it("keeps the broken native image hidden and ignores duplicate errors during decoding", async () => {
+  setup();
+  let complete!: (blob: Blob) => void;
+  vi.mocked(decodeImagePreview).mockReturnValue(
+    new Promise((resolve) => {
+      complete = resolve;
+    }),
+  );
+  using _url = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:decoded");
+  const onError = vi.fn();
+  await using screen = await render(
+    <AttachmentImage src="blob:pending-tiff" name="scan.tiff" onError={onError} />,
+  );
+  expect(image(screen).style.visibility).toBe("hidden");
+  await failDecode(screen);
+  await failDecode(screen);
+  expect(onError).not.toHaveBeenCalled();
+  await act(() => complete(bitmap));
+  expect(image(screen).getAttribute("src")).toBe("blob:decoded");
+  expect(image(screen).style.visibility).not.toBe("hidden");
+});

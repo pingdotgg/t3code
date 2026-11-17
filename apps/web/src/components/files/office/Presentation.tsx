@@ -1,11 +1,7 @@
 /* oxlint-disable react/no-unstable-nested-components -- These callbacks return overlays, and are invoked as render functions. */
 import { useEffect, useRef, useState } from "react";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
-import {
-  FileSurfaceAction,
-  FileSurfaceLoading,
-  FILE_SURFACE_SUBHEADER_CLASS,
-} from "../fileSurfaceChrome";
+import { FileSurfaceAction, FileSurfaceLoading } from "../fileSurfaceChrome";
 import { OfficePages, type PaintPage } from "./OfficePages";
 import { createWorkerClient } from "./worker-rpc";
 import type { SlideMethods, SlideSummary } from "./slide-protocol";
@@ -94,26 +90,28 @@ export default function Presentation(props: {
   };
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className={FILE_SURFACE_SUBHEADER_CLASS}>
-        <FileSurfaceAction
-          label="Previous slide"
-          disabled={page === 0}
-          onPress={() => select(page - 1)}
-        >
-          <ChevronLeftIcon className="size-3.5" />
-        </FileSurfaceAction>
-        <span className="flex-1 text-center text-xs tabular-nums" aria-live="polite">
-          Slide {page + 1} of {opened.slides.length}
-        </span>
-        <FileSurfaceAction
-          label="Next slide"
-          disabled={page + 1 === opened.slides.length}
-          onPress={() => select(page + 1)}
-        >
-          <ChevronRightIcon className="size-3.5" />
-        </FileSurfaceAction>
-      </div>
       <OfficePages
+        toolbar={
+          <div className="mr-auto flex items-center gap-1">
+            <FileSurfaceAction
+              label="Previous slide"
+              disabled={page === 0}
+              onPress={() => select(page - 1)}
+            >
+              <ChevronLeftIcon className="size-3.5" />
+            </FileSurfaceAction>
+            <span className="px-1 tabular-nums" aria-live="polite">
+              Slide {page + 1} of {opened.slides.length}
+            </span>
+            <FileSurfaceAction
+              label="Next slide"
+              disabled={page + 1 === opened.slides.length}
+              onPress={() => select(page + 1)}
+            >
+              <ChevronRightIcon className="size-3.5" />
+            </FileSurfaceAction>
+          </div>
+        }
         pages={opened.slides}
         paint={opened.paint}
         label="Slide"

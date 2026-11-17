@@ -1,3 +1,4 @@
+import { ZoomableMediaViewport } from "./ZoomableMediaViewport";
 import { DownloadIcon, CopyIcon, CheckIcon, Code2Icon, EyeIcon, Table2Icon } from "lucide-react";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { Spinner } from "~/components/ui/spinner";
@@ -332,7 +333,7 @@ function WorkspaceVideoPreview(props: {
   const latestUrl = assetUrl._tag === "Success" ? `${assetUrl.url}${revisionSuffix}` : null;
 
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4">
+    <ZoomableMediaViewport>
       <MediaVideoPlayer
         src={latestUrl}
         sourceFailed={assetUrl._tag === "Failure"}
@@ -350,7 +351,7 @@ function WorkspaceVideoPreview(props: {
           asset: { environmentId: props.environmentId, resource },
         }}
       />
-    </div>
+    </ZoomableMediaViewport>
   );
 }
 
@@ -454,6 +455,7 @@ function WorkspaceDocumentPreview(props: {
   }
   return (
     <AttachmentFilePreview
+      embedded
       key={`${revision}:${props.refreshRevision}`}
       name={props.name}
       mimeType="application/octet-stream"
@@ -1587,6 +1589,7 @@ export default function FilePreviewPanel({
           ) : null}
           {isFolder ? null : relativePath && attachment ? (
             <AttachmentFilePreview
+              embedded
               key={`${environmentId}:${attachment.id}`}
               name={attachment.name}
               mimeType={attachment.mimeType}

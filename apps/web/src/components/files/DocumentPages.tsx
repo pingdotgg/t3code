@@ -1,9 +1,10 @@
+import { pinchFileZoom } from "./fileZoom";
+import { FileZoomControls, FILE_ZOOM_TOOLBAR_CLASS } from "./FileZoomControls";
 import DOMPurify from "dompurify";
-import { MinusIcon, PlusIcon, RotateCcwIcon } from "lucide-react";
-import { FileSurfaceAction } from "./fileSurfaceChrome";
 import { useEffect, useRef, useState } from "react";
 import { useTheme } from "~/hooks/useTheme";
 import { observeResize } from "~/lib/observeResize";
+import { listenForPinch } from "./pinchZoom";
 
 export function sanitizeDocumentHtml(source: string): string {
   const fragment = DOMPurify.sanitize(source, {
@@ -70,6 +71,14 @@ function documentColors() {
   );
 }
 
+const MIN_READING_ZOOM = 0.5;
+const MAX_READING_ZOOM = 2;
+
+/** Reading size is a CSS variable inside the frame, so zooming never reloads the document. */
+function setReadingZoom(frame: HTMLIFrameElement | null, zoom: number) {
+  frame?.contentDocument?.documentElement?.style.setProperty("--reading-zoom", String(zoom));
+}
+
 export default function DocumentPages(props: {
   readonly html: string;
   readonly name: string;
@@ -88,48 +97,81 @@ export default function DocumentPages(props: {
   const [zoom, setZoom] = useState(1);
   const [outputHeight, setOutputHeight] = useState(0);
   const stopObserving = useRef<(() => void) | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Disconnect the iframe body's resize observer when the document unmounts.
-  useEffect(() => () => stopObserving.current?.(), []);
+  const stopPinch = useRef<(() => void) | null>(null);
+  const frame = useRef<HTMLIFrameElement>(null);
+  // The frame applies pinch steps immediately; React state only follows for the toolbar.
+  const liveZoom = useRef(1);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Disconnect the iframe body's resize observer and pinch listener when the document unmounts.
+  useEffect(
+    () => () => {
+      stopObserving.current?.();
+      stopPinch.current?.();
+    },
+    [],
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Push toolbar reading-size changes into the loaded frame without rebuilding srcDoc.
+  useEffect(() => {
+    liveZoom.current = zoom;
+    setReadingZoom(frame.current, zoom);
+  }, [zoom]);
   const html = sanitizeDocumentHtml(props.html);
-  const srcDoc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><style>:root{color-scheme:${resolvedTheme}}html{background:${colors[0]};color:${colors[1]};font:${15 * zoom}px/1.65 system-ui,sans-serif}body{box-sizing:border-box;margin:${props.output ? "0" : "20px auto"};padding:${props.output ? "16px" : "32px"};width:${props.output ? "100%" : "calc(100% - 40px)"};max-width:${860 * zoom}px;min-height:${props.output ? "0" : "calc(100vh - 40px)"};display:flow-root;background:${colors[2]};overflow-wrap:anywhere}h1,h2,h3{line-height:1.25}img{max-width:100%;height:auto}table{border-collapse:collapse;min-width:100%;max-width:100%}td,th{border:1px solid ${colors[3]};padding:6px 12px;text-align:left}th{background:${colors[0]}}tr:nth-child(even){background:${colors[0]}}pre,span[data-odf-whitespace]{white-space:pre-wrap}*{scrollbar-width:thin}${props.output ? "" : "@media(max-width:420px){body{padding:20px;width:calc(100% - 24px);margin:12px auto}}"}</style></head><body>${html}</body></html>`;
+  const srcDoc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><style>:root{color-scheme:${resolvedTheme}}html{background:${colors[0]};color:${colors[1]};font:15px/1.65 system-ui,sans-serif}body{zoom:var(--reading-zoom,1);box-sizing:border-box;margin:${props.output ? "0" : "20px auto"};padding:${props.output ? "16px" : "32px"};width:${props.output ? "100%" : "calc(var(--reading-width, 100vw) - 40px)"};max-width:860px;min-height:${props.output ? "0" : "calc(100vh - 40px)"};display:flow-root;background:${colors[2]};overflow-wrap:anywhere}h1,h2,h3{line-height:1.25}img{max-width:100%;height:auto}table{border-collapse:collapse;min-width:100%;max-width:100%}td,th{border:1px solid ${colors[3]};padding:6px 12px;text-align:left}th{background:${colors[0]}}tr:nth-child(even){background:${colors[0]}}pre,span[data-odf-whitespace]{white-space:pre-wrap}*{scrollbar-width:thin}${props.output ? "" : "@media(max-width:420px){body{padding:20px;width:calc(100% - 24px);margin:12px auto}}"}</style></head><body>${html}</body></html>`;
   return (
     <>
       {!props.output ? (
-        <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-1 border-b border-border/60 px-3 py-1 text-xs text-muted-foreground">
+        <div className={FILE_ZOOM_TOOLBAR_CLASS}>
           <span className="min-w-0 flex-1 text-muted-foreground tabular-nums" role="status">
             {props.details}
           </span>
-          <FileSurfaceAction
-            label="Decrease reading size"
-            disabled={zoom <= 0.5}
-            onPress={() => setZoom((value) => Math.max(0.5, value - 0.25))}
-          >
-            <MinusIcon className="size-3.5" />
-          </FileSurfaceAction>
-          <span className="min-w-10 text-center tabular-nums">{Math.round(zoom * 100)}%</span>
-          <FileSurfaceAction
-            label="Increase reading size"
-            disabled={zoom >= 2}
-            onPress={() => setZoom((value) => Math.min(2, value + 0.25))}
-          >
-            <PlusIcon className="size-3.5" />
-          </FileSurfaceAction>
-          <FileSurfaceAction
-            label="Reset reading size"
-            disabled={zoom === 1}
-            onPress={() => setZoom(1)}
-          >
-            <RotateCcwIcon className="size-3.5" />
-          </FileSurfaceAction>
+          <FileZoomControls
+            zoom={zoom}
+            min={MIN_READING_ZOOM}
+            max={MAX_READING_ZOOM}
+            onChange={setZoom}
+            onReset={() => setZoom(1)}
+          />
         </div>
       ) : null}
       <iframe
         title={props.name}
         srcDoc={srcDoc}
-        // Same-origin access lets the parent measure saved output; scripts remain blocked.
-        sandbox={props.output ? "allow-same-origin" : ""}
+        ref={frame}
+        // Same-origin access lets the parent measure output and apply pinch zoom; scripts remain blocked.
+        sandbox="allow-same-origin"
         onLoad={(event) => {
-          if (!props.output) return;
+          const node = event.currentTarget;
+          node.contentDocument?.documentElement?.style.setProperty(
+            "--reading-width",
+            `${node.clientWidth}px`,
+          );
+          setReadingZoom(node, liveZoom.current);
+          if (!props.output) {
+            stopObserving.current?.();
+            stopObserving.current = observeResize(node, () => {
+              node.contentDocument?.documentElement?.style.setProperty(
+                "--reading-width",
+                `${node.clientWidth}px`,
+              );
+            });
+            stopPinch.current?.();
+            const view = node.contentWindow;
+            stopPinch.current = view
+              ? listenForPinch(view, (factor, point) => {
+                  const previous = liveZoom.current;
+                  const next = pinchFileZoom(previous, factor, MIN_READING_ZOOM, MAX_READING_ZOOM);
+                  if (next === previous) return;
+                  liveZoom.current = next;
+                  setReadingZoom(node, next);
+                  // Text reflows, so keep the pointer's proportional position.
+                  view.scrollTo({
+                    left: (view.scrollX + point.x) * (next / previous) - point.x,
+                    top: (view.scrollY + point.y) * (next / previous) - point.y,
+                  });
+                  setZoom(next);
+                })
+              : null;
+            return;
+          }
           stopObserving.current?.();
           const body = event.currentTarget.contentDocument?.body;
           if (!body) return;
