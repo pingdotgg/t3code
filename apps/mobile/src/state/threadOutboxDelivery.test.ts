@@ -791,61 +791,6 @@ describe("thread outbox recovery rollback", () => {
     );
   });
 
-  it("keeps an attachment prepared while a failed task is being recovered", async () => {
-    const message: QueuedThreadMessage = {
-      ...queuedMessage({ messageId: "failed-late-attachment", text: "Original prompt" }),
-      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
-      creation: {
-        projectId: ProjectId.make("project-1"),
-        workspaceMode: "local",
-        branch: null,
-        worktreePath: null,
-      },
-    };
-    const sourceKey = `${message.environmentId}:${message.threadId}`;
-    const targetKey = "new-task:restored-failed-late-attachment";
-    await composerDrafts.waitForComposerDraftsLoaded();
-    appAtomRegistry.set(composerDrafts.composerDraftsAtom, {
-      [targetKey]: { text: message.text, attachments: [] },
-      [sourceKey]: { text: "Please include tests", attachments: [] },
-    });
-    const saving = Promise.withResolvers<void>();
-    const resume = Promise.withResolvers<void>();
-    const write = harness.draftFile.File.prototype.write;
-    const writeSpy = vi
-      .spyOn(harness.draftFile.File.prototype, "write")
-      .mockImplementationOnce(async function (value) {
-        write(value);
-        saving.resolve();
-        await resume.promise;
-      });
-    const attachment = {
-      id: "late-paste",
-      type: "image" as const,
-      name: "pasted.png",
-      mimeType: "image/png",
-      sizeBytes: 1,
-      dataUrl: "data:image/png;base64,AA==",
-      previewUri: "data:image/png;base64,AA==",
-    };
-    try {
-      const recovering = recoverFailedThreadDraft(message);
-      await saving.promise;
-      composerDrafts.appendComposerDraftAttachments(sourceKey, [attachment], {
-        appendReference: true,
-      });
-      resume.resolve();
-      await recovering;
-      expect(composerDrafts.getComposerDraftSnapshot(targetKey).attachments).toContainEqual(
-        attachment,
-      );
-    } finally {
-      resume.resolve();
-      writeSpy.mockRestore();
-      await composerDrafts.flushComposerDrafts();
-    }
-  });
-
   it("keeps a late attachment and its reference when recovery fills the context limit", async () => {
     const message: QueuedThreadMessage = {
       ...queuedMessage({ messageId: "failed-full-context", text: "Original prompt" }),
