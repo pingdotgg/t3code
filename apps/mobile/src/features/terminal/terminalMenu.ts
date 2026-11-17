@@ -3,6 +3,9 @@ import { DEFAULT_TERMINAL_ID, type ProjectScript } from "@t3tools/contracts";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 
@@ -37,24 +40,29 @@ export function basename(input: string | null): string | null {
   return segments[segments.length - 1] ?? normalized;
 }
 
-export function getTerminalStatusLabel(input: {
-  readonly status: TerminalMenuSession["status"];
-  readonly hasRunningSubprocess?: boolean;
-}): string {
+export function getTerminalStatusLabel(
+  input: {
+    readonly status: TerminalMenuSession["status"];
+    readonly hasRunningSubprocess?: boolean;
+  },
+  resolve: MessageResolver = m,
+): string {
   if (input.status === "running") {
-    return input.hasRunningSubprocess ? "Task running" : "Ready";
+    return input.hasRunningSubprocess
+      ? resolve(msg("Task running", { $context: "terminal status" }))
+      : resolve(msg("Ready", { $context: "terminal status" }));
   }
   if (input.status === "starting") {
-    return "Starting";
+    return resolve(msg("Starting", { $context: "terminal status" }));
   }
   if (input.status === "exited") {
-    return "Exited";
+    return resolve(msg("Exited", { $context: "terminal status" }));
   }
   if (input.status === "error") {
-    return "Error";
+    return resolve(msg("Error", { $context: "terminal status" }));
   }
 
-  return "Not started";
+  return resolve(msg("Not started", { $context: "terminal status" }));
 }
 
 /** Count the mounted terminal before sessions load, or new-terminal navigation may replace it with itself. */

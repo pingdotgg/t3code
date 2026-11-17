@@ -1,6 +1,7 @@
 import * as Updates from "expo-updates";
 // Metro namespace imports evaluate unrelated React Native getters, including unavailable native modules.
 import { AppState } from "react-native";
+import { msg } from "gt-react-native";
 
 import {
   type AtomCommandResult,
@@ -9,6 +10,8 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+
+import { m } from "../../i18n/messages";
 
 export type AppUpdateCheckState =
   | "idle"
@@ -223,7 +226,7 @@ async function performAppUpdateCheck(
   setState("checking");
   const check = await settlePromise(() => client.checkForUpdateAsync());
   if (check._tag === "Failure") {
-    reportUpdateFailure(check, "Could not check for updates.", options.onFailure);
+    reportUpdateFailure(check, m(msg("Could not check for updates.")), options.onFailure);
     setState("idle");
     return;
   }
@@ -236,7 +239,7 @@ async function performAppUpdateCheck(
   setState("downloading");
   const fetched = await settlePromise(() => client.fetchUpdateAsync());
   if (fetched._tag === "Failure") {
-    reportUpdateFailure(fetched, "Could not download the update.", options.onFailure);
+    reportUpdateFailure(fetched, m(msg("Could not download the update.")), options.onFailure);
     setState("idle");
     return;
   }
@@ -281,7 +284,7 @@ async function installAppUpdate(
   setState("restarting");
   const flushed = await settlePromise(() => environment.flushPendingWrites());
   if (flushed._tag === "Failure") {
-    reportUpdateFailure(flushed, "Could not save pending state.", undefined);
+    reportUpdateFailure(flushed, m(msg("Could not save pending state.")), undefined);
     if (!userRequested) {
       deferral.installInProgress = false;
       return "flush-failed";
@@ -289,7 +292,11 @@ async function installAppUpdate(
   }
   const reloaded = await settlePromise(() => client.reloadAsync());
   if (reloaded._tag === "Failure") {
-    reportUpdateFailure(reloaded, "Downloaded, but could not restart the app.", options.onFailure);
+    reportUpdateFailure(
+      reloaded,
+      m(msg("Downloaded, but could not restart the app.")),
+      options.onFailure,
+    );
     setState("idle");
     deferral.installInProgress = false;
     return "restart-failed";
@@ -357,7 +364,7 @@ async function applyDeferredAppUpdateInstall(
   const safe = await settlePromise(() => environment.isSafeToRestartInBackground());
   if (flushed._tag === "Failure" || safe._tag !== "Success" || !safe.value) {
     if (flushed._tag === "Failure") {
-      reportUpdateFailure(flushed, "Could not save pending state.", undefined);
+      reportUpdateFailure(flushed, m(msg("Could not save pending state.")), undefined);
     }
     deferral.installInProgress = false;
     // Wait for a fresh background transition after failure to avoid same-session retry loops.
@@ -366,7 +373,7 @@ async function applyDeferredAppUpdateInstall(
   }
   const reloaded = await settlePromise(() => client.reloadAsync());
   if (reloaded._tag === "Failure") {
-    reportUpdateFailure(reloaded, "Downloaded, but could not restart the app.", undefined);
+    reportUpdateFailure(reloaded, m(msg("Downloaded, but could not restart the app.")), undefined);
     deferral.installInProgress = false;
     deferral.pendingInstall = false;
   }
@@ -376,11 +383,15 @@ async function defaultConfirmInstallNow(): Promise<boolean> {
   const Dialog = await import("../../components/ui/Dialog");
   return new Promise<boolean>((resolve) => {
     Dialog.alert(
-      "Update ready",
-      "A new version has been downloaded and installs automatically the next time you leave the app. Install it now instead?",
+      m(msg("Update ready")),
+      m(
+        msg(
+          "A new version has been downloaded and installs automatically the next time you leave the app. Install it now instead?",
+        ),
+      ),
       [
-        { onPress: () => resolve(false), style: "cancel", text: "Later" },
-        { onPress: () => resolve(true), text: "Install Now" },
+        { onPress: () => resolve(false), style: "cancel", text: m(msg("Later")) },
+        { onPress: () => resolve(true), text: m(msg("Install Now")) },
       ],
       { cancelable: true, onDismiss: () => resolve(false) },
     );

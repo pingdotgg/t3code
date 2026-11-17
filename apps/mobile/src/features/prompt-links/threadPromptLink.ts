@@ -4,7 +4,9 @@ import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contract
 import { parseThreadLinkPrompt, type LinkedPrompt } from "@t3tools/shared/promptLinks";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
+import { msg } from "gt-react-native";
 
+import { m } from "../../i18n/messages";
 import { findStackRoute } from "../../lib/appLinking";
 import { rootNavigationRef } from "../../lib/rootNavigation";
 import { scopedThreadKey } from "../../lib/scopedEntities";
@@ -57,7 +59,7 @@ export function takeThreadPromptLink(
   if (environmentId === null || threadId === null) return nextState;
   const parsed = parseThreadLinkPrompt(search);
   if (!parsed.ok) {
-    Dialog.alert("Could not open link", parsed.error);
+    Dialog.alert(m(msg("Could not open link")), parsed.error);
     return nextState;
   }
   if (parsed.value !== null) {
