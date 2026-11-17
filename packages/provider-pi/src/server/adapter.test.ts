@@ -3990,6 +3990,50 @@ describe("PiAdapterV2", () => {
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect.each([
+    { block: "thinking", itemType: "reasoning" },
+    { block: "text", itemType: "assistant_message" },
+  ] as const)(
+    "drops an abandoned $block attempt when Pi starts the block again",
+    ({ block, itemType }) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* startTurn(runtime, providerThread);
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({ type: "response", command: "prompt", success: true });
+        yield* fake.emit({ type: "agent_start" });
+        yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
+        for (const [type, delta] of [
+          [`${block}_start`, undefined],
+          [`${block}_delta`, "Abandoned attempt"],
+          [`${block}_start`, undefined],
+          [`${block}_delta`, "Replacement attempt"],
+        ] as const) {
+          yield* fake.emit({
+            type: "message_update",
+            assistantMessageEvent: { type, contentIndex: 0, ...(delta ? { delta } : {}) },
+          });
+        }
+        yield* fake.emit({ type: "message_end", message: { role: "assistant" } });
+        const item = yield* takeEvent(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === itemType &&
+            event.turnItem.status === "completed",
+        );
+        assert.equal(
+          item.type === "turn_item.updated" && "text" in item.turnItem ? item.turnItem.text : null,
+          "Replacement attempt",
+        );
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("records the model Pi reports on the completed provider turn", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
