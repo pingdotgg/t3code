@@ -1,4 +1,5 @@
 import type { ModelSelection, ProviderDriverKind } from "@t3tools/contracts";
+import { useGT } from "gt-react-native";
 import {
   buildTraitsTriggerDisplay,
   getPromptControlledTraits,
@@ -21,6 +22,7 @@ export function ComposerModelControl(props: {
   readonly iconOnly?: boolean;
   readonly onPress: () => void;
 }) {
+  const gt = useGT();
   const descriptors = resolveProviderOptionDescriptors({
     capabilities: props.modelOption?.capabilities,
     selections: props.selection?.options,
@@ -36,7 +38,7 @@ export function ComposerModelControl(props: {
       }).label
     : "";
   const badge = props.modelOption?.providerBadge;
-  const label = props.modelOption?.label ?? props.selection?.model ?? "Choose model";
+  const label = props.modelOption?.label ?? props.selection?.model ?? gt("Choose model");
   const providerNameLabel = badge
     ? providerInstanceNameLabel({
         provider: props.modelOption?.providerDriver,
@@ -49,7 +51,7 @@ export function ComposerModelControl(props: {
   return (
     <ComposerInlineControl
       accessibilityLabel={[
-        "Model and reasoning settings",
+        gt("Model and reasoning settings"),
         label,
         badge?.showBadge ? badge.displayName : null,
         summary,
