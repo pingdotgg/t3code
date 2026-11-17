@@ -12,6 +12,7 @@ import { useBarOverlap } from "../../components/ui/useBarInset";
 import { useEnvironments } from "../../state/environments";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { BrowserBar, useBarFollowsScroll } from "./BrowserBar";
+import { loopbackUrlForDevice } from "./browserTabs";
 import { TunnelWebView, type TunnelNavigation, type TunnelWebViewRef } from "./TunnelWebView";
 
 type LocalPreviewRouteScreenProps = StaticScreenProps<{
@@ -41,12 +42,13 @@ export function LocalPreviewScreen(props: {
   readonly onMaximize?: (url: string) => void;
 }) {
   const { environmentId, onMaximize } = props;
+  const initialUrl = forDevice(props.url);
   const environmentLabel =
     useEnvironments().presentationById.get(environmentId)?.entry.target.label ?? "the environment";
   const { themeVariables } = useAppearancePreferences();
   const barOverlap = useBarOverlap();
   const webView = useRef<TunnelWebViewRef>(null);
-  const [requested, setRequested] = useState(props.url);
+  const [requested, setRequested] = useState(initialUrl);
   const [page, setPage] = useState<TunnelNavigation | null>(null);
   const [failed, setFailed] = useState(false);
   const [unsupported, setUnsupported] = useState<string | null>(null);
@@ -55,7 +57,8 @@ export function LocalPreviewScreen(props: {
   const current = (!failed && page?.url) || requested;
 
   const open = (value: string) => {
-    const next = normalizedOrNull(value);
+    const normalized = normalizedOrNull(value);
+    const next = normalized === null ? null : forDevice(normalized);
     if (next === null) {
       Dialog.alert("Could not open this address", "Enter an http or https URL.");
       return;
@@ -119,7 +122,7 @@ export function LocalPreviewScreen(props: {
           ref={webView}
           className="flex-1"
           environmentId={environmentId}
-          url={props.url}
+          url={initialUrl}
           onNavigationChange={(next) => {
             if (next.loading) setFailed(false);
             setPage(next);
@@ -182,6 +185,11 @@ function hostOf(value: string): string {
   } catch {
     return value;
   }
+}
+
+// The unspecified address would name the phone itself, so it becomes the environment's localhost.
+function forDevice(url: string): string {
+  return loopbackUrlForDevice(url) ?? url;
 }
 
 function normalizedOrNull(value: string): string | null {
