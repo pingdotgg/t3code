@@ -927,11 +927,17 @@ function reviewThreadText(thread: PullRequestReviewThread): string {
     .trim();
 }
 
+/** A thread's line, marked when it is numbered as in the base branch, the diff's left side. */
+function reviewThreadLine(thread: PullRequestReviewThread): string | null {
+  return thread.line === null ? null : `${thread.line}${thread.side === "left" ? " (before)" : ""}`;
+}
+
 function reviewThreadContext(
   thread: PullRequestReviewThread,
   pullRequestNumber: number,
 ): ReviewCommentContext {
   const lineIndex = Math.max(0, (thread.line ?? 1) - 1);
+  const line = reviewThreadLine(thread);
   return {
     id: `pull-request-finding:${thread.id}`,
     sectionId: `pull-request:${pullRequestNumber}`,
@@ -939,8 +945,7 @@ function reviewThreadContext(
     filePath: thread.path,
     startIndex: lineIndex,
     endIndex: lineIndex,
-    rangeLabel:
-      thread.line === null ? "file" : `L${thread.line}${thread.side === "left" ? " (before)" : ""}`,
+    rangeLabel: line === null ? "file" : `L${line}`,
     // Strip bot bookkeeping comments before bounding finding text.
     text: bounded(reviewThreadText(thread)),
     diff: "",
@@ -1340,8 +1345,9 @@ function reviewLineComments(
       if (body === null || !pullRequestAnchorMatchesUrl(anchor.anchor, lineComment.reviewUrl)) {
         return [];
       }
-      const line = thread.line === null ? "" : ` line ${thread.line}`;
-      return [`${lineComment.author?.login ?? "ghost"} on \`${thread.path}\`${line}: ${body}`];
+      const line = reviewThreadLine(thread);
+      const at = line === null ? "" : ` line ${line}`;
+      return [`${lineComment.author?.login ?? "ghost"} on \`${thread.path}\`${at}: ${body}`];
     }),
   );
   // Threads or their replies can be partly loaded; then an empty match proves nothing.
