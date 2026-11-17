@@ -9,7 +9,10 @@ import * as Stream from "effect/Stream";
 export class AgentAlerts extends Context.Service<
   AgentAlerts,
   {
-    /** Hands the alert to every subscribed client. False when none is subscribed. */
+    /**
+     * Hands the alert to every subscribed client. False when none is subscribed. True means a
+     * client took it, not that it put it on screen.
+     */
     readonly offer: (alert: AgentAlert) => Effect.Effect<boolean>;
     readonly stream: Stream.Stream<AgentAlert>;
   }

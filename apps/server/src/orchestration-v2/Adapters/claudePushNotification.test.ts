@@ -50,7 +50,7 @@ describe("claudePushNotification", () => {
           sentAt: "2026-11-17T12:00:00.000Z",
         },
         additionalContext:
-          "T3 Code showed this notification on the user's connected T3 Code client.",
+          "T3 Code passed this notification to a connected T3 Code client with notifications on. That client shows it unless the user already has this thread open.",
       },
     });
     NodeAssert.deepEqual(delivered, [{ id: "tool-1", body: "fleet.lock stuck" }]);

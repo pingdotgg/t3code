@@ -33,7 +33,8 @@ function toolOutput(toolResponse: ToolResponse, delivered: boolean): SyncHookJSO
       hookEventName: "PostToolUse",
       // Claude Code writes the model's result text from these fields and ignores `message`.
       // `no_transport` is its closest wording: a local notification was or was not sent, and
-      // no mobile push was. `additionalContext` tells the model what T3 did.
+      // no mobile push was. `additionalContext` tells the model what T3 did: it knows a client
+      // took the alert, not that the client put it on screen.
       updatedToolOutput: {
         ...toolResponse,
         message: delivered
@@ -44,7 +45,7 @@ function toolOutput(toolResponse: ToolResponse, delivered: boolean): SyncHookJSO
         disabledReason: "no_transport",
       },
       additionalContext: delivered
-        ? "T3 Code showed this notification on the user's connected T3 Code client."
+        ? "T3 Code passed this notification to a connected T3 Code client with notifications on. That client shows it unless the user already has this thread open."
         : "This notification reached nobody: no T3 Code client with notifications on is connected.",
     },
   };
