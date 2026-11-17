@@ -1307,7 +1307,7 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(error.operation, "write-file");
-        assert!(!error.to_string().contains("new"));
+        assert!(!error.detail.contains("new"));
         assert_eq!(stored(&dir, "voice-cloud-openai").as_deref(), Some("old"));
         assert_eq!(stored(&dir, "voice-cloud-xai"), None);
         assert_eq!(store.raw()["cloudSpeechCredentials"]["openai"], "old");
