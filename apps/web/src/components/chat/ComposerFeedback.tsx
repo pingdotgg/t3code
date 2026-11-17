@@ -2,9 +2,11 @@ import {
   codexFeedbackNotice,
   type CodexFeedbackSubmission,
 } from "@t3tools/client-runtime/state/threads";
+import { msg } from "gt-react";
 import { MessageSquareIcon } from "lucide-react";
 
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
@@ -12,6 +14,7 @@ import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 export function feedbackBannerItem(
   submission: CodexFeedbackSubmission,
   onDismiss: () => void,
+  resolve: MessageResolver = m,
 ): ComposerBannerStackItem | null {
   const notice = codexFeedbackNotice(submission);
   if (!notice) return null;
@@ -31,18 +34,19 @@ export function feedbackBannerItem(
               (error: unknown) => {
                 toastManager.add({
                   type: "error",
-                  title: "Could not copy thread ID",
-                  description: error instanceof Error ? error.message : "An error occurred.",
+                  title: m(msg("Could not copy thread ID")),
+                  description:
+                    error instanceof Error ? error.message : m(msg("An error occurred.")),
                 });
               },
             );
           }}
         >
-          Copy ID
+          {resolve(msg("Copy ID"))}
         </Button>
       ) : undefined,
     ...(submission.status !== "uploading"
-      ? { dismissLabel: "Dismiss feedback notice", onDismiss }
+      ? { dismissLabel: resolve(msg("Dismiss feedback notice")), onDismiss }
       : {}),
   };
 }

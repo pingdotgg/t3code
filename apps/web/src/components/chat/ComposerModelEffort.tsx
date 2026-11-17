@@ -7,9 +7,11 @@ import {
 import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
 import { getProviderOptionCurrentLabel } from "@t3tools/shared/model";
+import { msg, T, useGT } from "gt-react";
 import { CheckIcon, ChevronRightIcon, ChevronUpIcon, WorkflowIcon } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, use, useRef, useState } from "react";
 
+import { m, type MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import {
   Menu,
@@ -85,6 +87,7 @@ export function describeComposerEffort(
   traits: TraitsSelectionInput | null,
   effortDisplay: EffortDisplay,
   size: ComposerControlSize,
+  resolve: MessageResolver = m,
 ): { suffix: ReactNode; detail: string | null } {
   if (!traits) return { suffix: null, detail: null };
   const visibility = getTraitsSectionVisibility(traits);
@@ -121,7 +124,9 @@ export function describeComposerEffort(
     : !reasoning
       ? null
       : reasoning.type === "boolean"
-        ? `${reasoning.label} ${reasoning.currentValue === true ? "On" : "Off"}`
+        ? reasoning.currentValue === true
+          ? resolve(msg("{option} On", { option: reasoning.label }))
+          : resolve(msg("{option} Off", { option: reasoning.label }))
         : ultrathink
           ? "Ultrathink"
           : (getProviderOptionCurrentLabel(
@@ -191,6 +196,7 @@ function ColumnRow(props: {
   disabled?: boolean;
   onPick: () => void;
 }) {
+  const gt = useGT();
   const rowProps = {
     type: "button",
     role: "radio",
@@ -209,11 +215,17 @@ function ColumnRow(props: {
       <span className="min-w-0 flex-1 truncate">{props.label}</span>
       {props.selected ? (
         <>
-          {props.isDefault ? <span className="sr-only">Default</span> : null}
+          {props.isDefault ? (
+            <span className="sr-only">
+              {gt("Default", { $context: "marks the default option" })}
+            </span>
+          ) : null}
           <CheckIcon aria-hidden="true" className="size-3.5" />
         </>
       ) : props.isDefault ? (
-        <span className="text-muted-foreground/70 text-xs">Default</span>
+        <span className="text-muted-foreground/70 text-xs">
+          {gt("Default", { $context: "marks the default option" })}
+        </span>
       ) : null}
     </>
   );
@@ -300,6 +312,7 @@ function EffortLevels(props: { traits: TraitsSelectionInput }) {
 type TraitsSelection = ReturnType<typeof useTraitsSelection>;
 
 function EffortRows(props: { control: ColumnControl; traits: TraitsSelection; locked: boolean }) {
+  const gt = useGT();
   const { control, traits } = props;
   const { descriptor } = control;
   if (control.kind === "boolean") {
@@ -308,7 +321,11 @@ function EffortRows(props: { control: ColumnControl; traits: TraitsSelection; lo
         {([true, false] as const).map((value) => (
           <ColumnRow
             key={String(value)}
-            label={value ? "On" : "Off"}
+            label={
+              value
+                ? gt("On", { $context: "option state" })
+                : gt("Off", { $context: "option state" })
+            }
             selected={(control.descriptor.currentValue === true) === value}
             tabStop={(control.descriptor.currentValue === true) === value}
             onPick={() => traits.changeBoolean(descriptor.id, value)}
@@ -367,6 +384,7 @@ function OptionMenuRow(props: {
   /** Holds the column's tab stop when the model has no levels. */
   tabStop: boolean;
 }) {
+  const gt = useGT();
   const { descriptor, traits } = props;
   const [open, setOpen] = useState(false);
   const popupRef = useRef<HTMLDivElement>(null);
@@ -448,7 +466,9 @@ function OptionMenuRow(props: {
                   ) : null}
                 </span>
                 {choice.isDefault ? (
-                  <span className="text-muted-foreground/70 text-xs">Default</span>
+                  <span className="text-muted-foreground/70 text-xs">
+                    {gt("Default", { $context: "marks the default option" })}
+                  </span>
                 ) : null}
                 <MenuRadioItemIndicator />
               </span>
@@ -466,11 +486,17 @@ function OptionSwitchRow(props: {
   traits: TraitsSelection;
   tabStop: boolean;
 }) {
+  const gt = useGT();
   const { descriptor, traits } = props;
   const checked = descriptor.currentValue === true;
   return (
     <label className={cn(OPTION_ROW, "has-focus-visible:bg-foreground/[0.09]")}>
-      <OptionRowText label={descriptor.label} value={checked ? "On" : "Off"} />
+      <OptionRowText
+        label={descriptor.label}
+        value={
+          checked ? gt("On", { $context: "option state" }) : gt("Off", { $context: "option state" })
+        }
+      />
       <Switch
         size="sm"
         checked={checked}
@@ -485,12 +511,15 @@ function OptionSwitchRow(props: {
 
 function NoEffortRow() {
   return (
-    <div className="flex h-8 items-center px-2 text-muted-foreground text-sm">No effort levels</div>
+    <div className="flex h-8 items-center px-2 text-muted-foreground text-sm">
+      <T>No effort levels</T>
+    </div>
   );
 }
 
 /** The model picker's effort column: the selected model's levels and its other options. */
 export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | null }) {
+  const gt = useGT();
   const picker = use(DockedPickerContext);
   const visibility = props.traits ? getTraitsSectionVisibility(props.traits) : null;
   const controls =
@@ -503,7 +532,10 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
       <div className="shrink-0 px-3 pt-2.5">
         <div className="flex h-8.25 -translate-y-px items-center gap-2 border-b border-border/70 pb-1.5 text-sm">
           <span className="text-muted-foreground">
-            {controls?.effort?.descriptor.label ?? (controls?.others.length ? "Options" : "Effort")}
+            {controls?.effort?.descriptor.label ??
+              (controls?.others.length
+                ? gt("Options", { $context: "heading for model options" })
+                : gt("Effort", { $context: "heading for reasoning effort levels" }))}
           </span>
           <span className="ms-auto min-w-0 truncate text-muted-foreground text-xs">
             {picker.modelLabel}
@@ -528,9 +560,12 @@ const FOOTER_SEGMENT =
 function SpeedSegment(props: {
   checked: boolean;
   label: string;
+  /** The untranslated speed name that picks the bolt, when `label` is translated. */
+  speed?: string;
   description?: string | undefined;
   onPick: () => void;
 }) {
+  const speed = props.speed ?? props.label;
   const buttonProps = {
     type: "button",
     role: "radio",
@@ -541,8 +576,8 @@ function SpeedSegment(props: {
   } as const;
   const content = (
     <>
-      {props.label === "Fast" || props.label === "Ultrafast" ? (
-        <FastBolt ultra={props.label === "Ultrafast"} />
+      {speed === "Fast" || speed === "Ultrafast" ? (
+        <FastBolt ultra={speed === "Ultrafast"} />
       ) : null}
       {props.label}
     </>
@@ -557,6 +592,7 @@ function SpeedSegment(props: {
 }
 
 function SpeedControl(props: { traits: TraitsSelectionInput }) {
+  const gt = useGT();
   const traits = useTraitsSelection(props.traits);
   const { speedSelect, fastToggle } = splitSpeed(
     traits.selectDescriptors,
@@ -584,7 +620,12 @@ function SpeedControl(props: { traits: TraitsSelectionInput }) {
               <SpeedSegment
                 key={String(value)}
                 checked={(fastToggle.currentValue === true) === value}
-                label={value ? "Fast" : "Standard"}
+                speed={value ? "Fast" : "Standard"}
+                label={
+                  value
+                    ? gt("Fast", { $context: "response speed" })
+                    : gt("Standard", { $context: "response speed" })
+                }
                 onPick={() => traits.changeBoolean(fastToggle.id, value)}
               />
             ))
@@ -620,6 +661,7 @@ function PermissionsMenu(props: {
   options: ReadonlyArray<RuntimeModeOption>;
   onChange: (mode: RuntimeMode) => void;
 }) {
+  const gt = useGT();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const current = props.options.find((option) => option.mode === props.runtimeMode);
   if (!current) return null;
@@ -636,7 +678,7 @@ function PermissionsMenu(props: {
             ref={triggerRef}
             type="button"
             data-composer-permissions-trigger
-            aria-label={`Permissions: ${current.label}`}
+            aria-label={gt("Permissions: {mode}", { mode: current.label })}
             className="ms-auto flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2 text-muted-foreground text-xs outline-none hover:bg-foreground/[0.09] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset data-popup-open:bg-foreground/[0.09] data-popup-open:text-foreground"
           />
         }

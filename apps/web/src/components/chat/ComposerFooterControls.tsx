@@ -1,5 +1,6 @@
 import type { ModelSelection, ProviderInstanceId, RuntimeMode } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
+import { T, useGT } from "gt-react";
 import { type ComponentProps, memo, useId, useRef, useState } from "react";
 
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
@@ -32,6 +33,7 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
   emphasized?: boolean;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
+  const gt = useGT();
   const size = props.size ?? "sm";
   const accessDisplay = props.accessDisplay ?? "label";
   const composerFloatingLayerProps = useComposerMenuProps();
@@ -42,7 +44,10 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
     supervisedRuntimeModeOption;
   const RuntimeModeIcon = runtimeModeOption.icon;
   // The chip opens the same Permissions toggle used in the model picker and the overflow menu.
-  const permissionsTooltip = `Permissions: ${runtimeModeOption.label}. ${runtimeModeOption.description}`;
+  const permissionsTooltip = gt("Permissions: {mode}. {description}", {
+    mode: runtimeModeOption.label,
+    description: runtimeModeOption.description,
+  });
   const permissionsChip = (
     <Menu
       open={open}
@@ -62,7 +67,7 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
                   size={size}
                   // Mirrors the model trigger's trailing pe-1 so the gaps on both sides of the chip match.
                   className="ps-1.5"
-                  aria-label={`Permissions: ${runtimeModeOption.label}`}
+                  aria-label={gt("Permissions: {mode}", { mode: runtimeModeOption.label })}
                 />
               }
             />
@@ -107,6 +112,7 @@ export function ComposerPermissionsSection(props: {
   runtimeModeOptions: ReadonlyArray<RuntimeModeOption>;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
+  const gt = useGT();
   // Hover or keyboard focus previews a mode's name and description before a pick.
   const [previewMode, setPreviewMode] = useState<RuntimeMode | null>(null);
   const shownMode = previewMode ?? props.runtimeMode;
@@ -116,9 +122,11 @@ export function ComposerPermissionsSection(props: {
   const descriptionId = useId();
   return (
     <div data-composer-permissions className="grid w-72 gap-1.5 px-2 py-1.5">
-      <div className="font-medium text-muted-foreground text-xs">Permissions</div>
+      <div className="font-medium text-muted-foreground text-xs">
+        <T>Permissions</T>
+      </div>
       <MenuPrimitive.RadioGroup
-        aria-label="Permissions"
+        aria-label={gt("Permissions")}
         value={props.runtimeMode}
         onValueChange={(value: RuntimeMode) => {
           if (value !== props.runtimeMode) props.onRuntimeModeChange(value);
