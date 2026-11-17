@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeStream from "@effect/platform-node/NodeStream";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -48,6 +49,47 @@ it.effect("protects unknown desktop visibility until an explicit hidden report a
       yield* send({ type: "attached", threadId: key.threadId, tabId: "sentinel-3" });
       yield* channel.awaitAttached({ threadId: key.threadId, tabId: "sentinel-3" }, "5 seconds");
       expect(channel.isShown(key)).toBe(true);
+    }).pipe(
+      Effect.provide(
+        DesktopBrowserChannel.layer.pipe(
+          Layer.provide(
+            ServerConfig.layer({ ...config, desktopBrowserFd: 41, desktopBrowserControlFd: 42 }),
+          ),
+        ),
+      ),
+    );
+  }).pipe(
+    Effect.provide(
+      ServerConfig.layerTest(process.cwd(), { prefix: "desktop-browser-channel-" }).pipe(
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+  ),
+);
+
+it.effect("awaitShown resolves once a hidden tab is reported shown", () =>
+  Effect.gen(function* () {
+    const input = yield* Queue.unbounded<Uint8Array>();
+    vi.mocked(NodeStream.fromReadable).mockReturnValue(Stream.fromQueue(input));
+    const config = yield* ServerConfig.ServerConfig;
+    yield* Effect.gen(function* () {
+      const channel = yield* DesktopBrowserChannel.DesktopBrowserChannel;
+      const key = { threadId: "thread-1", tabId: "tab-1" };
+      const send = (event: object) =>
+        Queue.offer(
+          input,
+          new TextEncoder().encode(`${JSON.stringify(event)}
+`),
+        );
+
+      expect(yield* channel.awaitShown(key, "5 seconds")).toBe(true);
+      yield* send({ type: "shown", ...key, shown: false });
+      yield* send({ type: "attached", threadId: key.threadId, tabId: "sentinel" });
+      yield* channel.awaitAttached({ threadId: key.threadId, tabId: "sentinel" }, "5 seconds");
+
+      const shown = yield* channel.awaitShown(key, "5 seconds").pipe(Effect.forkChild);
+      yield* send({ type: "shown", ...key, shown: true });
+      expect(yield* Fiber.join(shown)).toBe(true);
     }).pipe(
       Effect.provide(
         DesktopBrowserChannel.layer.pipe(

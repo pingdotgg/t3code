@@ -47,6 +47,8 @@ export class DesktopBrowserChannel extends Context.Service<
     readonly isAttached: (key: DesktopTabKey) => Effect.Effect<boolean>;
     /** Whether a desktop window draws the tab on screen, which no streamed viewer counts. */
     readonly isShown: (key: DesktopTabKey) => boolean;
+    /** Resolves true once the desktop reports the tab shown; subscribes before checking, like awaitAttached. */
+    readonly awaitShown: (key: DesktopTabKey, timeout: Duration.Input) => Effect.Effect<boolean>;
     /** A load failure the desktop saw, possibly before the server connected to the tab. */
     readonly loadFailure: (key: DesktopTabKey) => PreviewAutomationLoadError | undefined;
     readonly endpoint: (key: DesktopTabKey) => Effect.Effect<string, never, Scope.Scope>;
@@ -64,6 +66,7 @@ const make = Effect.gen(function* () {
   const inputFd = config.desktopBrowserFd;
   const controlFd = config.desktopBrowserControlFd;
   const changes = yield* PubSub.unbounded<{ key: DesktopTabKey; attached: boolean }>();
+  const shownChanges = yield* PubSub.unbounded<{ key: DesktopTabKey; shown: boolean }>();
   const attachedTabs = new Set<string>();
   // Missing reports protect desktop tabs until the renderer explicitly marks them hidden.
   const shownTabs = new Map<string, boolean>();
@@ -92,6 +95,9 @@ const make = Effect.gen(function* () {
         return Effect.void;
       }),
       isShown: () => false,
+      awaitShown: Effect.fn("DesktopBrowserChannel.awaitShown")(function () {
+        return Effect.succeed(false);
+      }),
       loadFailure: () => undefined,
     });
   }
@@ -149,7 +155,7 @@ const make = Effect.gen(function* () {
         }
         case "shown":
           shownTabs.set(id, event.shown);
-          return Effect.void;
+          return PubSub.publish(shownChanges, { key, shown: event.shown });
       }
     }),
     Effect.catchCause((cause) => Effect.logWarning("desktop browser channel stopped", { cause })),
@@ -253,6 +259,21 @@ const make = Effect.gen(function* () {
       return Effect.sync(() => attachedTabs.has(keyOf(key)));
     }),
     isShown: (key) => shownTabs.get(keyOf(key)) ?? true,
+    awaitShown: Effect.fn("DesktopBrowserChannel.awaitShown")(function (key, timeout) {
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const subscription = yield* PubSub.subscribe(shownChanges);
+          if (shownTabs.get(keyOf(key)) ?? true) return true;
+          return yield* Stream.fromSubscription(subscription).pipe(
+            Stream.filter((change) => change.shown && keyOf(change.key) === keyOf(key)),
+            Stream.runHead,
+            Effect.map(Option.isSome),
+            Effect.timeoutOption(timeout),
+            Effect.map((result) => Option.getOrElse(result, () => false)),
+          );
+        }),
+      );
+    }),
     loadFailure: (key) => loadFailures.get(keyOf(key)),
     endpoint,
     turn: Effect.fn("DesktopBrowserChannel.turn")(function (threadId, active) {

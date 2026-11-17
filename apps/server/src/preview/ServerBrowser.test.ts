@@ -422,6 +422,12 @@ const desktopRenders = (tabId: string) => {
 let desktopAttachesLate = false;
 let desktopAttachWaiting = Promise.withResolvers<void>();
 const shownDesktopTabs = new Set<string>();
+/** Marks a desktop tab shown the way the renderer's report does. */
+const showDesktopTab = (tabId: string) => {
+  shownDesktopTabs.add(tabId);
+  desktopDetaches.emit("shown", tabId);
+};
+let desktopShowWaiting = Promise.withResolvers<void>();
 const releasedDesktopTabs: Array<string> = [];
 const desktopLoadFailures = new Map<string, PreviewAutomationLoadError>();
 const desktopTurns = new NodeEvents.EventEmitter();
@@ -509,6 +515,28 @@ const dependencies = Layer.mergeAll(
     ),
     isAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
     isShown: (key) => shownDesktopTabs.has(key.tabId),
+    awaitShown: (key, timeout) =>
+      Effect.raceFirst(
+        Stream.callback<string>((queue) =>
+          Effect.acquireRelease(
+            Effect.sync(() => {
+              const onShown = (tabId: string) => Queue.offerUnsafe(queue, tabId);
+              desktopDetaches.on("shown", onShown);
+              if (shownDesktopTabs.has(key.tabId)) Queue.offerUnsafe(queue, key.tabId);
+              return onShown;
+            }),
+            (onShown) => Effect.sync(() => desktopDetaches.off("shown", onShown)),
+          ),
+        ).pipe(
+          Stream.filter((tabId) => tabId === key.tabId),
+          Stream.runHead,
+          Effect.as(true),
+        ),
+        Effect.sync(() => desktopShowWaiting.resolve()).pipe(
+          Effect.andThen(Effect.sleep(timeout)),
+          Effect.as(false),
+        ),
+      ),
     loadFailure: (key) => desktopLoadFailures.get(key.tabId),
     endpoint: (key) =>
       Effect.acquireRelease(Effect.succeed(`ws://desktop/${key.tabId}`), () =>
@@ -592,6 +620,7 @@ beforeEach(() => {
   focusedFrame = null;
   desktopTabs.clear();
   shownDesktopTabs.clear();
+  desktopShowWaiting = Promise.withResolvers<void>();
   desktopLoadFailures.clear();
   desktopRendersNext = false;
   desktopAttachesLate = false;
@@ -3299,6 +3328,59 @@ it.effect("preview_open reports a tab it shows as visible once the client attach
       });
 
       expect(opened.visible).toBe(true);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect(
+  "preview_open reports a hidden desktop tab it reveals as visible once the desktop shows it",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const broker = yield* Broker.PreviewAutomationBroker;
+        const manager = yield* Manager.PreviewManager;
+        const events = yield* manager.subscribeEvents;
+        yield* ServerBrowser.ServerBrowser;
+        yield* Effect.yieldNow;
+        // Like the renderer, the desktop reports the tab shown a round trip after the reveal.
+        yield* Effect.gen(function* () {
+          let event;
+          do event = yield* PubSub.take(events);
+          while (event.type !== "navigated" || !event.snapshot.revealRequest);
+          yield* Effect.promise(() => desktopShowWaiting.promise);
+          showDesktopTab(event.tabId);
+        }).pipe(Effect.forkScoped);
+
+        desktopRendersNext = true;
+        const opened = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { reuseExistingTab: false, open: true },
+        });
+
+        expect(opened.visible).toBe(true);
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.effect("preview_open stops waiting for a desktop tab that never shows", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      yield* ServerBrowser.ServerBrowser;
+      yield* Effect.yieldNow;
+      desktopRendersNext = true;
+      const opening = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { reuseExistingTab: false, open: true },
+        })
+        .pipe(Effect.forkScoped);
+      yield* Effect.promise(() => desktopShowWaiting.promise);
+      yield* TestClock.adjust("1 second");
+
+      expect((yield* Fiber.join(opening)).visible).toBe(false);
     }),
   ).pipe(Effect.provide(layer)),
 );

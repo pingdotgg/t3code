@@ -2649,10 +2649,13 @@ const make = Effect.gen(function* () {
                 }),
               );
               // Only an explicit show is sure to reach a client; desktop tabs are visible without a viewer.
+              const waitMs = Math.min(REVEAL_VIEWER_WAIT_MS, deadlineMs - performance.now());
               if (reveal === true && tab.viewers.size === 0 && tab.desktop === null)
-                shown = awaitViewer(
-                  tab,
-                  Math.min(REVEAL_VIEWER_WAIT_MS, deadlineMs - performance.now()),
+                shown = awaitViewer(tab, waitMs);
+              // A desktop tab mounted hidden keeps reporting hidden until its panel opens.
+              else if (reveal === true && tab.desktop !== null && !isVisible(tab))
+                shown = runPromise(desktopChannel.awaitShown(tab, Math.max(0, waitMs))).then(
+                  constVoid,
                 );
             }
             await shown;
