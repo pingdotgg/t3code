@@ -1,7 +1,6 @@
-import { it } from "@effect/vitest";
-import { expect } from "vite-plus/test";
-import * as Fiber from "effect/Fiber";
+import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
 
 import { responsePayloads } from "./mcpResponsePayloads.ts";
@@ -94,17 +93,17 @@ it.effect("picks the SSE reader from the media type alone, whatever its case", (
   }),
 );
 
-it.effect("releases a stalled SSE response body when its consumer is interrupted", () =>
+it.effect("releases and cancels a stalled SSE response body when its consumer is interrupted", () =>
   Effect.gen(function* () {
     const reading = Promise.withResolvers<void>();
-    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    let cancelled = false;
     const body = new ReadableStream<Uint8Array>(
       {
-        start(value) {
-          controller = value;
-        },
         pull() {
           reading.resolve();
+        },
+        cancel() {
+          cancelled = true;
         },
       },
       { highWaterMark: 0 },
@@ -117,10 +116,6 @@ it.effect("releases a stalled SSE response body when its consumer is interrupted
     );
     yield* Effect.promise(() => reading.promise);
     yield* Fiber.interrupt(consumer);
-    try {
-      expect(body.locked, "interrupted SSE response must release its body").toBe(false);
-    } finally {
-      if (body.locked) controller.close();
-    }
+    expect({ locked: body.locked, cancelled }).toEqual({ locked: false, cancelled: true });
   }),
 );
