@@ -449,10 +449,11 @@ export const OrchestratorMcpThreadReadInput = Schema.Struct({
   author: Schema.optional(Schema.Literals(["user", "agent"])),
   afterPosition: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(-1))),
   beforePosition: Schema.optional(NonNegativeInt),
-  // No "Max N." text: each clamps, and a page reports where the rest starts.
-  limit: Schema.optional(clampedPositiveInt(100)),
-  runLimit: Schema.optional(clampedPositiveInt(50)),
-  maxCharsPerItem: Schema.optional(clampedPositiveInt(20_000)),
+  limit: Schema.optional(clampedPositiveInt(100)).annotate({ description: "Max 100." }),
+  runLimit: Schema.optional(clampedPositiveInt(50)).annotate({ description: "Max 50." }),
+  maxCharsPerItem: Schema.optional(clampedPositiveInt(20_000)).annotate({
+    description: "Max 20000.",
+  }),
 });
 export type OrchestratorMcpThreadReadInput = typeof OrchestratorMcpThreadReadInput.Type;
 
