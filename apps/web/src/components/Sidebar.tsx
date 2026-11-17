@@ -45,6 +45,7 @@ import { foldSearchQuery, rankMessageMatches } from "@t3tools/shared/paletteSear
 import { findForMessageMatch, openThreadFindOnQuery } from "./chat/threadFindStore";
 import {
   threadRuntimeCanArchive,
+  threadRuntimeIsActive,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/models";
 import {
@@ -271,7 +272,9 @@ import {
   sidebarFolderRowId,
 } from "./sidebar/SidebarProjectFolderHeader";
 import {
+  SIDEBAR_RUNNING_SHELF_ROW,
   SidebarDragBoundary,
+  SidebarRunningShelfHeader,
   SidebarSectionHeader,
   SidebarSectionPlaceholder,
 } from "./sidebar/SidebarListMarkers";
@@ -333,6 +336,7 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
+const RUNNING_SHELF_EXPANDED_KEY = "t3code:sidebar:running-expanded";
 
 const inboxReturns = createInboxReturnTracker();
 
@@ -465,6 +469,11 @@ function useSidebarThreads(input: {
     false,
     Schema.Boolean,
   );
+  const [runningShelfExpanded, setRunningShelfExpanded] = useLocalStorage(
+    RUNNING_SHELF_EXPANDED_KEY,
+    true,
+    Schema.Boolean,
+  );
   // Shared with the old per-project sidebar, so folders keep their open state.
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
@@ -525,11 +534,34 @@ function useSidebarThreads(input: {
     ? workingThreads
     : routeThreadOnly(workingThreads, routeRowThreadKey);
   const topThreads = [...pinnedThreads, ...activeThreads];
+  // Boring mode lifts running threads out of their folders into a Running shelf at the top.
+  const runningThreads =
+    folderGroups === null
+      ? EMPTY_THREADS
+      : sortWorkingThreadsBySend(
+          topThreads.filter((thread) => threadRuntimeIsActive(thread.runtime)),
+        );
+  const folderThreads =
+    runningThreads.length === 0
+      ? topThreads
+      : topThreads.filter((thread) => !threadRuntimeIsActive(thread.runtime));
+  const runningProjectKeys = new Set(
+    runningThreads.map((thread) => `${thread.environmentId}:${thread.projectId}`),
+  );
+  // A folder whose threads are all running stays put, so it does not blink out and back.
+  const keepFolder = (group: SidebarProjectSnapshot) =>
+    keepEmpty(group) ||
+    group.memberProjectRefs.some((ref) =>
+      runningProjectKeys.has(`${ref.environmentId}:${ref.projectId}`),
+    );
+  const visibleRunningThreads = runningShelfExpanded
+    ? runningThreads
+    : routeThreadOnly(runningThreads, routeRowThreadKey);
   // Pinned threads lead their own project's folder instead of a list-wide Pinned section.
   const projectFolders =
     folderGroups === null
       ? null
-      : groupSidebarThreadsByProject(folderGroups, topThreads, keepEmpty).map((folder) => {
+      : groupSidebarThreadsByProject(folderGroups, folderThreads, keepFolder).map((folder) => {
           const collapsed = !resolveProjectExpanded(
             projectExpandedById,
             sidebarFolderExpansionKeys(folder.group),
@@ -547,6 +579,7 @@ function useSidebarThreads(input: {
           };
         });
   const orderedThreads = [
+    ...visibleRunningThreads,
     ...(projectFolders === null ? topThreads : projectFolders.flatMap((folder) => folder.threads)),
     ...visibleWorkingThreads,
     ...visibleSnoozedThreads,
@@ -588,6 +621,10 @@ function useSidebarThreads(input: {
     toggleSnoozedShelf: () => setSnoozedShelfExpanded((value) => !value),
     workingShelfExpanded,
     toggleWorkingShelf: () => setWorkingShelfExpanded((value) => !value),
+    runningThreads,
+    visibleRunningThreads,
+    runningShelfExpanded,
+    toggleRunningShelf: () => setRunningShelfExpanded((value) => !value),
     projectFolders,
     toggleProjectFolder: (group: SidebarProjectSnapshot) => {
       const keys = sidebarFolderExpansionKeys(group);
@@ -1315,6 +1352,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     toggleSnoozedShelf,
     workingShelfExpanded,
     toggleWorkingShelf,
+    runningThreads,
+    visibleRunningThreads,
+    runningShelfExpanded,
+    toggleRunningShelf,
     projectFolders,
     toggleProjectFolder,
     renderedSettledThreads,
@@ -1998,6 +2039,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // Only order, section, or draft changes need layout reads and motion.
   const listMotionLayoutKey = [
     sidebarListItemsKey,
+    visibleRunningThreads.map(threadShellKey).join("\n"),
     projectFolders
       ?.map((folder) => `${folder.group.projectKey}:${folder.threads.length}`)
       .join("\n") ?? "",
@@ -3354,6 +3396,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         section: SidebarSection,
                         // The tree row of the project folder this row sits in.
                         folderRow?: string,
+                        shelfRow?: string,
                       ) => {
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
@@ -3381,6 +3424,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             variant={rowVariant}
                             navigationParent={
                               folderRow ??
+                              shelfRow ??
                               (section === "working" ||
                               section === "snoozed" ||
                               section === "settled"
@@ -3469,7 +3513,28 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         );
                       };
                       const from = isContextDrag ? null : (dragState?.activeSection ?? null);
-                      const items: ReactNode[] = [
+                      const items: ReactNode[] = [];
+                      if (runningThreads.length > 0) {
+                        items.push(
+                          <SidebarRunningShelfHeader
+                            key="running-shelf-header"
+                            count={runningThreads.length}
+                            expanded={runningShelfExpanded}
+                            onToggle={toggleRunningShelf}
+                          />,
+                        );
+                        for (const thread of visibleRunningThreads) {
+                          items.push(
+                            renderThreadRow(
+                              thread,
+                              thread.pinnedAt != null ? "pinned" : "active",
+                              undefined,
+                              SIDEBAR_RUNNING_SHELF_ROW,
+                            ),
+                          );
+                        }
+                      }
+                      items.push(
                         <SidebarDraftBlock
                           key="draft-sessions"
                           projectByKey={projectByKey}
@@ -3479,7 +3544,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           onNavigateToDraft={navigateToDraft}
                           onDraftContextMenu={handleDraftContextMenu}
                         />,
-                      ];
+                      );
                       for (const item of sidebarListItems) {
                         if (item.kind === "thread") {
                           // Folders draw pinned and active rows in their own place below.

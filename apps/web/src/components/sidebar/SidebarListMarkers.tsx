@@ -145,3 +145,30 @@ export function SidebarSectionHeader(props: {
     </SortableSidebarMarker>
   );
 }
+
+/** The Running shelf's tree row; its thread rows name it as their parent. */
+export const SIDEBAR_RUNNING_SHELF_ROW = "shelf:running";
+
+/**
+ * Heads the boring sidebar's Running shelf. Unlike the other shelves it is no drag
+ * marker: its rows keep their pinned or active section, so drops resolve as in their folders.
+ */
+export function SidebarRunningShelfHeader(props: {
+  count: number;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <li data-thread-selection-safe className="relative mx-0.5 h-8 list-none">
+      <CollapsibleSectionHeader
+        data-sidebar-row={SIDEBAR_RUNNING_SHELF_ROW}
+        data-testid="sidebar-running-shelf-toggle"
+        onClick={props.onToggle}
+        expanded={props.expanded}
+        accessory={<span className="font-normal tabular-nums">{props.count}</span>}
+      >
+        Running
+      </CollapsibleSectionHeader>
+    </li>
+  );
+}
