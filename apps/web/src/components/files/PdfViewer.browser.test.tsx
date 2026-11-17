@@ -227,8 +227,8 @@ it("restores page, within-page offset and zoom after a remount", async () => {
 });
 
 it("renews the URL and keeps the latest reading position through a page error and retry", async () => {
-  const url = URL.createObjectURL(twoPagePdf());
-  const renewed = URL.createObjectURL(twoPagePdf());
+  const url = URL.createObjectURL(testPdf());
+  const renewed = URL.createObjectURL(testPdf());
   try {
     await using screen = await render(
       <div className="flex h-[300px] w-[320px]">
