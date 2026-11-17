@@ -10,6 +10,7 @@ const project = (id: string, repository: string) =>
     repositoryIdentity: {
       canonicalKey: `github.com/${repository}`,
       provider: SourceControlProviderKind.make("github"),
+      webUrl: `https://github.com/${repository}`,
       displayName: repository,
       owner: repository.split("/")[0],
       name: repository.split("/")[1],
@@ -59,6 +60,7 @@ describe("resolveIssueLinkTarget", () => {
   });
 
   it.each([
+    "https://github.com:8443/acme/web/issues/7",
     "https://github.com.evil.example/acme/web/issues/7",
     "https://github.com/acme/web/pull/7",
   ])("leaves %s an ordinary link", (url) => {
