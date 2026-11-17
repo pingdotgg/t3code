@@ -194,7 +194,15 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
         name: "AgentActivity",
         displayName: "Agent Activity",
         description: "Shows the current state of active T3 Code agents.",
-        android: null,
+        android: {
+          minWidth: 250,
+          minHeight: 110,
+          targetCellWidth: 4,
+          targetCellHeight: 2,
+          resizeMode: "both",
+          // The embedded layout renders before first launch; publishing replaces it with stored props.
+          initialLayout: "./src/widgets/AgentActivityWidget.android.tsx",
+        },
         ios: {
           supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"],
           // Embeds the layout so the gallery preview and a new widget render
