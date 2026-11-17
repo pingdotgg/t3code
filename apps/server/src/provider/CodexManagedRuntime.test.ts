@@ -23,6 +23,7 @@ import * as CodexInstallation from "./CodexInstallation.ts";
 import { makeCodexManagedRuntime } from "./CodexManagedRuntime.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 import { codexAppServerArgs } from "./codexLaunchArgs.ts";
+import { codexContinuationIdentity, resolveCodexHomeLayout } from "./Drivers/CodexHomeLayout.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeSettings = Schema.decodeSync(CodexSettings);
@@ -118,6 +119,14 @@ it.live.each(
           assert.strictEqual(effective.config.binaryPath, executable.executablePath);
           assert.notStrictEqual(effective.config.homePath, ambient.CODEX_HOME);
           assert.equal(runtime.homeLayout.sharedHomePath, sharedHome);
+          // regression: #37979 Codex keeps a resumed thread's model provider, so a thread
+          // started on the default provider cannot continue on openai_token_sharing.
+          assert.notStrictEqual(
+            codexContinuationIdentity(runtime.homeLayout).continuationKey,
+            codexContinuationIdentity(
+              yield* resolveCodexHomeLayout(decodeSettings({ homePath: sharedHome })),
+            ).continuationKey,
+          );
           if (account === "primary") {
             assert.equal(effective.config.homePath, sharedHome);
             assert.equal(runtime.homeLayout.mode, "direct");
