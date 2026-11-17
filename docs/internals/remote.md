@@ -158,6 +158,24 @@ of requests to the hosted origin. The browser exchanges the secret with the
 environment and strips it from its history. Moving the token into a query
 parameter would disclose it to the wrong origin.
 
+## Desktop previews tunnel loopback
+
+A desktop webview for another environment keeps `localhost` URLs and reaches the environment's
+loopback through `/api/preview/tunnel`, one WebSocket per TCP connection, on the same origin as
+every other request. That is why it works over any connection method. Three choices are easy to
+undo by accident:
+
+- **Fixed proxy, not PAC.** Chromium never consults a PAC script for loopback hosts, even with
+  `<-loopback>`. The partition uses a fixed SOCKS5 proxy with the bypass list `*,<-loopback>`, in
+  that order: everything is direct except loopback. A fixed proxy also has no direct retry, so a
+  failed tunnel is a connection error and never the reviewer's own localhost. The rule matches
+  hostnames, not resolved addresses, so a custom name that resolves to loopback still goes direct.
+- **Media tickets.** Desktop main opens the tunnel but holds no environment credentials. Media
+  tickets are not DPoP-bound, so the renderer can hand one over. Main asks it for a tunnel URL per
+  connection, which also makes the tunnel follow a route switch.
+- **System browser links** have no tunnel. They keep the private-network rewrite in
+  [`browserTargetResolver.ts`](../../apps/web/src/browser/browserTargetResolver.ts).
+
 ## Access and process ownership are different
 
 Tailscale supplies an endpoint for ordinary pairing, so it needs no separate
