@@ -590,7 +590,7 @@ export const make = Effect.gen(function* () {
           credentialType: AuthAccessTokenType,
           dpopProof: proof,
         }).pipe(
-          Effect.mapError((error) => mapRemoteEnvironmentError(error)),
+          Effect.mapError((error) => mapRemoteDpopEnvironmentError(error, "direct")),
           Effect.provideService(HttpClient.HttpClient, httpClient),
           Effect.withSpan("environment.authorization.directRenewal"),
         );
@@ -650,7 +650,7 @@ export const make = Effect.gen(function* () {
         const failure = socket.failure;
         return yield* failure._tag === "ConnectionBlockedError"
           ? failure
-          : mapRemoteEnvironmentError(failure);
+          : mapRemoteDpopEnvironmentError(failure, "direct");
       }
       return {
         environmentId: descriptor.environmentId,
