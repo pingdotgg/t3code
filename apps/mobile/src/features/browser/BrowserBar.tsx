@@ -5,6 +5,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText } from "../../components/ui/AppText";
 import { ControlPill } from "../../components/ui/ControlPill";
+import { deriveSharedTopBand } from "../../lib/reserved-regions";
+import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 
 /**
  * The one-row chrome above a browser page: close, back, address with reload, then `trailing`.
@@ -23,9 +25,10 @@ export function BrowserBar(props: {
   readonly onExpand?: () => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
+  const band = deriveSharedTopBand(useNativeColumnLayoutMetrics());
   if (props.compact && draft === null) {
     return (
-      <SafeAreaView edges={["top"]}>
+      <TopArea band={band}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Address ${props.url}. Show the browser controls`}
@@ -36,13 +39,16 @@ export function BrowserBar(props: {
             {hostOf(props.url)}
           </AppText>
         </Pressable>
-      </SafeAreaView>
+      </TopArea>
     );
   }
   return (
-    // The screen around it insets the sides.
-    <SafeAreaView edges={["top"]}>
-      <View className="flex-row items-center gap-1 px-2 pt-1 pb-1.5">
+    <TopArea band={band}>
+      <View
+        className={
+          band ? "flex-row items-center gap-1 px-2" : "flex-row items-center gap-1 px-2 pt-1 pb-1.5"
+        }
+      >
         <ControlPill icon="xmark" accessibilityLabel="Close browser" onPress={props.onClose} />
         {props.canGoBack ? (
           <ControlPill icon="chevron.left" accessibilityLabel="Back" onPress={props.onBack} />
@@ -91,7 +97,30 @@ export function BrowserBar(props: {
         </View>
         {props.trailing}
       </View>
-    </SafeAreaView>
+    </TopArea>
+  );
+}
+
+/**
+ * Below the top safe area, or, where the system status covers only one end of it, beside the
+ * status in that band. The screen around the bar insets its sides.
+ */
+function TopArea(props: {
+  readonly band: ReturnType<typeof deriveSharedTopBand>;
+  readonly children: ReactNode;
+}) {
+  if (!props.band) return <SafeAreaView edges={["top"]}>{props.children}</SafeAreaView>;
+  return (
+    <View
+      style={{
+        height: props.band.height,
+        paddingLeft: props.band.left,
+        paddingRight: props.band.right,
+        justifyContent: "center",
+      }}
+    >
+      {props.children}
+    </View>
   );
 }
 
