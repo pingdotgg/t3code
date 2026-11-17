@@ -45,7 +45,7 @@
   "94168222df47e6a3": "Installez l’outil en ligne de commande GitHub ({cli}) via {url} ou votre gestionnaire de paquets (par exemple {command}).",
   "6ff697b80a1714c7": "Installez l’outil en ligne de commande GitLab ({cli}) depuis {url} ou votre gestionnaire de paquets (par exemple {command}).",
   "929a11e234f6e5d9": "Installez les outils en ligne de commande Azure ({cli}), puis activez la prise en charge d’Azure DevOps avec {command}.",
-  "c4a6440c1399e21a": "Ajoutez un jeton Bitbucket dans Réglages → Gestion de versions.",
+  "ad599e9de33538dd": "Ajoutez un jeton Bitbucket dans Réglages → Gestion de versions et tickets.",
   "d810ecd91e8cf9d0": "Installez la CLI Origin avec {install}, puis exécutez {login}.",
   "eb0f60ef4f92ab7d": "Installez {fj} 0.6 ou version ultérieure depuis {fjUrl} et exécutez {fjLogin}, ou installez {tea} 0.16 ou version ultérieure depuis {teaUrl} et exécutez {teaLogin} pour chaque serveur Forgejo ou Gitea.",
   "d026a85e2e50e675": "Installez la CLI GitCafe avec {install}, puis exécutez {login}, enregistrez un jeton dans Réglages ou définissez {variable} sur le serveur.",
@@ -641,9 +641,10 @@
   "f0ab079175905bbb": "Commiter, pousser et créer {shortLabel}",
   "8360d689ebc7f829": "Pousser et créer {shortLabel} depuis la branche par défaut ?",
   "daa408bb99d21d18": "{kind, select, pr {Cette action va pousser les commits locaux et créer une PR sur « {branch} ». Vous pouvez continuer sur cette branche ou créer une branche de fonctionnalité et y lancer la même action.} mr {Cette action va pousser les commits locaux et créer une MR sur « {branch} ». Vous pouvez continuer sur cette branche ou créer une branche de fonctionnalité et y lancer la même action.} generic {Cette action va pousser les commits locaux et créer une demande de modification sur « {branch} ». Vous pouvez continuer sur cette branche ou créer une branche de fonctionnalité et y lancer la même action.} other {Cette action va pousser les commits locaux et créer {changeRequest} sur « {branch} ». Vous pouvez continuer sur cette branche ou créer une branche de fonctionnalité et y lancer la même action.}}",
-  "b6ff8cb15525a16f": "Non connecté. Ajoutez un {credential} pour lister ses tickets.",
+  "8471c4c5a50ffde3": "Les tickets de cet hôte ne peuvent pas encore être consultés.",
+  "2f4a47129f89fe22": "Non connecté. Ajoutez une clé d’API personnelle pour lister ses tickets.",
   "024baab60525a419": "L’identifiant enregistré a été refusé.",
-  "af1480fafb1febef": "Connecté en tant que {account} · aucun projet associé pour l’instant. Choisissez un {scope} pour un projet afin de lister ses tickets.",
+  "2613c232516f3c72": "Connecté en tant que {account} · aucun projet associé pour l’instant. Choisissez une équipe pour un projet afin de lister ses tickets.",
   "77d07bfe2f8ee19d": "{count, plural, one {Connecté en tant que {account} · {count} projet associé} other {Connecté en tant que {account} · {count} projets associés}}",
   "3eb9a01099aaf799": "{count} s",
   "3618302947c280f0": "{count} min",
@@ -1880,7 +1881,7 @@
   "3d117a49eb32d0cb": "Réduire le diff",
   "cadc29aaf9f0fd05": "Automatique",
   "ec520ada4398caa3": "Commit {sha}",
-  "cf34b1bdf8179c16": "Non commité",
+  "cf34b1bdf8179c16": "Locales",
   "d85877d9ef77c50c": "Modifications",
   "b816058fba61e4d6": "Tour {count}",
   "646de37e0bec85f8": "Appel d’outil",
@@ -1930,7 +1931,7 @@
   "e797245c587e7e29": "Redimensionner les fichiers modifiés",
   "99c76aa12c632a36": "Fichiers : {section}",
   "3e9ddb26c2c59bcc": "Modifications",
-  "d293587abc871e7c": "Non commité",
+  "d293587abc871e7c": "Locales",
   "8f3906e1adcda127": "Dernier tour",
   "c35ff689e28afdcf": "Tour",
   "b736ae3cc48c6809": [
@@ -9942,7 +9943,7 @@
         {
           "t": "span",
           "i": 5,
-          "c": "sur l’ensemble de"
+          "c": "sur"
         },
         {
           "i": 6,
@@ -9992,7 +9993,7 @@
         {
           "t": "span",
           "i": 5,
-          "c": "sur l’ensemble de"
+          "c": "sur"
         },
         {
           "i": 6,
@@ -11254,7 +11255,7 @@
   "14914b47296ba6b7": "Plusieurs hôtes correspondent à cette destination SSH. Sélectionnez l’environnement pour modifier ses hôtes.",
   "e3ec7b94218b8fe7": "Expo Simulators",
   "608db1513cc8c165": "Jusqu’à {sessions, plural, one {{sessions} session} other {{sessions} sessions}} à la fois, chacune arrêtée après {maxMinutes} min ou {idleMinutes} min d’inactivité",
-  "28a4cd11ce51865e": "Point de terminaison d’API personnalisé",
+  "28a4cd11ce51865e": "API personnalisée",
   "49c009661b1e91d6": "Vérification du statut du fournisseur",
   "9c52dc73cc75980f": "En attente des détails d’installation et d’authentification du serveur.",
   "7b4990ffdca7c727": "Ce fournisseur est installé mais désactivé pour les nouvelles sessions dans T3 Code.",
@@ -11344,6 +11345,8 @@
   "54b188d65247e42f": "Labs",
   "f41ea186c275b56e": "À propos",
   "af4b7734da1d5ce7": "Voix",
+  "4ec62c39ca3192bf": "Versions et tickets",
+  "f2bf529f85e05494": "Partage et accès",
   "7cf24feddad00a5e": "Préférences",
   "58058320796d28f6": "Code",
   "1a07e4d043f5df4e": "Connexions",

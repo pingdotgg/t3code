@@ -125,6 +125,7 @@ export const SETTINGS_NAV_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/source-control": msg("Source control & issues", {
     $context: "settings navigation item",
   }),
+  "/settings/access": msg("Sharing & access", { $context: "settings navigation item" }),
 };
 
 /** Sidebar order. A group with a hidden heading is set apart on screen by space alone. */

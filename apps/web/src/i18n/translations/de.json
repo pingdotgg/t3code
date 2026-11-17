@@ -45,7 +45,7 @@
   "94168222df47e6a3": "Installiere das GitHub-Kommandozeilentool ({cli}) über {url} oder deinen Paketmanager (zum Beispiel {command}).",
   "6ff697b80a1714c7": "Installiere das GitLab-Kommandozeilentool ({cli}) über {url} oder deinen Paketmanager (zum Beispiel {command}).",
   "929a11e234f6e5d9": "Installiere die Azure-Kommandozeilentools ({cli}) und aktiviere dann die Azure-DevOps-Unterstützung mit {command}.",
-  "c4a6440c1399e21a": "Füge unter Einstellungen → Versionskontrolle ein Bitbucket-Token hinzu.",
+  "ad599e9de33538dd": "Füge unter Einstellungen → Versionskontrolle & Issues ein Bitbucket-Token hinzu.",
   "d810ecd91e8cf9d0": "Installiere die Origin CLI mit {install} und führe dann {login} aus.",
   "eb0f60ef4f92ab7d": "Installiere {fj} 0.6 oder neuer von {fjUrl} und führe {fjLogin} aus, oder installiere {tea} 0.16 oder neuer von {teaUrl} und führe {teaLogin} für jeden Forgejo- oder Gitea-Server aus.",
   "d026a85e2e50e675": "Installiere die GitCafe CLI mit {install} und führe dann {login} aus, speichere ein Token in den Einstellungen oder setze {variable} auf dem Server.",
@@ -641,9 +641,10 @@
   "f0ab079175905bbb": "Committen, pushen & {shortLabel} erstellen",
   "8360d689ebc7f829": "Pushen & {shortLabel} aus dem Standard-Branch erstellen?",
   "daa408bb99d21d18": "{kind, select, pr {Diese Aktion pusht lokale Commits und erstellt einen PR auf „{branch}“. Du kannst auf diesem Branch weitermachen oder einen Feature-Branch erstellen und dieselbe Aktion dort ausführen.} mr {Diese Aktion pusht lokale Commits und erstellt einen MR auf „{branch}“. Du kannst auf diesem Branch weitermachen oder einen Feature-Branch erstellen und dieselbe Aktion dort ausführen.} generic {Diese Aktion pusht lokale Commits und erstellt eine Änderungsanfrage auf „{branch}“. Du kannst auf diesem Branch weitermachen oder einen Feature-Branch erstellen und dieselbe Aktion dort ausführen.} other {Diese Aktion pusht lokale Commits und erstellt {changeRequest} auf „{branch}“. Du kannst auf diesem Branch weitermachen oder einen Feature-Branch erstellen und dieselbe Aktion dort ausführen.}}",
-  "b6ff8cb15525a16f": "Nicht verbunden. Füge {credential} hinzu, um die Issues aufzulisten.",
+  "8471c4c5a50ffde3": "Issues dieses Hosts können noch nicht angezeigt werden.",
+  "2f4a47129f89fe22": "Nicht verbunden. Füge einen persönlichen API-Schlüssel hinzu, um die Issues aufzulisten.",
   "024baab60525a419": "Die gespeicherten Anmeldedaten wurden abgelehnt.",
-  "af1480fafb1febef": "Verbunden als {account} · noch keine Projekte verknüpft. Wähle für ein Projekt ein {scope}, um seine Issues aufzulisten.",
+  "2613c232516f3c72": "Verbunden als {account} · noch keine Projekte verknüpft. Wähle für ein Projekt ein Team, um seine Issues aufzulisten.",
   "77d07bfe2f8ee19d": "{count, plural, one {Verbunden als {account} · {count} Projekt verknüpft} other {Verbunden als {account} · {count} Projekte verknüpft}}",
   "3eb9a01099aaf799": "{count} s",
   "3618302947c280f0": "{count} Min.",
@@ -1879,7 +1880,7 @@
   "3d117a49eb32d0cb": "Diff einklappen",
   "cadc29aaf9f0fd05": "Automatisch",
   "ec520ada4398caa3": "Commit {sha}",
-  "cf34b1bdf8179c16": "Nicht committet",
+  "cf34b1bdf8179c16": "Lokal",
   "d85877d9ef77c50c": "Änderungen",
   "b816058fba61e4d6": "Runde {count}",
   "646de37e0bec85f8": "Tool-Aufruf",
@@ -1929,7 +1930,7 @@
   "e797245c587e7e29": "Größe der Änderungsdateien anpassen",
   "99c76aa12c632a36": "Dateien: {section}",
   "3e9ddb26c2c59bcc": "Änderungen",
-  "d293587abc871e7c": "Nicht committet",
+  "d293587abc871e7c": "Lokal",
   "8f3906e1adcda127": "Letzte Runde",
   "c35ff689e28afdcf": "Runde",
   "b736ae3cc48c6809": [
@@ -9943,7 +9944,7 @@
         {
           "t": "span",
           "i": 5,
-          "c": "über"
+          "c": "auf"
         },
         {
           "i": 6,
@@ -9993,7 +9994,7 @@
         {
           "t": "span",
           "i": 5,
-          "c": "über"
+          "c": "auf"
         },
         {
           "i": 6,
@@ -11346,6 +11347,8 @@
   "54b188d65247e42f": "Labs",
   "f41ea186c275b56e": "Info",
   "af4b7734da1d5ce7": "Spracheingabe",
+  "4ec62c39ca3192bf": "Versionskontrolle & Issues",
+  "f2bf529f85e05494": "Freigabe & Zugriff",
   "7cf24feddad00a5e": "Präferenzen",
   "58058320796d28f6": "Code",
   "1a07e4d043f5df4e": "Verbindungen",

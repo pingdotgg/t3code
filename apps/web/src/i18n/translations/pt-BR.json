@@ -45,7 +45,7 @@
   "94168222df47e6a3": "Instale a ferramenta de linha de comando do GitHub ({cli}) em {url} ou pelo seu gerenciador de pacotes (por exemplo, {command}).",
   "6ff697b80a1714c7": "Instale a ferramenta de linha de comando do GitLab ({cli}) em {url} ou pelo seu gerenciador de pacotes (por exemplo, {command}).",
   "929a11e234f6e5d9": "Instale as ferramentas de linha de comando do Azure ({cli}) e ative o suporte ao Azure DevOps com {command}.",
-  "c4a6440c1399e21a": "Adicione um token do Bitbucket em Configurações → Controle de versão.",
+  "ad599e9de33538dd": "Adicione um token do Bitbucket em Configurações → Controle de versão e issues.",
   "d810ecd91e8cf9d0": "Instale a CLI do Origin com {install} e execute {login}.",
   "eb0f60ef4f92ab7d": "Instale o {fj} 0.6 ou posterior em {fjUrl} e execute {fjLogin}, ou instale o {tea} 0.16 ou posterior em {teaUrl} e execute {teaLogin} para cada servidor Forgejo ou Gitea.",
   "d026a85e2e50e675": "Instale a CLI do GitCafe com {install} e execute {login}, salve um token nas Configurações ou defina {variable} no servidor.",
@@ -641,9 +641,10 @@
   "f0ab079175905bbb": "Commit, push e criar {shortLabel}",
   "8360d689ebc7f829": "Fazer push e criar {shortLabel} a partir do branch padrão?",
   "daa408bb99d21d18": "{kind, select, pr {Esta ação vai fazer push dos commits locais e criar um PR em \"{branch}\". Você pode continuar neste branch ou criar um branch de feature e executar a mesma ação nele.} mr {Esta ação vai fazer push dos commits locais e criar um MR em \"{branch}\". Você pode continuar neste branch ou criar um branch de feature e executar a mesma ação nele.} generic {Esta ação vai fazer push dos commits locais e criar uma solicitação de alteração em \"{branch}\". Você pode continuar neste branch ou criar um branch de feature e executar a mesma ação nele.} other {Esta ação vai fazer push dos commits locais e criar {changeRequest} em \"{branch}\". Você pode continuar neste branch ou criar um branch de feature e executar a mesma ação nele.}}",
-  "b6ff8cb15525a16f": "Não conectado. Adicione um {credential} para listar as issues.",
+  "8471c4c5a50ffde3": "Ainda não é possível navegar pelas issues deste host.",
+  "2f4a47129f89fe22": "Não conectado. Adicione uma chave de API pessoal para listar as issues.",
   "024baab60525a419": "A credencial salva foi recusada.",
-  "af1480fafb1febef": "Conectado como {account} · nenhum projeto vinculado ainda. Escolha um {scope} para um projeto para listar as issues dele.",
+  "2613c232516f3c72": "Conectado como {account} · nenhum projeto vinculado ainda. Escolha uma equipe para um projeto para listar as issues dele.",
   "77d07bfe2f8ee19d": "{count, plural, one {Conectado como {account} · {count} projeto vinculado} other {Conectado como {account} · {count} projetos vinculados}}",
   "3eb9a01099aaf799": "{count}s",
   "3618302947c280f0": "{count}min",
@@ -3051,7 +3052,7 @@
   "c54cc9c75db9dc58": "Aprove apenas um login que você acabou de iniciar.",
   "e9f4b93c4ec30453": "Código de login",
   "33194f3e1b80f838": [
-    "Obtenha um em Usar o T3 Code em outro app (MCP), Configurações → Compartilhamento e acesso ou com",
+    "Obtenha um em Usar o T3 Code em outro app (MCP), Configurações → Compartilhamento ou com",
     " ",
     {
       "t": "code",
@@ -3525,7 +3526,7 @@
       "k": "_gt_value_1",
       "v": "v"
     },
-    ": Configurações → Compartilhamento e acesso → Clientes autorizados → Criar link e cole o código aqui."
+    ": Configurações → Compartilhamento → Clientes autorizados → Criar link e cole o código aqui."
   ],
   "c205277bd4ab61d2": [
     "Este ambiente já está vinculado a ",
@@ -8521,7 +8522,7 @@
     {
       "t": "Link",
       "i": 1,
-      "c": "Compartilhamento e acesso"
+      "c": "Compartilhamento"
     },
     ". Desativar encerra todos os links de convidado."
   ],
@@ -9941,7 +9942,7 @@
         {
           "t": "span",
           "i": 5,
-          "c": "em todos os"
+          "c": "em"
         },
         {
           "i": 6,
@@ -9991,7 +9992,7 @@
         {
           "t": "span",
           "i": 5,
-          "c": "em todos os"
+          "c": "em"
         },
         {
           "i": 6,
@@ -11343,6 +11344,8 @@
   "54b188d65247e42f": "Labs",
   "f41ea186c275b56e": "Sobre",
   "af4b7734da1d5ce7": "Voz",
+  "4ec62c39ca3192bf": "Versões e issues",
+  "f2bf529f85e05494": "Compartilhamento",
   "7cf24feddad00a5e": "Preferências",
   "58058320796d28f6": "Código",
   "1a07e4d043f5df4e": "Conexões",
