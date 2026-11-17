@@ -83,6 +83,8 @@ describe("openPreviewSession", () => {
         profileId: "work",
         viewport: source.viewport,
         runtime: "server",
+        zoomFactor: 1,
+        colorScheme: "system",
       },
     });
     const state = useRightPanelStore.getState();
