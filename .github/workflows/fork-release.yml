@@ -19,9 +19,9 @@ name: Fork release
 # Upstream workflow changes are not taken: the sync restores .github/workflows to the
 # fork's version, which also keeps the default token allowed to push. The generated agent
 # context budget is measured again after merging. When other files conflict, the sync merges
-# upstream up to the last commit before the conflict and still releases, then opens (or
-# updates) an "Upstream sync is blocked" issue naming the commit and files, and the run
-# fails. Resolve them on a branch and merge that into main; the next run closes the issue.
+# upstream up to the last commit before the conflict and still releases, then fails the run
+# with the conflicting commit and files on its summary page. Resolve them on a branch and
+# merge that into main; the next run picks up from there.
 # To push merges that need more than the default token, add a SYNC_TOKEN secret (a PAT).
 
 on:
@@ -39,7 +39,6 @@ on:
 
 permissions:
   contents: write
-  issues: write
 
 concurrency:
   group: fork-release
@@ -112,26 +111,9 @@ jobs:
           git commit --no-edit
           git push origin HEAD:main
 
-      # One open issue tracks a blocked sync: updated while blocked, closed once it merges.
-      - name: Report sync status
-        if: steps.sync.outcome == 'success'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BLOCKED: ${{ steps.sync.outputs.blocked }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          title="Upstream sync is blocked by a conflict"
-          issue="$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')"
-          if [ "$BLOCKED" = "true" ]; then
-            { cat "$RUNNER_TEMP/sync-report.md"; echo; echo "Last checked by $RUN_URL"; } > sync-issue.md
-            if [ -n "$issue" ]; then
-              gh issue edit "$issue" --body-file sync-issue.md
-            else
-              gh issue create --title "$title" --body-file sync-issue.md
-            fi
-          elif [ -n "$issue" ]; then
-            gh issue close "$issue" --comment "Resolved: $RUN_URL merged upstream/main."
-          fi
+      - name: Report blocked sync
+        if: steps.sync.outputs.blocked == 'true'
+        run: cat "$RUNNER_TEMP/sync-report.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Plan release
         id: plan
@@ -342,5 +324,5 @@ jobs:
     steps:
       - name: Fail for the blocked sync
         run: |
-          echo "::error::Upstream sync is blocked by a conflict. See the open \"Upstream sync is blocked by a conflict\" issue."
+          echo "::error::Upstream sync is blocked by a conflict. The run summary lists the upstream commit and files to resolve."
           exit 1
