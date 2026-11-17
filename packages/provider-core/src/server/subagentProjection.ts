@@ -201,20 +201,35 @@ export const SUBAGENT_RESULT_TURN_ITEM_TYPES = [
   "run_interrupt_result",
 ] as const satisfies ReadonlyArray<OrchestrationV2TurnItem["type"]>;
 
-function withStopNotice(
+/** The item carrying a provider's stop reason for a run, which its delegated result ends with. */
+export function subagentStopNotice(
   projection: Pick<OrchestrationV2ThreadProjection, "turnItems">,
   run: OrchestrationV2Run,
-  text: string,
-): string {
+) {
   // Codex ends a hook-stopped turn as completed or interrupted, depending on its version.
   const ids = [
     derive.runSignalTurnItem({ runId: run.id, signal: PROVIDER_STOP_REASON_SIGNAL }),
     derive.runSignalTurnItem({ runId: run.id, signal: "interrupt-result" }),
   ];
-  const notice = projection.turnItems.find((item) => ids.includes(item.id));
-  return notice?.type === "system_notice" || notice?.type === "run_interrupt_result"
-    ? `${text}\n\n${notice.message}`
-    : text;
+  return projection.turnItems.find(
+    (
+      item,
+    ): item is Extract<
+      OrchestrationV2TurnItem,
+      { readonly type: "system_notice" | "run_interrupt_result" }
+    > =>
+      ids.includes(item.id) &&
+      (item.type === "system_notice" || item.type === "run_interrupt_result"),
+  );
+}
+
+function withStopNotice(
+  projection: Pick<OrchestrationV2ThreadProjection, "turnItems">,
+  run: OrchestrationV2Run,
+  text: string,
+): string {
+  const notice = subagentStopNotice(projection, run);
+  return notice === undefined ? text : `${text}\n\n${notice.message}`;
 }
 
 export function subagentResultForRun(
