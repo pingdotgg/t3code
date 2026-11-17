@@ -153,6 +153,8 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("conversation-summary.generate"),
     runId: RunId,
     pass: Schema.optional(NonNegativeInt),
+    retry: Schema.optional(NonNegativeInt),
+    retryAt: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     type: Schema.Literal("model-evaluation.generate"),

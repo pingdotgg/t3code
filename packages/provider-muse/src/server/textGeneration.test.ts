@@ -140,24 +140,28 @@ it.layer(NodeServices.layer)("Muse text generation", (it) => {
     }),
   );
 
-  it.effect("summarizes cited conversation messages through the structured runner", () =>
+  it.effect("refuses conversation summaries without launching Muse", () =>
     Effect.gen(function* () {
-      const expected = {
-        statements: [{ text: "The user requested an auth fix.", citations: ["M1"] }],
-      };
-      const test = fixture(finish(JSON.stringify(expected)));
+      const test = fixture(
+        finish(
+          JSON.stringify({
+            statements: [{ text: "The user requested an auth fix.", citations: ["M1"] }],
+          }),
+        ),
+      );
       const service = yield* test.make;
-      expect(
-        yield* service.generateConversationSummary({
+      const error = yield* service
+        .generateConversationSummary({
           cwd: titleInput.cwd,
           modelSelection,
           messages: [{ ref: "M1", role: "user", text: "Fix the login form." }],
-        }),
-      ).toEqual(expected);
-      expect(service.supportedOperations).toContain("generateConversationSummary");
+        })
+        .pipe(Effect.flip);
+      expect(error.detail).toContain("cannot isolate a conversation summary");
+      expect(test.createHost).not.toHaveBeenCalled();
+      expect(service.supportedOperations).not.toContain("generateConversationSummary");
       expect(service.supportedOperations).toContain("generateKnowledgeCandidates");
       expect(service.supportedOperations).not.toContain("generateReviewGuide");
-      expect(test.host.close).toHaveBeenCalledOnce();
     }),
   );
 

@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { backfillToolSearchBatch } from "../src/orchestration-v2/toolSearchIndex.ts";
 import { runMigrations } from "../src/persistence/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrateDevDb } from "./migrate-dev-db.ts";
@@ -177,6 +178,41 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
       const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-src-" });
       const destDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-dest-" });
       const source = yield* createFixtureSource(sourceDir);
+      yield* withDatabase(
+        source,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const item = {
+            id: "tool-copy",
+            threadId: "stopped-thread",
+            runId: null,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "completed",
+            title: null,
+            startedAt: "2026-08-01T00:00:00.000Z",
+            completedAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z",
+            type: "command_execution",
+            input: "test",
+            output: "copiedtoolterm",
+            exitCode: 0,
+          };
+          yield* sql`INSERT INTO orchestration_v2_projection_turn_items
+          (turn_item_id, thread_id, ordinal, type, status, updated_at, payload_json, inline_work_output)
+          VALUES ('tool-copy', 'stopped-thread', 1, 'command_execution', 'completed',
+            ${item.updatedAt}, ${JSON.stringify(item)}, 0)`;
+          yield* sql`INSERT INTO orchestration_v2_tool_search(rowid, text)
+          SELECT rowid, 'copiedtoolterm' FROM orchestration_v2_projection_turn_items WHERE turn_item_id = 'tool-copy'`;
+          yield* sql`UPDATE orchestration_v2_tool_search_state
+          SET cursor = (SELECT max(rowid) FROM orchestration_v2_projection_turn_items),
+              backfill_end = (SELECT max(rowid) FROM orchestration_v2_projection_turn_items) WHERE id = 1`;
+        }),
+      );
 
       const result = yield* runMigrateDevDb(
         { baseDir: destDir, source, projects: 5, threadsPerProject: 2 },
@@ -188,6 +224,15 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         result.databasePath,
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
+          while (!(yield* backfillToolSearchBatch(sql))) {}
+          const toolHits = yield* sql<{ id: string }>`SELECT items.turn_item_id AS id
+            FROM orchestration_v2_tool_search AS search
+            JOIN orchestration_v2_projection_turn_items AS items ON items.rowid = search.rowid
+            WHERE orchestration_v2_tool_search MATCH 'copiedtoolterm'`;
+          assert.deepEqual(
+            toolHits.map((hit) => hit.id),
+            ["tool-copy"],
+          );
           const threads = yield* sql<{ thread_id: string }>`
             SELECT thread_id FROM orchestration_v2_projection_threads ORDER BY thread_id`;
           const events = yield* sql<{ stream_id: string }>`

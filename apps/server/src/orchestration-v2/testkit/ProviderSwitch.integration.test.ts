@@ -5276,6 +5276,7 @@ describe("orchestration v2 context restart", () => {
   const summaryText = "[Generated summary] The earliest runs settled the plan.";
   const summaries = (gap: boolean): ConversationSummaryRuntimeShape => ({
     summarizeThread: () => Effect.succeed({ hasMore: false }),
+    stalledThreads: () => Effect.succeed([]),
     hasPendingPass: () => Effect.succeed(false),
     forHandoff: ({ itemIds }) =>
       Effect.succeed(

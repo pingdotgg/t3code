@@ -55,11 +55,12 @@ const CLAUDE_INVESTIGATION_ALLOWED = [
 const CLAUDE_INVESTIGATION_DENIED = ["Bash(git * --output*)", "Bash(git * -o *)"].join(",");
 
 const NO_SESSION_PERSISTENCE = "--no-session-persistence";
-// Judges and memory run in an empty directory without the user's or checkout's customizations.
+// Source-only generation runs without the user's or checkout's customizations.
 const ISOLATED_OPERATIONS: ReadonlySet<TextGenerationOperations.Operation> = new Set([
   "generateModelEvaluation",
   "generateKnowledgeCandidates",
   "checkFactStanding",
+  "generateConversationSummary",
 ]);
 // Claude Code before 2.0.63 exits with this on stderr; those runs retry without the flag.
 const NO_SESSION_PERSISTENCE_REJECTED = `error: unknown option '${NO_SESSION_PERSISTENCE}'`;

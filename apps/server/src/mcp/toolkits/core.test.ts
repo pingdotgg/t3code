@@ -54,6 +54,7 @@ import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import * as ThreadGroupService from "../../orchestration-v2/ThreadGroupService.ts";
 import type * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ThreadSearch from "../../orchestration-v2/ThreadSearch.ts";
+import * as ToolSearch from "../../orchestration-v2/ToolSearch.ts";
 import * as PreviewBrowser from "../../preview/PreviewBrowser.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as FileHistory from "../../project/knowledge/FileHistory.ts";
@@ -96,6 +97,7 @@ const decodeThreadSearchResult = Schema.decodeUnknownEffect(
 
 const layerThreadToolkitNeedingGroups = McpHttpServer.layerThreadToolkit.pipe(
   Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+  Layer.provide(Layer.mock(ToolSearch.ToolSearch)({})),
   Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
   Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
   Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
@@ -1044,6 +1046,7 @@ it.effect("search names the calling thread, so an agent can tell its own match a
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(Layer.mock(ToolSearch.ToolSearch)({})),
         Layer.provide(
           Layer.mock(ThreadSearch.ThreadSearch)({
             search: () =>
@@ -1288,6 +1291,7 @@ it.effect.each([
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
         Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+        Layer.provide(Layer.mock(ToolSearch.ToolSearch)({})),
         Layer.provide(Layer.mock(ThreadGroupService.ThreadGroupService)({})),
         Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
         Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
@@ -1328,6 +1332,7 @@ it.effect("run_scheduled_task_now reports why a started run failed to dispatch",
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
         Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+        Layer.provide(Layer.mock(ToolSearch.ToolSearch)({})),
         Layer.provide(Layer.mock(ThreadGroupService.ThreadGroupService)({})),
         Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
         Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
@@ -1634,6 +1639,7 @@ it.effect("thread search preserves citations and pagination and returns a thread
       McpHttpServer.layerThreadToolkit.pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
+        Layer.provide(Layer.mock(ToolSearch.ToolSearch)({})),
         Layer.provide(
           Layer.mock(ThreadSearch.ThreadSearch)({
             search: () => Effect.succeed({ matches: [match], nextCursor: null }),

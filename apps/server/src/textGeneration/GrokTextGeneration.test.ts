@@ -16,7 +16,6 @@ import { ProviderInstanceId } from "@t3tools/contracts";
 import { GrokSettings } from "@t3tools/provider-grok/settings";
 
 import * as ServerConfig from "../config.ts";
-import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { makeGrokTextGeneration } from "@t3tools/provider-grok/testing";
 import { execScriptSource, writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
@@ -42,7 +41,9 @@ function makeAcpGrokWrapper(dir: string, env: Record<string, string>): string {
 
 function withFakeAcpGrok<A, E, R>(
   env: Record<string, string>,
-  effectFn: (textGeneration: ProviderTextGeneration) => Effect.Effect<A, E, R>,
+  effectFn: (
+    textGeneration: Effect.Success<ReturnType<typeof makeGrokTextGeneration>>,
+  ) => Effect.Effect<A, E, R>,
 ) {
   return Effect.gen(function* () {
     const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-grok-text-acp-"));
@@ -119,6 +120,36 @@ it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
           expect(requests.find((request) => request.id === 9001)).toMatchObject({
             result: { outcome: { outcome: "cancelled" } },
           });
+        }),
+    );
+  });
+
+  it.effect("refuses conversation summaries without launching Grok", () => {
+    const requestLogDir = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3code-grok-text-log-"),
+    );
+    const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
+
+    return withFakeAcpGrok(
+      {
+        T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
+          statements: [{ text: "The user asked for a login fix.", citations: ["M1"] }],
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          expect(textGeneration.supportedOperations).not.toContain("generateConversationSummary");
+          expect(textGeneration.supportedOperations).toContain("generateKnowledgeCandidates");
+          const error = yield* textGeneration
+            .generateConversationSummary({
+              cwd: process.cwd(),
+              modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-mock"),
+              messages: [{ ref: "M1", role: "user", text: "Fix the login form." }],
+            })
+            .pipe(Effect.flip);
+          expect(error.detail).toContain("cannot isolate a conversation summary");
+          expect(NodeFS.existsSync(requestLogPath)).toBe(false);
         }),
     );
   });

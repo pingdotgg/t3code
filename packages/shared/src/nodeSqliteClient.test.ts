@@ -110,6 +110,27 @@ const countEntries = (sql: SqlClient.SqlClient) =>
     (rows) => rows[0]?.count,
   );
 
+it.effect.each([false, true])("commits writes with 64-bit row IDs (worker: %s)", (writerWorker) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sqlite-rowid-" });
+    return yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE large_ids(id INTEGER PRIMARY KEY, value TEXT)`;
+      yield* sql.withTransaction(sql`INSERT INTO large_ids VALUES (9009535716950016, 'kept')`);
+      yield* sql.withTransaction(sql`UPDATE large_ids SET value = 'updated'`);
+      assert.deepEqual(yield* sql`SELECT CAST(id AS TEXT) AS id, value FROM large_ids`, [
+        { id: "9009535716950016", value: "updated" },
+      ]);
+    }).pipe(
+      Effect.provide(
+        SqliteClient.layer({ filename: path.join(directory, "state.sqlite"), writerWorker }),
+      ),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 const layer = it.layer(SqliteClient.layer({ filename: ":memory:" }));
 
 layer("NodeSqliteClient", (it) => {

@@ -19,7 +19,7 @@ pnpm mcp-tool-use --model claude-opus-5-5 --out runs/opus
 - Flags: `--case <ids>`, `--cases <file.ndjson>`, `--samples <n>` (default 2, and a 3rd when the first 2 disagree), `--concurrency <n>` (samples in flight, default 8), `--max-steps <n>`, `--effort <level>`, `--dry-run` (prints request bodies, no model calls), and `--context` (prints the size of T3's text and schemas, no key needed).
 - `--baseline <results.jsonl> --stop-on-regression` stops as soon as a case that passed every baseline sample fails. Use it to test one copy change against a baseline run.
 - Cost: a full run of all cases at 3 samples cost $25 on Sonnet and $45 on Opus on 2026-11-10. The 16 device cases at 3 samples each cost about $5.70–5.90 on Opus and $2.90–3.40 on Sonnet (main's text–#25661), including the Haiku shell simulator; dry runs cost $0. Results record token costs for the agent and shell simulator. Codex proxy charges are outside that total; only its shell simulator is priced here, about $0.60–0.70 for the device cases.
-- A rate limit or overload (429, 529 or another 5xx) is retried with backoff for up to about 4 minutes. A sample that still fails gets an `error` in `results.jsonl`, is left out of every pass rate, and is listed in the summary; the tokens it spent still count toward the cost.
+- A rate limit or overload (429, 529 or another 5xx) is retried with backoff within a two-minute per-request deadline. A sample that still fails gets an `error` in `results.jsonl`, is left out of every pass rate, and is listed in the summary; the tokens it spent still count toward the cost. Completed samples are also written immediately under `samples/`, so an interrupted batch retains its finished traces.
 
 ## Add a case
 
@@ -34,6 +34,16 @@ Cases are JSON lines in `cases/`, one file per area. The case schema in `run.ts`
 - `expect`: the checks, such as `calls`, `callsMustNot`, `maxCalls`, `order`, `shellMust`, `textMust`, `finalTextMust` (the last text, once the turn ended), and `linked`. A call's `args` match partially: `~text` is a case-insensitive substring, `"<=N"` / `">=N"` bound a number, `null` matches a missing key, and keys may be dotted paths. Device cases also use `device` to check every child brief, forbid raw UI commands, bound failed device actions per user turn, and require artifact paths in completed final answers. Secrets cases use `secret` (see [Secrets cases](#secrets-cases)).
 
 Check that the case builds with `--dry-run --case <id>`. Then run it on the text before your fix, where it must fail, and on the text after, where it must pass.
+
+## LCM recovery
+
+`cases/lcm-recovery.ndjson` checks project summary search followed by roll-up and leaf expansion, expansion from an already-known summary, an ordinary question that needs no history, and tool-output search followed by an exact item read. It uses production tool descriptions, schemas and agent guidance, with synthetic tool results. The model must recover the original failing assertion, preserve the distinction between a failed command and an assistant's success claim, and avoid unscoped transcript reads or shell scans. Reading one exact source item remains valid.
+
+```sh
+pnpm mcp-tool-use --cases mcp-tool-use/cases/lcm-recovery.ndjson --model morph-kimik31 --shell-model morph-dsv41flash --samples 3 --concurrency 1 --out runs/lcm-recovery
+```
+
+`morph-dsv41flash` can also be the agent model for a same-case comparison. These cases test model routing and evidence use; server tests exercise actual FTS, citation validation and expansion pagination. Mocked search results do not establish retrieval recall or database performance.
 
 ## Group conversations
 

@@ -7,6 +7,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
   TrimmedString,
+  TurnItemId,
 } from "./baseSchemas.ts";
 
 export const OrchestrationThreadSearchSource = Schema.Literals(["user", "assistant"]);
@@ -17,13 +18,15 @@ export const THREAD_SEARCH_QUERY_MAX_LENGTH = 200;
 const SearchQuery = TrimmedString.check(
   Schema.isMinLength(2),
   Schema.isMaxLength(THREAD_SEARCH_QUERY_MAX_LENGTH),
+  Schema.isPattern(/^[^\u0000]*$/u),
 );
 
 export const ThreadSearchCursor = Schema.Struct({
+  source: Schema.optionalKey(Schema.Literals(["messages", "tools"])),
   query: SearchQuery,
   projectId: Schema.NullOr(ProjectId),
   includeArchived: Schema.Boolean,
-  rank: Schema.Literals([0, 1]),
+  rank: Schema.Literals([0, 1, 2, 3]),
   updatedAt: IsoDateTime,
   threadId: ThreadId,
 });
@@ -43,6 +46,7 @@ export const OrchestrationThreadSearchMatch = Schema.Struct({
   title: Schema.optionalKey(Schema.String),
   source: OrchestrationThreadSearchSource,
   messageId: Schema.optionalKey(MessageId),
+  itemId: Schema.optionalKey(TurnItemId),
   digest: Schema.optionalKey(Schema.String),
   archived: Schema.optionalKey(Schema.Boolean),
   snippet: Schema.String.check(Schema.isMaxLength(240)),

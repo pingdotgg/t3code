@@ -193,6 +193,35 @@ describe("handoff budget", () => {
     assert.equal(command?.kind, "command_execution");
     assert.include(command!.text, "Exit code: 1");
     assert.include(command!.text, "界".repeat(300));
+    const imageOutput = JSON.stringify({ type: "image", data: "AAECAw==", mimeType: "image/png" });
+    const imageCommand = historicalMessage({
+      ...base,
+      type: "command_execution",
+      input: "read screenshot.png",
+      output: imageOutput,
+      exitCode: 0,
+    });
+    assert.notInclude(imageCommand!.text, "AAECAw==");
+    assert.include(imageCommand!.text, "image/png");
+    assert.include(imageCommand!.text, "read screenshot.png");
+    const native = nativeContextHistory(
+      { runs: [], attempts: [], providerTurns: [], contextHandoffs: [] },
+      providerThread,
+    );
+    native.nativeInputRunIds.add(base.runId);
+    const nativePayload = "AAECAw==".repeat(4_096);
+    assert.isAtLeast(
+      native.estimate([
+        {
+          ...base,
+          type: "dynamic_tool",
+          toolName: "Read",
+          input: { path: "screenshot.png" },
+          output: { type: "image", data: nativePayload, mimeType: "image/png" },
+        },
+      ]),
+      estimateTextTokens(nativePayload),
+    );
     const fileChange = {
       ...base,
       type: "file_change",

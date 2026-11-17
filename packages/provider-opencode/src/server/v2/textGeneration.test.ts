@@ -21,6 +21,7 @@ const OWNED_SERVER_URL = "http://127.0.0.1:4302";
 
 const state = {
   startEnvironments: [] as Array<NodeJS.ProcessEnv | undefined>,
+  startDirectories: [] as string[],
   closeCalls: [] as string[],
   connectUrls: [] as string[],
   sessionInputs: [] as unknown[],
@@ -32,14 +33,17 @@ const state = {
 let promptSent = Promise.withResolvers<void>();
 const runtime = {
   startOpenCodeServerProcess: ({
+    directory,
     environment,
     verify,
   }: {
+    directory: string;
     environment?: NodeJS.ProcessEnv;
     verify?: (url: string) => Effect.Effect<string, OpenCodeRuntime.OpenCodeRuntimeError>;
   }) =>
     Effect.gen(function* () {
       state.startEnvironments.push(environment);
+      state.startDirectories.push(directory);
       if (verify !== undefined) yield* verify(OWNED_SERVER_URL);
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
@@ -175,6 +179,7 @@ const make = (
 beforeEach(() => {
   promptSent = Promise.withResolvers<void>();
   state.startEnvironments.length = 0;
+  state.startDirectories.length = 0;
   state.closeCalls.length = 0;
   state.connectUrls.length = 0;
   state.sessionInputs.length = 0;
@@ -430,6 +435,80 @@ it.layer(layer)("OpenCode2TextGeneration blind evaluation", (it) => {
           message: "Tools are not available while generating text.",
         },
       ]);
+    }).pipe(Effect.scoped),
+  );
+});
+
+const summaryInput = {
+  cwd: "/thread-worktree",
+  modelSelection: { instanceId: ProviderInstanceId.make("opencode"), model: "openai/gpt-5" },
+  messages: [{ ref: "M1", role: "user" as const, text: "Rename parseDate." }],
+};
+const summary = {
+  statements: [{ text: "The user asked to rename parseDate.", citations: ["M1"] }],
+};
+
+it.layer(layer)("OpenCode2TextGeneration conversation summaries", (it) => {
+  it.effect("summarizes on an owned server that loads no workspace or user customization", () =>
+    Effect.gen(function* () {
+      state.events[1] = {
+        type: "session.text.ended",
+        data: {
+          sessionID: SESSION_ID,
+          assistantMessageID: "msg_summary",
+          ordinal: 0,
+          text: JSON.stringify(summary),
+        },
+      } as OpenCode2Client.OpenCode2StreamEvent;
+      const textGeneration = yield* make();
+
+      expect(yield* textGeneration.generateConversationSummary(summaryInput)).toEqual(summary);
+      expect(textGeneration.supportedOperations).toContain("generateConversationSummary");
+      expect(state.connectUrls).toEqual([OWNED_SERVER_URL]);
+      expect(state.startDirectories).toHaveLength(1);
+      expect(state.startDirectories[0]).not.toBe(summaryInput.cwd);
+      expect(state.sessionInputs[0]).toMatchObject({
+        location: { directory: state.startDirectories[0] },
+        permissions: [{ action: "*", resource: "*", effect: "ask" }],
+      });
+      const environment = state.startEnvironments[0];
+      expect(environment?.HOME).not.toBe("/original-home");
+      expect(environment?.XDG_CONFIG_HOME).not.toBe("/user-config");
+      expect(environment?.OPENCODE_DISABLE_PROJECT_CONFIG).toBe("1");
+      expect(JSON.parse(environment?.OPENCODE_CONFIG_CONTENT ?? "null")).toEqual({
+        providers: { custom: { options: { baseURL: "http://model.internal" } } },
+      });
+      expect(state.closeCalls).toEqual([OWNED_SERVER_URL]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses a selected agent, which an isolated server cannot load", () =>
+    Effect.gen(function* () {
+      const textGeneration = yield* make();
+      const error = yield* textGeneration
+        .generateConversationSummary({
+          ...summaryInput,
+          modelSelection: {
+            ...summaryInput.modelSelection,
+            options: [{ id: "agent", value: "planner" }],
+          },
+        })
+        .pipe(Effect.flip);
+
+      expect(error.detail).toContain("'agent'");
+      expect(state.connectUrls).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not summarize on an external server it cannot isolate", () =>
+    Effect.gen(function* () {
+      const textGeneration = yield* make(undefined, "https://remote.example.com");
+      expect(textGeneration.supportedOperations).not.toContain("generateConversationSummary");
+      const error = yield* textGeneration
+        .generateConversationSummary(summaryInput)
+        .pipe(Effect.flip);
+      expect(error.detail).toContain("cannot isolate");
+      expect(state.connectUrls).toEqual([]);
     }).pipe(Effect.scoped),
   );
 });

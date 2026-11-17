@@ -342,6 +342,23 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
       sourceItemId: TurnItemId.make(`turn-item-mcp-${index}`),
       item: { ...row.item, text: "x".repeat(600) },
     })),
+    ...["dynamic_tool", "command_execution"].map((type, index) => ({
+      ...row,
+      position: 12 + index,
+      sourceItemId: TurnItemId.make(`turn-item-binary-${type}`),
+      item: {
+        ...row.item,
+        type,
+        toolName: "Read",
+        input: "screenshot.png",
+        output: JSON.stringify({
+          content: [
+            { type: "image", source: { type: "base64", data: "AAECAw==" } },
+            { type: "text", text: "Screenshot captured; layout not verified." },
+          ],
+        }),
+      },
+    })),
   ];
 
   const layer = layerOrchestratorService.pipe(
@@ -421,6 +438,27 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
     });
     expect(first.items).toHaveLength(10);
     expect(first).toMatchObject({ nextPosition: 9, hasMore: true });
+    for (const source of rows.slice(-2)) {
+      const pieces: Array<string> = [];
+      let textOffset: number | null = 0;
+      while (textOffset !== null) {
+        const result: OrchestratorMcpThreadReadResult = yield* service.readThread(makeScope(), {
+          threadId: parentThreadId,
+          view: "activity",
+          itemId: source.sourceItemId,
+          textOffset,
+          maxCharsPerItem: 64,
+        });
+        const page = result.items[0]!;
+        expect(page.itemId).toBe(source.sourceItemId);
+        pieces.push(page.text!);
+        textOffset = page.nextTextOffset ?? null;
+      }
+      const recovered = pieces.join("");
+      expect(recovered).not.toContain("AAECAw==");
+      expect(recovered).toContain("Screenshot captured; layout not verified.");
+      expect("output" in source.item ? source.item.output : "").toContain("AAECAw==");
+    }
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 

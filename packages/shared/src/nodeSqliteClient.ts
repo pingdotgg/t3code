@@ -284,8 +284,8 @@ parentPort.on("message", (request) => {
       if (pendingBatch) Atomics.wait(received, 0, 0);
       parentPort.postMessage({ id, rows });
     } else {
-      const result = statement.run(...params);
-      parentPort.postMessage({ id, rows: raw ? result : [] });
+      const rows = raw ? statement.run(...params) : statement.all(...params);
+      parentPort.postMessage({ id, rows });
     }
   } catch (error) {
     // A step that throws leaves its statement active; an active write blocks every later COMMIT.
@@ -854,9 +854,10 @@ const make = Effect.fn("makeWithDatabase")(function* (
             if (arrays) statement.setReturnArrays(true);
             result = Exit.succeed(statement.all(...(params as any)));
           } else {
-            const value = statement.run(...(params as any));
             result = Exit.succeed(
-              mode === "raw" ? (value as unknown as ReadonlyArray<unknown>) : [],
+              mode === "raw"
+                ? (statement.run(...(params as any)) as unknown as ReadonlyArray<unknown>)
+                : statement.all(...(params as any)),
             );
           }
         } catch (cause) {

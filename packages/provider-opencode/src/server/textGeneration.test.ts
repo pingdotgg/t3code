@@ -26,6 +26,8 @@ const runtimeMock = {
   state: {
     startCalls: [] as string[],
     startEnvironments: [] as Array<NodeJS.ProcessEnv | undefined>,
+    startDirectories: [] as string[],
+    clientDirectories: [] as Array<string | undefined>,
     promptUrls: [] as string[],
     promptParts: [] as ReadonlyArray<unknown>[],
     promptInputs: [] as Array<Parameters<OpencodeClient["session"]["prompt"]>[0]>,
@@ -61,6 +63,8 @@ const runtimeMock = {
   reset() {
     this.state.startCalls.length = 0;
     this.state.startEnvironments.length = 0;
+    this.state.startDirectories.length = 0;
+    this.state.clientDirectories.length = 0;
     this.state.promptUrls.length = 0;
     this.state.promptParts.length = 0;
     this.state.promptInputs.length = 0;
@@ -81,12 +85,13 @@ const runtimeMock = {
 };
 
 const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
-  startOpenCodeServerProcess: ({ binaryPath, serverPassword, environment }) =>
+  startOpenCodeServerProcess: ({ binaryPath, directory, serverPassword, environment }) =>
     Effect.gen(function* () {
       const index = runtimeMock.state.startCalls.length + 1;
       const url = `http://127.0.0.1:${4_300 + index}`;
       runtimeMock.state.startCalls.push(binaryPath);
       runtimeMock.state.startEnvironments.push(environment);
+      runtimeMock.state.startDirectories.push(directory);
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           runtimeMock.state.closeCalls.push(url);
@@ -124,8 +129,9 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
           external: Boolean(serverUrl),
         }),
   runOpenCodeCommand: () => Effect.succeed({ stdout: "", stderr: "", code: 0 }),
-  createOpenCodeSdkClient: ({ baseUrl, serverPassword }) =>
-    ({
+  createOpenCodeSdkClient: ({ baseUrl, directory, serverPassword }) => {
+    runtimeMock.state.clientDirectories.push(directory);
+    return {
       provider: {
         list: async () => ({
           data: {
@@ -196,9 +202,10 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
           );
         },
       },
-    }) as unknown as ReturnType<
+    } as unknown as ReturnType<
       OpenCodeRuntime.OpenCodeRuntime["Service"]["createOpenCodeSdkClient"]
-    >,
+    >;
+  },
   loadOpenCodeInventory: () =>
     Effect.fail(
       new OpenCodeRuntime.OpenCodeRuntimeError({
@@ -244,6 +251,15 @@ const VALID_EVALUATION = {
   strengths: [],
   weaknesses: [],
   promptAdvice: [],
+};
+
+const SUMMARY_INPUT = {
+  cwd: "/thread-worktree",
+  modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+  messages: [{ ref: "M1", role: "user" as const, text: "Rename parseDate." }],
+};
+const SUMMARY = {
+  statements: [{ text: "The user asked to rename parseDate.", citations: ["M1"] }],
 };
 
 const OPENCODE_TEXT_GENERATION_IDLE_TTL_MS = 30_000;
@@ -856,6 +872,44 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
     ),
   );
 
+  it.effect("summarizes on an owned server that loads no workspace or user customization", () =>
+    withOpenCodeTextGeneration(
+      DEFAULT_OPENCODE_SETTINGS,
+      (textGeneration) =>
+        Effect.gen(function* () {
+          runtimeMock.state.promptResult = {
+            data: { parts: [{ type: "text", text: JSON.stringify(SUMMARY) }] },
+          };
+
+          expect(yield* textGeneration.generateConversationSummary(SUMMARY_INPUT)).toEqual(SUMMARY);
+          expect(textGeneration.supportedOperations).toContain("generateConversationSummary");
+          expect(runtimeMock.state.startDirectories).toHaveLength(1);
+          expect(runtimeMock.state.startDirectories[0]).not.toBe(SUMMARY_INPUT.cwd);
+          expect(runtimeMock.state.clientDirectories).toEqual(runtimeMock.state.startDirectories);
+          expect(runtimeMock.state.sessionCreateInputs[0]?.permission).toEqual([
+            { permission: "*", pattern: "*", action: "deny" },
+          ]);
+          const environment = runtimeMock.state.startEnvironments[0];
+          expect(environment?.HOME).not.toBe("/original-home");
+          expect(environment?.XDG_CONFIG_HOME).not.toBe("/user-config");
+          expect(environment?.OPENCODE_DISABLE_PROJECT_CONFIG).toBe("1");
+          expect(JSON.parse(environment?.OPENCODE_CONFIG_CONTENT ?? "null")).toEqual({
+            provider: { openai: { options: { apiKey: "inline-key" } } },
+          });
+          expect(runtimeMock.state.closeCalls).toEqual(["http://127.0.0.1:4301"]);
+        }),
+      {
+        HOME: "/original-home",
+        XDG_CONFIG_HOME: "/user-config",
+        OPENCODE_CONFIG_CONTENT: JSON.stringify({
+          provider: { openai: { options: { apiKey: "inline-key" } } },
+          instructions: ["/secret/instructions.md"],
+          default_agent: "custom",
+        }),
+      },
+    ),
+  );
+
   it.effect("parses JSON returned as plain text output", () =>
     withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
@@ -890,6 +944,19 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
 it.layer(layerOpenCodeTextGenerationExistingServerTest)(
   "OpenCodeTextGeneration with configured server URL",
   (it) => {
+    it.effect("does not summarize on a configured server it cannot isolate", () =>
+      withOpenCodeTextGeneration(EXISTING_SERVER_OPENCODE_SETTINGS, (textGeneration) =>
+        Effect.gen(function* () {
+          expect(textGeneration.supportedOperations).not.toContain("generateConversationSummary");
+          const error = yield* textGeneration
+            .generateConversationSummary(SUMMARY_INPUT)
+            .pipe(Effect.flip);
+          expect(error.detail).toContain("cannot isolate");
+          expect(runtimeMock.state.sessionCreateCalls).toBe(0);
+        }),
+      ),
+    );
+
     it.effect("does not offer the standing check, which a shared server cannot run blind", () =>
       withOpenCodeTextGeneration(EXISTING_SERVER_OPENCODE_SETTINGS, (textGeneration) =>
         Effect.sync(() => {

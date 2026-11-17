@@ -121,6 +121,7 @@ it.effect.each([
   ["t3_knowledge_read_source", { projectId: "project", threadId: "thread", messageId: "message" }],
   ["t3_knowledge_prepare_context", preparation],
   ["t3_knowledge_mutate", { mutation }],
+  ["t3_conversation_summary_search", { projectId: "project", query: "cache" }],
   ["t3_conversation_summary_list", { projectId: "project", threadId: "thread" }],
   [
     "t3_conversation_summary_describe",

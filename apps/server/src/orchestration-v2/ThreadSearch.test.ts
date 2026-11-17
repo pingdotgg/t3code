@@ -15,6 +15,7 @@ import {
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
@@ -366,6 +367,71 @@ it.layer(layerTest)("ThreadSearch", (it) => {
         })
         .pipe(Effect.flip);
       assert.equal(mismatch.operation, "cursor");
+      const sourceMismatch = yield* search
+        .search({
+          projectId,
+          query: "paged-match",
+          cursor: { ...first.nextCursor, source: "tools" },
+        })
+        .pipe(Effect.flip);
+      assert.equal(sourceMismatch.operation, "cursor");
+    }),
+  );
+
+  it.effect("cited search matches every word and ranks the whole phrase first", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const projectId = ProjectId.make("words-search");
+      yield* createProject(projectId);
+      const payload = Buffer.from(
+        Array.from({ length: 6_000 }, (_, index) => index % 256),
+      ).toString("base64");
+      const texts = {
+        "words-apart": "The xattr probe failed before the kernel extension loaded.",
+        "words-phrase": `Kernel xattr support is missing on this volume. ${payload} Check the mount.`,
+        "words-partial": "Only the kernel is mentioned here.",
+        "words-quoted": 'Set "lease expiry" in the config.',
+      };
+      for (const [id, text] of Object.entries(texts)) {
+        const threadId = ThreadId.make(id);
+        yield* projections.apply(thread(threadId, projectId, { title: id }));
+        yield* projections.apply(
+          message(threadId, `${id}-message`, "assistant", text, {
+            minute: id === "words-apart" ? 5 : 1,
+          }),
+        );
+      }
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_turn_items
+          (turn_item_id, thread_id, ordinal, type, status, updated_at, payload_json)
+        VALUES ('turn-item:words-phrase', 'words-phrase', 1, 'assistant_message', 'completed',
+          ${DateTime.formatIso(at(1))}, ${JSON.stringify({ messageId: "words-phrase-message" })})
+      `;
+      const noticeItemId = IdAllocator.derive.userTurnItem({
+        messageId: MessageId.make("words-apart-message"),
+      });
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_turn_items
+          (turn_item_id, thread_id, ordinal, type, status, updated_at, payload_json)
+        VALUES (${noticeItemId}, 'words-apart', 1, 'notification', 'completed',
+          ${DateTime.formatIso(at(5))}, ${JSON.stringify({ summary: "notice" })})
+      `;
+      const words = yield* search.search({ projectId, query: "kernel xattr" });
+      assert.deepEqual(
+        words.matches.map((hit) => hit.messageId),
+        [MessageId.make("words-phrase-message"), MessageId.make("words-apart-message")],
+      );
+      assert.include(words.matches[1]?.snippet ?? "", "xattr probe");
+      assert.equal(
+        words.matches[0]?.snippet,
+        "Kernel xattr support is missing on this volume. [binary payload omitted] Check the mount.",
+      );
+      assert.equal(words.matches[0]?.itemId, "turn-item:words-phrase");
+      assert.equal(words.matches[1]?.itemId, noticeItemId);
+      const quoted = yield* search.search({ projectId, query: '"expiry lease"' });
+      assert.deepEqual(quoted.matches, []);
     }),
   );
 

@@ -1,5 +1,9 @@
 import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
 
+import { omitConversationPayloads } from "./conversationPayload.ts";
+
+export { conversationEvidenceText } from "./conversationPayload.ts";
+
 export const finalizedToolStatuses = ["completed", "failed", "cancelled", "interrupted"] as const;
 export const summaryToolTypes = [
   "command_execution",
@@ -20,7 +24,7 @@ export const turnStartHistoryTypes = [
 ] as const;
 
 /** Only user-visible evidence; reasoning, credentials and approval payloads are not sources. */
-export function summaryToolText(item: OrchestrationV2TurnItem): string | null {
+function toolEvidence(item: OrchestrationV2TurnItem) {
   if (!finalizedToolStatuses.some((status) => status === item.status)) return null;
   const evidence = (() => {
     switch (item.type) {
@@ -55,7 +59,15 @@ export function summaryToolText(item: OrchestrationV2TurnItem): string | null {
         return null;
     }
   })();
-  return evidence === null
-    ? null
-    : JSON.stringify({ type: item.type, status: item.status, ...evidence }, null, 2);
+  return evidence === null ? null : { type: item.type, status: item.status, ...evidence };
+}
+
+export function summaryToolText(item: OrchestrationV2TurnItem): string | null {
+  const evidence = toolEvidence(item);
+  return evidence === null ? null : JSON.stringify(omitConversationPayloads(evidence), null, 2);
+}
+
+export function rawToolEvidenceBytes(item: OrchestrationV2TurnItem): number | null {
+  const evidence = toolEvidence(item);
+  return evidence === null ? null : Buffer.byteLength(JSON.stringify(evidence, null, 2));
 }

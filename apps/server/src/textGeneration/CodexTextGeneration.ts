@@ -294,12 +294,16 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     Effect.orElseSucceed(() => undefined),
   );
 
-  const evaluationConfiguration = Effect.fn("CodexTextGeneration.evaluationConfiguration")(
-    function* (homePath: string, launchArgs: string) {
+  const readIsolatedConfiguration = Effect.fn("CodexTextGeneration.evaluationConfiguration")(
+    function* (
+      homePath: string,
+      launchArgs: string,
+      operation: TextGenerationOperations.Operation,
+    ) {
       const invalid = (cause: unknown) =>
         new TextGenerationError({
-          operation: "generateModelEvaluation",
-          detail: "Failed to isolate the Codex evaluator configuration.",
+          operation,
+          detail: "Failed to isolate the Codex configuration.",
           cause,
         });
       const parseConfig = (source: string) =>
@@ -373,7 +377,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     },
   );
 
-  const isolatedEvaluatorHome = Effect.fn("CodexTextGeneration.isolatedEvaluatorHome")(function* (
+  const createIsolatedHome = Effect.fn("CodexTextGeneration.isolatedEvaluatorHome")(function* (
     originalHome: string,
     operation: TextGenerationOperations.Operation,
     configuration: string,
@@ -385,7 +389,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           (cause) =>
             new TextGenerationError({
               operation,
-              detail: "Failed to create the Codex evaluator home.",
+              detail: "Failed to create the isolated Codex home.",
               cause,
             }),
         ),
@@ -397,7 +401,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           (cause) =>
             new TextGenerationError({
               operation,
-              detail: "Failed to prepare the Codex evaluator configuration.",
+              detail: "Failed to prepare the isolated Codex configuration.",
               cause,
             }),
         ),
@@ -418,7 +422,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         (cause) =>
           new TextGenerationError({
             operation,
-            detail: "Failed to prepare the Codex evaluator login.",
+            detail: "Failed to prepare the isolated Codex login.",
             cause,
           }),
       ),
@@ -472,7 +476,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         )?.slug ??
         listed.find((candidate) => codexModelFamily(candidate.slug) === requestedFamily)?.slug;
       const model =
-        operation === "generateModelEvaluation"
+        operation === "generateModelEvaluation" || operation === "generateConversationSummary"
           ? requestedModel
           : (matchedModel ??
             listed.find((candidate) => candidate.isDefault)?.slug ??
@@ -505,14 +509,16 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           : {}),
       };
       const originalHome = env.CODEX_HOME ?? path.join(yield* HostProcess.HomeDirectory, ".codex");
-      const judgeConfiguration =
-        operation === "generateModelEvaluation" || operation === "checkFactStanding"
-          ? yield* evaluationConfiguration(originalHome, launchArgs).pipe(
+      const isolatedConfiguration =
+        operation === "generateModelEvaluation" ||
+        operation === "generateConversationSummary" ||
+        operation === "checkFactStanding"
+          ? yield* readIsolatedConfiguration(originalHome, launchArgs, operation).pipe(
               Effect.mapError(
                 (cause) =>
                   new TextGenerationError({
                     operation,
-                    detail: "Failed to isolate the Codex evaluator configuration.",
+                    detail: "Failed to isolate the Codex configuration.",
                     cause,
                   }),
               ),
@@ -520,15 +526,15 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           : undefined;
       // The standing check keeps a keyring login working in its own home, without tools or
       // developer instructions; that home's global AGENTS.md still reaches it.
-      const sharedHome = judgeConfiguration?.source === null;
-      if (sharedHome && operation === "generateModelEvaluation")
+      const sharedHome = isolatedConfiguration?.source === null;
+      if (sharedHome && operation !== "checkFactStanding")
         return yield* new TextGenerationError({
           operation,
           detail:
-            "Codex blind evaluation requires file-backed login or a model API. Keyring login cannot be isolated.",
+            "Isolated Codex requests require file-backed login or a model API. Keyring login cannot be isolated.",
         });
       const discoveredMcpServers =
-        judgeConfiguration && !sharedHome
+        isolatedConfiguration && !sharedHome
           ? []
           : yield* listEnabledMcpServers({
               binary,
@@ -544,21 +550,21 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const enabledMcpServers = discoveredMcpServers ?? [];
       const mcpServersOff = codexMcpServersOff(enabledMcpServers);
       const execLaunchArgs =
-        judgeConfiguration && !sharedHome
-          ? judgeConfiguration.args
+        isolatedConfiguration && !sharedHome
+          ? isolatedConfiguration.args
           : [
               ...codexExecLaunchArgs(launchArgs),
-              ...(judgeConfiguration
-                ? [...judgeConfiguration.args, "--config", 'developer_instructions=""']
+              ...(isolatedConfiguration
+                ? [...isolatedConfiguration.args, "--config", 'developer_instructions=""']
                 : []),
             ];
       // A launch-arg mcp_servers={...} table replaces ours and can re-enable dotted names.
       const launchArgsSetMcpTable = execLaunchArgs.some((arg) => /\bmcp_servers\s*=/.test(arg));
-      if (judgeConfiguration?.source)
-        env.CODEX_HOME = yield* isolatedEvaluatorHome(
+      if (isolatedConfiguration && isolatedConfiguration.source !== null)
+        env.CODEX_HOME = yield* createIsolatedHome(
           originalHome,
           operation,
-          judgeConfiguration.source,
+          isolatedConfiguration.source,
         );
       const spawnCommand = yield* resolveSpawnCommand(
         binary,
@@ -642,7 +648,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
               : `Codex CLI command failed with code ${exitCode}.`,
         });
       }
-      if (judgeConfiguration) {
+      if (isolatedConfiguration) {
         const events = yield* Effect.try({
           try: () =>
             stdout
@@ -667,7 +673,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
             ) {
               return yield* new TextGenerationError({
                 operation,
-                detail: "Codex evaluator attempted tool activity.",
+                detail: "Codex attempted tool activity in an isolated run.",
               });
             }
           }

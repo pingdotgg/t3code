@@ -105,6 +105,7 @@ import { turnStartHistoryTypes } from "@t3tools/provider-core/server/conversatio
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import { readableSearchText } from "./messageSearchIndex.ts";
+import { indexToolItem } from "./toolSearchIndex.ts";
 import {
   isFoldableWorkItem,
   isThreadHistoryUserTurn,
@@ -3111,6 +3112,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 payload_json = excluded.payload_json,
                 inline_work_output = excluded.inline_work_output
             `;
+              yield* indexToolItem(sql, event.payload);
               break;
             }
             case "checkpoint-scope.created": {

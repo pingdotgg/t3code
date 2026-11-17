@@ -28,6 +28,7 @@ import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
+import * as ToolSearch from "../../../orchestration-v2/ToolSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadGroupService from "../../../orchestration-v2/ThreadGroupService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -214,23 +215,31 @@ const ThreadTransferTool = Tool.make("t3_thread_transfer", {
 const ThreadSearchTool = Tool.make("t3_thread_search", {
   ...commandTool,
   description:
-    "Search finished user and assistant messages. Project scope applies before the limit. Omit projectId to use the calling thread project. Callers outside a thread search all projects when projectId is absent. Archived threads require includeArchived. Continue with nextCursor using the same query and scope. Each thread contributes one exact message citation.",
+    "Search finished user and assistant messages, or with source=tools finished tool output. Every word must appear in one result; quote to keep a phrase. complete=false: older output is still indexing. Project scope applies before the limit. Omit projectId to use the calling thread project. Callers outside a thread search all projects when projectId is absent. Archived threads require includeArchived. Continue with nextCursor using the same query and scope. Each thread contributes one matching item. Search compressed history with t3_conversation_summary_search. Read around a hit: t3_thread_read with its itemId and view=activity, then afterPosition or beforePosition and a small limit.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     ...OrchestrationSearchThreadsInput.fields,
     projectId: Schema.optional(ProjectId),
+    source: Schema.optional(Schema.Literals(["messages", "tools"])),
   }),
   success: Schema.Struct({
     ...OrchestrationSearchThreadsResult.fields,
     currentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
     matches: Schema.Array(
-      Schema.Struct({
-        ...OrchestrationThreadSearchMatch.fields,
-        link: Schema.optional(Schema.String),
-      }),
+      Schema.Union([
+        Schema.Struct({
+          ...OrchestrationThreadSearchMatch.fields,
+          link: Schema.optional(Schema.String),
+        }),
+        Schema.Struct({
+          ...ToolSearch.ToolSearchMatch.fields,
+          link: Schema.optional(Schema.String),
+        }),
+      ]),
     ),
+    complete: Schema.optional(Schema.Boolean),
   }),
-  dependencies: [...commandTool.dependencies, ThreadSearch.ThreadSearch],
+  dependencies: [...commandTool.dependencies, ThreadSearch.ThreadSearch, ToolSearch.ToolSearch],
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);

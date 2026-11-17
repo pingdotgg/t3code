@@ -638,6 +638,52 @@ const browserCase = (id: string) =>
     .map((line) => decodeDeviceCase(line))
     .find((c) => c.id === id)!;
 
+it("grades LCM recovery through original evidence without forbidding an exact source read", () => {
+  const fixture = NodeFS.readFileSync(
+    new URL("./cases/lcm-recovery.ndjson", import.meta.url),
+    "utf8",
+  )
+    .trim()
+    .split("\n")
+    .map((line) => decodeDeviceCase(line))[0]!;
+  const scope = { projectId: "project-app", threadId: "thread-orders" };
+  const calls = [
+    {
+      step: 0,
+      tool: "t3_conversation_summary_search",
+      input: { projectId: scope.projectId, query: "orders migration" },
+    },
+    {
+      step: 1,
+      tool: "t3_conversation_summary_expand",
+      input: { ...scope, summaryId: `summary:${"b".repeat(64)}` },
+    },
+    {
+      step: 2,
+      tool: "t3_conversation_summary_expand",
+      input: { ...scope, summaryId: `summary:${"a".repeat(64)}` },
+    },
+    { step: 3, tool: "t3_thread_read", input: { threadId: scope.threadId, itemId: "item-check" } },
+  ];
+  const run = {
+    calls,
+    text: "",
+    finalText: "The test failed: expected 'pending' to be 'settled'.",
+    stopReason: "end_turn",
+  };
+  assert.deepEqual(failed(fixture.expect, run), []);
+  assert.isNotEmpty(failed(fixture.expect, { ...run, calls: calls.slice(0, 2) }));
+  assert.isNotEmpty(
+    failed(fixture.expect, {
+      ...run,
+      calls: [
+        ...calls,
+        { step: 4, tool: "t3_thread_read", input: { threadId: scope.threadId, itemId: undefined } },
+      ],
+    }),
+  );
+});
+
 it("rebuilds the template from this checkout and sends a child T3's task prompt", () => {
   const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
   const system = base.system.map((block) => String(block.text));

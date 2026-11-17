@@ -10,6 +10,7 @@ import { reconcileV2PreviewMigration } from "./reconcileV2PreviewMigration.ts";
 import { reconcileProjectKnowledgePreviewMigration } from "./reconcileProjectKnowledgePreviewMigration.ts";
 import { reconcileSavedKnowledgePreviewMigration } from "./reconcileSavedKnowledgePreviewMigration.ts";
 import { reconcileKnowledgeViewsPreviewMigration } from "./reconcileKnowledgeViewsPreviewMigration.ts";
+import { reconcileConversationSearchPreviewMigration } from "./reconcileConversationSearchPreviewMigration.ts";
 
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
 import Migration0002 from "./Migrations/002_OrchestrationCommandReceipts.ts";
@@ -126,6 +127,8 @@ import Migration0112 from "./Migrations/112_TurnItemInlineWorkOutput.ts";
 import Migration0113 from "./Migrations/113_RepairSubagentGroups.ts";
 import Migration0114 from "./Migrations/114_ProjectKnowledgeRecallIndex.ts";
 import Migration0115 from "./Migrations/115_ProjectKnowledgeFactVerdict.ts";
+import Migration0116 from "./Migrations/116_ConversationSummarySearch.ts";
+import Migration0117 from "./Migrations/117_ToolOutputSearch.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -244,6 +247,8 @@ const migrationEntries = [
   [113, "RepairSubagentGroups", Migration0113],
   [114, "ProjectKnowledgeRecallIndex", Migration0114],
   [115, "ProjectKnowledgeFactVerdict", Migration0115],
+  [116, "ConversationSummarySearch", Migration0116],
+  [117, "ToolOutputSearch", Migration0117],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -347,6 +352,10 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
     toMigrationInclusive === undefined || toMigrationInclusive >= 96
       ? yield* reconcileKnowledgeViewsPreviewMigration(migrationManifest)
       : [];
+  const conversationSearchPreviewMigrations =
+    toMigrationInclusive === undefined || toMigrationInclusive >= 117
+      ? yield* reconcileConversationSearchPreviewMigration(migrationManifest)
+      : [];
   if (includesV2) {
     yield* assertV2MigrationsCanRun(toMigrationInclusive);
   }
@@ -372,6 +381,7 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
     ...knowledgePreviewMigrations,
     ...savedKnowledgePreviewMigrations,
     ...knowledgeViewsPreviewMigrations,
+    ...conversationSearchPreviewMigrations,
   ];
   for (const [index, [id, name]] of pending.entries()) {
     if (latestRecordedId > 0) {

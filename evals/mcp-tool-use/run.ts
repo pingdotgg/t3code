@@ -123,6 +123,7 @@ const MODELS = {
   "gpt-6.1-sol": "GPT-6.1 Sol",
   "gpt-6-astra": "GPT-6 Astra",
   "morph-kimik31": "Kimi K3.1",
+  "morph-dsv41flash": "DeepSeek V4.1 Flash",
 } as const;
 type Model = keyof typeof MODELS;
 /** GPT models replay a Codex capture through CLIProxyAPI, the rest a Claude Code capture. */
@@ -2232,8 +2233,6 @@ const callCodex = Effect.fn("evaluateMcpToolUse.callCodex")(function* (
   };
 });
 
-// Concurrent runs share an organization's rate limits. Backing off for up to about 4 minutes
-// lets a sample wait out a busy spell, with jitter so samples do not retry in step.
 const RETRY = Schedule.min([Schedule.exponential("2 seconds"), Schedule.spaced("1 minute")]).pipe(
   Schedule.jittered,
 );
@@ -2273,7 +2272,7 @@ const postModel = Effect.fn("evaluateMcpToolUse.postModel")(function* (
     return yield* Effect.die(new Error(`Model API ${response.status}: ${body}`));
   }
   return yield* response.text;
-});
+}, Effect.timeout("120 seconds"));
 const callModel = (apiKey: string, body: unknown, proxy?: Config["proxy"]) =>
   postModel(apiKey, body, proxy).pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(ApiResponse))),
@@ -2807,7 +2806,11 @@ const main = Effect.gen(function* () {
     ),
   );
   const inFlight = yield* Semaphore.make(flags.concurrency);
-  const runOne = (testCase: McpToolUseCase) => {
+  const sampleDirectory = path.join(out, "samples");
+  yield* fs.makeDirectory(sampleDirectory, { recursive: true });
+  let nextSample = 0;
+  const runOne = Effect.fn("evaluateMcpToolUse.runOne")((testCase: McpToolUseCase) => {
+    const sampleIndex = nextSample++;
     const { id, kind, pattern } = testCase;
     const identity = { id, kind, pattern, role: testCase.setup.role };
     const usage = { usage: emptyUsage(), shellUsage: emptyUsage() };
@@ -2846,10 +2849,17 @@ const main = Effect.gen(function* () {
         },
       }),
       Effect.tap((row) =>
+        encodeJson(row).pipe(
+          Effect.flatMap((json) =>
+            fs.writeFileString(path.join(sampleDirectory, `${sampleIndex}.json`), json),
+          ),
+        ),
+      ),
+      Effect.tap((row) =>
         Effect.log(`${row.id}: ${"error" in row ? "ERROR" : row.pass ? "pass" : "FAIL"}`),
       ),
     );
-  };
+  });
   // Without --samples, a case whose 2 samples disagree gets a 3rd to settle it.
   const runCase = Effect.fn("evaluateMcpToolUse.runCase")(function* (testCase: McpToolUseCase) {
     const samples = Array.from({ length: flags.samples ?? 2 }, () => testCase);

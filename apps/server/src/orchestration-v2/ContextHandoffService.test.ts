@@ -95,7 +95,12 @@ it.layer(layerTest)("ContextHandoffService legacy import", (it) => {
         toProviderThreadId: ProviderThreadId.make("provider-thread:first-v2"),
         toProviderInstanceId: ProviderInstanceId.make("codex"),
         items: [
-          importedItem({ role: "user", id: "one", text: "What did we decide?", ordinal: 1 }),
+          importedItem({
+            role: "user",
+            id: "one",
+            text: "What did we decide? data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK38AAAAASUVORK5CYII=",
+            ordinal: 1,
+          }),
           importedItem({
             role: "assistant",
             id: "two",
@@ -109,6 +114,7 @@ it.layer(layerTest)("ContextHandoffService legacy import", (it) => {
       assert.equal(handoff.strategy, "manual_context");
       assert.deepStrictEqual(handoff.fromProviderThreadIds, []);
       assert.include(handoff.summaryText, "What did we decide?");
+      assert.notInclude(handoff.summaryText, "data:image/png");
       assert.include(handoff.summaryText, "keep the migration lightweight");
     }),
   );
@@ -298,6 +304,46 @@ it.layer(layerTest)("ContextHandoffService provider handoff", (it) => {
         const delivered = yield* encodeHandoff(durable);
         assert.lengthOf(delivered.match(/COMMAND_EVIDENCE_SENTINEL/g) ?? [], 1);
         assert.lengthOf(delivered.match(/TOOL_EVIDENCE_SENTINEL/g) ?? [], 1);
+
+        const bytes = "AQID".repeat(10_000);
+        const oldText = `Keep the recovery decision. data:image/png;base64,${bytes} Continue the patch.`;
+        const { history: oldHistory, ...withoutHistory } = handoff;
+        for (const legacy of [false, true]) {
+          const recovered = yield* decodeHandoff(
+            yield* encodeHandoff(
+              legacy
+                ? { ...withoutHistory, summaryText: oldText }
+                : {
+                    ...handoff,
+                    history: {
+                      ...oldHistory!,
+                      messages: [{ ...selected[0]!, text: oldText }],
+                    },
+                  },
+            ),
+          );
+          const original = yield* encodeHandoff(recovered);
+          const clean = yield* deliverContextHandoffs({
+            handoffs: [recovered],
+            providerThread: target,
+            budget: 4_000,
+            alreadyDeliveredItemIds: new Set(),
+            inject: (value) => {
+              const text = JSON.stringify(value);
+              assert.include(text, "Keep the recovery decision.");
+              assert.include(text, "Continue the patch.");
+              assert.notInclude(text, bytes);
+              return Effect.succeed(native);
+            },
+            persist: () => Effect.void,
+          });
+          if (!native) {
+            assert.include(clean.context, "Keep the recovery decision.");
+            assert.include(clean.context, "Continue the patch.");
+            assert.notInclude(clean.context, bytes);
+          }
+          assert.equal(yield* encodeHandoff(recovered), original);
+        }
       }),
   );
 
@@ -422,6 +468,23 @@ it.effect("caps the side chat context block without summarizing discarded parent
         `Use t3_thread_read on thread ${parentThreadId} to see the main thread's live state.`,
       ),
     );
+
+    const bytes = "AQID".repeat(10_000);
+    const sourceText = `Keep the side-chat decision. data:image/png;base64,${bytes} Continue the patch.`;
+    const sourceItem = importedItem({
+      role: "user",
+      id: "binary-context",
+      text: sourceText,
+      ordinal: 1,
+    });
+    for (const digest of [[sourceItem], [`- User: ${sourceText}`]]) {
+      const clean = ContextHandoffService.makeSideChatContext({ parentThreadId, digest });
+      assert.include(clean, "Keep the side-chat decision.");
+      assert.include(clean, "Continue the patch.");
+      assert.notInclude(clean, "data:image/png");
+      assert.notInclude(clean, bytes);
+    }
+    assert.equal(sourceItem.text, sourceText);
 
     const framingOnly = ContextHandoffService.makeSideChatContext({
       parentThreadId,

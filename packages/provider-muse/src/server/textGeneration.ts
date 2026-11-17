@@ -290,5 +290,6 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
 
   return TextGenerationOperations.fromRunner("MuseTextGeneration", runMuseJson, {
     supportsInvestigation: false,
+    supportsConversationSummary: false,
   });
 });

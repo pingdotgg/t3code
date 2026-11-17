@@ -36,9 +36,11 @@ export function conversationSummaryEffect(input: {
   readonly threadId: ThreadId;
   readonly runId: RunId;
   readonly pass?: number;
+  readonly retry?: number;
+  readonly retryAt?: string;
 }): PendingOrchestrationEffectV2 {
   const pass = input.pass ?? 0;
-  const id = `effect:conversation-summary.generate:${input.runId}${pass === 0 ? "" : `:pass:${pass}`}`;
+  const id = `effect:conversation-summary.generate:${input.runId}${input.retry === undefined ? "" : `:retry:${input.retry}${input.retryAt === undefined ? "" : `:${input.retryAt}`}`}${pass === 0 ? "" : `:pass:${pass}`}`;
   return {
     id,
     commandId: CommandId.make(`command:${id}`),
@@ -47,6 +49,8 @@ export function conversationSummaryEffect(input: {
       type: "conversation-summary.generate",
       runId: input.runId,
       ...(pass === 0 ? {} : { pass }),
+      ...(input.retry === undefined ? {} : { retry: input.retry }),
+      ...(input.retryAt === undefined ? {} : { retryAt: input.retryAt }),
     },
   };
 }
@@ -74,7 +78,25 @@ export interface ConversationSummaryRuntimeShape {
   readonly summarizeThread: (input: {
     readonly threadId: ThreadId;
     readonly runId: RunId;
-  }) => Effect.Effect<{ readonly hasMore: boolean }, ConversationSummaryPassError>;
+    readonly retry?: number | undefined;
+  }) => Effect.Effect<
+    {
+      readonly hasMore: boolean;
+      readonly summarizedWithModelKey?: string;
+    },
+    ConversationSummaryPassError
+  >;
+  readonly stalledThreads: (input: {
+    readonly modelKey: string;
+    readonly limit: number;
+  }) => Effect.Effect<
+    ReadonlyArray<{
+      readonly threadId: ThreadId;
+      readonly runId: RunId;
+      readonly retry: number;
+      readonly retryAt?: string;
+    }>
+  >;
   /** Whether a summary pass for the thread is queued or running. Unknown counts as pending. */
   readonly hasPendingPass: (input: { readonly threadId: ThreadId }) => Effect.Effect<boolean>;
   /**
@@ -109,6 +131,7 @@ export class ConversationSummaryRuntime extends Context.Reference<ConversationSu
     defaultValue: () => ({
       summarizeThread: () => Effect.succeed({ hasMore: false }),
       hasPendingPass: () => Effect.succeed(false),
+      stalledThreads: () => Effect.succeed([]),
       forHandoff: () => Effect.succeed([]),
     }),
   },

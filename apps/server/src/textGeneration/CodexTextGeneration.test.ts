@@ -64,7 +64,7 @@ interface FakeCodexInput {
   requiredCwd?: string;
   requireInstructions?: string;
   forbidInstructions?: string;
-  requireIsolatedHome?: boolean;
+  requireIsolatedHome?: boolean | "empty routing";
   requireMcpServersOff?: ReadonlyArray<string>;
 }
 
@@ -144,7 +144,11 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "  const home = process.env.CODEX_HOME;",
         '  if (NodeFS.existsSync(home + "/AGENTS.md")) fail("inherited global instructions", 12);',
         '  const config = NodeFS.readFileSync(home + "/config.toml", "utf8");',
-        '  if (!config.includes(\'model_provider = "private"\') || !config.includes(\'base_url = "http://127.0.0.1:1/v1"\') || config.includes("developer_instructions")) fail("incorrect isolated routing", 13);',
+        '  if (check.requireIsolatedHome === "empty routing") {',
+        '    if (config.trim() !== "") fail("expected empty isolated routing", 13);',
+        "  } else {",
+        '    if (!config.includes(\'model_provider = "private"\') || !config.includes(\'base_url = "http://127.0.0.1:1/v1"\') || config.includes("developer_instructions")) fail("incorrect isolated routing", 13);',
+        "  }",
         '  if (!NodeFS.lstatSync(home + "/auth.json").isSymbolicLink() || !NodeFS.lstatSync(home + "/auth.lock").isSymbolicLink()) fail("credential identity was split", 14);',
         '  const auth = NodeFS.realpathSync(home + "/auth.json");',
         '  NodeFS.writeFileSync(auth + ".new", "rotated-login");',
@@ -587,17 +591,21 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
 
   it.effect.each([
     "file login",
+    "empty routing",
     "tool activity",
     "keyring login",
     "keyring MCP discovery unavailable",
   ] as const)("checks fact standing blind (%s)", (state) => {
     const keyring = state.startsWith("keyring");
+    const emptyRouting = state === "empty routing";
     const discoveryUnavailable = state === "keyring MCP discovery unavailable";
     const answer = { results: [{ ref: 1, verdict: "standing", selfContained: true }] };
     return withFakeCodexEnv(
       {
         output: JSON.stringify(answer),
-        configToml: `${keyring ? 'cli_auth_credentials_store = "keyring"\n' : ""}profile = "private"\ndeveloper_instructions = "Do not inherit"\n[profiles.private]\nmodel_provider = "private"\n[model_providers.private]\nbase_url = "http://127.0.0.1:1/v1"\nwire_api = "responses"\n`,
+        configToml: emptyRouting
+          ? 'developer_instructions = "Do not inherit"\n[mcp_servers.augmenter]\ncommand = "must-not-run"\n'
+          : `${keyring ? 'cli_auth_credentials_store = "keyring"\n' : ""}profile = "private"\ndeveloper_instructions = "Do not inherit"\n[profiles.private]\nmodel_provider = "private"\n[model_providers.private]\nbase_url = "http://127.0.0.1:1/v1"\nwire_api = "responses"\n`,
         ...(keyring
           ? {
               launchArgs: "--config 'developer_instructions=\"Do not inherit\"'",
@@ -605,7 +613,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
               requireMcpServersOff: discoveryUnavailable ? [] : ["augmenter"],
               forbidInstructions: "Do not inherit",
             }
-          : { requireIsolatedHome: true }),
+          : { requireIsolatedHome: emptyRouting ? "empty routing" : true }),
         requireArg: "--config project_doc_max_bytes=0",
         disabledFeatures: ["plugins", "apps", "shell_tool", "unified_exec", "hooks", "view_image"],
         events: [
@@ -635,6 +643,49 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
         }),
     );
   });
+
+  it.effect.each(["file login", "keyring login"] as const)(
+    "isolates conversation summaries without changing their model (%s)",
+    (login) => {
+      const summary = { statements: [{ text: "The user asked for a rename.", citations: ["M1"] }] };
+      return withFakeCodexEnv(
+        {
+          output: JSON.stringify(summary),
+          models: ["other-default-model"],
+          defaultModel: "other-default-model",
+          configToml: `${login === "keyring login" ? 'cli_auth_credentials_store = "keyring"\n' : ""}model_provider = "private"\ndeveloper_instructions = "Do not inherit"\n[model_providers.private]\nbase_url = "http://127.0.0.1:1/v1"\nwire_api = "responses"\n`,
+          requireIsolatedHome: login === "file login",
+          requireArg: "--model gpt-6-luna",
+          requiredArgs: ["--config project_doc_max_bytes=0"],
+          disabledFeatures: ["plugins", "apps", "shell_tool", "unified_exec", "skill_search"],
+          events: [
+            {
+              type: "item.completed",
+              item: { type: "agent_message", text: JSON.stringify(summary) },
+            },
+          ],
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const result = yield* textGeneration
+              .generateConversationSummary({
+                cwd: process.cwd(),
+                modelSelection: createModelSelection(
+                  ProviderInstanceId.make("codex"),
+                  "gpt-6-luna",
+                ),
+                messages: [{ ref: "M1", role: "user", text: "Rename parseDate." }],
+              })
+              .pipe(Effect.exit);
+            if (login === "keyring login")
+              expect(Exit.isFailure(result) ? Cause.pretty(result.cause) : "").toContain(
+                "Keyring login cannot be isolated",
+              );
+            else expect(Exit.isSuccess(result) ? result.value : result).toEqual(summary);
+          }),
+      );
+    },
+  );
 
   it.effect("preserves custom PR instructions while allowing checkout inspection", () =>
     withFakeCodexEnv(

@@ -566,6 +566,28 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
     }),
   );
 
+  it.effect("refuses conversation summaries without launching Antigravity", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture({
+        outputs: ['{"statements":[{"text":"Repair Google login.","citations":["M1"]}]}'],
+      });
+      expect(fixture.textGeneration.supportedOperations).not.toContain(
+        "generateConversationSummary",
+      );
+      expect(fixture.textGeneration.supportedOperations).toContain("generateKnowledgeCandidates");
+      const error = yield* fixture.textGeneration
+        .generateConversationSummary({
+          cwd: fixture.projectDirectory,
+          modelSelection,
+          messages: [{ ref: "M1", role: "user", text: "Repair Google login." }],
+        })
+        .pipe(Effect.flip);
+      expect(error.detail).toContain("cannot isolate a conversation summary");
+      expect(fixture.state.workspaces).toEqual([]);
+      yield* fixture.assertCleaned;
+    }),
+  );
+
   it.effect("does not launch during sign-out or before sign-in", () =>
     Effect.gen(function* () {
       const fixture = yield* makeFixture({ rejectAdmission: true });

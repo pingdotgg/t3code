@@ -3,7 +3,7 @@ import type { CondensedCase, LeafCase } from "./cases.ts";
 const MAX_CHARS = 1_200;
 
 type Statement = { readonly text: string; readonly citations: ReadonlyArray<string> };
-type Rules = Pick<CondensedCase, "mustMention" | "attributed" | "mustNot">;
+type Rules = Pick<LeafCase, "mustMention" | "attributed" | "mustNot" | "supportedBy">;
 
 function gradeStatements(
   refs: ReadonlySet<string>,
@@ -14,9 +14,18 @@ function gradeStatements(
   const texts = statements.map((statement) => statement.text);
   const failures: Array<string> = [];
   if (statements.length === 0) failures.push("no statements");
-  for (const statement of statements)
+  for (const statement of statements) {
     if (!statement.citations.some((ref) => refs.has(ref.trim())))
       failures.push(`cites no given source: ${statement.text}`);
+    for (const ref of statement.citations)
+      if (!refs.has(ref.trim())) failures.push(`unknown citation ${ref}: ${statement.text}`);
+    for (const rule of rules.supportedBy ?? [])
+      if (
+        new RegExp(rule.when, "i").test(statement.text) &&
+        !rule.refs.some((ref) => statement.citations.includes(ref))
+      )
+        failures.push(`missing supporting source ${rule.refs.join(" or ")}: ${statement.text}`);
+  }
   if (maxChars !== undefined) {
     const chars = texts.reduce((sum, text) => sum + text.trim().length, 0);
     if (chars > maxChars) failures.push(`${chars} characters, over ${maxChars}`);

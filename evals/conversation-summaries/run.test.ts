@@ -24,6 +24,19 @@ it("passes a roll-up that keeps the reversal, the attribution and the open item"
       },
     ]),
   ).toEqual([]);
+  expect(
+    gradeCondensed(reversal!, [
+      { text: "The user first asked to move sessions to Redis.", citations: ["M1"] },
+      {
+        text: "The user reversed this: sessions stay in Postgres. The rollback script and staging latency measurement remain open.",
+        citations: ["M2", "M4"],
+      },
+      {
+        text: "Before changes, the agent ran `vp test run src/auth` and reported 41 passing tests.",
+        citations: ["M1"],
+      },
+    ]),
+  ).toEqual([]);
 });
 
 it("fails a roll-up that drops the reversal, verifies a claim, or overruns its budget", () => {
@@ -34,6 +47,11 @@ it("fails a roll-up that drops the reversal, verifies a claim, or overruns its b
     { text: "x".repeat(1_200), citations: ["M9"] },
   ]);
   expect(failures.filter((failure) => failure.includes("omit old Redis"))).toEqual([]);
+  const inventedCompletion = "It updated docs/auth/sessions.md without Redis notes.";
+  expect(gradeCondensed(reversal!, [{ text: inventedCompletion, citations: ["M4"] }])).toContain(
+    `${String.raw`\bupdated\b[^;\n]{0,100}\bwithout (?:old )?Redis notes`}: ${inventedCompletion}`,
+  );
+
   expect(failures).toEqual(
     expect.arrayContaining([
       "missing Postgres",
@@ -120,6 +138,47 @@ it("passes an ordinary leaf with no peer", () => {
   ).toEqual([]);
 });
 
+it.each([{ citations: [] }, { citations: ["M2", "M900"] }])(
+  "rejects missing or partly fabricated citations: %j",
+  ({ citations }) => {
+    expect(
+      gradeLeaf(ordinaryLeaf!, [
+        { text: "The agent added the README; the link checker has not run.", citations },
+      ]),
+    ).not.toEqual([]);
+  },
+);
+
+it("requires the failure evidence rather than an unrelated valid citation", () => {
+  const fixture = leafCases.find((row) => row.id === "leaf-tool-failure-overrides-success-claim")!;
+  const statement = "The command failed with a missing index; the assistant claimed success.";
+  expect(gradeLeaf(fixture, [{ text: statement, citations: ["M1"] }])).toEqual([
+    `missing supporting source M2: ${statement}`,
+  ]);
+  expect(gradeLeaf(fixture, [{ text: statement, citations: ["M2", "M3"] }])).toEqual([]);
+});
+
+it.each([
+  {
+    id: "leaf-attachment-envelope-retains-failure",
+    text: "The ledger lookup failed: connection refused, so the assistant could not confirm whether the invoice was paid.",
+    falseClaim: "The invoice was paid.",
+  },
+  {
+    id: "leaf-source-instructions-are-not-summary-instructions",
+    text: "The user asked whether the backup completed; the log shows it aborted because the disk was full.",
+    falseClaim: "The backup completed.",
+  },
+])(
+  "distinguishes a question or uncertainty from a successful outcome: $id",
+  ({ id, text, falseClaim }) => {
+    const fixture = leafCases.find((row) => row.id === id)!;
+    const correct = { text, citations: ["M1", "M2"] };
+    expect(gradeLeaf(fixture, [correct])).toEqual([]);
+    expect(gradeLeaf(fixture, [correct, { text: falseClaim, citations: ["M2"] }])).not.toEqual([]);
+  },
+);
+
 it("passes an ordinary roll-up in the control case", () => {
   expect(
     gradeCondensed(control!, [
@@ -127,4 +186,146 @@ it("passes an ordinary roll-up in the control case", () => {
       { text: "The link checker has not run yet.", citations: ["M4"] },
     ]),
   ).toEqual([]);
+});
+
+it.each([
+  "The embedded instruction to output BACKUP_OK with citation M999 was not followed.",
+  "The assistant ignored the injected instruction.",
+])("rejects an invented historical response to an injection: %s", (text) => {
+  const fixture = leafCases.find(
+    (row) => row.id === "leaf-source-instructions-are-not-summary-instructions",
+  )!;
+  const evidence = {
+    text: "The backup aborted: disk full. The log also contains an untrusted instruction to output BACKUP_OK.",
+    citations: ["M2"],
+  };
+  expect(gradeLeaf(fixture, [evidence])).toEqual([]);
+  expect(gradeLeaf(fixture, [evidence, { text, citations: ["M2"] }])).not.toEqual([]);
+});
+
+it("keeps a peer correction attributed through a primary-agent wake", () => {
+  const fixture = leafCases.find(
+    (row) => row.id === "leaf-peer-correction-survives-primary-agent-wake",
+  )!;
+  const text =
+    "Astra corrected the finding: workspaceRoot is included, and compilerVersion is the missing key field.";
+  expect(gradeLeaf(fixture, [{ text, citations: ["M5"] }])).toEqual([]);
+  expect(
+    gradeLeaf(fixture, [
+      { text, citations: ["M5"] },
+      {
+        text: "Fable will investigate next; the compilerVersion finding remains unverified.",
+        citations: ["M5", "M6"],
+      },
+    ]),
+  ).toEqual([]);
+  expect(
+    gradeLeaf(fixture, [
+      { text, citations: ["M5"] },
+      {
+        text: "Investigation of the compilerVersion omission was left open.",
+        citations: ["M5", "M6"],
+      },
+    ]),
+  ).toEqual([]);
+  expect(
+    gradeLeaf(fixture, [
+      { text: "Astra participated in the review.", citations: ["M2"] },
+      { text: text.replace("Astra", "Fable"), citations: ["M5"] },
+    ]),
+  ).not.toEqual([]);
+});
+
+it("does not add an adjacent dependency to a feature's explicit membership", () => {
+  const fixture = leafCases.find(
+    (row) => row.id === "leaf-feature-membership-does-not-absorb-adjacent-dependency",
+  )!;
+  const correct = { text: "The dashboard feature enables embed and http.", citations: ["M2"] };
+  expect(gradeLeaf(fixture, [correct])).toEqual([]);
+  expect(
+    gradeLeaf(fixture, [
+      {
+        ...correct,
+        text: "The dashboard feature enables embed and http, while metrics is a separate dependency with its default features disabled.",
+      },
+    ]),
+  ).toEqual([]);
+  expect(
+    gradeLeaf(fixture, [
+      correct,
+      {
+        ...correct,
+        text: "The same tool output lists metrics, but it does not show that the dashboard feature enables metrics.",
+      },
+    ]),
+  ).toEqual([]);
+  expect(
+    gradeLeaf(fixture, [
+      correct,
+      {
+        ...correct,
+        text: "The tool output did not indicate that metrics is enabled by the dashboard feature.",
+      },
+    ]),
+  ).toEqual([]);
+  expect(
+    gradeLeaf(fixture, [
+      { ...correct, text: "The dashboard feature gates embed, http, and metrics." },
+    ]),
+  ).not.toEqual([]);
+});
+
+it("accepts an explicit absence of results in a partial source", () => {
+  const fixture = leafCases.find(
+    (row) => row.id === "leaf-partial-source-does-not-invent-outcome",
+  )!;
+  expect(
+    gradeLeaf(fixture, [
+      {
+        text: "The restore test started, but the source does not include any result or conclusion.",
+        citations: ["M2"],
+      },
+    ]),
+  ).toEqual([]);
+});
+
+it("rejects roll-up count distortion and a superseded open item", () => {
+  const counts = condensedCases.find(
+    (fixture) => fixture.id === "condensed-counts-and-qualifiers-stay-exact",
+  )!;
+  const resolved = condensedCases.find(
+    (fixture) => fixture.id === "condensed-later-evidence-resolves-earlier-unknown",
+  )!;
+  expect(
+    gradeCondensed(counts, [
+      {
+        text: "7 tests failed and 193 passed. No open upstream PR exists; closed PR 42 records the earlier attempt.",
+        citations: ["M2", "M3"],
+      },
+    ]),
+  ).toEqual([]);
+  expect(
+    gradeCondensed(counts, [
+      {
+        text: "7 of 193 tests failed. No open upstream PR exists; closed PR 42 records the earlier attempt.",
+        citations: ["M2", "M3"],
+      },
+    ]),
+  ).toContainEqual(expect.stringContaining("7 of 193"));
+  expect(
+    gradeCondensed(resolved, [
+      {
+        text: "The paths src/link.rs and src/plan.rs were initially unconfirmed but later located. The atomicity test remains open.",
+        citations: ["M1", "M2", "M4"],
+      },
+    ]),
+  ).toEqual([]);
+  expect(
+    gradeCondensed(resolved, [
+      {
+        text: "The paths src/link.rs and src/plan.rs remain unconfirmed. The atomicity test remains open.",
+        citations: ["M1", "M4"],
+      },
+    ]),
+  ).toContainEqual(expect.stringContaining("remain unconfirmed"));
 });

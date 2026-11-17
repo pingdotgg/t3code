@@ -76,7 +76,10 @@ const resolveInstance = Effect.fn("TextGeneration.resolveInstance")(function* (
   if (!supports(instance, operation)) {
     return yield* new TextGenerationError({
       operation,
-      detail: `Provider '${instanceId}' does not support this text generation operation. Choose a model from a provider that supports it.`,
+      detail:
+        operation === "generateConversationSummary"
+          ? `Provider '${instanceId}' does not support isolated conversation summaries. Choose another model in Settings → Threads → Text generation.`
+          : `Provider '${instanceId}' does not support this text generation operation. Choose a model from a provider that supports it.`,
     });
   }
   if (operation === "generateKnowledgeCandidates" || operation === "checkFactStanding") {

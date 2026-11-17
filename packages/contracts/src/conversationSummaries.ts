@@ -23,6 +23,7 @@ export const ConversationSummaryId = Schema.String.check(
 export type ConversationSummaryId = typeof ConversationSummaryId.Type;
 
 export const CONVERSATION_SUMMARY_MAX_SOURCES = 24;
+export const CONVERSATION_SUMMARY_MAX_SEARCH_EXCERPT_CHARS = 1_000;
 export const CONVERSATION_SUMMARY_MAX_EXPANSION_CHARS = 48_000;
 
 /** UTF-16 offsets into the complete canonical source; end is exclusive. */
@@ -182,6 +183,35 @@ export const ConversationSummaryList = Schema.Struct({
   nextCursor: Schema.NullOr(ConversationSummaryId),
 });
 export type ConversationSummaryList = typeof ConversationSummaryList.Type;
+
+export const ConversationSummarySearchInput = Schema.Struct({
+  projectId: ProjectId,
+  threadId: Schema.optionalKey(ThreadId),
+  query: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 }))),
+  cursor: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(2_048))),
+});
+export type ConversationSummarySearchInput = typeof ConversationSummarySearchInput.Type;
+
+export const ConversationSummarySearch = Schema.Struct({
+  summaries: Schema.Array(
+    Schema.Struct({
+      id: ConversationSummaryId,
+      projectId: ProjectId,
+      threadId: ThreadId,
+      createdAt: IsoDateTime,
+      excerpt: Schema.String.check(
+        Schema.isMaxLength(CONVERSATION_SUMMARY_MAX_SEARCH_EXCERPT_CHARS),
+      ),
+      sourceCount: PositiveInt,
+      kind: Schema.Literals(["leaf", "rollup"]),
+      truncated: Schema.Boolean,
+    }),
+  ).check(Schema.isMaxLength(20)),
+  /** Bounded source verification can produce an empty page with a continuation. */
+  nextCursor: Schema.NullOr(Schema.String),
+});
+export type ConversationSummarySearch = typeof ConversationSummarySearch.Type;
 
 export const ConversationSummaryDescribeInput = Schema.Struct({
   ...Scope,

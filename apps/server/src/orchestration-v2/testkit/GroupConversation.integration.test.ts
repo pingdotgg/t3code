@@ -1236,6 +1236,11 @@ describe("group conversations", () => {
               commandId: CommandId.make("command:group:stop"),
               threadId,
             });
+            yield* until(
+              orchestrator
+                .getThreadProjection(threadId)
+                .pipe(Effect.map((projection) => publishedRows(projection).length === 1)),
+            );
             const after = yield* settle(threadId);
             const group = (yield* readGroup(threadId))!;
             assert.equal(group.closedBecause, "stopped");
@@ -1753,6 +1758,15 @@ describe("group conversations", () => {
               commandId: CommandId.make("command:group:stop"),
               threadId,
             });
+            yield* until(
+              orchestrator
+                .getThreadProjection(threadId)
+                .pipe(
+                  Effect.map((projection) =>
+                    publishedRows(projection).some((row) => row.text.endsWith("@opus")),
+                  ),
+                ),
+            );
             yield* settle(threadId);
             const stopped = yield* orchestrator.getThreadProjection(threadId);
             assert.isTrue(

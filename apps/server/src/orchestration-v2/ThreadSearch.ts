@@ -1,3 +1,4 @@
+import { conversationEvidenceText } from "@t3tools/provider-core/server/conversationEvidence";
 import {
   IsoDateTime,
   MessageId,
@@ -14,7 +15,9 @@ import {
   type OrchestrationV2ThreadShellSnapshot,
   ProjectId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Digest from "effect/crypto/Digest";
 import * as Hex from "effect/encoding/Hex";
 import * as DateTime from "effect/DateTime";
@@ -70,7 +73,8 @@ export class ThreadSearchError extends Schema.TaggedError<ThreadSearchError>()(
 
 // Token lists bind as JSON arrays, so any number of them is one parameter.
 const ExactSearchRequest = Schema.Struct({
-  pattern: Schema.String,
+  phrase: Schema.String,
+  terms: Schema.fromJsonString(Schema.Array(Schema.String)),
   limit: Schema.Int,
   projectId: Schema.NullOr(ProjectId),
   includeArchived: Schema.Boolean,
@@ -84,7 +88,7 @@ const ExactSearchRow = Schema.Struct({
   messageId: MessageId,
   updatedAt: IsoDateTime,
   archived: Schema.Number,
-  rank: Schema.Literals([0, 1]),
+  rank: Schema.Literals([0, 1, 2, 3]),
   matchText: Schema.String,
   messageCreatedAt: Schema.NullOr(IsoDateTime),
 });
@@ -93,17 +97,29 @@ function escapeLikePattern(value: string): string {
   return value.replaceAll("!", "!!").replaceAll("%", "!%").replaceAll("_", "!_");
 }
 
+function exactSearchTerms(query: string): ReadonlyArray<string> {
+  const terms = Array.from(query.matchAll(/"([^"]+)"|(\S+)/g), (match) =>
+    (match[1] ?? match[2] ?? "").trim(),
+  ).filter((term) => term.length > 0);
+  return [...new Set(terms)];
+}
+
 function foldAsciiCase(value: string): string {
   return value.replace(/[A-Z]/g, (character) => character.toLowerCase());
 }
 
 function buildExactSearchSnippet(text: string, query: string): string {
-  const normalizedText = text.replace(/\s+/g, " ").trim();
+  const normalizedText = conversationEvidenceText(text).replace(/\s+/g, " ").trim();
   if (normalizedText.length <= 240) {
     return normalizedText;
   }
-  const normalizedQuery = foldAsciiCase(query.replace(/\s+/g, " ").trim());
-  const matchIndex = foldAsciiCase(normalizedText).indexOf(normalizedQuery);
+  const folded = foldAsciiCase(normalizedText);
+  const phraseIndex = folded.indexOf(foldAsciiCase(query.replace(/\s+/g, " ").trim()));
+  const termIndexes = exactSearchTerms(query)
+    .map((term) => folded.indexOf(foldAsciiCase(term)))
+    .filter((index) => index !== -1);
+  const matchIndex =
+    phraseIndex !== -1 ? phraseIndex : termIndexes.length === 0 ? 0 : Math.min(...termIndexes);
   const bodyLength = 236;
   const idealStart = Math.max(0, matchIndex - 72);
   const start = Math.min(idealStart, normalizedText.length - bodyLength);
@@ -438,7 +454,7 @@ export const make = Effect.gen(function* () {
   const exactSearchRows = SqlSchema.findAll({
     Request: ExactSearchRequest,
     Result: ExactSearchRow,
-    execute: ({ pattern, limit, projectId, includeArchived, cursor }) => sql`
+    execute: ({ phrase, terms, limit, projectId, includeArchived, cursor }) => sql`
       WITH candidate AS (
         SELECT
           threads.thread_id,
@@ -463,7 +479,8 @@ export const make = Effect.gen(function* () {
           AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_runs AS run
             WHERE run.run_id = messages.run_id AND run.status = 'rolled_back')
           AND messages.role IN ('user', 'assistant')
-          AND json_extract(messages.payload_json, '$.text') LIKE ${pattern} ESCAPE '!'
+          AND NOT EXISTS (SELECT 1 FROM json_each(${terms}) AS term
+            WHERE json_extract(messages.payload_json, '$.text') NOT LIKE term.value ESCAPE '!')
       ),
       ranked AS (
         SELECT
@@ -475,12 +492,14 @@ export const make = Effect.gen(function* () {
           archived_at,
           match_text,
           message_created_at,
-          CASE role WHEN 'user' THEN 0 ELSE 1 END AS match_rank,
+          CASE WHEN match_text LIKE ${phrase} ESCAPE '!' THEN 0 ELSE 2 END
+            + CASE role WHEN 'user' THEN 0 ELSE 1 END AS match_rank,
           thread_updated_at,
           ROW_NUMBER() OVER (
             PARTITION BY thread_id
             ORDER BY
-              CASE role WHEN 'user' THEN 0 ELSE 1 END ASC,
+              CASE WHEN match_text LIKE ${phrase} ESCAPE '!' THEN 0 ELSE 2 END
+                + CASE role WHEN 'user' THEN 0 ELSE 1 END ASC,
               message_created_at DESC,
               message_id ASC
           ) AS thread_match_rank
@@ -509,12 +528,46 @@ export const make = Effect.gen(function* () {
     `,
   });
 
+  const messageItemRows = SqlSchema.findAll({
+    Request: Schema.Struct({
+      hits: Schema.fromJsonString(
+        Schema.Array(
+          Schema.Struct({
+            threadId: ThreadId,
+            messageId: MessageId,
+            serverDerivedItemId: TurnItemId,
+          }),
+        ),
+      ),
+    }),
+    Result: Schema.Struct({ messageId: MessageId, itemId: TurnItemId }),
+    execute: ({ hits }) => sql`
+      SELECT "messageId", "itemId" FROM (
+        SELECT
+          json_extract(hit.value, '$.messageId') AS "messageId",
+          coalesce(
+            (SELECT items.turn_item_id FROM orchestration_v2_projection_turn_items AS items
+              WHERE items.turn_item_id = json_extract(hit.value, '$.serverDerivedItemId')
+                AND items.thread_id = json_extract(hit.value, '$.threadId')),
+            (SELECT items.turn_item_id FROM orchestration_v2_projection_turn_items AS items
+              WHERE items.thread_id = json_extract(hit.value, '$.threadId')
+                AND items.type IN ('user_message', 'assistant_message')
+                AND json_extract(items.payload_json, '$.messageId')
+                  = json_extract(hit.value, '$.messageId')
+              LIMIT 1)
+          ) AS "itemId"
+        FROM json_each(${hits}) AS hit
+      ) WHERE "itemId" IS NOT NULL
+    `,
+  });
+
   const searchExact: ThreadSearch["Service"]["search"] = Effect.fn("ThreadSearch.search")(
     function* (input) {
       const limit = input.limit ?? 50;
       if (
         input.cursor !== undefined &&
-        (input.cursor.query !== input.query ||
+        ((input.cursor.source ?? "messages") !== "messages" ||
+          input.cursor.query !== input.query ||
           input.cursor.projectId !== (input.projectId ?? null) ||
           input.cursor.includeArchived !== (input.includeArchived ?? false))
       ) {
@@ -525,7 +578,8 @@ export const make = Effect.gen(function* () {
       const rows = yield* sql
         .withTransaction(
           exactSearchRows({
-            pattern: `%${escapeLikePattern(input.query)}%`,
+            phrase: `%${escapeLikePattern(input.query)}%`,
+            terms: exactSearchTerms(input.query).map((term) => `%${escapeLikePattern(term)}%`),
             limit: limit + 1,
             projectId: input.projectId ?? null,
             includeArchived: input.includeArchived ?? false,
@@ -543,12 +597,31 @@ export const make = Effect.gen(function* () {
           ),
         );
       const page = rows.slice(0, limit);
+      const itemIds = new Map(
+        (yield* messageItemRows({
+          hits: page.map((row) => ({
+            threadId: row.threadId,
+            messageId: row.messageId,
+            serverDerivedItemId: IdAllocator.derive.userTurnItem({ messageId: row.messageId }),
+          })),
+        }).pipe(
+          NodeSqliteClient.readOnly,
+          Effect.mapError(
+            (cause) =>
+              new ThreadSearchError({
+                operation: Schema.isSchemaError(cause) ? "decode" : "query",
+                cause,
+              }),
+          ),
+        )).map((row) => [row.messageId, row.itemId]),
+      );
       const last = page.at(-1);
       return {
         nextCursor:
           rows.length > limit && last
             ? {
                 query: input.query,
+                source: "messages" as const,
                 projectId: input.projectId ?? null,
                 includeArchived: input.includeArchived ?? false,
                 rank: last.rank,
@@ -556,22 +629,24 @@ export const make = Effect.gen(function* () {
                 threadId: last.threadId,
               }
             : null,
-        matches: yield* Effect.forEach(page, (row) =>
-          crypto.digest(Digest.sha256, new TextEncoder().encode(row.matchText)).pipe(
+        matches: yield* Effect.forEach(page, (row) => {
+          const itemId = itemIds.get(row.messageId);
+          return crypto.digest(Digest.sha256, new TextEncoder().encode(row.matchText)).pipe(
             Effect.map((hash) => ({
               threadId: row.threadId,
               projectId: row.projectId,
               title: row.title,
               source: row.source,
               messageId: row.messageId,
+              ...(itemId === undefined ? {} : { itemId }),
               digest: Hex.encode(hash),
               archived: row.archived === 1,
               snippet: buildExactSearchSnippet(row.matchText, input.query),
               messageCreatedAt: row.messageCreatedAt,
             })),
             Effect.mapError((cause) => new ThreadSearchError({ operation: "query", cause })),
-          ),
-        ),
+          );
+        }),
       };
     },
   );

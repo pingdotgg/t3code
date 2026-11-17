@@ -8,6 +8,7 @@ import type {
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { HandoffSummary } from "../project/conversationSummaries/conversationSummarySchedule.ts";
 import { ContextHandoffBudgetError } from "@t3tools/provider-core/server/failure";
+import { conversationEvidenceText } from "@t3tools/provider-core/server/conversationEvidence";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
@@ -213,13 +214,15 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
         : yield* input.evidence(uniqueMessages);
     const messages = uniqueMessages.map((message) => {
       const attached = evidence.get(message.itemId);
-      return attached === undefined
-        ? message
-        : { ...message, text: `${message.text}\n\n${attached}` };
+      const text = conversationEvidenceText(message.text);
+      return {
+        ...message,
+        text: attached === undefined ? text : `${text}\n\n${conversationEvidenceText(attached)}`,
+      };
     });
     const oldContext = pending
       .filter((handoff) => handoff.history === undefined)
-      .map((handoff) => handoff.summaryText)
+      .map((handoff) => conversationEvidenceText(handoff.summaryText))
       .join("\n\n");
     const fullCoverage =
       oldContext && historyCost([], `${coverage}\n${oldContext}`) + 512 <= budget

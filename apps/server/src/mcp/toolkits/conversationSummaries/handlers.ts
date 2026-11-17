@@ -15,6 +15,9 @@ const failure = (error: ConversationSummaryError | OrchestratorMcpFailure) =>
 const access = readCaller().pipe(Effect.andThen(ConversationSummaries.ConversationSummaries));
 
 export const layer = McpToolAccess.toLayer(ConversationSummariesToolkit, {
+  t3_conversation_summary_search: McpToolAccess.reads((input) =>
+    Effect.flatMap(access, (service) => service.search(input)).pipe(Effect.mapError(failure)),
+  ),
   t3_conversation_summary_list: McpToolAccess.reads((input) =>
     Effect.flatMap(access, (service) => service.list(input)).pipe(Effect.mapError(failure)),
   ),
