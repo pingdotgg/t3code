@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { AUDIO_CPP_VERSION } from "@t3tools/audio-cpp";
+import { AUDIO_CPP_VERSION, audioCppRuntime } from "@t3tools/audio-cpp";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
@@ -14,12 +14,13 @@ import * as ServerConfig from "../config.ts";
 import * as LocalSpeechSynthesis from "./LocalSpeechSynthesis.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
 
-/** Runs `body` against the service with an extracted runtime, so installs download only the model. */
+/** Runs `body` against the service, with an extracted runtime unless `runtime` is false. */
 const withService = <A, E>(
   store: Partial<SpeechModelStore.SpeechModelStore["Service"]>,
   body: (
     service: LocalSpeechSynthesis.LocalSpeechSynthesis["Service"],
   ) => Effect.Effect<A, E, never>,
+  options: { readonly runtime?: boolean } = {},
 ) =>
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
@@ -31,9 +32,11 @@ const withService = <A, E>(
       "runtime",
       `audio-cpp-${AUDIO_CPP_VERSION}-darwin-arm64`,
     );
-    yield* fs.makeDirectory(path.join(runtime, "libs"), { recursive: true });
-    yield* fs.writeFileString(path.join(runtime, ".t3-complete"), AUDIO_CPP_VERSION);
-    yield* fs.writeFileString(path.join(runtime, "libs", "libaudiocpp.0.1.0.dylib"), "");
+    if (options.runtime !== false) {
+      yield* fs.makeDirectory(path.join(runtime, "libs"), { recursive: true });
+      yield* fs.writeFileString(path.join(runtime, ".t3-complete"), AUDIO_CPP_VERSION);
+      yield* fs.writeFileString(path.join(runtime, "libs", "libaudiocpp.0.1.0.dylib"), "");
+    }
     return yield* body(yield* LocalSpeechSynthesis.LocalSpeechSynthesis);
   }).pipe(
     Effect.provide(
@@ -41,6 +44,7 @@ const withService = <A, E>(
         Layer.provide(
           Layer.mock(SpeechModelStore.SpeechModelStore)({
             isReady: () => Effect.succeed(false),
+            linkedFrom: () => Effect.undefined,
             ...store,
           }),
         ),
@@ -52,6 +56,52 @@ const withService = <A, E>(
     Effect.provideService(HostProcess.Platform, "darwin"),
     Effect.provideService(HostProcess.Architecture, "arm64"),
   );
+
+it.effect("counts only the files an install still needs in its download size", () =>
+  withService(
+    { isReady: (file) => Effect.succeed(file.id !== "pingdotgg/audio.cpp") },
+    (service) =>
+      Effect.gen(function* () {
+        const { models } = yield* service.catalog;
+        expect(models[0]?.install).toEqual({
+          state: "downloadable",
+          size: audioCppRuntime("darwin", "arm64")!.size,
+        });
+      }),
+    { runtime: false },
+  ),
+);
+
+it.effect("links a model file already on this machine instead of downloading it", () =>
+  Effect.gen(function* () {
+    let linked = false;
+    const download = vi.fn(() => Effect.succeed("/unused"));
+    yield* withService(
+      {
+        download,
+        link: (models, source) =>
+          Effect.sync(() => {
+            linked = source === "~/models";
+            return linked ? models.map((model) => model.id) : [];
+          }),
+        isReady: () => Effect.sync(() => linked),
+        linkedFrom: () => Effect.sync(() => (linked ? "/Users/me/models/model.gguf" : undefined)),
+      },
+      (service) =>
+        Effect.gen(function* () {
+          expect(yield* Effect.flip(service.link("~/elsewhere"))).toMatchObject({
+            reason: "not-found",
+          });
+          const { models } = yield* service.link("~/models");
+          expect(models[0]?.install).toMatchObject({
+            state: "installed",
+            linkedFrom: "/Users/me/models/model.gguf",
+          });
+          expect(download).not.toHaveBeenCalled();
+        }),
+    );
+  }),
+);
 
 it.effect("joins a second download of the same model instead of starting another install", () =>
   Effect.gen(function* () {
@@ -77,14 +127,17 @@ it.effect("joins a second download of the same model instead of starting another
   }),
 );
 
-it.effect("refuses a download while a removal deletes the shared runtime", () =>
+it.effect("refuses a download or link while a removal deletes the shared runtime", () =>
   Effect.gen(function* () {
     const removing = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
     const download = vi.fn(() => Effect.succeed("/unused"));
+    const linked = vi.fn();
+    const link = () => Effect.sync(() => (linked(), []));
     yield* withService(
       {
         download,
+        link,
         remove: () =>
           Deferred.succeed(removing, undefined).pipe(Effect.andThen(Deferred.await(release))),
       },
@@ -95,9 +148,11 @@ it.effect("refuses a download while a removal deletes the shared runtime", () =>
           expect(yield* Effect.flip(service.download("supertonic-3"))).toMatchObject({
             reason: "busy",
           });
+          expect(yield* Effect.flip(service.link("~/models"))).toMatchObject({ reason: "busy" });
           yield* Deferred.succeed(release, undefined);
           yield* Fiber.join(removal);
           expect(download).not.toHaveBeenCalled();
+          expect(linked).not.toHaveBeenCalled();
         }),
     );
   }),

@@ -56,7 +56,13 @@ const IDLE_UNLOAD_MS = 10 * 60_000;
 export class LocalSynthesisInstallError extends Schema.TaggedError<LocalSynthesisInstallError>()(
   "LocalSynthesisInstallError",
   {
-    reason: Schema.Literals(["unknown-model", "unsupported-platform", "busy", "failed"]),
+    reason: Schema.Literals([
+      "unknown-model",
+      "unsupported-platform",
+      "busy",
+      "not-found",
+      "failed",
+    ]),
     cause: Schema.optionalKey(Schema.Defect()),
   },
 ) {}
@@ -70,6 +76,10 @@ export class LocalSpeechSynthesis extends Context.Service<
       modelId: string,
     ) => Effect.Effect<SpeechSynthesisCatalog, LocalSynthesisInstallError>;
     readonly cancel: (modelId: string) => Effect.Effect<SpeechSynthesisCatalog>;
+    /** Uses model files already on this machine, from a file or a folder to search. */
+    readonly link: (
+      source: string,
+    ) => Effect.Effect<SpeechSynthesisCatalog, LocalSynthesisInstallError>;
     /** Removes the model, and the shared runtime once no installed model needs it. */
     readonly remove: (
       modelId: string,
@@ -182,6 +192,17 @@ const make = Effect.gen(function* () {
       yield* fs.writeFileString(path.join(staging, ".t3-complete"), AUDIO_CPP_VERSION);
       yield* fs.remove(runtimeDirectory, { recursive: true, force: true });
       yield* fs.rename(staging, runtimeDirectory);
+      // Runtimes from earlier releases for this platform; nothing loads them again.
+      const parent = path.dirname(runtimeDirectory);
+      for (const name of yield* fs.readDirectory(parent).pipe(Effect.orElseSucceed(() => []))) {
+        const entry = path.join(parent, name);
+        if (
+          entry !== runtimeDirectory &&
+          name.startsWith("audio-cpp-") &&
+          name.endsWith(`-${platform}-${architecture}`)
+        )
+          yield* fs.remove(entry, { recursive: true, force: true }).pipe(Effect.ignore);
+      }
     }).pipe(
       Effect.scoped,
       Effect.onExit((exit) =>
@@ -194,7 +215,7 @@ const make = Effect.gen(function* () {
 
   type Transfer = {
     readonly modelId: string;
-    /** Fixed once the install knows whether it needs the runtime, so extracting it does not shrink it. */
+    /** Fixed once the install knows which files it needs, so finishing one does not shrink it. */
     size: number;
     runtime: number;
     model: number;
@@ -202,8 +223,9 @@ const make = Effect.gen(function* () {
     fiber?: Fiber.Fiber<void, unknown>;
   };
   let transfer: Transfer | undefined;
-  // A removal deletes the shared runtime, so it and an install must not overlap.
-  let removing = false;
+  // A removal deletes the shared runtime and a link replaces model files, so neither may
+  // overlap an install or each other.
+  let changing = false;
 
   const catalog = Effect.gen(function* () {
     const ready = yield* runtimeReady;
@@ -211,20 +233,24 @@ const make = Effect.gen(function* () {
     const models = yield* Effect.forEach(LOCAL_SYNTHESIS_MODELS, (model) =>
       Effect.gen(function* () {
         const active = transfer?.modelId === model.id ? transfer : undefined;
-        const size = active?.size ?? model.file.size + runtimeSize;
+        const modelReady = yield* store.isReady(model.file);
+        const linkedFrom = ready && modelReady ? yield* store.linkedFrom(model.file) : undefined;
         const install = active
           ? {
               state: active.verifying ? ("verifying" as const) : ("downloading" as const),
-              size,
+              size: active.size,
               downloaded: active.runtime + active.model,
             }
-          : {
-              state:
-                ready && (yield* store.isReady(model.file))
-                  ? ("installed" as const)
-                  : ("downloadable" as const),
-              size,
-            };
+          : ready && modelReady
+            ? {
+                state: "installed" as const,
+                size: model.file.size,
+                ...(linkedFrom && { linkedFrom }),
+              }
+            : {
+                state: "downloadable" as const,
+                size: (modelReady ? 0 : model.file.size) + runtimeSize,
+              };
         return { id: model.id, name: model.name, voices: model.voices, install };
       }),
     );
@@ -252,7 +278,7 @@ const make = Effect.gen(function* () {
     if (!runtimeFile || !runtime)
       return yield* new LocalSynthesisInstallError({ reason: "unsupported-platform" });
     // Checked and claimed without yielding, so a concurrent download or removal cannot interleave.
-    if (removing || (transfer && transfer.modelId !== modelId))
+    if (changing || (transfer && transfer.modelId !== modelId))
       return yield* new LocalSynthesisInstallError({ reason: "busy" });
     if (!transfer) {
       const state: Transfer = {
@@ -264,9 +290,12 @@ const make = Effect.gen(function* () {
       };
       transfer = state;
       const install = Effect.gen(function* () {
-        // Read after claiming: no removal can start while this transfer exists.
-        if (!(yield* runtimeReady)) {
-          state.size += runtimeFile.size;
+        // Read after claiming: no removal or link can start while this transfer exists.
+        const needsRuntime = !(yield* runtimeReady);
+        state.size =
+          (needsRuntime ? runtimeFile.size : 0) +
+          ((yield* store.isReady(model.file)) ? 0 : model.file.size);
+        if (needsRuntime) {
           const archivePath = yield* store.download(runtimeFile, {
             onProgress: (downloaded) => {
               state.runtime = downloaded;
@@ -342,32 +371,55 @@ const make = Effect.gen(function* () {
     Effect.forkScoped,
   );
 
-  const remove = Effect.fn("LocalSpeechSynthesis.remove")(function* (modelId: string) {
-    const model = yield* findModel(modelId);
-    yield* Effect.acquireUseRelease(
+  // Claimed without yielding, so a download, removal, or link cannot interleave.
+  const exclusive = <A, E>(effect: Effect.Effect<A, E>) =>
+    Effect.acquireUseRelease(
       Effect.suspend(() => {
-        if (transfer || removing) return new LocalSynthesisInstallError({ reason: "busy" });
-        removing = true;
+        if (transfer || changing) return new LocalSynthesisInstallError({ reason: "busy" });
+        changing = true;
         return Effect.void;
       }),
-      () =>
-        permit.withPermits(1)(
-          Effect.gen(function* () {
-            if (worker?.modelId === modelId) yield* unloadWorker;
-            yield* store.remove(model.file).pipe(Effect.mapError(installFailed));
-            const remaining = yield* Effect.filter(LOCAL_SYNTHESIS_MODELS, (entry) =>
-              store.isReady(entry.file),
-            );
-            if (remaining.length === 0)
-              yield* fs
-                .remove(runtimeDirectory, { recursive: true, force: true })
-                .pipe(Effect.mapError(installFailed));
-          }),
-        ),
+      () => effect,
       () =>
         Effect.sync(() => {
-          removing = false;
+          changing = false;
         }),
+    );
+
+  const link = Effect.fn("LocalSpeechSynthesis.link")(function* (source: string) {
+    if (!runtimeFile)
+      return yield* new LocalSynthesisInstallError({ reason: "unsupported-platform" });
+    const linked = yield* exclusive(
+      store
+        .link(
+          LOCAL_SYNTHESIS_MODELS.map((model) => model.file),
+          source,
+        )
+        .pipe(Effect.mapError(installFailed)),
+    );
+    const model = LOCAL_SYNTHESIS_MODELS.find((entry) => linked.includes(entry.file.id));
+    if (!model) return yield* new LocalSynthesisInstallError({ reason: "not-found" });
+    // The model is in place; an install now fetches only the runtime.
+    if (!(yield* runtimeReady)) return yield* download(model.id);
+    return yield* catalog;
+  });
+
+  const remove = Effect.fn("LocalSpeechSynthesis.remove")(function* (modelId: string) {
+    const model = yield* findModel(modelId);
+    yield* exclusive(
+      permit.withPermits(1)(
+        Effect.gen(function* () {
+          if (worker?.modelId === modelId) yield* unloadWorker;
+          yield* store.remove(model.file).pipe(Effect.mapError(installFailed));
+          const remaining = yield* Effect.filter(LOCAL_SYNTHESIS_MODELS, (entry) =>
+            store.isReady(entry.file),
+          );
+          if (remaining.length === 0)
+            yield* fs
+              .remove(runtimeDirectory, { recursive: true, force: true })
+              .pipe(Effect.mapError(installFailed));
+        }),
+      ),
     );
     return yield* catalog;
   });
@@ -464,7 +516,7 @@ const make = Effect.gen(function* () {
       Stream.withSpan("LocalSpeechSynthesis.stream"),
     );
 
-  return LocalSpeechSynthesis.of({ catalog, download, cancel, remove, stream });
+  return LocalSpeechSynthesis.of({ catalog, download, cancel, link, remove, stream });
 });
 
 export const layer = Layer.effect(LocalSpeechSynthesis, make);

@@ -75,6 +75,8 @@ export const SpeechSynthesisModelInstall = Schema.Struct({
   /** Bytes to download, including the speech runtime when this environment lacks it. */
   size: Schema.Finite,
   downloaded: Schema.optionalKey(Schema.Finite),
+  /** The environment's own file an installed model uses; only filesystem readers see it. */
+  linkedFrom: Schema.optionalKey(Schema.String),
 });
 export type SpeechSynthesisModelInstall = typeof SpeechSynthesisModelInstall.Type;
 export const SpeechSynthesisModelRequest = Schema.Struct({

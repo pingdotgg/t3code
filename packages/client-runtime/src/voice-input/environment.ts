@@ -381,6 +381,17 @@ export const cancelSpeechSynthesisModelDownload = (prepared: PreparedConnection,
     run: ({ client, headers }) => client.cancelSynthesisModel({ headers, payload: { modelId } }),
   });
 
+export const linkSpeechSynthesisModels = (prepared: PreparedConnection, path: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.linkSynthesisModels(),
+    // Hashing the model, then fetching the runtime, takes longer than an ordinary request.
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    run: ({ client, headers }) => client.linkSynthesisModels({ headers, payload: { path } }),
+  });
+
 export const removeSpeechSynthesisModel = (prepared: PreparedConnection, modelId: string) =>
   request({
     group: "voice",

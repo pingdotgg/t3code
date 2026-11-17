@@ -5,11 +5,13 @@ import {
   downloadSpeechSynthesisModel,
   getCloudSpeechKeys,
   getSpeechSynthesisModels,
+  linkSpeechSynthesisModels,
   removeSpeechSynthesisModel,
   setCloudSpeechKey,
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import {
+  AuthFilesystemReadScope,
   AuthSettingsWriteScope,
   READ_ALOUD_LABELS,
   EMPTY_SPEECH_SYNTHESIS_CATALOG,
@@ -136,8 +138,10 @@ function LocalSpeechModel({
   onChanged: () => void;
 }) {
   const canManage = useEnvironmentScope(prepared.environmentId, AuthSettingsWriteScope);
+  const canReadFiles = useEnvironmentScope(prepared.environmentId, AuthFilesystemReadScope);
   const [requesting, setRequesting] = useState(false);
   const [error, setError] = useState("");
+  const [existingPath, setExistingPath] = useState("");
   const install = model.install;
   const downloading = install?.state === "downloading" || install?.state === "verifying";
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Poll the environment's download progress while it runs.
@@ -147,7 +151,7 @@ function LocalSpeechModel({
     return () => window.clearTimeout(timer);
   }, [downloading, requesting, refreshing, onChanged]);
   if (!install) return null;
-  const run = async (action: "download" | "cancel" | "remove") => {
+  const run = async (action: "download" | "cancel" | "remove" | "link") => {
     setRequesting(true);
     setError("");
     try {
@@ -156,19 +160,27 @@ function LocalSpeechModel({
           ? downloadSpeechSynthesisModel(prepared, model.id)
           : action === "cancel"
             ? cancelSpeechSynthesisModelDownload(prepared, model.id)
-            : removeSpeechSynthesisModel(prepared, model.id),
+            : action === "link"
+              ? linkSpeechSynthesisModels(prepared, existingPath)
+              : removeSpeechSynthesisModel(prepared, model.id),
       );
+      if (action === "link") setExistingPath("");
     } catch {
       setError(
         action === "download"
           ? "Could not download the model. Check the environment's connection and disk space."
-          : "Could not change the model. Try again.",
+          : action === "link"
+            ? `No ${model.name} file was found at that path.`
+            : "Could not change the model. Try again.",
       );
     }
     setRequesting(false);
     onChanged();
   };
-  const progress = install.downloaded === undefined ? 0 : (install.downloaded / install.size) * 100;
+  const progress =
+    install.downloaded === undefined || install.size === 0
+      ? 0
+      : Math.min(100, (install.downloaded / install.size) * 100);
   return (
     <SettingsRow
       title={model.name}
@@ -177,6 +189,11 @@ function LocalSpeechModel({
           {install.state === "installed"
             ? "Installed on the selected environment. Replies are read without leaving it."
             : `Runs on the selected environment after a ${formatSize(install.size)} download.`}
+          {install.linkedFrom && (
+            <span className="mt-0.5 block break-all text-2xs">
+              Using your file at {install.linkedFrom}
+            </span>
+          )}
           {downloading && (
             <span className="mt-2 block">
               <span
@@ -218,9 +235,14 @@ function LocalSpeechModel({
             size="sm"
             variant="outline"
             disabled={!canManage || requesting}
+            aria-label={
+              install.linkedFrom
+                ? `Stop using your ${model.name} file; the file stays on disk`
+                : undefined
+            }
             onClick={() => void run("remove")}
           >
-            Remove
+            {install.linkedFrom ? "Stop using" : "Remove"}
           </Button>
         ) : (
           <Button
@@ -234,7 +256,35 @@ function LocalSpeechModel({
           </Button>
         )
       }
-    />
+    >
+      {install.state === "downloadable" && canManage && canReadFiles && (
+        <form
+          className="mt-2 flex items-center gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void run("link");
+          }}
+        >
+          <div className="min-w-0 flex-1">
+            <Input
+              size="compact"
+              aria-label={`Path to a ${model.name} file or folder already on this environment`}
+              placeholder="Already downloaded elsewhere? Paste the model file or folder path"
+              value={existingPath}
+              onChange={(event) => setExistingPath(event.target.value)}
+            />
+          </div>
+          <Button
+            type="submit"
+            size="sm"
+            variant="outline"
+            disabled={requesting || !existingPath.trim()}
+          >
+            Use existing
+          </Button>
+        </form>
+      )}
+    </SettingsRow>
   );
 }
 

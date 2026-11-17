@@ -261,10 +261,32 @@ effectIt.effect(
           return Effect.fail(new CloudSpeechError({ provider, reason: "rejected-key" }));
         },
       });
+      const linkSynthesis = vi.fn();
+      const local = Layer.mock(LocalSpeechSynthesis.LocalSpeechSynthesis)({
+        catalog: Effect.succeed({
+          ...EMPTY_SPEECH_SYNTHESIS_CATALOG,
+          models: [
+            {
+              id: "fixture-voice",
+              name: "Fixture voice",
+              voices: [],
+              install: {
+                state: "installed",
+                size: 1,
+                linkedFrom: "/home/someone/models/voice.gguf",
+              },
+            },
+          ],
+        }),
+        link: (source) => {
+          linkSynthesis(source);
+          return Effect.succeed(EMPTY_SPEECH_SYNTHESIS_CATALOG);
+        },
+      });
       const { handler, dispose } = HttpRouter.toWebHandler(
         HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
           Layer.provide(speechHttpApiLayer),
-          Layer.provide(Layer.mock(LocalSpeechSynthesis.LocalSpeechSynthesis)({})),
+          Layer.provide(local),
           Layer.provide(principal(AuthOrchestrationOperateScope, AuthSettingsWriteScope)),
           Layer.provide(
             Layer.mock(SpeechService.SpeechService)({
@@ -355,21 +377,26 @@ effectIt.effect(
       );
       expect(transcribe).toHaveBeenLastCalledWith("openrouter", "acme/transcribe-1");
       // Naming a path on the environment needs filesystem access, not only settings access.
-      const link = yield* Effect.promise(() =>
-        handler(
-          new Request("http://localhost/api/voice/models/link", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ path: "/models" }),
-          }),
-          context,
-        ),
-      );
-      expect(link.status).toBe(403);
-      const listed = yield* Effect.promise(() =>
-        handler(new Request("http://localhost/api/voice/models"), context),
-      );
-      expect(yield* Effect.promise(() => listed.text())).not.toContain("/home/someone");
+      for (const path of ["models/link", "synthesis/local/models/link"]) {
+        const link = yield* Effect.promise(() =>
+          handler(
+            new Request(`http://localhost/api/voice/${path}`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ path: "/models" }),
+            }),
+            context,
+          ),
+        );
+        expect(link.status).toBe(403);
+      }
+      expect(linkSynthesis).not.toHaveBeenCalled();
+      for (const path of ["models", "synthesis/local/models"]) {
+        const listed = yield* Effect.promise(() =>
+          handler(new Request(`http://localhost/api/voice/${path}`), context),
+        );
+        expect(yield* Effect.promise(() => listed.text())).not.toContain("/home/someone");
+      }
     }),
 );
 

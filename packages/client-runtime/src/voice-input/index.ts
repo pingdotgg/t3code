@@ -44,6 +44,7 @@ export {
   cancelSpeechSynthesisModelDownload,
   downloadSpeechSynthesisModel,
   getSpeechSynthesisModels,
+  linkSpeechSynthesisModels,
   removeSpeechSynthesisModel,
   startSpeechSynthesis,
 } from "./environment.ts";

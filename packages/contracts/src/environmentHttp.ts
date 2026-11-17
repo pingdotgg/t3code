@@ -887,6 +887,14 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.post("linkSynthesisModels", "/api/voice/synthesis/local/models/link", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechModelLinkRequest,
+      success: SpeechSynthesisCatalog,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.post("removeSynthesisModel", "/api/voice/synthesis/local/models/remove", {
       headers: OptionalBearerHeaders,
       payload: SpeechSynthesisModelRequest,

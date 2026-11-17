@@ -8,6 +8,7 @@ import {
   EnvironmentAuthenticatedPrincipal,
   EnvironmentHttpApi,
   type EnvironmentSpeechModels,
+  type SpeechSynthesisCatalog,
   EnvironmentVoiceBodyLimit,
   SPEECH_MAX_OPTIONS_BYTES,
 } from "@t3tools/contracts";
@@ -67,6 +68,20 @@ const withoutHostPaths = Effect.fnUntraced(function* (result: EnvironmentSpeechM
   return { models: result.models.map(({ linkedFrom: _, ...model }) => model) };
 });
 
+// Untraced: it runs inside each handler's own span.
+const withoutCatalogHostPaths = Effect.fnUntraced(function* (catalog: SpeechSynthesisCatalog) {
+  const session = yield* EnvironmentAuthenticatedPrincipal;
+  if (session.scopes.has(AuthFilesystemReadScope)) return catalog;
+  return {
+    ...catalog,
+    models: catalog.models.map(({ install, ...model }) => {
+      if (!install) return model;
+      const { linkedFrom: _, ...visible } = install;
+      return { ...model, install: visible };
+    }),
+  };
+});
+
 export const speechHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "voice",
@@ -85,7 +100,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
             if (error.reason === "failed")
               return yield* failEnvironmentInternal("internal_error", error);
             return yield* failEnvironmentInvalidRequest(
-              error.reason === "unknown-model"
+              error.reason === "unknown-model" || error.reason === "not-found"
                 ? "invalid_command"
                 : error.reason === "busy"
                   ? "speech_busy"
@@ -107,7 +122,8 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         "synthesisModels",
         Effect.fn("environment.voice.synthesisModels")(function* (args) {
           yield* guard(args.endpoint.name);
-          if (args.params.provider === "local") return yield* local.catalog;
+          if (args.params.provider === "local")
+            return yield* local.catalog.pipe(Effect.flatMap(withoutCatalogHostPaths));
           return yield* cloud.synthesisModels(args.params.provider).pipe(
             Effect.catchTags({
               SpeechSynthesisError: (error) =>
@@ -139,21 +155,36 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         "downloadSynthesisModel",
         Effect.fn("environment.voice.downloadSynthesisModel")(function* (args) {
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);
-          return yield* local.download(args.payload.modelId).pipe(mapInstallError);
+          return yield* local
+            .download(args.payload.modelId)
+            .pipe(mapInstallError, Effect.flatMap(withoutCatalogHostPaths));
         }),
       )
       .handle(
         "cancelSynthesisModel",
         Effect.fn("environment.voice.cancelSynthesisModel")(function* (args) {
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);
-          return yield* local.cancel(args.payload.modelId);
+          return yield* local
+            .cancel(args.payload.modelId)
+            .pipe(Effect.flatMap(withoutCatalogHostPaths));
         }),
       )
       .handle(
         "removeSynthesisModel",
         Effect.fn("environment.voice.removeSynthesisModel")(function* (args) {
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);
-          return yield* local.remove(args.payload.modelId).pipe(mapInstallError);
+          return yield* local
+            .remove(args.payload.modelId)
+            .pipe(mapInstallError, Effect.flatMap(withoutCatalogHostPaths));
+        }),
+      )
+      .handle(
+        "linkSynthesisModels",
+        Effect.fn("environment.voice.linkSynthesisModels")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          // The request names a path on this machine and the result reveals what is there.
+          yield* requireEnvironmentScope(AuthFilesystemReadScope);
+          return yield* local.link(args.payload.path).pipe(mapInstallError);
         }),
       )
       .handle(
