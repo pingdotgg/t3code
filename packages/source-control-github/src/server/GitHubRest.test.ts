@@ -722,11 +722,35 @@ describe("GitHub check failures", () => {
     check_run_url: "https://api.github.com/repos/acme/web/check-runs/123",
     steps: [{ name: "Run lint", conclusion: "failure" }],
   };
+  const exitOneAnnotation = {
+    path: ".github",
+    start_line: 0,
+    annotation_level: "failure",
+    message: "Process completed with exit code 1.",
+  };
 
   it.effect("sees the signed log redirect itself and follows it without Authorization", () => {
     const { layer, calls, fetch } = fetchHarness((url) => {
       if (url.includes("/annotations"))
         return json([
+          {
+            path: ".github",
+            start_line: 0,
+            annotation_level: "failure",
+            message: "Process completed with exit code 1.",
+          },
+          {
+            path: ".github",
+            start_line: 0,
+            annotation_level: "failure",
+            message: "Process completed with exit code 137.",
+          },
+          {
+            path: ".github/workflows/ci.yml",
+            start_line: 0,
+            annotation_level: "failure",
+            message: "Process completed with exit code 1.",
+          },
           { path: "a.ts", start_line: 4, annotation_level: "failure", message: "bad code" },
           { path: "budget.json", start_line: 0, annotation_level: "failure", message: "grew" },
         ]);
@@ -736,7 +760,9 @@ describe("GitHub check failures", () => {
           headers: { location: "https://blob.example/log?signature=secret" },
         });
       if (url.startsWith("https://blob.example/"))
-        return new Response("2026-10-30T12:00:00Z ##[error]bad code\n");
+        return new Response(
+          "2026-10-30T12:00:00Z ##[error]bad code\n##[error]Process completed with exit code 1.\n",
+        );
       return json(job);
     });
     return Effect.gen(function* () {
@@ -746,10 +772,16 @@ describe("GitHub check failures", () => {
         attempt: 1,
         failedSteps: ["Run lint"],
         annotations: [
+          { path: ".github", startLine: 0, message: "Process completed with exit code 137." },
           { path: "a.ts", startLine: 4, message: "bad code" },
           { path: "budget.json", startLine: 0, message: "grew" },
         ],
-        log: { _tag: "excerpt", text: "##[error]bad code", totalLines: 1, truncated: false },
+        log: {
+          _tag: "excerpt",
+          text: "##[error]bad code\n##[error]Process completed with exit code 1.",
+          totalLines: 2,
+          truncated: false,
+        },
       });
       expect(result).not.toHaveProperty("required");
       const authorization = (call: (typeof calls)[number]) =>
@@ -770,7 +802,7 @@ describe("GitHub check failures", () => {
   it.effect("reads an untouched job from an earlier attempt after a rerun", () => {
     const { layer } = harness((request) =>
       request.url.includes("/annotations")
-        ? json([])
+        ? json([exitOneAnnotation])
         : request.url.endsWith("/logs")
           ? new Response("##[error]bad code\n")
           : json(job),
@@ -783,6 +815,9 @@ describe("GitHub check failures", () => {
       });
       expect(result).toMatchObject({
         attempt: 1,
+        annotations: [
+          { path: ".github", startLine: 0, message: "Process completed with exit code 1." },
+        ],
         log: { _tag: "excerpt", text: "##[error]bad code" },
       });
     }).pipe(Effect.provide(layer));
@@ -816,14 +851,27 @@ describe("GitHub check failures", () => {
   ])("returns $reason for $name without extra reads", (test) => {
     const { layer, requests } = harness((request) =>
       request.url.includes("/annotations")
-        ? json([])
+        ? json([exitOneAnnotation])
         : request.url.endsWith("/logs")
           ? json({ message: "Unavailable" }, { status: test.logStatus })
           : json(test.job),
     );
     return Effect.gen(function* () {
       const read = yield* makeGitHubCheckFailureReader;
-      expect((yield* read(input)).log).toEqual({ _tag: "unavailable", reason: test.reason });
+      const result = yield* read(input);
+      expect(result.log).toEqual({ _tag: "unavailable", reason: test.reason });
+      expect(result.annotations).toEqual(
+        test.requests === 3
+          ? [
+              {
+                path: ".github",
+                startLine: 0,
+                level: "failure",
+                message: exitOneAnnotation.message,
+              },
+            ]
+          : [],
+      );
       expect(requests).toHaveLength(test.requests);
     }).pipe(Effect.provide(layer));
   });

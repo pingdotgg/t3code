@@ -182,3 +182,27 @@ describe("MCP app tool output", () => {
     expect(turnItemOutputText(bounded)).toBe("chart\n[image]");
   });
 });
+
+describe("MCP results with the SDK's _meta", () => {
+  const meta = { "io.modelcontextprotocol/serverInfo": { name: "T3 Code", version: "1" } };
+  const structuredContent = {
+    check: "Server tests 7",
+    message: "expected [ 60 ]\nto equal [ 59 ]",
+  };
+  it.each([
+    [
+      "text and structured content",
+      { content: JSON.stringify(structuredContent), structuredContent },
+    ],
+    ["text blocks only", { content: [{ type: "text", text: "Server tests: 7 passed" }] }],
+    [
+      "text blocks and structured content",
+      { content: [{ type: "text", text: JSON.stringify(structuredContent) }], structuredContent },
+    ],
+  ])("reads %s the same with or without _meta", (_shape, result) => {
+    const plain = turnItemOutputText(toolItem(result));
+    const withMeta = turnItemOutputText(toolItem({ ...result, _meta: meta }));
+    expect(withMeta).toBe(plain);
+    expect(withMeta).not.toContain("serverInfo");
+  });
+});

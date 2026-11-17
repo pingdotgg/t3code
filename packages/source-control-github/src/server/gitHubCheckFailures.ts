@@ -165,12 +165,21 @@ export const makeGitHubCheckFailureReader = Effect.gen(function* () {
       status: JOB_CONCLUSIONS[job.conclusion ?? ""] ?? "neutral",
       attempt: job.run_attempt,
       failedSteps: failedSteps.slice(0, 20).map((name) => name.slice(0, 300)),
-      annotations: annotations.slice(0, 20).map((annotation) => ({
-        path: annotation.path.slice(0, 1024),
-        startLine: annotation.start_line,
-        level: annotation.annotation_level,
-        message: annotation.message.slice(0, 300),
-      })),
+      annotations: annotations
+        .filter(
+          // Only drop exit 1 when the delivered excerpt already contains it.
+          (annotation) =>
+            annotation.message !== "Process completed with exit code 1." ||
+            log._tag !== "excerpt" ||
+            !log.text.includes(annotation.message),
+        )
+        .slice(0, 20)
+        .map((annotation) => ({
+          path: annotation.path.slice(0, 1024),
+          startLine: annotation.start_line,
+          level: annotation.annotation_level,
+          message: annotation.message.slice(0, 300),
+        })),
       log,
     } satisfies PullRequestCheckFailure;
   });

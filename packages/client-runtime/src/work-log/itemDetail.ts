@@ -40,7 +40,10 @@ function textFromBlocks(
     if (typeof resource.text === "string") return resource.text;
     if (typeof resource.uri === "string") return resource.uri;
   }
-  const keys = Object.keys(value).filter((key) => key !== "isError" && key !== "is_error");
+  // MCP SDKs stamp `_meta` with server info on every result; it is never the tool's output.
+  const keys = Object.keys(value).filter(
+    (key) => key !== "isError" && key !== "is_error" && key !== "_meta",
+  );
   if (keys.length === 1 && keys[0] === "content")
     return textFromBlocks(value.content, depth + 1, imageBlocks);
   if (keys.length === 2 && keys.includes("content") && keys.includes("structuredContent")) {
