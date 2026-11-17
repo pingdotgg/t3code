@@ -19,6 +19,14 @@
       "types": "./src/zip/zipDirectory.ts",
       "default": "./src/zip/zipDirectory.ts"
     },
+    "./zip/error": {
+      "types": "./src/zip/zipError.ts",
+      "default": "./src/zip/zipError.ts"
+    },
+    "./zip/error-messages": {
+      "types": "./src/zip/zipErrorMessages.ts",
+      "default": "./src/zip/zipErrorMessages.ts"
+    },
     "./workspace-basename-lookup": {
       "types": "./src/workspaceBasenameLookup.ts",
       "default": "./src/workspaceBasenameLookup.ts"

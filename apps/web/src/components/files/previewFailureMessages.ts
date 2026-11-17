@@ -1,4 +1,6 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { isZipError } from "@t3tools/client-runtime/zip/error";
+import { ZIP_ERROR_MESSAGES } from "@t3tools/client-runtime/zip/error-messages";
 import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
@@ -6,7 +8,7 @@ import { m, type MessageResolver } from "~/i18n/messages";
 import { isPreviewError, type PreviewFailure } from "./previewFailure";
 
 const PREVIEW_FAILURE_MESSAGES = {
-  "file-too-large": msg("Preview limited to files under 50 MB."),
+  ...ZIP_ERROR_MESSAGES,
   "file-load-failed": msg("The file could not be loaded. Close it and try again."),
   "file-unavailable": msg("The file is unavailable."),
   "document-unavailable": msg("This file is unavailable."),
@@ -15,11 +17,7 @@ const PREVIEW_FAILURE_MESSAGES = {
   "preview-failed": msg("Could not preview this file."),
   "read-failed": msg("Could not read this file."),
   "parse-failed": msg("Could not parse this file."),
-  "archive-expanded-too-large": msg(
-    "The expanded archive exceeds the preview size or compression ratio limit.",
-  ),
   "tar-numeric-format": msg("This TAR uses an unsupported numeric format."),
-  "archive-too-many-entries": msg("This archive contains more than 2,048 entries."),
   "tar-header-damaged": msg("The TAR header is damaged."),
   "archive-entry-damaged": msg("An archive entry is too large or damaged."),
   "archive-metadata-too-large": msg("Archive metadata is too large."),
@@ -144,6 +142,6 @@ export function previewFailureText(failure: PreviewFailure, resolve: MessageReso
 }
 
 export function previewErrorText(cause: unknown, fallback: string): string {
-  if (isPreviewError(cause)) return m(PREVIEW_FAILURE_MESSAGES[cause.code]);
+  if (isPreviewError(cause) || isZipError(cause)) return m(PREVIEW_FAILURE_MESSAGES[cause.code]);
   return errorDisplayMessage(cause, m) ?? fallback;
 }

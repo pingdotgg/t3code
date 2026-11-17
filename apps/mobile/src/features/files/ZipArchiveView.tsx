@@ -5,6 +5,8 @@ import {
   ARCHIVE_MAX_BYTES,
   boundedZip,
 } from "@t3tools/client-runtime/zip/bounded-zip";
+import { isZipError } from "@t3tools/client-runtime/zip/error";
+import { zipErrorText } from "@t3tools/client-runtime/zip/error-messages";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { filePreviewDelimiter, parseDelimitedPreview } from "@t3tools/shared/delimitedPreview";
 import {
@@ -147,7 +149,9 @@ async function openArchive(bytes: ArrayBuffer): Promise<ZipArchive> {
         title: msg("Couldn't browse this ZIP"),
         detail:
           cause instanceof Error
-            ? msg("{error} Save the ZIP to open it in another app.", { error: cause.message })
+            ? msg("{error} Save the ZIP to open it in another app.", {
+                error: isZipError(cause) ? zipErrorText(cause.code, m) : cause.message,
+              })
             : msg("It may be incomplete or damaged. Save the ZIP to open it in another app."),
         retry: false,
       },
