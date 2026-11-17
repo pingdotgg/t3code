@@ -21,6 +21,7 @@ import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
   Menu,
   MenuCheckboxItem,
+  MenuGroup,
   MenuGroupLabel,
   MenuItem,
   MenuItemDetail,
@@ -101,51 +102,55 @@ export const WorktreeRepositoriesControl = memo(function WorktreeRepositoriesCon
             aria-label="Filter repositories"
           />
         ) : null}
-        <MenuGroupLabel>
-          {selection.needsChoice
-            ? "Choose the repositories this thread works on"
-            : "Each gets its own worktree on the thread's branch"}
-        </MenuGroupLabel>
-        {visible.length === 0 ? <MenuItem disabled>No repositories match</MenuItem> : null}
-        {visible.map((choice) => (
-          <MenuCheckboxItem
-            key={choice.repositoryPath}
-            checked={selected.has(choice.repositoryPath)}
-            closeOnClick={false}
-            onCheckedChange={(next) =>
-              choose(
-                choices.flatMap((candidate) =>
-                  (
-                    candidate.repositoryPath === choice.repositoryPath
-                      ? next
-                      : selected.has(candidate.repositoryPath)
-                  )
-                    ? [candidate.repositoryPath]
-                    : [],
-                ),
-              )
-            }
-          >
-            <span className="flex min-w-0 items-baseline gap-2">
-              <MenuItemLabel>{choice.name}</MenuItemLabel>
-              {choice.relativePath !== undefined && choice.relativePath !== choice.name ? (
-                <MenuItemDetail>{choice.relativePath}</MenuItemDetail>
-              ) : null}
-            </span>
-          </MenuCheckboxItem>
-        ))}
+        <MenuGroup>
+          <MenuGroupLabel>
+            {selection.needsChoice
+              ? "Choose the repositories this thread works on"
+              : "Each gets its own worktree on the thread's branch"}
+          </MenuGroupLabel>
+          {visible.length === 0 ? <MenuItem disabled>No repositories match</MenuItem> : null}
+          {visible.map((choice) => (
+            <MenuCheckboxItem
+              key={choice.repositoryPath}
+              checked={selected.has(choice.repositoryPath)}
+              closeOnClick={false}
+              onCheckedChange={(next) =>
+                choose(
+                  choices.flatMap((candidate) =>
+                    (
+                      candidate.repositoryPath === choice.repositoryPath
+                        ? next
+                        : selected.has(candidate.repositoryPath)
+                    )
+                      ? [candidate.repositoryPath]
+                      : [],
+                  ),
+                )
+              }
+            >
+              <span className="flex min-w-0 items-baseline gap-2">
+                <MenuItemLabel>{choice.name}</MenuItemLabel>
+                {choice.relativePath !== undefined && choice.relativePath !== choice.name ? (
+                  <MenuItemDetail>{choice.relativePath}</MenuItemDetail>
+                ) : null}
+              </span>
+            </MenuCheckboxItem>
+          ))}
+        </MenuGroup>
         {props.offersBaseBranch ? (
           <>
             <MenuSeparator />
-            <MenuGroupLabel>Start from this branch where a repository has it</MenuGroupLabel>
-            <MenuSearchInput
-              value={baseBranch}
-              onChange={(event) =>
-                setWorktreeBaseBranch(props.project, event.currentTarget.value.trim())
-              }
-              placeholder="Each repository's default branch"
-              aria-label="Base branch"
-            />
+            <MenuGroup>
+              <MenuGroupLabel>Start from this branch where a repository has it</MenuGroupLabel>
+              <MenuSearchInput
+                value={baseBranch}
+                onChange={(event) =>
+                  setWorktreeBaseBranch(props.project, event.currentTarget.value.trim())
+                }
+                placeholder="Each repository's default branch"
+                aria-label="Base branch"
+              />
+            </MenuGroup>
           </>
         ) : null}
         <MenuSeparator />
