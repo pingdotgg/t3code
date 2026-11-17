@@ -323,6 +323,7 @@ export default function FileBrowserPanel({
     timestamps: FileTreeTimestamps;
   } | null>(null);
   const resettingTreeRef = useRef(false);
+  const loadExpandedRef = useRef(() => {});
   const previousTreePathsRef = useRef<readonly string[] | null>(null);
   const syncingSelectionRef = useRef(false);
   const treeSelectionPathRef = useRef<string | null>(null);
@@ -525,6 +526,7 @@ export default function FileBrowserPanel({
       }
     });
     loadExpanded();
+    loadExpandedRef.current = loadExpanded;
     return model.subscribe(loadExpanded);
   }, [directoryPaths, expansionRoot, load, model, pendingExpandedPaths]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes ignored-file status into the imperative Pierre tree model
@@ -599,6 +601,9 @@ export default function FileBrowserPanel({
     const updates = resort ? [] : buildFileTreePathUpdates(previousTreePaths, treePaths);
     if (resort || shouldRebuildFileTree(previousTreePaths, treePaths, updates)) {
       resetTreeKeepingViewState(model, treePaths, directoryPaths, query, resettingTreeRef);
+      // The reset hid its own changes from `loadExpanded`, so remembered folders that just
+      // arrived are reopened now.
+      loadExpandedRef.current();
       return;
     }
     if (updates.length > 0) model.batch(updates);

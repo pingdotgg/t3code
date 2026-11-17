@@ -353,6 +353,56 @@ describe("FileBrowserPanel", () => {
     await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
     await vi.waitFor(() => expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"));
   });
+
+  it("reopens a remembered nested folder that arrives in a very large listing", async () => {
+    const panel = () => (
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo-remembered-large-folder"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />
+    );
+    const root: ProjectEntry[] = [
+      { path: "src", kind: "directory" },
+      { path: "README.md", kind: "file" },
+    ];
+    const inner: ProjectEntry[] = [
+      { path: "src/aaa-inner", kind: "directory" },
+      { path: "src/aaa-inner/x.ts", kind: "file" },
+      { path: "src/index.ts", kind: "file" },
+    ];
+    using _listing = withDirectoryListing([...root, ...inner]);
+    {
+      await using _first = await render(panel());
+      await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+      findTreeRow("src/")!.click();
+      await vi.waitFor(() => expect(findTreeRow("src/aaa-inner/")).not.toBeNull());
+      findTreeRow("src/aaa-inner/")!.click();
+      await vi.waitFor(() => expect(findTreeRow("src/aaa-inner/x.ts")).not.toBeNull());
+    }
+
+    withDirectoryListing(root);
+    await using second = await render(panel());
+    await vi.waitFor(() => expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"));
+    withDirectoryListing([
+      ...root,
+      ...inner,
+      ...Array.from({ length: 2_000 }, (_, index): ProjectEntry => {
+        const name = String((index * 7_919) % 2_000).padStart(4, "0");
+        return { path: `src/generated-${name}`, kind: "directory" };
+      }),
+    ]);
+    await second.rerender(panel());
+
+    await vi.waitFor(() =>
+      expect(findTreeRow("src/aaa-inner/")?.getAttribute("aria-expanded")).toBe("true"),
+    );
+    await vi.waitFor(() => expect(findTreeRow("src/aaa-inner/x.ts")).not.toBeNull());
+  });
 });
 
 describe("FileBrowserPanel sorting", () => {
@@ -564,21 +614,28 @@ describe("FileBrowserPanel sorting", () => {
       { path: "beta.txt", kind: "file", mtimeMs: 2 },
     ];
     using _entries = withDirectoryListing(tree);
-    await using screen = await renderPanel();
-    await userEvent.click(sortKeyButton("Sort by date modified"));
-    findTreeRow("alpha/")!.click();
-    await vi.waitFor(() => expect(findTreeRow("alpha/inner/")).not.toBeNull());
-    findTreeRow("alpha/inner/")!.click();
-    await vi.waitFor(() => expect(findTreeRow("alpha/inner/x.ts")).not.toBeNull());
-    findTreeRow("alpha/")!.click();
-    await expectRows(["alpha/", "beta.txt"]);
+    {
+      await using screen = await renderPanel();
+      await userEvent.click(sortKeyButton("Sort by date modified"));
+      findTreeRow("alpha/")!.click();
+      await vi.waitFor(() => expect(findTreeRow("alpha/inner/")).not.toBeNull());
+      findTreeRow("alpha/inner/")!.click();
+      await vi.waitFor(() => expect(findTreeRow("alpha/inner/x.ts")).not.toBeNull());
+      findTreeRow("alpha/")!.click();
+      await expectRows(["alpha/", "beta.txt"]);
 
-    tree[4] = { path: "beta.txt", kind: "file", mtimeMs: 3 };
-    withDirectoryListing([...tree]);
-    await screen.rerender(panel());
-    await userEvent.click(sortDirectionButton("Sort descending"));
+      tree[4] = { path: "beta.txt", kind: "file", mtimeMs: 3 };
+      withDirectoryListing([...tree]);
+      await screen.rerender(panel());
+      await userEvent.click(sortDirectionButton("Sort descending"));
 
+      await expectRows(["alpha/", "beta.txt"]);
+    }
+
+    withDirectoryListing([tree[0]!, tree[4]!]);
+    await using _remounted = await renderPanel();
     await expectRows(["alpha/", "beta.txt"]);
+    expect(findTreeRow("alpha/")!.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("shows new search matches after a refresh re-sorts by date modified", async () => {
