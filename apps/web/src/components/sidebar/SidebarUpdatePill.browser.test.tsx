@@ -1,5 +1,5 @@
 import { APP_NAME } from "@t3tools/shared/branding";
-import type { DesktopUpdateState } from "@t3tools/contracts";
+import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => {
     update: null as DesktopUpdateState | null,
     hasUpdates: false,
     rows: [] as ReadonlyArray<UpdateEverythingRow>,
+    checkProviders: (): Promise<void> => Promise.resolve(),
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -46,6 +47,9 @@ vi.mock("./useUpdateEverything", () => ({
     restarts: [],
   }),
 }));
+vi.mock("../ProviderUpdatesAction", () => ({
+  useCheckProviderUpdates: () => mocks.checkProviders,
+}));
 
 function nightlyUpdate(releaseNotes: DesktopUpdateState["releaseNotes"]): DesktopUpdateState {
   return {
@@ -77,11 +81,18 @@ function setup(
   {
     hasUpdates = false,
     rows = [],
-  }: { hasUpdates?: boolean; rows?: ReadonlyArray<UpdateEverythingRow> } = {},
+    checkProviders = () => Promise.resolve(),
+  }: {
+    hasUpdates?: boolean;
+    rows?: ReadonlyArray<UpdateEverythingRow>;
+    checkProviders?: () => Promise<void>;
+  } = {},
 ) {
   mocks.update = update;
   mocks.hasUpdates = hasUpdates;
   mocks.rows = rows;
+  mocks.checkProviders = checkProviders;
+  delete window.desktopBridge;
 }
 
 function publish(update: DesktopUpdateState | null) {
@@ -192,5 +203,28 @@ describe("SidebarUpdatePill check", () => {
     });
     await expect.element(available).not.toHaveAttribute("aria-disabled");
     await expect.element(available).toHaveAttribute("data-update-state", "available");
+  });
+
+  it("offers the update the app check found while providers are still checking", async () => {
+    const upToDate = {
+      ...nightlyUpdate([]),
+      status: "up-to-date",
+      availableVersion: null,
+    } as const;
+    setup(upToDate, { checkProviders: () => new Promise<void>(() => {}) });
+    window.desktopBridge = {
+      checkForUpdate: async () => {
+        await publish(nightlyUpdate([]));
+        return { checked: true, state: nightlyUpdate([]) };
+      },
+    } as Partial<DesktopBridge> as DesktopBridge;
+    await using screen = await render(<SidebarUpdatePill />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+    const available = screen.getByRole("button", {
+      name: "Update 0.0.50-nightly.2 ready to download",
+    });
+    await expect.element(available).toHaveAttribute("data-update-state", "available");
+    await expect.element(available).not.toHaveAttribute("aria-disabled");
   });
 });
