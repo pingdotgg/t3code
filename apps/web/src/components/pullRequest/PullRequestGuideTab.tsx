@@ -174,7 +174,7 @@ export function PullRequestGuideTab({
   );
 }
 
-const FAILURE_HINT = "Check the review guide model in Settings → Source control.";
+const FAILURE_HINT = "Check the review guide model in Settings → Source control & issues.";
 
 function FailureDetails({ detail }: { detail: string }) {
   return (

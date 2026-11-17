@@ -1,8 +1,24 @@
-export const NAVIGATION_TAB_ORDER = ["threads", "pullRequests", "usage"] as const;
+export const NAVIGATION_TAB_ORDER = ["threads", "pullRequests", "issues", "usage"] as const;
 export type NavigationTab = (typeof NAVIGATION_TAB_ORDER)[number];
 
+const SHARED_SLOT_TABS = ["pullRequests", "issues"] as const;
+export type SharedSlotTab = (typeof SHARED_SLOT_TABS)[number];
+
+export function isSharedSlotTab(value: unknown): value is SharedSlotTab {
+  return SHARED_SLOT_TABS.some((tab) => tab === value);
+}
+
+/**
+ * Pull requests and issues share one slot in the tab bar. The open one holds it, or else the one
+ * opened last; this returns the other, which the bar leaves out.
+ */
+export function sharedSlotAbsentee(selected: NavigationTab, last: unknown): SharedSlotTab {
+  const holder = isSharedSlotTab(selected) ? selected : last === "issues" ? last : "pullRequests";
+  return holder === "issues" ? "pullRequests" : "issues";
+}
+
 export function navigationCustomizationAvailable(
-  registeredSections: number = NAVIGATION_TAB_ORDER.length,
+  registeredSections: number = NAVIGATION_TAB_ORDER.length - 1,
 ) {
   return registeredSections > 4;
 }
@@ -10,6 +26,7 @@ export function navigationCustomizationAvailable(
 export const NAVIGATION_TAB_LABELS: Readonly<Record<NavigationTab, string>> = {
   threads: "Threads",
   pullRequests: "Pulls",
+  issues: "Issues",
   usage: "Usage",
 };
 

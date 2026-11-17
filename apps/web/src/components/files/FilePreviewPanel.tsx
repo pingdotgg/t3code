@@ -503,6 +503,10 @@ interface FileRevealState {
   cancelGuard: (() => void) | null;
   handledRequestId: number | null;
   latestRequestId: number | null;
+  /** The path's code view offset when it last unmounted, restored when it is shown again. */
+  scrollTop: number;
+  scrollContainer: HTMLElement | null;
+  restoreFrameId: number | null;
 }
 
 function useFileLineReveal(
@@ -521,6 +525,9 @@ function useFileLineReveal(
       cancelGuard: null,
       handledRequestId: null,
       latestRequestId: null,
+      scrollTop: 0,
+      scrollContainer: null,
+      restoreFrameId: null,
     };
     if (!existingState) revealStatesByPath.set(relativePath, state);
 
@@ -530,10 +537,20 @@ function useFileLineReveal(
         state.frameId = null;
       }
       state.cancelGuard?.();
+      if (state.restoreFrameId !== null) {
+        cancelAnimationFrame(state.restoreFrameId);
+        state.restoreFrameId = null;
+      }
     };
 
+    const scrollContainer = fileContainer.closest<HTMLElement>(".file-preview-virtualizer");
+
     if (phase === "unmount") {
+      // A view torn down before its restore ran never showed the saved offset, so keep it.
+      const restorePending = state.restoreFrameId !== null;
       cancelPendingReveal();
+      if (scrollContainer && !restorePending) state.scrollTop = scrollContainer.scrollTop;
+      state.scrollContainer = null;
       return;
     }
 
@@ -550,12 +567,37 @@ function useFileLineReveal(
       state.handledRequestId = null;
     }
 
+    if (scrollContainer && state.scrollContainer !== scrollContainer) {
+      state.scrollContainer = scrollContainer;
+      const savedScrollTop = state.scrollTop;
+      // A pending line reveal owns the scroll position.
+      if (
+        savedScrollTop > 0 &&
+        (revealLine === null || state.handledRequestId === revealRequestId)
+      ) {
+        const restoreScroll = (attempt: number) => {
+          state.restoreFrameId = requestAnimationFrame(() => {
+            state.restoreFrameId = null;
+            if (!scrollContainer.isConnected || scrollContainer.scrollTop !== 0) return;
+            // Wait for the virtualizer to size the file so the offset is not clamped.
+            const fits =
+              scrollContainer.scrollHeight - scrollContainer.clientHeight >= savedScrollTop;
+            if (fits || attempt >= REVEAL_MAX_ATTEMPTS) {
+              scrollContainer.scrollTop = savedScrollTop;
+              return;
+            }
+            restoreScroll(attempt + 1);
+          });
+        };
+        restoreScroll(0);
+      }
+    }
+
     if (revealLine === null) {
       fileContainer.style.minHeight = "";
       return;
     }
 
-    const scrollContainer = fileContainer.closest<HTMLElement>(".file-preview-virtualizer");
     if (!scrollContainer) return;
     fileContainer.style.minHeight = `${Math.ceil(
       Math.max(instance.height, scrollContainer.clientHeight),

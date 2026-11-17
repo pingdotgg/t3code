@@ -7,6 +7,10 @@ import {
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 import {
+  type FilePreviewScroll,
+  filePreviewRestoreScrollMessage,
+  isFilePreviewScrollRestored,
+  readFilePreviewScroll,
   type HtmlRenderShortcut,
   htmlRenderShortcutsMessage,
   htmlRenderThemeFragment,
@@ -157,21 +161,119 @@ export function BrowserDocumentFrame(props: {
       className="min-h-0 flex-1"
     />
   ) : (
-    <FileDocument key={key} src={props.src} title={props.title} />
+    <FileDocument
+      key={props.documentId ?? key}
+      documentKey={key}
+      src={props.src}
+      title={props.title}
+    />
   );
 }
 
-// URL renewals must not discard form input or scroll; a new key mounts a fresh document.
-function FileDocument(props: { readonly src: string; readonly title: string }) {
-  const [src] = useState(props.src);
+interface FileDocumentRevision {
+  readonly key: string;
+  readonly src: string;
+}
+
+interface FileDocumentFrames {
+  readonly shown: FileDocumentRevision;
+  readonly next: FileDocumentRevision | null;
+}
+
+// Identity, not key, so a late load from a replaced frame cannot uncover a newer unloaded one.
+const showRevision =
+  (next: FileDocumentRevision) =>
+  (current: FileDocumentFrames): FileDocumentFrames =>
+    current.next === next ? { shown: next, next: null } : current;
+
+// A page whose load never fires (a stalled subresource) must not pin the previous revision.
+const FILE_DOCUMENT_SWAP_TIMEOUT_MS = 5_000;
+
+// URL renewals keep a revision's first URL, so they do not discard form input or scroll. A new
+// revision loads beneath the page on screen, takes its scroll position and replaces it once
+// painted, so no blank frame shows and the reader keeps their place.
+function FileDocument(props: {
+  readonly documentKey: string;
+  readonly src: string;
+  readonly title: string;
+}) {
+  const [frames, setFrames] = useState<FileDocumentFrames>(() => ({
+    shown: { key: props.documentKey, src: props.src },
+    next: null,
+  }));
+  if ((frames.next ?? frames.shown).key !== props.documentKey) {
+    setFrames({
+      shown: frames.shown,
+      next:
+        frames.shown.key === props.documentKey ? null : { key: props.documentKey, src: props.src },
+    });
+  }
+  const { next } = frames;
+  const shownFrame = useRef<HTMLIFrameElement>(null);
+  const nextFrame = useRef<HTMLIFrameElement>(null);
+  // The page reports its scroll position (see FILE_PREVIEW_SCROLL_SCRIPT); the next revision
+  // scrolls there before it is uncovered.
+  const scroll = useRef<FilePreviewScroll | null>(null);
+  // Two frames let the browser paint the incoming page before it is uncovered.
+  const reveal = (revision: FileDocumentRevision) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => setFrames(showRevision(revision))));
+  const onFrameMessage = useEffectEvent((event: MessageEvent) => {
+    const position = readFilePreviewScroll(event.data);
+    if (position !== undefined) {
+      if (event.source === shownFrame.current?.contentWindow) scroll.current = position;
+    } else if (
+      next !== null &&
+      event.source === nextFrame.current?.contentWindow &&
+      isFilePreviewScrollRestored(event.data)
+    ) {
+      reveal(next);
+    }
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for the frames' scroll reports
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => onFrameMessage(event);
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- swaps in a revision whose load event never arrives
+  useEffect(() => {
+    if (next === null) return;
+    const timer = setTimeout(() => setFrames(showRevision(next)), FILE_DOCUMENT_SWAP_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [next]);
+  // The shown frame stays last so it paints on top and is never moved, which would reload it.
   return (
-    <iframe
-      src={src}
-      title={props.title}
-      className="min-h-0 flex-1 border-0"
-      style={{ backgroundColor: "Canvas" }}
-      sandbox="allow-scripts allow-forms allow-popups allow-downloads"
-    />
+    <div className="relative min-h-0 flex-1">
+      {[next, frames.shown].map((revision) =>
+        revision === null ? null : (
+          <iframe
+            key={revision.key}
+            ref={revision === next ? nextFrame : shownFrame}
+            src={revision.src}
+            title={props.title}
+            className="absolute inset-0 size-full border-0"
+            style={{ backgroundColor: "Canvas" }}
+            sandbox="allow-scripts allow-forms allow-popups allow-downloads"
+            inert={revision === next}
+            aria-hidden={revision === next ? true : undefined}
+            onLoad={
+              revision === next
+                ? (event) => {
+                    if (scroll.current === null) {
+                      reveal(revision);
+                      return;
+                    }
+                    event.currentTarget.contentWindow?.postMessage(
+                      filePreviewRestoreScrollMessage(scroll.current),
+                      "*",
+                    );
+                  }
+                : undefined
+            }
+          />
+        ),
+      )}
+    </div>
   );
 }
 

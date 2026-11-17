@@ -248,8 +248,8 @@ patchedDependencies:
   # scroll target a Material bottom sheet picks, so sheet content can sit below its header.
   "@expo/ui@58.0.27": patches/@expo__ui@58.0.27.patch
   "@ff-labs/fff-node@0.11.0": patches/@ff-labs__fff-node@0.11.0.patch
-  # Exports the dependency-light subpaths mobile and the web diff parser import, and re-measures
-  # editor carets when the code font changes.
+  # Exports the dependency-light subpaths mobile and the web diff parser import, re-measures
+  # editor carets when the code font changes, and stops the find bar reclaiming focus from the file.
   "@pierre/diffs@1.7.0-beta.4": patches/@pierre__diffs@1.7.0-beta.4.patch
   "@react-native-ai/apple@0.12.0": patches/@react-native-ai__apple@0.12.0.patch
   "@react-native-menu/menu@2.0.0": patches/@react-native-menu__menu@2.0.0.patch
