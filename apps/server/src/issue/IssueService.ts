@@ -424,6 +424,12 @@ const make = Effect.gen(function* () {
       entries,
       errors,
       nextCursors,
+      scopes: [...scopes.values()].map((project) => ({
+        projectId: project.project.id,
+        tracker: project.tracker,
+        host: project.host,
+        scope: project.scope,
+      })),
     };
   });
 
