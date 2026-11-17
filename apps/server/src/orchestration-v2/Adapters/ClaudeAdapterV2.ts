@@ -2142,6 +2142,12 @@ function parseClaudeInteger(text: string): number {
   return Number.parseInt(value, 10);
 }
 
+// A background command that starts by sleeping is a timer the agent set to check back, which
+// Claude wakes it for when it ends. A dev server never starts that way.
+function isClaudeSleepTimer(command: string | undefined): boolean {
+  return command !== undefined && /^\s*sleep\s+\d/.test(command);
+}
+
 // Claude Code defers MCP tools behind ToolSearch, so the agent only finds
 // t3_background_wait when the system prompt says when to reach for it.
 const CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS = `
@@ -6781,17 +6787,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             nativeThreadId: string,
             task: OrchestrationV2PendingBackgroundTask,
           ) {
-            const startedMonitor = yield* Ref.modify(
+            const startedWait = yield* Ref.modify(
               pendingBackgroundTasksByNativeThread,
               (current) => {
                 const roster = new Map(rosterForNativeThread(current, nativeThreadId));
-                const startedMonitor =
-                  task.kind === "monitor" && roster.get(task.taskId)?.kind !== "monitor";
+                const previous = roster.get(task.taskId);
+                const startedWait =
+                  task.kind === "monitor"
+                    ? previous?.kind !== "monitor"
+                    : task.kind === "command" &&
+                      previous?.command === undefined &&
+                      isClaudeSleepTimer(task.command);
                 roster.set(task.taskId, task);
-                return [startedMonitor, new Map(current).set(nativeThreadId, roster)] as const;
+                return [startedWait, new Map(current).set(nativeThreadId, roster)] as const;
               },
             );
-            if (startedMonitor) {
+            if (startedWait) {
               yield* addTaskIdsToNativeThreadSet(
                 awaitedBackgroundTasksByNativeThread,
                 nativeThreadId,

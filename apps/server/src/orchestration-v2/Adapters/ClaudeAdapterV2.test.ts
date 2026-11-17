@@ -12242,6 +12242,44 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        // A sleep is a timer the agent ends its turn on, so a restart must wake it.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              model: "claude-sonnet-4-6",
+              id: "msg_background_timer",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: "toolu_timer",
+                  name: "Bash",
+                  input: { command: "sleep 1740; date", run_in_background: true },
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "background-timer-launch",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: "timer",
+            tool_use_id: "toolu_timer",
+            description: "Wait 29 minutes before the next check",
+            is_backgrounded: true,
+            task_type: "local_bash",
+            uuid: "00000000-0000-4000-8000-000000000205",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
         yield* Queue.offer(harness.sdkMessages, turnOneResult);
         yield* harness.awaitTerminal(1);
 
@@ -12252,6 +12290,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const started = (afterStart.at(-1)?.providerThread.pendingBackgroundTasks ?? [])[0];
         assert.equal(started?.taskId, WAKE_TASK_ID);
         assert.equal(started?.nativeItemId, WAKE_TOOL_USE_ID);
+        assert.deepEqual(
+          (afterStart.at(-1)?.providerThread.pendingBackgroundTasks ?? []).map((task) => [
+            task.taskId,
+            task.awaited === true,
+          ]),
+          [
+            [WAKE_TASK_ID, false],
+            ["timer", true],
+          ],
+        );
 
         const command = harness.events.find(
           (event) =>
