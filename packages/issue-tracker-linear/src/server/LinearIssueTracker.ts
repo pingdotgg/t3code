@@ -426,7 +426,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
         return scope === undefined ? null : { host: DESCRIPTOR.host, workspace, scope, key };
       },
 
-      probeCredential: (token) =>
+      probeCredential: ({ token }) =>
         linear.viewer(token).pipe(
           Effect.map((data) => ({
             account: userName(data.viewer),

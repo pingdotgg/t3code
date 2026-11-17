@@ -16,15 +16,20 @@ import {
   type IssueTrackerConnection,
   type IssueTrackerConnectionList,
 } from "@t3tools/contracts";
-import type { StandaloneIssueTrackerApi } from "@t3tools/source-control-core/server/IssueTracker";
+import type {
+  IssueTrackerCredential,
+  StandaloneIssueTrackerApi,
+} from "@t3tools/source-control-core/server/IssueTracker";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as IssueTrackerBindings from "../persistence/IssueTrackerBindings.ts";
 import * as IssueService from "./IssueService.ts";
-import { issueTrackerSecretName } from "./IssueTrackerHostLive.ts";
+import {
+  decodeIssueTrackerCredential,
+  encodeIssueTrackerCredential,
+  issueTrackerSecretName,
+} from "./IssueTrackerHostLive.ts";
 import * as IssueTrackerRegistry from "./IssueTrackerRegistry.ts";
-
-const encoder = new TextEncoder();
 
 export class IssueTrackerConnections extends Context.Service<
   IssueTrackerConnections,
@@ -80,14 +85,15 @@ const make = Effect.gen(function* () {
   });
 
   /** The tracker's view of a stored credential; a refusal is status, not a failure. */
-  const status = (api: StandaloneIssueTrackerApi, token: string) =>
-    api.probeCredential(token).pipe(
+  const status = (api: StandaloneIssueTrackerApi, credential: IssueTrackerCredential) =>
+    api.probeCredential(credential).pipe(
       Effect.map((probe): IssueTrackerConnection => ({
         ...api.standalone,
         connected: true,
         account: probe.account,
         detail: null,
         scopes: probe.scopes,
+        fields: credential.fields,
       })),
       Effect.catch((error) =>
         Effect.succeed<IssueTrackerConnection>({
@@ -96,6 +102,7 @@ const make = Effect.gen(function* () {
           account: null,
           detail: IssueService.trackerDetail(error),
           scopes: [],
+          fields: credential.fields,
         }),
       ),
     );
@@ -106,7 +113,7 @@ const make = Effect.gen(function* () {
       Effect.flatMap((stored) =>
         Option.isNone(stored)
           ? Effect.succeed(disconnected(api))
-          : status(api, new TextDecoder().decode(stored.value)),
+          : status(api, decodeIssueTrackerCredential(stored.value)),
       ),
     );
 
@@ -137,7 +144,20 @@ const make = Effect.gen(function* () {
   )(function* (input) {
     const api = yield* requireTracker(input.tracker);
     if (input.token === null) return yield* disconnect(api);
-    const probe = yield* api.probeCredential(input.token).pipe(
+    const wanted = api.standalone.credential.fields ?? [];
+    const missing = wanted.find((field) => input.fields?.[field.key] === undefined);
+    if (missing !== undefined) {
+      return yield* new IssueTrackerConnectionError({
+        tracker: input.tracker,
+        reason: "rejected",
+        detail: `${api.standalone.displayName} needs its ${missing.label.toLowerCase()} too.`,
+      });
+    }
+    const credential: IssueTrackerCredential = {
+      token: input.token,
+      fields: Object.fromEntries(wanted.map((field) => [field.key, input.fields![field.key]!])),
+    };
+    const probe = yield* api.probeCredential(credential).pipe(
       Effect.mapError(
         (error) =>
           new IssueTrackerConnectionError({
@@ -149,7 +169,7 @@ const make = Effect.gen(function* () {
       ),
     );
     yield* secrets
-      .set(issueTrackerSecretName(api.kind), encoder.encode(input.token))
+      .set(issueTrackerSecretName(api.kind), encodeIssueTrackerCredential(credential))
       .pipe(Effect.mapError(secretFailure(api.kind, "The credential could not be stored.")));
     return {
       ...api.standalone,
@@ -157,6 +177,7 @@ const make = Effect.gen(function* () {
       account: probe.account,
       detail: null,
       scopes: probe.scopes,
+      fields: credential.fields,
     };
   });
 
