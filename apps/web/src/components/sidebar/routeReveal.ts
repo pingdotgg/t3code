@@ -62,6 +62,11 @@ export function useActiveRowReveal(
   // Returns a ref cleanup while it waits on a hidden row, so an unmount releases the wait.
   const revealRow = (row: HTMLElement | null, rowKey: string): (() => void) | undefined => {
     if (row === null) return undefined;
+    // A draft's first send right after a mount: its row spends the mount reveal, unscrolled.
+    if (reveal.quietKey === rowKey) {
+      mountRevealOwed.current = false;
+      return undefined;
+    }
     if (reveal.pendingKey !== rowKey && !mountRevealOwed.current) return undefined;
     // The closed narrow sheet keeps rows mounted but hidden, and opening it does not
     // re-render them, so wait for the row to get a box before spending the reveal.
