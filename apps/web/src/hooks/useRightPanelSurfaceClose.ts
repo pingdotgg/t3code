@@ -137,12 +137,12 @@ export function useRightPanelSurfaceClose(input: {
             surface.kind === "terminal" ? surface.terminalIds.map(labelFor) : [],
           )
         : [];
-      const first = labels[0];
+      const [first, ...rest] = labels;
       if (first === undefined) {
         finishClose(toClose);
         return;
       }
-      void confirmTerminalClose([first, ...labels.slice(1)]).then((confirmed) => {
+      void confirmTerminalClose([first, ...rest]).then((confirmed) => {
         if (confirmed) finishClose(toClose);
       });
     });
