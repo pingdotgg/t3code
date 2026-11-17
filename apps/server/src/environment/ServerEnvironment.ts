@@ -278,6 +278,7 @@ export const make = Effect.gen(function* () {
       ignoredFileSearch: true,
       triage: true,
       oneTimeSchedules: true,
+      missedRunSchedules: true,
       freshContext: true,
       scheduledTaskThreadModes: true,
       npmReleaseLookup: true,

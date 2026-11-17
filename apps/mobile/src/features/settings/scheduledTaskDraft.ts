@@ -58,6 +58,8 @@ export type ScheduleDraft = {
   /** ISO time for a one-time run. Empty until the user picks the "Once" mode. */
   readonly runAt: string;
   readonly weekdays: ReadonlyArray<number>;
+  readonly runMissedOnce: boolean;
+  readonly savedRunMissedOnce?: boolean | undefined;
   readonly intervalMinutes: string;
   readonly signature: ScheduledTaskWebhookSignature | null;
   readonly maxDeliveryAgeMinutes: string;
@@ -74,6 +76,7 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
   timeOfDay: "09:00",
   runAt: "",
   weekdays: [1, 2, 3, 4, 5],
+  runMissedOnce: false,
   intervalMinutes: "15",
   signature: null,
   maxDeliveryAgeMinutes: "",
@@ -93,6 +96,8 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
         weekdays: task.schedule.weekdays?.length
           ? [...new Set(task.schedule.weekdays)].sort((a, b) => a - b)
           : [0, 1, 2, 3, 4, 5, 6],
+        runMissedOnce: task.schedule.missedRun === "run_once",
+        savedRunMissedOnce: task.schedule.missedRun === "run_once",
       };
     case "once":
       return { ...DEFAULT_SCHEDULE, mode: "once", runAt: task.schedule.runAt };
@@ -194,6 +199,9 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
     type: "fixed_time",
     timeOfDay: draft.timeOfDay,
     ...(weekdays.length === 7 ? {} : { weekdays }),
+    ...(draft.runMissedOnce === draft.savedRunMissedOnce
+      ? {}
+      : { missedRun: draft.runMissedOnce ? ("run_once" as const) : ("skip" as const) }),
   };
 }
 
@@ -231,6 +239,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.schedule.timeOfDay,
     draft.schedule.runAt,
     [...draft.schedule.weekdays].sort((a, b) => a - b),
+    draft.schedule.runMissedOnce,
     draft.schedule.intervalMinutes,
     draft.schedule.maxDeliveryAgeMinutes,
     draft.schedule.replayKey,
