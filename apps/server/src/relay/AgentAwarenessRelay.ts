@@ -97,6 +97,7 @@ function shouldPublishAgentAwarenessEvent(
     case "thread.metadata-updated":
     case "thread.pull-request-link-updated":
     case "thread.pull-request-synced":
+    case "thread.issue-synced":
     case "thread.snoozed":
     case "thread.unsnoozed":
     case "thread.settled":

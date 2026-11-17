@@ -46,6 +46,7 @@ import { makeRelayDeviceRegistrationRequest } from "./registrationPayload";
 import {
   __resetAgentAwarenessRemoteRegistrationForTest,
   armAgentAwarenessLiveActivityForLocalWork,
+  agentAwarenessNotificationsReady,
   getAgentAwarenessRegistrationStatus,
   refreshActiveLiveActivityRemoteRegistration,
   refreshAgentAwarenessRegistration,

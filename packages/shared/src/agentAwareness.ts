@@ -107,7 +107,7 @@ export interface ProjectThreadAwarenessV2Input {
       | "title"
       | "updatedAt"
     >;
-  /** The approval a live subagent below this thread is waiting on. */
+  /** What a live subagent below this thread is waiting on the user for. */
   readonly pendingSubagentRequest?: SubagentRequestAwareness | null;
 }
 
@@ -137,7 +137,7 @@ export function projectThreadAwarenessV2(
         DateTime.toEpochMillis(request.createdAt) > DateTime.toEpochMillis(thread.snoozedAt));
     if (!requestWakes && subagentRequest === null && !failedAfterSnooze) return null;
   }
-  const phase = resolveThreadAwarenessPhaseV2(thread, subagentRequest !== null);
+  const phase = resolveThreadAwarenessPhaseV2(thread, subagentRequest);
   if (phase === null) {
     return null;
   }
