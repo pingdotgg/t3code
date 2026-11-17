@@ -571,6 +571,9 @@ importers:
       '@formatjs/intl-locale':
         specifier: 4.2.13
         version: 4.2.13
+      '@formatjs/intl-pluralrules':
+        specifier: 5.4.6
+        version: 5.4.6
       '@legendapp/list':
         specifier: 3.7.2
         version: 3.7.2(patch_hash=fc8470158c72676c35f43a0a84f90e53105c3eedd930e242534a37ff4159a3ef)(react-dom@19.3.0(react@19.3.0))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
