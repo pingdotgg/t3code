@@ -16,7 +16,10 @@ import {
   type IssueTrackerConnection,
   type IssueTrackerConnectionList,
 } from "@t3tools/contracts";
-import type { StandaloneIssueTrackerApi } from "@t3tools/source-control-core/server/IssueTracker";
+import type {
+  IssueTrackerError,
+  StandaloneIssueTrackerApi,
+} from "@t3tools/source-control-core/server/IssueTracker";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as IssueTrackerBindings from "../persistence/IssueTrackerBindings.ts";
@@ -79,7 +82,18 @@ const make = Effect.gen(function* () {
     scopes: [],
   });
 
-  /** The tracker's view of a stored credential; a refusal is status, not a failure. */
+  const probeFailure = (error: IssueTrackerError) =>
+    new IssueTrackerConnectionError({
+      tracker: error.tracker,
+      reason: error.reason === "unauthenticated" ? "rejected" : "failed",
+      detail: IssueService.trackerDetail(error),
+      cause: error,
+    });
+
+  /**
+   * The tracker's view of a stored credential. A refusal is status, not a failure; anything else
+   * (a rate limit, an outage) fails the listing so Settings offers a retry.
+   */
   const status = (api: StandaloneIssueTrackerApi, token: string) =>
     api.probeCredential(token).pipe(
       Effect.map((probe): IssueTrackerConnection => ({
@@ -90,13 +104,15 @@ const make = Effect.gen(function* () {
         scopes: probe.scopes,
       })),
       Effect.catch((error) =>
-        Effect.succeed<IssueTrackerConnection>({
-          ...api.standalone,
-          connected: true,
-          account: null,
-          detail: IssueService.trackerDetail(error),
-          scopes: [],
-        }),
+        error.reason === "unauthenticated"
+          ? Effect.succeed<IssueTrackerConnection>({
+              ...api.standalone,
+              connected: true,
+              account: null,
+              detail: IssueService.trackerDetail(error),
+              scopes: [],
+            })
+          : Effect.fail(probeFailure(error)),
       ),
     );
 
@@ -137,17 +153,7 @@ const make = Effect.gen(function* () {
   )(function* (input) {
     const api = yield* requireTracker(input.tracker);
     if (input.token === null) return yield* disconnect(api);
-    const probe = yield* api.probeCredential(input.token).pipe(
-      Effect.mapError(
-        (error) =>
-          new IssueTrackerConnectionError({
-            tracker: input.tracker,
-            reason: error.reason === "unauthenticated" ? "rejected" : "failed",
-            detail: IssueService.trackerDetail(error),
-            cause: error,
-          }),
-      ),
-    );
+    const probe = yield* api.probeCredential(input.token).pipe(Effect.mapError(probeFailure));
     yield* secrets
       .set(issueTrackerSecretName(api.kind), encoder.encode(input.token))
       .pipe(Effect.mapError(secretFailure(api.kind, "The credential could not be stored.")));
