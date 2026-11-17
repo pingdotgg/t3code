@@ -142,7 +142,28 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
         VALUES ('delivery-1', 'task-1', 'key-1', 1900000000000, '{}', '{}', '[]')`;
       yield* sql`INSERT INTO auth_sessions (session_id, subject, scopes, method, issued_at, expires_at)
         VALUES ('session-1', 'user', '[]', 'pairing', '2026-08-01', '2027-08-01')`;
-      if (toMigrationInclusive === undefined) yield* insertPeerLink(sql);
+      if (toMigrationInclusive === undefined) {
+        yield* insertPeerLink(sql);
+        for (const [projectId, term] of [
+          ["project-kept", "keptfactterm"],
+          ["project-deleted", "droppedfactterm"],
+        ] as const) {
+          const factId = `fact-${projectId}`;
+          yield* sql`INSERT INTO project_knowledge_facts
+            (id, project_id, status, revision, content, entities_json, tags_json, kind, trust,
+              created_at, updated_at, sources_json, origin_json)
+            VALUES (${factId}, ${projectId}, 'saved', 1, ${`Remember ${term}`}, '[]', '[]',
+              'decision', 1, '2026-08-01', '2026-08-01', '[]', '{}')`;
+          yield* sql`INSERT INTO project_knowledge_fact_history
+            (project_id, fact_id, revision, event, actor_json, content, sources_json, trust_after, created_at)
+            VALUES (${projectId}, ${factId}, 1, 'created', '{}', ${`Remember ${term}`}, '[]', 1, '2026-08-01')`;
+          yield* sql`INSERT INTO project_knowledge_commands
+            (command_id, project_id, fact_id, request_digest)
+            VALUES (${`command-${projectId}`}, ${projectId}, ${factId}, 'digest')`;
+          yield* sql`INSERT INTO model_evaluation_resets (project_id, generation, reset_at)
+            VALUES (${projectId}, 1, '2026-08-01')`;
+        }
+      }
     }),
   );
   return databasePath;
@@ -194,7 +215,38 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
                 (SELECT COUNT(*) FROM scheduled_task_webhook_pending) AS webhooks,
               (SELECT COUNT(*) FROM orchestration_v2_projection_context_transfers) AS transfers,
               (SELECT COUNT(*) FROM peer_environment_links) AS links`;
-          return { threads, events, sessions, pullRequest, project, leftovers };
+          const projectTables = yield* sql<{ name: string }>`
+            SELECT m.name FROM sqlite_master m, pragma_table_info(m.name) c
+            WHERE m.type = 'table' AND c.name = 'project_id' ORDER BY m.name`;
+          const projectRows: Record<string, ReadonlyArray<string>> = {};
+          for (const { name } of projectTables) {
+            const rows = yield* sql.unsafe<{ project_id: string }>(
+              `SELECT DISTINCT project_id FROM "${name}" ORDER BY project_id`,
+            ).unprepared;
+            if (rows.length > 0) projectRows[name] = rows.map((row) => row.project_id);
+          }
+          const searched = yield* sql<{ id: string }>`
+            SELECT f.id FROM project_knowledge_fts
+            JOIN project_knowledge_facts f ON f.rowid = project_knowledge_fts.rowid
+            WHERE project_knowledge_fts MATCH 'keptfactterm'`;
+          // FTS5 keeps a deleted row's terms in older segments until they merge.
+          const [dropped] = yield* sql<{ blocks: number }>`
+            SELECT COUNT(*) AS blocks FROM project_knowledge_fts_data
+            WHERE instr(block, CAST('droppedfactterm' AS BLOB)) > 0`;
+          const factSearch = {
+            found: searched.map((row) => row.id),
+            droppedBlocks: dropped?.blocks,
+          };
+          return {
+            threads,
+            events,
+            sessions,
+            pullRequest,
+            project,
+            leftovers,
+            projectRows,
+            factSearch,
+          };
         }),
       );
       assert.deepStrictEqual(
@@ -241,6 +293,29 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         transfers: 0,
         links: 0,
       });
+      // Asserted across whatever tables carry a project, so a later migration's table is covered.
+      assert.deepStrictEqual(
+        [...new Set(Object.values(kept.projectRows).flat())],
+        ["project-kept"],
+        "rows of a dropped project go with it",
+      );
+      for (const table of [
+        "model_evaluation_resets",
+        "project_knowledge_commands",
+        "project_knowledge_fact_history",
+        "project_knowledge_facts",
+      ]) {
+        assert.deepStrictEqual(
+          kept.projectRows[table],
+          ["project-kept"],
+          `${table} keeps its rows`,
+        );
+      }
+      assert.deepStrictEqual(
+        kept.factSearch,
+        { found: ["fact-project-kept"], droppedBlocks: 0 },
+        "fact search finds kept facts and its index holds nothing of dropped ones",
+      );
     }),
   );
 

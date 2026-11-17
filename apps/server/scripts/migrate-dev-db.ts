@@ -239,8 +239,8 @@ const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath:
         WHERE m.type = 'table' AND c.name = 'thread_id'`;
       const threadIdNullable = new Map(threadColumns.map((row) => [row.name, row.notnull === 0]));
       // FTS5 makes its own shadow tables and contentless rows cannot be copied:
-      // create the virtual table, skip its shadow tables and rows, and rebuild the
-      // index once the messages and triggers are in.
+      // create the virtual table, skip its shadow tables and rows, and rebuild each
+      // index once its rows and triggers are in.
       const virtualTables = schema
         .filter((entry) => entry.type === "table" && /^CREATE VIRTUAL TABLE/i.test(entry.sql))
         .map((entry) => entry.name);
@@ -317,6 +317,9 @@ const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath:
         if (entry.type !== "table") yield* sql.unsafe(entry.sql).unprepared;
       }
       yield* rebuildMessageSearch(sql);
+      if (virtualTables.includes("project_knowledge_fts")) {
+        yield* sql`INSERT INTO project_knowledge_fts(project_knowledge_fts) VALUES ('rebuild')`;
+      }
     }),
   );
   yield* sql`DETACH DATABASE src`;
@@ -389,15 +392,24 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
       WHERE recency_rank <= ${input.threadsPerProject}
     )`;
 
-  const threadTables = yield* sql<{ name: string }>`
+  const tablesWithColumn = (column: string) => sql<{ name: string }>`
     SELECT m.name FROM sqlite_master m, pragma_table_info(m.name) c
-    WHERE m.type = 'table' AND c.name = 'thread_id'
-      AND m.name <> ${PROVIDER_SESSIONS_TABLE}`;
+    WHERE m.type = 'table' AND c.name = ${column}`;
+  const projectTables = yield* tablesWithColumn("project_id");
+  const threadTables = (yield* tablesWithColumn("thread_id")).filter(
+    ({ name }) => name !== PROVIDER_SESSIONS_TABLE,
+  );
+  const searchIndexes = yield* sql<{ name: string }>`
+    SELECT name FROM sqlite_master
+    WHERE type = 'table' AND sql LIKE 'CREATE VIRTUAL TABLE % USING fts5(%'`;
 
   yield* sql.withTransaction(
     Effect.gen(function* () {
-      yield* sql`DELETE FROM projection_projects
-        WHERE project_id NOT IN (SELECT project_id FROM kept_projects)`;
+      for (const { name } of projectTables) {
+        yield* sql.unsafe(
+          `DELETE FROM "${name}" WHERE project_id NOT IN (SELECT project_id FROM kept_projects)`,
+        ).unprepared;
+      }
       yield* sql`DELETE FROM ${sql(PROVIDER_SESSIONS_TABLE)}
         WHERE COALESCE(thread_id, '') NOT IN (SELECT thread_id FROM kept_threads)
           AND provider_session_id NOT IN (
@@ -434,6 +446,10 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
           WHERE json_extract(script.value, '$.runOnSettle') IS NOT NULL)`;
       for (const table of CLEARED_TABLES) {
         yield* sql`DELETE FROM ${sql(table)}`;
+      }
+      // FTS5 deletes only add tombstones; merging drops the pruned rows' terms from the index.
+      for (const { name } of searchIndexes) {
+        yield* sql.unsafe(`INSERT INTO "${name}"("${name}") VALUES ('optimize')`).unprepared;
       }
     }),
   );
