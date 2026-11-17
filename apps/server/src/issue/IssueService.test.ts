@@ -451,6 +451,32 @@ describe("IssueService", () => {
       expect(through.entries.map((entry) => entry.key)).toEqual(["4"]);
     }),
   );
+
+  it.effect("lists every issue when the tracker cannot name the signed-in account", () =>
+    Effect.gen(function* () {
+      const service = yield* makeService({
+        projects: [project({ id: "web", repository: "acme/web" })],
+        trackers: [
+          fakeTracker({
+            // As `az devops invoke --area profile` fails on a dev.azure.com organization.
+            getViewer: () =>
+              Effect.fail(
+                new IssueTrackerError({
+                  tracker: GITHUB,
+                  operation: "getViewer",
+                  reason: "failed",
+                  detail: "Azure DevOps CLI command failed.",
+                }),
+              ),
+            listIssues: () => Effect.succeed({ items: [issue("1")], nextCursor: null }),
+          }),
+        ],
+      });
+      const result = yield* service.list({ state: "open", involvement: "all" });
+      expect(result.errors).toEqual([]);
+      expect(result.entries.map((entry) => entry.key)).toEqual(["1"]);
+    }),
+  );
 });
 
 describe("IssueService with a standalone tracker", () => {
