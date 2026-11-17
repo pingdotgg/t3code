@@ -1,5 +1,5 @@
-import { copyFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 
 import { expect } from "e2e";
 
@@ -37,10 +37,10 @@ test(
       "wallpaper-source.png": wallpaper,
     };
     const project = await t3.project("theme-preview", files);
-    const themesDir = join(T3_HOME, "userdata", "themes");
-    await mkdir(themesDir, { recursive: true });
+    const themesDir = NodePath.join(T3_HOME, "userdata", "themes");
+    await NodeFSP.mkdir(themesDir, { recursive: true });
     for (const name of Object.keys(files)) {
-      await copyFile(join(project, name), join(themesDir, name));
+      await NodeFSP.copyFile(NodePath.join(project, name), NodePath.join(themesDir, name));
     }
     await runPromise(makeState(T3_HOME).cli(["theme", "set", "wallpaper-source"]));
     await t3.open("/settings/appearance");
