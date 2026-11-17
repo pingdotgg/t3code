@@ -33,7 +33,7 @@ describe("fileBreadcrumbs", () => {
       { label: ".claude", path: "~/.claude", kind: "directory" },
       { label: "CLAUDE.md", path: "~/.claude/CLAUDE.md", kind: "file" },
     ]);
-    expect(fileBreadcrumbs("t3code", "~\\.claude\\CLAUDE.md", "C:\\repo")).toEqual([
+    expect(fileBreadcrumbs("t3code", "~\\.claude/CLAUDE.md")).toEqual([
       { label: "~", path: "~/", kind: "directory" },
       { label: ".claude", path: "~/.claude", kind: "directory" },
       { label: "CLAUDE.md", path: "~/.claude/CLAUDE.md", kind: "file" },
@@ -42,15 +42,11 @@ describe("fileBreadcrumbs", () => {
     expect(isListableHostFolder("~/.claude")).toBe(true);
   });
 
-  it("keeps literal backslashes inside POSIX path segments", () => {
+  it("keeps a literal backslash inside a workspace path segment", () => {
     expect(fileBreadcrumbs("t3code", "dir\\one/report.txt")).toEqual([
       { label: "t3code", path: "", kind: "project" },
       { label: "dir\\one", path: "dir\\one", kind: "directory" },
       { label: "report.txt", path: "dir\\one/report.txt", kind: "file" },
-    ]);
-    expect(fileBreadcrumbs("t3code", "~\\.claude\\CLAUDE.md", "/repo")).toEqual([
-      { label: "~", path: "~/", kind: "directory" },
-      { label: ".claude\\CLAUDE.md", path: "~/.claude\\CLAUDE.md", kind: "file" },
     ]);
   });
 

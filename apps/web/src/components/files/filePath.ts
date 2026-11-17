@@ -11,22 +11,13 @@ export interface FileBreadcrumbChild extends ProjectEntry {
   label: string;
 }
 
-export function fileBreadcrumbs(
-  projectName: string,
-  relativePath: string,
-  cwd?: string,
-): FileBreadcrumb[] {
+export function fileBreadcrumbs(projectName: string, relativePath: string): FileBreadcrumb[] {
   const hostPath = isHostPath(relativePath);
   const windowsPath = isWindowsAbsolutePath(relativePath);
-  // Home expansion consumes the prefix; only Windows treats its remaining backslashes as separators.
-  const homePath = relativePath.startsWith("~\\")
-    ? "~/" +
-      (isWindowsAbsolutePath(cwd ?? "")
-        ? relativePath.slice(2).replaceAll("\\", "/")
-        : relativePath.slice(2))
-    : relativePath;
   const separator = windowsPath ? "\\" : "/";
   // `\` is a legal filename character outside Windows paths.
+  // The server reads `~\` as home; the rest keeps the usual relative-path spelling.
+  const homePath = relativePath.startsWith("~\\") ? `~/${relativePath.slice(2)}` : relativePath;
   const parts = homePath.split(windowsPath ? /[\\/]/ : "/").filter(Boolean);
   const root = relativePath.startsWith("\\\\") ? "\\\\" : relativePath.startsWith("/") ? "/" : "";
   return [
@@ -44,9 +35,9 @@ export function fileBreadcrumbs(
   ];
 }
 
-/** Use the destination's crumb spelling so trailing or repeated separators still match. */
-export function breadcrumbPathOf(relativePath: string, cwd?: string): string {
-  return fileBreadcrumbs("", relativePath, cwd).at(-1)?.path ?? relativePath;
+/** Use the crumb's path spelling so trailing or repeated separators still match. */
+export function breadcrumbPathOf(relativePath: string): string {
+  return fileBreadcrumbs("", relativePath).at(-1)?.path ?? relativePath;
 }
 
 /** UNC servers are not listable directories; their shares are. */
@@ -54,23 +45,19 @@ export function isListableHostFolder(path: string): boolean {
   return isHostPath(path) && !/^\\\\[^\\/]+$/.test(path);
 }
 
-function trailCrumbIndex(trail: string, path: string, cwd?: string): number {
-  const crumbPath = breadcrumbPathOf(path, cwd);
-  return fileBreadcrumbs("", trail, cwd).findIndex((crumb) => crumb.path === crumbPath);
+function trailCrumbIndex(trail: string, path: string): number {
+  const crumbPath = breadcrumbPathOf(path);
+  return fileBreadcrumbs("", trail).findIndex((crumb) => crumb.path === crumbPath);
 }
 
 /** Retain descendant crumbs when navigating up; other navigation resets the trail to path. */
-export function retainedBreadcrumbTrail(
-  trail: string | undefined,
-  path: string,
-  cwd?: string,
-): string {
-  return trail !== undefined && trailCrumbIndex(trail, path, cwd) >= 0 ? trail : path;
+export function retainedBreadcrumbTrail(trail: string | undefined, path: string): string {
+  return trail !== undefined && trailCrumbIndex(trail, path) >= 0 ? trail : path;
 }
 
-export function trailChildOf(folder: string, trail: string, cwd?: string): string | null {
-  const index = trailCrumbIndex(trail, folder, cwd);
-  return index < 0 ? null : (fileBreadcrumbs("", trail, cwd)[index + 1]?.label ?? null);
+export function trailChildOf(folder: string, trail: string): string | null {
+  const index = trailCrumbIndex(trail, folder);
+  return index < 0 ? null : (fileBreadcrumbs("", trail)[index + 1]?.label ?? null);
 }
 
 export function joinHostPath(folder: string, relativePath: string): string {
