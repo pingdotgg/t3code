@@ -1,0 +1,43 @@
+name: Windows test build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/opencode-session-import
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-test-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    name: Build Windows x64 installer
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      - name: Setup Vite+ and dependencies
+        uses: ./.github/actions/setup-ci-deps
+
+      - name: Build Windows x64 installer
+        run: vp run dist:desktop:win:x64
+
+      - name: Upload installer
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: t3code-windows-x64
+          path: release/**/*
+          if-no-files-found: error
+          retention-days: 7
