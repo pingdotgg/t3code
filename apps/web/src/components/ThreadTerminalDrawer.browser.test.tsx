@@ -52,6 +52,7 @@ const fixture = vi.hoisted(() => ({
 const fakeSurface: object = new Proxy(
   {
     input: document.createElement("textarea"),
+    subscribeOutput: () => () => {},
     write: (data: string) => fixture.messages.push(data),
     // The real surface re-reports its measured grid.
     resendSize: () => {

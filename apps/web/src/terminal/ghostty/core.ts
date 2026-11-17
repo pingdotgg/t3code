@@ -629,6 +629,11 @@ export class GhosttyTerminalCore {
       : encoded;
   }
 
+  isBracketedPasteMode(): boolean {
+    this.ensureActive();
+    return this.modeEnabled(2004);
+  }
+
   encodePaste(data: string): string {
     this.ensureActive();
     const input = encoder.encode(data);

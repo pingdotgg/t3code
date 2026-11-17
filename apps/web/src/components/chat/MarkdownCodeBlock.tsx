@@ -26,6 +26,7 @@ import {
 } from "./MarkdownCodeBlock.logic";
 import { reportMarkdownActionFailure } from "./markdownActionFailure";
 import { PierreEntryIcon } from "./PierreEntryIcon";
+import { RunShellCommandDialog } from "./RunShellCommandDialog";
 
 const MAX_HIGHLIGHT_CACHE_ENTRIES = 500;
 const MAX_HIGHLIGHT_CACHE_MEMORY_BYTES = 50 * 1024 * 1024;
@@ -166,7 +167,11 @@ export function MarkdownCodeBlock({
   const wrapped = wrapOverride ?? defaultWrapped;
   const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
   const copyLabel = copied ? "Copied" : "Copy code";
+  const [confirmingCommand, setConfirmingCommand] = useState<string | null>(null);
   const command = code.trim();
+  if (confirmingCommand !== null && confirmingCommand !== command) setConfirmingCommand(null);
+  const lineCount = command.split("\n").length;
+  const runLabel = lineCount > 1 ? `Run ${lineCount} lines in terminal` : "Run in terminal";
   const canRun =
     onRunShellCommand !== undefined &&
     !isStreaming &&
@@ -176,7 +181,7 @@ export function MarkdownCodeBlock({
     !command.endsWith("\\") &&
     // Control and invisible format characters (bidi overrides, zero-width) can
     // make the rendered command differ from what the terminal would receive.
-    !/[\p{Cc}\p{Cf}]/u.test(code.slice(0, -1));
+    !/[\p{Cc}\p{Cf}]/u.test(code.slice(0, -1).replace(lineCount > 1 ? /[\n\t]/g : /\n/g, ""));
 
   const handleCopy = () => copyToClipboard(code.endsWith("\n") ? code.slice(0, -1) : code);
 
@@ -247,14 +252,17 @@ export function MarkdownCodeBlock({
                     type="button"
                     variant="ghost-muted"
                     size="icon-xs"
-                    onClick={() => onRunShellCommand(command)}
-                    aria-label="Run in terminal"
+                    onClick={() => {
+                      if (lineCount > 1) setConfirmingCommand(command);
+                      else onRunShellCommand(command);
+                    }}
+                    aria-label={runLabel}
                   />
                 }
               >
                 <PlayIcon className="size-3" />
               </TooltipTrigger>
-              <TooltipPopup side="top">Run in terminal</TooltipPopup>
+              <TooltipPopup side="top">{runLabel}</TooltipPopup>
             </Tooltip>
           ) : null}
           {viewToggle}
@@ -263,6 +271,15 @@ export function MarkdownCodeBlock({
       }
     >
       {children}
+      {canRun && confirmingCommand === command ? (
+        <RunShellCommandDialog
+          command={command}
+          onClose={() => setConfirmingCommand(null)}
+          onRun={onRunShellCommand}
+        >
+          {children}
+        </RunShellCommandDialog>
+      ) : null}
     </MarkdownCodeBlockFrame>
   );
 }
