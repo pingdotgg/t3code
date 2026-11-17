@@ -93,6 +93,7 @@ import { incomingShareImports, useIncomingShare } from "../sharing/IncomingShare
 import { idleShareFlagAtom, idleShareImportPhaseAtom } from "./incomingShareImport";
 import { newTaskFlowKey } from "./new-task-flow-state";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
+import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { ConnectionStatusDot } from "../connection/ConnectionStatusDot";
 import { appAtomRegistry } from "../../state/atom-registry";
 
@@ -734,6 +735,16 @@ export function NewTaskDraftScreen(props: {
       The shared content is no longer in the inbox. You can continue editing this task draft.
     </Text>
   ) : null;
+  const renderSelectedProjectIcon = (size: number) => (
+    <ProjectFavicon
+      environmentId={selectedProject.environmentId}
+      faviconPath={selectedProject.faviconPath}
+      projectIcon={selectedProject.projectIcon}
+      size={size}
+      projectTitle={selectedProject.title}
+      workspaceRoot={selectedProject.workspaceRoot}
+    />
+  );
   const hero = flow.isScratchDraft ? (
     <View className="items-center gap-2 px-6" testID="new-task-hero">
       <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
@@ -745,7 +756,7 @@ export function NewTaskDraftScreen(props: {
           accessibilityLabel={selectedProjectLabel ?? selectedProject.title}
           chevronDirection="right"
           disabled={isComposerInteractionLocked}
-          icon="folder"
+          renderIcon={renderSelectedProjectIcon}
           label={selectedProjectLabel ?? selectedProject.title}
           onPress={chooseProject}
         />
@@ -830,7 +841,9 @@ export function NewTaskDraftScreen(props: {
           accessibilityLabel={`Project: ${contextProjectLabel}`}
           chevronDirection="right"
           disabled={isComposerInteractionLocked}
-          icon="folder"
+          {...(flow.isScratchDraft
+            ? { renderIcon: renderSelectedProjectIcon }
+            : { icon: "folder" as const })}
           label={contextProjectLabel}
           maxWidth="100%"
           onPress={chooseProject}
