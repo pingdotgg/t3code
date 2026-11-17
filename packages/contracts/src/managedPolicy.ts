@@ -81,6 +81,8 @@ export const ManagedPolicyLimits = Schema.Struct({
   /** Can only turn product analytics off, never force it on. */
   telemetry: Schema.optionalKey(Schema.Boolean),
   browserCookieImport: Schema.optionalKey(Schema.Boolean),
+  /** `false` turns SnapShots off in the desktop app. */
+  snapShot: Schema.optionalKey(Schema.Boolean),
   providers: Schema.optionalKey(ManagedProviderLimits),
   updates: Schema.optionalKey(ManagedUpdatesPolicy),
 });

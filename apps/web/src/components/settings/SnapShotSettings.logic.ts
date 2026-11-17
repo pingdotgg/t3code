@@ -6,6 +6,16 @@ import {
   captureSetupMacPermissionsReady,
 } from "./SnapShotSetupDialog.logic";
 
+/** The wizard to reopen after macOS quit the app from a permission prompt, if any. */
+export function resumedCaptureSetup(
+  state: DesktopSnapShotState | null,
+  resume: { readonly wasEnabled: boolean } | null,
+) {
+  return state?.macPermissions && resume && state.policyDenial === undefined
+    ? { initialStep: "access" as const, wasEnabled: resume.wasEnabled }
+    : null;
+}
+
 export function snapShotStatus(state: DesktopSnapShotState | null, enabled: boolean): string {
   if (!state) return "Checking snapshots…";
   if (state.mode === "unavailable") return state.message ?? "Not supported on this platform.";
