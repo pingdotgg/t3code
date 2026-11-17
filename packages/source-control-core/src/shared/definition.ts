@@ -94,6 +94,9 @@ export type RepositorySelectorIdentity = Pick<
   "provider" | "displayName" | "owner" | "name"
 >;
 
+export type IssueScopeIdentity = RepositorySelectorIdentity &
+  Partial<Pick<RepositoryIdentity, "canonicalKey">>;
+
 /** A git remote's host, as `recognizeRemote` reads it. */
 export interface GitRemoteHost {
   /** Trimmed. */
@@ -359,7 +362,7 @@ export interface SourceControlDefinition {
    * The container the project's issues live in, where that is not its repository: Azure DevOps
    * keeps work items per project. Null when the repository cannot be placed.
    */
-  readonly issueScope?: (identity: RepositorySelectorIdentity) => string | null;
+  readonly issueScope?: (identity: IssueScopeIdentity) => string | null;
   /**
    * The key of a remote's lower case `host/path`, `.git` suffix kept, for a host that spells it
    * apart from `normalizeGitRemoteUrl`: over SSH and the web, or with `.git` as part of the name.
@@ -695,7 +698,7 @@ export interface SourceControlDefinitionRegistry {
     identity: RepositorySelectorIdentity | null | undefined,
   ) => string | null;
   /** Where the project's issues live: the host's `issueScope`, else its repository. */
-  readonly issueScope: (identity: RepositorySelectorIdentity | null | undefined) => string | null;
+  readonly issueScope: (identity: IssueScopeIdentity | null | undefined) => string | null;
   readonly changeRequestHost: <const Kind extends string | undefined>(
     identity: ChangeRequestHostIdentity,
     kind: Kind,

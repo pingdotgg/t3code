@@ -170,13 +170,25 @@ export const definition = defineSourceControl({
     return name ? decodeUrlPathSegment(name) : null;
   },
   // Work items belong to the project: `organization/project` out of the remote's
-  // `organization/project/_git/repository`. A shorter path is not placed: `acme/_git/web` is a
-  // project named after its repository on dev.azure.com and a bare project on a legacy host, and
-  // nothing here says which host the remote is on.
+  // `organization/project/_git/repository`. A shorter path depends on the host: `acme/_git/web`
+  // is a project named after its repository on dev.azure.com and a bare project on a legacy host.
   issueScope: (identity) => {
-    const segments = (identity.displayName ?? "").split("/").filter((part) => part !== "");
+    const segments = (identity.displayName ?? "")
+      .split("/")
+      .filter((part) => part !== "")
+      .map(decodeUrlPathSegment);
     const at = segments.indexOf("_git");
-    return at === 2 ? segments.slice(0, at).map(decodeUrlPathSegment).join("/") : null;
+    const repository = segments[at + 1];
+    if (at === 2) return segments.slice(0, at).join("/");
+    if (repository === undefined || (at !== 0 && at !== 1)) return null;
+    const host = identity.canonicalKey?.split("/", 1)[0]?.toLowerCase() ?? "";
+    const legacy = host.endsWith(".visualstudio.com");
+    const [first = ""] = segments;
+    if (at === 0) return legacy ? repository : null;
+    if (host === "dev.azure.com") return `${first}/${repository}`;
+    if (!legacy) return null;
+    // Work item URLs on a legacy host leave the collection out.
+    return first.toLowerCase() === "defaultcollection" ? repository : first;
   },
   repositoryKeyFromRemote,
   canonicalRepositoryKey,
