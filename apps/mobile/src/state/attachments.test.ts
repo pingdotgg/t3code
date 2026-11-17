@@ -6,7 +6,10 @@ import {
 import { runAttachmentUploadCycle } from "@t3tools/client-runtime/state/attachments";
 import * as Cause from "effect/Cause";
 import { AsyncResult, AtomRegistry } from "effect/reactivity";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import { afterEach, beforeEach, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   grantedEnvironments: new Set<string>(),
@@ -76,24 +79,29 @@ describe("attachment mutation grants", () => {
     expect(state.remove).toHaveBeenCalledOnce();
   });
 
-  it("blocks the upload cycle's asynchronous cleanup after grant revocation", async () => {
-    state.grantedEnvironments.add("secondary");
-    const transport = vi.fn();
-    const result = await runAttachmentUploadCycle({
-      registry,
-      ...attachmentEnvironment,
-      environmentId,
-      upload: { name: "image.png", mimeType: "image/png", sizeBytes: 1 },
-      resolveUploadUrl: () => "https://example.test/upload",
-      transport,
-      onMinted: () => {
-        state.grantedEnvironments.delete("secondary");
-        return "cancel";
-      },
-    });
-    expect(result.status).toBe("cancelled");
-    expect(state.create).toHaveBeenCalledOnce();
-    expect(state.remove).not.toHaveBeenCalled();
-    expect(transport).not.toHaveBeenCalled();
-  });
+  it.effect("blocks the upload cycle's cleanup after grant revocation", () =>
+    Effect.gen(function* () {
+      state.grantedEnvironments.add("secondary");
+      const transferStarted = Promise.withResolvers<void>();
+      const cycle = yield* Effect.forkChild(
+        runAttachmentUploadCycle({
+          registry,
+          ...attachmentEnvironment,
+          environmentId,
+          upload: { name: "image.png", mimeType: "image/png", sizeBytes: 1 },
+          resolveUploadUrl: () => "https://example.test/upload",
+          transport: () =>
+            Effect.callback<void>(() => {
+              state.grantedEnvironments.delete("secondary");
+              transferStarted.resolve();
+            }),
+        }),
+      );
+      yield* Effect.promise(() => transferStarted.promise);
+      // Interrupting deletes the fresh mint, which the revoked grant must refuse.
+      yield* Fiber.interrupt(cycle);
+      expect(state.create).toHaveBeenCalledOnce();
+      expect(state.remove).not.toHaveBeenCalled();
+    }),
+  );
 });
