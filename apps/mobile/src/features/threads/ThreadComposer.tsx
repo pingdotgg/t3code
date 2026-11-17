@@ -47,6 +47,7 @@ import {
   composerContextImportsAtom,
   countComposerDraftAttachmentsAfterSelection,
   useComposerDraft,
+  useComposerDraftResetGeneration,
 } from "../../state/use-composer-drafts";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
 import { useProject, useVisibleThreadShells } from "../../state/entities";
@@ -100,6 +101,7 @@ import {
   resolveComposerSendPresentation,
   type ComposerSendPresentation,
 } from "./composerSendPresentation";
+import { useSubmitAfterNativeImages } from "./useSubmitAfterNativeImages";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { ComposerPopoverAnchor } from "./ComposerPopoverAnchor";
 import { ComposerQueuedEditAttachments } from "./ComposerQueuedEdit";
@@ -172,7 +174,7 @@ export interface ThreadComposerProps {
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onPickDraftMedia: () => Promise<void>;
   readonly onPickDraftFiles: () => Promise<void>;
-  readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
+  readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<boolean>;
   readonly onNativePasteText: (paste: ComposerTextPaste) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
@@ -261,9 +263,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const [isFocused, setIsFocused] = useState(false);
   const pendingPastedTextAttachmentCountRef = useRef(0);
   const pendingNativeImagePasteCountRef = useRef(0);
-  type HeldSend = { readonly draftKey: string; readonly followUp?: ActiveTurnComposerAction };
-  const heldSendRef = useRef<HeldSend | null>(null);
-  const [releasedSend, setReleasedSend] = useState<HeldSend | null>(null);
   const [pendingPastedTextAttachmentCount, setPendingPastedTextAttachmentCount] = useState(0);
   const settingsRoutePresentedRef = useRef(false);
   const settingsSheetPresentation = useThreadSettingsSheetPresentation({
@@ -291,6 +290,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
   const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   const composerDraftKey = props.draftKey ?? composerOwnerKey;
+  const readResetGeneration = useComposerDraftResetGeneration(composerDraftKey);
   const {
     text: draftMessage,
     attachments: draftAttachments,
@@ -529,10 +529,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const handleSend = async (followUp?: ActiveTurnComposerAction) => {
     if (isSubmissionLocked || sendBlockedReason !== null) return;
     // Sending now would leave a still-converting pasted image out of the turn, so wait for it.
-    if (pendingNativeImagePasteCountRef.current > 0) {
-      heldSendRef.current = { draftKey: composerDraftKey, followUp };
-      return;
-    }
+    if (nativeImageSubmit.deferSend(followUp)) return;
     if (pendingPastedTextAttachmentCountRef.current > 0) return;
     if (usageLimitsOffered && isUsageLimitsCommand(draftMessage) && draftAttachments.length === 0) {
       if (openUsageLimits()) onChangeDraftMessage("");
@@ -570,13 +567,13 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     });
   };
 
-  const sendReleased = useEffectEvent((held: HeldSend) => {
-    if (held.draftKey === composerDraftKey) void handleSend(held.followUp);
+  const nativeImageSubmit = useSubmitAfterNativeImages({
+    draftKey: composerDraftKey,
+    readResetGeneration,
+    blocked: isSubmissionLocked || sendBlockedReason !== null,
+    onPasteImages: props.onNativePasteImages,
+    onSubmit: (followUp) => void handleSend(followUp),
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sends from the render where the pasted images joined the draft
-  useEffect(() => {
-    if (releasedSend) sendReleased(releasedSend);
-  }, [releasedSend]);
 
   const lockedProviderInstanceId = props.canSwitchProvider
     ? undefined
@@ -863,12 +860,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   onPasteImages={(uris) => {
                     if (isSubmissionLocked) return;
                     pendingNativeImagePasteCountRef.current += 1;
-                    void props.onNativePasteImages(uris).finally(() => {
+                    void nativeImageSubmit.pasteImages(uris).finally(() => {
                       pendingNativeImagePasteCountRef.current -= 1;
-                      if (pendingNativeImagePasteCountRef.current > 0) return;
-                      const held = heldSendRef.current;
-                      heldSendRef.current = null;
-                      if (held) setReleasedSend(held);
                     });
                   }}
                   onPasteText={(paste) => {

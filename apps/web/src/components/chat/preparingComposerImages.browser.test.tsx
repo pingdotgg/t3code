@@ -24,8 +24,9 @@ function Probe(props: {
   draftImagesStore: DraftImagesStore;
   onReady: (queue: QueueSubmit) => void;
   onCommit?: (images: ReadonlyArray<string>) => void;
+  blocked?: boolean;
 }) {
-  const queue = useSubmitAfterPreparingImages(props.targetKey);
+  const queue = useSubmitAfterPreparingImages(props.targetKey, props.blocked);
   const draftImages = useStore(props.draftImagesStore, (state) => state.ids);
   const { onCommit } = props;
   useEffect(() => {
@@ -45,16 +46,18 @@ it("sends after pasted images finish compressing, with the compressed image in t
   const draftImagesStore = createDraftImagesStore();
   let queueSubmit: QueueSubmit | undefined;
   let committedImages: ReadonlyArray<string> = [];
-  await using _screen = await render(
+  const onCommit = (images: ReadonlyArray<string>) => {
+    committedImages = images;
+  };
+  const onReady = (queue: QueueSubmit) => {
+    queueSubmit = queue;
+  };
+  await using screen = await render(
     <Probe
       targetKey={target}
       draftImagesStore={draftImagesStore}
-      onCommit={(images) => {
-        committedImages = images;
-      }}
-      onReady={(queue) => {
-        queueSubmit = queue;
-      }}
+      onCommit={onCommit}
+      onReady={onReady}
     />,
     // A bare hook probe; nothing here navigates.
     { router: false },
@@ -74,6 +77,31 @@ it("sends after pasted images finish compressing, with the compressed image in t
     removePreparingComposerImages(target, new Set(["second"]));
     draftImagesStore.setState({ ids: ["second"] });
   });
+  expect(submit).toHaveBeenCalledOnce();
+  expect(submit.mock.results[0]?.value).toEqual(["second"]);
+
+  submit.mockClear();
+  await act(() => addPreparingComposerImages(target, [preparingImage("uploading")]));
+  expect(queueSubmit?.(submit)).toBe(true);
+  await screen.rerender(
+    <Probe
+      targetKey={target}
+      draftImagesStore={draftImagesStore}
+      onCommit={onCommit}
+      onReady={onReady}
+      blocked
+    />,
+  );
+  await act(() => removePreparingComposerImages(target, new Set(["uploading"])));
+  expect(submit).not.toHaveBeenCalled();
+  await screen.rerender(
+    <Probe
+      targetKey={target}
+      draftImagesStore={draftImagesStore}
+      onCommit={onCommit}
+      onReady={onReady}
+    />,
+  );
   expect(submit).toHaveBeenCalledOnce();
   expect(submit.mock.results[0]?.value).toEqual(["second"]);
 });
@@ -118,5 +146,30 @@ it("drops a waiting send when the composer moves to another draft or discards it
   await act(() => addPreparingComposerImages(target, [preparingImage("discarded")]));
   expect(queueSubmit?.(submit)).toBe(true);
   await act(() => cancelPreparingComposerImages(target));
+  expect(submit).not.toHaveBeenCalled();
+});
+
+it("keeps the draft unsent when image preparation fails", async () => {
+  const target = "submit-after-failed-preparation";
+  using _store = { [Symbol.dispose]: () => cancelPreparingComposerImages(target) };
+  const draftImagesStore = createDraftImagesStore();
+  let queueSubmit: QueueSubmit | undefined;
+  await using _screen = await render(
+    <Probe
+      targetKey={target}
+      draftImagesStore={draftImagesStore}
+      onReady={(queue) => {
+        queueSubmit = queue;
+      }}
+    />,
+    // A bare hook probe; nothing here navigates.
+    { router: false },
+  );
+  const submit = vi.fn();
+  await act(() => addPreparingComposerImages(target, [preparingImage("failed")]));
+  expect(queueSubmit?.(submit)).toBe(true);
+  await act(() =>
+    removePreparingComposerImages(target, new Set(["failed"]), { cancelSubmission: true }),
+  );
   expect(submit).not.toHaveBeenCalled();
 });

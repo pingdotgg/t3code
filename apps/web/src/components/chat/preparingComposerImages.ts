@@ -63,6 +63,7 @@ export function isPreparingComposerImage(targetKey: string, imageId: string): bo
 export function removePreparingComposerImages(
   targetKey: string,
   imageIds: ReadonlySet<string>,
+  options?: { readonly cancelSubmission?: boolean },
 ): ReadonlySet<string> {
   const current =
     usePreparingComposerImageStore.getState().byTargetKey[targetKey] ?? NO_PREPARING_IMAGES;
@@ -70,6 +71,7 @@ export function removePreparingComposerImages(
     current.filter((image) => imageIds.has(image.id)).map((image) => image.id),
   );
   if (removed.size === 0) return removed;
+  if (options?.cancelSubmission) invalidatePendingSubmit(targetKey);
   usePreparingComposerImageStore.setState((state) => {
     const remaining = (state.byTargetKey[targetKey] ?? NO_PREPARING_IMAGES).filter(
       (image) => !removed.has(image.id),
@@ -88,9 +90,13 @@ export function removePreparingComposerImages(
 // Bumped on cancel so a send held for the cancelled images is dropped rather than released.
 const cancelGenerations = new Map<string, number>();
 
+function invalidatePendingSubmit(targetKey: string) {
+  cancelGenerations.set(targetKey, (cancelGenerations.get(targetKey) ?? 0) + 1);
+}
+
 /** Drops every image still preparing for the target, so its compression result is discarded. */
 export function cancelPreparingComposerImages(targetKey: string): void {
-  cancelGenerations.set(targetKey, (cancelGenerations.get(targetKey) ?? 0) + 1);
+  invalidatePendingSubmit(targetKey);
   if (!usePreparingComposerImageStore.getState().byTargetKey[targetKey]) return;
   usePreparingComposerImageStore.setState((state) => {
     const byTargetKey = { ...state.byTargetKey };
@@ -103,7 +109,7 @@ export function cancelPreparingComposerImages(targetKey: string): void {
  * Holds a send made while the target still has images compressing, and runs it once they finish,
  * so the turn includes them. Returns false when nothing is compressing and the caller should send.
  */
-export function useSubmitAfterPreparingImages(targetKey: string) {
+export function useSubmitAfterPreparingImages(targetKey: string, blocked = false) {
   const preparing = usePreparingComposerImages(targetKey);
   const pendingRef = useRef<{
     readonly targetKey: string;
@@ -121,11 +127,11 @@ export function useSubmitAfterPreparingImages(targetKey: string) {
       pendingRef.current = null;
       return;
     }
-    if (preparing.length > 0) return;
+    if (preparing.length > 0 || blocked) return;
     pendingRef.current = null;
     // After the composer's later effects have synced its draft refs to this render.
     queueMicrotask(pending.submit);
-  }, [preparing, targetKey]);
+  }, [preparing, targetKey, blocked]);
   return useStableCallback((submit: () => void) => {
     if (countPreparingComposerImages(targetKey) === 0) return false;
     pendingRef.current = {
