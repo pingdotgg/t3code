@@ -36,7 +36,10 @@ import {
   IssueTrackerError,
   isStandaloneIssueTracker,
   type IssueTrackerApi,
+  type StandaloneIssueTrackerApi,
 } from "@t3tools/source-control-core/server/IssueTracker";
+import type { IssueLink } from "@t3tools/source-control-core/shared/definition";
+import { parseUrl } from "@t3tools/shared/url";
 
 import * as IssueTrackerBindings from "../persistence/IssueTrackerBindings.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -89,6 +92,29 @@ function resolveGitHostBinding(project: OrchestrationProjectShell): ProjectTrack
     host: sourceControlDefinitions.changeRequestHost(identity, kind),
     scope,
   };
+}
+
+/** A standalone tracker's issue key names its scope, as `ENG-1` is in team `ENG`. */
+const STANDALONE_ISSUE_KEY = /^([A-Z][A-Z0-9_]*)-[1-9][0-9]*$/;
+
+/**
+ * The issue a standalone tracker's link names, such as `https://linear.app/acme/issue/ENG-1/slug`:
+ * on the tracker's own host, with a path segment shaped like one of its issue keys.
+ */
+function parseStandaloneIssueUrl(
+  trackers: ReadonlyArray<StandaloneIssueTrackerApi>,
+  value: string,
+): { readonly tracker: IssueTrackerKind; readonly link: IssueLink } | null {
+  const url = parseUrl(value);
+  if (url === null || url.protocol !== "https:") return null;
+  const host = url.host.toLowerCase();
+  const api = trackers.find((tracker) => tracker.standalone.host === host);
+  if (api === undefined) return null;
+  for (const segment of url.pathname.split("/")) {
+    const scope = STANDALONE_ISSUE_KEY.exec(segment)?.[1];
+    if (scope !== undefined) return { tracker: api.kind, link: { host, scope, key: segment } };
+  }
+  return null;
 }
 
 /** Lower case, so a scope keeps its cursor whichever project's spelling of it is read. */
@@ -621,7 +647,11 @@ const make = Effect.gen(function* () {
 
   const resolveUrl: IssueService["Service"]["resolveUrl"] = Effect.fn("IssueService.resolveUrl")(
     function* (url, preferredProjectId) {
-      const parsed = sourceControlDefinitions.parseIssueUrl(url);
+      const gitHost = sourceControlDefinitions.parseIssueUrl(url);
+      const parsed =
+        gitHost === null
+          ? parseStandaloneIssueUrl(registry.standalone, url)
+          : { tracker: IssueTrackerKind.make(gitHost.definition.kind), link: gitHost.link };
       if (parsed === null) {
         return yield* new IssueOperationError({
           operation: "resolveUrl",
@@ -629,19 +659,17 @@ const make = Effect.gen(function* () {
           detail: "This is not a recognised issue URL.",
         });
       }
-      const { definition, link } = parsed;
+      const { tracker, link } = parsed;
       // A link names its server's port; a binding does only when its remote or web URL did.
       const authority = new URL(url).host.toLowerCase();
       const { supported } = yield* listProjects({ host: link.host, authority });
-      const onHost = supported.filter(
-        (project) => project.tracker === IssueTrackerKind.make(definition.kind),
-      );
+      const onHost = supported.filter((project) => project.tracker === tracker);
       const onAuthority = onHost.filter((project) => project.host === authority);
       const onTracker = onAuthority.length > 0 ? onAuthority : onHost;
       const preferFirst = (projects: ReadonlyArray<SupportedProject>) =>
         projects.find((project) => project.project.id === preferredProjectId) ?? projects[0];
       const own = preferFirst(
-        onTracker.filter((project) => project.scope.toLowerCase() === link.scope),
+        onTracker.filter((project) => project.scope.toLowerCase() === link.scope.toLowerCase()),
       );
       const lender = own ?? preferFirst(onTracker);
       if (lender === undefined) {
