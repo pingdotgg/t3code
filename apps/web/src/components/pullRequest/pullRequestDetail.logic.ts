@@ -13,6 +13,7 @@ import {
 } from "@t3tools/client-runtime/source-control-clients";
 import * as Schema from "effect/Schema";
 import {
+  COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
   GitCommandError,
   PullRequestDetail,
   PullRequestOperationError,
@@ -950,11 +951,27 @@ function terminologyForUrl(url: string): ChangeRequestTerminology {
     .changeRequest;
 }
 
+function reviewThreadText(thread: PullRequestReviewThread): string {
+  return thread.comments
+    .flatMap((comment) => {
+      const body = readableBody(comment.body);
+      return body === null ? [] : [`${comment.author?.login ?? "ghost"}: ${body}`];
+    })
+    .join("\n")
+    .trim();
+}
+
+/** A thread's line, marked when it is numbered as in the base branch, the diff's left side. */
+function reviewThreadLine(thread: PullRequestReviewThread): string | null {
+  return thread.line === null ? null : `${thread.line}${thread.side === "left" ? " (before)" : ""}`;
+}
+
 function reviewThreadContext(
   thread: PullRequestReviewThread,
   pullRequestNumber: number,
 ): ReviewCommentContext {
   const lineIndex = Math.max(0, (thread.line ?? 1) - 1);
+  const line = reviewThreadLine(thread);
   return {
     id: `pull-request-finding:${thread.id}`,
     sectionId: `pull-request:${pullRequestNumber}`,
@@ -963,17 +980,9 @@ function reviewThreadContext(
     filePath: thread.path,
     startIndex: lineIndex,
     endIndex: lineIndex,
-    rangeLabel:
-      thread.line === null ? "file" : `L${thread.line}${thread.side === "left" ? " (before)" : ""}`,
+    rangeLabel: line === null ? "file" : `L${line}`,
     // Strip bot bookkeeping comments before bounding finding text.
-    text: bounded(
-      thread.comments
-        .flatMap((comment) => {
-          const body = readableBody(comment.body);
-          return body === null ? [] : [`${comment.author?.login ?? "ghost"}: ${body}`];
-        })
-        .join("\n"),
-    ),
+    text: bounded(reviewThreadText(thread)),
     diff: "",
     fenceLanguage: inferReviewCommentFenceLanguage(thread.path),
   };
@@ -1296,15 +1305,25 @@ export type PullRequestChatSubject = Extract<PullRequestFinding, { kind: "thread
  * URL because host ids are only unique within a repository. Null when there are no words in it.
  */
 export function buildPullRequestCommentContext(
-  pullRequest: { readonly number: number; readonly url: string },
+  pullRequest: {
+    readonly number: number;
+    readonly url: string;
+    readonly reviewThreads: ReadonlyArray<PullRequestReviewThread>;
+    readonly reviewThreadsTruncated?: boolean | undefined;
+  },
   subject: PullRequestChatSubject,
 ): ReviewCommentContext | null {
   const pullRequestNumber = pullRequest.number;
+  // Unlike a batch fix, one remark brought in to talk about travels whole.
   if (subject.kind === "thread") {
-    const context = reviewThreadContext(subject.thread, pullRequestNumber);
-    return context.text === ""
+    const text = reviewThreadText(subject.thread);
+    return text === ""
       ? null
-      : { ...context, id: `pr-comment:${pullRequest.url}:thread:${subject.thread.id}` };
+      : {
+          ...reviewThreadContext(subject.thread, pullRequestNumber),
+          id: `pr-comment:${pullRequest.url}:thread:${subject.thread.id}`,
+          text,
+        };
   }
   const comment = subject.comment;
   const body = readableBody(comment.body);
@@ -1320,12 +1339,72 @@ export function buildPullRequestCommentContext(
     startIndex: 0,
     endIndex: 0,
     rangeLabel: "comment",
-    text: bounded(`${author}: ${body}`),
+    text: remarkText(`${author}: ${body}`.trim(), reviewLineComments(comment, pullRequest)),
     diff: "",
     ...(comment.path === null
       ? {}
       : { fenceLanguage: inferReviewCommentFenceLanguage(comment.path) }),
   };
+}
+
+/**
+ * The record keeps only the first COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS, so a long summary gives
+ * up its tail, never more than half, before the review link and line comments that follow it.
+ */
+function remarkText(remark: string, review: ReadonlyArray<string>): string {
+  if (review.length === 0) return remark;
+  const after = review.join("\n\n");
+  const room = Math.max(
+    COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS / 2,
+    COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS - after.length - 200,
+  );
+  if (remark.length <= room) return `${remark}\n\n${after}`;
+  let end = room;
+  const last = remark.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  const omitted = remark.length - end;
+  return `${remark.slice(0, end)}\n… ${omitted} more characters of the review summary are omitted; read it at the review link.\n\n${after}`;
+}
+
+/** A GitHub review summary's link and the line comments it posted, which live in other threads. */
+function reviewLineComments(
+  comment: PullRequestComment,
+  pullRequest: {
+    readonly reviewThreads: ReadonlyArray<PullRequestReviewThread>;
+    readonly reviewThreadsTruncated?: boolean | undefined;
+  },
+): ReadonlyArray<string> {
+  const reviewThreads = pullRequest.reviewThreads;
+  const anchor = comment.kind === "review" ? parsePullRequestAnchor(comment.url) : null;
+  // Only GitHub links line comments to their review, so no other host can say it posted none.
+  if (anchor?.kind !== "timeline" || !/^pullrequestreview-\d+$/i.test(anchor.anchor)) return [];
+  const posted = reviewThreads.flatMap((thread) =>
+    thread.comments.flatMap((lineComment) => {
+      const body = readableBody(lineComment.body);
+      if (body === null || !pullRequestAnchorMatchesUrl(anchor.anchor, lineComment.reviewUrl)) {
+        return [];
+      }
+      const line = reviewThreadLine(thread);
+      const at = line === null ? "" : ` line ${line}`;
+      return [`${lineComment.author?.login ?? "ghost"} on \`${thread.path}\`${at}: ${body}`];
+    }),
+  );
+  // Threads or their replies can be partly loaded; then an empty match proves nothing.
+  const complete =
+    pullRequest.reviewThreadsTruncated === false &&
+    reviewThreads.every((thread) => thread.nextCommentsCursor === undefined);
+  const more = complete ? [] : ["More may exist; see the review link."];
+  return [
+    `Review: ${comment.url}`,
+    ...(posted.length === 0
+      ? [
+          complete
+            ? "This review posted no line comments."
+            : "No line comments from this review were loaded.",
+          ...more,
+        ]
+      : [`Line comments in this review:\n\n${posted.join("\n\n")}`, ...more]),
+  ];
 }
 
 const ANSWER_INSTRUCTIONS = [

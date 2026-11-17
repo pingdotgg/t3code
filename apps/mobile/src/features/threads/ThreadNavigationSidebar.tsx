@@ -586,7 +586,9 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             : props.searchQuery.trim().length > 0
               ? threadSearch.isPending
                 ? gt("Searching thread messages…")
-                : gt("No matching threads")
+                : threadSearch.failed
+                  ? gt("Couldn't search thread messages")
+                  : gt("No matching threads")
               : selectedProjectScope !== null
                 ? gt("No threads in {project}", { project: selectedProjectScope.title })
                 : gt("No threads yet")}

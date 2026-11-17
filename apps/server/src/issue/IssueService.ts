@@ -9,6 +9,7 @@ import {
   IssueOperationError,
   IssueTrackerKind,
   IssueUnavailableError,
+  SourceControlProviderKind,
   type IssueCandidates,
   type IssueCommentInput,
   type IssueCommentsPage,
@@ -640,10 +641,30 @@ const make = Effect.gen(function* () {
     return { projectId, tracker: own.tracker, host: own.host, scope: own.scope };
   });
 
+  /** A host whose hostname does not name it, such as GitHub Enterprise Server, is vouched for by a project on it. */
+  const parseOnProjectHost = (value: string) => {
+    const url = parseUrl(value);
+    if (url === null) return Effect.succeed(null);
+    return listProjects({ host: url.hostname, authority: url.host.toLowerCase() }).pipe(
+      Effect.map(({ supported }) => {
+        for (const project of supported) {
+          const parsed = sourceControlDefinitions.parseIssueUrl(
+            value,
+            SourceControlProviderKind.make(project.tracker),
+          );
+          if (parsed !== null) return parsed;
+        }
+        return null;
+      }),
+    );
+  };
+
   const resolveUrl: IssueService["Service"]["resolveUrl"] = Effect.fn("IssueService.resolveUrl")(
     function* (url, preferredProjectId) {
-      const gitHost = sourceControlDefinitions.parseIssueUrl(url);
-      const standalone = gitHost === null ? findStandaloneIssueUrl(registry.standalone, url) : null;
+      const recognized = sourceControlDefinitions.parseIssueUrl(url);
+      const standalone =
+        recognized === null ? findStandaloneIssueUrl(registry.standalone, url) : null;
+      const gitHost = recognized ?? (standalone === null ? yield* parseOnProjectHost(url) : null);
       const parsed =
         gitHost === null
           ? standalone

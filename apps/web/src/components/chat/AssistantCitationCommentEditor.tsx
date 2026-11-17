@@ -120,26 +120,29 @@ export function AssistantCitationCommentEditor({
       ) : null}
       <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
         <TextFieldSpeechControls speech={speech} />
-        <Button
-          variant="outline"
-          size="xs"
-          // Escape cancels; keep Tab from the comment on Save so Enter cannot discard a new citation.
-          tabIndex={-1}
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={onCancel}
-        >
-          <T>Cancel</T>
-        </Button>
-        <Button
-          size="xs"
-          disabled={speech.preparing || (commentTooLong && !speech.blocksSubmission)}
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={submit}
-        >
-          {commentTooLong
-            ? gt("Shorten comment")
-            : gt("Save", { $context: "verb, saves the comment" })}
-        </Button>
+        {/* Wrap as a pair so the recording pill never pushes Save alone onto a new row under Cancel. */}
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="xs"
+            // Escape cancels; keep Tab from the comment on Save so Enter cannot discard a new citation.
+            tabIndex={-1}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={onCancel}
+          >
+            <T>Cancel</T>
+          </Button>
+          <Button
+            size="xs"
+            disabled={speech.preparing || (commentTooLong && !speech.blocksSubmission)}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={submit}
+          >
+            {commentTooLong
+              ? gt("Shorten comment")
+              : gt("Save", { $context: "verb, saves the comment" })}
+          </Button>
+        </div>
       </div>
     </div>
   );

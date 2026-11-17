@@ -147,6 +147,7 @@ export function resolveQuickAction(
   const hasChanges = gitStatus.hasWorkingTreeChanges;
   const hasOpenPr = gitStatus.pr?.state === "open";
   const isAhead = gitStatus.aheadCount > 0;
+  const hasDefaultBranchDelta = (gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) > 0;
   const isBehind = gitStatus.behindCount > 0;
   const isDiverged = isAhead && isBehind;
   const terminology = changeRequestTerminologyFor(gitStatus);
@@ -287,6 +288,15 @@ export function resolveQuickAction(
       label: resolve(msg("View {shortLabel}", { shortLabel: terminology.shortLabel })),
       disabled: false,
       kind: "open_pr",
+    };
+  }
+
+  if (hasDefaultBranchDelta && !isDefaultBranch) {
+    return {
+      label: resolve(msg("Create {shortLabel}", { shortLabel: terminology.shortLabel })),
+      disabled: false,
+      kind: "run_action",
+      action: "create_pr",
     };
   }
 

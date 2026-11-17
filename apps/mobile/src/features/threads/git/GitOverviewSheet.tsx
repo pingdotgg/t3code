@@ -271,8 +271,11 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       className="flex-1 bg-screen"
       contentInsetAdjustmentBehavior="automatic"
       showsVerticalScrollIndicator={false}
-      contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
-      contentContainerStyle={{ ...groupedListInsets(isInspector), paddingTop: 8 }}
+      contentContainerStyle={{
+        ...groupedListInsets(isInspector),
+        paddingTop: 8,
+        paddingBottom: Math.max(insets.bottom, 18) + 18,
+      }}
       refreshControl={
         <RefreshControl refreshing={isRefreshing} onRefresh={() => void handleRefresh()} />
       }

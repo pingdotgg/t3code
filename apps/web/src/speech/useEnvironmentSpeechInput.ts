@@ -14,6 +14,7 @@ import type {
   EnvironmentSpeechModel,
   EnvironmentSpeechStatus,
   ProjectId,
+  SpeechBenchmarkTier,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { chooseSetupSpeechModel } from "@t3tools/shared/speech";
@@ -259,7 +260,11 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         .then((result) => {
           if (disposed) return;
           const model = result.models.find((candidate) => candidate.id === setupModelId) ?? null;
-          if (model) setSetup((current) => ({ ...current, model }));
+          if (model)
+            setSetup((current) => ({
+              ...current,
+              model: { ...model, recommended: current.model?.recommended ?? false },
+            }));
         })
         .catch(() => undefined)
         .finally(() => {
@@ -353,20 +358,26 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       session.adopt(createTarget());
   }, [session, input.ownerKey, createTarget]);
   const loadSetupCatalog = useStableCallback(
-    async (connection: PreparedConnection, selectedModelId: string, request: number) => {
+    async (
+      connection: PreparedConnection,
+      selectedModelId: string,
+      benchmarkTier: SpeechBenchmarkTier,
+      request: number,
+    ) => {
       setSetup({ ...INITIAL_SETUP, open: true });
-      const catalog = await runEnvironmentSpeech(getEnvironmentSpeechModels(connection)).catch(
-        () => null,
-      );
+      const catalog = await runEnvironmentSpeech(
+        getEnvironmentSpeechModels(connection, true),
+      ).catch(() => null);
       if (request !== startRequestRef.current) return;
       const choice = chooseSetupSpeechModel(catalog?.models ?? [], {
         selectedModelId,
         intent: latestRef.current.clientSettings.speechLanguage,
         preferred: preferredSpeechLanguages(),
+        benchmarkTier,
       });
       setSetup((current) => ({
         ...current,
-        model: choice?.model ?? null,
+        model: choice ? { ...choice.model, recommended: choice.recommended } : null,
         language: choice?.language ?? null,
         catalogFailed: catalog === null,
         error: choice
@@ -420,7 +431,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     setStatus({ prepared, value: latestStatus });
     setQueuedStart(null);
     if (latestStatus.supported && latestStatus.state === "missing-model") {
-      return loadSetupCatalog(prepared, latestStatus.modelId, request);
+      return loadSetupCatalog(prepared, latestStatus.modelId, latestStatus.benchmarkTier, request);
     }
     if (!latestStatus.supported) {
       toastManager.add({
@@ -519,7 +530,13 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       setOpen: (open: boolean) => setSetup((current) => ({ ...current, open })),
       retryCatalog:
         setup.open && setup.catalogFailed && prepared && currentStatus?.supported
-          ? () => loadSetupCatalog(prepared, currentStatus.modelId, ++startRequestRef.current)
+          ? () =>
+              loadSetupCatalog(
+                prepared,
+                currentStatus.modelId,
+                currentStatus.benchmarkTier,
+                ++startRequestRef.current,
+              )
           : null,
       download: downloadSetupModel,
       cancelDownload: cancelSetupDownload,
