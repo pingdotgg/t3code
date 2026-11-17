@@ -181,6 +181,7 @@ export default defineConfig({
       ".repos/**",
       "infra/task-cache/vendor/**",
       // Vendored skills stay byte-identical to upstream so syncs diff cleanly.
+      "workflow/skills/anthropic/**",
       "workflow/skills/mattpocock/**",
       "workflow/skills/pstack/**",
       "workflow/skills/tstack/**",

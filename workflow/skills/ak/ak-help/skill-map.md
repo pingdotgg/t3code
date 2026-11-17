@@ -6,7 +6,7 @@ An arrow means the first skill's files name the second, so it may hand work to i
 - **Entry points** (call others, nothing calls them): ak-help, blast-radius, diagnosing-bugs, figure-it-out, full-stop, grill-me, implement, ketchup-video (user-only), recall, reflect, retro, second-opinion, swarm, takeover, technical-writing
 - **Hubs** (call others and are called): architect, arena, automate-me, babysit-pr, bcheck, benchmark-checklist, codebase-design, comment-sicko, create-verification-skill, diff-review, domain-modeling, explain-work, file-pr, full-send, grill-with-docs, grilling, how, implement-spec, improve-codebase-architecture, interrogate, ketchup, linus (user-only), maestro, maestro-worker, maintain-verification-skill, modernize, no-comments, plan-to-issues (user-only), principle-attack-the-premise (user-only), principle-build-the-lever (user-only), principle-explain-the-number (user-only), principle-fix-root-causes, principle-minimize-reader-load (user-only), principle-prove-it-works, principle-type-system-discipline (user-only), replan, setup-matt-pocock-skills, show-me-your-work, tdd, to-spec, to-tickets, triage, triage-issues, typescript-best-practices, validate-change, verify, wayfinder, why
 - **Leaves** (called, call nothing): bro, caveman (user-only), council, in-your-own-words, leaving-pr-comments, principle-boundary-discipline (user-only), principle-encode-lessons-in-structure (user-only), principle-experience-first (user-only), principle-foundational-thinking (user-only), principle-guard-the-context-window (user-only), principle-laziness-protocol, principle-make-operations-idempotent (user-only), principle-model-the-domain (user-only), principle-outcome-oriented-execution (user-only), principle-redesign-from-first-principles (user-only), principle-separate-before-serializing-shared-state (user-only), principle-sequence-verifiable-units (user-only), principle-subtract-before-you-add (user-only), principle-test-behavior-not-implementation, prototype, research, sol-loop, statechart (user-only), unslop, writing-for-agents
-- **Standalone** (no links either way): correct (user-only), handoff, sharpen, t3code-update, teach, to-questionnaire, wizard
+- **Standalone** (no links either way): correct (user-only), frontend-design, handoff, sharpen, t3code-update, teach, to-questionnaire, wizard
 
 ```mermaid
 flowchart LR
@@ -24,6 +24,8 @@ flowchart LR
     triage["triage"]
     validate_change["validate-change"]
     verify["verify"]
+  end
+  subgraph anthropic
   end
   subgraph mattpocock
     codebase_design["codebase-design"]
