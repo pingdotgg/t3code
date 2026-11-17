@@ -169,6 +169,18 @@ fn reads_html_documents_only_and_refuses_internal_links_and_hard_links() {
 }
 
 #[test]
+fn previews_report_missing_images_instead_of_refusing_the_page() {
+    let (html, missing) = conn_files::html::prepare_preview(
+        "<img src='/not-a-real-preview-image.png'><p>Keep page</p>",
+    )
+    .unwrap();
+    assert!(html.contains("Keep page"));
+    assert!(html.contains("/not-a-real-preview-image.png"));
+    assert_eq!(missing, vec!["/not-a-real-preview-image.png"]);
+    assert!(conn_files::html::prepare_preview("<style>body{height:100vh}</style>").is_err());
+}
+
+#[test]
 fn publication_bounds_titles_for_direct_callers() {
     let tmp = Scratch::new();
     let files = Files::open(&tmp.0).unwrap();

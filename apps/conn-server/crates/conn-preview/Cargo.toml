@@ -1,0 +1,36 @@
+[package]
+name = "conn-preview"
+description = "Bounded headless Chrome transport for agent previews."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+conn-support = { workspace = true, features = ["tls"] }
+conn-files.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+url = "2"
+thiserror.workspace = true
+tokio = { workspace = true, features = ["process", "fs"] }
+nix.workspace = true
+command-fds.workspace = true
+
+sha2.workspace = true
+# zip does not select a flate2 backend; standalone builds need the pure-Rust one.
+flate2.workspace = true
+zip.workspace = true
+hyper = { version = "1", default-features = false, features = ["client", "http1"] }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
+http-body-util = "0.1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustix = { workspace = true, features = ["process", "net"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

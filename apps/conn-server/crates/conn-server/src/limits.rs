@@ -47,6 +47,7 @@ struct RawLimit {
     int: bool,
     minimum: Option<f64>,
     maximum: Option<f64>,
+    max_area: Option<u64>,
 }
 
 struct Limit {
@@ -65,6 +66,7 @@ struct Limit {
     int: bool,
     minimum: Option<f64>,
     maximum: Option<f64>,
+    max_area: Option<u64>,
 }
 
 impl Limit {
@@ -106,6 +108,7 @@ impl Limit {
             int: raw.int,
             minimum: raw.minimum,
             maximum: raw.maximum,
+            max_area: raw.max_area,
         }
     }
 
@@ -142,6 +145,16 @@ impl Limit {
                         if found.is_some() {
                             return found;
                         }
+                    }
+                }
+                if let Some(max) = self.max_area {
+                    let area = map
+                        .get("width")
+                        .and_then(Value::as_u64)
+                        .zip(map.get("height").and_then(Value::as_u64))
+                        .map(|(w, h)| w.saturating_mul(h));
+                    if area.is_some_and(|area| area > max) {
+                        return Some(at(format!("a viewport area at most {max} pixels"), path));
                     }
                 }
                 if let Some(keys) = &self.keys {

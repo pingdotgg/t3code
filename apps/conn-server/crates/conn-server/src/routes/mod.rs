@@ -9,6 +9,7 @@ use crate::AppState;
 mod assets;
 mod hooks;
 pub mod mcp;
+mod preview;
 mod pull_requests;
 
 pub fn router() -> Router<AppState> {
@@ -16,5 +17,6 @@ pub fn router() -> Router<AppState> {
         .merge(mcp::router())
         .merge(assets::router())
         .merge(hooks::router())
+        .merge(preview::router())
         .merge(pull_requests::router())
 }

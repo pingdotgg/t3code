@@ -3,6 +3,7 @@
 //
 //   conn-server-<version>-linux-x64.tar.gz
 //   └── conn-server-<version>-linux-x64/
+//       ├── chrome.json            the generated Linux Chrome pin
 //       ├── conn-server            the x86_64-unknown-linux-musl binary (static)
 //       └── sdk-host/              the SDK host: index.mjs, drivers/, package.json, the lockfile
 //           └── node_modules/      production dependencies only (the Claude Agent SDK)
@@ -98,6 +99,7 @@ const sdkHost = NodePath.join(top, "sdk-host");
 NodeFS.mkdirSync(sdkHost, { recursive: true });
 NodeFS.copyFileSync(binary, NodePath.join(top, "conn-server"));
 NodeFS.chmodSync(NodePath.join(top, "conn-server"), 0o755);
+NodeFS.copyFileSync(NodePath.join(repo, "crates/conn-preview/chrome.json"), NodePath.join(top, "chrome.json"));
 for (const file of SDK_HOST_FILES) {
   NodeFS.cpSync(NodePath.join(repo, "helpers/sdk-host", file), NodePath.join(sdkHost, file), { recursive: true });
 }

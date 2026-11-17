@@ -164,6 +164,7 @@ pub fn capabilities(server_restart: bool) -> ExecutionEnvironmentCapabilities {
         conn_contract::from_json(json!({})).expect("every capability is optional");
     capabilities.server_restart = server_restart.then_some(true);
     capabilities.repository_identity = Some(false);
+    capabilities.server_browser = Some(true);
     // Uploads are claimed by the message that sends them (`host.rs`).
     capabilities.attachment_uploads = Some(true);
     capabilities.file_attachments = Some(ExecutionEnvironmentCapabilitiesFileAttachments {
@@ -258,6 +259,7 @@ mod tests {
                 "linkedThreadRefreshes",
                 "pullRequestChecks",
                 "pullRequests",
+                "serverBrowser",
                 "shellOlderSettled",
                 "shellThreadFamilies",
                 "threadForceStop"

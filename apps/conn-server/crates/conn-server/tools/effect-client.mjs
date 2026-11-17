@@ -164,6 +164,7 @@ const program = Effect.gen(function* () {
   if (Exit.isSuccess(activity)) decodedTags.add("server.reportClientActivity");
 
   if (fixture) {
+    yield* decodeCall(client, "subscribePreviewEvents", {});
     yield* decodeCall(client, "panels.requests", {deviceName: "Fixture Mac"});
     const events = yield* take(client.subscribeServerConfig({}), 20);
     check("windowed stream: 20 chunks, window 8", events.length === 20, `${events.length} events`);
@@ -311,6 +312,15 @@ const decodeEach = (client) =>
       title: "Repo",
       workspaceRoot: repo,
     });
+    yield* call("preview.list", {threadId:none});
+    yield* call("preview.close", {threadId:none});
+    yield* call("preview.resize", {threadId:none,tabId:"missing",viewport:{_tag:"fill"}});
+    yield* call("preview.adjust", {threadId:none,tabId:"missing",colorScheme:"dark"});
+    yield* call("preview.reportProfiles", {profiles:[],defaultProfileId:"default",recordingFrameRate:60});
+    yield* call("preview.clearProfile", {profileId:"never-opened"});
+    yield* call("preview.reportStatus", {threadId:none,tabId:"missing",navStatus:{_tag:"Idle"},canGoBack:false,canGoForward:false});
+    yield* call("preview.open", {threadId:none,runtime:"server",url:"file:///refused"});
+    yield* call("subscribePreviewEvents", {});
     yield* call("git.resolvePullRequest", { cwd: repo, reference: "42" });
     yield* call("git.preparePullRequestThread", { cwd: repo, reference: "42", mode: "worktree" });
     git(repo, "config", "user.name", "test");

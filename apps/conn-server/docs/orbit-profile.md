@@ -1000,17 +1000,17 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `peerLinks.link` | no | X | N | L | threads on other machines (mini reaches every machine) |
 | `peerLinks.list` | no | X | N | L | threads on other machines (mini reaches every machine) |
 | `peerLinks.unlink` | no | X | N | L | threads on other machines (mini reaches every machine) |
-| `preview.adjust` | no | X | N | L | agent browser and preview tabs; container previews go through the app Route |
-| `preview.clearProfile` | no | X | N | L | agent browser and preview tabs; container previews go through the app Route |
-| `preview.close` | no | X | N | L | agent browser and preview tabs; container previews go through the app Route |
+| `preview.adjust` | yes | X | N | L | agent browser and preview tabs; container previews go through the app Route |
+| `preview.clearProfile` | yes | X | N | L | agent browser and preview tabs; container previews go through the app Route |
+| `preview.close` | yes | X | N | L | agent browser and preview tabs; container previews go through the app Route |
 | `preview.desktopRegister` | no | X | X | M | Electron tab relay; not needed by a native client |
 | `preview.desktopRequests` | no | X | X | M | Electron tab relay; not needed by a native client |
 | `preview.desktopRespond` | no | X | X | M | Electron tab relay; not needed by a native client |
-| `preview.list` | no | X | N | L | agent browser and preview tabs; container previews go through the app Route |
-| `preview.open` | no | X | N | L | agent browser and preview tabs; container previews go through the app Route |
+| `preview.list` | yes | X | N | L | agent browser and preview tabs; container previews go through the app Route |
+| `preview.open` | yes | X | N | L | agent browser and preview tabs; container previews go through the app Route |
 | `preview.reportProfiles` | yes | X | U |  |  |
-| `preview.reportStatus` | no | X | N | L | agent browser and preview tabs; container previews go through the app Route |
-| `preview.resize` | no | X | N | L | agent browser and preview tabs; container previews go through the app Route |
+| `preview.reportStatus` | yes | X | N | L | agent browser and preview tabs; container previews go through the app Route |
+| `preview.resize` | yes | X | N | L | agent browser and preview tabs; container previews go through the app Route |
 | `preview.stopLocalServer` | no | X | N | L | agent browser and preview tabs; container previews go through the app Route |
 | `projectClone.cancel` | no | X | U | M | clone from the client; Orbit clones containers |
 | `projectClone.retry` | no | X | U | M | clone from the client; Orbit clones containers |
@@ -1143,7 +1143,7 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `subscribeAuthAccess` | yes | N | N |  | connection streams |
 | `subscribeDeviceState` | yes | U | N |  | device panel opens setup when this fails |
 | `subscribeDiscoveredLocalServers` | no | X | U | M | port scan for previews |
-| `subscribePreviewEvents` | no | X | N | L | preview tabs |
+| `subscribePreviewEvents` | yes | X | N | L | preview tabs |
 | `subscribeProjectClones` | yes | X | U |  |  |
 | `subscribeResourceTelemetry` | no | X | U | M |  |
 | `subscribeServerConfig` | yes | N | N |  | connection streams |
@@ -1192,7 +1192,7 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `device_open` | no | X | N | L | simulators |
 | `device_screenshot` | no | X | N | L | simulators |
 | `fill_credential` | no | X | U | M | test logins |
-| `html_preview` | no | U | N | L | charts; needs headless Chromium on the server |
+| `html_preview` | yes | U | N | L | charts; needs headless Chromium on the server |
 | `html_render` | yes | U | N | L | charts; needs headless Chromium on the server |
 | `link_pull_request` | yes | U | N |  | PR links on a thread; Swamp could link the PR it opens |
 | `link_pull_requests` | yes | U | N |  | PR links on a thread; Swamp could link the PR it opens |
@@ -1202,19 +1202,19 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `mcp_connect` | yes | U | U | M | MCP Apps |
 | `orchestrator_capabilities` | yes | N | N |  | core orchestration |
 | `panel_open` | yes | U | U | S |  |
-| `preview_act` | no | U | N | L | agent browser; needs headless Chromium on the server |
-| `preview_cdp_endpoint` | no | U | N | L | agent browser; needs headless Chromium on the server |
-| `preview_dialog` | no | U | N | L | agent browser; needs headless Chromium on the server |
-| `preview_evaluate` | no | U | N | L | agent browser; needs headless Chromium on the server |
-| `preview_navigate` | no | U | N | L | agent browser; needs headless Chromium on the server |
-| `preview_open` | no | U | N | L | agent browser; needs headless Chromium on the server |
-| `preview_recording_start` | no | U | N | L | agent browser; needs headless Chromium on the server |
-| `preview_recording_stop` | no | U | N | L | agent browser; needs headless Chromium on the server |
-| `preview_resize` | no | U | N | L | agent browser; needs headless Chromium on the server |
-| `preview_set_appearance` | no | U | N | L | agent browser; needs headless Chromium on the server |
-| `preview_snapshot` | no | U | N | L | agent browser; needs headless Chromium on the server |
-| `preview_status` | no | U | N | L | agent browser; needs headless Chromium on the server |
-| `preview_wait_for` | no | U | N | L | agent browser; needs headless Chromium on the server |
+| `preview_act` | yes | U | N | L | agent browser; needs headless Chromium on the server |
+| `preview_cdp_endpoint` | yes | U | N | L | agent browser; needs headless Chromium on the server |
+| `preview_dialog` | yes | U | N | L | agent browser; needs headless Chromium on the server |
+| `preview_evaluate` | yes | U | N | L | agent browser; needs headless Chromium on the server |
+| `preview_navigate` | yes | U | N | L | agent browser; needs headless Chromium on the server |
+| `preview_open` | yes | U | N | L | agent browser; needs headless Chromium on the server |
+| `preview_recording_start` | yes | U | N | L | agent browser; needs headless Chromium on the server |
+| `preview_recording_stop` | yes | U | N | L | agent browser; needs headless Chromium on the server |
+| `preview_resize` | yes | U | N | L | agent browser; needs headless Chromium on the server |
+| `preview_set_appearance` | yes | U | N | L | agent browser; needs headless Chromium on the server |
+| `preview_snapshot` | yes | U | N | L | agent browser; needs headless Chromium on the server |
+| `preview_status` | yes | U | N | L | agent browser; needs headless Chromium on the server |
+| `preview_wait_for` | yes | U | N | L | agent browser; needs headless Chromium on the server |
 | `read_pull_request_guide` | no | O | N | M | PR babysitting; Orbit's review-and-merge does it in a container |
 | `request_credentials` | yes | X | U | M | test logins |
 | `request_secret` | yes | U | N | S | agent asks for a secret |
@@ -1231,8 +1231,8 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `t3_environment_read` | yes | N | N |  | core orchestration |
 | `t3_environment_unlink` | no | X | N | L | linked machines |
 | `t3_pending_request` | yes | N | N |  | core orchestration |
-| `t3_preview_close` | no | U | N | L | agent browser; needs headless Chromium on the server |
-| `t3_preview_list` | no | U | N | L | agent browser; needs headless Chromium on the server |
+| `t3_preview_close` | yes | U | N | L | agent browser; needs headless Chromium on the server |
+| `t3_preview_list` | yes | U | N | L | agent browser; needs headless Chromium on the server |
 | `t3_project_clone` | no | O | U | M | Orbit owns projects in a container |
 | `t3_project_create` | no | O | U | M | Orbit owns projects in a container |
 | `t3_project_delete` | no | O | U | M | Orbit owns projects in a container |

@@ -43,6 +43,22 @@ save_test_login
 request_credentials
 database_query
 panel_open
+html_preview
+preview_open
+preview_status
+preview_navigate
+preview_resize
+preview_set_appearance
+preview_evaluate
+preview_dialog
+preview_cdp_endpoint
+t3_preview_close
+t3_preview_list
+preview_snapshot
+preview_act
+preview_wait_for
+preview_recording_start
+preview_recording_stop
 mcp_call
 mcp_connect
 

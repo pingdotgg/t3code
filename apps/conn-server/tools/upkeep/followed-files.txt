@@ -183,6 +183,22 @@ apps/server/src/mcp/toolkits/panels
 packages/contracts/src/secretRequest.ts
 packages/contracts/src/agentPanels.ts
 
+[crates/conn-preview]
+apps/server/src/preview
+apps/server/src/htmlRender
+apps/server/src/mcp/PreviewAutomationBroker.ts
+apps/server/src/mcp/toolkits/preview
+apps/server/src/mcp/toolkits/previewControls
+apps/server/src/mcp/toolkits/html
+packages/contracts/src/preview.ts
+packages/contracts/src/previewAutomation.ts
+packages/contracts/src/browserProfile.ts
+packages/shared/src/previewPage.ts
+packages/shared/src/previewSessionControl.ts
+packages/shared/src/previewViewport.ts
+packages/shared/src/preview.ts
+packages/shared/src/credentialFill.ts
+
 [crates/conn-server]
 apps/server/src/orchestration-v2/workflowScriptQuery.ts
 apps/server/src/orchestration-v2/workflowFileRead.ts

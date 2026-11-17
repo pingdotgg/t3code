@@ -99,6 +99,9 @@
   {"name":"workflow script path cannot be blank","tag":"orchestration.getWorkflowScript","payload":{"scriptPath":" ","threadId":"t"},"ok":false},
   {"name":"workflow stop ids are trimmed","tag":"orchestration.stopWorkflow","payload":{"threadId":" t ","subagentId":" s "},"ok":true,"after":{"threadId":"t","subagentId":"s"}},
   {"name":"workflow stop thread cannot be blank","tag":"orchestration.stopWorkflow","payload":{"threadId":" ","subagentId":"s"},"ok":false},
-  {"name":"workflow script path trims JavaScript BOM whitespace","tag":"orchestration.getWorkflowScript","payload":{"scriptPath":"\ufeff /tmp/run.js \ufeff","threadId":"t"},"ok":true,"after":{"scriptPath":"/tmp/run.js"}}
+  {"name":"workflow script path trims JavaScript BOM whitespace","tag":"orchestration.getWorkflowScript","payload":{"scriptPath":"\ufeff /tmp/run.js \ufeff","threadId":"t"},"ok":true,"after":{"scriptPath":"/tmp/run.js"}},
+  {"name":"preview viewport dimensions use generated range","tag":"preview.resize","payload":{"threadId":"t","tabId":"tab","viewport":{"_tag":"freeform","width":1000000,"height":480}},"ok":false},
+  {"name":"preview viewport area cap","tag":"preview.open","payload":{"threadId":"t","runtime":"server","viewport":{"_tag":"freeform","width":3840,"height":3840}},"ok":false},
+  {"name":"preview report profile name cap","tag":"preview.reportProfiles","payload":{"profiles":[{"id":"work","name":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","kind":"persistent"}],"defaultProfileId":"work"},"ok":false}
  ]
 }

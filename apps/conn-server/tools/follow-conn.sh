@@ -62,6 +62,11 @@ generated=(
   crates/conn-contract/generated/report.json
   crates/conn-contract/tests/fixtures/sampled.jsonl
   crates/conn-contract/methods.json
+  crates/conn-preview/chrome.json
+  crates/conn-preview/src/spec.json
+  crates/conn-preview/src/injected.js
+  crates/conn-preview/LICENSE.playwright
+  crates/conn-preview/NOTICE.playwright
   crates/conn-mcp/src/catalog.jsonl
   crates/conn-mcp/src/instructions.txt
   crates/conn-mcp/src/claude-instructions.txt

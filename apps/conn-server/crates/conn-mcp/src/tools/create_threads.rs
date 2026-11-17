@@ -221,14 +221,7 @@ fn title(parent: &Value, request: &Value, index: usize) -> String {
     if detail.encode_utf16().count() <= 80 {
         return detail.to_owned();
     }
-    let mut units = 0;
-    let prefix: String = detail
-        .chars()
-        .take_while(|c| {
-            units += c.len_utf16();
-            units <= 77
-        })
-        .collect();
+    let prefix = conn_support::text::utf16_prefix(detail, 77);
     format!("{prefix}...")
 }
 

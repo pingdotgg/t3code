@@ -18,6 +18,10 @@ conn-provider-claude = { path = "crates/conn-provider-claude" }
 conn-provider-codex = { path = "crates/conn-provider-codex" }
 conn-provider-acp = { path = "crates/conn-provider-acp" }
 conn-provider-support = { path = "crates/conn-provider-support" }
+conn-preview = { path = "crates/conn-preview" }
+command-fds = { version = "0.3.3", features = ["tokio"] }
+zip = { version = "9.6", default-features = false, features = ["deflate-flate2"] }
+nix = { version = "0.31", default-features = false, features = ["net"] }
 conn-mcp = { path = "crates/conn-mcp" }
 conn-vcs = { path = "crates/conn-vcs" }
 conn-files = { path = "crates/conn-files" }

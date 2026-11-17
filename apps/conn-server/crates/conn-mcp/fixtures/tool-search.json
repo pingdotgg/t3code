@@ -33,6 +33,7 @@
       "names": [
         "t3_project_list",
         "t3_project_read",
+        "preview_cdp_endpoint",
         "annotations_list",
         "list_scheduled_tasks",
         "create_threads",
@@ -81,6 +82,7 @@
         "delete_scheduled_task",
         "run_scheduled_task_now",
         "t3_environment_read",
+        "preview_navigate",
         "t3_project_list"
       ]
     }

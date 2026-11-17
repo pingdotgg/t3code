@@ -266,22 +266,57 @@ async fn call(
             )
         });
     let mut changed = false;
+    let include_image = arguments.get("includeImage").and_then(Value::as_bool) == Some(true);
     let result = match tools::call(service, caller, name, arguments, origin.as_deref()).await {
+        Ok(mut value) if name == "preview_snapshot" && value.get("screenshot").is_some() => {
+            let data = value
+                .get_mut("screenshot")
+                .and_then(Value::as_object_mut)
+                .and_then(|s| s.remove("data"))
+                .unwrap_or(Value::Null);
+            let url = value.get("url").cloned().unwrap_or(Value::Null);
+            let (mut value, text, omitted) = crate::snapshot::bound_metadata(value);
+            let mut content = vec![
+                json!({"type":"text","text":json!({"url":url}).to_string()}),
+                json!({"type":"text","text":text}),
+            ];
+            if !omitted.is_empty() {
+                content.push(json!({"type":"text","text":format!("Snapshot text was bounded. Omitted: {}.",omitted.join("; "))}));
+                value["omitted"] = json!(omitted);
+            }
+            if include_image {
+                content.push(json!({"type":"image","data":data,"mimeType":"image/png"}));
+            }
+            json!({"content":content,"structuredContent":value,"isError":false})
+        }
+        Ok(mut value) if name == "html_preview" => {
+            let data = value
+                .get_mut("screenshot")
+                .and_then(Value::as_object_mut)
+                .and_then(|s| s.remove("data"))
+                .unwrap_or(Value::Null);
+            json!({"content":[{"type":"text","text":value.to_string()},{"type":"image","mimeType":"image/png","data":data}],"structuredContent":value,"isError":false})
+        }
         Ok(value) => {
             changed = name == "tool_search"
                 && value["tools"]
                     .as_array()
                     .is_some_and(|tools| !tools.is_empty());
-            json!({
-                "content": [{"type": "text", "text": value.to_string()}],
-                "structuredContent": value,
-                "isError": false,
-            })
+            json!({"content": [{"type": "text", "text": value.to_string()}], "structuredContent": value, "isError": false})
+        }
+        Err(tools::ToolError::Failure { message, .. }) if name == "html_preview" => {
+            json!({"content":[{"type":"text","text":message}],"structuredContent":{"error":{"_tag":"OrchestratorMcpFailure","operation":"preview","failureCount":1,"message":message}},"isError":true})
         }
         Err(tools::ToolError::Failure { code, message }) => {
             let failure =
                 json!({"_tag": "OrchestratorMcpFailure", "code": code, "message": message});
             json!({"content": [{"type": "text", "text": failure.to_string()}], "isError": true})
+        }
+        Err(tools::ToolError::Preview { tag, message }) if name == "preview_snapshot" => {
+            json!({"content":[{"type":"text","text":format!("Preview snapshot failed: {message}")}],"structuredContent":{"error":{"_tag":tag,"operation":"snapshot","failureCount":1,"message":message}},"isError":true})
+        }
+        Err(tools::ToolError::Preview { message, .. }) => {
+            json!({"content":[{"type":"text","text":message}],"isError":true})
         }
         Err(tools::ToolError::Worktree { code, message }) => {
             let failure = json!({"_tag":"WorktreeMcpFailure", "code":code, "message":message});

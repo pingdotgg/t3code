@@ -9,6 +9,7 @@ rust-version.workspace = true
 
 [dependencies]
 conn-support.workspace = true
+conn-preview.workspace = true
 conn-contract.workspace = true
 conn-engine.workspace = true
 # Reuse the client attachment store, git services and project setup terminals.

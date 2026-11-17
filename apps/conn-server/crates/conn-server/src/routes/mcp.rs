@@ -40,6 +40,7 @@ pub fn service(deps: &Deps) -> Option<Arc<McpService>> {
     let directory = environment.clone();
     let refresh_deps = deps.clone();
     Some(McpService::new(McpConfig {
+        preview: deps.preview.clone(),
         refresh_provider: Some(Arc::new(move |id| {
             let deps = refresh_deps.clone();
             Box::pin(async move {

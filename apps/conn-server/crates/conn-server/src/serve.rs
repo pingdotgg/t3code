@@ -230,7 +230,9 @@ pub async fn serve_with_instances(
         })
         .await;
     let _ = host.scheduled_tasks.set(scheduled_tasks.clone());
+    let preview = conn_preview::tabs::Preview::new(state_dir.clone());
     let mut deps = Deps {
+        preview: Some(preview.clone()),
         panels: Some(conn_features::panels::PanelBroker::default()),
         secrets: Some(secrets),
         test_logins: Some(conn_features::test_logins::TestLogins::new(&state_dir)),
@@ -331,6 +333,7 @@ pub async fn serve_with_instances(
     // started outlives the server.
     terminals.shutdown().await;
     engine.shutdown().await;
+    preview.shutdown().await;
     let _ = tokio::task::spawn_blocking(move || runtime.clear(&state_dir)).await;
     if restart.requested() {
         // A failure exit also restarts units with Restart=on-failure.

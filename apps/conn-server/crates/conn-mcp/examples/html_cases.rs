@@ -62,7 +62,10 @@ async fn run(state: PathBuf, cases: Vec<Value>) -> Result<Vec<Value>, Error> {
         ))
     })
     .await??;
+    let preview = conn_preview::tabs::Preview::new(state.clone());
     let service = McpService::new(McpConfig {
+        preview: Some(preview.clone()),
+
         test_logins: None,
         refresh_provider: None,
         worktrees: None,
@@ -101,13 +104,17 @@ async fn run(state: PathBuf, cases: Vec<Value>) -> Result<Vec<Value>, Error> {
             provider_session_id: runtime.into(),
             provider_instance_id: "claudeAgent".into(),
             subagent: false,
-            preview: false,
+            preview: true,
         });
         let headers = open(&service, &caller).await?;
         agents.push((caller, headers));
     }
     let before = anonymous_kib().await;
     let mut replies = Vec::new();
+    if cases.len() > 256 {
+        return Err("at most 256 fixture cases".into());
+    }
+    let mut tabs = Vec::<String>::new();
     for case in cases {
         let mode = usize::from(
             case.get("supervised")
@@ -115,8 +122,29 @@ async fn run(state: PathBuf, cases: Vec<Value>) -> Result<Vec<Value>, Error> {
                 .unwrap_or(false),
         );
         let (caller, headers) = agents.get(mode).ok_or("missing caller")?;
-        let args = case.get("args").cloned().ok_or("missing args")?;
-        let mut reply = call(&service, caller, headers, "html_render", args).await?;
+        let mut args = case.get("args").cloned().ok_or("missing args")?;
+        if let Some(id) = args.get("tabId").and_then(Value::as_str) {
+            let replacement = match id {
+                "$first" => tabs.first(),
+                "$last" => tabs.last(),
+                _ => None,
+            };
+            if let Some(id) = replacement {
+                args["tabId"] = json!(id);
+            }
+        }
+        let tool = case
+            .get("tool")
+            .and_then(Value::as_str)
+            .unwrap_or("html_render");
+        let mut reply = call(&service, caller, headers, tool, args).await?;
+        if tool == "preview_open"
+            && let Some(id) = reply
+                .pointer("/result/structuredContent/tabId")
+                .and_then(Value::as_str)
+        {
+            tabs.push(id.into());
+        }
         if let Some(id) = reply
             .pointer("/result/structuredContent/htmlRender/attachmentId")
             .and_then(Value::as_str)
@@ -130,6 +158,7 @@ async fn run(state: PathBuf, cases: Vec<Value>) -> Result<Vec<Value>, Error> {
         }
         replies.push(reply);
     }
+    preview.shutdown().await;
     eprintln!(
         "HTML fixture Pss_Anon KiB: before={before:?}, after={:?}",
         anonymous_kib().await

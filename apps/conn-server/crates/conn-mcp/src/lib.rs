@@ -28,6 +28,7 @@ mod http_limits {
 pub use http_limits::MAX_MCP_BODY_BYTES;
 mod links;
 mod sessions;
+pub mod snapshot;
 mod time;
 mod tools;
 mod transport;
@@ -40,6 +41,7 @@ pub use worktrees::WorktreeConfig;
 
 /// What the service needs from the server around it.
 pub struct McpConfig {
+    pub preview: Option<conn_preview::tabs::Preview>,
     pub engine: Arc<dyn Engine>,
     /// The same attachment store used by client RPC and HTTP uploads.
     pub files: Option<Arc<conn_files::Files>>,

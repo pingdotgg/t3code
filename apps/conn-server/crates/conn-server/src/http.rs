@@ -626,7 +626,7 @@ async fn ws(
         }))
         .with_status(StatusCode::UPGRADE_REQUIRED);
     }
-    let Some(principal) = authenticate_upgrade(&state, &query, &headers) else {
+    let Some(principal) = authenticate_upgrade(&state, &query, &headers, "rpc") else {
         let reason =
             if query.contains_key("wsTicket") || headers.contains_key(header::AUTHORIZATION) {
                 "invalid_credential"
@@ -691,18 +691,19 @@ async fn revoked(auth: &AuthStore, session_id: &str) {
     }
 }
 
-/// `authenticateWebSocketUpgrade`: an RPC ticket in `wsTicket`, else a bearer header.
-fn authenticate_upgrade(
+/// `authenticateWebSocketUpgrade`: a ticket for the route's scope, else a bearer header.
+pub(crate) fn authenticate_upgrade(
     state: &AppState,
     query: &HashMap<String, String>,
     headers: &HeaderMap,
+    scope: &str,
 ) -> Option<Principal> {
     match query
         .get("wsTicket")
         .map(|t| t.trim())
         .filter(|t| !t.is_empty())
     {
-        Some(ticket) => state.auth.authenticate_ticket(ticket, "rpc"),
+        Some(ticket) => state.auth.authenticate_ticket(ticket, scope),
         None => bearer(headers).and_then(|t| state.auth.authenticate_bearer(t)),
     }
 }
@@ -852,6 +853,57 @@ mod tests {
     }
 
     const UPGRADE: &str = "connection: upgrade\r\nupgrade: websocket\r\nsec-websocket-version: 13\r\nsec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==";
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn preview_stream_requires_read_scope_and_a_media_ticket() {
+        let (addr, auth) = serve().await;
+        let url = "/api/preview-stream/ws?threadId=thread&tabId=missing";
+        let request = |credential: &str| format!("GET {url} HTTP/1.1\r\n{UPGRADE}\r\n{credential}");
+        assert_eq!(call(addr, &request(""), "").await.0, 401);
+        let session = |scopes: Vec<String>| {
+            auth.issue_session(auth::SessionRequest {
+                scopes,
+                label: None,
+                subject: None,
+                ttl_ms: auth::SESSION_TTL_MS,
+            })
+            .unwrap()
+            .token
+        };
+        let terminal = session(vec!["terminal:operate".into()]);
+        assert_eq!(
+            call(
+                addr,
+                &request(&format!("authorization: Bearer {terminal}")),
+                ""
+            )
+            .await
+            .0,
+            403
+        );
+        let read = session(vec!["orchestration:read".into()]);
+        assert_eq!(
+            call(addr, &request(&format!("authorization: Bearer {read}")), "")
+                .await
+                .0,
+            404
+        );
+        let blank_ticket = format!(
+            "GET {url}&wsTicket=%20%20 HTTP/1.1\r\n{UPGRADE}\r\nauthorization: Bearer {read}"
+        );
+        assert_eq!(call(addr, &blank_ticket, "").await.0, 404);
+        let ticket = auth.issue_ticket(&read, Some("rpc")).unwrap().0;
+        let head = format!("GET {url}&wsTicket={ticket} HTTP/1.1\r\n{UPGRADE}");
+        assert_eq!(call(addr, &head, "").await.0, 401);
+        let ticket = auth.issue_ticket(&read, Some("media")).unwrap().0;
+        let head = format!("GET {url}&wsTicket={ticket} HTTP/1.1\r\n{UPGRADE}");
+        assert_eq!(call(addr, &head, "").await.0, 404);
+        assert_eq!(
+            call(addr, &head, "").await.0,
+            404,
+            "media tickets remain usable for reconnects"
+        );
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn pairs_and_authenticates_the_socket() {

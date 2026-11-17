@@ -137,6 +137,19 @@ pub fn read_source(files: &Files, path: &str) -> Result<String, HtmlError> {
 /// Prepares an inline page with T3's bootstrap and validated, inlined local images.
 pub fn prepare(source: &str) -> Result<String, HtmlError> {
     reject_viewport_height(source)?;
+    let (html, missing) = inline_images(&inject_bootstrap(source)?)?;
+    if !missing.is_empty() {
+        return Err(HtmlError::Invalid(format!(
+            "These local images could not be read: {}. Use absolute paths to existing image files, or remove them.",
+            missing.join(", ")
+        )));
+    }
+    Ok(html)
+}
+
+/// Prepares a draft page and reports unreadable local images without losing the draft.
+pub fn prepare_preview(source: &str) -> Result<(String, Vec<String>), HtmlError> {
+    reject_viewport_height(source)?;
     inline_images(&inject_bootstrap(source)?)
 }
 
@@ -420,7 +433,7 @@ fn image_mime(path: &str) -> Option<&'static str> {
     )
 }
 
-fn inline_images(html: &str) -> Result<String, HtmlError> {
+fn inline_images(html: &str) -> Result<(String, Vec<String>), HtmlError> {
     inline_images_with_metadata(html, |path| {
         fs::metadata(path)
             .ok()
@@ -432,7 +445,7 @@ fn inline_images(html: &str) -> Result<String, HtmlError> {
 fn inline_images_with_metadata(
     html: &str,
     mut metadata: impl FnMut(&str) -> Option<usize>,
-) -> Result<String, HtmlError> {
+) -> Result<(String, Vec<String>), HtmlError> {
     let refs = image_references(html)?;
     let mut files = Vec::new();
     let mut known = HashMap::new();
@@ -502,12 +515,6 @@ fn inline_images_with_metadata(
             ),
         );
     }
-    if !missing.is_empty() {
-        return Err(HtmlError::Invalid(format!(
-            "These local images could not be read: {}. Use absolute paths to existing image files, or remove them.",
-            missing.join(", ")
-        )));
-    }
     let mut result = String::with_capacity(projected);
     let mut cursor = 0;
     for reference in refs {
@@ -520,7 +527,7 @@ fn inline_images_with_metadata(
     }
     result.push_str(html.get(cursor..).unwrap_or_default());
     page_size(result.len())?;
-    Ok(result)
+    Ok((result, missing.into_iter().map(str::to_owned).collect()))
 }
 
 fn image_size(path: &str, size: usize) -> HtmlError {
@@ -628,9 +635,6 @@ mod tests {
             None
         });
         assert_eq!(probes, 0);
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "These local images could not be read: c:/foo.png. Use absolute paths to existing image files, or remove them."
-        );
+        assert_eq!(result.unwrap().1, vec!["c:/foo.png"]);
     }
 }

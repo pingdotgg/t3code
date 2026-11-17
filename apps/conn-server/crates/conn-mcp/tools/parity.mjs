@@ -12,6 +12,7 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { previewParity } from "./preview-parity.mjs";
 import { htmlParity } from "./html-parity.mjs";
 import { toolOutputParity } from "./tool-output-parity.mjs";
 import { checkMcpApps } from "./mcp-apps-parity.mjs";
@@ -244,6 +245,7 @@ const htmlBinary = [
 ].find((file) => NodeFS.existsSync(file));
 if (htmlBinary === undefined) throw new Error("Build the conn-mcp html_cases example first.");
 await htmlParity(htmlBinary);
+await previewParity(htmlBinary);
 await toolOutputParity(NodePath.join(NodePath.dirname(htmlBinary), "tool_output_cases"));
 
 const servers = await Promise.all([startTs(), startRust()]);

@@ -196,7 +196,7 @@ const CARGO_RUN_VARIABLE =
  * (`RSS_TURNS=5 cargo run --example rss`): they pass the cargo runner.
  */
 export const RUN_KNOBS = [
-  "ACP_FIXTURE", "ACP_DUMP", "CONN_CONTRACT_REAL_PAYLOADS",
+  "CONN_NETWORK_LOG", "ACP_FIXTURE", "ACP_DUMP", "CONN_CONTRACT_REAL_PAYLOADS",
   "REPLAY_MCP_CAPTURE", "RSS_TURNS", "RSS_SETTINGS", "STREAM", "REOPEN", "IDLE_MS", "CHECKPOINTS",
 ];
 
@@ -212,7 +212,7 @@ export const RUN_SET = [
  * `tools/sealed-run-check.mjs` fails when the code reads a variable in none of these lists.
  */
 export const RUN_DROPPED = [
-  "CODEX_HOME", "CLAUDE_CONFIG_DIR", "CLAUDE_BIN", "CAFE_TOKEN", "T3_ACP_MCP_ENDPOINT",
+  "CONN_SERVER_BROWSER_PATH", "T3CODE_SERVER_BROWSER_SANDBOX", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "CLAUDE_BIN", "CAFE_TOKEN", "T3_ACP_MCP_ENDPOINT",
   "T3_ACP_MCP_AUTHORIZATION", "PROGRAMDATA", "HOSTNAME", "GIT_CONFIG_COUNT",
 ];
 
