@@ -795,6 +795,82 @@ describe("group conversations", () => {
       ),
   );
 
+  it.live.each([
+    ["failed", "failed", "answer", "everyone"],
+    ["PASS", "unavailable", "answer", "everyone"],
+    ["PASS", "PASS", "answer", "everyone"],
+    ["", "PASS", "answer", "everyone"],
+    ["failed", "failed", "failed", "everyone"],
+    ["PASS", "PASS", "PASS", "everyone"],
+    ["failed", "PASS", "answer", "direct"],
+    ["PASS", "PASS", "answer", "direct"],
+  ] as const)(
+    "hands an unanswered question along once (%s, %s, %s, %s)",
+    ([leadReply, firstReply, lastReply, mode]) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeHarness("unanswered");
+          const threadId = ThreadId.make("thread:group:unanswered");
+          yield* withReactor(
+            Effect.gen(function* () {
+              yield* startThread(threadId);
+              const first = yield* invite(
+                threadId,
+                firstReply === "unavailable"
+                  ? {
+                      instanceId: ProviderInstanceId.make("removed-provider"),
+                      model: "removed-model",
+                    }
+                  : ASTRA,
+              );
+              const last = yield* invite(threadId, OPUS);
+              const replies = [
+                [threadId, leadReply],
+                [first, firstReply],
+                [last, lastReply],
+              ] as const;
+              yield* Ref.set(
+                harness.control.failing,
+                new Set(replies.filter(([, reply]) => reply === "failed").map(([id]) => id)),
+              );
+              for (const [id, reply] of replies) {
+                yield* script(harness.control, id, [
+                  reply === "answer" ? "Here is the answer.\n@user" : reply,
+                ]);
+              }
+              yield* say(
+                threadId,
+                "question",
+                "Can someone answer this?",
+                mode === "direct" ? ["primary"] : "everyone",
+              );
+              const after = yield* settle(threadId);
+              const turns = yield* Ref.get(harness.control.turns);
+              assert.deepEqual(
+                turns.map((turn) => turn.threadId),
+                mode === "direct"
+                  ? [threadId]
+                  : firstReply === "unavailable"
+                    ? [threadId, last]
+                    : [threadId, first, last],
+                "each fallback gets one turn in seating order, without retrying the lead",
+              );
+              assert.equal(after.thread.group?.closedBecause, "settled");
+              if (firstReply === "unavailable") {
+                assert.deepEqual(noticesOf(after), ["removed-model could not start."]);
+              }
+              if (mode === "everyone" && lastReply === "answer") {
+                assert.include(
+                  publishedRows(after).map((row) => row.text),
+                  "Here is the answer.\n@user",
+                );
+              }
+            }),
+          ).pipe(Effect.provide(harness.layer));
+        }),
+      ),
+  );
+
   it.live("keeps others running when a seat fails, and the discussion still settles", () =>
     Effect.scoped(
       Effect.gen(function* () {

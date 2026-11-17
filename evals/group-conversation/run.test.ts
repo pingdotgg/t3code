@@ -263,14 +263,14 @@ describe("production prompt and policy simulation", () => {
     }
   });
 
-  it("does not invent reaction turns after PASS or an address to the user", async () => {
+  it("tries an unanswered PASS once per member and honors an address to the user", async () => {
     for (const text of ["PASS", "The decision is settled.\n@user"]) {
       for (const parallel of [true, false]) {
         const result = await simulateDiscussion("Design approvals.", parallel, async () => ({
           role: "assistant",
           text,
         }));
-        expect(result.entries).toHaveLength(2);
+        expect(result.entries).toHaveLength(text === "PASS" ? 3 : 2);
         expect(result.close).toBe("settled");
       }
     }

@@ -495,6 +495,8 @@ export const OrchestrationV2ThreadGroup = Schema.Struct({
       turnsLeft: NonNegativeInt,
       /** Members told to start whose runs may not exist yet, so the barrier still holds. */
       delivering: Schema.Array(OrchestrationV2ThreadGroupMember),
+      /** Includes deliveries rejected before a run exists, so fallback skips them too. */
+      attempted: Schema.optional(Schema.Array(OrchestrationV2ThreadGroupMember)),
       /** The next run ordinal when the latest message was sent. Peers' words before it are history. */
       since: Schema.optional(NonNegativeInt),
     }),

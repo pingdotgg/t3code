@@ -111,6 +111,20 @@ export const planWave = (
       lostTurn.includes(member) ||
       unseen(member).some((entry) => wakes(entry, discussion.mode, group).includes(member)),
   );
+  // An unanswered broadcast gets one fresh seat at a time; failed deliveries also count as attempts.
+  if (woken.length === 0 && discussion.mode === "everyone") {
+    const fallback = members.find((member) => {
+      if (member === "primary" || discussion.attempted?.includes(member)) return false;
+      const pending = unseen(member);
+      return (
+        pending.some((entry) => entry.speaker === "user") &&
+        pending.every(
+          (entry) => entry.speaker === "user" || readTurnOutcome(entry.text).type === "pass",
+        )
+      );
+    });
+    if (fallback !== undefined) woken.push(fallback);
+  }
   if (woken.length === 0) return { start: [], close: "settled" };
   if (discussion.turnsLeft === 0) return { start: [], close: "budget" };
   const allowed = woken.slice(0, discussion.turnsLeft);

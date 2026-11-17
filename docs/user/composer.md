@@ -134,7 +134,8 @@ then choose **Invite a model** in an existing thread and pick a model. You can a
 use `/invite`, or **Invite a model** in the command palette.
 
 Messages reach everyone by default. The thread's own model answers first, and the
-others then add only what that answer lacks, or stay quiet. Type `@` and choose
+others then add only what that answer lacks, or stay quiet. If nobody answers,
+remaining members get a turn one at a time within the same turn limit. Type `@` and choose
 group members to address them directly; those you name all answer at once. Each
 message can start at most eight model turns, including follow-up replies. In a larger group, address up to eight members at a time.
 Members can answer each other, and they share the workspace and can

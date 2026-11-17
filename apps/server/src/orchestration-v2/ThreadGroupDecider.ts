@@ -308,6 +308,7 @@ export function groupAfterMessage(
       mode: audience.mode,
       turnsLeft: Math.max(0, availableTurns(group, createdBy) - turnsSpent(audience)),
       delivering: audience.seats,
+      attempted: [...(audience.includesPrimary ? ["primary" as const] : []), ...audience.seats],
       since: nextRunOrdinal,
     },
     closedBecause: null,
@@ -349,6 +350,7 @@ export function groupAfterWave(
       ...discussion,
       turnsLeft: discussion.turnsLeft - wave.start.length,
       delivering: wave.start,
+      attempted: Array.from(new Set([...(discussion.attempted ?? []), ...wave.start])),
     },
   };
 }
