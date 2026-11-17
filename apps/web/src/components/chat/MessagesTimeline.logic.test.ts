@@ -3416,11 +3416,13 @@ describe("v2 run and attempt history", () => {
       "working-indicator-row",
       "steer",
       "answer",
+      "step",
       "live-activity-row",
     ]);
     expect(rows([user, step, passed], "zen", running)).toEqual([
       "user",
       "working-indicator-row",
+      "step",
       "live-activity-row",
     ]);
     expect(liveAnswerPreview([user, step, passed])).toBe("step");
@@ -5656,6 +5658,106 @@ describe("working window", () => {
     const rows = applyWorkingWindow(deriveMessagesTimelineRows(input), input);
     expect(rows.map((row) => row.id)).toEqual(["prompt", "working-indicator-row"]);
     expect(workingRow(rows)?.window?.items.map((item) => item.id)).toEqual(["command"]);
+  });
+
+  it("shows Zen's live progress and thinking until the turn ends, with or without folding", () => {
+    const visibleIds = (input: Parameters<typeof deriveMessagesTimelineRows>[0]) => {
+      const derived = deriveMessagesTimelineRows(input);
+      // Folding off streams rows in place; the timeline skips the working window.
+      const rows = input.turnWorkFold === true ? applyWorkingWindow(derived, input) : derived;
+      return rows.flatMap((row): string[] =>
+        row.kind === "working"
+          ? (row.window?.items.map((item) => item.id) ?? [])
+          : row.kind === "work"
+            ? row.groupedEntries.map((entry) => entry.id)
+            : row.kind === "message"
+              ? [row.id]
+              : [],
+      );
+    };
+    for (const thread of ["main", "subagent"] as const) {
+      // A provider-native subagent thread's work has no app run.
+      const entryRunId = thread === "main" ? runId : null;
+      const assistant = (id: string, second: number) => ({
+        id,
+        kind: "message" as const,
+        createdAt: time(second),
+        message: {
+          id: MessageId.make(id),
+          role: "assistant" as const,
+          text: id,
+          runId: entryRunId,
+          createdAt: time(second),
+          updatedAt: time(second),
+          streaming: false,
+        },
+      });
+      const step = (id: string, second: number, entry: Partial<WorkLogEntry>) => {
+        const row = work(id, second, { label: id, ...entry });
+        return { ...row, entry: { ...row.entry, runId: entryRunId } };
+      };
+      const turn = [
+        prompt("prompt", 0),
+        step("thought", 1, {
+          detail: "Checking the files",
+          itemType: "reasoning",
+          toolLifecycleStatus: "completed",
+        }),
+        assistant("progress", 2),
+        step("command", 3, { itemType: "command_execution", toolLifecycleStatus: "completed" }),
+        step("running", 4, { itemType: "command_execution", toolLifecycleStatus: "inProgress" }),
+      ];
+      const ended = [...turn.slice(0, 4), assistant("final", 5)];
+      const states = {
+        running: { timelineEntries: turn, isWorking: true },
+        checkpointing: { timelineEntries: ended, isWorking: true },
+        completed: { timelineEntries: ended, isWorking: false },
+      };
+      for (const [state, { timelineEntries, isWorking }] of Object.entries(states)) {
+        // Runless subagent work never checkpoints.
+        if (thread === "subagent" && state === "checkpointing") continue;
+        const latestRun =
+          thread === "subagent"
+            ? null
+            : state === "running"
+              ? { runId, status: "running" as const, startedAt: time(0), completedAt: null }
+              : {
+                  runId,
+                  status: "completed" as const,
+                  startedAt: time(0),
+                  completedAt: time(5),
+                  turnEnded: true,
+                };
+        for (const toolCallVisibility of ["showAll", "hideSuccessful", "hideAll", "zen"] as const) {
+          for (const turnWorkFold of [true, false]) {
+            const ids = visibleIds({
+              timelineEntries: timelineEntries as never,
+              latestRun,
+              isWorking,
+              runlessWorkActive: thread === "subagent" && isWorking,
+              activeTurnStartedAt: time(0),
+              turnDiffSummaries: [],
+              supportsConversationRollback: false,
+              toolCallVisibility,
+              turnWorkFold,
+            });
+            const label = `${thread} ${state} ${toolCallVisibility} fold=${turnWorkFold}`;
+            if (state !== "running") {
+              expect(ids, label).toEqual(["prompt", "final"]);
+            } else {
+              const hidesTools = toolCallVisibility === "hideAll" || toolCallVisibility === "zen";
+              expect(ids, label).toEqual([
+                "prompt",
+                "thought",
+                "progress",
+                ...(toolCallVisibility === "showAll" && turnWorkFold ? ["command"] : []),
+                ...(!hidesTools && turnWorkFold ? ["running"] : []),
+              ]);
+            }
+          }
+        }
+      }
+    }
   });
 
   it("streams the answer below the bar and folds it once work follows", () => {

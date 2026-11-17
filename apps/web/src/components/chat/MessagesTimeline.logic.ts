@@ -2067,12 +2067,18 @@ function filterRowEntries(input: RowEntriesInput) {
     const steerAnswerIds = deriveInFlightSteerAnswerIds(entries);
     const retainedReplyIds = retainedAssistantReplyEntryIds(entries);
     shown = entries.filter((entry, index) => {
+      // The running response keeps its progress and thinking; both fold away once it ends.
+      const live = index >= answeringFrom;
       if (entry.kind !== "message") {
-        return workShownAsFinalAnswerOnly(entry, input.pendingApprovalRequestIds);
+        return (
+          (live && entry.kind === "work" && entry.entry.itemType === "reasoning") ||
+          workShownAsFinalAnswerOnly(entry, input.pendingApprovalRequestIds)
+        );
       }
       const { message } = entry;
       return (
         message.role !== "assistant" ||
+        live ||
         message.id === input.revealedMessageId ||
         steerAnswerIds.has(message.id) ||
         retainedReplyIds.has(entry.id) ||

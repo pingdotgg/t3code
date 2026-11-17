@@ -688,6 +688,79 @@ describe("MessagesTimeline work rows", () => {
       .not.toBeInTheDocument();
   });
 
+  it("reads Zen thoughts in full in the work history until the user closes one", async () => {
+    const runId = RunId.make("zen-thought-run");
+    const thought = (id: string, detail: string, status: "inProgress" | "completed") =>
+      work(id, {
+        runId,
+        label: "Thinking",
+        tone: "thinking",
+        itemType: "reasoning",
+        detail,
+        toolLifecycleStatus: status,
+      });
+    const entries = [
+      message("Build it", { runId }),
+      ...Array.from({ length: 12 }, (_, index) =>
+        message(`Step ${index}`, { runId, role: "assistant" }, `step-${index}`),
+      ),
+      thought("thought-1", "Read the config first.\n\nThen check the routes.", "completed"),
+      work("command", {
+        runId,
+        label: "Ran zen-hidden-command",
+        tone: "tool",
+        itemType: "command_execution",
+        toolLifecycleStatus: "completed",
+      }),
+      thought("thought-2", "Now comparing both layouts.", "inProgress"),
+    ];
+    const props = {
+      isWorking: true,
+      activeTurnStartedAt: CREATED_AT,
+      latestRun: { runId, status: "running" as const, startedAt: CREATED_AT, completedAt: null },
+    };
+    const thoughtRow = (id: string) =>
+      document.querySelector<HTMLElement>(
+        `[aria-label='Work history'] [data-work-entry-id='${id}']`,
+      );
+    try {
+      __setClientSettingsForTests({
+        ...DEFAULT_CLIENT_SETTINGS,
+        turnWorkFoldEnabled: true,
+        toolCallVisibility: "zen",
+      });
+      {
+        await using screen = await renderTimeline(entries, props);
+        await vi.waitFor(() => {
+          expect(thoughtRow("thought-1")?.getAttribute("aria-expanded")).toBe("true");
+          expect(thoughtRow("thought-2")?.getAttribute("aria-expanded")).toBe("true");
+        });
+        const paragraph = screen.getByText("Then check the routes.", { exact: true }).element();
+        expect(paragraph.closest(".truncate")).toBeNull();
+        await expect.element(screen.getByText("Now comparing both layouts.")).toBeVisible();
+        expect(document.body.textContent).not.toContain("zen-hidden-command");
+
+        // Opening the history remounts its rows; a closed thought stays closed.
+        await click(thoughtRow("thought-1")!);
+        await vi.waitFor(() =>
+          expect(thoughtRow("thought-1")?.getAttribute("aria-expanded")).toBe("false"),
+        );
+        await screen.getByRole("button", { name: "Open work history" }).click();
+        await expect.element(screen.getByText("Step 0", { exact: true })).toBeInTheDocument();
+        expect(thoughtRow("thought-1")?.getAttribute("aria-expanded")).toBe("false");
+        expect(thoughtRow("thought-2")?.getAttribute("aria-expanded")).toBe("true");
+      }
+
+      // Outside Zen, a thought stays a one-line row beside the tool calls.
+      __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, turnWorkFoldEnabled: true });
+      await using screen = await renderTimeline(entries, props);
+      await expect.element(screen.getByText("zen-hidden-command", { exact: false })).toBeVisible();
+      expect(thoughtRow("thought-1")?.getAttribute("aria-expanded")).toBe("false");
+    } finally {
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    }
+  });
+
   it("keeps following the end while the work history opens and collapses", async () => {
     using _turnWorkFold = withTurnWorkFold();
     const runId = RunId.make("collapse-run");
