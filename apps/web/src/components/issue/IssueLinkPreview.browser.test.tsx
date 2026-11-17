@@ -21,6 +21,11 @@ import { IssueLinkPreview } from "./IssueLinkPreview";
 
 const url = "https://github.com/owner/repo/issues/7";
 
+function setup({ detail = null as unknown, error = null as unknown } = {}) {
+  state.detail = detail;
+  state.error = error;
+}
+
 function renderPreview() {
   return render(
     <IssueLinkPreview
@@ -40,15 +45,16 @@ function renderPreview() {
 }
 
 it("shows the issue's title, state and author on hover", async () => {
-  state.error = null;
-  state.detail = {
-    scope: "owner/repo",
-    displayKey: "#7",
-    title: "Hover cards for issues",
-    state: { category: "closed", name: "Closed", closeReason: "completed" },
-    author: { login: "octocat" },
-    createdAt: "2026-08-01T00:00:00Z",
-  };
+  setup({
+    detail: {
+      scope: "owner/repo",
+      displayKey: "#7",
+      title: "Hover cards for issues",
+      state: { category: "closed", name: "Closed", closeReason: "completed" },
+      author: { login: "octocat" },
+      createdAt: "2026-08-01T00:00:00Z",
+    },
+  });
   await using screen = await renderPreview();
 
   await userEvent.hover(screen.getByRole("link"));
@@ -59,8 +65,7 @@ it("shows the issue's title, state and author on hover", async () => {
 });
 
 it("falls back to the link's URL when the issue cannot be read", async () => {
-  state.detail = null;
-  state.error = new Error("unavailable");
+  setup({ error: new Error("unavailable") });
   await using screen = await renderPreview();
 
   await userEvent.hover(screen.getByRole("link"));
