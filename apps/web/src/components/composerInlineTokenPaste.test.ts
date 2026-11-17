@@ -48,88 +48,71 @@ const importAll =
   };
 
 describe("importPastedComposerText", () => {
-  it("turns a context reference without a fragment into its plain label", () => {
-    expect(importPastedComposerText(clipboard({ "text/plain": pastedText }), importNothing)).toBe(
-      "Read this: Source Thread Ready and continue.",
-    );
-  });
-
-  it("turns a context reference whose record the import dropped into its plain label", () => {
-    const fragment = encodeComposerContextFragment({
-      version: 1,
-      source: { environmentId: sourceThread.environmentId },
+  const reference = formatComposerContextReference(sourceThread);
+  const codeThread = threadContextRecord(
+    { environmentId: sourceThread.environmentId, threadId: ThreadId.make("thread-code") },
+    "Fix `foo` bug",
+  );
+  const localId = ComposerContextId.make("thread-local");
+  const importAsLocal = (pasted: ComposerContextClipboardFragment) =>
+    new Map(pasted.records.map((record) => [record.contextId, localId]));
+  it.each([
+    {
+      name: "a reference without a fragment becomes its label",
+      text: pastedText,
+      expected: "Read this: Source Thread Ready and continue.",
+    },
+    {
+      name: "a reference whose record the import dropped becomes its label",
+      text: pastedText,
       records: [sourceThread],
-    });
-    expect(
-      importPastedComposerText(
-        clipboard({ "text/plain": pastedText, [COMPOSER_CONTEXT_CLIPBOARD_MIME]: fragment ?? "" }),
-        importNothing,
-      ),
-    ).toBe("Read this: Source Thread Ready and continue.");
-  });
-
-  it("keeps context references inside pasted code as written", () => {
-    const reference = formatComposerContextReference(sourceThread);
-    const code = `\`\`\`md\n${reference}\n\`\`\`\nInline \`${reference}\` and ${reference}`;
-    expect(importPastedComposerText(clipboard({ "text/plain": code }), importNothing)).toBe(
-      `\`\`\`md\n${reference}\n\`\`\`\nInline \`${reference}\` and Source Thread Ready`,
-    );
-  });
-
-  it("keeps a reference in a fence whose body holds a fence marker mid-line", () => {
-    const reference = formatComposerContextReference(sourceThread);
-    const code = `\`\`\`js\nconsole.log("\`\`\`");\n${reference}\n\`\`\``;
-    expect(importPastedComposerText(clipboard({ "text/plain": code }), importNothing)).toBe(code);
-  });
-
-  it("imports a reference between escaped backticks", () => {
-    const fragment = encodeComposerContextFragment({
-      version: 1,
-      source: { environmentId: sourceThread.environmentId },
+      expected: "Read this: Source Thread Ready and continue.",
+    },
+    {
+      name: "a reference the draft already holds stays",
+      text: pastedText,
+      held: [sourceThread.contextId],
+      expected: pastedText,
+    },
+    {
+      name: "references inside fenced and inline code stay as written",
+      text: `\`\`\`md\n${reference}\n\`\`\`\nInline \`${reference}\` and ${reference}`,
+      expected: `\`\`\`md\n${reference}\n\`\`\`\nInline \`${reference}\` and Source Thread Ready`,
+    },
+    {
+      name: "a fence holding a fence marker mid-line stays open",
+      text: `\`\`\`js\nconsole.log("\`\`\`");\n${reference}\n\`\`\``,
+      expected: `\`\`\`js\nconsole.log("\`\`\`");\n${reference}\n\`\`\``,
+    },
+    {
+      name: "a reference between escaped backticks is imported",
+      text: `\\\`${reference}\\\``,
       records: [sourceThread],
-    });
-    const localId = ComposerContextId.make("thread-local");
-    const text = `\\\`${formatComposerContextReference(sourceThread)}\\\``;
+      importContext: importAsLocal,
+      expected: `\\\`${formatComposerContextReference({ ...sourceThread, contextId: localId })}\\\``,
+    },
+    {
+      name: "backticks in a reference's label do not open code",
+      text: `Quote with \`, see ${formatComposerContextReference(codeThread)}`,
+      records: [codeThread],
+      importContext: importAsLocal,
+      expected: `Quote with \`, see ${formatComposerContextReference({ ...codeThread, contextId: localId })}`,
+    },
+  ])("$name", ({ text, records, importContext = importNothing, held = [], expected }) => {
+    const fragment = records
+      ? encodeComposerContextFragment({
+          version: 1,
+          source: { environmentId: sourceThread.environmentId },
+          records,
+        })!
+      : "";
     expect(
       importPastedComposerText(
-        clipboard({ "text/plain": text, [COMPOSER_CONTEXT_CLIPBOARD_MIME]: fragment ?? "" }),
-        () => new Map([[sourceThread.contextId, localId]]),
+        clipboard({ "text/plain": text, [COMPOSER_CONTEXT_CLIPBOARD_MIME]: fragment }),
+        importContext,
+        new Set<string>(held),
       ),
-    ).toBe(`\\\`${formatComposerContextReference({ ...sourceThread, contextId: localId })}\\\``);
-  });
-
-  it("imports a reference whose label holds backticks", () => {
-    const thread = threadContextRecord(
-      { environmentId: sourceThread.environmentId, threadId: ThreadId.make("thread-code") },
-      "Fix `foo` bug",
-    );
-    const fragment = encodeComposerContextFragment({
-      version: 1,
-      source: { environmentId: thread.environmentId },
-      records: [thread],
-    });
-    const localId = ComposerContextId.make("thread-local");
-    expect(
-      importPastedComposerText(
-        clipboard({
-          "text/plain": `Quote with \`, see ${formatComposerContextReference(thread)}`,
-          [COMPOSER_CONTEXT_CLIPBOARD_MIME]: fragment ?? "",
-        }),
-        (pasted) => new Map(pasted.records.map((record) => [record.contextId, localId])),
-      ),
-    ).toBe(
-      `Quote with \`, see ${formatComposerContextReference({ ...thread, contextId: localId })}`,
-    );
-  });
-
-  it("keeps a context reference whose record the draft already holds", () => {
-    expect(
-      importPastedComposerText(
-        clipboard({ "text/plain": pastedText }),
-        importNothing,
-        new Set([sourceThread.contextId]),
-      ),
-    ).toBe(pastedText);
+    ).toBe(expected);
   });
 
   it("pastes a copied thread link back as the chip it was copied from", () => {
