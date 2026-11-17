@@ -8104,7 +8104,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 );
               }
 
-              const serviceTier = getCodexServiceTierOptionValue(turnInput.modelSelection);
+              const serviceTier =
+                adapterOptions.resolveRuntime === undefined
+                  ? getCodexServiceTierOptionValue(turnInput.modelSelection)
+                  : undefined;
               if (serviceTier !== undefined) {
                 // turn/steer carries no settings, and the turns Codex starts on its own reuse the thread's.
                 yield* client.request("thread/settings/update", { threadId, serviceTier }).pipe(

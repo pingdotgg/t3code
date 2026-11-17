@@ -1824,36 +1824,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     Effect.gen(function* () {
       const nativeThreadId = "steer-tier-thread";
       const nativeTurnId = "steer-tier-turn";
-      const ultrafast = {
-        ...CODEX_TEST_MODEL_SELECTION,
-        options: [{ id: "serviceTier", value: "ultrafast" }],
-      } satisfies ModelSelection;
       const harness = yield* makeCodexReplayHarness(
         makeCodexReplayTranscript({
           scenario: "steer-service-tier",
           entries: [
-            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Work." }).map(
-              (entry) =>
-                entry.type === "expect_outbound" &&
-                entry.label === "turn/start" &&
-                Predicate.isObject(entry.frame) &&
-                Predicate.isObject(entry.frame.params)
-                  ? {
-                      ...entry,
-                      frame: {
-                        ...entry.frame,
-                        params: { ...entry.frame.params, serviceTier: "ultrafast" },
-                      },
-                    }
-                  : entry,
-            ),
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Work." }),
             {
               type: "expect_outbound",
               label: "thread/settings/update",
               frame: {
                 id: 4,
                 method: "thread/settings/update",
-                params: { threadId: nativeThreadId, serviceTier: "default" },
+                params: { threadId: nativeThreadId, serviceTier: "fast" },
               },
             },
             { type: "emit_inbound", frame: { id: 4, result: {} } },
@@ -1866,7 +1848,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 params: {
                   threadId: nativeThreadId,
                   expectedTurnId: nativeTurnId,
-                  input: [{ type: "text", text: "Slow down." }],
+                  input: [{ type: "text", text: "Hurry up." }],
                 },
               },
             },
@@ -1884,16 +1866,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ],
         }),
       );
-      const turnInput = {
-        ...makeCodexTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("steer-tier-attempt"),
-          text: "Work.",
-        }),
-        modelSelection: ultrafast,
-      };
+      const turnInput = makeCodexTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("steer-tier-attempt"),
+        text: "Work.",
+      });
       yield* harness.runtime.startTurn(turnInput);
       yield* harness.until(() =>
         harness.events.some(
@@ -1912,9 +1891,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         providerTurnId,
         modelSelection: {
           ...CODEX_TEST_MODEL_SELECTION,
-          options: [{ id: "serviceTier", value: "default" }],
+          options: [{ id: "serviceTier", value: "fast" }],
         },
-        message: { ...turnInput.message, text: "Slow down." },
+        message: { ...turnInput.message, text: "Hurry up." },
       });
       yield* harness.firstTerminal;
       assert.equal(harness.terminalEvents()[0]?.status, "completed");
