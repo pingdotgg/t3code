@@ -1191,7 +1191,10 @@ function TaskForm({
                     accessibilityLabel="Run once if missed"
                     value={draft.schedule.runMissedOnce}
                     onValueChange={(runMissedOnce) =>
-                      setDraft({ ...draft, schedule: { ...draft.schedule, runMissedOnce } })
+                      setDraft((current) => ({
+                        ...current,
+                        schedule: { ...current.schedule, runMissedOnce },
+                      }))
                     }
                   />
                 </View>
@@ -1374,8 +1377,10 @@ function TaskForm({
         </SettingsSection>
         {draft.schedule.mode === "fixed_time" ? (
           <Text className="px-2 text-sm text-foreground-muted">
-            Time uses the environment's time zone, which may differ from your phone's. Run once if
-            missed catches up when the environment was off or asleep at that time.
+            Time uses the environment's time zone, which may differ from your phone's.
+            {offersMissedRun
+              ? " Run once if missed catches up when the environment was off or asleep at that time."
+              : null}
           </Text>
         ) : null}
       </View>
