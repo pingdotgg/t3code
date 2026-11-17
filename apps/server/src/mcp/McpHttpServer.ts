@@ -46,7 +46,7 @@ import {
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
-import * as McpToolExposure from "./McpToolExposure.ts";
+import * as McpToolGroups from "./McpToolGroups.ts";
 import { MCP_TOOL_EXPOSURE_HEADER } from "@t3tools/provider-core/server/mcpSession";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
@@ -76,8 +76,8 @@ import * as WorktreeHandlers from "./toolkits/worktree/handlers.ts";
 import { WorktreeToolkit } from "./toolkits/worktree/tools.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
 import * as PullRequestsHandlers from "./toolkits/pullRequests/handlers.ts";
-import * as ToolSearchHandlers from "./toolkits/toolSearch/handlers.ts";
-import { ToolSearchToolkit } from "./toolkits/toolSearch/tools.ts";
+import * as GatewayHandlers from "./toolkits/gateway/handlers.ts";
+import { CallTool, HelpToolkit } from "./toolkits/gateway/tools.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
 import * as IssuesHandlers from "./toolkits/issues/handlers.ts";
 import { IssuesToolkit } from "./toolkits/issues/tools.ts";
@@ -1360,44 +1360,133 @@ export const layerTools = Layer.mergeAll(
   layerMessageToolkit,
 );
 
-const layerToolExposure = Layer.effect(
-  McpToolExposure.McpToolExposure,
+const layerToolCatalog = Layer.effect(
+  McpToolGroups.McpToolCatalog,
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
-    return McpToolExposure.make(
-      () =>
-        server.tools.map(({ tool }) => ({ name: tool.name, description: tool.description ?? "" })),
-      () => server.notifications["notifications/tools/list_changed"]({}),
-    );
+    return McpToolGroups.McpToolCatalog.of({
+      listed: Effect.fn("McpToolCatalog.listed")(function* (names) {
+        // The server gives every tool handler its request context.
+        const request = yield* Effect.serviceOption(McpSchema.McpRequestContext).pipe(
+          Effect.flatMap(Effect.fromOption),
+          Effect.orDie,
+        );
+        return server.tools
+          .filter(({ tool, annotations }) => {
+            const enabledWhen = Context.getOrUndefined(annotations, McpSchema.EnabledWhen);
+            return (
+              names.includes(tool.name) &&
+              !McpToolGroups.isGatewayTool(tool.name) &&
+              (enabledWhen === undefined ||
+                enabledWhen({
+                  protocolVersion: request.protocolVersion,
+                  capabilities: request.clientCapabilities,
+                  clientInfo: request.clientInfo,
+                }))
+            );
+          })
+          .map(({ tool }) => ({
+            name: tool.name,
+            description: tool.description ?? "",
+            inputSchema: tool.inputSchema,
+          }));
+      }),
+    });
   }),
 );
 
+const decodeToolCall = Schema.decodeUnknownOption(CallTool.parametersSchema);
+const isInvalidParams = Schema.is(McpSchema.InvalidParams);
+const toolCallFailed = (text: string) =>
+  new McpSchema.CallToolResult({ isError: true, content: [{ type: "text", text }] });
+
+/**
+ * `t3_call` declares no access of its own: the server runs the named tool as it
+ * runs any call, so that tool's access checks, middleware, and analytics apply.
+ */
+const registerToolCall = Effect.fn("McpHttpServer.registerToolCall")(function* () {
+  const server = yield* McpServer.McpServer;
+  yield* server.addTool({
+    tool: new McpSchema.Tool({
+      name: CallTool.name,
+      description: Tool.getDescription(CallTool),
+      inputSchema: advertisedJsonSchema(CallTool),
+    }),
+    annotations: CallTool.annotations,
+    handle: Effect.fnUntraced(function* (payload) {
+      const call = Option.getOrUndefined(decodeToolCall(payload));
+      if (call === undefined) {
+        return toolCallFailed(
+          `${CallTool.name} takes \`tool\`, a tool name, and \`arguments\`, an object.`,
+        );
+      }
+      const target = server.tools.find(({ tool }) => tool.name === call.tool)?.tool;
+      if (target === undefined || McpToolGroups.isGatewayTool(call.tool)) {
+        return toolCallFailed(
+          `No T3 tool is named "${call.tool}". Call ${McpToolGroups.T3_HELP} with a group to list its tools: ${McpToolGroups.TOOL_GROUP_NAMES}.`,
+        );
+      }
+      const request = yield* McpSchema.McpRequestContext;
+      const session = yield* Effect.serviceOption(McpSchema.McpServerClient);
+      const clientInfo = request.clientInfo ?? { name: "unknown", version: "" };
+      // `callTool` reads the caller from a session client. A stateless request has none, so
+      // this one carries the request's own profile. No T3 tool sends requests back to the client.
+      const client = Option.getOrElse(session, () =>
+        McpSchema.McpServerClient.of({
+          clientId: request.clientId,
+          protocolVersion: request.protocolVersion as McpProtocol.StatefulProtocolVersion,
+          clientCapabilities: request.clientCapabilities,
+          clientInfo,
+          initializePayload: {
+            protocolVersion: request.protocolVersion,
+            capabilities: request.clientCapabilities,
+            clientInfo,
+          },
+          requestMetadata: request.requestMetadata,
+          getClient: Effect.die(`${CallTool.name} has no MCP session to send a client request on.`),
+        }),
+      );
+      return yield* server.callTool({ name: call.tool, arguments: call.arguments ?? {} }).pipe(
+        Effect.provideService(McpSchema.McpServerClient, client),
+        Effect.catch((error) =>
+          Effect.succeed(
+            toolCallFailed(
+              isInvalidParams(error)
+                ? `${error.message}\nInput schema of ${call.tool}: ${JSON.stringify(target.inputSchema)}`
+                : error.message,
+            ),
+          ),
+        ),
+      );
+    }),
+  });
+});
+
 /**
  * A provider session that sends `MCP_TOOL_EXPOSURE_HEADER: deferred` lists only
- * the direct tools and what its `tool_search` calls loaded. Calls are never
- * gated, and every other client lists everything but `tool_search`.
+ * the direct tools, and reaches the rest through `t3_help` and `t3_call`. Calls
+ * are never gated, and every other client lists everything but those two.
  */
 const layerDeferredListing = McpServer.visibility(
-  Effect.gen(function* () {
-    const exposure = yield* McpToolExposure.McpToolExposure;
-    // Untraced: it runs once per tool on every list request.
-    return Effect.fnUntraced(function* ({ method, target, headers }: McpServer.MiddlewareOptions) {
-      if (method !== "tools/list") return true;
-      const scope = yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext);
-      const providerSessionId = Option.getOrUndefined(scope)?.thread?.providerSessionId;
-      if (headers[MCP_TOOL_EXPOSURE_HEADER] !== "deferred" || providerSessionId === undefined) {
-        return target !== McpToolExposure.TOOL_SEARCH;
-      }
-      return exposure.isListed(providerSessionId, target);
-    });
+  // Untraced: it runs once per tool on every list request.
+  Effect.fnUntraced(function* ({ method, target, headers }: McpServer.MiddlewareOptions) {
+    if (method !== "tools/list") return true;
+    const scope = yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext);
+    const deferred =
+      headers[MCP_TOOL_EXPOSURE_HEADER] === "deferred" &&
+      Option.getOrUndefined(scope)?.thread !== undefined;
+    return deferred
+      ? McpToolGroups.isListedWhenDeferred(target)
+      : !McpToolGroups.isGatewayTool(target);
   }),
   { global: true },
 );
 
-/** Outside layerTools: the clients its budget measures never list `tool_search`. */
-export const layerToolSearch = Layer.mergeAll(
-  toolkitRegistration(ToolSearchToolkit, ToolSearchHandlers.layer),
+/** Outside layerTools: the clients its budget measures never list the gateway tools. */
+export const layerToolGateway = Layer.mergeAll(
+  toolkitRegistration(HelpToolkit, GatewayHandlers.layer).pipe(Layer.provide(layerToolCatalog)),
+  Layer.effectDiscard(withToolSpans(registerToolCall())),
   layerDeferredListing,
-).pipe(Layer.provide(layerToolExposure));
+).pipe(Layer.provide(McpServer.McpServer.layer));
 
-export const layer = layerMcpTransport(Layer.mergeAll(layerTools, layerToolSearch));
+export const layer = layerMcpTransport(Layer.mergeAll(layerTools, layerToolGateway));

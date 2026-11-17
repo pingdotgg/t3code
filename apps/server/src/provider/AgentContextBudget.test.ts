@@ -14,6 +14,7 @@ import { DeviceService } from "../device/DeviceService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import { TOOL_GROUPS } from "../mcp/McpToolGroups.ts";
 import { PreviewAutomationBroker } from "../mcp/PreviewAutomationBroker.ts";
 import {
   CLAUDE_PROVIDER,
@@ -132,6 +133,16 @@ it.effect("only request_secret and send_to_user ask Claude Code to load them up 
       ["request_secret", { "anthropic/alwaysLoad": true }],
       ["send_to_user", { "anthropic/alwaysLoad": true }],
     ]);
+  }).pipe(Effect.provide(layerAdvertisedTools)),
+);
+
+// A tool outside every group is one a deferring client can never find through `t3_help`.
+it.effect("every advertised tool is in exactly one tool group", () =>
+  Effect.gen(function* () {
+    const mcp = yield* McpServer.McpServer;
+    expect(TOOL_GROUPS.flatMap((group) => group.tools).toSorted()).toEqual(
+      mcp.tools.map(({ tool }) => tool.name).toSorted(),
+    );
   }).pipe(Effect.provide(layerAdvertisedTools)),
 );
 

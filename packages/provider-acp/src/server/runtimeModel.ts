@@ -10,7 +10,7 @@ import {
   deriveToolActivityPresentation,
   mergeToolActivityData,
 } from "@t3tools/shared/toolActivity";
-import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
+import { T3_CALL_TOOL_NAME, T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
 import type {
   OrchestrationV2ProviderThreadNativeMetadata,
   ThreadTokenUsageSnapshot,
@@ -1094,8 +1094,38 @@ const T3_MCP_TITLE_SUFFIX_CALL =
  */
 const T3_MCP_BARE_TITLE_CALL = /^(?:Running )?(?<tool>[A-Za-z0-9_]+)(?::\s*\{|$)/;
 
-/** ACP lacks typed MCP calls; recognize provider metadata and terminal fallback commands. */
+/**
+ * ACP lacks typed MCP calls; recognize provider metadata and terminal fallback commands.
+ * A `t3_call` is identified as the T3 tool it runs, so the rest of T3 sees that tool.
+ */
 export function extractMcpToolCallIdentity(
+  toolCall: AcpToolCallState,
+  options?: {
+    readonly embeddedTerminalCommands?: ReadonlyArray<string>;
+  },
+): AcpMcpToolCallIdentity | undefined {
+  const identity = extractDeclaredMcpToolCallIdentity(toolCall, options);
+  if (identity?.tool !== T3_CALL_TOOL_NAME || !/^t3[-_ ]?code$/i.test(identity.server)) {
+    return identity;
+  }
+  // Agents put the call's arguments at the top of rawInput or under `arguments`.
+  const rawInput = isRecord(toolCall.data.rawInput) ? toolCall.data.rawInput : undefined;
+  const call = [identity.input, rawInput, rawInput?.arguments].find(
+    (candidate): candidate is Record<string, unknown> & { readonly tool: string } =>
+      isRecord(candidate) &&
+      typeof candidate.tool === "string" &&
+      candidate.tool !== T3_CALL_TOOL_NAME,
+  );
+  // The arguments can arrive after the call starts; until then it shows as `t3_call`.
+  if (call === undefined) return identity;
+  return {
+    server: identity.server,
+    tool: call.tool,
+    input: isRecord(call.arguments) ? call.arguments : {},
+  };
+}
+
+function extractDeclaredMcpToolCallIdentity(
   toolCall: AcpToolCallState,
   options?: {
     readonly embeddedTerminalCommands?: ReadonlyArray<string>;

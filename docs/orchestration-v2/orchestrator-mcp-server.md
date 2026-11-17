@@ -206,6 +206,25 @@ delegation and thread tools. `t3_thread_launch` is documented with them but
 registered by the project toolkit in
 [`toolkits/project/tools.ts`](../../apps/server/src/mcp/toolkits/project/tools.ts).
 
+### Clients without tool search
+
+Claude Code, Codex, and Pi defer T3's tools themselves. A provider session that
+cannot sends `t3-tool-exposure: deferred`. `tools/list` then returns only
+`orchestrator_capabilities`, `delegate_task`, `task_status`, `t3_help`, and
+`t3_call`. `t3_help` returns the tools and schemas of one group from
+[`McpToolGroups.ts`](../../apps/server/src/mcp/McpToolGroups.ts). `t3_call`
+runs a tool through the MCP server's own call path, so that tool's access
+checks, middleware, and analytics apply unchanged.
+
+The list is fixed for the session on purpose. Adding tools to `tools/list`
+rewrites the provider's prompt prefix on every load, and it depends on the
+client honoring `tools/list_changed`.
+
+The provider reports these calls as `t3_call`. The ACP adapter identifies each
+one as the tool it runs (`extractMcpToolCallIdentity`), so the timeline and
+all code keyed on a T3 tool name see the real tool. An adapter that starts
+sending the header needs the same step.
+
 ### `orchestrator_capabilities`
 
 Returns:

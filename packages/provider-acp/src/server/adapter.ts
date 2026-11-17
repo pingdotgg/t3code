@@ -378,7 +378,7 @@ export interface AcpAdapterV2Flavor {
     EffectAcpSchema.InitializeRequest["clientCapabilities"]
   >["_meta"];
   readonly mcpOverHttp?: boolean;
-  /** The agent has no tool search of its own, so T3 lists optional tools on demand. */
+  /** The agent has no tool search of its own, so it reaches optional T3 tools through `t3_call`. */
   readonly deferMcpTools?: boolean;
   readonly normalizeSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
@@ -3348,7 +3348,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 mcpIdentity === undefined
                   ? (merged.title ?? merged.kind ?? "Tool")
                   : `${mcpIdentity.server}.${mcpIdentity.tool}`,
-              input: merged.data.rawInput ?? null,
+              input: mcpIdentity?.input ?? merged.data.rawInput ?? null,
               output: merged.data.rawOutput ?? merged.data.content ?? null,
             },
           });
