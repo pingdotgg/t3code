@@ -718,7 +718,6 @@ export interface SourceControlDefinitionRegistry {
   ) => string | null;
   /** Where the project's issues live: the host's `issueScope`, else its repository. */
   readonly issueScope: (identity: RepositorySelectorIdentity | null | undefined) => string | null;
-  readonly issueHost: (identity: ChangeRequestHostIdentity, kind: string) => string;
   readonly changeRequestHost: <const Kind extends string | undefined>(
     identity: ChangeRequestHostIdentity,
     kind: Kind,
@@ -905,10 +904,6 @@ export function makeSourceControlDefinitionRegistry(
         ? repositorySelector(identity)
         : issueScope(identity);
     },
-    issueHost: (identity, kind) =>
-      issueWebUrl(identity)?.host.toLowerCase() ??
-      byKind.get(kind)?.changeRequestHost?.(identity) ??
-      projectChangeRequestHost(identity, kind),
     changeRequestHost: (identity, kind) =>
       (kind === undefined ? undefined : byKind.get(kind)?.changeRequestHost?.(identity)) ??
       projectChangeRequestHost(identity, kind),

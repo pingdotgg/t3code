@@ -305,8 +305,21 @@ describe("IssueService", () => {
             projectId: "configured",
             key: "3",
             writable: true,
-            host: transport === "ssh" ? host : `${host}:8443`,
+            host: provider === "forgejo" && transport !== "ssh" ? `${host}:8443` : host,
           });
+          const bindingHost = provider === "forgejo" && transport !== "ssh" ? `${host}:8443` : host;
+          expect(yield* configured.projectScope("configured" as ProjectId)).toMatchObject({
+            host: bindingHost,
+          });
+          expect(
+            yield* configured.detail({
+              projectId: "configured" as ProjectId,
+              tracker: IssueTrackerKind.make(provider),
+              host: bindingHost,
+              scope: "acme/web",
+              key: "3",
+            }),
+          ).toMatchObject({ writable: true });
           if (transport !== "ssh") {
             expect(
               yield* configured

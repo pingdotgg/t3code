@@ -88,7 +88,7 @@ function resolveGitHostBinding(project: OrchestrationProjectShell): ProjectTrack
   if (!identity || kind === undefined || kind === "unknown" || scope === null) return null;
   return {
     tracker: IssueTrackerKind.make(kind),
-    host: sourceControlDefinitions.issueHost(identity, kind),
+    host: sourceControlDefinitions.changeRequestHost(identity, kind),
     repositoryIdentity: identity,
     scope,
   };
