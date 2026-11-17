@@ -442,15 +442,23 @@ export function BranchToolbarBranchSelector({
     return resolveConfirmedSelectedRef(listedRef, result._tag === "Success" ? result.value : null);
   };
 
-  const confirmSwitchFromCurrentCheckout = (nextBranch: string) =>
+  const confirmCheckoutSwitchIn = (
+    checkout: { readonly cwd: string; readonly worktreePath: string | null },
+    nextBranch: string,
+  ) =>
     activeProjectRef === null
       ? Promise.resolve(true)
       : confirmCheckoutSwitch({
           environmentId,
           projectId: activeProjectRef.projectId,
           threadId: activeThreadId ?? null,
-          worktreePath: activeWorktreePath,
-          currentBranch: currentGitBranch,
+          worktreePath: checkout.worktreePath,
+          currentBranch:
+            checkout.cwd === branchCwd
+              ? currentGitBranch
+              : checkout.cwd === activeProjectCwd
+                ? (projectStatusQuery.data?.refName ?? null)
+                : null,
           nextBranch,
         });
 
@@ -506,8 +514,10 @@ export function BranchToolbarBranchSelector({
 
     runBranchAction(async () => {
       if (
-        selectionTarget.checkoutCwd === branchCwd &&
-        !(await confirmSwitchFromCurrentCheckout(selectedBranchName))
+        !(await confirmCheckoutSwitchIn(
+          { cwd: selectionTarget.checkoutCwd, worktreePath: selectionTarget.nextWorktreePath },
+          selectedBranchName,
+        ))
       ) {
         return;
       }
@@ -580,7 +590,11 @@ export function BranchToolbarBranchSelector({
     onComposerFocusRequest?.();
 
     runBranchAction(async () => {
-      if (!(await confirmSwitchFromCurrentCheckout(name))) return;
+      if (
+        !(await confirmCheckoutSwitchIn({ cwd: branchCwd, worktreePath: activeWorktreePath }, name))
+      ) {
+        return;
+      }
       const previousBranch = resolvedActiveBranch;
       setOptimisticBranch(name);
       const createBranchResult = await createRefMutation({
