@@ -3022,6 +3022,40 @@ const reserveClaudePdfBudget = (
       }).pipe(Effect.andThen(persist)),
   );
 
+// MCP app notes are app-written, so they go as quoted user input like Codex's untrusted context.
+// A slash command runs only when it opens a plain-text prompt; its note waits for the next turn.
+const withClaudeAppContext = (
+  message: SDKUserMessage,
+  appContext: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"],
+  reservation: Effect.Success<ReturnType<typeof reserveClaudePdfBudget>>,
+): SDKUserMessage => {
+  const content = message.message.content;
+  if (
+    appContext === undefined ||
+    appContext.length === 0 ||
+    (typeof content === "string" && content.startsWith("/"))
+  ) {
+    return message;
+  }
+  const contextBlocks = appContext.map((entry) => ({
+    type: "text" as const,
+    text: `<external_${entry.key}>${entry.text}</external_${entry.key}>`,
+  }));
+  const bytes = Buffer.byteLength(encodeClaudeJson(contextBlocks));
+  reservation.budget.pending.bytes += bytes;
+  reservation.bytes += bytes;
+  return {
+    ...message,
+    message: {
+      ...message.message,
+      content: [
+        ...contextBlocks,
+        ...(typeof content === "string" ? [{ type: "text" as const, text: content }] : content),
+      ],
+    },
+  };
+};
+
 const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input: {
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
@@ -13185,6 +13219,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       ...(skills === undefined ? {} : { skills }),
                       uuid: promptUuid,
                     }).pipe(
+                      Effect.map((message) =>
+                        withClaudeAppContext(message, turnInput.appContext, pdfReservation),
+                      ),
                       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                       Effect.provideService(Path.Path, path),
                     );
