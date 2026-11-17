@@ -1021,12 +1021,14 @@ effectIt.effect("reads a macOS process's environment, never its arguments", () =
       "  301 /opt/homebrew/bin/node server.js COMMAND=argument",
       "  302 /opt/homebrew/bin/node other.js",
       "  303 /opt/homebrew/bin/node reused.js",
+      "  304 /opt/homebrew/bin/node server.js",
     ].join("\n");
     const withEnvironment = [
       "  300 /bin/zsh -c COMMAND=spelled node server.js | cat",
       "  301 /opt/homebrew/bin/node server.js COMMAND=argument HOME=/u COMMAND=a",
       "  302 /opt/homebrew/bin/node other.js HOME=/u",
       "  303 /opt/homebrew/bin/node replaced.js COMMAND=b",
+      "  304 /opt/homebrew/bin/node server.json COMMAND=c",
     ].join("\n");
     expect(
       PortScanner.parsePsEnvironments(withEnvironment, withoutEnvironment, ["COMMAND"]),

@@ -405,7 +405,7 @@ export const parsePsEnvironments = (
   for (const [pid, line] of parsePsCommandLines(withEnvironment)) {
     const args = argv.get(pid);
     // A different argv is a reused pid.
-    if (args === undefined || !line.startsWith(args)) continue;
+    if (args === undefined || (line !== args && !line.startsWith(`${args} `))) continue;
     const environment = line.slice(args.length).trim();
     environments.set(
       pid,
