@@ -8,7 +8,7 @@ import {
 import type { EnvironmentId, PullRequestAction } from "@t3tools/contracts";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { use, useRef, useState } from "react";
-import { Linking, Platform } from "react-native";
+import { Linking } from "react-native";
 import type { MenuProps } from "../../components/ui/Menu.types";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -156,24 +156,24 @@ export function usePullRequestListActions(
       {
         id: "open",
         title: `Open ${terminology.singular}`,
-        image: Platform.OS === "ios" ? "arrow.up.right" : "open_in_new",
+        image: "arrow.up.right",
       },
       ...(writableEnvironments.has(entry.environmentId) && entry.state === "open"
         ? [
             {
               id: "request-review",
               title: "Request review",
-              image: Platform.OS === "ios" ? "person.badge.plus" : "person_add",
+              image: "person.badge.plus",
             },
             {
               id: entry.isDraft ? "ready" : "draft",
               title: entry.isDraft ? "Mark ready for review" : "Convert to draft",
-              image: Platform.OS === "ios" ? "pencil" : "edit",
+              image: "pencil",
             },
             {
               id: "close",
               title: pullRequestActionLabel("close", terminology),
-              image: Platform.OS === "ios" ? "xmark" : "close",
+              image: "xmark",
               attributes: { destructive: true },
             },
           ]
@@ -182,20 +182,20 @@ export function usePullRequestListActions(
               {
                 id: "reopen",
                 title: pullRequestActionLabel("reopen", terminology),
-                image: Platform.OS === "ios" ? "arrow.clockwise" : "refresh",
+                image: "arrow.clockwise",
               },
             ]
           : []),
       {
         id: "share",
         title: "Share…",
-        image: Platform.OS === "ios" ? "square.and.arrow.up" : "share",
+        image: "square.and.arrow.up",
       },
-      { id: "copy", title: "Copy link", image: Platform.OS === "ios" ? "link" : "link" },
+      { id: "copy", title: "Copy link", image: "link" },
       {
         id: "provider",
         title: openOnProviderLabel(entry.provider),
-        image: Platform.OS === "ios" ? "safari" : "open_in_browser",
+        image: "safari",
       },
     ];
   };
