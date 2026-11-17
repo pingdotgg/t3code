@@ -113,7 +113,7 @@ async fn checkpoint_scenario(dir: &std::path::Path) -> (Vec<Value>, Vec<Value>, 
         run_ended(item) && item["event"]["payload"]["id"] == "run:thread-cp:2"
     })
     .await;
-    read(&mut follow, &mut items, |_| false).await;
+    drain(&mut follow, &mut items).await;
     // Rewind the conversation to the first turn (a root thread keeps its files).
     let projection = engine
         .get_thread_projection("thread-cp".into())
@@ -141,7 +141,7 @@ async fn checkpoint_scenario(dir: &std::path::Path) -> (Vec<Value>, Vec<Value>, 
             && item["event"]["payload"]["status"] == "rolled_back"
     })
     .await;
-    read(&mut follow, &mut items, |_| false).await;
+    drain(&mut follow, &mut items).await;
 
     // A fork of the first turn, then its first message: a native fork.
     engine
@@ -179,28 +179,48 @@ async fn checkpoint_scenario(dir: &std::path::Path) -> (Vec<Value>, Vec<Value>, 
         .await
         .unwrap();
     read(&mut fork, &mut fork_items, run_ended).await;
-    read(&mut fork, &mut fork_items, |_| false).await;
+    drain(&mut fork, &mut fork_items).await;
     let shell = engine.shell_snapshot().await.unwrap();
     (items, fork_items, shell["threads"].clone())
 }
 
-/// Reads items until `done` holds for one, or the stream is quiet for 300 ms.
+/// Reads items until `done` holds for one. A slow runner can pause longer than any quiet
+/// window mid-turn, so this waits on the event itself and fails loudly after 30 s.
 async fn read<T: serde::Serialize, E: serde::Serialize>(
     stream: &mut Subscription<T, E>,
     out: &mut Vec<Value>,
     done: impl Fn(&Value) -> bool,
 ) {
-    while let Ok(Some(item)) = timeout(Duration::from_millis(300), stream.recv()).await {
-        let item = match item {
-            Ok(item) => to_json(&item),
-            Err(e) => panic!("stream failed: {}", to_json(&e)),
-        };
-        let stop = done(&item);
-        out.push(item);
-        if stop {
-            return;
+    let wait = async {
+        loop {
+            if done(&next(stream, out).await.expect("stream ended")) {
+                return;
+            }
         }
-    }
+    };
+    timeout(Duration::from_secs(30), wait)
+        .await
+        .expect("expected item never came");
+}
+
+/// Reads the trailing items until the stream is quiet for 300 ms.
+async fn drain<T: serde::Serialize, E: serde::Serialize>(
+    stream: &mut Subscription<T, E>,
+    out: &mut Vec<Value>,
+) {
+    while let Ok(Some(_)) = timeout(Duration::from_millis(300), next(stream, out)).await {}
+}
+
+async fn next<T: serde::Serialize, E: serde::Serialize>(
+    stream: &mut Subscription<T, E>,
+    out: &mut Vec<Value>,
+) -> Option<Value> {
+    let item = match stream.recv().await? {
+        Ok(item) => to_json(&item),
+        Err(e) => panic!("stream failed: {}", to_json(&e)),
+    };
+    out.push(item.clone());
+    Some(item)
 }
 
 fn run_ended(item: &Value) -> bool {
@@ -267,7 +287,7 @@ async fn main() {
         .unwrap();
     read(&mut thread, &mut thread_items, run_ended).await;
     // The root node's final update follows the run's, as in TS.
-    read(&mut thread, &mut thread_items, |_| false).await;
+    drain(&mut thread, &mut thread_items).await;
     read(&mut shell, &mut shell_items, |item| {
         item["thread"]["status"] == "completed"
     })
@@ -344,7 +364,7 @@ async fn main() {
         run_ended(item) && item["event"]["payload"]["id"] == "run:thread-3:2"
     })
     .await;
-    read(&mut queue, &mut queue_items, |_| false).await;
+    drain(&mut queue, &mut queue_items).await;
 
     // A Stop the provider never confirms, then Force stop.
     let mut stop_items = vec![];
@@ -385,7 +405,7 @@ async fn main() {
         .await
         .unwrap();
     read(&mut stuck, &mut stop_items, run_ended).await;
-    read(&mut stuck, &mut stop_items, |_| false).await;
+    drain(&mut stuck, &mut stop_items).await;
     drop(stuck);
 
     // A Stop while the provider still starts the turn (a cold start): the run ends at once.
@@ -415,7 +435,7 @@ async fn main() {
         .await
         .unwrap();
     read(&mut cold, &mut cold_stop_items, run_ended).await;
-    read(&mut cold, &mut cold_stop_items, |_| false).await;
+    drain(&mut cold, &mut cold_stop_items).await;
     drop(cold);
 
     // A turn that leaves a background command running after it completed.
