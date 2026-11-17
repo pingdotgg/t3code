@@ -10,7 +10,6 @@ const SPLIT = new Set(["apps/web/src/components", "apps/mobile/src/features"]);
 
 const lint = NodeChildProcess.spawnSync("vp", ["lint", "--format=json", ...ROOTS], {
   encoding: "utf8",
-  env: { ...process.env, T3_LINT_UNTRANSLATED_COPY: "1" },
   maxBuffer: 512 * 1024 * 1024,
 });
 const report: { diagnostics: ReadonlyArray<{ code?: string; filename: string }> } = JSON.parse(
