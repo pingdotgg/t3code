@@ -303,7 +303,7 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
           { theme: "grove" },
           { theme: "grove", appearance: "dark" },
           { appearance: "light" },
-          { theme: "t3-code" },
+          { theme: "" },
         ]);
       }),
       selected,

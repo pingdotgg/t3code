@@ -136,7 +136,7 @@ Invalid files are not published.
 ### Background image
 
 A published theme can have a full-size background image. Ask an agent, for example "use
-~/Pictures/wallpaper.jpg as T3 Code's background", or save a JPEG, PNG, or WebP file of up to
+~/Pictures/wallpaper.jpg as Ada's background", or save a JPEG, PNG, or WebP file of up to
 16 MB beside the theme file: `nightfall.jpg` beside `nightfall.json`. The theme's CSS decides
 where the image shows:
 

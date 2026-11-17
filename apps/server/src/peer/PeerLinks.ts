@@ -562,7 +562,7 @@ const make = Effect.gen(function* () {
         message: `${peer.label} runs an ${APP_NAME} version that cannot keep a linked agent's limits. Update it, then link again.`,
       });
     }
-    const issued = yield* signIn(primary, input, `${APP_NAME} · ${self.label}`, self.environmentId);
+    const issued = yield* signIn(primary, input, `T3 Code · ${self.label}`, self.environmentId);
     const now = yield* DateTime.now;
     const linked: PeerLink = {
       environmentId: peer.environmentId,
