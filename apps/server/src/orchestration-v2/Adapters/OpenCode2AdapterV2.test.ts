@@ -286,6 +286,7 @@ const agentList = {
     },
   ],
 };
+const listAgents = [out("agent.list", "<any>"), reply("agent.list", agentList)];
 const supervisedRules = [
   { action: "shell", resource: "*", effect: "ask" },
   { action: "edit", resource: "*", effect: "ask" },
@@ -893,7 +894,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     agent: "general",
     model: { id: "big-pickle", providerID: "opencode", variant: "default" },
   });
-  const backgroundLaunch = (child: string): ReadonlyArray<ProviderReplayEntry> => {
+  const backgroundLaunch = (
+    child: string,
+    created: Record<string, unknown> = childCreated(child),
+  ): ReadonlyArray<ProviderReplayEntry> => {
     const call = "call-background";
     const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: call };
     return [
@@ -907,7 +911,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         input: { description: "Sleep", prompt: "sleep", background: true },
         executed: false,
       }),
-      event("session.created", childCreated(child)),
+      event("session.created", created),
       event("session.tool.progress", {
         ...tool,
         metadata: { sessionID: child, status: "running" },
@@ -1508,19 +1512,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   it.effect("keeps a subagent's own agent denies under the Full access rules it inherits", () =>
     Effect.gen(function* () {
       const editDeny = { action: "edit", resource: "*", effect: "deny" };
-      const launch = backgroundLaunch(CHILD).map((entry) =>
-        entry.type === "emit_inbound" &&
-        entry.frame.type === "sdk.event" &&
-        entry.frame.event.type === "session.created"
-          ? event("session.created", {
-              ...childCreated(CHILD),
-              agent: "review",
-              permissions: t3Rules,
-            })
-          : entry,
-      );
       const { runtime, thread } = yield* resumed([
-        ...launch,
+        ...backgroundLaunch(CHILD, {
+          ...childCreated(CHILD),
+          agent: "review",
+          permissions: t3Rules,
+        }),
         out("agent.list", "<any>"),
         reply("agent.list", {
           ...agentList,
@@ -1747,6 +1744,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       // The adapter writes a child's rules only when they changed.
       ...(writesRules
         ? [
+            ...listAgents,
             out("session.update", { sessionID: CHILD, permissions: "<any>" }),
             reply("session.update", null),
           ]
@@ -1972,6 +1970,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ...again,
           metadata: { sessionID: CHILD, status: "running" },
         }),
+        ...listAgents,
         out("session.update", { sessionID: CHILD, permissions: "<any>" }),
         reply("session.update", null),
         // The child fails while the joined call is still the foreground one.
@@ -2377,6 +2376,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             ...toolOf(SESSION, "call-other"),
             metadata: { sessionID: OTHER, status: "running" },
           }),
+          ...listAgents,
           event("session.tool.success", {
             ...toolOf(SESSION, "call-other"),
             content: [{ type: "text", text: "OTHER_OK" }],
@@ -2763,6 +2763,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         [
           ...backgroundLaunch(CHILD),
           event("session.execution.succeeded", { sessionID: SESSION }),
+          ...listAgents,
           out("session.update", { sessionID: CHILD, permissions: t3Rules }),
           reply("session.update", null),
           out("session.prompt", { sessionID: SESSION, text: "<any>" }),

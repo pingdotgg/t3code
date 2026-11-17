@@ -438,19 +438,41 @@ const mcpRules = (mcpServerName: string | null): ReadonlyArray<Rule> =>
         { action: `${mcpServerName}_*`, resource: "*", effect: "allow" },
       ];
 
-const sessionRules = (
-  policy: RulesPolicy,
-  paths: ReadonlyArray<Rule>,
-  grants: ReadonlyArray<Rule>,
-  mcpServerName: string | null,
-): ReadonlyArray<Rule> => [
-  ...(policy.runtimeMode === "full-access"
+const policyRules = (policy: RulesPolicy): ReadonlyArray<Rule> =>
+  policy.runtimeMode === "full-access"
     ? [rule("*", "allow")]
     : [
         rule("shell", "ask"),
         rule("edit", policy.runtimeMode === "auto-accept-edits" ? "allow" : "ask"),
         rule("external_directory", "ask"),
-      ]),
+      ];
+
+// A child session inherits its parent's rules, which outrank agent rules; repeat the agent's own
+// restrictions after them. Its later allows and asks never loosen T3's policy.
+const agentLimits = (policy: RulesPolicy, agentRules: ReadonlyArray<Rule>): ReadonlyArray<Rule> => {
+  const start = agentRules.findIndex((entry) => entry.effect === "deny");
+  if (start === -1) return [];
+  const base = policyRules(policy);
+  return agentRules
+    .slice(start)
+    .flatMap((entry) =>
+      entry.effect === "deny"
+        ? [entry]
+        : policy.runtimeMode === "full-access"
+          ? [{ ...entry, effect: "allow" as const }]
+          : [entry, ...base.filter((own) => entry.action === "*" || own.action === entry.action)],
+    );
+};
+
+const sessionRules = (
+  policy: RulesPolicy,
+  paths: ReadonlyArray<Rule>,
+  grants: ReadonlyArray<Rule>,
+  mcpServerName: string | null,
+  limits: ReadonlyArray<Rule> = [],
+): ReadonlyArray<Rule> => [
+  ...policyRules(policy),
+  ...limits,
   ...grants,
   // Plan edits are re-allowed only for plan paths; free-tier sessions refuse denied shell/read.
   ...(policy.interactionMode === "plan" ? [rule("edit", "deny")] : []),
@@ -2117,8 +2139,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* emit({ type: "app_thread.created", driver, appThread });
       yield* emitProviderThread(child);
       yield* emitSubagent(call);
-      // Reused child sessions may retain old mode rules; refresh policy as soon as the call identifies them.
-      if (info === undefined) {
+      // Reused children may keep old mode rules, and new ones copy their parent's; rewrite both.
+      if (info === undefined || info.permissions !== undefined) {
         yield* writeRules(child, rootOf(call.state).policy).pipe(
           Effect.timeout(REQUEST_REPLY_TIMEOUT),
           Effect.ignore({ log: true }),
@@ -3963,10 +3985,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     yield* readModels(session.cwd);
 
     const agentRules = new Map<string, ReadonlyMap<string, ReadonlyArray<Rule>>>();
-    const pathsFor = Effect.fnUntraced(function* (
-      directory: string,
-      agents: ReadonlyArray<string>,
-    ) {
+    const agentsIn = Effect.fnUntraced(function* (directory: string) {
       let known = agentRules.get(directory);
       if (known === undefined) {
         // A fresh server lists no agents for its first moments, like its models.
@@ -3984,15 +4003,20 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           ),
           Effect.option,
         );
-        if (listed._tag === "None") return [];
-        known = new Map(
-          listed.value.data.map((agent) => [agent.id, agentPaths(agent.permissions)]),
-        );
+        if (listed._tag === "None") return new Map<string, ReadonlyArray<Rule>>();
+        known = new Map(listed.value.data.map((agent) => [agent.id, agent.permissions]));
         agentRules.set(directory, known);
       }
+      return known;
+    });
+    const pathsFor = Effect.fnUntraced(function* (
+      directory: string,
+      agents: ReadonlyArray<string>,
+    ) {
+      const known = yield* agentsIn(directory);
       const paths = new Map<string, Rule>();
       for (const agent of agents) {
-        for (const entry of known.get(agent) ?? []) {
+        for (const entry of agentPaths(known.get(agent) ?? [])) {
           paths.set(`${entry.action}\u0000${entry.resource}`, entry);
         }
       }
@@ -4000,7 +4024,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     });
 
     const rulesFor = Effect.fnUntraced(function* (
-      thread: Pick<ThreadState, "directory" | "agent" | "grants">,
+      thread: Pick<ThreadState, "directory" | "agent" | "grants" | "subagent">,
       policy: RulesPolicy,
       appThreadId: string | null,
     ) {
@@ -4009,11 +4033,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         policy.runtimeMode === "full-access" && !plan
           ? []
           : yield* pathsFor(thread.directory, plan ? [thread.agent, "plan"] : [thread.agent]);
+      const limits =
+        thread.subagent === undefined
+          ? []
+          : agentLimits(policy, (yield* agentsIn(thread.directory)).get(thread.agent) ?? []);
       return sessionRules(
         policy,
         paths,
         policy.runtimeMode === "full-access" ? [] : thread.grants,
         appThreadId === null ? null : yield* mcpServerNameFor(appThreadId),
+        limits,
       );
     });
 
@@ -4698,7 +4727,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const directory = threadInput.runtimePolicy.cwd ?? host.paths.cwd;
           const policy = threadInput.runtimePolicy;
           const permissions = yield* rulesFor(
-            { directory, agent: "build", grants: [] },
+            { directory, agent: "build", grants: [], subagent: undefined },
             policy,
             threadInput.threadId,
           );
