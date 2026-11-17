@@ -1217,7 +1217,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // navigation resolves through its redirect instead, and still reveals.
   const routeKeyInPlace = routeDraftThread?.promotedTo != null;
 
-  if (routeTarget?.kind === "draft") {
+  if (routeTarget?.kind === "draft" && routeKeyInPlace) {
     observeSidebarDraftPromotion(routeReveal, routeRowThreadKey);
   }
   // History, the palette and links can open a thread the scope hides or the list
