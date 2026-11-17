@@ -39,6 +39,9 @@ describe("ACP Registry contracts", () => {
     expect(resolveProviderIconUrl("https://example.com/hermes.png")).toBe(
       "https://example.com/hermes.png",
     );
+    expect(resolveProviderIconUrl("https://example.com/café.png")).toBe(
+      "https://example.com/caf%C3%A9.png",
+    );
     for (const value of [
       "",
       "not a URL",
@@ -47,6 +50,7 @@ describe("ACP Registry contracts", () => {
       "http://example.com/icon.png",
       "https://user:secret@example.com/icon.png",
       "https://example.com/" + "x".repeat(2048),
+      "https://example.com/" + "é".repeat(400),
     ]) {
       expect(resolveProviderIconUrl(value)).toBeNull();
     }
