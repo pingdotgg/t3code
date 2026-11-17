@@ -2,6 +2,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { LayersIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
+import { ProjectActionsSettings } from "./ProjectActionsSettings";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
@@ -46,9 +47,12 @@ export function ProjectsSettings() {
       ) : unavailable ? (
         unavailable
       ) : (
-        <SettingsScopeNotice target="project">
-          Choose a project to manage its name, icon, checkouts and actions.
-        </SettingsScopeNotice>
+        <SettingsPageContainer className="gap-6">
+          <ProjectActionsSettings />
+          <SettingsScopeNotice inline target="project">
+            Choose a project to manage its name, icon, checkouts and its own actions.
+          </SettingsScopeNotice>
+        </SettingsPageContainer>
       )}
     </div>
   );
