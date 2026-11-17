@@ -154,6 +154,7 @@ describe("command permissions", () => {
 
   it.effect.each([
     { method: WS_METHODS.serverRunStorageCleanup, scope: AuthSettingsWriteScope },
+    { method: WS_METHODS.serverClearWorktreeSharedPath, scope: AuthSettingsWriteScope },
     { method: WS_METHODS.serverMutateAgentLibrary, scope: AuthSettingsWriteScope },
     { method: WS_METHODS.serverReclaimDatabaseSpace, scope: AuthEnvironmentMaintainScope },
     { method: WS_METHODS.serverUpdateAgentGateway, scope: AuthAccessWriteScope },

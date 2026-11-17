@@ -399,6 +399,7 @@ import {
 import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
 import {
   StorageCleanupReport,
+  WorktreeSharedPathClearError,
   ThreadHistoryTrimReport,
   ThreadHistoryTrimStatus,
   DatabaseReclaimError,
@@ -600,6 +601,7 @@ export const WS_METHODS = {
   serverGetStorageCleanupReport: "server.getStorageCleanupReport",
   serverGetDatabaseStorage: "server.getDatabaseStorage",
   serverReclaimDatabaseSpace: "server.reclaimDatabaseSpace",
+  serverClearWorktreeSharedPath: "server.clearWorktreeSharedPath",
   serverGetThreadHistoryTrim: "server.getThreadHistoryTrim",
   serverPreviewThreadHistoryTrim: "server.previewThreadHistoryTrim",
   serverTrimThreadHistory: "server.trimThreadHistory",
@@ -954,6 +956,11 @@ const WsServerGetStorageCleanupReportRpc = Rpc.make(WS_METHODS.serverGetStorageC
   success: Schema.NullOr(StorageCleanupReport),
   stream: true,
   error: EnvironmentAuthorizationError,
+});
+
+const WsServerClearWorktreeSharedPathRpc = Rpc.make(WS_METHODS.serverClearWorktreeSharedPath, {
+  payload: Schema.Struct({ path: Schema.String }),
+  error: Schema.Union([WorktreeSharedPathClearError, EnvironmentAuthorizationError]),
 });
 
 const WsServerGetDatabaseStorageRpc = Rpc.make(WS_METHODS.serverGetDatabaseStorage, {
@@ -2544,6 +2551,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetDatabaseStorageRpc,
   WsServerGetSettingsRpc,
   WsServerReclaimDatabaseSpaceRpc,
+  WsServerClearWorktreeSharedPathRpc,
   WsServerGetThreadHistoryTrimRpc,
   WsServerPreviewThreadHistoryTrimRpc,
   WsServerTrimThreadHistoryRpc,

@@ -31,6 +31,7 @@ import {
 } from "../storageCleanup.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { makeIsSharedPathLink } from "../vcs/worktreeLightPaths.ts";
 import { withWorkspaceLease } from "./workspaceLease.ts";
 import { APP_NAME } from "@t3tools/shared/branding";
 
@@ -120,6 +121,7 @@ export const make = Effect.fn("WorktreeReclamation.make")(function* (runtime: Re
   const processes = yield* ProcessRunner.ProcessRunner;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const isSharedPathLink = yield* makeIsSharedPathLink;
 
   const inside = (root: string, target: string) => {
     const relative = path.relative(root, target);
@@ -317,9 +319,10 @@ export const make = Effect.fn("WorktreeReclamation.make")(function* (runtime: Re
       args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
       maxOutputBytes: 256 * 1024,
     });
-    const kept = ignored.stdout
-      .split("\0")
-      .filter((entry) => entry !== "" && !regenerableIgnoredPath(entry));
+    const kept = yield* Effect.filter(
+      ignored.stdout.split("\0").filter((entry) => entry !== "" && !regenerableIgnoredPath(entry)),
+      (entry) => isSharedPathLink(worktreePath, entry).pipe(Effect.map((shared) => !shared)),
+    );
     if (ignored.stdoutTruncated || kept.length > 0) {
       const sample = kept.slice(0, IGNORED_SAMPLE_LIMIT).join(", ");
       const more =

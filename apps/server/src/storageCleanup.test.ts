@@ -1,3 +1,4 @@
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -3254,6 +3255,43 @@ describe("storage cleanup reports and local file policies", () => {
         expect(fullStatusCalls()).toBe(0);
       }),
     ),
+  );
+  it.live.skipIf(!symlinksSupported)(
+    "lists shared worktree folders, clears one in place and ignores links to them",
+    () =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const { service, fs, repo, worktree, setPolicy } = yield* cleanupFixture();
+          const { worktreeSharedPathsDir } = yield* ServerConfig.ServerConfig;
+          setPolicy("any-local-files");
+          const shared = `${worktreeSharedPathsDir}/repo-0123456789abcdef/.zig-cache`;
+          yield* fs.makeDirectory(`${shared}/o`, { recursive: true });
+          yield* fs.writeFileString(`${shared}/o/artifact`, "x".repeat(64 * 1024));
+          yield* fs.symlink(shared, `${worktree}/.zig-cache`);
+          yield* fs.writeFileString(`${repo}/.git/info/exclude`, "/.zig-cache\n");
+
+          const report = yield* service.runNow;
+          expect(report.entries.find((entry) => entry.path === worktree)?.outcome).toBe("removed");
+          const listed = report.entries.find((entry) => entry.kind === "worktree-shared");
+          expect(listed).toMatchObject({ outcome: "kept", path: shared });
+          expect(listed?.reason).toContain("Shared by every repo worktree");
+          expect(listed?.bytes).toBeGreaterThanOrEqual(64 * 1024);
+
+          yield* service.clearSharedPath(shared);
+          expect(yield* fs.readDirectory(shared)).toEqual([]);
+          expect(yield* fs.readDirectory(worktreeSharedPathsDir)).toEqual([
+            "repo-0123456789abcdef",
+          ]);
+          const cleared = (yield* service.latestReport)?.entries.find(
+            (entry) => entry.path === shared,
+          );
+          expect(cleared).toMatchObject({ outcome: "removed", reason: "Cleared" });
+
+          const outside = yield* service.clearSharedPath(repo).pipe(Effect.flip);
+          expect(outside._tag).toBe("WorktreeSharedPathClearError");
+          expect(yield* fs.exists(`${repo}/tracked.txt`)).toBe(true);
+        }),
+      ),
   );
   it.live.each([
     ["any-local-files", ".env", "kept"],

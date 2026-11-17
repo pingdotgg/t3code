@@ -22,6 +22,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // Stopping a server signals its processes, as closing a terminal does.
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
+  [WS_METHODS.serverClearWorktreeSharedPath]: AuthSettingsWriteScope,
   // Agent and skill edits are settings writes, as the whole-library settings patch is.
   [WS_METHODS.serverMutateAgentLibrary]: AuthSettingsWriteScope,
   // Restarts the server, as an update does.

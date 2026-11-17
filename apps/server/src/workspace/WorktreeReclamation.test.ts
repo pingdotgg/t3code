@@ -45,7 +45,7 @@ const threadId = ThreadId.make("thread-reclaim");
 const TestLayer = Layer.mergeAll(
   GitVcsDriver.layer.pipe(
     Layer.provide(VcsProcess.layer),
-    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-reclaim-config-" })),
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-reclaim-config-" })),
   ),
   ProcessRunner.layer,
   SqlitePersistence.layerMemory,
@@ -217,6 +217,15 @@ describe("WorktreeReclamation", () => {
   it.effect("reclaims a clean, merged, idle checkout and keeps its branch", () =>
     Effect.gen(function* () {
       const { fixture, service } = yield* setup();
+      const { worktreeSharedPathsDir } = yield* ServerConfig.ServerConfig;
+      const sharedCache = NodePath.join(worktreeSharedPathsDir, "project", ".zig-cache");
+      NodeFS.mkdirSync(sharedCache, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(sharedCache, "artifact"), "built\n");
+      NodeFS.symlinkSync(sharedCache, NodePath.join(fixture.worktree, ".zig-cache"));
+      NodeFS.appendFileSync(
+        NodePath.join(fixture.project, ".git", "info", "exclude"),
+        "/.zig-cache\n",
+      );
       const measured = allocatedBytes(fixture.worktree);
       expect(measured).toBeGreaterThanOrEqual(512 * 1024);
 
@@ -234,6 +243,7 @@ describe("WorktreeReclamation", () => {
         allocatedBytesAfter: 0,
       });
       expect(NodeFS.existsSync(fixture.worktree)).toBe(false);
+      expect(NodeFS.readFileSync(NodePath.join(sharedCache, "artifact"), "utf8")).toBe("built\n");
       // The branch survives, so the thread's next turn can recreate the checkout.
       expect(git(fixture.project, "rev-parse", "--verify", "refs/heads/feature").trim()).toBe(
         git(fixture.project, "rev-parse", "origin/feature").trim(),
