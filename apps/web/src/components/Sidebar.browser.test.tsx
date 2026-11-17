@@ -8,6 +8,8 @@ import {
   EnvironmentId,
   type LocalApi,
   ProjectId,
+  ProviderInstanceId,
+  RunId,
   ThreadId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -208,6 +210,153 @@ describe("sidebar render isolation", () => {
     await userEvent.keyboard(`{/${modifier}}`);
     expect(rowRenders()).toBeGreaterThan(beforeRelease);
     expect(jumpLabelsSince(beforeRelease)).toEqual([]);
+  });
+});
+
+describe("the Idle shelf", () => {
+  it("folds the threads no agent is working on away", async () => {
+    using stack = new DisposableStack();
+    const previousSettings = getClientSettings();
+    stack.defer(() => __setClientSettingsForTests(previousSettings));
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS });
+    window.localStorage.removeItem("t3code:sidebar:idle-expanded");
+    vi.mocked(useProjects).mockReturnValue([project("active")]);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: null,
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: null,
+    });
+    vi.mocked(useQuietThreadShells).mockReturnValue([
+      makeThreadFixture({
+        id: ThreadId.make("thread-idle"),
+        environmentId: EnvironmentId.make("local"),
+        projectId: ProjectId.make("active"),
+        title: "Idle thread",
+      }),
+    ]);
+
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+
+    const toggle = screen.getByTestId("sidebar-idle-shelf-toggle");
+    const row = screen.getByTestId("sidebar-row-card");
+    await expect.element(toggle).toHaveAttribute("aria-expanded", "true");
+    await vi.waitFor(() => expect(row.element().textContent).toContain("Idle thread"));
+
+    await userEvent.click(toggle);
+    await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
+    await vi.waitFor(() => expect(row.query()).toBeNull());
+  });
+
+  it("links the idle rows to their header for the arrow keys", async () => {
+    using stack = new DisposableStack();
+    const previousSettings = getClientSettings();
+    stack.defer(() => __setClientSettingsForTests(previousSettings));
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS });
+    window.localStorage.removeItem("t3code:sidebar:idle-expanded");
+    vi.mocked(useProjects).mockReturnValue([project("active")]);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: null,
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: null,
+    });
+    vi.mocked(useQuietThreadShells).mockReturnValue([
+      makeThreadFixture({
+        id: ThreadId.make("thread-idle"),
+        environmentId: EnvironmentId.make("local"),
+        projectId: ProjectId.make("active"),
+        title: "Idle thread",
+      }),
+    ]);
+
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+
+    await vi.waitFor(() =>
+      expect(
+        screen.container.querySelector<HTMLElement>('[data-sidebar-row="shelf:idle"]'),
+      ).not.toBeNull(),
+    );
+    await vi.waitFor(() =>
+      expect(
+        screen.container.querySelector<HTMLElement>('[data-sidebar-parent="shelf:idle"]'),
+      ).not.toBeNull(),
+    );
+  });
+
+  it("keeps a running thread visible when the shelf folds", async () => {
+    using stack = new DisposableStack();
+    const previousSettings = getClientSettings();
+    stack.defer(() => __setClientSettingsForTests(previousSettings));
+    // Without a Working shelf the running threads sit among the idle ones.
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      sidebarWorkingShelfEnabled: false,
+    });
+    window.localStorage.removeItem("t3code:sidebar:idle-expanded");
+    vi.mocked(useProjects).mockReturnValue([project("active")]);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: null,
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: null,
+    });
+    vi.mocked(useQuietThreadShells).mockReturnValue([
+      makeThreadFixture({
+        id: ThreadId.make("thread-running"),
+        environmentId: EnvironmentId.make("local"),
+        projectId: ProjectId.make("active"),
+        title: "Running thread",
+        runtime: {
+          status: "running",
+          activeRunId: RunId.make("run-1"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          providerName: null,
+          lastError: null,
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      }),
+      makeThreadFixture({
+        id: ThreadId.make("thread-idle"),
+        environmentId: EnvironmentId.make("local"),
+        projectId: ProjectId.make("active"),
+        title: "Idle thread",
+      }),
+    ]);
+
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+
+    const toggle = screen.getByTestId("sidebar-idle-shelf-toggle");
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("sidebar-row-card").elements()).toHaveLength(2),
+    );
+
+    await userEvent.click(toggle);
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("sidebar-row-card").elements()).toHaveLength(1),
+    );
+    await expect.element(screen.getByText("Running thread")).toBeVisible();
   });
 });
 
