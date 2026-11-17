@@ -64,6 +64,7 @@ const listWithProbeFailure = (reason: IssueTrackerError["reason"]) =>
                 IssueTrackerRegistry.fromTrackers([tracker]),
               ),
               Layer.mock(ServerSecretStore.ServerSecretStore)({
+                // @effect-diagnostics-next-line preferSucceedSomeOrNone:off -- kept as the repro wrote it.
                 get: () => Effect.succeed(Option.some(new TextEncoder().encode("saved-valid-key"))),
               }),
               Layer.mock(IssueTrackerBindings.IssueTrackerBindingsRepository)({
