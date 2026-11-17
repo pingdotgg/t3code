@@ -2313,7 +2313,7 @@ it.effect("recall skips facts the check set aside, which search still finds", ()
         composer: { text: query, records: [] },
         knowledgeAllowance: 48000,
       });
-    const tenantQuery = "Change cache keys to include tenant IDs.";
+    const tenantQuery = "Should tenant IDs be part of the new cache keys?";
     assert.deepEqual(attachedFactIds(yield* recall("recall-set-aside", tenantQuery)).toSorted(), [
       standing,
       unchecked,
