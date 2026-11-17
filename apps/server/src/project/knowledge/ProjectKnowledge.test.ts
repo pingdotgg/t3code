@@ -1842,6 +1842,10 @@ it.effect("browsing searches can opt out of reinforcing retrieval counts", () =>
       ["limit", longQuery.slice(0, THREAD_SEARCH_QUERY_MAX_LENGTH)],
       ["over-limit", longQuery.slice(0, THREAD_SEARCH_QUERY_MAX_LENGTH + 1)],
       ["long-with-whitespace", ` \n\t${longQuery}\n\t `],
+      [
+        "truncated-copy",
+        `${"Cache keys include tenant IDs.".padEnd(8_192)}Should we change that requirement?`,
+      ],
     ] as const) {
       const requestId = CommandId.make(`suggest-relevant-${name}`);
       assert.deepEqual(yield* recalled(requestId, query), [ProjectFactId.make("fact-one")]);

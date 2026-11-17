@@ -8,9 +8,7 @@ const RECALL_MIN_MATCHED_TERMS = 3;
 const RECALL_MONITOR_MIN_MATCHED_TERMS = 8;
 const RECALL_MIN_COVERAGE = 0.3;
 const RECALL_MIN_MESSAGE_COVERAGE = 0.028;
-// Four terms in a row are a statement, not a shared name. No fact judged useful shared one with its message.
-const RECALL_RESTATED_RUN = 4;
-const RECALL_RESTATED_SHARE = 0.1;
+const RECALL_RESTATED_MIN_TERMS = 4;
 // 40 hid a current fact behind near-duplicates. 100 and 200 delivered the same facts here, and 200 slowed the tail.
 export const RECALL_CANDIDATE_LIMIT = 100;
 
@@ -83,13 +81,6 @@ export const recallTerms = (
   tokenize: (text: string) => Iterable<string> = tokenizeRecallText,
 ): ReadonlySet<string> => new Set(recallTermSequence(text, tokenize));
 
-const termRuns = (terms: ReadonlyArray<string>): ReadonlySet<string> =>
-  new Set(
-    terms
-      .slice(RECALL_RESTATED_RUN - 1)
-      .map((_, index) => terms.slice(index, index + RECALL_RESTATED_RUN).join(" ")),
-  );
-
 /** Work already under way. A pull-request watch stays eligible and the gate decides. */
 const isProgressNotice = (kind: OrchestrationV2NotificationSource["kind"]): boolean => {
   switch (kind) {
@@ -117,12 +108,6 @@ export const recallTrigger = (message: RecallMessage): RecallTrigger => {
   return { recall: true };
 };
 
-/** The message already carries the fact, so attaching it only takes a slot another fact could use. */
-const restates = (messageRuns: ReadonlySet<string>, factRuns: ReadonlySet<string>): boolean =>
-  factRuns.size > 0 &&
-  [...factRuns].filter((run) => messageRuns.has(run)).length / factRuns.size >=
-    RECALL_RESTATED_SHARE;
-
 const idf = (docs: number, corpusSize: number) => Math.log(1 + corpusSize / (1 + docs));
 
 export const rankRecallCandidates = <Fact extends RecallFactText>(
@@ -139,7 +124,11 @@ export const rankRecallCandidates = <Fact extends RecallFactText>(
   const tokenize = stats.tokenize ?? tokenizeRecallText;
   const querySequence = recallTermSequence(text, tokenize);
   const queryTerms = new Set(querySequence);
-  const queryRuns = termRuns(querySequence);
+  // Partial overlap loses questions, negation and qualifications that can change the claim.
+  const copiedStatement =
+    message.length <= RECALL_MESSAGE_CHARS && querySequence.length >= RECALL_RESTATED_MIN_TERMS
+      ? text.trim()
+      : undefined;
   const queryMass = [...queryTerms].reduce(
     (sum, term) => sum + idf(stats.docs(term), stats.corpusSize),
     0,
@@ -166,7 +155,7 @@ export const rankRecallCandidates = <Fact extends RecallFactText>(
           ))) &&
       relevance >= RECALL_MIN_COVERAGE &&
       queryCoverage >= RECALL_MIN_MESSAGE_COVERAGE &&
-      !restates(queryRuns, termRuns(sequence));
+      copiedStatement !== fact.content.trim();
     return [{ fact, relevance, passes }];
   });
   // Equal coverage preserves project-local trust and recency order.
