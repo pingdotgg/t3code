@@ -12,6 +12,11 @@ export function filePreviewKey(source: FilePreviewItem): string {
   return source.uri;
 }
 
+/** The thumbnail a gallery page opens from and closes into, including pages that were not tapped. */
+export function filePreviewSourceIdentifier(source: FilePreviewItem): string {
+  return source.sourceIdentifier ?? `preview:${filePreviewKey(source)}`;
+}
+
 export function filePreviewGallery(source: FilePreviewSource, group: readonly FilePreviewItem[]) {
   if (source.kind !== "image") return [source];
   const selectedKey = filePreviewKey(source);
