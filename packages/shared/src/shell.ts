@@ -278,6 +278,20 @@ export function buildEnvironmentCaptureCommand(
     : command;
 }
 
+// Process first so profile prepends win; User and Machine add dirs missing from the launch snapshot.
+export function windowsEnvironmentValueCommand(name: string): string {
+  if (name === "PATH") {
+    return (
+      "$value = (@(" +
+      "[Environment]::GetEnvironmentVariable('PATH','Process')," +
+      "[Environment]::GetEnvironmentVariable('PATH','Machine')," +
+      "[Environment]::GetEnvironmentVariable('PATH','User')" +
+      ") | Where-Object { $_ }) -join ';'"
+    );
+  }
+  return `$value = [Environment]::GetEnvironmentVariable('${name}')`;
+}
+
 function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
   return [
     "$ErrorActionPreference = 'Stop'",
@@ -288,7 +302,7 @@ function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): st
 
       return [
         `Write-Output '${envCaptureStart(name)}'`,
-        `$value = [Environment]::GetEnvironmentVariable('${name}')`,
+        windowsEnvironmentValueCommand(name),
         "if ($null -ne $value -and $value.Length -gt 0) { Write-Output $value }",
         `Write-Output '${envCaptureEnd(name)}'`,
       ];

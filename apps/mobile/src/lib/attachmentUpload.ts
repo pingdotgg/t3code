@@ -15,6 +15,7 @@ import {
   AuthOrchestrationOperateScope,
   PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { appAtomRegistry } from "../state/atom-registry";
@@ -31,6 +32,10 @@ import {
 } from "./composerImages";
 import { imageMimeType } from "@t3tools/shared/image";
 import { uuidv4 } from "./uuid";
+import {
+  attachmentUploadError,
+  type AttachmentUploadError,
+} from "@t3tools/client-runtime/state/attachment-uploads";
 
 export type UploadedMobileAttachment =
   | UploadChatImageAttachment
@@ -248,159 +253,164 @@ async function uploadFileBytes(
   }
 }
 
-/** persistUploadedReferences runs only for new uploaded ids; save them to their owner so crash retries reuse bytes. */
-export async function prepareTurnAttachments(input: {
+function requireUploadAccess(environmentId: EnvironmentId): void {
+  if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+    throw new Error("This connection cannot upload attachments.");
+  }
+}
+
+/**
+ * Uploads one attachment and returns its uploaded id, reusing an earlier upload the server
+ * still has. Interrupting it aborts the native transfer and deletes the pending upload it minted;
+ * a failed transfer deletes it too.
+ */
+export const uploadComposerAttachment = Effect.fn("uploadComposerAttachment")(function* (
+  environmentId: EnvironmentId,
+  attachment: DraftComposerAttachment,
+  onProgress?: (progress: number) => void,
+) {
+  yield* Effect.try({
+    try: () => requireUploadAccess(environmentId),
+    catch: attachmentUploadError,
+  });
+  if (
+    attachment.uploadEnvironmentId === environmentId &&
+    attachment.uploadedAttachmentId !== undefined
+  ) {
+    const verification = yield* verifyPersistedAttachmentUpload({
+      registry: appAtomRegistry,
+      createAssetUrl: assetEnvironment.createUrl,
+      environmentId,
+      attachmentId: attachment.uploadedAttachmentId,
+    });
+    if (verification.status === "failed") {
+      return yield* attachmentUploadError(verification.error);
+    }
+    if (verification.status === "verified") return attachment.uploadedAttachmentId;
+  }
+  yield* Effect.try({
+    try: () => requireUploadAccess(environmentId),
+    catch: attachmentUploadError,
+  });
+  if (
+    Option.isNone(
+      appAtomRegistry.get(environmentSession.preparedConnectionValueAtom(environmentId)),
+    )
+  ) {
+    return yield* attachmentUploadError(new Error("The environment is not connected."));
+  }
+  const result = yield* runAttachmentUploadCycle({
+    registry: appAtomRegistry,
+    createUploadUrl: attachmentEnvironment.createUploadUrl,
+    remove: attachmentEnvironment.remove,
+    environmentId,
+    upload: attachmentUploadInput(attachment),
+    // Resolve at transfer time; reconnects may change the base URL.
+    resolveUploadUrl: (relativeUrl) => {
+      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return null;
+      const connection = appAtomRegistry.get(
+        environmentSession.preparedConnectionValueAtom(environmentId),
+      );
+      return Option.isNone(connection)
+        ? null
+        : resolveAssetUrl(connection.value.httpBaseUrl, relativeUrl);
+    },
+    transport: (url) =>
+      Effect.tryPromise({
+        try: (signal) => uploadFileBytes(environmentId, attachment, url, signal, onProgress),
+        catch: attachmentUploadError,
+      }),
+  });
+  if (result.status === "uploaded") return result.attachmentId;
+  if (result.attachmentId !== null) {
+    yield* Effect.promise(() =>
+      releaseCreatedUploadsQuietly(environmentId, [result.attachmentId!]),
+    );
+  }
+  return yield* attachmentUploadError(
+    result.step === "resolve-url" &&
+      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
+      ? new Error("This connection cannot upload attachments.")
+      : result.error instanceof Error
+        ? result.error
+        : new Error(`Upload failed for '${attachment.name}'.`),
+  );
+});
+
+/**
+ * Turns a message's attachments into wire references. `uploadAttachment` is the shared upload
+ * registry, so a send joins an upload the composer already started; interrupting this stops
+ * waiting without cancelling that shared upload. persistUploadedReferences runs only for new
+ * uploaded ids; save them to their owner so crash retries reuse bytes.
+ */
+export const prepareTurnAttachments = Effect.fn("prepareTurnAttachments")(function* (input: {
   readonly environmentId: EnvironmentId;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly supportsImageUploads?: boolean;
-  readonly signal?: AbortSignal;
-  readonly onUploadProgress?: (attachmentId: string, progress: number) => void;
+  readonly uploadAttachment: (
+    attachment: DraftComposerAttachment,
+  ) => Effect.Effect<string, AttachmentUploadError>;
   readonly persistUploadedReferences?: (
     draftAttachments: ReadonlyArray<DraftComposerAttachment>,
-  ) => Promise<"persisted" | "abandon">;
-}): Promise<PrepareTurnAttachmentsResult> {
+  ) => Effect.Effect<"persisted" | "abandon">;
+}) {
   const { environmentId } = input;
-  if (input.signal?.aborted) return { status: "abandoned" };
+  const inlineImages = (attachments: ReadonlyArray<DraftComposerAttachment>) =>
+    Effect.tryPromise({
+      try: () =>
+        toUploadChatImageAttachments(
+          attachments.filter(
+            (attachment): attachment is DraftComposerImageAttachment => attachment.type === "image",
+          ),
+        ),
+      catch: attachmentUploadError,
+    });
   const files = input.attachments.filter((attachment) => attachment.type === "file");
-  const ready = (
-    attachments: ReadonlyArray<UploadedMobileAttachment>,
-    pendingAttachmentIds: ReadonlyArray<string>,
-    draftAttachments: ReadonlyArray<DraftComposerAttachment>,
-  ): PreparedTurnAttachments => ({
-    status: "ready",
-    attachments,
-    draftAttachments,
-    pendingAttachmentIds,
-  });
-
   if (input.attachments.length === 0 || (files.length === 0 && !input.supportsImageUploads)) {
-    try {
-      const imageAttachments = await toUploadChatImageAttachments(
-        input.attachments.filter((attachment) => attachment.type === "image"),
-      );
-      if (input.signal?.aborted) return { status: "abandoned" };
-      return ready(imageAttachments, [], input.attachments);
-    } catch (error) {
-      if (input.signal?.aborted) return { status: "abandoned" };
-      throw error;
-    }
+    const imageAttachments = yield* inlineImages(input.attachments);
+    return {
+      status: "ready",
+      attachments: imageAttachments,
+      draftAttachments: input.attachments,
+      pendingAttachmentIds: [],
+    } satisfies PreparedTurnAttachments as PrepareTurnAttachmentsResult;
   }
 
-  const requireUploadAccess = () => {
-    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
-      throw new Error("This connection cannot upload attachments.");
-    }
-  };
-  requireUploadAccess();
-
-  const connection = appAtomRegistry.get(
-    environmentSession.preparedConnectionValueAtom(environmentId),
-  );
-  if (Option.isNone(connection)) {
-    throw new Error("The environment is not connected.");
-  }
-
+  yield* Effect.try({
+    try: () => requireUploadAccess(environmentId),
+    catch: attachmentUploadError,
+  });
   const uploadedAttachments: UploadedMobileAttachment[] = [];
   const pendingAttachmentIds: string[] = [];
-  const createdAttachmentIds: string[] = [];
-  const controller = new AbortController();
-  const abort = () => controller.abort();
-  input.signal?.addEventListener("abort", abort, { once: true });
-  try {
-    for (const attachment of input.attachments) {
-      if (controller.signal.aborted) throw new Error("Upload cancelled.");
-      requireUploadAccess();
-      if (attachment.type === "image" && !input.supportsImageUploads) {
-        uploadedAttachments.push(...(await toUploadChatImageAttachments([attachment])));
-        continue;
-      }
-
-      if (
-        attachment.uploadEnvironmentId === environmentId &&
-        attachment.uploadedAttachmentId !== undefined
-      ) {
-        const verification = await verifyPersistedAttachmentUpload({
-          registry: appAtomRegistry,
-          createAssetUrl: assetEnvironment.createUrl,
-          environmentId,
-          attachmentId: attachment.uploadedAttachmentId,
-        });
-        if (verification.status === "failed") {
-          throw verification.error;
-        }
-        if (verification.status === "verified") {
-          pendingAttachmentIds.push(attachment.uploadedAttachmentId);
-          uploadedAttachments.push(uploadedReference(attachment, attachment.uploadedAttachmentId));
-          continue;
-        }
-      }
-
-      requireUploadAccess();
-      const result = await runAttachmentUploadCycle({
-        registry: appAtomRegistry,
-        createUploadUrl: attachmentEnvironment.createUploadUrl,
-        remove: attachmentEnvironment.remove,
-        environmentId,
-        upload: attachmentUploadInput(attachment),
-        // Resolve at transfer time; reconnects may change the base URL.
-        resolveUploadUrl: (relativeUrl) => {
-          requireUploadAccess();
-          const currentConnection = appAtomRegistry.get(
-            environmentSession.preparedConnectionValueAtom(environmentId),
-          );
-          return Option.isNone(currentConnection)
-            ? null
-            : resolveAssetUrl(currentConnection.value.httpBaseUrl, relativeUrl);
-        },
-        transport: (url) => ({
-          done: uploadFileBytes(
-            environmentId,
-            attachment,
-            url,
-            controller.signal,
-            input.onUploadProgress
-              ? (progress) => input.onUploadProgress?.(attachment.id, progress)
-              : undefined,
-          ),
-          abort,
-        }),
-        onMinted: (attachmentId) => {
-          if (controller.signal.aborted) return "cancel";
-          pendingAttachmentIds.push(attachmentId);
-          createdAttachmentIds.push(attachmentId);
-          return "continue";
-        },
-      });
-      if (result.status !== "uploaded") {
-        throw result.status === "failed" && result.error !== undefined
-          ? result.error
-          : new Error(`Upload failed for '${attachment.name}'.`);
-      }
-      uploadedAttachments.push(uploadedReference(attachment, result.attachmentId));
+  for (const attachment of input.attachments) {
+    if (attachment.type === "image" && !input.supportsImageUploads) {
+      uploadedAttachments.push(...(yield* inlineImages([attachment])));
+      continue;
     }
-
-    if (controller.signal.aborted) throw new Error("Upload cancelled.");
-
-    const draftAttachments = withUploadedMobileAttachmentReferences({
-      environmentId,
-      attachments: input.attachments,
-      uploadedAttachments,
-    });
-    const referencesChanged = draftAttachments.some(
-      (attachment, index) => attachment !== input.attachments[index],
-    );
-    if (referencesChanged && input.persistUploadedReferences) {
-      if ((await input.persistUploadedReferences(draftAttachments)) === "abandon") {
-        await releaseCreatedUploadsQuietly(environmentId, createdAttachmentIds);
-        return { status: "abandoned" };
-      }
-    }
-    return ready(uploadedAttachments, pendingAttachmentIds, draftAttachments);
-  } catch (error) {
-    await releaseCreatedUploadsQuietly(environmentId, createdAttachmentIds);
-    if (controller.signal.aborted) return { status: "abandoned" };
-    throw error;
-  } finally {
-    input.signal?.removeEventListener("abort", abort);
+    const uploadedId = yield* input.uploadAttachment(attachment);
+    pendingAttachmentIds.push(uploadedId);
+    uploadedAttachments.push(uploadedReference(attachment, uploadedId));
   }
-}
+
+  const draftAttachments = withUploadedMobileAttachmentReferences({
+    environmentId,
+    attachments: input.attachments,
+    uploadedAttachments,
+  });
+  const referencesChanged = draftAttachments.some(
+    (attachment, index) => attachment !== input.attachments[index],
+  );
+  if (
+    referencesChanged &&
+    input.persistUploadedReferences &&
+    (yield* input.persistUploadedReferences(draftAttachments)) === "abandon"
+  ) {
+    return { status: "abandoned" } as PrepareTurnAttachmentsResult;
+  }
+  return {
+    status: "ready",
+    attachments: uploadedAttachments,
+    draftAttachments,
+    pendingAttachmentIds,
+  } satisfies PreparedTurnAttachments as PrepareTurnAttachmentsResult;
+});

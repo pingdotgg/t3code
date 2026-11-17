@@ -258,6 +258,32 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("reports an optional file as absent when the workspace root was removed", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const path = yield* Path.Path;
+        const cwd = path.join(yield* makeTempDir, "removed-worktree");
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "t3.json",
+          allowMissing: true,
+        });
+        expect(result).toEqual({
+          relativePath: "t3.json",
+          contents: "",
+          byteLength: 0,
+          truncated: false,
+          exists: false,
+        });
+
+        const error = yield* workspaceFileSystem
+          .readFile({ cwd, relativePath: "t3.json" })
+          .pipe(Effect.flip);
+        expect(error).toMatchObject({ operation: "realpath-workspace-root" });
+      }),
+    );
+
     it.effect("finishes short reads before decoding UTF-8 text", () =>
       Effect.gen(function* () {
         const files = yield* WorkspaceFileSystem.WorkspaceFileSystem;

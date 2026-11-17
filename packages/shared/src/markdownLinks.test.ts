@@ -48,6 +48,21 @@ describe("inlineCodeFilePathCandidate", () => {
     ["./bin/run:12", "./bin/run:12"],
     ["src/資料.備份:12", "src/資料.備份:12"],
     ["src/foo.c++:12", "src/foo.c++:12"],
+    // regression: #37740 absolute paths with spaces are files, commands are not
+    ["/Users/me/Path Test/notes with spaces.md", "/Users/me/Path Test/notes with spaces.md"],
+    ["~/Library/Mobile Documents/notes.md", "~/Library/Mobile Documents/notes.md"],
+    [
+      "/Users/me/Library/CloudStorage/OneDrive-Org/Alex/Partners/Acme/Finance Use Cases/working/2026-11-16 message - draft.md",
+      "/Users/me/Library/CloudStorage/OneDrive-Org/Alex/Partners/Acme/Finance Use Cases/working/2026-11-16 message - draft.md",
+    ],
+    ["cd /tmp && ls", null],
+    ["/usr/bin/python3 -m venv .venv", null],
+    ["/usr/local/bin/node server.js", null],
+    ["/usr/bin/env python3 foo.py", null],
+    ["/opt/homebrew/bin/python3 manage.py", null],
+    ["/bin/echo hello world.txt", null],
+    ["~/bin/run tests.sh", null],
+    ["/Users/me/notes with spaces.md", "/Users/me/notes with spaces.md"],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
   });

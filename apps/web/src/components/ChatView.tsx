@@ -2195,7 +2195,7 @@ export default function ChatView(props: ChatViewProps) {
           if (document.querySelector("[data-mcp-app-fullscreen]") !== null) return;
           if (
             !isInSideChatPane(document.activeElement) &&
-            shouldRefocusComposerOnWindowFocus(document.activeElement)
+            shouldRefocusComposerOnWindowFocus(document.activeElement, document.getSelection())
           ) {
             focusComposerStable();
           }
@@ -2965,6 +2965,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadKey,
     activeThreadBranch,
     activeProject,
+    activeProjectIsScratch,
     activeProjectDefaultModelSelection,
     activeMessageCount,
     isServerThread,
@@ -3305,6 +3306,7 @@ export default function ChatView(props: ChatViewProps) {
             ? addPullRequestsSurfaceStable
             : undefined,
       }}
+      issuesSupported={serverConfig?.environment.capabilities.issues === true}
       files={{
         projectId: activeProject?.id,
         projectName: activeProject?.title ?? null,

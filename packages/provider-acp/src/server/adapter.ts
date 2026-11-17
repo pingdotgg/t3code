@@ -445,6 +445,7 @@ export interface AcpAdapterV2Flavor {
    * `reasoningEffort` is its `effortLevel`).
    */
   readonly ownedModelOptionIds?: ReadonlyArray<string>;
+  readonly lockSessionModeToPolicy?: true;
   readonly sessionModeForPolicy?: (
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
   ) => string | undefined;
@@ -501,14 +502,16 @@ export interface AcpAdapterV2Flavor {
   /**
    * Native steering: `send` queues a message into the running turn and returns the
    * agent's id for it, which `injectedSteerId` reads from the update that delivers it.
+   * No id means the running turn reads the message once the agent accepts it.
    */
   readonly steering?: {
     readonly send: (
       runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
       sessionId: string,
       text: string,
-    ) => Effect.Effect<string, EffectAcpErrors.AcpError>;
-    readonly injectedSteerId: (
+      images: ReadonlyArray<EffectAcpSchema.ContentBlock>,
+    ) => Effect.Effect<string | undefined, EffectAcpErrors.AcpError>;
+    readonly injectedSteerId?: (
       notification: EffectAcpSchema.SessionNotification,
     ) => string | undefined;
   };
@@ -799,8 +802,8 @@ export const AcpProviderCapabilitiesV2 = {
   checkpointing: {
     appCanCheckpointFilesystem: true,
     supportsNestedCheckpointScopes: true,
-    // ACP lacks truncation; rollback restores T3 checkpoints and starts a fresh agent session.
-    providerCanRollbackConversation: true,
+    // ACP lacks truncation; rollback starts a fresh agent session and turn start replays the kept history.
+    providerCanRollbackConversation: false,
     providerRollbackReturnsSnapshot: true,
     providerCanReadConversationSnapshot: false,
   },
@@ -1574,6 +1577,10 @@ function acpRootSessionUpdateIngestsOutput(
   }
 }
 
+/** Monitor wakes arrive as their own chunk led by a tagged `<monitor-event task_id=…>`; bare mentions are content. */
+const acpIsMonitorChatter = (text: string) =>
+  /^\s*(?:<monitor-event\s|Monitor\s+["']?[0-9a-f-]{8,}["']?\s+ended)/i.test(text);
+
 export function acpPostSettleWakeEvidence(
   notification: EffectAcpSchema.SessionNotification,
   flavor: Pick<AcpAdapterV2Flavor, "extractBackgroundToolMutation"> = {},
@@ -1588,9 +1595,7 @@ export function acpPostSettleWakeEvidence(
     const text = update.content.text;
     if ((flavor.extractBackgroundToolMutation?.(text) ?? []).length > 0) return false;
     if (update.sessionUpdate === "agent_message_chunk" && text.trim().length === 0) return false;
-    if (/<monitor-event\b/i.test(text) || /Monitor\s+["']?[0-9a-f-]{8,}["']?\s+ended/i.test(text)) {
-      return false;
-    }
+    if (acpIsMonitorChatter(text)) return false;
   }
   return true;
 }
@@ -2059,6 +2064,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             : flavor.extractSubagentUpdate?.(tool);
         let turnAttached = yield* Deferred.make<boolean>();
         const activeSessionId = yield* Ref.make<string | null>(null);
+        // session/load replays history before activeSessionId names the loaded session.
+        const loadingSessionId = yield* Ref.make<string | null>(null);
         const contextUsageBySessionId = yield* Ref.make(
           new Map<string, ThreadTokenUsageSnapshot>(),
         );
@@ -2091,6 +2098,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         });
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
         const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
+        const configuredRuntimeMode = yield* Ref.make<
+          ProviderAdapter.ProviderAdapterV2RuntimePolicy["runtimeMode"] | null
+        >(null);
         const promptInstructionStates = yield* Ref.make(new Map<string, T3AcpInstructionState>());
         const promptRuntimeInstructions = yield* Ref.make(new Map<string, string>());
         // Unique markers keep delayed prompt completions from clearing later compactions.
@@ -2548,12 +2558,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* Ref.set(continuationRequested, false);
               yield* cancelPendingRuntimeRequests();
               const context = yield* Ref.get(activeTurn);
-              if (context !== null)
+              if (context !== null) {
+                if (!context.finalized && !context.interrupted) {
+                  yield* terminalizeOpenForegroundTools(context, "failed");
+                }
                 yield* finalizeTurn(
                   context,
                   "failed",
                   makeProviderFailure({ class: "transport_error" }),
                 );
+              }
             }),
           ).pipe(Effect.asVoid);
         const makeRuntimeInput = (
@@ -3927,7 +3941,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
             return true;
           }
-          if (notification.sessionId === root) return false;
+          if (
+            notification.sessionId === root ||
+            notification.sessionId === (yield* Ref.get(loadingSessionId))
+          )
+            return false;
           if (yield* Ref.get(stoppedRunQuarantine)) return true;
           const update = notification.update;
           if (update.sessionUpdate === "state_update") {
@@ -5517,6 +5535,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               return;
             }
             if (
+              notification.sessionId !==
+              ((yield* Ref.get(loadingSessionId)) ?? (yield* Ref.get(activeSessionId)))
+            )
+              return;
+            if (
               update.sessionUpdate === "user_message_chunk" ||
               update.sessionUpdate === "agent_message_chunk" ||
               update.sessionUpdate === "agent_thought_chunk"
@@ -5530,14 +5553,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               for (const lateBackgroundMutation of lateBackgroundMutations) {
                 yield* applyLateBackgroundMutation(notification.sessionId, lateBackgroundMutation);
               }
-              const lateMonitorChatter =
-                /<monitor-event\b/i.test(text) ||
-                /Monitor\s+["']?[0-9a-f-]{8,}["']?\s+ended/i.test(text);
-              if (
-                text.trim().length > 0 &&
-                lateBackgroundMutations.length === 0 &&
-                !lateMonitorChatter
-              ) {
+              if (lateBackgroundMutations.length === 0 && !acpIsMonitorChatter(text)) {
                 yield* appendLoadedHistory(
                   notification,
                   update.sessionUpdate === "user_message_chunk"
@@ -6227,10 +6243,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           ),
         );
 
-        const cancelPendingRuntimeRequests = Effect.fnUntraced(function* () {
+        const cancelPendingRuntimeRequests = Effect.fnUntraced(function* (
+          options: { readonly stopMcpCalls: boolean } = { stopMcpCalls: true },
+        ) {
           const waiting = turnAttached;
           turnAttached = yield* Deferred.make<boolean>();
           yield* Deferred.succeed(waiting, false);
+          // session/cancel does not end the agent's MCP calls; T3 runs them, so it stops them.
+          if (options.stopMcpCalls && runtimeMcpBridge !== undefined) {
+            yield* runtimeMcpBridge.stopCalls;
+          }
           const requests = yield* Ref.modify(pendingRuntimeRequests, (current) => [
             [...current.values()],
             new Map<string, PendingRuntimeRequest>(),
@@ -6638,7 +6660,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   context.nativePromptId ??= nativePromptId;
                 }
               }
-              const injectedSteerId = flavor.steering?.injectedSteerId(rawNotification);
+              const injectedSteerId = flavor.steering?.injectedSteerId?.(rawNotification);
               if (injectedSteerId !== undefined) {
                 yield* Deferred.succeed(steerInjection(injectedSteerId), undefined);
               }
@@ -7288,12 +7310,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           threadId: ThreadId | null,
           resumeSessionId?: string,
         ) {
+          if (resumeSessionId !== undefined) yield* Ref.set(loadingSessionId, resumeSessionId);
           const startup = Effect.gen(function* () {
             yield* spawnAcpRuntime(threadId, resumeSessionId);
             yield* wireAcpRuntimeHandlers(runtime, yield* Ref.get(runtimeCallbackGeneration));
             return yield* runtime.start();
           });
-          return yield* flavor.withRuntimeStartup?.(startup) ?? startup;
+          return yield* (flavor.withRuntimeStartup?.(startup) ?? startup).pipe(
+            Effect.onError(() => Ref.set(loadingSessionId, null)),
+          );
         });
 
         const restartAcpRuntime = Effect.fnUntraced(function* (threadId: ThreadId | null) {
@@ -7536,6 +7561,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               return yield* startAcpRuntime(input.threadId);
             });
         yield* Ref.set(activeSessionId, started.sessionId);
+        yield* Ref.set(loadingSessionId, null);
         yield* setActiveSessionSetup(started);
         rememberTerminalEnvironment(started.sessionId, yield* readMcpContext(input.threadId));
         yield* runtime.drainEvents;
@@ -7567,14 +7593,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const mcpContext = yield* readMcpContext(threadId);
           const activationOptions = acpMcpActivation(mcpContext);
           prepareTerminalEnvironment(mcpContext, sessionId);
-          const activated = canLoadSession
-            ? yield* runtime.loadSession(sessionId, activationOptions)
-            : canResumeSession
-              ? yield* runtime.resumeSession(sessionId, activationOptions)
-              : yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                  driver,
-                  detail: `ACP driver cannot load or resume session ${sessionId}`,
-                });
+          yield* Ref.set(loadingSessionId, sessionId);
+          const activated = yield* Effect.gen(function* () {
+            return canLoadSession
+              ? yield* runtime.loadSession(sessionId, activationOptions)
+              : canResumeSession
+                ? yield* runtime.resumeSession(sessionId, activationOptions)
+                : yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver,
+                    detail: `ACP driver cannot load or resume session ${sessionId}`,
+                  });
+          }).pipe(Effect.onError(() => Ref.set(loadingSessionId, null)));
           rememberTerminalEnvironment(activated.sessionId, yield* readMcpContext(threadId));
           return activated;
         });
@@ -7782,11 +7811,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* runtime.setConfigOption(selection.id, selection.value);
           }
           const policyMode = flavor.sessionModeForPolicy?.(runtimePolicy);
+          const modeLocked = flavor.lockSessionModeToPolicy && policyMode !== undefined;
           if (policyMode !== undefined) {
             yield* runtime.setMode(policyMode);
           }
           const modeState = yield* runtime.getModeState;
           if (
+            !modeLocked &&
             modeSelection !== undefined &&
             typeof modeSelection.value === "string" &&
             modeState?.availableModes.some((mode) => mode.id === modeSelection.value) === true &&
@@ -7837,6 +7868,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const nativeBuild = nativeBuildConfigurationBySessionId.get(startResult.sessionId);
             if (nativeBuild !== undefined) {
               if (
+                !modeLocked &&
                 nativeBuild.modeId !== undefined &&
                 effectiveModeState?.currentModeId !== nativeBuild.modeId &&
                 effectiveModeState?.availableModes.some(
@@ -7849,7 +7881,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 const option = effectiveConfigOptions.find(
                   (candidate) => candidate.type === "select" && candidate.id === saved.id,
                 );
-                if (option === undefined || option.type !== "select") continue;
+                if (
+                  option === undefined ||
+                  option.type !== "select" ||
+                  (modeLocked && option.category === "mode")
+                )
+                  continue;
                 const choices = option.options.flatMap((entry) =>
                   "value" in entry ? [entry.value] : entry.options.map((choice) => choice.value),
                 );
@@ -7861,6 +7898,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
           }
           yield* validateModelSelection(modelSelection);
+          yield* Ref.set(configuredRuntimeMode, runtimePolicy.runtimeMode);
           yield* (
             flavor.onSessionConfigurationUpdate?.(
               yield* runtime.getConfigOptions,
@@ -7955,10 +7993,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const terminalizeOpenForegroundTools = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           status: "completed" | "failed" = "completed",
+          options?: { readonly unstartedOnly?: boolean },
         ) {
           for (const tool of context.tools.values()) {
             if (!acpCompletedTurnShouldTerminalizeTool(tool, { ...flavor, extractSubagentUpdate }))
               continue;
+            if (options?.unstartedOnly === true && tool.status !== "pending") continue;
             yield* emitTool(context, tool, status);
           }
         });
@@ -8321,6 +8361,38 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
         });
 
+        const imageAttachmentBlocks = Effect.fnUntraced(function* (
+          attachments: ReadonlyArray<ChatAttachment>,
+        ) {
+          const blocks: Array<EffectAcpSchema.ContentBlock> = [];
+          for (const attachment of attachments.filter(isProviderNativeImageAttachment)) {
+            const path = host.resolveAttachmentPath(attachment as ChatAttachment);
+            if (path === null) {
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver,
+                detail: `Invalid attachment id '${attachment.id}'`,
+              });
+            }
+            const bytes = yield* fileSystem.readFile(path).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver,
+                    detail: `Failed to read attachment '${attachment.id}'`,
+                    reason: "attachment_unreadable",
+                    payload: cause,
+                  }),
+              ),
+            );
+            blocks.push({
+              type: "image",
+              data: Buffer.from(bytes).toString("base64"),
+              mimeType: attachment.mimeType,
+            });
+          }
+          return blocks;
+        });
+
         const resolvePromptParts = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           sessionId: string,
@@ -8349,41 +8421,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             resolveExtractedTextPath: host.resolveExtractedTextPath,
           });
           const isNativeSlashCommand = userText.trimStart().startsWith("/");
-          const imageAttachments = turnInput.message.attachments.filter(
-            isProviderNativeImageAttachment,
-          );
-          if (imageAttachments.length > 0 && !supportsImagePrompts) {
+          if (
+            !supportsImagePrompts &&
+            turnInput.message.attachments.some(isProviderNativeImageAttachment)
+          ) {
             return yield* new ProviderAdapter.ProviderAdapterProtocolError({
               driver,
               detail: "ACP driver did not negotiate image prompt support",
             });
           }
-          const attachmentBlocks: Array<EffectAcpSchema.ContentBlock> = [];
-          for (const attachment of flavor.buildAttachmentPrompt ? [] : imageAttachments) {
-            const path = host.resolveAttachmentPath(attachment as ChatAttachment);
-            if (path === null) {
-              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                driver,
-                detail: `Invalid attachment id '${attachment.id}'`,
-              });
-            }
-            const bytes = yield* fileSystem.readFile(path).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterProtocolError({
-                    driver,
-                    detail: `Failed to read attachment '${attachment.id}'`,
-                    reason: "attachment_unreadable",
-                    payload: cause,
-                  }),
-              ),
-            );
-            attachmentBlocks.push({
-              type: "image",
-              data: Buffer.from(bytes).toString("base64"),
-              mimeType: attachment.mimeType,
-            });
-          }
+          const attachmentBlocks = flavor.buildAttachmentPrompt
+            ? []
+            : yield* imageAttachmentBlocks(turnInput.message.attachments);
           if (flavor.buildAttachmentPrompt) {
             const setup = yield* Ref.get(activeSessionSetup);
             const modelOption = findModelConfigOption(yield* runtime.getConfigOptions);
@@ -8505,6 +8554,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (needsSessionActivation) {
               const activated = yield* activateSession(requestedSessionId, turnInput.threadId);
               yield* Ref.set(activeSessionId, activated.sessionId);
+              yield* Ref.set(loadingSessionId, null);
               yield* setActiveSessionSetup(activated);
               yield* configureSession(activated, turnInput.modelSelection, turnInput.runtimePolicy);
               yield* Ref.set(activeSelection, turnInput.modelSelection);
@@ -8515,7 +8565,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               if (
                 configuredSelection === null ||
                 !modelSelectionsEqual(configuredSelection, turnInput.modelSelection) ||
-                configuredInteractionMode !== turnInput.runtimePolicy.interactionMode
+                configuredInteractionMode !== turnInput.runtimePolicy.interactionMode ||
+                (yield* Ref.get(configuredRuntimeMode)) !== turnInput.runtimePolicy.runtimeMode
               ) {
                 const currentSessionSetup = yield* Ref.get(activeSessionSetup);
                 if (currentSessionSetup === null) {
@@ -8962,6 +9013,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     if (!interrupted && flavor.restartRuntimeAfterPromptError?.(failure) === true) {
                       yield* Ref.set(runtimeRestartRequired, true);
                     }
+                    // An agent that answered with an error may still finish tools it started,
+                    // never pending ones; any other failure means its process or pipe is gone.
+                    const agentAnswered =
+                      Result.isSuccess(error) && error.success._tag === "AcpRequestError";
+                    if (!interrupted) {
+                      yield* terminalizeOpenForegroundTools(context, "failed", {
+                        unstartedOnly: agentAnswered,
+                      });
+                    }
                     yield* finalizeTurn(
                       context,
                       interrupted ? "interrupted" : "failed",
@@ -9216,6 +9276,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       threadInput.providerThread.appThreadId,
                     ).pipe(Effect.tapError(() => restorePreviousItemIdentity));
                     yield* Ref.set(activeSessionId, activated.sessionId);
+                    yield* Ref.set(loadingSessionId, null);
                     yield* setActiveSessionSetup(activated);
                     const nextSelection = threadInput.modelSelection ?? input.modelSelection;
                     const nextRuntimePolicy = threadInput.runtimePolicy ?? input.runtimePolicy;
@@ -9262,8 +9323,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           steerTurn: Effect.fn("AcpAdapterV2.steerTurn")(
             function* (turnInput) {
               const steering = flavor.steering;
-              // The agent takes text only, so a steer with attachments waits for the next turn.
-              if (steering === undefined || turnInput.message.attachments.length > 0) {
+              // A text-only steer leaves attachments to the orchestrator's restart.
+              if (
+                steering === undefined ||
+                (turnInput.message.attachments.length > 0 &&
+                  flavor.capabilities.turns.activeSteeringAcceptsAttachments === false)
+              ) {
                 return yield* new ProviderAdapter.ProviderAdapterSteerRunUnsupportedError({
                   driver,
                   providerThreadId: turnInput.providerThread.id,
@@ -9287,11 +9352,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   Effect.timeoutOption(startHold.bound),
                 );
               }
+              const text = yield* providerMessageTextWithAttachmentPaths({
+                text: turnInput.message.text,
+                attachments: turnInput.message.attachments,
+                resolveAttachmentPath: host.resolveAttachmentPath,
+                resolveExtractedTextPath: host.resolveExtractedTextPath,
+              });
               const steerId = yield* steering.send(
                 runtime,
                 context.nativeThreadId,
-                turnInput.message.text,
+                text,
+                yield* imageAttachmentBlocks(turnInput.message.attachments),
               );
+              if (steerId === undefined) return;
               const injected = steerInjection(steerId);
               // The agent reads a steer at its next step. One that lands after the last
               // step is dropped, and the turn settles right after; the orchestrator then
@@ -9555,7 +9628,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       if (hardRestart || turnInput.requestRuntimeRestart === true) {
                         yield* quarantineStoppedRun();
                       }
-                      yield* cancelPendingRuntimeRequests();
+                      // A settled soft interrupt keeps background subagents, and with them their MCP calls.
+                      yield* cancelPendingRuntimeRequests({ stopMcpCalls: !settledSoftInterrupt });
                       // Finalize before killing so projection catches up and concurrent interrupts see activeTurn cleared.
                       if (
                         (hardRestart || context.promptSettled || settledSoftInterrupt) &&
@@ -9716,15 +9790,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       snapshotInput.providerThread.appThreadId,
                     );
                     prepareTerminalEnvironment(mcpContext, sessionId);
-                    const activated = yield* runtime.loadSession(
-                      sessionId,
-                      acpMcpActivation(mcpContext),
-                    );
+                    yield* Ref.set(loadingSessionId, sessionId);
+                    const activated = yield* runtime
+                      .loadSession(sessionId, acpMcpActivation(mcpContext))
+                      .pipe(Effect.onError(() => Ref.set(loadingSessionId, null)));
                     rememberTerminalEnvironment(
                       activated.sessionId,
                       yield* readMcpContext(snapshotInput.providerThread.appThreadId),
                     );
                     yield* Ref.set(activeSessionId, activated.sessionId);
+                    yield* Ref.set(loadingSessionId, null);
                     yield* setActiveSessionSetup(activated);
                     yield* Ref.set(activeSelection, null);
                     yield* Ref.set(activeInteractionMode, null);
@@ -9732,7 +9807,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const state = yield* Ref.get(snapshot);
                   const messages = state.order.flatMap((key) => {
                     const message = state.messages.get(key);
-                    return message === undefined ? [] : [message];
+                    return message === undefined ||
+                      (message.text.trim().length === 0 && message.attachments.length === 0)
+                      ? []
+                      : [message];
                   });
                   const now = yield* DateTime.now;
                   return {

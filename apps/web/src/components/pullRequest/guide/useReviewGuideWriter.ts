@@ -54,7 +54,7 @@ export function useReviewGuideWriter({
         title: "Could not start a review guide",
         description: readableFailure(
           squashAtomCommandFailure(result),
-          "Check the review guide model in Settings → Source control.",
+          "Check the review guide model in Settings → Source control & issues.",
         ),
       });
     }
