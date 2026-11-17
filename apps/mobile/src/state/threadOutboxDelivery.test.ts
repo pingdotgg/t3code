@@ -824,6 +824,7 @@ describe("thread outbox recovery rollback", () => {
       mimeType: "image/png",
       sizeBytes: 1,
       dataUrl: "data:image/png;base64,AA==",
+      previewUri: "data:image/png;base64,AA==",
     };
     try {
       const recovering = recoverFailedThreadDraft(message);
