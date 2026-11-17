@@ -41,6 +41,7 @@ import { applyThemeBackground, startThemeBackground } from "./themeBackground";
 import {
   applyThemeColorPreview,
   CUSTOM_THEMES_STORAGE_KEY,
+  getDefaultThemeColors,
   getThemeDefinition,
   invalidateCustomThemes,
 } from "./themePalette";
@@ -167,8 +168,7 @@ describe("theme backgrounds", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(t.properties.get(BACKGROUND)).toMatch(/^url\("blob:/);
 
-    // @ts-expect-error -- the draft paints only the colors it is given.
-    applyThemeColorPreview({ canvas: "#f4f1ff", accent: "#6d5ae6" }, "light");
+    applyThemeColorPreview(getDefaultThemeColors("light"), "light");
     expect(t.properties.has(BACKGROUND)).toBe(false);
   });
 });
