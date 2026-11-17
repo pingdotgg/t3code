@@ -374,6 +374,7 @@
   "74d36a4b4a67340f": "Una VPN, un firewall o un bloqueador de anuncios en este dispositivo puede bloquear T3 Connect.",
   "13d74302502bdb92": "Una VPN, un firewall o un filtro DNS en este dispositivo puede bloquear el túnel.",
   "6538d9af1dc853bc": "Prueba otra red o añade una ruta directa, como una dirección de Tailscale.",
+  "e950948b20d099cf": "El inicio de sesión de este dispositivo en {host} caducó o fue revocado. Emparéjalo de nuevo con un enlace de emparejamiento nuevo de {host}.",
   "964a38e20cc7ecda": "Asegúrate de que T3 Code se está ejecutando en {host}.",
   "00fcb4f22434502b": "Vuelve a intentarlo. Si sigue fallando, copia el diagnóstico.",
   "589f3050d8371c67": "Este dispositivo",

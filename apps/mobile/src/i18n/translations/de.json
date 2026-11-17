@@ -374,6 +374,7 @@
   "74d36a4b4a67340f": "Ein VPN, eine Firewall oder ein Werbeblocker auf diesem Gerät kann T3 Connect blockieren.",
   "13d74302502bdb92": "Ein VPN, eine Firewall oder ein DNS-Filter auf diesem Gerät kann den Tunnel blockieren.",
   "6538d9af1dc853bc": "Versuche ein anderes Netzwerk oder füge eine direkte Route hinzu, etwa eine Tailscale-Adresse.",
+  "e950948b20d099cf": "Die Anmeldung dieses Geräts bei {host} ist abgelaufen oder wurde widerrufen. Kopple es erneut mit einem neuen Kopplungslink von {host}.",
   "964a38e20cc7ecda": "Stelle sicher, dass T3 Code auf {host} läuft.",
   "00fcb4f22434502b": "Versuche es erneut. Wenn es weiter fehlschlägt, kopiere die Diagnosedaten.",
   "589f3050d8371c67": "Dieses Gerät",

@@ -374,6 +374,7 @@
   "74d36a4b4a67340f": "A VPN, firewall, or ad blocker on this device can block T3 Connect.",
   "13d74302502bdb92": "A VPN, firewall, or DNS filter on this device can block the tunnel.",
   "6538d9af1dc853bc": "Try another network, or add a direct route such as a Tailscale address.",
+  "e950948b20d099cf": "This device's sign-in to {host} expired or was revoked. Pair it again with a new pairing link from {host}.",
   "964a38e20cc7ecda": "Make sure T3 Code is running on {host}.",
   "00fcb4f22434502b": "Retry. If it keeps failing, copy the diagnostics.",
   "589f3050d8371c67": "This device",

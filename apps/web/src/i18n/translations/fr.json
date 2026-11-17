@@ -374,6 +374,7 @@
   "74d36a4b4a67340f": "Un VPN, un pare-feu ou un bloqueur de publicités sur cet appareil peut bloquer T3 Connect.",
   "13d74302502bdb92": "Un VPN, un pare-feu ou un filtre DNS sur cet appareil peut bloquer le tunnel.",
   "6538d9af1dc853bc": "Essayez un autre réseau, ou ajoutez une route directe comme une adresse Tailscale.",
+  "e950948b20d099cf": "La connexion de cet appareil à {host} a expiré ou a été révoquée. Appairez-le à nouveau avec un nouveau lien d’appairage depuis {host}.",
   "964a38e20cc7ecda": "Vérifiez que T3 Code est lancé sur {host}.",
   "00fcb4f22434502b": "Réessayez. Si l’échec persiste, copiez les diagnostics.",
   "589f3050d8371c67": "Cet appareil",
