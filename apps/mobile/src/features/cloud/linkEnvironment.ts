@@ -10,6 +10,7 @@ import {
   EnvironmentHttpUnauthorizedError,
 } from "@t3tools/contracts";
 import {
+  RelayOkResponse,
   type RelayEnvironmentLinkResponse as RelayEnvironmentLinkResponseType,
   type RelayManagedEndpointProviderKind,
 } from "@t3tools/contracts/relay";
@@ -161,6 +162,40 @@ type LinkEnvironmentToCloudRequirements =
   | HttpClient.HttpClient
   | ManagedRelay.ManagedRelayClient
   | MobileStorage.MobileStorage;
+
+const decodeRelayOkResponse = Schema.decodeUnknownEffect(RelayOkResponse);
+
+export const updateLinkedEnvironmentLiveActivityPreference = Effect.fn(
+  "linkEnvironment.updateLinkedEnvironmentLiveActivityPreference",
+)(function* (connection: SavedRemoteConnection, liveActivitiesEnabled: boolean) {
+  if (!connection.bearerToken) return false;
+
+  const client = yield* makeEnvironmentHttpApiClient(connection.httpBaseUrl);
+  return yield* client.connect
+    .liveActivityPreference({
+      headers: { authorization: `Bearer ${connection.bearerToken}` },
+      payload: { liveActivitiesEnabled },
+      responseMode: "response-only",
+    })
+    .pipe(
+      Effect.flatMap((response) =>
+        Effect.gen(function* () {
+          if (response.status === 404) return false;
+          if (response.status === 200) {
+            const json = yield* response.json;
+            const result = yield* decodeRelayOkResponse(json);
+            return result.ok;
+          }
+          return yield* new CloudEnvironmentLinkError({
+            message: `Environment returned HTTP ${response.status}.`,
+          });
+        }),
+      ),
+      Effect.mapError(
+        cloudEnvironmentLinkError("Could not update the environment's Live Activity preference."),
+      ),
+    );
+});
 
 export const linkEnvironmentToCloudWithPreference = Effect.fn(
   "linkEnvironment.linkEnvironmentToCloudWithPreference",

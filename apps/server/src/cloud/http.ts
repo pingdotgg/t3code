@@ -152,6 +152,13 @@ export const layer = HttpApiBuilder.group(
           Effect.andThen(toHttpError(cloudLink.updatePreferences(payload))),
         ),
       )
+      .handle("liveActivityPreference", ({ payload }) =>
+        requireEnvironmentScope(AuthRelayWriteScope).pipe(
+          Effect.andThen(
+            toHttpError(cloudLink.updateLiveActivityPreference(payload.liveActivitiesEnabled)),
+          ),
+        ),
+      )
       .handle("health", ({ payload }) =>
         toHttpError(cloudLink.answerHealthRequest(payload)).pipe(
           Effect.tap(() => appendCloudCredentialResponseHeaders),

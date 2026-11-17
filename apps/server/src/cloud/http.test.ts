@@ -99,7 +99,9 @@ const layerLinkProofRoutes = HttpApiBuilder.layer(LinkProofTestApi).pipe(
         capabilities: { repositoryIdentity: false },
       }),
     }),
-    Layer.mock(ManagedEndpointRuntime.CloudManagedEndpointRuntime)({}),
+    Layer.mock(ManagedEndpointRuntime.CloudManagedEndpointRuntime)({
+      withLinkStateLock: (effect) => effect,
+    }),
     Layer.mock(CliTokenManager.CloudCliTokenManager)({}),
     Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({}),
     Layer.mock(HttpServer.HttpServer)({
@@ -297,6 +299,22 @@ describe("link proof over a non-loopback desktop transport", () => {
         requiredScope: "relay:write",
         requiredPermission: "relay:configure",
       });
+    }),
+  );
+
+  it.effect("allows relay writers to set preferences without creating a link", () =>
+    Effect.gen(function* () {
+      const { post, exchange } = yield* linkProofClient;
+      const path = "/api/connect/live-activity-preference";
+      const payload = { liveActivitiesEnabled: true };
+      const readToken = yield* exchange(DESKTOP_BOOTSTRAP_TOKEN, "relay:read");
+      const denied = yield* post(path, payload, { authorization: `Bearer ${readToken}` });
+      expect(denied.status).toBe(403);
+
+      const writeToken = yield* exchange(DESKTOP_BOOTSTRAP_TOKEN, "relay:write");
+      const unlinked = yield* post(path, payload, { authorization: `Bearer ${writeToken}` });
+      expect(unlinked.status).toBe(200);
+      expect(yield* responseJson(unlinked)).toEqual({ ok: false });
     }),
   );
 

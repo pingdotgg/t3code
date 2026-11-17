@@ -11,6 +11,7 @@ import * as MobileStorage from "../../persistence/mobile-storage";
 import {
   CloudEnvironmentLinkError,
   linkEnvironmentToCloudWithPreference,
+  updateLinkedEnvironmentLiveActivityPreference,
 } from "../cloud/linkEnvironment";
 import { setLiveActivityUpdatesEnabled } from "./liveActivityPreferences";
 import { updateAgentAwarenessRegistrationPreferences } from "./remoteRegistration";
@@ -34,6 +35,7 @@ vi.mock("expo-device", () => ({}));
 vi.mock("../cloud/linkEnvironment", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../cloud/linkEnvironment")>()),
   linkEnvironmentToCloudWithPreference: vi.fn(() => Effect.void),
+  updateLinkedEnvironmentLiveActivityPreference: vi.fn(() => Effect.succeed(true)),
 }));
 
 vi.mock("./remoteRegistration", () => ({
@@ -76,7 +78,7 @@ describe("liveActivityPreferences", () => {
   });
 
   it.effect("restores relay preferences when an environment update fails", () => {
-    vi.mocked(linkEnvironmentToCloudWithPreference).mockImplementationOnce(() =>
+    vi.mocked(updateLinkedEnvironmentLiveActivityPreference).mockImplementationOnce(() =>
       Effect.fail(new CloudEnvironmentLinkError({ message: "environment update failed" })),
     );
 
@@ -87,7 +89,8 @@ describe("liveActivityPreferences", () => {
           previousEnabled: true,
           clerkToken: "clerk-token",
           connections: [connection],
-          canConfigureEnvironment: () => true,
+          canConfigureEnvironment: () => false,
+          canUpdateEnvironment: () => true,
         }),
       );
 
@@ -98,20 +101,24 @@ describe("liveActivityPreferences", () => {
       expect(updateAgentAwarenessRegistrationPreferences).toHaveBeenNthCalledWith(2, {
         liveActivitiesEnabled: true,
       });
-      expect(linkEnvironmentToCloudWithPreference).toHaveBeenNthCalledWith(1, {
-        clerkToken: "clerk-token",
+      expect(updateLinkedEnvironmentLiveActivityPreference).toHaveBeenNthCalledWith(
+        1,
         connection,
-        liveActivitiesEnabled: false,
-      });
-      expect(linkEnvironmentToCloudWithPreference).toHaveBeenNthCalledWith(2, {
-        clerkToken: "clerk-token",
+        false,
+      );
+      expect(updateLinkedEnvironmentLiveActivityPreference).toHaveBeenNthCalledWith(
+        2,
         connection,
-        liveActivitiesEnabled: true,
-      });
+        true,
+      );
+      expect(linkEnvironmentToCloudWithPreference).not.toHaveBeenCalled();
     }).pipe(Effect.provide(layerTest));
   });
 
-  it.effect("only re-links environments with relay access when enabling updates", () => {
+  it.effect("only creates missing links when the session can configure Connect", () => {
+    vi.mocked(updateLinkedEnvironmentLiveActivityPreference).mockReturnValueOnce(
+      Effect.succeed(false),
+    );
     const readOnlyConnection: SavedRemoteConnection = {
       ...connection,
       environmentId: "read-only" as EnvironmentId,
@@ -123,6 +130,7 @@ describe("liveActivityPreferences", () => {
         previousEnabled: false,
         clerkToken: "clerk-token",
         connections: [readOnlyConnection, connection],
+        canUpdateEnvironment: (environmentId) => environmentId === connection.environmentId,
         canConfigureEnvironment: (environmentId) => environmentId === connection.environmentId,
       });
 
@@ -152,9 +160,11 @@ describe("liveActivityPreferences", () => {
         clerkToken: "clerk-token",
         connections: [connection],
         canConfigureEnvironment: () => canConfigureEnvironment,
+        canUpdateEnvironment: () => canConfigureEnvironment,
       });
 
       expect(linkEnvironmentToCloudWithPreference).not.toHaveBeenCalled();
+      expect(updateLinkedEnvironmentLiveActivityPreference).not.toHaveBeenCalled();
       expect(updateAgentAwarenessRegistrationPreferences).toHaveBeenCalledTimes(1);
     }).pipe(Effect.provide(layerTest));
   });

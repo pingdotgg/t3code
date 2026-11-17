@@ -64,6 +64,45 @@ describe("EnvironmentLinks", () => {
     );
   });
 
+  it.effect("updates Live Activities only on the matching active link", () => {
+    const fakeDb = {
+      update: (table: unknown) => {
+        expect(table).toBe(relayEnvironmentLinks);
+        return {
+          set: (values: Record<string, unknown>) => {
+            expect(values).toEqual({
+              liveActivitiesEnabled: false,
+              updatedAt: expect.any(String),
+            });
+            return {
+              where: (condition: unknown) => {
+                const query = new PgDialect().sqlToQuery(condition as never);
+                expect(query.params).toEqual(["user-1", "env-1", "public-key-1"]);
+                expect(query.sql).toContain('"relay_environment_links"."revoked_at" is null');
+                return { returning: () => Effect.succeed([]) };
+              },
+            };
+          },
+        };
+      },
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const links = yield* EnvironmentLinks.EnvironmentLinks;
+      const updated = yield* links.updateLiveActivityPreference({
+        userId: "user-1",
+        environmentId: "env-1",
+        environmentPublicKey: "public-key-1",
+        liveActivitiesEnabled: false,
+      });
+      expect(updated).toBe(false);
+    }).pipe(
+      Effect.provide(
+        EnvironmentLinks.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),
+      ),
+    );
+  });
+
   it.effect("revokes only the active link owned by the requesting user", () => {
     const updateValues: Array<Record<string, unknown>> = [];
     const whereConditions: Array<unknown> = [];

@@ -252,6 +252,7 @@ const INTERNAL_OPERATION_MESSAGES = {
   "persist-recovered-tunnel": "Could not persist the recovered managed tunnel configuration.",
   "read-relay-config": "Could not read environment relay configuration.",
   "remove-relay-config": "Could not remove environment relay configuration.",
+  "update-live-activity-preference": "Could not update T3 Connect Live Activity preferences.",
   "update-webhook-settings": "Could not update T3 Connect webhook settings.",
   "read-preferences": "Could not read environment cloud preferences.",
   "persist-preferences": "Could not persist environment cloud preferences.",
@@ -455,6 +456,12 @@ export class CloudLink extends Context.Service<
     ) => Effect.Effect<
       EnvironmentCloudLinkStateResult,
       CloudLinkNotLinkedError | CloudLinkInternalError | ManagedLimits.ManagedPolicyRefusedError
+    >;
+    readonly updateLiveActivityPreference: (
+      enabled: boolean,
+    ) => Effect.Effect<
+      RelayOkResponse,
+      CloudLinkInternalError | ManagedLimits.ManagedPolicyRefusedError
     >;
     readonly answerHealthRequest: (
       request: RelayCloudEnvironmentHealthRequest,
@@ -1431,6 +1438,37 @@ const make = Effect.gen(function* () {
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("read-preferences")),
   );
 
+  const updateLiveActivityPreference = Effect.fn("environment.cloud.updateLiveActivityPreference")(
+    function* (liveActivitiesEnabled: boolean) {
+      return yield* endpointRuntime.withLinkStateLock(
+        Effect.gen(function* () {
+          const connection = yield* readRelayConnection.pipe(withSecrets);
+          const cloudUserId = yield* secrets.get(CLOUD_LINKED_USER_ID);
+          const revoked = yield* secrets.get(CLOUD_LINK_REVOKED);
+          if (connection === null || Option.isNone(cloudUserId) || Option.isSome(revoked)) {
+            return { ok: false };
+          }
+          const environmentId = yield* environment.getEnvironmentId;
+          const client = yield* makeRelayEnvironmentClient(connection);
+          return yield* client.server
+            .updateLiveActivityPreference({
+              params: { environmentId },
+              payload: { cloudUserId: bytesToString(cloudUserId.value), liveActivitiesEnabled },
+            })
+            .pipe(
+              Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
+              Effect.timeout("10 seconds"),
+              Effect.catch(internalError("update-live-activity-preference")),
+            );
+        }),
+      );
+    },
+    Effect.catchIf(
+      ServerSecretStore.isSecretStoreError,
+      internalError("update-live-activity-preference"),
+    ),
+  );
+
   const answerHealthRequest = Effect.fn("environment.cloud.health")(
     function* (request: RelayCloudEnvironmentHealthRequest) {
       const cloudMintPublicKey = yield* secrets
@@ -1660,6 +1698,7 @@ const make = Effect.gen(function* () {
       linkState,
       unlink,
       updatePreferences: refused,
+      updateLiveActivityPreference: refused,
       answerHealthRequest: refused,
       mintCredential: refused,
       reconcileDesiredLinkIfStillDesired: notDesired,
@@ -1676,6 +1715,7 @@ const make = Effect.gen(function* () {
     linkState,
     unlink,
     updatePreferences,
+    updateLiveActivityPreference,
     answerHealthRequest,
     mintCredential,
     reconcileDesiredLinkIfStillDesired,

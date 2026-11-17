@@ -2,7 +2,10 @@ import * as Effect from "effect/Effect";
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import type { SavedRemoteConnection } from "../../lib/connection";
-import { linkEnvironmentToCloudWithPreference } from "../cloud/linkEnvironment";
+import {
+  linkEnvironmentToCloudWithPreference,
+  updateLinkedEnvironmentLiveActivityPreference,
+} from "../cloud/linkEnvironment";
 import { updateAgentAwarenessRegistrationPreferences } from "./remoteRegistration";
 
 export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEnabled")(
@@ -11,6 +14,7 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
     readonly previousEnabled: boolean;
     readonly clerkToken: string | null;
     readonly connections: ReadonlyArray<SavedRemoteConnection>;
+    readonly canUpdateEnvironment: (environmentId: EnvironmentId) => boolean;
     readonly canConfigureEnvironment: (environmentId: EnvironmentId) => boolean;
   }) {
     const linkedConnections = input.connections.filter(
@@ -20,9 +24,16 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
     const updateEnvironmentPreference = Effect.fn("updateEnvironmentPreference")(function* (
       connection: SavedRemoteConnection,
       enabled: boolean,
-      clerkToken: string,
+      clerkToken: string | null,
     ) {
-      if (!input.canConfigureEnvironment(connection.environmentId)) return;
+      if (
+        input.canUpdateEnvironment(connection.environmentId) &&
+        (yield* updateLinkedEnvironmentLiveActivityPreference(connection, enabled))
+      ) {
+        return;
+      }
+      if (!enabled || !clerkToken || !input.canConfigureEnvironment(connection.environmentId))
+        return;
 
       yield* linkEnvironmentToCloudWithPreference({
         clerkToken,
@@ -61,7 +72,7 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
       yield* Effect.forEach(
         linkedConnections,
         (connection) =>
-          updateEnvironmentPreference(connection, input.previousEnabled, clerkToken).pipe(
+          updateEnvironmentPreference(connection, input.previousEnabled, null).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning(
                 `Could not restore Live Activity preference for environment ${connection.environmentId}.`,
