@@ -17,20 +17,13 @@ export interface VocsHarnessTargetOptions {
   readonly cloudflare?: { readonly worker?: unknown } | undefined;
 }
 
-export type VocsTargetOption =
-  | DeployTargetInput<VocsTarget, unknown>
-  | VocsHarnessTargetOptions;
+export type VocsTargetOption = DeployTargetInput<VocsTarget, unknown> | VocsHarnessTargetOptions;
 
 /** The default target is Vocs' own Cloudflare target module. */
-export const DEFAULT_TARGET_SPECIFIER =
-  "@alchemy.run/frontend-frameworks/vocs/cloudflare";
+export const DEFAULT_TARGET_SPECIFIER = "@alchemy.run/frontend-frameworks/vocs/cloudflare";
 
-const isDeployTargetInput = (
-  value: unknown,
-): value is DeployTargetInput<VocsTarget, unknown> =>
-  typeof value === "string" ||
-  typeof value === "function" ||
-  isDeployTarget(value);
+const isDeployTargetInput = (value: unknown): value is DeployTargetInput<VocsTarget, unknown> =>
+  typeof value === "string" || typeof value === "function" || isDeployTarget(value);
 
 export interface VocsTargetInputSelection {
   readonly input: DeployTargetInput<VocsTarget, unknown>;

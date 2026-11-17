@@ -6,8 +6,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as SharedKeybindings from "@t3tools/shared/keybindings";
@@ -444,6 +446,108 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(layerKeybindings())),
   );
 
+  it.effect("keeps entries it cannot decode when editing other keybindings", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const futureCommand = { key: "mod+shift+k", command: "command.from-a-newer-build" };
+      const badShortcut = { key: "mod+shift+d+o", command: "terminal.new" };
+      yield* fs.writeFileString(
+        keybindingsConfigPath,
+        JSON.stringify([
+          { key: "mod+r", command: "script.run-tests.run" },
+          futureCommand,
+          badShortcut,
+        ]),
+      );
+      const keybindings = yield* Keybindings.Keybindings;
+      const persisted = Effect.map(fs.readFileString(keybindingsConfigPath), JSON.parse);
+
+      const saved = yield* keybindings.upsertKeybindingRule({
+        key: "mod+shift+r",
+        command: "script.run-tests.run",
+      });
+      assert.equal(saved.issues.length, 2);
+      assert.deepEqual(yield* persisted, [
+        { key: "mod+r", command: "script.run-tests.run" },
+        futureCommand,
+        badShortcut,
+        { key: "mod+shift+r", command: "script.run-tests.run" },
+      ]);
+
+      const removed = yield* keybindings.removeKeybindingRule({
+        key: "mod+r",
+        command: "script.run-tests.run",
+      });
+      assert.deepEqual(yield* persisted, [
+        futureCommand,
+        badShortcut,
+        { key: "mod+shift+r", command: "script.run-tests.run" },
+      ]);
+      const { issues } = yield* keybindings.loadConfigState;
+      assert.deepEqual(removed.issues, issues);
+      assert.deepEqual(
+        issues.map((issue) => issue.kind === "keybindings.invalid-entry" && issue.index),
+        [0, 1],
+      );
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
+  it.effect("removes a hand-written keybinding targeted by its settings spelling", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        {
+          key: "Shift+Cmd+R",
+          command: "script.run-tests.run",
+          when: "terminalFocus&&!previewFocus",
+        },
+        { key: "mod+shift+r", command: "script.run-tests.run" },
+        { key: "x\u0000true", command: "script.run-tests.run" },
+        { key: "x", command: "script.run-tests.run", when: "true" },
+      ]);
+      yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings.Keybindings;
+        yield* keybindings.removeKeybindingRule({
+          key: "meta+shift+r",
+          command: "script.run-tests.run",
+          when: "terminalFocus && !previewFocus",
+        });
+        yield* keybindings.removeKeybindingRule({
+          key: "x",
+          command: "script.run-tests.run",
+          when: "true",
+        });
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.deepEqual(persisted, [
+        { key: "mod+shift+r", command: "script.run-tests.run" },
+        { key: "x\u0000true", command: "script.run-tests.run" },
+      ]);
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
+  it.effect("replaces a hand-written keybinding targeted by its settings spelling", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "escape", command: "script.run-tests.run", when: "a && b && c" },
+      ]);
+      yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings.Keybindings;
+        return yield* keybindings.upsertKeybindingRule({
+          key: "mod+alt+r",
+          command: "script.run-tests.run",
+          replace: { key: "esc", command: "script.run-tests.run", when: "(a && b) && c" },
+        });
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.deepEqual(persisted, [{ key: "mod+alt+r", command: "script.run-tests.run" }]);
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
   it.effect("refuses to overwrite malformed keybindings config", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -513,5 +617,43 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         assert.isTrue(persistedCommands.has(command), `expected persisted command ${command}`);
       }
     }).pipe(Effect.provide(layerKeybindings())),
+  );
+
+  it.effect(
+    "suppresses change emission when revalidating unchanged keybindings configuration",
+    () =>
+      Effect.gen(function* () {
+        const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+        yield* writeKeybindingsConfig(keybindingsConfigPath, [
+          { key: "mod+j", command: "terminal.toggle" },
+        ]);
+
+        const keybindings = yield* Keybindings.Keybindings;
+        yield* keybindings.start;
+
+        const changes = yield* keybindings.subscribeChanges;
+
+        // Revalidate when config on disk has not changed (e.g. atime bump on Windows).
+        // `revalidate` publishes before it returns, so a wrongly emitted event would be
+        // buffered in the subscription ahead of the real change observed below.
+        yield* keybindings.revalidate;
+
+        yield* writeKeybindingsConfig(keybindingsConfigPath, [
+          { key: "mod+j", command: "terminal.toggle" },
+          { key: "mod+k", command: "threadPanel.toggle" },
+        ]);
+        yield* keybindings.revalidate;
+
+        // The first buffered event must be the real change, not the unchanged state.
+        const change = Option.getOrThrow(yield* Stream.runHead(changes));
+        assert.isTrue(
+          change.keybindings.some(
+            (rule) =>
+              rule.command === "threadPanel.toggle" &&
+              rule.shortcut.key === "k" &&
+              rule.shortcut.modKey,
+          ),
+        );
+      }).pipe(Effect.scoped, Effect.provide(layerKeybindings())),
   );
 });

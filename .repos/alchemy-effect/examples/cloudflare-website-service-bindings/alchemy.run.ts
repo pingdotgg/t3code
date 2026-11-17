@@ -1,7 +1,7 @@
-import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Effect from "effect/Effect";
 import { resolve } from "node:path";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(
   "CloudflareWebsiteServiceBindingsExample",
@@ -54,21 +54,16 @@ export default Alchemy.Stack(
       }),
     });
 
-    const gateways = yield* Effect.forEach(
-      Object.entries(websites),
-      ([name, website]) =>
-        Effect.gen(function* () {
-          const gateway = yield* Cloudflare.Worker(`${name}Gateway`, {
-            main: "./gateway.ts",
-            cache: { enabled: false },
-            dev: { port: 0 },
-            env: { WEBSITE: website },
-          });
-          return [
-            name,
-            { websiteUrl: website.url, gatewayUrl: gateway.url },
-          ] as const;
-        }),
+    const gateways = yield* Effect.forEach(Object.entries(websites), ([name, website]) =>
+      Effect.gen(function* () {
+        const gateway = yield* Cloudflare.Worker(`${name}Gateway`, {
+          main: "./gateway.ts",
+          cache: { enabled: false },
+          dev: { port: 0 },
+          env: { WEBSITE: website },
+        });
+        return [name, { websiteUrl: website.url, gatewayUrl: gateway.url }] as const;
+      }),
     );
     return Object.fromEntries(gateways);
   }),

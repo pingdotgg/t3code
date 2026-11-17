@@ -21,9 +21,7 @@ export default {
 };
 `;
 
-class CfTestWorker extends Context.Service<CfTestWorker, TestWorker>()(
-  "test/CfTestWorker",
-) {}
+class CfTestWorker extends Context.Service<CfTestWorker, TestWorker>()("test/CfTestWorker") {}
 
 const CfTestWorkerLive = Layer.effect(
   CfTestWorker,
@@ -36,47 +34,42 @@ const CfTestWorkerLive = Layer.effect(
   }),
 );
 
-layer(CfTestWorkerLive.pipe(Layer.provideMerge(localRuntimeLayer)))(
-  "request.cf",
-  (it) => {
-    it.effect("defaults to the fallback blob", () =>
-      Effect.gen(function* () {
-        const worker = yield* CfTestWorker;
-        const cf = yield* worker.fetchJson<Record<string, unknown>>("/", {
-          headers: { "Accept-Encoding": "gzip" },
-        });
-        // Fallback fields (Miniflare's static placeholder blob)
-        expect(cf.country).toBe("US");
-        expect(cf.colo).toBe("DFW");
-        expect(cf.city).toBe("Austin");
-        expect(cf.asn).toBe(395747);
-        expect(cf.tlsVersion).toBe("TLSv1.3");
-        // The client's `Accept-Encoding` is preserved on `clientAcceptEncoding`
-        // (workerd rewrites the user request's `Accept-Encoding`)
-        expect(cf.clientAcceptEncoding).toBe("gzip");
-      }),
-    );
+layer(CfTestWorkerLive.pipe(Layer.provideMerge(localRuntimeLayer)))("request.cf", (it) => {
+  it.effect("defaults to the fallback blob", () =>
+    Effect.gen(function* () {
+      const worker = yield* CfTestWorker;
+      const cf = yield* worker.fetchJson<Record<string, unknown>>("/", {
+        headers: { "Accept-Encoding": "gzip" },
+      });
+      // Fallback fields (Miniflare's static placeholder blob)
+      expect(cf.country).toBe("US");
+      expect(cf.colo).toBe("DFW");
+      expect(cf.city).toBe("Austin");
+      expect(cf.asn).toBe(395747);
+      expect(cf.tlsVersion).toBe("TLSv1.3");
+      // The client's `Accept-Encoding` is preserved on `clientAcceptEncoding`
+      // (workerd rewrites the user request's `Accept-Encoding`)
+      expect(cf.clientAcceptEncoding).toBe("gzip");
+    }),
+  );
 
-    it.effect("uses the MF-CF-Blob header verbatim when present", () =>
-      Effect.gen(function* () {
-        const worker = yield* CfTestWorker;
-        const cf = yield* worker.fetchJson<Record<string, unknown>>("/", {
-          headers: {
-            [Cf.HEADER_CF_BLOB]: JSON.stringify({ country: "GB", colo: "LHR" }),
-          },
-        });
-        expect(cf).toEqual({ country: "GB", colo: "LHR" });
-      }),
-    );
-  },
-);
+  it.effect("uses the MF-CF-Blob header verbatim when present", () =>
+    Effect.gen(function* () {
+      const worker = yield* CfTestWorker;
+      const cf = yield* worker.fetchJson<Record<string, unknown>>("/", {
+        headers: {
+          [Cf.HEADER_CF_BLOB]: JSON.stringify({ country: "GB", colo: "LHR" }),
+        },
+      });
+      expect(cf).toEqual({ country: "GB", colo: "LHR" });
+    }),
+  );
+});
 
 layer(
   CfTestWorkerLive.pipe(
     Layer.provideMerge(localRuntimeLayer),
-    Layer.provide(
-      Layer.succeed(Cf.Cf, { ...Cf.fallbackCf, country: "AU", colo: "SYD" }),
-    ),
+    Layer.provide(Layer.succeed(Cf.Cf, { ...Cf.fallbackCf, country: "AU", colo: "SYD" })),
   ),
 )("request.cf with Cf layer override", (it) => {
   it.effect("uses the overridden blob", () =>

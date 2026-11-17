@@ -1,10 +1,11 @@
 import { ArrowDownIcon, ArrowUpIcon, PencilIcon, PlusIcon, StarIcon, XIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import { isReasoningControl } from "@t3tools/client-runtime/model-traits";
 import { type CustomModelDefinition, normalizeCustomModelSlug } from "@t3tools/shared/model";
 
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -27,7 +28,19 @@ const CUSTOM_MODEL_PLACEHOLDER_BY_KIND: Partial<Record<ProviderDriverKind, strin
 
 const FILTER_THRESHOLD = 8;
 
-function describeModelCapabilities(model: ServerProviderModel): string[] {
+const PROVIDER_ALIAS_SLUGS = new Set(["default", "auto"]);
+
+function hasReasoningControl(model: ServerProviderModel): boolean {
+  return (model.capabilities?.optionDescriptors ?? []).some(isReasoningControl);
+}
+
+// Reasoning is the norm, so only its absence is labeled, and only when other models have it.
+// Custom and null capabilities are fallbacks or user-written, not discovered, so they prove nothing.
+// Alias slugs ("default", Cursor's "auto") defer to the provider's own model choice, so reasoning is unknown.
+function describeModelCapabilities(
+  model: ServerProviderModel,
+  flagMissingReasoning: boolean,
+): string[] {
   const descriptors = model.capabilities?.optionDescriptors ?? [];
   const labels: string[] = [];
   const hasFastMode = descriptors.some(
@@ -38,18 +51,14 @@ function describeModelCapabilities(model: ServerProviderModel): string[] {
         descriptor.options.some((option) => option.id === "fast" || option.label === "Fast")),
   );
   if (hasFastMode) labels.push("Fast mode");
-  if (descriptors.some((descriptor) => descriptor.id === "thinking")) labels.push("Thinking");
   if (
-    descriptors.some(
-      (descriptor) =>
-        descriptor.type === "select" &&
-        (descriptor.id === "reasoningEffort" ||
-          descriptor.id === "effort" ||
-          descriptor.id === "reasoning" ||
-          descriptor.id === "variant"),
-    )
+    flagMissingReasoning &&
+    !model.isCustom &&
+    model.capabilities &&
+    !PROVIDER_ALIAS_SLUGS.has(model.slug) &&
+    !hasReasoningControl(model)
   ) {
-    labels.push("Reasoning");
+    labels.push("No reasoning");
   }
   return labels;
 }
@@ -100,7 +109,8 @@ interface ProviderModelsSectionProps {
   readonly hiddenModels: ReadonlyArray<string>;
   readonly favoriteModels: ReadonlyArray<string>;
   readonly modelOrder: ReadonlyArray<string>;
-  readonly onChange: (next: ReadonlyArray<CustomModelDefinition>) => void;
+  /** Resolves true once the custom models are saved. */
+  readonly onChange: (next: ReadonlyArray<CustomModelDefinition>) => Promise<boolean>;
   readonly onHiddenModelsChange: (
     next: ReadonlyArray<string>,
     affectedModels: ReadonlyArray<string>,
@@ -128,14 +138,23 @@ export function ProviderModelsSection({
 }: ProviderModelsSectionProps) {
   const [input, setInput] = useState("");
   const [isAdding, setIsAdding] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const addAttemptRef = useRef(0);
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [editingSlug, setEditingSlug] = useState<string | null>(null);
+  const editAttemptRef = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
   const scrollToSlugRef = useRef<string | null>(null);
   const hiddenModelSet = new Set(hiddenModels);
   const favoriteModelSet = new Set(favoriteModels);
-  const displayModels = groupModelsForDisplay(models, {
+  const reportedSlugs = new Set(models.map((model) => model.slug));
+  // A favorite the provider no longer reports (disabled, signed out, model removed)
+  // still needs a row, or its star could never be cleared.
+  const unreportedFavoriteModels = favoriteModels.flatMap((slug): ServerProviderModel[] =>
+    reportedSlugs.has(slug) ? [] : [{ slug, name: slug, isCustom: false, capabilities: null }],
+  );
+  const displayModels = groupModelsForDisplay([...models, ...unreportedFavoriteModels], {
     favoriteModels: favoriteModelSet,
     hiddenModels: hiddenModelSet,
     modelOrder,
@@ -144,6 +163,7 @@ export function ProviderModelsSection({
   const hiddenCount = displayModels.filter(
     (model) => !model.isCustom && hiddenModelSet.has(model.slug),
   ).length;
+  const flagMissingReasoning = models.some(hasReasoningControl);
   const showFilter = models.length > FILTER_THRESHOLD;
   const normalizedFilter = filter.trim().toLowerCase();
   const isFiltering = showFilter && normalizedFilter.length > 0;
@@ -173,8 +193,8 @@ export function ProviderModelsSection({
   const allBuiltInModelsHidden =
     builtInModels.length > 0 && builtInModels.every((model) => hiddenModels.includes(model.slug));
 
-  const handleAdd = () => {
-    if (!canManageCustomModels || driverKind === "antigravity") return;
+  const handleAdd = async () => {
+    if (!canManageCustomModels || driverKind === "antigravity" || isSaving) return;
     const normalized = normalizeCustomModelSlug(input);
     if (!normalized) {
       setError("Enter a model slug.");
@@ -193,15 +213,25 @@ export function ProviderModelsSection({
       return;
     }
 
+    addAttemptRef.current += 1;
+    const attempt = addAttemptRef.current;
+    setIsSaving(true);
+    const saved = await onChange([
+      ...customModels,
+      { slug: normalized, name: normalized, capabilities: null },
+    ]);
+    setIsSaving(false);
+    // Cancel bumps the attempt, so a late save cannot close the draft opened after it.
+    if (!saved || attempt !== addAttemptRef.current) return;
     scrollToSlugRef.current = normalized;
     setFilter("");
-    onChange([...customModels, { slug: normalized, name: normalized, capabilities: null }]);
     setInput("");
     setError(null);
     setIsAdding(false);
   };
 
   const cancelAdd = () => {
+    addAttemptRef.current += 1;
     setInput("");
     setError(null);
     setIsAdding(false);
@@ -209,17 +239,23 @@ export function ProviderModelsSection({
 
   const handleRemove = (slug: string) => {
     if (!canManageCustomModels) return;
-    if (editingSlug === slug) setEditingSlug(null);
-    onChange(customModels.filter((entry) => entry.slug !== slug));
+    if (editingSlug === slug) {
+      editAttemptRef.current += 1;
+      setEditingSlug(null);
+    }
+    void onChange(customModels.filter((entry) => entry.slug !== slug));
     onModelOrderChange(modelOrder.filter((model) => model !== slug));
     onFavoriteModelsChange(favoriteModels.filter((model) => model !== slug));
     setError(null);
   };
 
-  const handleSaveEdit = (next: CustomModelDefinition) => {
+  const handleSaveEdit = async (next: CustomModelDefinition) => {
     if (!canManageCustomModels) return;
-    onChange(customModels.map((entry) => (entry.slug === next.slug ? next : entry)));
-    setEditingSlug(null);
+    const attempt = ++editAttemptRef.current;
+    const saved = await onChange(
+      customModels.map((entry) => (entry.slug === next.slug ? next : entry)),
+    );
+    if (saved && attempt === editAttemptRef.current) setEditingSlug(null);
   };
 
   const setHidden = (slug: string, hidden: boolean) => {
@@ -254,6 +290,7 @@ export function ProviderModelsSection({
 
   const handleToggleEdit = useStableCallback((slug: string) => {
     if (!canManageCustomModels) return;
+    editAttemptRef.current += 1;
     setEditingSlug((current) => (current === slug ? null : slug));
   });
   const rowHandlers = {
@@ -278,6 +315,7 @@ export function ProviderModelsSection({
         canMoveUp={!isFiltering && previousModel !== undefined && groupOf(previousModel) === group}
         canMoveDown={!isFiltering && nextModel !== undefined && groupOf(nextModel) === group}
         isFiltering={isFiltering}
+        flagMissingReasoning={flagMissingReasoning}
         canWritePreferences={canWritePreferences}
         canManageCustomModels={canManageCustomModels}
         {...rowHandlers}
@@ -379,8 +417,14 @@ export function ProviderModelsSection({
                   driverKind={driverKind}
                   entry={editingEntry}
                   builtInModels={builtInModels}
-                  onSave={handleSaveEdit}
-                  onCancel={() => setEditingSlug(null)}
+                  onSave={(next) => void handleSaveEdit(next)}
+                  onDraftChange={() => {
+                    editAttemptRef.current += 1;
+                  }}
+                  onCancel={() => {
+                    editAttemptRef.current += 1;
+                    setEditingSlug(null);
+                  }}
                 />
               ) : null}
             </div>
@@ -394,6 +438,7 @@ export function ProviderModelsSection({
             id={`provider-instance-${instanceId}-custom-model`}
             size="sm"
             autoFocus
+            readOnly={isSaving}
             value={input}
             onChange={(event) => {
               setInput(event.target.value);
@@ -407,13 +452,13 @@ export function ProviderModelsSection({
               }
               if (event.key !== "Enter") return;
               event.preventDefault();
-              handleAdd();
+              void handleAdd();
             }}
             placeholder={driverKind ? CUSTOM_MODEL_PLACEHOLDER_BY_KIND[driverKind] : "model-slug"}
             spellCheck={false}
           />
           <div className="flex shrink-0 gap-2">
-            <Button size="sm" variant="outline" onClick={handleAdd}>
+            <Button size="sm" variant="outline" disabled={isSaving} onClick={handleAdd}>
               Add
             </Button>
             <Button size="sm" variant="ghost" onClick={cancelAdd}>
@@ -430,13 +475,14 @@ export function ProviderModelsSection({
   );
 }
 
-function ProviderModelRow({
+const ProviderModelRow = memo(function ProviderModelRow({
   model,
   isHidden,
   isFavorite,
   canMoveUp,
   canMoveDown,
   isFiltering,
+  flagMissingReasoning,
   canWritePreferences,
   canManageCustomModels,
   onToggleFavorite,
@@ -451,6 +497,7 @@ function ProviderModelRow({
   readonly canMoveUp: boolean;
   readonly canMoveDown: boolean;
   readonly isFiltering: boolean;
+  readonly flagMissingReasoning: boolean;
   readonly canWritePreferences: boolean;
   readonly canManageCustomModels: boolean;
   readonly onToggleFavorite: (slug: string) => void;
@@ -459,7 +506,7 @@ function ProviderModelRow({
   readonly onToggleEdit: (slug: string) => void;
   readonly onRemove: (slug: string) => void;
 }) {
-  const capLabels = describeModelCapabilities(model);
+  const capLabels = describeModelCapabilities(model, flagMissingReasoning);
   const nameClassName = cn("text-xs", isHidden ? "text-muted-foreground" : "text-foreground/90");
   const pickerTooltip = model.isCustom
     ? "Custom models are always shown in the picker"
@@ -614,4 +661,4 @@ function ProviderModelRow({
       </Tooltip>
     </div>
   );
-}
+});

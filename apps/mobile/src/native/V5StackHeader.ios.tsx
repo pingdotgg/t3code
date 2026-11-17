@@ -8,7 +8,7 @@ import { StyleSheet } from "react-native";
 import { KeyboardController, useKeyboardState } from "react-native-keyboard-controller";
 import { isDuoDevice } from "../lib/device-type";
 import { useMobileNavigationTheme } from "../lib/useMobileNavigationTheme";
-import { useDeviceType, useNativeLayoutMetrics } from "../native/native-layout-metrics";
+import { useDeviceType, useNativeLayoutMetrics } from "./native-layout-metrics";
 import { HeaderItemsWidthContext } from "./header-items-width";
 import {
   SearchBar,
@@ -124,6 +124,7 @@ function convertItems(items: NativeStackHeaderItem[], prefix: string): HeaderIte
           axisBehavior: item.axisBehavior,
           icon: convertIcon(item.icon),
           menu: item.disabled ? undefined : convertMenu(item.menu, `${id}:menu`),
+          disabled: item.disabled,
           variant: item.variant,
           tintColor: item.tintColor,
           hidesSharedBackground: item.hidesSharedBackground,
@@ -137,6 +138,7 @@ function convertItems(items: NativeStackHeaderItem[], prefix: string): HeaderIte
           axisBehavior: item.axisBehavior,
           icon: convertIcon(item.icon),
           onPress: item.disabled ? undefined : item.onPress,
+          disabled: item.disabled,
           visibilityPriority:
             item.visibilityPriority === "default" ? "standard" : item.visibilityPriority,
           variant: item.variant,
@@ -154,6 +156,8 @@ export function V5StackHeader(props: {
   readonly column?: "primary" | "detail";
   /** The workspace's compose action, shown as its own group in this column's bar. */
   readonly onCompose?: () => void;
+  /** UIKit morphs search items that share an identifier between bars as columns change. */
+  readonly searchIdentifier?: string;
 }) {
   const { options } = props;
   const theme = useMobileNavigationTheme();
@@ -180,7 +184,14 @@ export function V5StackHeader(props: {
   const bottom = toolbar.flatMap<HeaderItem>((item, index) => {
     if (item.type === "mailSearchToolbar") return [];
     if (item.type === "searchBarPlacement")
-      return [{ type: "item", id: `toolbar-search:${index}`, searchBarPlacement: true }];
+      return [
+        {
+          type: "item",
+          id: `toolbar-search:${index}`,
+          searchBarPlacement: true,
+          ...(props.searchIdentifier ? { identifier: props.searchIdentifier } : {}),
+        },
+      ];
     return convertItems([item], `toolbar:${index}`);
   });
   if (mailSearch) {
@@ -197,7 +208,12 @@ export function V5StackHeader(props: {
     if (bottomSearch) {
       if (spacesSearch && bottom.length)
         bottom.push({ type: "spacer", id: "before-search", sizing: "fixed", width: 8 });
-      bottom.push({ type: "item", id: "home-search", searchBarPlacement: true });
+      bottom.push({
+        type: "item",
+        id: "home-search",
+        searchBarPlacement: true,
+        ...(props.searchIdentifier ? { identifier: props.searchIdentifier } : {}),
+      });
       if (spacesSearch && mailSearch.onComposePress)
         bottom.push({ type: "spacer", id: "after-search", sizing: "fixed", width: 8 });
     }

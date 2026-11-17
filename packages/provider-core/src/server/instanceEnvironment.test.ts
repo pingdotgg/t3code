@@ -17,11 +17,13 @@ describe("mergeProviderInstanceEnvironment", () => {
       const baseEnv = {
         CODEX_HOME: "~/.inherited-codex",
         CLAUDE_CONFIG_DIR: "~/.inherited-claude",
+        GROK_HOME: "~/.inherited-grok",
       };
       const environment = yield* mergeProviderInstanceEnvironment(
         [
           { name: "CODEX_HOME", value, sensitive: false },
           { name: "CLAUDE_CONFIG_DIR", value, sensitive: false },
+          { name: "GROK_HOME", value, sensitive: false },
           { name: "CUSTOM_VALUE", value, sensitive: false },
         ],
         baseEnv,
@@ -30,11 +32,13 @@ describe("mergeProviderInstanceEnvironment", () => {
       expect(environment).toEqual({
         CODEX_HOME: path.join("/home/ada", tail),
         CLAUDE_CONFIG_DIR: path.join("/home/ada", tail),
+        GROK_HOME: path.join("/home/ada", tail),
         CUSTOM_VALUE: value,
       });
       expect(baseEnv).toEqual({
         CODEX_HOME: "~/.inherited-codex",
         CLAUDE_CONFIG_DIR: "~/.inherited-claude",
+        GROK_HOME: "~/.inherited-grok",
       });
     }).pipe(
       Effect.provideService(HostProcess.HomeDirectory, "/home/ada"),
@@ -77,6 +81,33 @@ describe("mergeProviderInstanceEnvironment", () => {
         OPENROUTER_API_KEY: "sk-or-test",
         ANTHROPIC_API_KEY: "",
         OPENAI_API_KEY: "inherited",
+        PATH: "/bin",
+      });
+    }),
+  );
+
+  it.effect("replaces every inherited spelling of a name on Windows, and only there", () =>
+    Effect.gen(function* () {
+      const merge = (platform: NodeJS.Platform) =>
+        mergeProviderInstanceEnvironment(
+          [{ name: "Https_Proxy", value: "http://gateway", sensitive: false }],
+          { HTTPS_PROXY: "http://mine", PATH: "/bin" },
+        ).pipe(Effect.provideService(HostProcess.Platform, platform));
+      // A home variable in another spelling is still expanded.
+      expect(
+        yield* mergeProviderInstanceEnvironment(
+          [{ name: "Codex_Home", value: "~/corp", sensitive: false }],
+          {},
+        ).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(HostProcess.HomeDirectory, "/home/ada"),
+        ),
+      ).toEqual({ CODEX_HOME: "/home/ada/corp" });
+      // Upper case sorts first, so it also wins where a spawn merges the parent environment back.
+      expect(yield* merge("win32")).toEqual({ HTTPS_PROXY: "http://gateway", PATH: "/bin" });
+      expect(yield* merge("linux")).toEqual({
+        HTTPS_PROXY: "http://mine",
+        Https_Proxy: "http://gateway",
         PATH: "/bin",
       });
     }),

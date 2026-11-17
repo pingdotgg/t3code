@@ -1,3 +1,6 @@
+import { describe, expect, test } from "@alchemy.run/test";
+import { PlanTree } from "@/Cli/components/view/PlanView.tsx";
+import { formatPlanLines } from "@/Cli/LoggingCli.ts";
 /**
  * Local-vs-live mode indicators in the plan/deploy renderers.
  *
@@ -13,62 +16,43 @@
  *   - mode-switch replacements always show the transition (`local → live`)
  */
 import { formatModeNote, modeLabel } from "@/Cli/ModeTag.ts";
-import { formatPlanLines } from "@/Cli/LoggingCli.ts";
-import { PlanTree } from "@/Cli/components/view/PlanView.tsx";
 import type { CRUD, Plan } from "@/Plan.ts";
 import type { ProviderMode } from "@/ProviderMode.ts";
-import { describe, expect, test } from "alchemy-test";
 
 describe("formatModeNote", { tags: ["unit", "local"] }, () => {
   test("mode-agnostic rows (no resolved mode) show nothing", () => {
-    expect(
-      formatModeNote({ mode: undefined, defaultMode: "live" }),
-    ).toBeUndefined();
-    expect(
-      formatModeNote({ mode: undefined, defaultMode: "local" }),
-    ).toBeUndefined();
+    expect(formatModeNote({ mode: undefined, defaultMode: "live" })).toBeUndefined();
+    expect(formatModeNote({ mode: undefined, defaultMode: "local" })).toBeUndefined();
   });
 
   test("a live row during deploy (default live) is quiet", () => {
-    expect(
-      formatModeNote({ mode: "live", defaultMode: "live" }),
-    ).toBeUndefined();
+    expect(formatModeNote({ mode: "live", defaultMode: "live" })).toBeUndefined();
   });
 
   test("a local row during dev (default local) is tagged local", () => {
     // Dev tags EVERY stamped row — knowing what's emulated is the point.
-    expect(formatModeNote({ mode: "local", defaultMode: "local" })).toBe(
-      "local",
-    );
+    expect(formatModeNote({ mode: "local", defaultMode: "local" })).toBe("local");
   });
 
   test("a local row during deploy (default live) is tagged local", () => {
-    expect(formatModeNote({ mode: "local", defaultMode: "live" })).toBe(
-      "local",
-    );
+    expect(formatModeNote({ mode: "local", defaultMode: "live" })).toBe("local");
   });
 
   test("a live row during dev (default local) is tagged remote", () => {
-    expect(formatModeNote({ mode: "live", defaultMode: "local" })).toBe(
-      "remote",
-    );
+    expect(formatModeNote({ mode: "live", defaultMode: "local" })).toBe("remote");
   });
 
   test("a missing default mode is treated as live", () => {
-    expect(
-      formatModeNote({ mode: "live", defaultMode: undefined }),
-    ).toBeUndefined();
-    expect(formatModeNote({ mode: "local", defaultMode: undefined })).toBe(
-      "local",
-    );
+    expect(formatModeNote({ mode: "live", defaultMode: undefined })).toBeUndefined();
+    expect(formatModeNote({ mode: "local", defaultMode: undefined })).toBe("local");
   });
 
   test("a mode-switch replacement always shows the transition", () => {
     // Even though the target mode matches the run default, the transition
     // is surfaced.
-    expect(
-      formatModeNote({ mode: "live", priorMode: "local", defaultMode: "live" }),
-    ).toBe("local → live");
+    expect(formatModeNote({ mode: "live", priorMode: "local", defaultMode: "live" })).toBe(
+      "local → live",
+    );
     expect(
       formatModeNote({
         mode: "local",
@@ -109,19 +93,13 @@ const crud = (options: {
   ({
     action: options.action,
     mode: options.mode,
-    state:
-      options.priorMode !== undefined
-        ? { providerMode: options.priorMode }
-        : {},
+    state: options.priorMode !== undefined ? { providerMode: options.priorMode } : {},
     bindings: [],
     resource: {
       LogicalId: options.id,
       Type: "Test.Resource",
-      FQN: options.namespace
-        ? `${options.namespace}/${options.id}`
-        : options.id,
-      Namespace:
-        options.namespace === undefined ? undefined : { Id: options.namespace },
+      FQN: options.namespace ? `${options.namespace}/${options.id}` : options.id,
+      Namespace: options.namespace === undefined ? undefined : { Id: options.namespace },
     },
   }) as unknown as CRUD;
 
@@ -140,8 +118,7 @@ const makePlan = (options: {
     defaultMode: options.defaultMode,
   }) as unknown as Plan;
 
-const lineFor = (lines: string[], id: string) =>
-  lines.find((line) => line.includes(`[${id}]`));
+const lineFor = (lines: string[], id: string) => lines.find((line) => line.includes(`[${id}]`));
 
 describe("formatPlanLines rename tags", { tags: ["unit", "local"] }, () => {
   test("a migrated resource shows its former FQN", () => {
@@ -198,19 +175,15 @@ describe("compact plan output", { tags: ["unit", "local"] }, () => {
     );
 
     store.emit({
-      _tag: "apply.resource.status",
+      type: "apply.resource.status",
       fqn: "codex/toolchain",
       id: "toolchain",
-      type: "Test.Resource",
+      resourceType: "Test.Resource",
       status: "updating",
     });
 
-    expect(store.snapshot().tasks.get("claude/toolchain")?.status).toBe(
-      "pending",
-    );
-    expect(store.snapshot().tasks.get("codex/toolchain")?.status).toBe(
-      "updating",
-    );
+    expect(store.snapshot().tasks.get("claude/toolchain")?.status).toBe("pending");
+    expect(store.snapshot().tasks.get("codex/toolchain")?.status).toBe("updating");
   });
 
   test("keeps unchanged resources available in review and progress context", () => {
@@ -227,12 +200,8 @@ describe("compact plan output", { tags: ["unit", "local"] }, () => {
     expect(lineFor(lines, "Changed")).toContain("update");
     expect(lines).not.toContain("1 unchanged hidden");
     const rows = new PlanTree(plan).rows;
-    expect(
-      rows.some((row) => row.type === "resource" && row.id === "Stable"),
-    ).toBe(true);
-    expect(
-      rows.some((row) => row.type === "resource" && row.id === "Changed"),
-    ).toBe(true);
+    expect(rows.some((row) => row.type === "resource" && row.id === "Stable")).toBe(true);
+    expect(rows.some((row) => row.type === "resource" && row.id === "Changed")).toBe(true);
   });
 
   test("an all-noop plan keeps typed resource rows", () => {

@@ -6,8 +6,9 @@ import { env } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
 import { afterEach, describe, it, vi } from "vitest";
 import workerdUnsafe from "workerd:unsafe";
-import { InstanceEvent } from "../index.ts";
 import { REDACTED_STEP_OUTPUT } from "../context.ts";
+import type { Engine, EngineLogs } from "../engine.ts";
+import { InstanceEvent } from "../index.ts";
 import { computeHash } from "../lib/cache.ts";
 import {
   InvalidStepReadableStreamError,
@@ -23,38 +24,30 @@ import {
   rollbackStreamOutput,
   writeStreamOutput,
 } from "../lib/streams.ts";
+import type { StreamOutputMeta } from "../lib/streams.ts";
 import { MODIFIER_KEYS } from "../modifier.ts";
 import { runWorkflow, runWorkflowAndAwait } from "./utils.ts";
-import type { Engine, EngineLogs } from "../engine.ts";
-import type { StreamOutputMeta } from "../lib/streams.ts";
 
 afterEach(async () => {
   await workerdUnsafe.abortAllDurableObjects();
 });
 
 describe("Context", () => {
-  it("should provide attempt count 1 on first successful attempt", async ({
-    expect,
-  }) => {
+  it("should provide attempt count 1 on first successful attempt", async ({ expect }) => {
     let receivedAttempt: number | undefined;
 
-    const engineStub = await runWorkflow(
-      "MOCK-INSTANCE-ID",
-      async (_event, step) => {
-        const result = await step.do("a successful step", async (ctx) => {
-          receivedAttempt = ctx.attempt;
-          return "success";
-        });
-        return result;
-      },
-    );
+    const engineStub = await runWorkflow("MOCK-INSTANCE-ID", async (_event, step) => {
+      const result = await step.do("a successful step", async (ctx) => {
+        receivedAttempt = ctx.attempt;
+        return "success";
+      });
+      return result;
+    });
 
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 5000 },
     );
@@ -65,32 +58,27 @@ describe("Context", () => {
   it("should provide attempt count to callback", async ({ expect }) => {
     const receivedAttempts: Array<number> = [];
 
-    const engineStub = await runWorkflow(
-      "MOCK-INSTANCE-ID-RETRY",
-      async (_event, step) => {
-        const result = await step.do(
-          "retrying step",
-          {
-            retries: {
-              limit: 2,
-              delay: 0,
-            },
+    const engineStub = await runWorkflow("MOCK-INSTANCE-ID-RETRY", async (_event, step) => {
+      const result = await step.do(
+        "retrying step",
+        {
+          retries: {
+            limit: 2,
+            delay: 0,
           },
-          async (ctx) => {
-            receivedAttempts.push(ctx.attempt);
-            throw new Error(`Throwing`);
-          },
-        );
-        return result;
-      },
-    );
+        },
+        async (ctx) => {
+          receivedAttempts.push(ctx.attempt);
+          throw new Error(`Throwing`);
+        },
+      );
+      return result;
+    });
 
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_FAILURE,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_FAILURE);
       },
       { timeout: 5000 },
     );
@@ -123,16 +111,12 @@ describe("Context", () => {
     const elapsed = Date.now() - start;
 
     const logs = (await engineStub.readLogs()) as EngineLogs;
-    expect(
-      logs.logs.filter((val) => val.event === InstanceEvent.ATTEMPT_START),
-    ).toHaveLength(2);
+    expect(logs.logs.filter((val) => val.event === InstanceEvent.ATTEMPT_START)).toHaveLength(2);
     // Should have waited at least ~1 second for the retry delay
     expect(elapsed).toBeGreaterThanOrEqual(900);
   });
 
-  it("should skip retry delays when disableRetryDelays is set", async ({
-    expect,
-  }) => {
+  it("should skip retry delays when disableRetryDelays is set", async ({ expect }) => {
     const engineId = env.ENGINE.idFromName("MOCK-INSTANCE-DISABLE-RETRY");
     const engineStub = env.ENGINE.get(engineId);
 
@@ -142,31 +126,26 @@ describe("Context", () => {
     });
 
     const start = Date.now();
-    const stub = await runWorkflowAndAwait(
-      "MOCK-INSTANCE-DISABLE-RETRY",
-      async (_event, step) => {
-        const result = await step.do(
-          "retrying step with delay",
-          {
-            retries: {
-              limit: 2,
-              delay: "10 seconds",
-              backoff: "constant",
-            },
+    const stub = await runWorkflowAndAwait("MOCK-INSTANCE-DISABLE-RETRY", async (_event, step) => {
+      const result = await step.do(
+        "retrying step with delay",
+        {
+          retries: {
+            limit: 2,
+            delay: "10 seconds",
+            backoff: "constant",
           },
-          async () => {
-            throw new Error("Always fails");
-          },
-        );
-        return result;
-      },
-    );
+        },
+        async () => {
+          throw new Error("Always fails");
+        },
+      );
+      return result;
+    });
     const elapsed = Date.now() - start;
 
     const logs = (await stub.readLogs()) as EngineLogs;
-    expect(
-      logs.logs.filter((val) => val.event === InstanceEvent.ATTEMPT_START),
-    ).toHaveLength(3);
+    expect(logs.logs.filter((val) => val.event === InstanceEvent.ATTEMPT_START)).toHaveLength(3);
     // Without disableRetryDelays, this would take 20+ seconds (10s + 10s)
     expect(elapsed).toBeLessThan(5000);
   });
@@ -180,23 +159,18 @@ describe("Context", () => {
   it("should provide step name and count in context", async ({ expect }) => {
     let receivedCtx: unknown;
 
-    const engineStub = await runWorkflow(
-      "MOCK-INSTANCE-STEP-CTX",
-      async (_event, step) => {
-        const result = await step.do("my step", async (ctx) => {
-          receivedCtx = ctx;
-          return "done";
-        });
-        return result;
-      },
-    );
+    const engineStub = await runWorkflow("MOCK-INSTANCE-STEP-CTX", async (_event, step) => {
+      const result = await step.do("my step", async (ctx) => {
+        receivedCtx = ctx;
+        return "done";
+      });
+      return result;
+    });
 
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 5000 },
     );
@@ -206,37 +180,30 @@ describe("Context", () => {
     });
   });
 
-  it("should increment step count for steps with the same name", async ({
-    expect,
-  }) => {
+  it("should increment step count for steps with the same name", async ({ expect }) => {
     const receivedContexts: Array<unknown> = [];
 
-    const engineStub = await runWorkflow(
-      "MOCK-INSTANCE-STEP-COUNT",
-      async (_event, step) => {
-        await step.do("repeated step", async (ctx) => {
-          receivedContexts.push(ctx);
-          return "first";
-        });
-        await step.do("repeated step", async (ctx) => {
-          receivedContexts.push(ctx);
-          return "second";
-        });
-        await step.do("different step", async (ctx) => {
-          receivedContexts.push(ctx);
-          return "third";
-        });
-        return "done";
-      },
-    );
+    const engineStub = await runWorkflow("MOCK-INSTANCE-STEP-COUNT", async (_event, step) => {
+      await step.do("repeated step", async (ctx) => {
+        receivedContexts.push(ctx);
+        return "first";
+      });
+      await step.do("repeated step", async (ctx) => {
+        receivedContexts.push(ctx);
+        return "second";
+      });
+      await step.do("different step", async (ctx) => {
+        receivedContexts.push(ctx);
+        return "third";
+      });
+      return "done";
+    });
 
     // Needs extra headroom: 3 sequential step.do calls + cold DO startup on Windows
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 10000 },
     );
@@ -252,9 +219,7 @@ describe("Context", () => {
     });
   });
 
-  it("should provide resolved config with defaults in context", async ({
-    expect,
-  }) => {
+  it("should provide resolved config with defaults in context", async ({ expect }) => {
     let receivedCtx: unknown;
 
     const engineStub = await runWorkflow(
@@ -272,9 +237,7 @@ describe("Context", () => {
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 5000 },
     );
@@ -291,9 +254,7 @@ describe("Context", () => {
     });
   });
 
-  it("should provide resolved config with user overrides merged in context", async ({
-    expect,
-  }) => {
+  it("should provide resolved config with user overrides merged in context", async ({ expect }) => {
     let receivedCtx: unknown;
 
     const engineStub = await runWorkflow(
@@ -320,9 +281,7 @@ describe("Context", () => {
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 5000 },
     );
@@ -340,9 +299,7 @@ describe("Context", () => {
     });
   });
 
-  it("should not allow user callback to mutate engine retry config", async ({
-    expect,
-  }) => {
+  it("should not allow user callback to mutate engine retry config", async ({ expect }) => {
     const receivedAttempts: Array<number> = [];
 
     const engineStub = await runWorkflow(
@@ -359,9 +316,8 @@ describe("Context", () => {
           async (ctx) => {
             receivedAttempts.push(ctx.attempt);
             // Attempt to escalate retries from 1 to 100
-            (
-              ctx as unknown as { config: { retries: { limit: number } } }
-            ).config.retries.limit = 100;
+            (ctx as unknown as { config: { retries: { limit: number } } }).config.retries.limit =
+              100;
             throw new Error("retry me");
           },
         );
@@ -372,9 +328,7 @@ describe("Context", () => {
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_FAILURE,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_FAILURE);
       },
       { timeout: 5000 },
     );
@@ -395,9 +349,7 @@ function decodeUtf8(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes);
 }
 
-async function readStreamBytes(
-  stream: ReadableStream<Uint8Array>,
-): Promise<Uint8Array> {
+async function readStreamBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
   const chunks: Array<Uint8Array> = [];
   const reader = stream.getReader();
   while (true) {
@@ -420,10 +372,7 @@ async function readStreamBytes(
   return result;
 }
 
-function countStreamOutputChunks(
-  state: DurableObjectState,
-  cacheKey: string,
-): number {
+function countStreamOutputChunks(state: DurableObjectState, cacheKey: string): number {
   const row = state.storage.sql
     .exec<{ cnt: number }>(
       `SELECT COUNT(*) AS cnt FROM streaming_step_chunks WHERE cache_key = ?`,
@@ -434,51 +383,40 @@ function countStreamOutputChunks(
 }
 
 describe("Context - ReadableStream step outputs", () => {
-  it("should persist a readable stream output and replay from cache", async ({
-    expect,
-  }) => {
+  it("should persist a readable stream output and replay from cache", async ({ expect }) => {
     const payload = "hello from a readable stream ".repeat(500); // ~14KB
     const payloadBytes = encodeUtf8(payload);
     let callCount = 0;
 
-    const engineStub = await runWorkflow(
-      "STREAM-BASIC",
-      async (_event, step) => {
-        const stream = await step.do("stream step", async () => {
-          callCount++;
-          return new ReadableStream<Uint8Array>({
-            start(controller) {
-              // Enqueue in two chunks
-              const mid = Math.floor(payloadBytes.length / 2);
-              controller.enqueue(payloadBytes.slice(0, mid));
-              controller.enqueue(payloadBytes.slice(mid));
-              controller.close();
-            },
-          });
+    const engineStub = await runWorkflow("STREAM-BASIC", async (_event, step) => {
+      const stream = await step.do("stream step", async () => {
+        callCount++;
+        return new ReadableStream<Uint8Array>({
+          start(controller) {
+            // Enqueue in two chunks
+            const mid = Math.floor(payloadBytes.length / 2);
+            controller.enqueue(payloadBytes.slice(0, mid));
+            controller.enqueue(payloadBytes.slice(mid));
+            controller.close();
+          },
         });
+      });
 
-        // The result should be a ReadableStream we can read
-        const bytes = await readStreamBytes(
-          stream as ReadableStream<Uint8Array>,
-        );
-        return decodeUtf8(bytes);
-      },
-    );
+      // The result should be a ReadableStream we can read
+      const bytes = await readStreamBytes(stream as ReadableStream<Uint8Array>);
+      return decodeUtf8(bytes);
+    });
 
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 5000 },
     );
 
     const logs = (await engineStub.readLogs()) as EngineLogs;
-    const successLog = logs.logs.find(
-      (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-    );
+    const successLog = logs.logs.find((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
     expect(successLog?.metadata.result).toBe(payload);
 
     // The closure should have been called exactly once (cache hit on replay)
@@ -499,39 +437,30 @@ describe("Context - ReadableStream step outputs", () => {
   });
 
   it("should persist an empty readable stream", async ({ expect }) => {
-    const engineStub = await runWorkflow(
-      "STREAM-EMPTY",
-      async (_event, step) => {
-        const stream = await step.do("empty stream step", async () => {
-          return new ReadableStream<Uint8Array>({
-            start(controller) {
-              controller.close();
-            },
-          });
+    const engineStub = await runWorkflow("STREAM-EMPTY", async (_event, step) => {
+      const stream = await step.do("empty stream step", async () => {
+        return new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.close();
+          },
         });
+      });
 
-        // Should be a readable stream that yields no data
-        const bytes = await readStreamBytes(
-          stream as ReadableStream<Uint8Array>,
-        );
-        return bytes.byteLength;
-      },
-    );
+      // Should be a readable stream that yields no data
+      const bytes = await readStreamBytes(stream as ReadableStream<Uint8Array>);
+      return bytes.byteLength;
+    });
 
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 5000 },
     );
 
     const logs = (await engineStub.readLogs()) as EngineLogs;
-    const successLog = logs.logs.find(
-      (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-    );
+    const successLog = logs.logs.find((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
     expect(successLog?.metadata.result).toBe(0);
 
     // Verify stream metadata
@@ -574,9 +503,7 @@ describe("Context - ReadableStream step outputs", () => {
   // By calling writeStreamOutput() inside the DO we replicate the
   // production code-path and avoid the RPC transfer artefacts.
 
-  it("should surface a locked readable stream as a fatal error", async ({
-    expect,
-  }) => {
+  it("should surface a locked readable stream as a fatal error", async ({ expect }) => {
     const engineId = env.ENGINE.idFromName("STREAM-LOCKED");
     const engineStub = env.ENGINE.get(engineId);
 
@@ -616,9 +543,7 @@ describe("Context - ReadableStream step outputs", () => {
     });
   });
 
-  it("should surface an unsupported chunk type as a fatal error", async ({
-    expect,
-  }) => {
+  it("should surface an unsupported chunk type as a fatal error", async ({ expect }) => {
     const engineId = env.ENGINE.idFromName("STREAM-UNSUPPORTED-CHUNK");
     const engineStub = env.ENGINE.get(engineId);
 
@@ -656,9 +581,7 @@ describe("Context - ReadableStream step outputs", () => {
     });
   });
 
-  it("should surface an oversized stream chunk as a fatal error", async ({
-    expect,
-  }) => {
+  it("should surface an oversized stream chunk as a fatal error", async ({ expect }) => {
     const engineId = env.ENGINE.idFromName("STREAM-OVERSIZED-CHUNK");
     const engineStub = env.ENGINE.get(engineId);
 
@@ -700,23 +623,18 @@ describe("Context - ReadableStream step outputs", () => {
     const instanceId = "STREAM-RESTART-CLEANUP";
     const engineId = env.ENGINE.idFromName(instanceId);
 
-    const engineStub = await runWorkflowAndAwait(
-      instanceId,
-      async (_event, step) => {
-        const stream = await step.do("stream before restart", async () => {
-          return new ReadableStream<Uint8Array>({
-            start(controller) {
-              controller.enqueue(encodeUtf8("data for restart test"));
-              controller.close();
-            },
-          });
+    const engineStub = await runWorkflowAndAwait(instanceId, async (_event, step) => {
+      const stream = await step.do("stream before restart", async () => {
+        return new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encodeUtf8("data for restart test"));
+            controller.close();
+          },
         });
-        const bytes = await readStreamBytes(
-          stream as ReadableStream<Uint8Array>,
-        );
-        return decodeUtf8(bytes);
-      },
-    );
+      });
+      const bytes = await readStreamBytes(stream as ReadableStream<Uint8Array>);
+      return decodeUtf8(bytes);
+    });
 
     // Verify chunks exist before restart
     const hash = await computeHash("stream before restart");
@@ -750,9 +668,7 @@ describe("Context - ReadableStream step outputs", () => {
     });
   });
 
-  it("should preserve mock stream chunks across restart", async ({
-    expect,
-  }) => {
+  it("should preserve mock stream chunks across restart", async ({ expect }) => {
     const mockPayload = "mock stream survives restart";
     const mockPayloadBytes = encodeUtf8(mockPayload);
 
@@ -794,9 +710,7 @@ describe("Context - ReadableStream step outputs", () => {
     await vi.waitUntil(
       async () => {
         const logs = (await stub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 5000 },
     );
@@ -827,9 +741,7 @@ describe("Context - ReadableStream step outputs", () => {
       const stream = await step.do("mocked restart stream", async () => {
         return new ReadableStream<Uint8Array>({
           start(controller) {
-            controller.enqueue(
-              encodeUtf8("WRONG - real step ran after restart"),
-            );
+            controller.enqueue(encodeUtf8("WRONG - real step ran after restart"));
             controller.close();
           },
         });
@@ -841,23 +753,17 @@ describe("Context - ReadableStream step outputs", () => {
     await vi.waitUntil(
       async () => {
         const logs = (await stub2.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 5000 },
     );
 
     const logs = (await stub2.readLogs()) as EngineLogs;
-    const successLog = logs.logs.find(
-      (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-    );
+    const successLog = logs.logs.find((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
     expect(successLog?.metadata.result).toBe(mockPayload);
   });
 
-  it("should normalize TypedArray chunks to Uint8Array on replay", async ({
-    expect,
-  }) => {
+  it("should normalize TypedArray chunks to Uint8Array on replay", async ({ expect }) => {
     // Return Int16Array chunks -- they should be stored as raw bytes
     // and replayed as Uint8Array
     const int16Data = new Int16Array([1, 2, 3, 256, -1]);
@@ -867,65 +773,49 @@ describe("Context - ReadableStream step outputs", () => {
       int16Data.byteLength,
     );
 
-    const engineStub = await runWorkflow(
-      "STREAM-TYPED-ARRAY",
-      async (_event, step) => {
-        const stream = await step.do("typed array step", async () => {
-          return new ReadableStream({
-            start(controller) {
-              controller.enqueue(int16Data);
-              controller.close();
-            },
-          });
+    const engineStub = await runWorkflow("STREAM-TYPED-ARRAY", async (_event, step) => {
+      const stream = await step.do("typed array step", async () => {
+        return new ReadableStream({
+          start(controller) {
+            controller.enqueue(int16Data);
+            controller.close();
+          },
         });
+      });
 
-        const bytes = await readStreamBytes(
-          stream as ReadableStream<Uint8Array>,
-        );
-        return Array.from(bytes);
-      },
-    );
+      const bytes = await readStreamBytes(stream as ReadableStream<Uint8Array>);
+      return Array.from(bytes);
+    });
 
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 5000 },
     );
 
     const logs = (await engineStub.readLogs()) as EngineLogs;
-    const successLog = logs.logs.find(
-      (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-    );
+    const successLog = logs.logs.find((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
     expect(successLog?.metadata.result).toEqual(Array.from(expectedBytes));
   });
 
-  it("should return a replay ReadableStream from waitForStepResult", async ({
-    expect,
-  }) => {
+  it("should return a replay ReadableStream from waitForStepResult", async ({ expect }) => {
     const payload = "stream content for waitForStepResult";
     const payloadBytes = encodeUtf8(payload);
 
-    const engineStub = await runWorkflow(
-      "STREAM-WAIT-FOR-STEP",
-      async (_event, step) => {
-        const stream = await step.do("stream step", async () => {
-          return new ReadableStream<Uint8Array>({
-            start(controller) {
-              controller.enqueue(payloadBytes);
-              controller.close();
-            },
-          });
+    const engineStub = await runWorkflow("STREAM-WAIT-FOR-STEP", async (_event, step) => {
+      const stream = await step.do("stream step", async () => {
+        return new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(payloadBytes);
+            controller.close();
+          },
         });
-        const bytes = await readStreamBytes(
-          stream as ReadableStream<Uint8Array>,
-        );
-        return decodeUtf8(bytes);
-      },
-    );
+      });
+      const bytes = await readStreamBytes(stream as ReadableStream<Uint8Array>);
+      return decodeUtf8(bytes);
+    });
 
     // Use engine's waitForStepResult to get the stream
     const stepResult = await engineStub.waitForStepResult("stream step");
@@ -933,26 +823,20 @@ describe("Context - ReadableStream step outputs", () => {
     // Should be a ReadableStream
     expect(stepResult).toBeInstanceOf(ReadableStream);
 
-    const replayBytes = await readStreamBytes(
-      stepResult as ReadableStream<Uint8Array>,
-    );
+    const replayBytes = await readStreamBytes(stepResult as ReadableStream<Uint8Array>);
     expect(decodeUtf8(replayBytes)).toBe(payload);
 
     // Wait for workflow to finish
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 5000 },
     );
   });
 
-  it("should mock a step result with a ReadableStream via modifier", async ({
-    expect,
-  }) => {
+  it("should mock a step result with a ReadableStream via modifier", async ({ expect }) => {
     const mockPayload = "mocked stream content from modifier";
     const mockPayloadBytes = encodeUtf8(mockPayload);
 
@@ -980,9 +864,7 @@ describe("Context - ReadableStream step outputs", () => {
 
     await runInDurableObject(engineStub, async (_engine, state) => {
       // normal non-mocked key should not exist
-      expect(
-        await state.storage.get(getStreamOutputMetaKey(baseCacheKey)),
-      ).toBeUndefined();
+      expect(await state.storage.get(getStreamOutputMetaKey(baseCacheKey))).toBeUndefined();
 
       const replaceResult = await state.storage.get<{
         __mockStreamOutput: true;
@@ -994,9 +876,7 @@ describe("Context - ReadableStream step outputs", () => {
       expect(replaceResult?.cacheKey).toBe(baseCacheKey);
       expect(replaceResult?.meta.state).toBe(StreamOutputState.Complete);
       expect(replaceResult?.meta.attempt).toBe(0);
-      expect(
-        countStreamOutputChunks(state, baseCacheKey),
-      ).toBeGreaterThanOrEqual(1);
+      expect(countStreamOutputChunks(state, baseCacheKey)).toBeGreaterThanOrEqual(1);
     });
 
     // Run a workflow that uses the mocked step
@@ -1017,106 +897,78 @@ describe("Context - ReadableStream step outputs", () => {
     await vi.waitUntil(
       async () => {
         const logs = (await stub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 5000 },
     );
 
     const logs = (await stub.readLogs()) as EngineLogs;
-    const successLog = logs.logs.find(
-      (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-    );
+    const successLog = logs.logs.find((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
     // The workflow should have received the mocked stream content
     expect(successLog?.metadata.result).toBe(mockPayload);
   });
 
-  it("should resolve stream output to a text preview in readLogs", async ({
-    expect,
-  }) => {
+  it("should resolve stream output to a text preview in readLogs", async ({ expect }) => {
     const payload = "hello from stream preview test";
     const payloadBytes = encodeUtf8(payload);
 
-    const engineStub = await runWorkflow(
-      "STREAM-PREVIEW-TEXT",
-      async (_event, step) => {
-        const stream = await step.do("preview step", async () => {
-          return new ReadableStream<Uint8Array>({
-            start(controller) {
-              controller.enqueue(payloadBytes);
-              controller.close();
-            },
-          });
+    const engineStub = await runWorkflow("STREAM-PREVIEW-TEXT", async (_event, step) => {
+      const stream = await step.do("preview step", async () => {
+        return new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(payloadBytes);
+            controller.close();
+          },
         });
-        const bytes = await readStreamBytes(
-          stream as ReadableStream<Uint8Array>,
-        );
-        return decodeUtf8(bytes);
-      },
-    );
+      });
+      const bytes = await readStreamBytes(stream as ReadableStream<Uint8Array>);
+      return decodeUtf8(bytes);
+    });
 
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 5000 },
     );
 
     const logs = (await engineStub.readLogs()) as EngineLogs;
-    const stepLog = logs.logs.find(
-      (val) => val.event === InstanceEvent.STEP_SUCCESS,
-    );
+    const stepLog = logs.logs.find((val) => val.event === InstanceEvent.STEP_SUCCESS);
     // readLogs() should resolve the stream output metadata to the preview text
     expect(stepLog?.metadata.result).toBe(payload);
   });
 
-  it("should truncate a long stream preview in readLogs", async ({
-    expect,
-  }) => {
+  it("should truncate a long stream preview in readLogs", async ({ expect }) => {
     // Generate a payload longer than the 1024-char preview limit
     const payload = "A".repeat(2048);
     const payloadBytes = encodeUtf8(payload);
 
-    const engineStub = await runWorkflow(
-      "STREAM-PREVIEW-TRUNCATED",
-      async (_event, step) => {
-        const stream = await step.do("long preview step", async () => {
-          return new ReadableStream<Uint8Array>({
-            start(controller) {
-              controller.enqueue(payloadBytes);
-              controller.close();
-            },
-          });
+    const engineStub = await runWorkflow("STREAM-PREVIEW-TRUNCATED", async (_event, step) => {
+      const stream = await step.do("long preview step", async () => {
+        return new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(payloadBytes);
+            controller.close();
+          },
         });
-        const bytes = await readStreamBytes(
-          stream as ReadableStream<Uint8Array>,
-        );
-        return decodeUtf8(bytes);
-      },
-    );
+      });
+      const bytes = await readStreamBytes(stream as ReadableStream<Uint8Array>);
+      return decodeUtf8(bytes);
+    });
 
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 5000 },
     );
 
     const logs = (await engineStub.readLogs()) as EngineLogs;
-    const stepLog = logs.logs.find(
-      (val) => val.event === InstanceEvent.STEP_SUCCESS,
-    );
+    const stepLog = logs.logs.find((val) => val.event === InstanceEvent.STEP_SUCCESS);
     // readLogs() should truncate the preview to 1024 chars
-    expect(stepLog?.metadata.result).toBe(
-      "A".repeat(1024) + "[truncated output]",
-    );
+    expect(stepLog?.metadata.result).toBe("A".repeat(1024) + "[truncated output]");
   });
 
   it("should resolve non-UTF-8 stream output to a binary summary in readLogs", async ({
@@ -1125,47 +977,36 @@ describe("Context - ReadableStream step outputs", () => {
     // Write raw bytes that are not valid UTF-8
     const invalidUtf8 = new Uint8Array([0xff, 0xfe, 0x80, 0x81]);
 
-    const engineStub = await runWorkflow(
-      "STREAM-PREVIEW-BINARY",
-      async (_event, step) => {
-        const stream = await step.do("binary step", async () => {
-          return new ReadableStream<Uint8Array>({
-            start(controller) {
-              controller.enqueue(invalidUtf8);
-              controller.close();
-            },
-          });
+    const engineStub = await runWorkflow("STREAM-PREVIEW-BINARY", async (_event, step) => {
+      const stream = await step.do("binary step", async () => {
+        return new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(invalidUtf8);
+            controller.close();
+          },
         });
-        const bytes = await readStreamBytes(
-          stream as ReadableStream<Uint8Array>,
-        );
-        return bytes.byteLength;
-      },
-    );
+      });
+      const bytes = await readStreamBytes(stream as ReadableStream<Uint8Array>);
+      return bytes.byteLength;
+    });
 
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 5000 },
     );
 
     const logs = (await engineStub.readLogs()) as EngineLogs;
-    const stepLog = logs.logs.find(
-      (val) => val.event === InstanceEvent.STEP_SUCCESS,
-    );
+    const stepLog = logs.logs.find((val) => val.event === InstanceEvent.STEP_SUCCESS);
     // readLogs() should fall back to a binary size summary
     expect(stepLog?.metadata.result).toBe(
       `[ReadableStream (binary): ${invalidUtf8.byteLength} bytes]`,
     );
   });
 
-  it("should time out during stream write and roll back", async ({
-    expect,
-  }) => {
+  it("should time out during stream write and roll back", async ({ expect }) => {
     // In the full workflow path a stream-write timeout triggers retries
     // (default limit: 5, exponential backoff from 1 s), so the test would
     // exceed its timeout before WORKFLOW_FAILURE is ever logged.  Testing
@@ -1195,9 +1036,7 @@ describe("Context - ReadableStream step outputs", () => {
       // the timeoutPromise() used by Context.do() in production.
       const timeoutTask = new Promise<never>((_, reject) => {
         setTimeout(() => {
-          const error = new WorkflowTimeoutError(
-            "Execution timed out after 1000ms",
-          );
+          const error = new WorkflowTimeoutError("Execution timed out after 1000ms");
           abortController.abort(error);
           reject(error);
         }, 1000);
@@ -1248,32 +1087,23 @@ describe("Context - typed-array step outputs (issue #14101)", () => {
     // Baseline: a 200KB view sized exactly to its backing buffer must
     // succeed. This case worked on `main` too — anchors the regression test
     // suite to "small enough to fit, regardless of normalisation".
-    const engineStub = await runWorkflow(
-      "UINT8-TIGHT-200K",
-      async (_event, step) => {
-        return await step.do("emit-tight-bytes", async () => {
-          return new Uint8Array(200_000);
-        });
-      },
-    );
+    const engineStub = await runWorkflow("UINT8-TIGHT-200K", async (_event, step) => {
+      return await step.do("emit-tight-bytes", async () => {
+        return new Uint8Array(200_000);
+      });
+    });
 
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 10000 },
     );
 
     const logs = (await engineStub.readLogs()) as EngineLogs;
-    expect(
-      logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS),
-    ).toBe(true);
-    expect(
-      logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_FAILURE),
-    ).toBe(false);
+    expect(logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS)).toBe(true);
+    expect(logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_FAILURE)).toBe(false);
   });
 
   it("should persist a 200KB Uint8Array view sliced from an 800KB backing buffer (regression #14101)", async ({
@@ -1284,33 +1114,24 @@ describe("Context - typed-array step outputs (issue #14101)", () => {
     // to the fix, workerd's v8::ValueSerializer would serialise the
     // entire 800KB backing buffer along with the view, blowing past the
     // 1MiB SQL blob limit and surfacing a raw `SQLITE_TOOBIG` error.
-    const engineStub = await runWorkflow(
-      "UINT8-SLICED-200K-OF-800K",
-      async (_event, step) => {
-        return await step.do("emit-sliced-bytes", async () => {
-          const backing = new ArrayBuffer(800_000);
-          return new Uint8Array(backing, 0, 200_000);
-        });
-      },
-    );
+    const engineStub = await runWorkflow("UINT8-SLICED-200K-OF-800K", async (_event, step) => {
+      return await step.do("emit-sliced-bytes", async () => {
+        const backing = new ArrayBuffer(800_000);
+        return new Uint8Array(backing, 0, 200_000);
+      });
+    });
 
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 10000 },
     );
 
     const logs = (await engineStub.readLogs()) as EngineLogs;
-    expect(
-      logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS),
-    ).toBe(true);
-    expect(
-      logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_FAILURE),
-    ).toBe(false);
+    expect(logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS)).toBe(true);
+    expect(logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_FAILURE)).toBe(false);
   });
 
   it("should return the original Uint8Array to the next step in the live execution path", async ({
@@ -1321,25 +1142,20 @@ describe("Context - typed-array step outputs (issue #14101)", () => {
     // the same shape — downstream user code that branches on
     // `value instanceof Uint8Array` works either way.
     let observedInNext: unknown = "not-seen";
-    const engineStub = await runWorkflow(
-      "UINT8-ROUND-TRIP",
-      async (_event, step) => {
-        const bytes = await step.do("emit-bytes", async () => {
-          return new Uint8Array([1, 2, 3, 4, 5]);
-        });
-        await step.do("read-bytes", async () => {
-          observedInNext = bytes;
-          return "ok";
-        });
-      },
-    );
+    const engineStub = await runWorkflow("UINT8-ROUND-TRIP", async (_event, step) => {
+      const bytes = await step.do("emit-bytes", async () => {
+        return new Uint8Array([1, 2, 3, 4, 5]);
+      });
+      await step.do("read-bytes", async () => {
+        observedInNext = bytes;
+        return "ok";
+      });
+    });
 
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 10000 },
     );
@@ -1355,25 +1171,20 @@ describe("Context - typed-array step outputs (issue #14101)", () => {
     // `Int16Array`, etc.) so downstream `instanceof` checks behave the
     // same whether the step ran live or via cached replay.
     let observedInNext: unknown = "not-seen";
-    const engineStub = await runWorkflow(
-      "INT16-ROUND-TRIP",
-      async (_event, step) => {
-        const bytes = await step.do("emit-int16", async () => {
-          return new Int16Array([1, 2, 3, 4, 5]);
-        });
-        await step.do("read-int16", async () => {
-          observedInNext = bytes;
-          return "ok";
-        });
-      },
-    );
+    const engineStub = await runWorkflow("INT16-ROUND-TRIP", async (_event, step) => {
+      const bytes = await step.do("emit-int16", async () => {
+        return new Int16Array([1, 2, 3, 4, 5]);
+      });
+      await step.do("read-int16", async () => {
+        observedInNext = bytes;
+        return "ok";
+      });
+    });
 
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 10000 },
     );
@@ -1388,36 +1199,27 @@ describe("Context - typed-array step outputs (issue #14101)", () => {
     // A view sliced from a much larger backing buffer would bloat past
     // SQLITE_TOOBIG if nested-level normalisation were missing. Recurses
     // into plain objects.
-    const engineStub = await runWorkflow(
-      "NESTED-UINT8-SLICED",
-      async (_event, step) => {
-        return await step.do("emit-nested-sliced-bytes", async () => {
-          const backing = new ArrayBuffer(800_000);
-          return {
-            image: new Uint8Array(backing, 0, 200_000),
-            meta: { width: 100, height: 100 },
-          };
-        });
-      },
-    );
+    const engineStub = await runWorkflow("NESTED-UINT8-SLICED", async (_event, step) => {
+      return await step.do("emit-nested-sliced-bytes", async () => {
+        const backing = new ArrayBuffer(800_000);
+        return {
+          image: new Uint8Array(backing, 0, 200_000),
+          meta: { width: 100, height: 100 },
+        };
+      });
+    });
 
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 10000 },
     );
 
     const logs = (await engineStub.readLogs()) as EngineLogs;
-    expect(
-      logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS),
-    ).toBe(true);
-    expect(
-      logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_FAILURE),
-    ).toBe(false);
+    expect(logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS)).toBe(true);
+    expect(logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_FAILURE)).toBe(false);
   });
 
   it("should compact typed-array views nested deep inside arrays of objects", async ({
@@ -1441,20 +1243,14 @@ describe("Context - typed-array step outputs (issue #14101)", () => {
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 10000 },
     );
 
     const logs = (await engineStub.readLogs()) as EngineLogs;
-    expect(
-      logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS),
-    ).toBe(true);
-    expect(
-      logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_FAILURE),
-    ).toBe(false);
+    expect(logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS)).toBe(true);
+    expect(logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_FAILURE)).toBe(false);
   });
 });
 
@@ -1464,38 +1260,27 @@ describe("Sensitive step output", () => {
   }) => {
     let downstreamValue: unknown;
 
-    const engineStub = await runWorkflowAndAwait(
-      "SENSITIVE-STEP-OUTPUT",
-      async (_event, step) => {
-        const secret = await step.do(
-          "sensitive step",
-          { sensitive: "output" },
-          async () => {
-            return { token: "super-secret" };
-          },
-        );
-        await step.do("downstream step", async () => {
-          downstreamValue = secret;
-          return "ok";
-        });
-      },
-    );
+    const engineStub = await runWorkflowAndAwait("SENSITIVE-STEP-OUTPUT", async (_event, step) => {
+      const secret = await step.do("sensitive step", { sensitive: "output" }, async () => {
+        return { token: "super-secret" };
+      });
+      await step.do("downstream step", async () => {
+        downstreamValue = secret;
+        return "ok";
+      });
+    });
 
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 5000 },
     );
 
     const logs = (await engineStub.readLogs()) as EngineLogs;
     const stepLog = logs.logs.find(
-      (val) =>
-        val.event === InstanceEvent.STEP_SUCCESS &&
-        val.target === "sensitive step-1",
+      (val) => val.event === InstanceEvent.STEP_SUCCESS && val.target === "sensitive step-1",
     );
     expect(stepLog?.metadata.result).toBe(REDACTED_STEP_OUTPUT);
 
@@ -1503,26 +1288,18 @@ describe("Sensitive step output", () => {
     expect(downstreamValue).toEqual({ token: "super-secret" });
   });
 
-  it("should redact a sensitive step's output from waitForStepResult", async ({
-    expect,
-  }) => {
+  it("should redact a sensitive step's output from waitForStepResult", async ({ expect }) => {
     const engineStub = await runWorkflowAndAwait(
       "SENSITIVE-STEP-WAIT-RESULT",
       async (_event, step) => {
-        await step.do(
-          "sensitive step",
-          { sensitive: "output" },
-          async () => "super-secret",
-        );
+        await step.do("sensitive step", { sensitive: "output" }, async () => "super-secret");
       },
     );
 
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 5000 },
     );
@@ -1532,65 +1309,48 @@ describe("Sensitive step output", () => {
   });
 
   it("should not redact a sensitive step's error", async ({ expect }) => {
-    const engineStub = await runWorkflowAndAwait(
-      "SENSITIVE-STEP-ERROR",
-      async (_event, step) => {
-        try {
-          await step.do(
-            "sensitive failing step",
-            { sensitive: "output", retries: { limit: 0, delay: 0 } },
-            async () => {
-              throw new NonRetryableError("boom with secret context");
-            },
-          );
-        } catch {}
-      },
-    );
+    const engineStub = await runWorkflowAndAwait("SENSITIVE-STEP-ERROR", async (_event, step) => {
+      try {
+        await step.do(
+          "sensitive failing step",
+          { sensitive: "output", retries: { limit: 0, delay: 0 } },
+          async () => {
+            throw new NonRetryableError("boom with secret context");
+          },
+        );
+      } catch {}
+    });
 
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 5000 },
     );
 
     const logs = (await engineStub.readLogs()) as EngineLogs;
-    const attemptFailure = logs.logs.find(
-      (val) => val.event === InstanceEvent.ATTEMPT_FAILURE,
-    );
-    const error = attemptFailure?.metadata.error as
-      | { message: string }
-      | undefined;
+    const attemptFailure = logs.logs.find((val) => val.event === InstanceEvent.ATTEMPT_FAILURE);
+    const error = attemptFailure?.metadata.error as { message: string } | undefined;
     expect(error?.message).toContain("boom with secret context");
   });
 
-  it("should redact a sensitive streaming step output in readLogs", async ({
-    expect,
-  }) => {
+  it("should redact a sensitive streaming step output in readLogs", async ({ expect }) => {
     const payload = "streamed secret";
     const payloadBytes = encodeUtf8(payload);
 
     const engineStub = await runWorkflowAndAwait(
       "SENSITIVE-STREAM-OUTPUT",
       async (_event, step) => {
-        const stream = await step.do(
-          "sensitive stream step",
-          { sensitive: "output" },
-          async () => {
-            return new ReadableStream<Uint8Array>({
-              start(controller) {
-                controller.enqueue(payloadBytes);
-                controller.close();
-              },
-            });
-          },
-        );
-        const bytes = await readStreamBytes(
-          stream as ReadableStream<Uint8Array>,
-        );
+        const stream = await step.do("sensitive stream step", { sensitive: "output" }, async () => {
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(payloadBytes);
+              controller.close();
+            },
+          });
+        });
+        const bytes = await readStreamBytes(stream as ReadableStream<Uint8Array>);
         return decodeUtf8(bytes);
       },
     );
@@ -1598,18 +1358,14 @@ describe("Sensitive step output", () => {
     await vi.waitUntil(
       async () => {
         const logs = (await engineStub.readLogs()) as EngineLogs;
-        return logs.logs.some(
-          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
-        );
+        return logs.logs.some((val) => val.event === InstanceEvent.WORKFLOW_SUCCESS);
       },
       { timeout: 5000 },
     );
 
     const logs = (await engineStub.readLogs()) as EngineLogs;
     const stepLog = logs.logs.find(
-      (val) =>
-        val.event === InstanceEvent.STEP_SUCCESS &&
-        val.target === "sensitive stream step-1",
+      (val) => val.event === InstanceEvent.STEP_SUCCESS && val.target === "sensitive stream step-1",
     );
     expect(stepLog?.metadata.result).toBe(REDACTED_STEP_OUTPUT);
   });
