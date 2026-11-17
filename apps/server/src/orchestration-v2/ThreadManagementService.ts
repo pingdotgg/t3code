@@ -1,3 +1,4 @@
+import * as Digest from "effect/crypto/Digest";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -484,6 +485,13 @@ export interface ThreadManagementServiceShape {
     readonly threadId: ThreadId;
     readonly runId: RunId;
   }) => Effect.Effect<void, ThreadManagementFailure>;
+  readonly requestContinuation: (input: {
+    readonly threadId: ThreadId;
+    readonly handoff?: string | undefined;
+  }) => Effect.Effect<
+    { readonly enabled: boolean; readonly targetThreadId?: ThreadId },
+    ThreadManagementFailure | import("@t3tools/contracts").ServerSettingsError
+  >;
   readonly settleThread: (input: {
     readonly threadId: ThreadId;
     readonly commandId: CommandId;
@@ -757,6 +765,18 @@ const make = Effect.gen(function* () {
 
   const assertDispatchTargetEnabled = (command: OrchestrationV2ServerCommand) => {
     switch (command.type) {
+      case "thread.fork":
+        return command.continuationAfterRunId === undefined
+          ? Effect.void
+          : orchestrator.getThreadRecords(command.sourceThreadId, []).pipe(
+              Effect.flatMap((projection) =>
+                assertProviderInstanceEnabled({
+                  projectId: projection.thread.projectId,
+                  commandId: command.commandId,
+                  instanceId: projection.thread.modelSelection.instanceId,
+                }),
+              ),
+            );
       case "thread.metadata.update":
         return command.continuation === undefined
           ? Effect.void
@@ -1233,6 +1253,73 @@ const make = Effect.gen(function* () {
       Stream.runHead,
       Effect.timeoutOption(Duration.millis(SETTLE_AFTER_RUN_WAIT_MS)),
     );
+  });
+
+  const continuationRequests = new Map<ThreadId, ThreadId>();
+  const requestContinuation: ThreadManagementServiceShape["requestContinuation"] = Effect.fn(
+    "ThreadManagementService.requestContinuation",
+  )(function* (input) {
+    const settings = yield* serverSettings.getSettings;
+    if (!settings.autoContinueHeavyThreads || input.handoff === undefined)
+      return { enabled: settings.autoContinueHeavyThreads };
+    const source = yield* orchestrator.getThreadRecords(input.threadId, ["runs", "messages"], {
+      messageRoles: ["user"],
+    });
+    const run = latestRun(source);
+    if (
+      !isListedThreadLineage(source.thread.lineage) ||
+      isDelegatedAppThread(source.thread) ||
+      run === undefined ||
+      !["running", "starting", "waiting"].includes(run.status) ||
+      source.runs.filter((candidate) => candidate.status === "completed").length < 2 ||
+      source.runs.some((candidate) => candidate.status === "queued") ||
+      threadPullRequestsOf(source.thread).some((link) => link.watch !== undefined)
+    )
+      return yield* new Orchestrator.OrchestratorDispatchError({
+        commandId: CommandId.make("continuation:refused"),
+        commandType: "thread.fork",
+        cause:
+          "Continuation needs a top-level thread with two completed turns, no queued messages, and no PR watch.",
+      });
+    const digest = yield* Digest.Digest.pipe(Effect.provide(Digest.layerWebCrypto));
+    const key = yield* digest.digestHex(
+      Digest.sha256,
+      new TextEncoder().encode(`${source.thread.id.length}:${source.thread.id}${run.id}`),
+    );
+    const targetThreadId = ThreadId.make(`continuation:${key}`);
+    const pendingTarget = continuationRequests.get(input.threadId);
+    if (pendingTarget !== undefined) return { enabled: true, targetThreadId: pendingTarget };
+    continuationRequests.set(input.threadId, targetThreadId);
+    const handoff = input.handoff;
+    yield* Effect.gen(function* () {
+      const waited = yield* waitForThread({
+        projectId: source.thread.projectId,
+        threadId: input.threadId,
+        runId: run.id,
+        timeoutMs: SETTLE_AFTER_RUN_WAIT_MS,
+        untilDelegatedWorkSettled: true,
+      });
+      if (waited.timedOut || waited.run?.status !== "completed") return;
+      if (!(yield* serverSettings.getSettings).autoContinueHeavyThreads) return;
+      yield* dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make(`${targetThreadId}:fork`),
+        sourceThreadId: input.threadId,
+        targetThreadId,
+        sourcePoint: { type: "run", runId: run.id },
+        continuationAfterRunId: run.id,
+        continuationMessageCount: source.messages.filter((message) => message.role === "user")
+          .length,
+        continuationHandoff: handoff,
+        createdBy: "agent",
+        creationSource: "server",
+      });
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => continuationRequests.delete(input.threadId))),
+      Effect.ignoreCause({ log: true }),
+      Effect.forkIn(layerScope),
+    );
+    return { enabled: true, targetThreadId };
   });
 
   const settleThread: ThreadManagementServiceShape["settleThread"] = Effect.fn(
@@ -1784,6 +1871,7 @@ const make = Effect.gen(function* () {
     waitForThread,
     settleAfterRun,
     settleThread,
+    requestContinuation,
     interruptThread,
     stopDelegatedTasks,
     stopWorkflow,

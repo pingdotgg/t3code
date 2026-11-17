@@ -5921,6 +5921,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const dispatchThreadFork = Effect.fn("orchestrationV2.dispatch.threadFork")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "thread.fork" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
     yield* Effect.annotateCurrentSpan({
       "orchestration_v2.command_id": command.commandId,
@@ -5931,13 +5932,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
 
     const sourceProjection = yield* projectionStore
-      .getThreadRecords(command.sourceThreadId, [
-        "runs",
-        ...(command.sourcePoint.type === "checkpoint" ? (["checkpoints"] as const) : []),
-        "providerThreads",
-        "providerTurns",
-        "attempts",
-      ])
+      .getThreadRecords(
+        command.sourceThreadId,
+        [
+          "runs",
+          ...(command.continuationAfterRunId === undefined ? [] : (["messages"] as const)),
+          ...(command.sourcePoint.type === "checkpoint" ? (["checkpoints"] as const) : []),
+          "providerThreads",
+          ...(command.continuationAfterRunId === undefined ? [] : (["providerSessions"] as const)),
+          "providerTurns",
+          "attempts",
+        ],
+        command.continuationAfterRunId === undefined ? undefined : { messageRoles: ["user"] },
+      )
       .pipe(
         Effect.mapError(
           (cause) =>
@@ -5947,6 +5954,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
+    if (command.continuationAfterRunId !== undefined) {
+      for (const session of sourceProjection.providerSessions) {
+        if (yield* sessionHasBackgroundWork(session, sourceProjection.providerThreads)) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Background work is still running; continue in this thread.",
+          });
+        }
+      }
+      const latest = sourceProjection.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+      if (
+        latest?.id !== command.continuationAfterRunId ||
+        latest.status !== "completed" ||
+        sourceProjection.messages.filter((message) => message.role === "user").length !==
+          command.continuationMessageCount ||
+        command.continuationHandoff === undefined ||
+        sourceProjection.providerThreads.some(
+          (thread) => (thread.pendingBackgroundTasks?.length ?? 0) > 0,
+        ) ||
+        threadPullRequestsOf(sourceProjection.thread).some((link) => link.watch !== undefined) ||
+        sourceProjection.thread.archivedAt !== null ||
+        sourceProjection.thread.settledOverride === "settled"
+      )
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The source thread changed before continuation; keep working in it.",
+        });
+    }
     // Read under the source's lock; validate the modes copied here, not an earlier read.
     yield* refuseAboveDispatchModeLimit(command, command.sourceThreadId, sourceProjection.thread);
     if (sourceProjection.thread.deletedAt !== null) {
@@ -6035,13 +6072,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: targetThread,
     });
-    yield* emitEvent({
-      type: "context-transfer.created",
-      threadId: command.targetThreadId,
-      providerInstanceId: transfer.sourceProviderInstanceId ?? targetThread.providerInstanceId,
-      occurredAt: now,
-      payload: transfer,
-    });
+    if (command.continuationAfterRunId === undefined)
+      yield* emitEvent({
+        type: "context-transfer.created",
+        threadId: command.targetThreadId,
+        providerInstanceId: transfer.sourceProviderInstanceId ?? targetThread.providerInstanceId,
+        occurredAt: now,
+        payload: transfer,
+      });
+    if (command.continuationAfterRunId !== undefined) {
+      yield* dispatchThreadMutation(
+        {
+          type: "thread.settle",
+          commandId: command.commandId,
+          threadId: command.sourceThreadId,
+          expectedLatestRunId: command.continuationAfterRunId,
+        },
+        events,
+        effects,
+      );
+    }
   });
 
   const dispatchThreadMergeBack = Effect.fn("orchestrationV2.dispatch.threadMergeBack")(function* (
@@ -15814,7 +15864,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchInterruptUnresponsive(command, events);
         break;
       case "thread.fork":
-        yield* dispatchThreadFork(command, events);
+        yield* dispatchThreadFork(command, events, effects);
+        if (
+          command.continuationAfterRunId !== undefined &&
+          command.continuationHandoff !== undefined
+        ) {
+          yield* dispatchMessage(
+            {
+              type: "message.dispatch",
+              commandId: command.commandId,
+              threadId: command.targetThreadId,
+              messageId: MessageId.make(`${command.targetThreadId}:handoff`),
+              text: `Continue the task from thread ${command.sourceThreadId}. The previous conversation remains available there.\n\n${command.continuationHandoff}`,
+              attachments: [],
+              freshContext: true,
+              dispatchMode: { type: "start_immediately" },
+              createdBy: command.createdBy,
+              creationSource: command.creationSource,
+            },
+            events,
+            effects,
+          );
+        }
         break;
       case "thread.merge_back":
         yield* dispatchThreadMergeBack(command, events);

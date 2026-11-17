@@ -107,6 +107,7 @@ export function AutoSettleSettingsRows(props: {
   const writeToAll = (
     patch: Partial<AutoSettleSettings> & {
       autoResumeLimitedThreads?: boolean;
+      autoContinueHeavyThreads?: boolean;
       snoozeLimitedThreads?: boolean;
     },
   ) => props.write(patch);
@@ -157,6 +158,16 @@ export function AutoSettleSettingsRows(props: {
         </SettingsSection>
       ) : null}
       <SettingsSection title={gt("Auto-settle")}>
+        {!projectSelected ? (
+          <SettingsSwitchRow
+            icon="arrow.triangle.branch"
+            label="Continue context-heavy threads"
+            subtitle="Off by default. Agents with T3 tools can continue long tasks in a fresh thread with a handoff after active work finishes."
+            value={uniformMobileSetting(displayTargets, "autoContinueHeavyThreads")}
+            disabled={disabledFor("autoContinueHeavyThreads")}
+            onValueChange={(value) => writeToAll({ autoContinueHeavyThreads: value })}
+          />
+        ) : null}
         <SettingsSwitchRow
           icon="arrow.triangle.branch"
           label={gt("Auto-settle merged threads")}

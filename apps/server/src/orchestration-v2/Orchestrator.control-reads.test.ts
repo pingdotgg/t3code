@@ -42,6 +42,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -3183,4 +3184,149 @@ it.effect(
       }
       assert.equal(yield* captureReads, quietParent);
     }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each([
+  "success",
+  "changed-run",
+  "new-message",
+  "watch",
+  "background",
+  "permission",
+] as const)("continuation durably commits its handoff and source settlement: %s", (scenario) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    const sourceThreadId = ThreadId.make("thread:continuation-source");
+    const targetThreadId = ThreadId.make("thread:continuation-target");
+    const projectId = ProjectId.make("project:continuation");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("continuation:create"),
+      threadId: sourceThreadId,
+      projectId,
+      title: "Long task",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+      initialMessage: {
+        messageId: MessageId.make("continuation:initial"),
+        text: "Implement auth.",
+        attachments: [],
+      },
+    });
+    const initial = yield* projections.getThreadProjection(sourceThreadId);
+    const run = initial.runs[0]!;
+    const now = yield* DateTime.now;
+    yield* projections.apply({
+      id: EventId.make("continuation:completed"),
+      type: "run.updated",
+      threadId: sourceThreadId,
+      occurredAt: now,
+      payload: { ...run, status: "completed", completedAt: now },
+    });
+    const source = yield* projections.getThreadProjection(sourceThreadId);
+    if (scenario === "watch")
+      yield* projections.apply({
+        id: EventId.make("continuation:watch"),
+        type: "thread.metadata-updated",
+        threadId: sourceThreadId,
+        occurredAt: now,
+        payload: {
+          ...source.thread,
+          pullRequests: [
+            {
+              host: "github.com",
+              repository: "acme/app",
+              number: 1,
+              url: "https://github.com/acme/app/pull/1",
+              source: "agent",
+              linkedAt: DateTime.formatIso(now),
+              snapshot: null,
+              stack: null,
+              watch: {
+                startedAt: DateTime.formatIso(now),
+                headSha: null,
+                failedChecks: [],
+                passed: false,
+                passedChecks: [],
+                remarksThrough: DateTime.formatIso(now),
+                remarkIds: [],
+                conflicting: false,
+                wakes: 0,
+              },
+            },
+          ],
+        },
+      });
+    if (scenario === "background") {
+      const thread = source.providerThreads[0];
+      assert.isDefined(thread);
+      yield* projections.apply({
+        id: EventId.make("continuation:background"),
+        type: "provider-thread.updated",
+        threadId: sourceThreadId,
+        occurredAt: now,
+        payload: {
+          ...thread,
+          pendingBackgroundTasks: [{ taskId: "still-running", kind: "command" }],
+        },
+      });
+    }
+    const commandId = CommandId.make("continuation:fork");
+    const result = yield* orchestrator
+      .dispatch({
+        type: "thread.fork",
+        commandId,
+        sourceThreadId,
+        targetThreadId,
+        sourcePoint: { type: "run", runId: run.id },
+        continuationAfterRunId: scenario === "changed-run" ? RunId.make("wrong") : run.id,
+        continuationMessageCount: scenario === "new-message" ? 0 : 1,
+        continuationHandoff: "Auth validator is implemented. Continue with session persistence.",
+        createdBy: "agent",
+        creationSource: "server",
+      })
+      .pipe(
+        Effect.provideService(
+          DispatchModeLimit,
+          scenario === "permission"
+            ? { runtimeMode: "approval-required", interactionMode: "default" }
+            : undefined,
+        ),
+        Effect.result,
+      );
+    const finalSource = yield* projections.getThreadProjection(sourceThreadId);
+    if (scenario !== "success") {
+      assert.isTrue(Result.isFailure(result));
+      assert.notEqual(finalSource.thread.settledOverride, "settled");
+      assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+      return;
+    }
+    assert.isTrue(Result.isSuccess(result), JSON.stringify(result));
+    assert.equal(finalSource.thread.settledOverride, "settled");
+    const target = yield* projections.getThreadProjection(targetThreadId);
+    assert.equal(target.thread.lineage.parentThreadId, sourceThreadId);
+    assert.equal(target.runs[0]?.freshContext, true);
+    assert.include(target.messages[0]?.text ?? "", "session persistence");
+    assert.isAbove((yield* outbox.listByCommandId(commandId)).length, 0);
+    yield* orchestrator.dispatch({
+      type: "thread.fork",
+      commandId,
+      sourceThreadId,
+      targetThreadId,
+      sourcePoint: { type: "run", runId: run.id },
+      continuationAfterRunId: run.id,
+      continuationMessageCount: 1,
+      continuationHandoff: "Auth handoff.",
+      createdBy: "agent",
+      creationSource: "server",
+    });
+    assert.lengthOf((yield* projections.getThreadProjection(targetThreadId)).runs, 1);
+  }).pipe(Effect.provide(layerTest)),
 );

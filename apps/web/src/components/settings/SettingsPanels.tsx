@@ -542,6 +542,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarAutoSettleOnMerge !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge
       ? [gt("Auto-settle merged threads")]
       : []),
+    ...(settings.autoContinueHeavyThreads !== DEFAULT_UNIFIED_SETTINGS.autoContinueHeavyThreads
+      ? ["Continue context-heavy threads"]
+      : []),
     ...(settings.autoResumeLimitedThreads !== DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads
       ? [gt("Resume after usage limits")]
       : []),
@@ -722,6 +725,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
+      autoContinueHeavyThreads: DEFAULT_UNIFIED_SETTINGS.autoContinueHeavyThreads,
       autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
       snoozePresets: DEFAULT_UNIFIED_SETTINGS.snoozePresets,
@@ -2027,6 +2031,24 @@ export function ThreadsSettingsPanel() {
 
       {hasServerTargets ? (
         <SettingsSection id="auto-settle" title={gt("Auto-settle")}>
+          {!isProjectScope ? (
+            <SettingsRow
+              serverScoped
+              {...searchableSetting("auto-continue-heavy-threads")}
+              description="Let agents continue long tasks in a fresh thread with a handoff. Off by default. Requires an agent that supports T3 tools; rollover waits for active work to finish."
+              settingKeys={["autoContinueHeavyThreads"]}
+              control={
+                <ScopedSwitch
+                  settingKeys={["autoContinueHeavyThreads"]}
+                  checked={settings.autoContinueHeavyThreads}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ autoContinueHeavyThreads: Boolean(checked) })
+                  }
+                  aria-label="Continue context-heavy threads"
+                />
+              }
+            />
+          ) : null}
           <SettingsRow
             serverScoped
             settingKeys={["sidebarAutoSettleOnMerge"]}

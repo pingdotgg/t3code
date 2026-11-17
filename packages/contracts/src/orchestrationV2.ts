@@ -3581,6 +3581,11 @@ export const OrchestrationV2Command = Schema.Union([
     sourceThreadId: ThreadId,
     targetThreadId: ThreadId,
     sourcePoint: OrchestrationV2ThreadForkSourcePoint,
+    continuationAfterRunId: Schema.optional(RunId),
+    continuationMessageCount: Schema.optional(NonNegativeInt),
+    continuationHandoff: Schema.optional(
+      Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(24000)),
+    ),
     title: Schema.optional(TrimmedNonEmptyString),
     sideChat: Schema.optional(Schema.Boolean),
     createdAt: Schema.optional(Schema.DateTimeUtc),
