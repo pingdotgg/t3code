@@ -65,8 +65,14 @@ export function issueTrackerSummary(
   tracker: IssueTrackerConnection,
   bindings: IssueTrackerConnectionList["bindings"],
 ): string {
-  if (!tracker.connected)
-    return `Not connected. Add a ${tracker.credential.label.toLowerCase()} to list its issues.`;
+  if (!tracker.connected) {
+    // Mid-sentence case, keeping an acronym: "personal API key", "API token".
+    const credential = tracker.credential.label
+      .split(" ")
+      .map((word) => (word === word.toUpperCase() ? word : word.toLowerCase()))
+      .join(" ");
+    return `Not connected. Add your ${credential} to list its issues.`;
+  }
   if (tracker.account === null) return tracker.detail ?? "The saved credential was rejected.";
   const linked = Object.values(bindings).filter(
     (binding) => binding.tracker === tracker.tracker,

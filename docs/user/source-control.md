@@ -366,8 +366,11 @@ itself where it can search. Press **Load more** at the end of a group to read fu
 The **Views** menu saves and restores a search, filter, and sort setup, as it does for pull
 requests.
 
-To list a Linear team's issues beside a project's, connect Linear with an API key under
-Settings → Source control & issues, then choose the team for that project there.
+To list a Linear team's or a Jira Cloud project's issues beside a project's, connect the tracker
+under Settings → Source control & issues, then choose the team or project there. Linear takes an
+API key; Jira takes your site (`yourteam.atlassian.net`), your account email, and an API token.
+Jira issues move along their workflow's transitions, and have no reactions or linked pull
+requests here. A new Jira issue is filed as a Task.
 
 Select an issue to open it beside the list: description, comments, state changes, linked pull
 requests, labels, assignees, and reactions. Linked pull requests open in the same panel. You can
