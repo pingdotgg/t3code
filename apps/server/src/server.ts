@@ -1010,7 +1010,7 @@ const layerMakeServer = Layer.unwrap(
                     servePort: config.tailscaleServePort,
                   },
                 );
-                return route;
+                return null;
               }
               const blockingRoutes =
                 holder === "dead"
@@ -1025,7 +1025,7 @@ const layerMakeServer = Layer.unwrap(
                     servePort: config.tailscaleServePort,
                   },
                 );
-                return route;
+                return null;
               }
               return yield* ensureTailscaleServe({
                 localPort,
