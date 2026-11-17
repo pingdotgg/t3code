@@ -29,7 +29,10 @@ export interface HeldIssuePage {
     readonly errors: ReadonlyArray<IssueListProjectError>;
   }>;
   readonly nextCursors: IssueListCursors;
-  /** Why the last "Load more" failed, until a retry succeeds or a new first page arrives. */
+  /**
+   * Why the last "Load more" failed, as a whole or for any scope it asked for, until a retry
+   * succeeds or a new first page arrives.
+   */
   readonly moreFailure: string | null;
 }
 
@@ -89,7 +92,11 @@ export function continueIssuePage(
       ...Object.fromEntries(Object.entries(page.nextCursors).filter(([key]) => !(key in asked))),
       ...next.nextCursors,
     },
-    moreFailure: null,
+    // A scope that failed keeps its cursor, so the page failed even though the request answered.
+    moreFailure:
+      next.errors.length > 0
+        ? next.errors.map((error) => `${error.projectTitle}: ${error.message}`).join("\n")
+        : null,
   };
 }
 
