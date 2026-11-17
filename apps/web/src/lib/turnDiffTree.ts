@@ -18,8 +18,6 @@ export interface TurnDiffTreeFileNode {
   name: string;
   path: string;
   stat: TurnDiffStat | null;
-  /** Set for created and deleted files, which have only one side of line counts. */
-  change?: "added" | "deleted";
 }
 
 export type TurnDiffTreeNode = TurnDiffTreeDirectoryNode | TurnDiffTreeFileNode;
@@ -138,7 +136,6 @@ export function buildTurnDiffTree(files: ReadonlyArray<TurnDiffFileChange>): Tur
       name: fileName,
       path: filePath,
       stat,
-      ...(file.kind === "added" || file.kind === "deleted" ? { change: file.kind } : {}),
     });
 
     if (stat) {

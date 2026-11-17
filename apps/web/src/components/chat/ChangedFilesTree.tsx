@@ -264,18 +264,7 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
         </span>
         {node.stat && (
           <span className="ml-auto shrink-0 font-mono text-3xs tabular-nums">
-            <DiffStatLabel
-              additions={
-                node.change === "deleted" && node.stat.additions === 0
-                  ? undefined
-                  : node.stat.additions
-              }
-              deletions={
-                node.change === "added" && node.stat.deletions === 0
-                  ? undefined
-                  : node.stat.deletions
-              }
-            />
+            <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
           </span>
         )}
       </button>
