@@ -3,6 +3,7 @@ import SwiftUI
 /// Owns app-wide presentation while the injected feature root owns product navigation.
 struct RootView<Content: View>: View {
     private let content: Content
+    @State private var showsDeprecationNotice = true
 
     init(@ViewBuilder content: () -> Content) {
         self.content = content()
@@ -12,5 +13,8 @@ struct RootView<Content: View>: View {
         content
             .background(T3Colors.background.ignoresSafeArea())
             .tint(T3Colors.accent)
+            .fullScreenCover(isPresented: $showsDeprecationNotice) {
+                DeprecationNotice { showsDeprecationNotice = false }
+            }
     }
 }
