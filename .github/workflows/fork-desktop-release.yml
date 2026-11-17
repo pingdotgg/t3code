@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "T3 Dulli version (0.<minor>.<patch>-dulli.<build>, e.g. 0.1.9-dulli.1)"
+        description: "T3 Dulli version (0.<minor>.<patch>-dulli.<build>, e.g. 0.1.10-dulli.1)"
         required: true
         type: string
 
@@ -835,7 +835,7 @@ jobs:
           generate_release_notes: true
           previous_tag: ${{ needs.preflight.outputs.previous_tag }}
           body: |
-            T3 Dulli community build from `YJJosh/t3dulli`, based on upstream v0.1.9.
+            T3 Dulli community build from `YJJosh/t3dulli`, based on upstream v0.1.10.
 
             Install the CLI with `npm install -g @yjosh/t3`, then run `t3`.
 

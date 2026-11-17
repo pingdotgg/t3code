@@ -183,7 +183,7 @@ it.layer(layer)("TerminalMcpService", (it) => {
       const { terminalId } = yield* service.start(scope, {});
       const target = { threadId, terminalId };
 
-      yield* manager.write({ ...target, data: "q" }, "user");
+      yield* manager.write({ ...target, data: "q" }, undefined, "user");
       const refused = yield* service.send(scope, { terminalId, data: "ls\r" }).pipe(Effect.flip);
       expect(refused).toMatchObject({ _tag: "TerminalMcpFailure", code: "user_has_control" });
       const closeRefused = yield* service.close(scope, { terminalId }).pipe(Effect.flip);

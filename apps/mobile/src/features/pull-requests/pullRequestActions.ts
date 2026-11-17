@@ -33,6 +33,10 @@ export const MERGE_METHODS = {
     description: "Keep the commits and add a merge commit.",
   },
   rebase: { title: "Rebase and merge", description: "Add the commits without a merge commit." },
+  "fast-forward": {
+    title: "Fast-forward merge",
+    description: "Add the commits as they are. Needs the branch to contain the base.",
+  },
 } as const satisfies Record<PullRequestMergeMethod, { title: string; description: string }>;
 
 export function pullRequestActionLabel(
@@ -81,6 +85,20 @@ export const PR_ACTION_ICONS = {
 
 export function allowedMergeMethods(pr: ActionDetail) {
   return pr.capabilities.mergeMethods.filter((method) => pr.mergeCapabilities[method]);
+}
+
+export function resolveMergeMethod(
+  pr: ActionDetail,
+  selected: PullRequestMergeMethod | null,
+  projectDefault: PullRequestMergeMethod | null,
+  lastUsed: PullRequestMergeMethod | undefined,
+) {
+  const methods = allowedMergeMethods(pr);
+  return (
+    [selected, projectDefault, lastUsed, "squash" as const].find(
+      (method) => method != null && methods.includes(method),
+    ) ?? methods[0]
+  );
 }
 
 export function allowedUpdateMethods(pr: ActionDetail) {

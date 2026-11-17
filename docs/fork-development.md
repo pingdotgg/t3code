@@ -1,6 +1,6 @@
 # T3 Dulli development
 
-T3 Dulli is the `YJJosh/t3dulli` community fork of **T3 Code v0.1.9** (`24e77473ec`). It uses T3's native provider, subagent, schedule, usage, and MCP infrastructure. The retired Dulli provider, Pi extensions, Pi sessions, and Pi judge are not part of this fork. Upstream's own Pi provider remains available.
+T3 Dulli is the `YJJosh/t3dulli` community fork of **T3 Code v0.1.10** (`7d32075e37`). It uses T3's native provider, subagent, schedule, usage, and MCP infrastructure. The retired Dulli provider, Pi extensions, Pi sessions, and Pi judge are not part of this fork. Upstream's own Pi provider remains available.
 
 ## Identity and coexistence
 
@@ -19,7 +19,7 @@ Build desktop artifacts with `--brand dulli`; omitting the flag retains upstream
 | Updates                          | `YJJosh/t3dulli` prereleases                |
 | Default T3 home                  | `~/.t3-dulli`                               |
 
-The fork never claims upstream's `t3code://` callbacks. Its Chromium profile is `t3-dulli` under the platform's application-data directory, separate from upstream profiles. Its systemd service is `t3-dulli.service`; its launchd label is `com.yjjosh.t3dulli.service`. The npm CLI and desktop shim both use `t3`, matching the old fork. Choose which installation owns `t3` on PATH; the desktop installer refuses to replace a foreign command and only removes its own shim.
+The fork never claims upstream's `t3code://` callbacks. Its Chromium profile is `t3-dulli` under the platform's application-data directory, separate from upstream profiles. Its systemd service is `t3-dulli.service`, its launchd label is `com.yjjosh.t3dulli.service`, and its Windows task is `t3-dulli-<domain>-<user name>`. The npm CLI and desktop shim both use `t3`, matching the old fork. Choose which installation owns `t3` on PATH; the desktop installer refuses to replace a foreign command and only removes its own shim.
 
 Existing fork userdata stays in `~/.t3-dulli/userdata`. `T3CODE_HOME` and `--base-dir` still override the home explicitly. Never test against either live `~/.t3/userdata` or `~/.t3-dulli/userdata`: copy read-only snapshots into the worktree's `.t3` instead. Dev uses isolated worktree state, not the installed application's data.
 
@@ -31,17 +31,17 @@ Sources and generated icons live in `assets/dulli`. `logo.svg` is the full tile;
 
 ## Building
 
-Use the Node version pinned in root `package.json` (26.12.1 for this baseline), then `vp i`. See [development](operations/development.md) for the upstream toolchain and native prerequisites.
+Use the Node version pinned in root `package.json` (26.13.1 for this baseline), then `vp i`. See [development](operations/development.md) for the upstream toolchain and native prerequisites.
 
 ```sh
-vp run dist:dulli:desktop --platform mac --target dmg --arch arm64 --build-version 0.1.9-dulli.1
-vp run dist:dulli:desktop --platform linux --target AppImage --arch x64 --build-version 0.1.9-dulli.1
-vp run dist:dulli:desktop --platform win --target nsis --arch x64 --build-version 0.1.9-dulli.1
+vp run dist:dulli:desktop --platform mac --target dmg --arch arm64 --build-version 0.1.10-dulli.1
+vp run dist:dulli:desktop --platform linux --target AppImage --arch x64 --build-version 0.1.10-dulli.1
+vp run dist:dulli:desktop --platform win --target nsis --arch x64 --build-version 0.1.10-dulli.1
 ```
 
 Without `--signed`, macOS builds do not need Apple signing secrets. For a local ad-hoc build, set `T3CODE_MACOS_COMMUNITY_SIGNING_IDENTITY=-`; `CSC_IDENTITY_AUTO_DISCOVERY=false` leaves only Electron's linker signature, which fails `codesign --verify`. The same variable selects a persistent community certificate; it signs without Apple's restricted passkey entitlements or notarization. Do not change an installed release's signing identity casually: macOS validates the next update against it.
 
-Build the CLI's web client with `VITE_DESKTOP_BUILD_BRAND=dulli`, then run `node apps/server/scripts/cli.ts build --brand dulli`. Build native executables with `node apps/server/scripts/cli.ts build-exe`; assemble their runtime dependencies with `scripts/build-cli-archive.ts`. The upstream archive builder preserves executable permissions and stages only runtime externals. Use `node scripts/build-npm-launcher.ts --version 0.1.9-dulli.1 --output-dir npm-packages` to generate `yjosh-t3.tgz`. This launcher downloads and checksum-verifies the matching GitHub archive; it is not the old JavaScript-only npm bundle.
+Build the CLI's web client with `VITE_DESKTOP_BUILD_BRAND=dulli`, then run `node apps/server/scripts/cli.ts build --brand dulli`. Build native executables with `node apps/server/scripts/cli.ts build-exe`; assemble their runtime dependencies with `scripts/build-cli-archive.ts`. The upstream archive builder preserves executable permissions and stages only runtime externals. Use `node scripts/build-npm-launcher.ts --version 0.1.10-dulli.1 --output-dir npm-packages` to generate `yjosh-t3.tgz`. This launcher downloads and checksum-verifies the matching GitHub archive; it is not the old JavaScript-only npm bundle.
 
 ## Releases and channels
 
@@ -52,13 +52,13 @@ Dispatch **T3 Dulli Release** (`.github/workflows/fork-desktop-release.yml`) wit
 - builds desktop installers, a signed Android APK, and native CLI archives on runners of each supported CLI architecture;
 - publishes a GitHub **prerelease** with updater manifests and `SHA256SUMS`, then publishes the `@yjosh/t3` npm launcher with the `latest` npm tag using OIDC provenance.
 
-Desktop's normal Latest track reads the `dulli` prerelease feed. The old same-base `-pi.N` to `-dulli.N` handoff is retired; v0.1.9 is a normal forward version upgrade. Upstream release, AUR, EAS/store/OTA, web-preview, Android-mirror, and relay publishing workflows are manual-only and repository-guarded so they cannot deploy from this fork. CI runs on GitHub-hosted runners.
+Desktop's normal Latest track reads the `dulli` prerelease feed. The old same-base `-pi.N` to `-dulli.N` handoff is retired; v0.1.10 is a normal forward version upgrade. Upstream release, AUR, EAS/store/OTA, web-preview, Android-mirror, and relay publishing workflows are manual-only and repository-guarded so they cannot deploy from this fork. CI runs on GitHub-hosted runners.
 
 Repository setup required before publication:
 
 - npm trusted publisher for **`@yjosh/t3`**, repository `YJJosh/t3dulli`, workflow `fork-desktop-release.yml`. The repository was renamed from `YJJosh/t3code`; the trusted publisher must name the new repository, or the npm publish step fails.
 - Secrets `DULLI_MACOS_CERTIFICATE_P12_BASE64` and `DULLI_MACOS_CERTIFICATE_PASSWORD`, plus variable `DULLI_MACOS_CERTIFICATE_SHA1`, for the persistent macOS community identity. The workflow handles RC2 PKCS#12 files on OpenSSL 3 and imports trust noninteractively on the ephemeral runner.
-- Java 21 and the Android SDK/NDK selected by Expo SDK 58 / React Native 0.88.1 for APK builds. Both clean Expo prebuild and Gradle inherit all four `T3CODE_ANDROID_RELEASE_*` settings through the job environment; for v0.1.9, Android versionCode is `10,090,000 + build`.
+- Java 21 and the Android SDK/NDK selected by Expo SDK 58 / React Native 0.88.1 for APK builds. Both clean Expo prebuild and Gradle inherit all four `T3CODE_ANDROID_RELEASE_*` settings through the job environment; for v0.1.10, Android versionCode is `10,100,000 + build`.
 - Secrets `DULLI_ANDROID_KEYSTORE_BASE64`, `DULLI_ANDROID_KEYSTORE_PASSWORD`, `DULLI_ANDROID_KEY_ALIAS`, and `DULLI_ANDROID_KEY_PASSWORD`, plus variable `DULLI_ANDROID_CERT_SHA256`. Keep the same Android key to upgrade existing installs. APK identity and signer fingerprint are verified before publication.
 
 The repository was called `YJJosh/t3code` up to v0.1.9-dulli.3. GitHub redirects the old name, so installs from those releases still find updates and downloads under `YJJosh/t3dulli`. Never create a new repository named `YJJosh/t3code`: that breaks the redirect for every older install.

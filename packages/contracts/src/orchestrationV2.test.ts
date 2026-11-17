@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import { NodeId, RunAttemptId, TrimmedNonEmptyString } from "./index.ts";
 import {
   latestProviderTurnForAttempt,
+  OrchestrationV2CheckpointFileSummary,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
@@ -15,6 +16,7 @@ import {
   OrchestrationV2ThreadHistoryPage,
   OrchestrationV2TurnItem,
   OrchestrationV2TurnItemJson,
+  OrchestrationV2Command,
   OrchestrationV2WorkspacePreparation,
 } from "./orchestrationV2.ts";
 
@@ -23,6 +25,7 @@ const now = DateTime.makeUnsafe("2026-04-20T00:00:00.000Z");
 const decodeOrchestrationV2TurnItemJson = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
 const encodeOrchestrationV2TurnItemJson = Schema.encodeSync(OrchestrationV2TurnItemJson);
 const decodeOrchestrationV2Subagent = Schema.decodeUnknownSync(OrchestrationV2Subagent);
+const decodeCheckpointFileSummary = Schema.decodeSync(OrchestrationV2CheckpointFileSummary);
 const encodeOrchestrationV2SubagentJson = Schema.encodeSync(OrchestrationV2SubagentJson);
 const decodeOrchestrationV2ProviderThreadJson = Schema.decodeUnknownSync(
   OrchestrationV2ProviderThreadJson,
@@ -398,6 +401,15 @@ describe("orchestration V2 contracts", () => {
     },
   );
 
+  it.each([" leading.ts", "src/trailing.ts "])(
+    "decodes the checkpoint file path %j exactly",
+    (path) => {
+      expect(
+        decodeCheckpointFileSummary({ path, kind: "added", additions: 1, deletions: 0 }).path,
+      ).toBe(path);
+    },
+  );
+
   it("decodes historical provider-thread JSON without pendingBackgroundTasks as empty roster", () => {
     const providerThread = decodeOrchestrationV2ProviderThreadJson({
       id: "provider-thread-1",
@@ -630,6 +642,7 @@ describe("background work kinds from older or newer servers", () => {
 
 describe("OrchestrationV2WorkspacePreparation memberBaseCommits", () => {
   const decode = Schema.decodeUnknownSync(OrchestrationV2WorkspacePreparation);
+  const decodeCommand = Schema.decodeUnknownSync(OrchestrationV2Command);
   const strategy = { type: "worktree", baseRef: "HEAD", startFromOrigin: false } as const;
 
   it("round-trips full SHAs and rejects ref-like or option-like values", () => {
@@ -638,6 +651,31 @@ describe("OrchestrationV2WorkspacePreparation memberBaseCommits", () => {
     for (const value of ["main", "HEAD", "a".repeat(7), "--upload-pack=touch pwn"]) {
       expect(() => decode({ ...strategy, memberBaseCommits: { api: value } })).toThrow();
     }
+  });
+
+  it("keeps memberBaseCommits on a thread.create initial message through command decode", () => {
+    const memberBaseCommits = { api: "a".repeat(40) };
+    const command = {
+      type: "thread.create",
+      commandId: "command-1",
+      threadId: "thread-1",
+      projectId: "project-1",
+      title: "Launch",
+      modelSelection: { instanceId: "instance-1", model: "model-1" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+      initialMessage: {
+        messageId: "message-1",
+        text: "hello",
+        attachments: [],
+        workspaceStrategy: { ...strategy, memberBaseCommits },
+      },
+    };
+    expect(decodeCommand(command)).toEqual(command);
   });
 });
 

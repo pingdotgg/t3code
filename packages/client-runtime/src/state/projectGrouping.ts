@@ -264,8 +264,11 @@ export function resolveScratchProjectScopeKey(
 }
 
 export function deriveProjectGroupLabel(input: {
+  readonly groupKey: string;
   readonly representative: Pick<EnvironmentProject, "title" | "repositoryIdentity">;
-  readonly members: ReadonlyArray<Pick<EnvironmentProject, "title" | "repositoryIdentity">>;
+  readonly members: ReadonlyArray<
+    Pick<EnvironmentProject, "title" | "hasCustomTitle" | "repositoryIdentity">
+  >;
 }): string {
   const sharedTitles = uniqueNonEmptyValues(input.members.map((member) => member.title));
   const sharedDisplayNames = uniqueNonEmptyValues(
@@ -280,8 +283,8 @@ export function deriveProjectGroupLabel(input: {
   if (
     sharedTitles.length === 1 &&
     sharedTitle !== undefined &&
-    !sharedDisplayNames.includes(sharedTitle) &&
-    !sharedRepositoryNames.includes(sharedTitle)
+    (input.members.some((member) => member.hasCustomTitle === true) ||
+      (!sharedDisplayNames.includes(sharedTitle) && !sharedRepositoryNames.includes(sharedTitle)))
   ) {
     return sharedTitle;
   }
@@ -293,6 +296,19 @@ export function deriveProjectGroupLabel(input: {
     return sharedRepositoryNames[0]!;
   }
 
+  // A whole-repository group is named for the repository, not one member's folder:
+  // clones can disagree on its casing. A subfolder group keeps its own title.
+  const representativeIdentity = input.representative.repositoryIdentity;
+  if (
+    representativeIdentity &&
+    input.groupKey === repositoryGroupingKeyOf(representativeIdentity)
+  ) {
+    return (
+      repositoryGroupingDisplayNameOf(representativeIdentity) ??
+      representativeIdentity.name ??
+      input.representative.title
+    );
+  }
   return input.representative.title;
 }
 
@@ -434,6 +450,7 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
           ? "No project"
           : members.length > 1
             ? deriveProjectGroupLabel({
+                groupKey: key,
                 representative,
                 members: members.map((member) => member.project),
               })
@@ -451,10 +468,14 @@ export function sortProjectsByGroupOrder<
   TProject extends { readonly id: string; readonly environmentId: string },
 >(
   projects: ReadonlyArray<TProject>,
-  groups: ReadonlyArray<{ readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef> }>,
+  groups: ReadonlyArray<{
+    readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef>;
+    readonly pinned: boolean;
+    readonly archived: boolean;
+  }>,
 ): TProject[] {
   const rankByProject = new Map<string, number>();
-  groups.forEach((group, rank) => {
+  pickableProjectGroups(groups).forEach((group, rank) => {
     for (const ref of group.memberProjectRefs) {
       const key = `${ref.environmentId}\0${ref.projectId}`;
       if (!rankByProject.has(key)) rankByProject.set(key, rank);

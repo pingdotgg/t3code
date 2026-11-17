@@ -1,5 +1,5 @@
 diff --git a/react-native.js b/react-native.js
-index 4af685dfb961eb0c8a4bf1ae9132c9304cf4fa4d..df4ead7ae4f03cd0fbcd99a3df7d95e15b1852b1 100644
+index 4af685dfb961eb0c8a4bf1ae9132c9304cf4fa4d..a50466b8fc8509db2d097b85a09d2109a20530cb 100644
 --- a/react-native.js
 +++ b/react-native.js
 @@ -1795,7 +1795,35 @@ function resolvePendingNativeMVCPAdjust(ctx, newScroll) {
@@ -38,8 +38,20 @@ index 4af685dfb961eb0c8a4bf1ae9132c9304cf4fa4d..df4ead7ae4f03cd0fbcd99a3df7d95e1
    var _a3, _b, _c;
    const state = ctx.state;
    const { idsInView, positions, props } = state;
+@@ -5422,6 +5450,11 @@ function updateItemSizesBatch(ctx, measurements) {
+   const result = {};
+   const previousTotalSize = state.totalSize;
+   for (const measurement of measurements) {
++    // T3 patch: Fabric's measure() reports NaN for a container with no layout yet. A NaN size makes
++    // totalSize NaN, and since NaN !== NaN, useArr$ returns a new snapshot on every read until React
++    // throws "Maximum update depth exceeded". The container's onLayout reports its real size later.
++    const measuredSize = state.props.horizontal ? measurement.size.width : measurement.size.height;
++    if (!Number.isFinite(measuredSize)) continue;
+     const ownsMeasuredItem = measurement.containerId === void 0 || isContainerItemCurrent(ctx, measurement.containerId, measurement.itemKey);
+     if (ownsMeasuredItem) {
+       const index = state.indexByKey.get(measurement.itemKey);
 diff --git a/react-native.mjs b/react-native.mjs
-index 9ebfddc183a9b202d35c990a387c9b628feeb185..c414a49e866ecab1393645101fb67d55530a7d00 100644
+index 9ebfddc183a9b202d35c990a387c9b628feeb185..489050190144997ac72de8f4f7c6219479216dba 100644
 --- a/react-native.mjs
 +++ b/react-native.mjs
 @@ -1774,7 +1774,35 @@ function resolvePendingNativeMVCPAdjust(ctx, newScroll) {
@@ -78,3 +90,15 @@ index 9ebfddc183a9b202d35c990a387c9b628feeb185..c414a49e866ecab1393645101fb67d55
    var _a3, _b, _c;
    const state = ctx.state;
    const { idsInView, positions, props } = state;
+@@ -5401,6 +5429,11 @@ function updateItemSizesBatch(ctx, measurements) {
+   const result = {};
+   const previousTotalSize = state.totalSize;
+   for (const measurement of measurements) {
++    // T3 patch: Fabric's measure() reports NaN for a container with no layout yet. A NaN size makes
++    // totalSize NaN, and since NaN !== NaN, useArr$ returns a new snapshot on every read until React
++    // throws "Maximum update depth exceeded". The container's onLayout reports its real size later.
++    const measuredSize = state.props.horizontal ? measurement.size.width : measurement.size.height;
++    if (!Number.isFinite(measuredSize)) continue;
+     const ownsMeasuredItem = measurement.containerId === void 0 || isContainerItemCurrent(ctx, measurement.containerId, measurement.itemKey);
+     if (ownsMeasuredItem) {
+       const index = state.indexByKey.get(measurement.itemKey);

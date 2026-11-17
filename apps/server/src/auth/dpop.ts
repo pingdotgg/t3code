@@ -53,7 +53,8 @@ export const mapDpopReplayStoreError = (
         cause: error,
       });
 
-export const verifyRequestDpopProof = Effect.fn("dpop.verifyRequestDpopProof")(function* (input: {
+/** Checks a proof without recording it; `consume` records its jti so it cannot be replayed. */
+export const checkRequestDpopProof = Effect.fn("dpop.checkRequestDpopProof")(function* (input: {
   readonly request: HttpServerRequest.HttpServerRequest;
   /** Overrides the `DPoP` header for requests that cannot carry one, such as a WebSocket upgrade. */
   readonly proof?: string;
@@ -86,42 +87,53 @@ export const verifyRequestDpopProof = Effect.fn("dpop.verifyRequestDpopProof")(f
     });
   }
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
-  const replayKey = yield* Digest.Digest.pipe(
-    Effect.flatMap((digest) =>
-      digest.digest(Digest.sha256, new TextEncoder().encode(`${result.thumbprint}:${result.jti}`)),
-    ),
-    Effect.map(Base64Url.encode),
-    Effect.mapError(
-      (cause) =>
-        new ServerAuthDpopReplayKeyCalculationError({
-          cause,
-        }),
-    ),
-  );
-  yield* secretStore
-    .create(
-      `${DPOP_REPLAY_MARKER_PREFIX}${replayKey}`,
-      new TextEncoder().encode(
-        [
-          `thumbprint=${result.thumbprint}`,
-          `jti=${result.jti}`,
-          `iat=${result.iat}`,
-          `consumedAt=${DateTime.formatIso(now)}`,
-        ].join("\n"),
-      ),
-    )
-    .pipe(
-      Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
-        Effect.gen(function* () {
-          const mapped = mapDpopReplayStoreError(error);
-          if (mapped._tag === "ServerAuthInvalidCredentialError") {
-            yield* Effect.annotateCurrentSpan({
-              "environment.dpop.failure_code": mapped.dpopFailureReason,
-            });
-          }
-          return yield* mapped;
-        }),
-      ),
-    );
-  return result.thumbprint;
+  const digest = yield* Digest.Digest;
+  const consume: Effect.Effect<void, ServerAuthInvalidCredentialError | ServerAuthInternalError> =
+    Effect.gen(function* () {
+      const replayKey = yield* digest
+        .digest(Digest.sha256, new TextEncoder().encode(`${result.thumbprint}:${result.jti}`))
+        .pipe(
+          Effect.map(Base64Url.encode),
+          Effect.mapError(
+            (cause) =>
+              new ServerAuthDpopReplayKeyCalculationError({
+                cause,
+              }),
+          ),
+        );
+      yield* secretStore
+        .create(
+          `${DPOP_REPLAY_MARKER_PREFIX}${replayKey}`,
+          new TextEncoder().encode(
+            [
+              `thumbprint=${result.thumbprint}`,
+              `jti=${result.jti}`,
+              `iat=${result.iat}`,
+              `consumedAt=${DateTime.formatIso(now)}`,
+            ].join("\n"),
+          ),
+        )
+        .pipe(
+          Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
+            Effect.gen(function* () {
+              const mapped = mapDpopReplayStoreError(error);
+              if (mapped._tag === "ServerAuthInvalidCredentialError") {
+                yield* Effect.annotateCurrentSpan({
+                  "environment.dpop.failure_code": mapped.dpopFailureReason,
+                });
+              }
+              return yield* mapped;
+            }),
+          ),
+        );
+    });
+  return { thumbprint: result.thumbprint, consume };
+});
+
+export const verifyRequestDpopProof = Effect.fn("dpop.verifyRequestDpopProof")(function* (
+  input: Parameters<typeof checkRequestDpopProof>[0],
+) {
+  const proof = yield* checkRequestDpopProof(input);
+  yield* proof.consume;
+  return proof.thumbprint;
 });

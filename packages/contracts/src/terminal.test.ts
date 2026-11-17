@@ -2,7 +2,9 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  chunkTerminalWrite,
   DEFAULT_TERMINAL_ID,
+  TERMINAL_WRITE_MAX_LENGTH,
   TerminalError,
   TerminalOpenInput,
   TerminalProviderEnvironmentError,
@@ -85,5 +87,25 @@ describe("TerminalMcpReadInput", () => {
     expect(() =>
       decodeSync(TerminalMcpReadInput, { ...input, timeoutMs: TERMINAL_MCP_MAX_WAIT_MS + 1 }),
     ).toThrow();
+  });
+});
+
+describe("chunkTerminalWrite", () => {
+  it("splits oversized writes so every chunk fits the contract", () => {
+    const chunks = chunkTerminalWrite("y".repeat(TERMINAL_WRITE_MAX_LENGTH * 2 + 5));
+    expect(chunks.map((chunk) => chunk.length)).toEqual([
+      TERMINAL_WRITE_MAX_LENGTH,
+      TERMINAL_WRITE_MAX_LENGTH,
+      5,
+    ]);
+    expect(chunks.join("")).toHaveLength(TERMINAL_WRITE_MAX_LENGTH * 2 + 5);
+  });
+
+  it("does not cut a surrogate pair in half at the boundary", () => {
+    const data = `${"z".repeat(TERMINAL_WRITE_MAX_LENGTH - 1)}😀tail`;
+    const chunks = chunkTerminalWrite(data);
+    expect(chunks[0]).toHaveLength(TERMINAL_WRITE_MAX_LENGTH - 1);
+    expect(chunks[1]).toBe("😀tail");
+    expect(chunks.join("")).toBe(data);
   });
 });
