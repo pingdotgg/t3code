@@ -297,6 +297,11 @@ const agentList = {
     },
   ],
 };
+// A reconnect drops the cached agents, so the next request answered from their rules reads them again.
+const relistsAgents: ReadonlyArray<ProviderReplayEntry> = [
+  out("agent.list", "<any>"),
+  reply("agent.list", agentList),
+];
 const supervisedRules = [
   { action: "shell", resource: "*", effect: "ask" },
   { action: "edit", resource: "*", effect: "ask" },
@@ -1651,10 +1656,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         out("session.prompt", { sessionID: SESSION, text: "<any>" }),
         promptAccepted,
         event("session.execution.started", { sessionID: SESSION }),
-        // Full access is T3's answer to each request, not an allow the root session carries.
-        asked("per_shell", "shell", SESSION),
-        out("permission.reply", { sessionID: SESSION, requestID: "per_shell", decision: "once" }),
-        reply("permission.reply", null),
         event("session.tool.input.started", { ...tool, name: "subagent" }),
         // The child copies the root's rules, which hold no allow to outrank its agent's deny.
         event("session.created", {
@@ -3975,9 +3976,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             ...(source === "stream"
               ? [
                   event("permission.asked", shellAsk.data, "late-permission"),
+                  ...relistsAgents,
                   event("form.created", { form: colorForm }),
                 ]
-              : []),
+              : relistsAgents),
             out("permission.reply", {
               sessionID: SESSION,
               requestID: shellAsk.data.id,
@@ -4413,6 +4415,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           promptAccepted,
           ...reconnected({ [SESSION]: { type: "running" } }),
           ...openRequests([shellAsk.data]),
+          ...relistsAgents,
           out("permission.reply", {
             sessionID: SESSION,
             requestID: shellAsk.data.id,
@@ -6041,6 +6044,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             ...(streamed ? { time: { created: 2, streamed: 3 } } : {}),
           }),
           ...openRequests([shellAsk.data]),
+          ...relistsAgents,
           event("session.execution.succeeded", { sessionID: SESSION }, "finish"),
         ],
         { supervised: true, replayGate: gate },

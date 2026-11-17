@@ -3834,6 +3834,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const previous = currentScope;
       connection = next;
       client = next.client;
+      // A restarted server may have reloaded its agents; rules answered from a stale copy could allow a new deny.
+      agentRules.clear();
       nativeGoalSupport = supportsNativeGoals();
       session = {
         ...session,
@@ -4103,12 +4105,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         root.policy,
         root.providerThread.appThreadId,
       ).pipe(Effect.option);
-      // A full-access root's rules open with an allow for everything, which outranks its agent's rules.
       const rules = session._tag === "None" ? undefined : session.value;
-      const own =
-        child || rules?.rules[0]?.action !== "*"
-          ? (yield* agentsIn(directory, child ? agent : undefined))?.get(agent)
-          : [];
+      const own = (yield* agentsIn(directory, child ? agent : undefined))?.get(agent);
       // A subagent whose agent rules cannot be read is refused; a root's request goes to the user.
       if (!child && (own === undefined || rules === undefined)) return false;
       // A subagent's own denies outrank the mode here only, never in rules its own subagents would copy.
@@ -4122,6 +4120,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             );
       const denied = effects.includes("deny");
       if (!denied && (effects.length === 0 || effects.includes("ask"))) return false;
+      // The rules OpenCode holds would have allowed this, so something of its own asked: the user decides.
+      const written = [...(own ?? []), ...(rules?.written ?? [])];
+      if (
+        !denied &&
+        data.resources.every(
+          (resource) => effectOf(data.action, resource, written, windows) === "allow",
+        )
+      ) {
+        return false;
+      }
       const delivered = yield* deliver(
         client.permission
           .reply({
