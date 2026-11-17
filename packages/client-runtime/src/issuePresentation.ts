@@ -51,8 +51,12 @@ export function issueWriteAccess(detail: IssueDetail, canWrite: boolean) {
       : null;
   const may = (capability: boolean, permission: boolean) =>
     blocked === null && capability && permission;
+  // A tracker with a workflow of its own offers the two categories by name ("open", "closed")
+  // while its issues carry workflow names ("Todo"), so the category alone says it is already there.
   const others = detail.capabilities.states.filter(
-    (state) => state.category !== detail.state.category || state.name !== detail.state.name,
+    (state) =>
+      state.category !== detail.state.category ||
+      (state.name !== detail.state.name && state.name !== state.category),
   );
   return {
     blocked,

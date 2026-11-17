@@ -13,6 +13,10 @@ export interface IssueListPreferences {
   readonly status: IssueListState;
   readonly host?: string;
   readonly q?: string | undefined;
+  /** `label`, `assignee` and `order` for the same reason: the pull-request page has `labels` and `sort`. */
+  readonly label?: ReadonlyArray<string> | undefined;
+  readonly assignee?: string | undefined;
+  readonly order?: "created" | undefined;
 }
 
 const DEFAULT_ISSUE_LIST_PREFERENCES = {
@@ -28,6 +32,9 @@ const IssueListPreferencesSchema = Schema.Struct({
   status: IssueListState,
   host: Schema.optional(BoundedPreference),
   q: Schema.optional(BoundedPreference),
+  label: Schema.optional(Schema.Array(BoundedPreference).check(Schema.isMaxLength(20))),
+  assignee: Schema.optional(BoundedPreference),
+  order: Schema.optional(Schema.Literal("created")),
 });
 const decodePreferences = Schema.decodeUnknownOption(IssueListPreferencesSchema);
 
@@ -43,12 +50,18 @@ export function issueListPreferences(search: {
   readonly status: IssueListState;
   readonly host?: string | undefined;
   readonly q?: string | undefined;
+  readonly label?: ReadonlyArray<string> | undefined;
+  readonly assignee?: string | undefined;
+  readonly order?: "created" | undefined;
 }): IssueListPreferences {
   return {
     who: search.who,
     status: search.status,
     ...(search.host ? { host: search.host } : {}),
     ...(search.q ? { q: search.q } : {}),
+    ...(search.label?.length ? { label: search.label } : {}),
+    ...(search.assignee ? { assignee: search.assignee } : {}),
+    ...(search.order ? { order: search.order } : {}),
   };
 }
 

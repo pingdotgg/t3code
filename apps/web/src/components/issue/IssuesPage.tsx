@@ -3,6 +3,8 @@ import {
   continueIssuePage,
   groupIssues,
   holdIssuePages,
+  issueCursorsForHost,
+  issueFilterScopes,
   issueTrackerKey,
   type HeldIssuePage,
 } from "@t3tools/client-runtime/issue-list";
@@ -11,6 +13,7 @@ import type {
   EnvironmentId,
   IssueInvolvement,
   IssueListInput,
+  IssueListSort,
   IssueListState,
   IssueTrackerKind,
   IssueTrackerSummary,
@@ -18,8 +21,11 @@ import type {
 } from "@t3tools/contracts";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import {
+  ArrowDownUpIcon,
   AtSignIcon,
+  CalendarArrowDownIcon,
   CircleCheckIcon,
+  ClockIcon,
   LayersIcon,
   PenLineIcon,
   Plug2Icon,
@@ -44,6 +50,8 @@ import {
   PullRequestSearchInput,
   type PullRequestFilterOption,
 } from "~/components/pullRequest/PullRequestListFilters";
+import { IssueFiltersMenu } from "./IssueListFilterPickers";
+import { PullRequestCompactFilterMenu } from "../pullRequest/PullRequestCompactFilterMenu";
 import { PullRequestsUnavailableState } from "~/components/pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs } from "~/components/RightPanelTabs";
 import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "~/components/WorkspaceBreadcrumb";
@@ -60,7 +68,6 @@ import {
 } from "~/components/ui/empty";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "~/components/ui/menu";
 import { SidebarInset } from "~/components/ui/sidebar";
-import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { isElectron } from "~/env";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { shortcutLabelForCommand } from "~/keybindings";
@@ -106,6 +113,11 @@ const INVOLVEMENT_TABS = [
   { value: "mentioned", label: "Mentioning me", Icon: AtSignIcon },
 ] as const satisfies ReadonlyArray<PullRequestFilterOption<IssueInvolvement>>;
 
+const SORT_OPTIONS = [
+  { value: "updated", label: "Recently updated", Icon: ClockIcon },
+  { value: "created", label: "Newest", Icon: CalendarArrowDownIcon },
+] as const satisfies ReadonlyArray<PullRequestFilterOption<IssueListSort>>;
+
 const PAGE_SIZE = 50;
 const EMPTY_SET: ReadonlySet<string> = new Set();
 const EMPTY_RECORD = {} as const;
@@ -123,11 +135,15 @@ function getShortcutContext() {
   };
 }
 
-function hostOptionsFor(groups: ReturnType<typeof groupIssues>) {
+function hostOptionsFor(groups: ReturnType<typeof groupIssues>, chosen: string | undefined) {
   const hosts = new Map<string, IssueTrackerSummary>();
   for (const group of groups) hosts.set(group.tracker.host, group.tracker);
   return [
     { value: "", label: "All", Icon: Plug2Icon },
+    // A remembered host no project is on any more stays listed, so the filter can be taken off.
+    ...(chosen !== undefined && !hosts.has(chosen)
+      ? [{ value: chosen, label: chosen, Icon: Plug2Icon }]
+      : []),
     ...[...hosts.values()].map((tracker) => ({
       value: tracker.host,
       label:
@@ -160,6 +176,9 @@ export function IssuesPage() {
     limit: PAGE_SIZE,
     ...(search.host ? { host: search.host } : {}),
     ...(debouncedQuery ? { query: debouncedQuery } : {}),
+    ...(search.label?.length ? { labels: search.label } : {}),
+    ...(search.assignee ? { assignee: search.assignee } : {}),
+    ...(search.order ? { sort: search.order } : {}),
   };
   const targets: ReadonlyArray<IssueListTarget> = capableEnvironments.map((e) => ({
     environmentId: e.environmentId,
@@ -171,15 +190,14 @@ export function IssuesPage() {
   const [pages, setPages] = useState<ReadonlyMap<EnvironmentId, HeldIssuePage>>(new Map());
   const held = holdIssuePages(list.answers, pages);
   const loadPage = useAtomCommand(issueEnvironment.listPage, { reportFailure: false });
-  const [loadingMore, setLoadingMore] = useState<EnvironmentId | null>(null);
-  const loadMore = async (environmentId: EnvironmentId) => {
+  const [loadingMore, setLoadingMore] = useState<string | null>(null);
+  // One tracker group's button carries on that tracker's scopes only.
+  const loadMore = async (environmentId: EnvironmentId, host: string) => {
     const page = held.get(environmentId);
-    if (!page || Object.keys(page.nextCursors).length === 0 || loadingMore !== null) return;
-    setLoadingMore(environmentId);
-    const result = await loadPage({
-      environmentId,
-      input: { ...listInput, cursors: page.nextCursors },
-    });
+    const cursors = page ? issueCursorsForHost(page.nextCursors, host) : {};
+    if (!page || Object.keys(cursors).length === 0 || loadingMore !== null) return;
+    setLoadingMore(`${environmentId} ${host}`);
+    const result = await loadPage({ environmentId, input: { ...listInput, cursors } });
     setLoadingMore(null);
     const failure = result._tag === "Failure" ? squashAtomCommandFailure(result) : null;
     setPages((current) => {
@@ -191,6 +209,7 @@ export function IssuesPage() {
           result._tag === "Failure"
             ? { failure: failure instanceof Error ? failure.message : "The next page failed." }
             : result.value,
+          cursors,
         ),
       );
       return next;
@@ -199,9 +218,10 @@ export function IssuesPage() {
 
   // Rows grouped per tracker account, so a tracker that cannot be read says so where its rows
   // would be, and each tracker's rows carry on from their own cursors.
-  const groups = groupIssues(held, debouncedQuery, projects);
+  const groups = groupIssues(held, debouncedQuery, projects, search.order ?? "updated");
+  const filterScopes = issueFilterScopes(held, projects);
 
-  const hostOptions = hostOptionsFor(groups);
+  const hostOptions = hostOptionsFor(groups, search.host);
 
   const updateSearch = (patch: { [Key in keyof IssuesSearch]?: IssuesSearch[Key] | undefined }) => {
     const merged = { ...search, ...patch };
@@ -210,6 +230,9 @@ export function IssuesPage() {
       status: merged.status ?? search.status,
       ...(merged.host ? { host: merged.host } : {}),
       q: merged.q || undefined,
+      ...(merged.label?.length ? { label: merged.label } : {}),
+      ...(merged.assignee ? { assignee: merged.assignee } : {}),
+      ...(merged.order ? { order: merged.order } : {}),
       ...(merged.selectedEnvironmentId
         ? { selectedEnvironmentId: merged.selectedEnvironmentId }
         : {}),
@@ -381,6 +404,14 @@ export function IssuesPage() {
     </Empty>
   ) : (
     <div className="flex flex-col gap-6">
+      {list.error ? (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning-surface px-3 py-2 text-xs">
+          <span>{list.error} Showing the issues that loaded.</span>
+          <Button size="xs" variant="outline" onClick={list.refresh}>
+            Retry
+          </Button>
+        </div>
+      ) : null}
       {groups.map((group) => {
         const presentation = issueTrackerPresentation(group.tracker.tracker);
         const showScope = new Set(group.rows.map((row) => row.scope.toLowerCase())).size > 1;
@@ -451,9 +482,9 @@ export function IssuesPage() {
                     variant="ghost-muted"
                     className="self-start"
                     disabled={loadingMore !== null}
-                    onClick={() => void loadMore(environmentId)}
+                    onClick={() => void loadMore(environmentId, group.tracker.host)}
                   >
-                    {loadingMore === environmentId
+                    {loadingMore === `${environmentId} ${group.tracker.host}`
                       ? "Loading…"
                       : moreFailure === null
                         ? "Load more"
@@ -510,7 +541,7 @@ export function IssuesPage() {
           <div className="topbar-scroll-fade scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto">
             <WorkspacePageContainer width="expanded" className="min-h-full gap-4">
               <div className="flex flex-wrap items-center gap-2">
-                <div className="min-w-0 basis-full @lg/issue-list:basis-0 @lg/issue-list:flex-1">
+                <div className="min-w-0 basis-full @lg/issue-list:min-w-48 @lg/issue-list:basis-0 @lg/issue-list:flex-1">
                   <PullRequestSearchInput
                     value={search.q ?? ""}
                     label="Search issues"
@@ -523,27 +554,29 @@ export function IssuesPage() {
                     onSubmit={(q) => updateSearch({ q: q || undefined })}
                   />
                 </div>
-                <ToggleGroup
-                  size="segmented"
-                  variant="segmented"
-                  aria-label="Filter by state"
-                  value={[search.status]}
-                  onValueChange={(next) => {
-                    const status = STATE_TABS.find((tab) => tab.value === next[0])?.value;
-                    if (status) updateSearch({ status });
-                  }}
-                >
-                  {STATE_TABS.map((tab) => (
-                    <Toggle key={tab.value} value={tab.value}>
-                      {tab.label}
-                    </Toggle>
-                  ))}
-                </ToggleGroup>
-                <FilterMenu
-                  label="Filter by involvement"
-                  value={search.who}
-                  options={INVOLVEMENT_TABS}
-                  onChange={(who) => updateSearch({ who })}
+                <PullRequestCompactFilterMenu
+                  label="Sort issues"
+                  triggerIcon={<ArrowDownUpIcon aria-hidden className="size-4" />}
+                  triggerLabel="Sort"
+                  outlined
+                  value={search.order ?? "updated"}
+                  options={SORT_OPTIONS}
+                  onChange={(order) =>
+                    updateSearch({ order: order === "created" ? "created" : undefined })
+                  }
+                />
+                <IssueFiltersMenu
+                  state={search.status}
+                  stateOptions={STATE_TABS}
+                  onState={(status) => updateSearch({ status })}
+                  involvement={search.who}
+                  involvementOptions={INVOLVEMENT_TABS}
+                  onInvolvement={(who) => updateSearch({ who })}
+                  scopes={filterScopes}
+                  labels={search.label ?? []}
+                  onLabels={(label) => updateSearch({ label })}
+                  assignee={search.assignee}
+                  onAssignee={(assignee) => updateSearch({ assignee })}
                 />
                 {hostOptions.length > 1 ? (
                   <FilterMenu

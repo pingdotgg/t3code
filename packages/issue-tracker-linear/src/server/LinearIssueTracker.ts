@@ -86,11 +86,23 @@ const EMOJI_BY_CONTENT: Record<IssueReactionContent, string> = {
   rocket: "🚀",
   eyes: "👀",
 };
+/** Linear takes the emoji on a write and answers with its short name, so a read knows both. */
+const EMOJI_NAME_BY_CONTENT: Record<IssueReactionContent, string> = {
+  "thumbs-up": "+1",
+  "thumbs-down": "-1",
+  laugh: "smile",
+  hooray: "tada",
+  confused: "confused",
+  heart: "heart",
+  rocket: "rocket",
+  eyes: "eyes",
+};
 const CONTENT_BY_EMOJI = new Map(
-  Object.entries(EMOJI_BY_CONTENT).map(([content, emoji]) => [
-    emoji,
-    content as IssueReactionContent,
-  ]),
+  [EMOJI_BY_CONTENT, EMOJI_NAME_BY_CONTENT].flatMap((spellings) =>
+    Object.entries(spellings).map(
+      ([content, emoji]) => [emoji, content as IssueReactionContent] as const,
+    ),
+  ),
 );
 
 /** `ENG-123`, or null for anything that is not a Linear identifier. */
@@ -104,13 +116,29 @@ function toState(state: LinearApi.LinearWorkflowState): IssueState {
     : { category: "open", name: state.name };
 }
 
-/** Linear identifies people by id, so that is the login; the display name is what people see. */
+/**
+ * The login is Linear's handle (its `displayName`, unique in a workspace), which is what people
+ * see and what filters and writes are named by; the id stays inside this adapter.
+ */
 function toActor(user: LinearApi.LinearUser): IssueActor {
   return {
-    login: user.id,
-    name: user.displayName ?? user.name,
+    login: user.displayName || user.id,
+    name: user.name ?? null,
     avatarUrl: user.avatarUrl ?? null,
   };
+}
+
+type LinearBot = NonNullable<LinearApi.LinearIssue["botActor"]>;
+
+/**
+ * Who did it: the person, else the integration that acted (GitHub moving an issue, a form filing
+ * one), which Linear reports beside an empty user.
+ */
+function actorOf(user: LinearApi.LinearUser | null, bot: LinearBot | null): IssueActor | null {
+  if (user !== null) return toActor(user);
+  const name = bot?.userDisplayName ?? bot?.name;
+  if (bot == null || !name) return null;
+  return { isBot: true, login: bot.name ?? name, name, avatarUrl: bot.avatarUrl ?? null };
 }
 
 /** How a user shows in a picker and an event: display name first, falling back to the id. */
@@ -125,7 +153,7 @@ function toSummary(issue: LinearApi.LinearIssue, commentCount = 0): TrackerIssue
     displayKey: issue.identifier,
     title: issue.title,
     url: issue.url,
-    author: issue.creator === null ? null : toActor(issue.creator),
+    author: actorOf(issue.creator, issue.botActor),
     state: toState(issue.state),
     createdAt: issue.createdAt,
     updatedAt: issue.updatedAt,
@@ -165,7 +193,7 @@ function toReactions(
 function toComment(comment: LinearApi.LinearComment, viewerId: string | null): IssueComment {
   return {
     id: comment.id,
-    author: comment.user === null ? null : toActor(comment.user),
+    author: actorOf(comment.user, comment.botActor),
     body: comment.body,
     createdAt: comment.createdAt,
     url: comment.url,
@@ -176,7 +204,7 @@ function toComment(comment: LinearApi.LinearComment, viewerId: string | null): I
 function toEvents(history: ReadonlyArray<LinearApi.LinearHistoryEntry>): IssueEvent[] {
   const events: IssueEvent[] = [];
   for (const entry of history) {
-    const actor = entry.actor === null ? null : toActor(entry.actor);
+    const actor = actorOf(entry.actor, entry.botActor);
     const add = (kind: IssueEvent["kind"], detail: string | null, suffix: string) =>
       events.push({ id: `${entry.id}:${suffix}`, kind, actor, createdAt: entry.createdAt, detail });
     if (entry.toState !== null && entry.toState.id !== entry.fromState?.id) {
@@ -270,11 +298,11 @@ function involvementFilter(input: {
 }): LinearApi.IssueFilter {
   switch (input.involvement) {
     case "assigned":
-      return { assignee: { id: { eq: input.viewer } } };
+      return { assignee: { displayName: { eq: input.viewer } } };
     case "authored":
-      return { creator: { id: { eq: input.viewer } } };
+      return { creator: { displayName: { eq: input.viewer } } };
     case "mentioned":
-      return { subscribers: { some: { id: { eq: input.viewer } } } };
+      return { subscribers: { some: { displayName: { eq: input.viewer } } } };
     case "all":
       return {};
   }
@@ -309,7 +337,8 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
       input: { readonly scope: string; readonly key: string },
     ) {
       const identifier = yield* requireIdentifier(operation, input.key);
-      const issue = yield* linear.getIssue(identifier, 0);
+      // One comment, not none: Linear refuses a page of zero.
+      const issue = yield* linear.getIssue(identifier, 1);
       if (issue === null) return yield* notFound(operation);
       const team = input.scope.trim().toUpperCase();
       if (issue.team.key !== team) {
@@ -384,7 +413,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
         ),
 
       // The id, not the display name: it is what the involvement filters compare against.
-      getViewer: () => linear.viewer().pipe(Effect.map((data) => data.viewer.id)),
+      getViewer: () => linear.viewer().pipe(Effect.map((data) => toActor(data.viewer).login)),
 
       listIssues: (input) => {
         // `ENG-12`, `#12` or `12` asks for one issue of this team by number.
@@ -392,6 +421,13 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
           input.query === undefined
             ? null
             : /^(?:[A-Za-z][A-Za-z0-9]*-|#)?(\d+)$/.exec(input.query.trim());
+        // Each is its own clause: an assignee filter must narrow "assigned to me", not replace it.
+        const clauses: LinearApi.IssueFilter[] = [
+          ...(input.assignee === undefined
+            ? []
+            : [{ assignee: { displayName: { eq: input.assignee } } }]),
+          ...(input.labels ?? []).map((name) => ({ labels: { some: { name: { eq: name } } } })),
+        ];
         const filter: LinearApi.IssueFilter = {
           team: { key: { eq: input.scope.trim().toUpperCase() } },
           ...involvementFilter(input),
@@ -405,6 +441,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
                       : { nin: CLOSED_STATE_TYPES },
                 },
               }),
+          ...(clauses.length === 0 ? {} : { and: clauses }),
           ...(input.query === undefined
             ? {}
             : {
@@ -415,25 +452,37 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
                 ],
               }),
         };
-        return linear.listIssues({ filter, first: input.limit, after: input.cursor }).pipe(
-          Effect.map((page) => ({
-            items: page.nodes.map(toSummary),
-            nextCursor: page.nextCursor,
-          })),
-        );
+        return linear
+          .listIssues({
+            filter,
+            first: input.limit,
+            after: input.cursor,
+            orderBy: input.sort === "created" ? "createdAt" : "updatedAt",
+          })
+          .pipe(
+            Effect.map((page) => ({
+              items: page.nodes.map((node) => toSummary(node)),
+              nextCursor: page.nextCursor,
+            })),
+          );
       },
 
       getIssue: Effect.fn("LinearIssueTracker.getIssue")(function* (input) {
         const identifier = yield* requireIdentifier("getIssue", input.key);
-        const [issue, viewer] = yield* Effect.all([
+        // One read of the viewer: the id matches reactions, the handle is what the client sees.
+        const [issue, me] = yield* Effect.all([
           linear.getIssue(identifier, COMMENTS_PAGE),
-          viewerId,
+          linear.viewer().pipe(
+            Effect.map((data) => data.viewer),
+            Effect.orElseSucceed(() => null),
+          ),
         ]);
+        const viewer = me?.id ?? null;
         if (issue === null) return yield* notFound("getIssue");
         return {
           ...toSummary(issue, issue.comments.nodes.length),
           body: issue.description ?? "",
-          viewer,
+          viewer: me === null ? null : toActor(me).login,
           viewerPermissions: VIEWER_PERMISSIONS,
           reactions: toReactions(issue.reactions, viewer),
           comments: issue.comments.nodes.map((comment) => toComment(comment, viewer)),
@@ -516,14 +565,23 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
         const emoji = EMOJI_BY_CONTENT[input.content];
         const target =
           input.subjectId === undefined ? { issueId: issue.id } : { commentId: input.subjectId };
-        if (input.reacted) {
+        // Comment ids are global: prove the comment belongs to this issue before writing.
+        const subject =
+          input.subjectId === undefined && input.reacted
+            ? null
+            : yield* linear.listReactions(target);
+        if (subject !== null && subject.issueId !== issue.id) {
+          return yield* failed("setReaction", "The comment does not belong to the selected issue.");
+        }
+        if (subject === null || input.reacted) {
           yield* linear.createReaction({ ...target, emoji });
           return;
         }
         const viewer = yield* viewerId;
-        const reactions = yield* linear.listReactions(target);
+        const { reactions } = subject;
         const own = reactions.find(
-          (reaction) => reaction.emoji === emoji && reaction.user?.id === viewer,
+          (reaction) =>
+            CONTENT_BY_EMOJI.get(reaction.emoji) === input.content && reaction.user?.id === viewer,
         );
         if (own !== undefined) yield* linear.deleteReaction(own.id);
       }),

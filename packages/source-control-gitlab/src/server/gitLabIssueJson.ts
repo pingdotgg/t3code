@@ -178,6 +178,18 @@ export function decodeIssueDetailJson(
   }));
 }
 
+/** The ids of the users a `/users?username=` lookup answered with: one, or none. */
+export function decodeUserIdsJson(
+  raw: string,
+): Result.Result<ReadonlyArray<number>, DecodeFailure> {
+  return Result.map(decodeUnknownList(raw), (rows) =>
+    rows.flatMap((entry) => {
+      const user = decodeUserEntry(entry);
+      return Exit.isSuccess(user) && user.value.id !== undefined ? [user.value.id] : [];
+    }),
+  );
+}
+
 export function decodeCreatedIssueJson(
   raw: string,
 ): Result.Result<{ readonly number: number; readonly url: string }, DecodeFailure> {

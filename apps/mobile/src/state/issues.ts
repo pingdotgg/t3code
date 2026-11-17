@@ -1,6 +1,8 @@
 import {
   createIssueEnvironmentAtoms,
+  createMergedIssueCandidatesAtoms,
   createMergedIssueListAtoms,
+  type IssueCandidatesTarget,
   type IssueListTarget,
 } from "@t3tools/client-runtime/state/issues";
 import { useAtomValue } from "@effect/atom-react";
@@ -26,4 +28,18 @@ export function useIssueList(targets: ReadonlyArray<IssueListTarget>) {
 /** After a write the list cannot see, such as a new issue filed from a sheet. */
 export function refreshIssueLists(environmentId: EnvironmentId) {
   mergedIssueLists.refreshEnvironment(appAtomRegistry, environmentId);
+}
+
+const mergedIssueCandidates = createMergedIssueCandidatesAtoms(
+  issueEnvironment.candidates,
+  formatEnvironmentQueryError,
+);
+
+/** The labels and people of every scope a list filter covers; no targets reads nothing. */
+export function useIssueFilterCandidates(targets: ReadonlyArray<IssueCandidatesTarget>) {
+  return useAtomValue(mergedIssueCandidates(targets));
+}
+
+export function refreshIssueFilterCandidates(targets: ReadonlyArray<IssueCandidatesTarget>) {
+  for (const target of targets) appAtomRegistry.refresh(issueEnvironment.candidates(target));
 }

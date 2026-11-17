@@ -2,6 +2,7 @@ import { useNavigation, type StaticScreenProps } from "@react-navigation/native"
 import { useAtom } from "@effect/atom-react";
 import {
   issueLabelsAfterPicks,
+  issuePicksAfterFailedWrite,
   issuePicksFor,
   issueWriteAfterPicks,
   noIssuePicks,
@@ -11,7 +12,7 @@ import type { IssueLabelCandidate } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 
 import * as Dialog from "../../components/ui/Dialog";
-import { issueEnvironment } from "../../state/issues";
+import { issueEnvironment, refreshIssueLists } from "../../state/issues";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { PullRequestLabelDot } from "../pull-requests/PullRequestLabelDot";
@@ -29,12 +30,16 @@ export function IssueLabelsScreen({ route }: StaticScreenProps<IssueParams>) {
   const result = useEnvironmentQuery(issueEnvironment.candidates(target));
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
   const [query, setQuery] = useState("");
-  const [picks, setPicks] = useAtom(issueLabelPicksFamily(issueParamsKey(route.params)));
-  // Picks against an older read are dropped when the sheet opens, and kept across a read while open.
-  const [openedWith] = useState(detail);
-  const current = detail
-    ? issuePicksFor(picks, detail, detail !== openedWith)
-    : noIssuePicks<IssueLabelCandidate>();
+  // The atom carries a closed sheet's picks to the next one; this sheet's own live here.
+  const [stored, setStored] = useAtom(issueLabelPicksFamily(issueParamsKey(route.params)));
+  // Picks against an older read are dropped once, when the sheet opens.
+  const [picks, setPicks] = useState(() =>
+    detail ? issuePicksFor(stored, detail, false) : noIssuePicks<IssueLabelCandidate>(),
+  );
+  const own = detail ? issuePicksFor(picks, detail, true) : noIssuePicks<IssueLabelCandidate>();
+  // What was last sent is read from the atom, so a write that fails while this sheet is open is
+  // sent again when it closes.
+  const current = { ...own, written: stored.basis === detail ? stored.written : null };
   const draft = current.draft;
   const allowed = access?.labels === true;
   const applied = new Set(detail?.labels.map((label) => label.name));
@@ -54,15 +59,17 @@ export function IssueLabelsScreen({ route }: StaticScreenProps<IssueParams>) {
           current.written,
         );
         if (labels === null) return;
-        setPicks({ ...current, written: labels });
+        const sent = { ...current, written: labels };
+        setStored(sent);
         void update({ ...target, input: { ...target.input, labels } }).then((response) => {
           const failure = issueCommandError(response);
-          if (failure === null) return;
-          setPicks(noIssuePicks());
+          if (failure === null) return refreshIssueLists(target.environmentId);
+          // Picks made after this write was sent are kept.
+          setStored((latest) => issuePicksAfterFailedWrite(latest, sent));
           Dialog.alert("Couldn't change labels", failure);
         });
       }),
-    [navigation, detail, draft, current, setPicks, update, target],
+    [navigation, detail, draft, current, setStored, update, target],
   );
   return (
     <IssueCandidatesSheet

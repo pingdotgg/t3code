@@ -131,14 +131,16 @@ export const IssueToolError = Schema.Union([
 export type IssueToolError = typeof IssueToolError.Type;
 
 /** How a tool names an issue back: enough to pass to any other issue tool. */
-const IssueIdentity = {
+const IssueKeyIdentity = {
   projectId: ProjectId,
   tracker: IssueTrackerKind,
   host: Schema.String,
   scope: Schema.String,
   key: Schema.String,
-  url: Schema.String,
 };
+const IssueIdentity = { ...IssueKeyIdentity, url: Schema.String };
+/** A write named by key alone never read the issue, so it has no URL to hand back. */
+const IssueIdentityAfterWrite = { ...IssueKeyIdentity, url: Schema.optional(Schema.String) };
 
 export const IssueEntry = Schema.Struct({
   ...IssueIdentity,
@@ -203,7 +205,7 @@ export const CreateIssueResult = Schema.Struct({
 });
 export type CreateIssueResult = typeof CreateIssueResult.Type;
 
-export const IssueWriteResult = Schema.Struct({ ...IssueIdentity });
+export const IssueWriteResult = Schema.Struct({ ...IssueIdentityAfterWrite });
 
 export const ThreadIssueEntry = Schema.Struct({
   ...IssueIdentity,
@@ -223,7 +225,7 @@ export const LinkIssueResult = Schema.Struct({
 export type LinkIssueResult = typeof LinkIssueResult.Type;
 
 export const UnlinkIssueResult = Schema.Struct({
-  ...IssueIdentity,
+  ...IssueIdentityAfterWrite,
   wasLinked: Schema.Boolean.annotate({
     description: "False when the issue was not linked to this thread to begin with.",
   }),

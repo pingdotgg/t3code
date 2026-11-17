@@ -3,6 +3,7 @@ import { useAtom } from "@effect/atom-react";
 import {
   issueAssigneeHeld,
   issueAssigneesAfterPicks,
+  issuePicksAfterFailedWrite,
   issuePicksFor,
   issueWriteAfterPicks,
   noIssuePicks,
@@ -12,7 +13,7 @@ import type { IssueAssigneeCandidate } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 
 import * as Dialog from "../../components/ui/Dialog";
-import { issueEnvironment } from "../../state/issues";
+import { issueEnvironment, refreshIssueLists } from "../../state/issues";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { PullRequestAvatar } from "../pull-requests/PullRequestPresentation";
@@ -29,12 +30,16 @@ export function IssueAssigneesScreen({ route }: StaticScreenProps<IssueParams>) 
   const result = useEnvironmentQuery(issueEnvironment.candidates(target));
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
   const [query, setQuery] = useState("");
-  const [picks, setPicks] = useAtom(issueAssigneePicksFamily(issueParamsKey(route.params)));
-  // Picks against an older read are dropped when the sheet opens, and kept across a read while open.
-  const [openedWith] = useState(detail);
-  const current = detail
-    ? issuePicksFor(picks, detail, detail !== openedWith)
-    : noIssuePicks<IssueAssigneeCandidate>();
+  // The atom carries a closed sheet's picks to the next one; this sheet's own live here.
+  const [stored, setStored] = useAtom(issueAssigneePicksFamily(issueParamsKey(route.params)));
+  // Picks against an older read are dropped once, when the sheet opens.
+  const [picks, setPicks] = useState(() =>
+    detail ? issuePicksFor(stored, detail, false) : noIssuePicks<IssueAssigneeCandidate>(),
+  );
+  const own = detail ? issuePicksFor(picks, detail, true) : noIssuePicks<IssueAssigneeCandidate>();
+  // What was last sent is read from the atom, so a write that fails while this sheet is open is
+  // sent again when it closes.
+  const current = { ...own, written: stored.basis === detail ? stored.written : null };
   const draft = current.draft;
   const allowed = access?.assignees === true;
   const held = (candidate: IssueAssigneeCandidate) =>
@@ -54,15 +59,17 @@ export function IssueAssigneesScreen({ route }: StaticScreenProps<IssueParams>) 
           current.written,
         );
         if (assignees === null) return;
-        setPicks({ ...current, written: assignees });
+        const sent = { ...current, written: assignees };
+        setStored(sent);
         void update({ ...target, input: { ...target.input, assignees } }).then((response) => {
           const failure = issueCommandError(response);
-          if (failure === null) return;
-          setPicks(noIssuePicks());
+          if (failure === null) return refreshIssueLists(target.environmentId);
+          // Picks made after this write was sent are kept.
+          setStored((latest) => issuePicksAfterFailedWrite(latest, sent));
           Dialog.alert("Couldn't change assignees", failure);
         });
       }),
-    [navigation, detail, draft, current, setPicks, update, target],
+    [navigation, detail, draft, current, setStored, update, target],
   );
   return (
     <IssueCandidatesSheet

@@ -1,9 +1,11 @@
-import { useAtomValue } from "@effect/atom-react";
+import { useAtom, useAtomValue } from "@effect/atom-react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import {
   continueIssuePage,
   groupIssues,
   holdIssuePages,
+  issueFilterScopes,
+  issueOrder,
   type EnvironmentIssueEntry,
   type HeldIssuePage,
 } from "@t3tools/client-runtime/issue-list";
@@ -12,6 +14,7 @@ import type {
   EnvironmentId,
   IssueInvolvement,
   IssueListInput,
+  IssueListSort,
   IssueListState,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
@@ -19,9 +22,11 @@ import { use, useRef, useState, type ReactNode } from "react";
 import { Keyboard, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { useNavigation } from "@react-navigation/native";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
+import { Chip } from "../../components/ui/Chip";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { usePaneRole } from "../../components/ui/Pane";
 import { RefreshControl } from "../../components/ui/RefreshControl";
@@ -42,6 +47,8 @@ import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { issueParamsKey } from "./issueParams";
 import { IssueListRow } from "./IssueListRow";
 import type { PullRequestFilterMenu } from "../pull-requests/PullRequestListFilters";
+import { issueListFiltersAtom } from "./issueListFilters";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 const DEFAULT_ISSUE_LIST_INPUT = { state: "open", involvement: "all", limit: 50 } as const;
 const STATES = {
@@ -55,6 +62,10 @@ const INVOLVEMENT = {
   authored: "Opened by you",
   mentioned: "Mentioning you",
 } as const satisfies Record<IssueInvolvement, string>;
+const SORTS = {
+  updated: "Recently updated",
+  created: "Newest",
+} as const satisfies Record<IssueListSort, string>;
 // A 12dp inset keeps 16dp chips concentric with Android's 28dp ScreenContent corner.
 const FILTER_ROW_STYLE =
   Platform.OS === "android"
@@ -115,11 +126,18 @@ export function IssuesScreen(
   const query = tab.searchMode === "resting" ? "" : debouncedQuery;
   const [state, setState] = useState<IssueListState>("open");
   const [involvement, setInvolvement] = useState<IssueInvolvement>("all");
+  const navigation = useNavigation();
+  const [{ labels, assignee }, setFilters] = useAtom(issueListFiltersAtom);
+  const { themeAppearance } = useAppearancePreferences();
+  const [sort, setSort] = useState<IssueListSort>("updated");
   const listInput: IssueListInput = {
     ...DEFAULT_ISSUE_LIST_INPUT,
     state,
     involvement,
     ...(query ? { query } : {}),
+    ...(labels.length > 0 ? { labels } : {}),
+    ...(assignee === null ? {} : { assignee: assignee.login }),
+    ...(sort === "updated" ? {} : { sort }),
   };
   const capable = environments.filter(
     (environment) =>
@@ -165,16 +183,19 @@ export function IssuesScreen(
     setPages(new Map([...held, ...loaded]));
   };
 
-  const groups = groupIssues(held, query, projects);
-  const entries = groups
-    .flatMap((group) => group.rows)
-    .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
-  const notices = groups.flatMap((group) => [
-    ...(group.tracker.configured
-      ? []
-      : [`${group.tracker.host}: ${group.tracker.detail ?? "This tracker cannot be read."}`]),
-    ...group.errors.map((error) => `${error.projectTitle}: ${error.message}`),
-  ]);
+  const groups = groupIssues(held, query, projects, sort);
+  const entries = groups.flatMap((group) => group.rows).sort(issueOrder(sort));
+  const filterScopes = issueFilterScopes(held, projects);
+  const notices = [
+    // An environment that failed while another answered: its issues are missing from the rows.
+    ...(entries.length > 0 && list.error ? [list.error] : []),
+    ...groups.flatMap((group) => [
+      ...(group.tracker.configured
+        ? []
+        : [`${group.tracker.host}: ${group.tracker.detail ?? "This tracker cannot be read."}`]),
+      ...group.errors.map((error) => `${error.projectTitle}: ${error.message}`),
+    ]),
+  ];
 
   const paneRole = usePaneRole();
   const sidebar = props.sidebar === true || (primaryColumn !== null && paneRole === "sidebar");
@@ -198,6 +219,12 @@ export function IssuesScreen(
   const scrollToTop = () =>
     void listRef.current?.scrollToOffset({ offset: -contentTopInset, animated: false });
 
+  const customized =
+    state !== "open" ||
+    involvement !== "all" ||
+    sort !== "updated" ||
+    labels.length > 0 ||
+    assignee !== null;
   // The Android header's filter button opens every filter, as the pull request list's does.
   const headerMenu: PullRequestFilterMenu | null =
     Platform.OS === "android"
@@ -210,21 +237,32 @@ export function IssuesScreen(
               subactions: choices(INVOLVEMENT, involvement, "involvement"),
             },
             {
-              id: "reset",
-              title: "Reset filters",
-              attributes: { disabled: state === "open" && involvement === "all" },
+              id: "labels",
+              title: labels.length === 0 ? "Labels…" : `Labels (${labels.length})…`,
             },
+            {
+              id: "assignee",
+              title:
+                assignee === null ? "Assignee…" : `Assignee: ${assignee.name ?? assignee.login}…`,
+            },
+            { id: "sort", title: "Sort", subactions: choices(SORTS, sort, "sort") },
+            { id: "reset", title: "Reset filters", attributes: { disabled: !customized } },
           ],
           onSelect: (id) => {
             const [field, value] = id.split(":");
             if (field === "state") setState(value as IssueListState);
             if (field === "involvement") setInvolvement(value as IssueInvolvement);
+            if (field === "sort") setSort(value as IssueListSort);
+            if (field === "labels" || field === "assignee")
+              navigation.navigate("IssueFilterSearch", { kind: field, scopes: filterScopes });
             if (field === "reset") {
               setState("open");
               setInvolvement("all");
+              setSort("updated");
+              setFilters({ labels: [], assignee: null });
             }
           },
-          customized: state !== "open" || involvement !== "all",
+          customized,
         }
       : null;
 
@@ -306,6 +344,47 @@ export function IssuesScreen(
                 actions={choices(INVOLVEMENT, involvement)}
                 onSelect={(id) => {
                   setInvolvement(id as IssueInvolvement);
+                  scrollToTop();
+                }}
+              />
+              <Chip
+                label={
+                  labels.length === 0
+                    ? "Labels"
+                    : labels.length === 1
+                      ? labels[0]!
+                      : `Labels ${labels.length}`
+                }
+                selected={labels.length > 0}
+                trailingIcon="chevron.down"
+                glass
+                colorScheme={themeAppearance}
+                accessibilityLabel="Filter by label"
+                onPress={() =>
+                  navigation.navigate("IssueFilterSearch", { kind: "labels", scopes: filterScopes })
+                }
+              />
+              <Chip
+                label={assignee === null ? "Assignee" : (assignee.name ?? assignee.login)}
+                selected={assignee !== null}
+                trailingIcon="chevron.down"
+                glass
+                colorScheme={themeAppearance}
+                accessibilityLabel="Filter by assignee"
+                onPress={() =>
+                  navigation.navigate("IssueFilterSearch", {
+                    kind: "assignee",
+                    scopes: filterScopes,
+                  })
+                }
+              />
+              <ListFilterMenu
+                label={SORTS[sort]}
+                active={sort !== "updated"}
+                accessibilityLabel="Sort issues"
+                actions={choices(SORTS, sort)}
+                onSelect={(id) => {
+                  setSort(id as IssueListSort);
                   scrollToTop();
                 }}
               />

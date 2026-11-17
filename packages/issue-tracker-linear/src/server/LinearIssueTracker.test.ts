@@ -44,6 +44,7 @@ const issue = (
   state: state("In Progress", "started"),
   team: { key: identifier.split("-")[0] },
   creator: JULIUS,
+  botActor: null,
   assignee: THEO,
   labels: { nodes: [{ id: "lbl_bug", name: "Bug", color: "#f00" }] },
   ...overrides,
@@ -78,19 +79,22 @@ function fakeLinear(
         const operation = /^(?:query|mutation) (\w+)/.exec(parsed.query)?.[1] ?? "?";
         requests.push({ authorization: request.headers.authorization, operation });
         const answer = answers[operation];
+        const answered = answer?.(parsed.variables);
         const response =
-          answer === undefined
-            ? new Response(
-                JSON.stringify({ errors: [{ message: `No answer for ${operation}` }] }),
-                {
-                  status: 400,
+          answered instanceof Response
+            ? answered
+            : answer === undefined
+              ? new Response(
+                  JSON.stringify({ errors: [{ message: `No answer for ${operation}` }] }),
+                  {
+                    status: 400,
+                    headers: { "content-type": "application/json" },
+                  },
+                )
+              : new Response(JSON.stringify({ data: answered }), {
+                  status: 200,
                   headers: { "content-type": "application/json" },
-                },
-              )
-            : new Response(JSON.stringify({ data: answer(parsed.variables) }), {
-                status: 200,
-                headers: { "content-type": "application/json" },
-              });
+                });
         return HttpClientResponse.fromWeb(request, response);
       }),
     ),
@@ -120,8 +124,14 @@ describe("LinearIssueTracker", () => {
           expect(variables.filter).toMatchObject({
             team: { key: { eq: "ENG" } },
             state: { type: { nin: ["completed", "canceled"] } },
-            assignee: { id: { eq: "usr_julius" } },
+            // "Assigned to me" survives an assignee filter: both must hold.
+            assignee: { displayName: { eq: "julius" } },
+            and: [
+              { assignee: { displayName: { eq: "theo" } } },
+              { labels: { some: { name: { eq: "Bug" } } } },
+            ],
           });
+          expect(variables.orderBy).toBe("createdAt");
           return {
             issues: {
               nodes: [
@@ -144,7 +154,10 @@ describe("LinearIssueTracker", () => {
         ...target,
         state: "open",
         involvement: "assigned",
-        viewer: "usr_julius",
+        viewer: "julius",
+        labels: ["Bug"],
+        assignee: "theo",
+        sort: "created",
         limit: 50,
       });
       expect(page.nextCursor).toBe("cur_2");
@@ -152,14 +165,83 @@ describe("LinearIssueTracker", () => {
         ["ENG-2", "ENG-2", { category: "closed", name: "Done", closeReason: "completed" }],
         ["ENG-1", "ENG-1", { category: "open", name: "In Progress" }],
       ]);
+      // A listing carries no comment totals, whatever the row's position.
+      expect(page.items.map((item) => item.commentCount)).toEqual([0, 0]);
       expect(page.items[0]).toMatchObject({
         closedAt: "2026-07-03T00:00:00.000Z",
-        author: { login: "usr_julius", name: "julius" },
-        assignees: [{ login: "usr_theo", name: "theo" }],
+        author: { login: "julius", name: "julius" },
+        assignees: [{ login: "theo", name: "theo" }],
         labels: [{ name: "Bug", color: "#f00" }],
       });
       // The stored key goes in as-is, not as a bearer token.
       expect(requests.map((request) => request.authorization)).toEqual(["lin_api_stored"]);
+
+      // Linear's reset header is an absolute time in epoch milliseconds.
+      const resetAt = 4_102_444_800_000;
+      const limited = fakeLinear({
+        T3Issues: () =>
+          new Response(JSON.stringify({ errors: [{ message: "Rate limited" }] }), {
+            status: 429,
+            headers: {
+              "content-type": "application/json",
+              "x-ratelimit-requests-reset": String(resetAt),
+            },
+          }),
+      });
+      const refused = yield* Effect.flip(
+        (yield* limited.tracker).listIssues({
+          ...target,
+          state: "open",
+          involvement: "all",
+          viewer: "julius",
+          sort: "updated",
+          limit: 50,
+        }),
+      );
+      expect([refused.reason, refused.retryAt]).toEqual(["rate-limited", resetAt]);
+    }),
+  );
+
+  it.effect("reacts to a comment only when it belongs to the issue named", () =>
+    Effect.gen(function* () {
+      const created: Array<unknown> = [];
+      const deleted: Array<unknown> = [];
+      const { tracker } = fakeLinear({
+        T3Viewer: () => ({ viewer: JULIUS, teams: { nodes: [] } }),
+        T3Issue: (variables) => {
+          // Linear refuses a page of zero comments, which fails the write that looked the issue up.
+          expect(variables.comments).toBeGreaterThan(0);
+          return { issue: bareDetail(String(variables.id)) };
+        },
+        T3CommentReactions: (variables) => ({
+          comment: {
+            issue: { id: variables.id === "cmt_own" ? "iss_ENG-1" : "iss_OPS-9" },
+            reactions: [{ id: "r1", emoji: "+1", user: JULIUS }],
+          },
+        }),
+        T3ReactionCreate: (variables) => {
+          created.push(variables.input);
+          return { reactionCreate: { success: true } };
+        },
+        T3ReactionDelete: (variables) => {
+          deleted.push(variables.id);
+          return { reactionDelete: { success: true } };
+        },
+      });
+      const api = yield* tracker;
+      const reaction = { ...target, key: "ENG-1", content: "thumbs-up" as const };
+      for (const reacted of [true, false]) {
+        const foreign = yield* Effect.flip(
+          api.setReaction({ ...reaction, subjectId: "cmt_other", reacted }),
+        );
+        expect(foreign.detail).toBe("The comment does not belong to the selected issue.");
+      }
+      expect([created, deleted]).toEqual([[], []]);
+
+      yield* api.setReaction({ ...reaction, subjectId: "cmt_own", reacted: true });
+      yield* api.setReaction({ ...reaction, subjectId: "cmt_own", reacted: false });
+      expect(created).toEqual([{ commentId: "cmt_own", emoji: "👍" }]);
+      expect(deleted).toEqual(["r1"]);
     }),
   );
 
@@ -177,14 +259,15 @@ describe("LinearIssueTracker", () => {
                   createdAt: "2026-07-02T01:00:00.000Z",
                   url: "https://linear.app/acme/issue/ENG-7#comment-cmt_1",
                   user: THEO,
-                  reactions: [{ id: "r1", emoji: "👍", user: JULIUS }],
+                  botActor: null,
+                  reactions: [{ id: "r1", emoji: "+1", user: JULIUS }],
                 },
               ],
               pageInfo: { hasNextPage: true, endCursor: "cmt_cur" },
             },
             reactions: [
               { id: "r2", emoji: "🚀", user: THEO },
-              { id: "r3", emoji: "🚀", user: JULIUS },
+              { id: "r3", emoji: "rocket", user: JULIUS },
               { id: "r4", emoji: "🤷", user: THEO },
             ],
             attachments: {
@@ -203,7 +286,9 @@ describe("LinearIssueTracker", () => {
                 {
                   id: "h1",
                   createdAt: "2026-07-01T01:00:00.000Z",
-                  actor: THEO,
+                  // An integration acted: Linear names it beside an empty user.
+                  actor: null,
+                  botActor: { name: "GitHub", userDisplayName: null, avatarUrl: null },
                   fromState: state("Todo", "unstarted"),
                   toState: state("Done", "completed"),
                   fromAssignee: null,
@@ -220,7 +305,7 @@ describe("LinearIssueTracker", () => {
       });
       const api = yield* tracker;
       const detail = yield* api.getIssue({ ...target, key: "eng-7" });
-      expect(detail.viewer).toBe("usr_julius");
+      expect(detail.viewer).toBe("julius");
       expect(detail.commentsCursor).toBe("cmt_cur");
       expect(detail.comments[0]?.reactions).toEqual([
         { content: "thumbs-up", count: 1, actors: [], viewerHasReacted: true },
@@ -234,6 +319,12 @@ describe("LinearIssueTracker", () => {
         ["labeled", "Bug"],
         ["assigned", "julius"],
       ]);
+      expect(detail.events[0]?.actor).toEqual({
+        isBot: true,
+        login: "GitHub",
+        name: "GitHub",
+        avatarUrl: null,
+      });
       expect(detail.linkedPullRequests).toEqual([
         expect.objectContaining({ repository: "acme/web", number: 12, state: "merged" }),
       ]);

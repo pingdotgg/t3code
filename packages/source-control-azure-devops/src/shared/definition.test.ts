@@ -260,5 +260,16 @@ describe("Azure DevOps issue scope", () => {
       definition.issueScope?.({ provider: kind, displayName: "acme/Web%20App/_git/web" }),
     ).toBe("acme/Web App");
     expect(definition.issueScope?.({ provider: kind, displayName: "web" })).toBeNull();
+    // One segment before `_git` is a different thing on each kind of host, so it is not placed.
+    expect(definition.issueScope?.({ provider: kind, displayName: "acme/_git/web" })).toBeNull();
+    // A legacy host keeps the organization in its name, and so does its work item URL.
+    expect(
+      definition.parseIssueUrl?.(
+        new URL("https://acme.visualstudio.com/Web%20App/_workitems/edit/9"),
+      ),
+    ).toEqual({ host: "acme.visualstudio.com", scope: "web app", key: "9" });
+    expect(
+      definition.parseIssueUrl?.(new URL("https://dev.azure.com/acme/_workitems/edit/9")),
+    ).toBeNull();
   });
 });

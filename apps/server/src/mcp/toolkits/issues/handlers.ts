@@ -1,6 +1,5 @@
 import {
   threadIssueKeysEqual,
-  type IssueDetail,
   type IssueRef,
   type OrchestrationV2ThreadShell,
   type ProjectId,
@@ -122,13 +121,14 @@ const make = Effect.gen(function* () {
     } satisfies ResolvedTarget;
   });
 
-  const identityOf = (target: ResolvedTarget, detail?: Pick<IssueDetail, "url">) => ({
+  /** Without a URL when the issue was named by key and never read: an empty one is not reusable. */
+  const identityOf = (target: ResolvedTarget) => ({
     projectId: target.projectId,
     tracker: target.tracker,
     host: target.host,
     scope: target.scope,
     key: target.key,
-    url: target.url ?? detail?.url ?? "",
+    ...(target.url === null ? {} : { url: target.url }),
   });
 
   const refOf = (target: ResolvedTarget): IssueRef & { readonly host: string } => ({
@@ -191,7 +191,8 @@ const make = Effect.gen(function* () {
         const target = yield* resolveTarget(input);
         const detail = yield* issues.detail(refOf(target));
         return {
-          ...identityOf(target, detail),
+          ...identityOf(target),
+          url: target.url ?? detail.url,
           displayKey: detail.displayKey,
           title: detail.title,
           state: detail.state,

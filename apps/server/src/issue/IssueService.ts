@@ -91,8 +91,9 @@ function resolveGitHostBinding(project: OrchestrationProjectShell): ProjectTrack
   };
 }
 
+/** Lower case, so a scope keeps its cursor whichever project's spelling of it is read. */
 function listCursorKey(host: string, scope: string): string {
-  return `${host} ${scope}`;
+  return `${host} ${scope.toLowerCase()}`;
 }
 
 function isTrackerUnusable(error: IssueTrackerError): boolean {
@@ -172,7 +173,7 @@ const make = Effect.gen(function* () {
   // Read per resolution so a binding saved in Settings applies without a restart.
   const resolveStandaloneBinding = (
     project: OrchestrationProjectShell,
-  ): Effect.Effect<ProjectTrackerBinding | null> =>
+  ): Effect.Effect<ProjectTrackerBinding | null, IssueOperationError> =>
     bindings.list.pipe(
       Effect.map((bound) => {
         const binding = bound.get(project.id);
@@ -184,7 +185,15 @@ const make = Effect.gen(function* () {
           scope: binding.scope,
         };
       }),
-      Effect.orElseSucceed(() => null),
+      // A failed read is not an unbound project: that would list the git host's issues alone.
+      Effect.mapError(
+        (cause) =>
+          new IssueOperationError({
+            operation: "listProjects",
+            detail: "The project's issue tracker binding could not be read.",
+            cause,
+          }),
+      ),
     );
 
   /**
@@ -193,7 +202,7 @@ const make = Effect.gen(function* () {
    */
   const resolveProjectTracker = (
     project: OrchestrationProjectShell,
-  ): Effect.Effect<ReadonlyArray<ProjectTrackerBinding>> =>
+  ): Effect.Effect<ReadonlyArray<ProjectTrackerBinding>, IssueOperationError> =>
     Effect.all([
       resolveStandaloneBinding(project),
       (project.repositoryIdentity != null
@@ -209,6 +218,8 @@ const make = Effect.gen(function* () {
   const listProjects = (filter: {
     readonly projectId?: IssueListInput["projectId"];
     readonly host?: string | undefined;
+    /** The link's `host:port`, for a host whose binding keeps its port. */
+    readonly authority?: string | undefined;
   }) =>
     (filter.projectId === undefined
       ? projects.listShells()
@@ -240,7 +251,8 @@ const make = Effect.gen(function* () {
           { tracker: IssueTrackerKind; projectCount: number }
         >();
         for (const candidate of bound.flat()) {
-          if (host !== undefined && candidate.host !== host) continue;
+          if (host !== undefined && candidate.host !== host && candidate.host !== filter.authority)
+            continue;
           const api = registry.get(candidate.tracker);
           if (api === null) {
             const counted = unimplemented.get(candidate.host);
@@ -295,7 +307,7 @@ const make = Effect.gen(function* () {
     // DevOps project shares its work items; read each scope once.
     const scopes = new Map<string, SupportedProject>();
     for (const project of supported) {
-      const key = listCursorKey(project.host, project.scope).toLowerCase();
+      const key = listCursorKey(project.host, project.scope);
       if (!scopes.has(key)) scopes.set(key, project);
     }
     const continuing = input.cursors;
@@ -362,6 +374,9 @@ const make = Effect.gen(function* () {
                 viewer,
                 limit,
                 query: input.query,
+                labels: input.labels,
+                assignee: input.assignee,
+                sort: input.sort ?? "updated",
                 cursor,
               }),
             ),
@@ -623,10 +638,14 @@ const make = Effect.gen(function* () {
         });
       }
       const { definition, link } = parsed;
-      const { supported } = yield* listProjects({ host: link.host });
-      const onTracker = supported.filter(
+      // A link names its server's port; a binding does only when its remote or web URL did.
+      const authority = new URL(url).host.toLowerCase();
+      const { supported } = yield* listProjects({ host: link.host, authority });
+      const onHost = supported.filter(
         (project) => project.tracker === IssueTrackerKind.make(definition.kind),
       );
+      const onAuthority = onHost.filter((project) => project.host === authority);
+      const onTracker = onAuthority.length > 0 ? onAuthority : onHost;
       const preferFirst = (projects: ReadonlyArray<SupportedProject>) =>
         projects.find((project) => project.project.id === preferredProjectId) ?? projects[0];
       const own = preferFirst(

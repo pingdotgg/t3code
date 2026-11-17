@@ -22,6 +22,14 @@ function projectIssueBinding(project: LinkProject): {
   };
 }
 
+function linkAuthority(url: string): string | null {
+  try {
+    return new URL(url).host.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The reference an issue link resolves to, and the project it is read through: the project whose
  * tracker binding is that host and scope, else any project on the same tracker and host lending
@@ -37,12 +45,18 @@ export function resolveIssueLinkTarget<Project extends LinkProject>(input: {
   const parsed = sourceControlClients.parseIssueUrl(input.url);
   if (parsed === null) return null;
   const { definition, link } = parsed;
-  const bound = input.projects.flatMap((project) => {
+  // A link names its server's port; a binding does only when its remote or web URL did.
+  const authority = linkAuthority(input.url);
+  const onHost = input.projects.flatMap((project) => {
     const binding = projectIssueBinding(project);
-    return binding === null || binding.tracker !== definition.kind || binding.host !== link.host
+    return binding === null ||
+      binding.tracker !== definition.kind ||
+      (binding.host !== link.host && binding.host !== authority)
       ? []
       : [{ project, binding }];
   });
+  const onAuthority = onHost.filter((candidate) => candidate.binding.host === authority);
+  const bound = onAuthority.length > 0 ? onAuthority : onHost;
   const preferFirst = (candidates: typeof bound) =>
     candidates.find((candidate) => candidate.project.id === input.preferredProjectId) ??
     candidates[0];

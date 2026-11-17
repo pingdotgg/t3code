@@ -60,7 +60,12 @@ export function IssueCandidatesSheet(props: {
           contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom }}
           ListHeaderComponent={
             props.notice ? (
-              <Text className="pb-3 text-xs text-foreground-muted">{props.notice}</Text>
+              <View className="items-start gap-2 pb-3">
+                <Text className="text-xs text-foreground-muted">{props.notice}</Text>
+                {props.loadError && props.candidates.length > 0 ? (
+                  <Button label="Retry" size="compact" onPress={props.onRetry} />
+                ) : null}
+              </View>
             ) : undefined
           }
           renderItem={({ item, index }) => (

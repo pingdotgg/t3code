@@ -59,6 +59,10 @@ export type IssueListState = typeof IssueListState.Type;
 export const IssueInvolvement = Schema.Literals(["all", "assigned", "authored", "mentioned"]);
 export type IssueInvolvement = typeof IssueInvolvement.Type;
 
+/** Newest first by the named date. */
+export const IssueListSort = Schema.Literals(["updated", "created"]);
+export type IssueListSort = typeof IssueListSort.Type;
+
 export const IssueReactionContent = PullRequestReactionContent;
 export type IssueReactionContent = typeof IssueReactionContent.Type;
 
@@ -266,6 +270,16 @@ export const IssueListInput = Schema.Struct({
   cursors: Schema.optional(IssueListCursors),
   /** Free text the trackers themselves are asked to match. */
   query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(200))),
+  /** Label names an issue must carry, every one of them. */
+  labels: Schema.optional(
+    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(200))).check(
+      Schema.isMaxLength(20),
+    ),
+  ),
+  /** An assignee's `login`, as an issue of that tracker names them. */
+  assignee: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(320))),
+  /** Absent means `updated`. */
+  sort: Schema.optional(IssueListSort),
 });
 export type IssueListInput = typeof IssueListInput.Type;
 

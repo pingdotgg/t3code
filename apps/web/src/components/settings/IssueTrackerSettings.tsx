@@ -55,6 +55,21 @@ export function IssueTrackerSettings({ environmentId }: { readonly environmentId
       </SettingsSection>
     );
   }
+  if (query.data === null && query.error !== null) {
+    return (
+      <SettingsSection id={searchableSetting("issue-trackers").id} title="Issue trackers">
+        <SettingsRow
+          title="Could not load issue trackers"
+          description={query.error}
+          control={
+            <Button size="xs" variant="outline" onClick={query.refresh}>
+              Retry
+            </Button>
+          }
+        />
+      </SettingsSection>
+    );
+  }
   if (trackers.length === 0) return null;
   return (
     <SettingsSection id={searchableSetting("issue-trackers").id} title="Issue trackers">

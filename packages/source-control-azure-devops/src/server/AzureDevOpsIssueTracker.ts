@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import {
   IssueTrackerKind,
   type IssueCapabilities,
+  type IssueEvent,
   type IssueInvolvement,
   type IssueLinkedPullRequest,
   type IssueViewerPermissions,
@@ -82,6 +83,8 @@ const VIEWER_PERMISSIONS: IssueViewerPermissions = {
 
 const REST_API_VERSION = "7.1";
 const PAGE_SIZE = 100;
+/** Updates are read a page per `az` process, oldest first, so a long history is bounded. */
+const UPDATE_PAGE_LIMIT = 5;
 /** Linked pull requests are read one `az` process each, so a work item's links are bounded. */
 const LINKED_PULL_REQUEST_LIMIT = 10;
 /** Which work item type a new issue is filed as, in order of preference across the stock processes. */
@@ -144,14 +147,16 @@ function parseScope(
   scope: string,
 ): { readonly organization: string; readonly project: string } | null {
   const parts = scope.split("/").flatMap((part) => part.trim() || []);
+  // `az` replaces a value starting with `@` by the contents of that local file.
+  if (parts.some((part) => part.startsWith("@"))) return null;
+  // A legacy organization is its hostname, so its scope may be the project alone.
+  if (host.toLowerCase().endsWith(".visualstudio.com")) {
+    const project = parts.length === 1 || parts.length === 2 ? parts.at(-1) : undefined;
+    return project === undefined ? null : { organization: `https://${host}`, project };
+  }
   if (parts.length !== 2) return null;
   const [organization, project] = parts as [string, string];
-  return {
-    organization: host.toLowerCase().endsWith(".visualstudio.com")
-      ? `https://${host}`
-      : `https://${host}/${encodeURIComponent(organization)}`,
-    project,
-  };
+  return { organization: `https://${host}/${encodeURIComponent(organization)}`, project };
 }
 
 function parseNumber(key: string): number | null {
@@ -169,7 +174,8 @@ function involvementClause(involvement: IssueInvolvement): string {
       return " AND [System.AssignedTo] = @Me";
     case "authored":
       return " AND [System.CreatedBy] = @Me";
-    // Azure records no mention of a person on a work item, so a mention filter has nothing to narrow by.
+    // WIQL over REST has no way to ask who was mentioned (`@RecentMentions` is a web portal
+    // macro), so a mention filter has nothing to narrow by.
     case "mentioned":
     case "all":
       return "";
@@ -188,10 +194,10 @@ function stateClause(state: "all" | "open" | "closed", closedStates: ClosedState
   }
 }
 
-/** `<iso changed date>|<id>` of the last row handed over, which is where the next page starts. */
-function parseCursor(cursor: string): { readonly changedAt: string; readonly id: number } | null {
+/** `<iso date the list is sorted by>|<id>` of the last row handed over, where the next page starts. */
+function parseCursor(cursor: string): { readonly date: string; readonly id: number } | null {
   const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\|([1-9]\d{0,9})$/.exec(cursor);
-  return match === null ? null : { changedAt: match[1]!, id: Number(match[2]) };
+  return match === null ? null : { date: match[1]!, id: Number(match[2]) };
 }
 
 function reasonFor(error: AzureDevOpsCli.AzureDevOpsCliError): IssueTrackerError["reason"] {
@@ -263,9 +269,14 @@ export const make: Effect.Effect<
     readonly cwd: string;
     readonly operation: string;
     readonly args: ReadonlyArray<string>;
+    readonly stdin?: string | undefined;
   }) =>
     azure
-      .execute({ cwd: input.cwd, args: [...input.args, "--only-show-errors", "--output", "json"] })
+      .execute({
+        cwd: input.cwd,
+        args: [...input.args, "--only-show-errors", "--output", "json"],
+        ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
+      })
       .pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.mapError(fail(input.operation)),
@@ -275,6 +286,7 @@ export const make: Effect.Effect<
     readonly cwd: string;
     readonly operation: string;
     readonly args: ReadonlyArray<string>;
+    readonly stdin?: string | undefined;
     readonly decode: (raw: string) => Result.Result<A, unknown>;
   }): Effect.Effect<A, IssueTrackerError> =>
     run(input).pipe(
@@ -362,6 +374,7 @@ export const make: Effect.Effect<
     readonly cwd: string;
     readonly operation: string;
     readonly organization: string;
+    readonly project: string;
     readonly number: number;
     readonly closed: ClosedStates;
   }): Effect.Effect<AzureDevOpsWorkItem, IssueTrackerError> =>
@@ -387,6 +400,12 @@ export const make: Effect.Effect<
         (item) => item !== null,
         () => notFound(input.operation),
       ),
+      // `az` addresses a work item by organization and id alone, so one from another project
+      // answers too; the scope names a project, and an item outside it is not this scope's.
+      Effect.filterOrFail(
+        (item) => item.project?.toLowerCase() === input.project.toLowerCase(),
+        () => notFound(input.operation),
+      ),
     );
 
   /** The work item as `az` addresses it, or a not-found for a key that names no id. */
@@ -403,6 +422,7 @@ export const make: Effect.Effect<
       }),
     );
 
+  /** Newest first, so the first page is the current discussion and a cursor leads to older ones. */
   const comments = (input: {
     readonly cwd: string;
     readonly operation: string;
@@ -421,14 +441,40 @@ export const make: Effect.Effect<
         apiVersion: "7.1-preview",
         query: [
           `$top=${PAGE_SIZE}`,
-          "order=asc",
+          "order=desc",
           "$expand=reactions",
           "api-version=7.1-preview.4",
           ...(input.cursor === undefined ? [] : [`continuationToken=${input.cursor}`]),
         ],
       }),
       decode: decodeCommentsJson,
-    });
+    }).pipe(Effect.map((page) => ({ ...page, comments: page.comments.toReversed() })));
+
+  const updates = Effect.fn("AzureDevOpsIssueTracker.updates")(function* (input: {
+    readonly cwd: string;
+    readonly organization: string;
+    readonly project: string;
+    readonly number: number;
+    readonly closed: ClosedStates;
+  }) {
+    const events: IssueEvent[] = [];
+    for (let page = 0; page < UPDATE_PAGE_LIMIT; page += 1) {
+      const answer = yield* read({
+        cwd: input.cwd,
+        operation: "getIssue",
+        args: invokeArgs({
+          ...input,
+          resource: "updates",
+          route: [`id=${input.number}`],
+          query: [`$top=${PAGE_SIZE}`, ...(page === 0 ? [] : [`$skip=${page * PAGE_SIZE}`])],
+        }),
+        decode: (raw) => decodeUpdatesJson(raw, input.closed),
+      });
+      events.push(...answer.events);
+      if (answer.count < PAGE_SIZE) break;
+    }
+    return events;
+  });
 
   const linkedPullRequests = (input: {
     readonly cwd: string;
@@ -490,6 +536,7 @@ export const make: Effect.Effect<
     readonly organization: string;
     readonly number: number;
     readonly args: ReadonlyArray<string>;
+    readonly stdin?: string | undefined;
   }) =>
     run({
       cwd: input.cwd,
@@ -506,18 +553,42 @@ export const make: Effect.Effect<
         String(input.number),
         ...input.args,
       ],
+      stdin: input.stdin,
     }).pipe(Effect.asVoid);
 
+  /** A write names its work item by id alone, so the item is first read to be the scope's own. */
+  const owned = (
+    operation: string,
+    cwd: string,
+    scope: { readonly organization: string; readonly project: string; readonly number: number },
+  ) => workItem({ ...scope, cwd, operation, closed: new Set() }).pipe(Effect.as(scope));
+
   /** Azure keeps tags as one `; `-joined field and takes exactly one assignee. */
-  const fieldArgs = (input: {
-    readonly labels?: ReadonlyArray<string> | undefined;
-    readonly assignees?: ReadonlyArray<string> | undefined;
-  }): ReadonlyArray<string> => {
+  const fieldArgs = (
+    operation: string,
+    input: {
+      readonly labels?: ReadonlyArray<string> | undefined;
+      readonly assignees?: ReadonlyArray<string> | undefined;
+    },
+  ): Effect.Effect<ReadonlyArray<string>, IssueTrackerError> => {
+    if ((input.assignees?.length ?? 0) > 1) {
+      return Effect.fail(refused(operation, "An Azure DevOps work item has one assignee at most."));
+    }
     const fields = [
-      ...(input.labels === undefined ? [] : [`System.Tags=${input.labels.join("; ")}`]),
-      ...(input.assignees === undefined ? [] : [`System.AssignedTo=${input.assignees[0] ?? ""}`]),
+      ...(input.labels === undefined ? [] : [["System.Tags", input.labels.join("; ")] as const]),
+      ...(input.assignees === undefined
+        ? []
+        : [["System.AssignedTo", input.assignees[0] ?? ""] as const]),
     ];
-    return fields.length === 0 ? [] : ["--fields", ...fields];
+    // `az` reads `field=@path` as that local file, and a field value has no stdin to go through.
+    if (fields.some(([, value]) => value.startsWith("@"))) {
+      return Effect.fail(
+        refused(operation, "Azure DevOps takes no label or assignee that starts with `@`."),
+      );
+    }
+    return Effect.succeed(
+      fields.length === 0 ? [] : ["--fields", ...fields.map(([name, value]) => `${name}=${value}`)],
+    );
   };
 
   return {
@@ -552,16 +623,16 @@ export const make: Effect.Effect<
         ),
       ),
 
-    listIssues: (input) => {
+    listIssues: Effect.fn("AzureDevOpsIssueTracker.listIssues")(function* (input) {
       const cursor = input.cursor === undefined ? undefined : parseCursor(input.cursor);
       if (cursor === null) {
-        return Effect.fail(
-          refused("listIssues", "The cursor was not one Azure DevOps handed out."),
-        );
+        return yield* refused("listIssues", "The cursor was not one Azure DevOps handed out.");
       }
       const limit = Math.min(Math.max(input.limit, 1), PAGE_SIZE);
       const text = input.query?.trim() ?? "";
-      return scoped("listIssues", input).pipe(
+      const created = input.sort === "created";
+      const dateField = created ? "[System.CreatedDate]" : "[System.ChangedDate]";
+      return yield* scoped("listIssues", input).pipe(
         Effect.flatMap((scope) =>
           closedStates({ ...scope, cwd: input.cwd, operation: "listIssues" }).pipe(
             Effect.map((closed) => ({ scope, closed })),
@@ -584,10 +655,16 @@ export const make: Effect.Effect<
                 stateClause(input.state, closed) +
                 involvementClause(input.involvement) +
                 (text.length === 0 ? "" : ` AND [System.Title] CONTAINS ${quoted(text)}`) +
+                (input.labels ?? [])
+                  .map((label) => ` AND [System.Tags] CONTAINS ${quoted(label)}`)
+                  .join("") +
+                (input.assignee === undefined
+                  ? ""
+                  : ` AND [System.AssignedTo] = ${quoted(input.assignee)}`) +
                 (cursor === undefined
                   ? ""
-                  : ` AND ([System.ChangedDate] < ${quoted(cursor.changedAt)} OR ([System.ChangedDate] = ${quoted(cursor.changedAt)} AND [System.Id] < ${cursor.id}))`) +
-                " ORDER BY [System.ChangedDate] DESC, [System.Id] DESC",
+                  : ` AND (${dateField} < ${quoted(cursor.date)} OR (${dateField} = ${quoted(cursor.date)} AND [System.Id] < ${cursor.id}))`) +
+                ` ORDER BY ${dateField} DESC, [System.Id] DESC`,
             },
           }).pipe(
             Effect.flatMap((raw) => {
@@ -615,13 +692,19 @@ export const make: Effect.Effect<
                     }),
                     decode: (raw) => decodeWorkItemsJson(raw, closed),
                   }).pipe(
-                    Effect.map((items) => {
+                    Effect.map((hydrated) => {
+                      // The cursor is the last row WIQL sorted, so its order is restored.
+                      const position = new Map(ids.map((row, index) => [String(row.id), index]));
+                      const items = hydrated.toSorted(
+                        (left, right) =>
+                          (position.get(left.key) ?? 0) - (position.get(right.key) ?? 0),
+                      );
                       const last = items.at(-1);
                       return {
                         items,
                         nextCursor:
                           ids.length > limit && last !== undefined
-                            ? `${last.updatedAt}|${last.key}`
+                            ? `${created ? last.createdAt : last.updatedAt}|${last.key}`
                             : null,
                       };
                     }),
@@ -630,7 +713,7 @@ export const make: Effect.Effect<
           ),
         ),
       );
-    },
+    }),
 
     getIssue: (input) =>
       target("getIssue", input).pipe(
@@ -645,17 +728,7 @@ export const make: Effect.Effect<
               Effect.all(
                 [
                   comments({ ...scope, cwd: input.cwd, operation: "getIssue" }),
-                  read({
-                    cwd: input.cwd,
-                    operation: "getIssue",
-                    args: invokeArgs({
-                      ...scope,
-                      resource: "updates",
-                      route: [`id=${scope.number}`],
-                      query: [`$top=${PAGE_SIZE}`],
-                    }),
-                    decode: (raw) => decodeUpdatesJson(raw, closed),
-                  }),
+                  updates({ ...scope, cwd: input.cwd, closed }),
                   linkedPullRequests({ cwd: input.cwd, organization: scope.organization, item }),
                 ],
                 { concurrency: 3 },
@@ -678,13 +751,25 @@ export const make: Effect.Effect<
 
     getComments: (input) =>
       target("getComments", input).pipe(
+        // `az` would read a `continuationToken=@path` as that local file.
+        Effect.filterOrFail(
+          () => !input.cursor.startsWith("@"),
+          () => refused("getComments", "The cursor was not one Azure DevOps handed out."),
+        ),
         Effect.flatMap((scope) =>
           comments({ ...scope, cwd: input.cwd, operation: "getComments", cursor: input.cursor }),
         ),
       ),
 
-    create: (input) =>
-      scoped("create", input).pipe(
+    create: (input) => {
+      const title = AzureDevOpsCli.textOption("--title", input.title);
+      const body =
+        input.body.length === 0
+          ? undefined
+          : AzureDevOpsCli.textOption("--description", input.body);
+      // az has one stdin, so a second value read from it goes in a call of its own.
+      const bodyFollows = title.stdin !== undefined && body?.stdin !== undefined;
+      return scoped("create", input).pipe(
         Effect.flatMap((scope) =>
           workItemTypes({ ...scope, cwd: input.cwd, operation: "create" }).pipe(
             Effect.flatMap((types) => {
@@ -692,9 +777,14 @@ export const make: Effect.Effect<
               const type = CREATE_TYPES.find((name) => names.includes(name)) ?? names[0];
               return type === undefined
                 ? Effect.fail(refused("create", "The project offers no work item type to file."))
-                : Effect.succeed({ type, closed: closedStateNames(types) });
+                : fieldArgs("create", {
+                    ...(input.labels.length === 0 ? {} : { labels: input.labels }),
+                    ...(input.assignees.length === 0 ? {} : { assignees: input.assignees }),
+                  }).pipe(
+                    Effect.map((fields) => ({ type, fields, closed: closedStateNames(types) })),
+                  );
             }),
-            Effect.flatMap(({ type, closed }) =>
+            Effect.flatMap(({ type, fields, closed }) =>
               read({
                 cwd: input.cwd,
                 operation: "create",
@@ -710,14 +800,11 @@ export const make: Effect.Effect<
                   scope.project,
                   "--type",
                   type,
-                  "--title",
-                  input.title,
-                  ...(input.body.length === 0 ? [] : ["--description", input.body]),
-                  ...fieldArgs({
-                    ...(input.labels.length === 0 ? {} : { labels: input.labels }),
-                    ...(input.assignees.length === 0 ? {} : { assignees: input.assignees }),
-                  }),
+                  title.arg,
+                  ...(body === undefined || bodyFollows ? [] : [body.arg]),
+                  ...fields,
                 ],
+                stdin: title.stdin ?? body?.stdin,
                 decode: (raw) => decodeWorkItemJson(raw, closed),
               }),
             ),
@@ -725,10 +812,23 @@ export const make: Effect.Effect<
               (item) => item !== null,
               () => unreadable("create", "incomplete-response"),
             ),
+            Effect.tap((item) =>
+              body === undefined || !bodyFollows
+                ? Effect.void
+                : update({
+                    cwd: input.cwd,
+                    operation: "create",
+                    organization: scope.organization,
+                    number: Number(item.key),
+                    args: [body.arg],
+                    stdin: body.stdin,
+                  }),
+            ),
             Effect.map((item) => ({ key: item.key, displayKey: item.displayKey, url: item.url })),
           ),
         ),
-      ),
+      );
+    },
 
     comment: (input) =>
       target("comment", input).pipe(
@@ -750,24 +850,43 @@ export const make: Effect.Effect<
         Effect.asVoid,
       ),
 
-    update: (input) =>
-      target("update", input).pipe(
+    update: (input) => {
+      const texts = [
+        ...(input.title === undefined ? [] : [AzureDevOpsCli.textOption("--title", input.title)]),
+        ...(input.body === undefined
+          ? []
+          : [AzureDevOpsCli.textOption("--description", input.body)]),
+      ];
+      // az has one stdin, so each value read from it needs its own call.
+      const batches =
+        texts.filter((text) => text.stdin !== undefined).length > 1
+          ? texts.map((text) => [text])
+          : [texts];
+      return target("update", input).pipe(
         Effect.flatMap((scope) =>
-          update({
-            ...scope,
-            cwd: input.cwd,
-            operation: "update",
-            args: [
-              ...(input.title === undefined ? [] : ["--title", input.title]),
-              ...(input.body === undefined ? [] : ["--description", input.body]),
-              ...fieldArgs(input),
-            ],
-          }),
+          fieldArgs("update", input).pipe(Effect.map((fields) => ({ scope, fields }))),
         ),
-      ),
+        Effect.tap(({ scope }) => owned("update", input.cwd, scope)),
+        Effect.flatMap(({ scope, fields }) =>
+          Effect.forEach(
+            batches,
+            (batch, index) =>
+              update({
+                ...scope,
+                cwd: input.cwd,
+                operation: "update",
+                args: [...batch.map((text) => text.arg), ...(index === 0 ? fields : [])],
+                stdin: batch.find((text) => text.stdin !== undefined)?.stdin,
+              }),
+            { discard: true },
+          ),
+        ),
+      );
+    },
 
     setState: (input) =>
       target("setState", input).pipe(
+        Effect.flatMap((scope) => owned("setState", input.cwd, scope)),
         Effect.flatMap((scope) =>
           update({
             ...scope,

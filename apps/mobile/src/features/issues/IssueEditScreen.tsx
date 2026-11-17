@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
-import { issueEnvironment } from "../../state/issues";
+import { issueEnvironment, refreshIssueLists } from "../../state/issues";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { PullRequestSheetContent } from "../pull-requests/PullRequestSheetContent";
@@ -47,6 +47,7 @@ export function IssueEditScreen({ route }: StaticScreenProps<IssueEditParams>) {
       setError(failure);
       return;
     }
+    refreshIssueLists(target.environmentId);
     navigation.goBack();
   };
   return (

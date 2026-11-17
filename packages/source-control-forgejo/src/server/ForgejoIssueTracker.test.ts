@@ -37,6 +37,26 @@ function answer(path: string): { readonly stdout: string; readonly stderr?: stri
     case "repos/acme/web/issues/42":
       return { stdout: encode(ISSUE) };
     case "repos/acme/web/issues/42/timeline":
+      // A second page, as an issue with a long history has: a reference from another repository.
+      if (path.endsWith("page=2")) {
+        return {
+          stdout: encode([
+            {
+              id: 5,
+              type: "pull_ref",
+              user: { login: "theo" },
+              created_at: "2026-07-02T03:00:00Z",
+              ref_issue: {
+                number: 50,
+                html_url: "https://forgejo.test:3000/acme/api/pulls/50",
+                repository: { full_name: "acme/api" },
+                pull_request: { merged: true },
+              },
+            },
+          ]),
+        };
+      }
+      if (!path.endsWith("page=1")) return { stdout: "[]" };
       return {
         stdout: encode([
           {
@@ -81,8 +101,6 @@ function answer(path: string): { readonly stdout: string; readonly stderr?: stri
             html_url: "https://forgejo.test:3000/acme/web/issues/42#issuecomment-7",
           },
         ]),
-        stderr:
-          'HTTP/1.1 200\nlink: <https://forgejo.test:3000/api/v1/repos/acme/web/issues/42/comments?page=2>; rel="next"\n',
       };
     case "repos/acme/web/issues/comments/7/reactions":
       return {
@@ -90,6 +108,16 @@ function answer(path: string): { readonly stdout: string; readonly stderr?: stri
           { content: "+1", user: { login: "julius" } },
           { content: "+1", user: { login: "theo" } },
         ]),
+      };
+    case "repos/acme/api/pulls/50":
+      return {
+        stdout: encode({
+          number: 50,
+          title: "fix(api): accept the pasted payload",
+          html_url: "https://forgejo.test:3000/acme/api/pulls/50",
+          state: "closed",
+          merged: true,
+        }),
       };
     case "repos/acme/web/pulls/50":
       return {
@@ -160,7 +188,8 @@ describe("ForgejoIssueTracker", () => {
           assignees: false,
         },
         reactions: [{ content: "eyes", count: 1, actors: ["theo"], viewerHasReacted: false }],
-        commentsCursor: "2",
+        // `/comments` answered with everything it has, so nothing is left to page.
+        commentsCursor: null,
       });
       expect(issue.comments).toEqual([
         {
@@ -176,7 +205,9 @@ describe("ForgejoIssueTracker", () => {
       expect(issue.events.map((event) => [event.kind, event.detail])).toEqual([
         ["labeled", "bug"],
         ["referenced", "#50"],
+        ["referenced", "#50"],
       ]);
+      // The same number in another repository is its own pull request, read from there.
       expect(issue.linkedPullRequests).toEqual([
         {
           repository: "acme/web",
@@ -187,7 +218,65 @@ describe("ForgejoIssueTracker", () => {
           isDraft: true,
           closesIssue: false,
         },
+        {
+          repository: "acme/api",
+          number: 50,
+          title: "fix(api): accept the pasted payload",
+          url: "https://forgejo.test:3000/acme/api/pulls/50",
+          state: "merged",
+          isDraft: false,
+          closesIssue: false,
+        },
       ]);
+    }),
+  );
+
+  it.effect("cuts the unpaged comments into pages and resolves labels past the first page", () =>
+    Effect.gen(function* () {
+      const calls: Array<readonly [string, string, unknown]> = [];
+      const api = yield* tracker((input) => {
+        calls.push([input.method ?? "GET", input.path, input.body]);
+        const [route] = input.path.split("?");
+        if (route === "user") return { stdout: encode({ login: "julius" }) };
+        if (route === "repos/acme/web/issues/42/comments") {
+          return {
+            stdout: encode(
+              Array.from({ length: 51 }, (_, index) => ({
+                id: index + 1,
+                body: `Comment ${index + 1}`,
+                user: { login: "theo" },
+                created_at: "2026-07-02T00:00:00Z",
+                html_url: "",
+              })),
+            ),
+          };
+        }
+        if (route === "repos/acme/web/labels") {
+          return input.path.endsWith("page=1")
+            ? {
+                stdout: encode([{ id: 3, name: "bug" }]),
+                stderr: 'link: <https://forgejo.test:3000/api/v1/x?page=2>; rel="next"\n',
+              }
+            : { stdout: encode([{ id: 9, name: "urgent" }]), stderr: "link: \n" };
+        }
+        return { stdout: "[]" };
+      });
+      const target = { cwd: "/w", host: "forgejo.test:3000", scope: "acme/web", key: "42" };
+      const page = yield* api.getComments({ ...target, cursor: "2" });
+      expect(page.comments.map((comment) => comment.id)).toEqual(["51"]);
+      expect(page.nextCursor).toBeNull();
+      expect(calls[1]?.[1]).toBe("repos/acme/web/issues/42/comments");
+
+      calls.length = 0;
+      yield* api.update!({ ...target, labels: ["bug", "urgent"] });
+      expect(calls.at(-1)).toEqual(["PUT", "repos/acme/web/issues/42/labels", { labels: [3, 9] }]);
+      // A name the repository lacks refuses the save before anything is written.
+      calls.length = 0;
+      const error = yield* Effect.flip(
+        api.update!({ ...target, title: "Renamed", labels: ["bug", "missing"] }),
+      );
+      expect(error.reason).toBe("failed");
+      expect(calls.map(([method]) => method)).toEqual(["GET", "GET"]);
     }),
   );
 
@@ -207,11 +296,44 @@ describe("ForgejoIssueTracker", () => {
         state: "open",
         involvement: "authored",
         viewer: "julius",
+        sort: "updated",
         limit: 50,
         cursor: "2",
       });
+      // Forgejo matches any of the labels it is sent, so a row missing one is dropped here.
+      const filtered = yield* api.listIssues({
+        cwd: "/w",
+        host: "forgejo.test:3000",
+        scope: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "julius",
+        labels: ["bug", "p1"],
+        assignee: "theo",
+        sort: "created",
+        limit: 50,
+      });
+      expect(filtered.items).toEqual([]);
+      // One `assigned_by` cannot name two people: "assigned to me" is kept by dropping rows here.
+      const mine = {
+        cwd: "/w",
+        host: "forgejo.test:3000",
+        scope: "acme/web",
+        state: "open",
+        involvement: "assigned",
+        assignee: "theo",
+        sort: "created",
+        limit: 50,
+      } as const;
+      expect((yield* api.listIssues({ ...mine, viewer: "julius" })).items).toEqual([]);
+      expect(
+        (yield* api.listIssues({ ...mine, viewer: "Theo" })).items.map((item) => item.key),
+      ).toEqual(["42"]);
       expect(paths).toEqual([
         "repos/acme/web/issues?type=issues&state=open&sort=recentupdate&created_by=julius&limit=50&page=2",
+        "repos/acme/web/issues?type=issues&state=open&sort=latest&labels=bug%2Cp1&assigned_by=theo&limit=50&page=1",
+        "repos/acme/web/issues?type=issues&state=open&sort=latest&assigned_by=theo&limit=50&page=1",
+        "repos/acme/web/issues?type=issues&state=open&sort=latest&assigned_by=theo&limit=50&page=1",
       ]);
       expect(page.items.map((item) => item.key)).toEqual(["42"]);
       // No `Link` header at all means the server may still have more; a full page carries on.

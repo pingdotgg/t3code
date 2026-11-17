@@ -4,6 +4,8 @@ import type {
   IssueListEntry,
   IssueListProjectError,
   IssueListResult,
+  IssueListSort,
+  IssueScopeRef,
   IssueTrackerSummary,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
@@ -60,6 +62,11 @@ export function holdIssuePages(
   return next;
 }
 
+/** The cursors of one tracker host, so its "Load more" leaves the other trackers where they are. */
+export function issueCursorsForHost(cursors: IssueListCursors, host: string): IssueListCursors {
+  return Object.fromEntries(Object.entries(cursors).filter(([key]) => key.startsWith(`${host} `)));
+}
+
 /**
  * Lays the next page over the rows held; a failure keeps them and says why. `asked` is the
  * cursors the page was asked to carry on: only those move, and what an earlier continuation
@@ -86,10 +93,18 @@ export function continueIssuePage(
   };
 }
 
+/** Newest first by the date the trackers were asked to sort on, so merged rows keep that order. */
+export function issueOrder(sort: IssueListSort) {
+  const date = (issue: IssueListEntry) =>
+    Date.parse(sort === "created" ? issue.createdAt : issue.updatedAt);
+  return (left: IssueListEntry, right: IssueListEntry) => date(right) - date(left);
+}
+
 export function groupIssues(
   held: ReadonlyMap<EnvironmentId, HeldIssuePage>,
   query: string,
   projects: ReadonlyArray<EnvironmentProject>,
+  sort: IssueListSort = "updated",
 ) {
   const byTracker = new Map<
     string,
@@ -138,10 +153,67 @@ export function groupIssues(
       group?.errors.push({ ...error, environmentId });
     }
   }
-  for (const group of byTracker.values()) {
-    group.rows.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
-  }
+  for (const group of byTracker.values()) group.rows.sort(issueOrder(sort));
   return [...byTracker.values()].sort((a, b) =>
     issueTrackerKey(a.tracker).localeCompare(issueTrackerKey(b.tracker)),
   );
+}
+
+/** The scopes whose labels and people a list filter offers, each reached through one project. */
+export function issueFilterScopes(
+  held: ReadonlyMap<EnvironmentId, HeldIssuePage>,
+  projects: ReadonlyArray<EnvironmentProject>,
+) {
+  const scopes: Array<{ readonly environmentId: EnvironmentId; readonly input: IssueScopeRef }> =
+    [];
+  for (const [environmentId, page] of held) {
+    for (const project of projects) {
+      if (project.environmentId !== environmentId) continue;
+      const identity = project.repositoryIdentity;
+      const kind = identity?.provider as SourceControlProviderKind | undefined;
+      const scope = sourceControlClients.issueScope(identity);
+      if (!identity || !kind || scope === null) continue;
+      const host = sourceControlClients.changeRequestHost(identity, kind);
+      const tracker = page.answer.trackers.find(
+        (t) => String(t.tracker) === kind && t.host.toLowerCase() === host.toLowerCase(),
+      );
+      if (!tracker?.configured || tracker.capabilities === null) continue;
+      if (
+        scopes.some(
+          (s) => s.input.scope.toLowerCase() === scope.toLowerCase() && s.input.host === host,
+        )
+      )
+        continue;
+      scopes.push({
+        environmentId,
+        input: { projectId: project.id, tracker: tracker.tracker, host, scope },
+      });
+    }
+    // A tracker bound in settings (a Linear team) is no repository's; its rows name its scope.
+    for (const entry of page.entries) {
+      const tracker = page.answer.trackers.find(
+        (t) => t.tracker === entry.tracker && t.host.toLowerCase() === entry.host.toLowerCase(),
+      );
+      if (!tracker?.configured) continue;
+      if (!tracker.capabilities?.labels && !tracker.capabilities?.assignees) continue;
+      if (
+        scopes.some(
+          (s) =>
+            s.input.scope.toLowerCase() === entry.scope.toLowerCase() &&
+            s.input.host?.toLowerCase() === entry.host.toLowerCase(),
+        )
+      )
+        continue;
+      scopes.push({
+        environmentId,
+        input: {
+          projectId: entry.projectId,
+          tracker: entry.tracker,
+          host: entry.host,
+          scope: entry.scope,
+        },
+      });
+    }
+  }
+  return scopes;
 }

@@ -37,6 +37,15 @@ export const CyclePeriod = Schema.Literals(["after", "before", "during"])
 export type CyclePeriod = typeof CyclePeriod.Type
 
 /**
+ * By which field should the pagination order by
+ *
+ * - `createdAt`
+ * - `updatedAt`
+ */
+export const PaginationOrderBy = Schema.Literals(["createdAt", "updatedAt"])
+export type PaginationOrderBy = typeof PaginationOrderBy.Type
+
+/**
  * The type of a release pipeline, which determines how releases are created and managed. Continuous pipelines create a new completed release for each sync. Scheduled pipelines accumulate issues into a started release that is explicitly completed.
  *
  * - `continuous`

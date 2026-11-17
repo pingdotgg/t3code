@@ -58,6 +58,8 @@ export const ForgejoTimelineEntry = Schema.Struct({
       Schema.Struct({
         number: Schema.Int,
         html_url: Schema.String,
+        /** Where the citing issue or pull request lives, which need not be this repository. */
+        repository: Schema.optional(Schema.NullOr(Schema.Struct({ full_name: Schema.String }))),
         pull_request: Schema.optional(Schema.NullOr(Schema.Struct({ merged: Schema.Boolean }))),
       }),
     ),
