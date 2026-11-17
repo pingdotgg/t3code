@@ -155,12 +155,14 @@ function withProbeForceKill(command: ChildProcess.Command): ChildProcess.Command
 export const spawnAndCollect = Effect.fn("snapshotProbe.spawnAndCollect")(function* (
   binaryPath: string,
   command: ChildProcess.Command,
+  options?: { readonly maxStdoutBytes: number },
 ) {
+  const maxStdoutBytes = options?.maxStdoutBytes ?? MAX_PROBE_OUTPUT_BYTES;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const child = yield* spawner.spawn(withProbeForceKill(command));
   const [stdout, stderr, exitCode] = yield* Effect.all(
     [
-      collectUint8StreamText({ stream: child.stdout, maxBytes: MAX_PROBE_OUTPUT_BYTES }),
+      collectUint8StreamText({ stream: child.stdout, maxBytes: maxStdoutBytes }),
       collectUint8StreamText({ stream: child.stderr, maxBytes: MAX_PROBE_OUTPUT_BYTES }),
       child.exitCode.pipe(Effect.map(Number)),
     ],
@@ -171,7 +173,7 @@ export const spawnAndCollect = Effect.fn("snapshotProbe.spawnAndCollect")(functi
   if (oversized !== undefined) {
     return yield* new ProviderProbeOutputLimitError({
       stream: oversized,
-      maxBytes: MAX_PROBE_OUTPUT_BYTES,
+      maxBytes: oversized === "stdout" ? maxStdoutBytes : MAX_PROBE_OUTPUT_BYTES,
     });
   }
   const result: CommandResult = { stdout: stdout.text, stderr: stderr.text, code: exitCode };
