@@ -5,6 +5,7 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  OrchestrationV2Notification,
   ProjectFactId,
   ProjectId,
   ProviderInstanceId,
@@ -18,6 +19,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodeURL from "node:url";
 import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -38,7 +40,7 @@ const RECALL_TIMEOUT = "1 second";
 const GATES = [
   "hand_picked",
   "slash",
-  "not_substantive",
+  "progress_notice",
   "allowance",
   "kernel_unavailable",
   "no_match",
@@ -59,6 +61,7 @@ export interface ReplayOptions {
   readonly project?: string;
   readonly factCount?: number;
   readonly limit?: number;
+  readonly candidateLimit?: number;
 }
 
 interface NormalizedFact {
@@ -78,6 +81,8 @@ interface NormalizedMessage {
   readonly threadId: string;
   readonly createdBy: string;
   readonly text: string;
+  readonly notification?: OrchestrationV2Notification;
+  readonly noticeKind: string | null;
 }
 
 export interface ReplayRow {
@@ -85,12 +90,15 @@ export interface ReplayRow {
   readonly projectId: string;
   readonly threadId: string;
   readonly createdBy: string;
+  readonly noticeKind: string | null;
   readonly characters: number;
   readonly gate: string;
   readonly deliveredFactIds: ReadonlyArray<string>;
+  readonly top: ReadonlyArray<{ readonly factId: string }>;
   readonly wallMs: number;
   readonly candidatesMs: number | null;
   readonly scoringMs: number | null;
+  readonly statsMs: number | null;
   readonly resolveMs: number | null;
   readonly seenMs: number | null;
 }
@@ -176,11 +184,12 @@ export const parseReplayArgs = (argv: ReadonlyArray<string>): ReplayOptions => {
   const out = read("--out");
   if (!factsPath || !messagesPath || !out)
     throw new Error(
-      "Usage: replay-project-memory.ts --facts <facts.json> --messages <msgs.json> --out <dir> [--project <id>] [--fact-count <n>] [--limit <n>]",
+      "Usage: replay-project-memory.ts --facts <facts.json> --messages <msgs.json> --out <dir> [--project <id>] [--fact-count <n>] [--limit <n>] [--candidate-limit <n>]",
     );
   const project = read("--project");
   const factCount = positiveInteger("--fact-count", read("--fact-count"));
   const limit = positiveInteger("--limit", read("--limit"));
+  const candidateLimit = positiveInteger("--candidate-limit", read("--candidate-limit"));
   return {
     facts: factsPath,
     messages: messagesPath,
@@ -188,6 +197,7 @@ export const parseReplayArgs = (argv: ReadonlyArray<string>): ReplayOptions => {
     ...(project ? { project } : {}),
     ...(factCount === undefined ? {} : { factCount }),
     ...(limit === undefined ? {} : { limit }),
+    ...(candidateLimit === undefined ? {} : { candidateLimit }),
   };
 };
 
@@ -235,6 +245,8 @@ const normalizeFact = (value: unknown): NormalizedFact => {
   };
 };
 
+const decodeNotification = Schema.decodeUnknownSync(OrchestrationV2Notification);
+
 const messageText = (row: Record<string, unknown>): { text: string; createdBy: string } => {
   if (typeof row.text === "string") {
     const createdBy =
@@ -261,12 +273,26 @@ const normalizeMessage = (value: unknown): NormalizedMessage => {
   if (typeof row.project_id !== "string" || typeof row.thread_id !== "string")
     throw new Error(`message ${row.message_id} is missing project_id or thread_id`);
   const { text, createdBy } = messageText(row);
+  const payload =
+    typeof row.payload_json === "string" ? JSON.parse(row.payload_json) : row.payload_json;
+  const body = typeof payload === "object" && payload !== null ? payload : row;
+  const raw = (body as Record<string, unknown>).notification;
+  let notification: NormalizedMessage["notification"];
+  if (raw !== undefined) {
+    try {
+      notification = decodeNotification(raw);
+    } catch {
+      notification = undefined;
+    }
+  }
   return {
     messageId: row.message_id,
     projectId: row.project_id,
     threadId: row.thread_id,
     createdBy,
     text,
+    ...(notification === undefined ? {} : { notification }),
+    noticeKind: notification?.source.kind ?? null,
   };
 };
 
@@ -398,6 +424,7 @@ export const summarizeReplay = (
     stageMs: {
       candidates: stage((row) => row.candidatesMs),
       scoring: stage((row) => row.scoringMs),
+      stats: stage((row) => row.statsMs),
       resolve: stage((row) => row.resolveMs),
       seen: stage((row) => row.seenMs),
     },
@@ -529,8 +556,8 @@ const recallGate = (outcome: ProjectKnowledge.RecallOutcome): (typeof GATES)[num
           return "slash";
         case "hand_attached":
           return "hand_picked";
-        case "not_substantive":
-          return "not_substantive";
+        case "progress_notice":
+          return "progress_notice";
         case "no_budget":
           return "allowance";
         case "no_match":
@@ -632,7 +659,10 @@ const loadFacts = Effect.fn("replay.loadFacts")(function* (
   return facts.length;
 });
 
-const measureMessage = Effect.fn("replay.measureMessage")(function* (message: NormalizedMessage) {
+const measureMessage = Effect.fn("replay.measureMessage")(function* (
+  message: NormalizedMessage,
+  candidateLimit: number | undefined,
+) {
   const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
   spans.length = 0;
   const started = performance.now();
@@ -642,6 +672,8 @@ const measureMessage = Effect.fn("replay.measureMessage")(function* (message: No
       threadId: ThreadId.make(message.threadId),
       requestId: CommandId.make(`memory-recall:${message.messageId}`),
       query: message.text,
+      ...(message.notification === undefined ? {} : { notification: message.notification }),
+      ...(candidateLimit === undefined ? {} : { candidateLimit }),
       composer: { text: message.text, records: [] },
       knowledgeAllowance: KNOWLEDGE_ALLOWANCE,
     })
@@ -652,15 +684,19 @@ const measureMessage = Effect.fn("replay.measureMessage")(function* (message: No
     projectId: message.projectId,
     threadId: message.threadId,
     createdBy: message.createdBy,
+    noticeKind: message.noticeKind,
     characters: message.text.length,
     gate: recallGate(outcome),
     deliveredFactIds: deliveredFactIds(outcome),
+    top: outcome._tag === "Omitted" ? [] : (outcome.top ?? []),
     wallMs,
     candidatesMs:
       stageMs("ProjectKnowledgeStore.recallCandidates") ??
       stageMs("ProjectKnowledgeStore.candidates"),
     scoringMs: stageMs("HolographicMemory.scoreCandidates"),
-    resolveMs: stageMs("ProjectKnowledge.resolveMatches"),
+    statsMs: stageMs("ProjectKnowledgeStore.termStats"),
+    resolveMs:
+      stageMs("ProjectKnowledge.resolveForTurn") ?? stageMs("ProjectKnowledge.resolveMatches"),
     seenMs: stageMs("ProjectKnowledgeStore.seenFactIds"),
   };
   return row;
@@ -699,7 +735,8 @@ export const replayProjectMemory = Effect.fn("replay.projectMemory")(function* (
         .pipe(Effect.provideService(Tracer.Tracer, tracer));
     }
     const rows: ReplayRow[] = [];
-    for (const message of corpus.messages) rows.push(yield* measureMessage(message));
+    for (const message of corpus.messages)
+      rows.push(yield* measureMessage(message, options.candidateLimit));
     return { loaded, rows };
   }).pipe(Effect.provide(knowledgeLayer(dbPath)));
   const summary = summarizeReplay(produced.rows, {

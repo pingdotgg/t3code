@@ -2286,6 +2286,89 @@ it.effect("recall keeps the most trusted fact when more than the bound match equ
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("recall does not score with the holographic kernel", () =>
+  Effect.gen(function* () {
+    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+    const projectId = ProjectId.make("recall-no-kernel");
+    yield* createProject(projectId);
+    yield* knowledge.mutate(createFact(projectId), { kind: "user" });
+    const query = "Change cache keys to include tenant IDs.";
+    const outcome = yield* knowledge.recall({
+      projectId,
+      threadId: ThreadId.make("recall-no-kernel"),
+      requestId: CommandId.make("recall-no-kernel"),
+      query,
+      composer: { text: query, records: [] },
+      knowledgeAllowance: 48000,
+    });
+    assert.deepEqual(attachedFactIds(outcome), [ProjectFactId.make("fact-one")]);
+  }).pipe(
+    Effect.provide(
+      knowledgeTestLayer(
+        Layer.succeed(HolographicMemory.HolographicMemory, {
+          scoreCandidates: () => Effect.die("recall must not call HolographicMemory"),
+        }),
+      ),
+    ),
+  ),
+);
+
+it.effect("recall preserves trust order for equally covered eligible near-duplicates", () =>
+  Effect.gen(function* () {
+    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+    const sql = yield* SqlClient.SqlClient;
+    const projectId = ProjectId.make("recall-near-duplicates");
+    yield* createProject(projectId);
+    const duplicate = "Ship the ledger labs toggle for billing.";
+    for (let index = 0; index < 40; index += 1) {
+      const id = `dup-${index.toString().padStart(2, "0")}`;
+      yield* knowledge.mutate(
+        {
+          ...createFact(projectId, id),
+          content: duplicate,
+          entities: [],
+          tags: [],
+        },
+        { kind: "user" },
+      );
+    }
+    yield* knowledge.mutate(
+      {
+        ...createFact(projectId, "current"),
+        content: "The ledger labs toggle gates billing.",
+        entities: ["ledger labs"],
+        tags: [],
+      },
+      { kind: "user" },
+    );
+    for (let index = 0; index < 200; index += 1)
+      yield* knowledge.mutate(
+        {
+          ...createFact(projectId, `pad-${index}`),
+          content: `Unrelated padding subject ${index} about alphabets and gardens.`,
+          entities: [],
+          tags: [],
+        },
+        { kind: "user" },
+      );
+    yield* sql`UPDATE project_knowledge_facts SET trust = 0.9 WHERE project_id = ${projectId} AND id LIKE 'dup-%'`;
+    yield* sql`UPDATE project_knowledge_facts SET trust = 0.51 WHERE project_id = ${projectId} AND id = 'current'`;
+    const query = "Ship the ledger labs toggle for billing.";
+    const outcome = yield* knowledge.recall({
+      projectId,
+      threadId: ThreadId.make("recall-near-duplicates"),
+      requestId: CommandId.make("recall-near-duplicates"),
+      query,
+      composer: { text: query, records: [] },
+      knowledgeAllowance: 48000,
+    });
+    assert.deepEqual(attachedFactIds(outcome), [
+      ProjectFactId.make("dup-00"),
+      ProjectFactId.make("dup-01"),
+    ]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect(
   "recall attaches an older fact when closer matches were shown or came from this thread",
   () =>
@@ -2312,6 +2395,7 @@ it.effect(
               ...createFact(projectId, factId),
               commandId: CommandId.make(`create:${factId}`),
               content: longer,
+              entities: [],
             },
             { kind: "user" },
           );
@@ -2323,11 +2407,14 @@ it.effect(
       const shownProject = ProjectId.make("recall-older-shown");
       const shownThread = ThreadId.make("recall-older-shown");
       const shownTarget = yield* saveOlderTarget(shownProject);
-      const shownIds = Array.from({ length: 45 }, (_, index) =>
+      const shownIds = Array.from({ length: 130 }, (_, index) =>
         ProjectFactId.make(`shown-${index.toString().padStart(2, "0")}`),
       );
       for (const factId of shownIds)
-        yield* knowledge.mutate(createFact(shownProject, factId), { kind: "user" });
+        yield* knowledge.mutate(
+          { ...createFact(shownProject, factId), entities: [] },
+          { kind: "user" },
+        );
       yield* knowledge.recordViews(shownProject, shownThread, shownIds);
       assert.deepEqual(
         attachedFactIds(yield* recallTarget(shownProject, shownThread, "recall-older-shown")),
@@ -2347,10 +2434,11 @@ it.effect(
         messageId: MessageId.make("recall-older-cited-message"),
       });
       if (source.state !== "available") return yield* Effect.die("source unavailable");
-      for (let index = 0; index < 45; index++)
+      for (let index = 0; index < 130; index++)
         yield* knowledge.mutate(
           {
             ...createFact(citedProject, `cited-${index.toString().padStart(2, "0")}`),
+            entities: [],
             sources: [source.source],
           },
           { kind: "user" },
@@ -2368,10 +2456,11 @@ it.effect(
         threadId: originThread,
         providerInstanceId,
       };
-      for (let index = 0; index < 45; index++)
+      for (let index = 0; index < 130; index++)
         yield* knowledge.mutate(
           {
             ...createFact(originProject, `origin-${index.toString().padStart(2, "0")}`),
+            entities: [],
             sources: [],
           },
           origin,
@@ -3377,12 +3466,10 @@ it.effect(
 );
 
 it.effect("does not consider a newer fact that shares no term with the recall query", () => {
-  const considered: string[] = [];
   const scoring = Layer.succeed(HolographicMemory.HolographicMemory, {
     scoreCandidates: (input) =>
-      Effect.sync(() => {
-        considered.push(...input.candidates.map((candidate) => candidate.id));
-        return input.candidates.map((candidate) => ({
+      Effect.sync(() =>
+        input.candidates.map((candidate) => ({
           id: candidate.id,
           rawCosine: 1,
           holographic: 1,
@@ -3393,8 +3480,8 @@ it.effect("does not consider a newer fact that shares no term with the recall qu
           tokenOverlap: 1,
           fts: 1,
           coverage: 1,
-        }));
-      }),
+        })),
+      ),
   });
   return Effect.gen(function* () {
     const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
@@ -3413,7 +3500,7 @@ it.effect("does not consider a newer fact that shares no term with the recall qu
       { kind: "user" },
     );
     const query = "Change cache keys to include tenant IDs.";
-    yield* knowledge.recall({
+    const outcome = yield* knowledge.recall({
       projectId,
       threadId: ThreadId.make("recall-bounded"),
       requestId: CommandId.make("recall-bounded"),
@@ -3421,6 +3508,8 @@ it.effect("does not consider a newer fact that shares no term with the recall qu
       composer: { text: query, records: [] },
       knowledgeAllowance: 48000,
     });
+    const considered =
+      outcome._tag === "Omitted" ? [] : (outcome.top ?? []).map((item) => item.factId);
     assert.include(considered, "matching");
     assert.notInclude(considered, "newer-unrelated");
     const searched = yield* knowledge.search({
@@ -3567,4 +3656,272 @@ it.effect(
         [],
       );
     }).pipe(Effect.provide(knowledgeTestLayer(HolographicMemory.layer, true))),
+);
+
+const isolatedFact = (
+  projectId: ProjectId,
+  id: string,
+  content: string,
+): ProjectKnowledgeMutation => ({
+  ...createFact(projectId, id),
+  content,
+  entities: [],
+  tags: [],
+});
+const recallIdsFor = (
+  knowledge: ProjectKnowledge.ProjectKnowledge["Service"],
+  projectId: ProjectId,
+  query: string,
+  request: string,
+) =>
+  knowledge
+    .recall({
+      projectId,
+      threadId: ThreadId.make(request),
+      requestId: CommandId.make(request),
+      query,
+      composer: { text: query, records: [] },
+      knowledgeAllowance: 48000,
+    })
+    .pipe(Effect.map(attachedFactIds));
+it.effect("recall in one project depends on facts saved in other projects", () =>
+  Effect.gen(function* () {
+    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+    const seed = (projectId: ProjectId) =>
+      Effect.gen(function* () {
+        yield* createProject(projectId);
+        yield* knowledge.mutate(
+          isolatedFact(
+            projectId,
+            `${projectId}-target`,
+            "React component props must be memoized before passing callbacks to list rows.",
+          ),
+          { kind: "user" },
+        );
+        for (let i = 0; i < 20; i++)
+          yield* knowledge.mutate(
+            isolatedFact(
+              projectId,
+              `${projectId}-pad-${i}`,
+              `Deploy note ${i}: rotate gardens alphabet.`,
+            ),
+            { kind: "user" },
+          );
+      });
+    const query =
+      "Why does the list row rerender? Check whether React component props callbacks are memoized.";
+    const alone = ProjectId.make("op-alone");
+    yield* seed(alone);
+    const before = yield* recallIdsFor(knowledge, alone, query, "alone-before");
+    // Another project on the same server saves many React notes.
+    const other = ProjectId.make("op-other-web-app");
+    yield* createProject(other);
+    for (let i = 0; i < 400; i++)
+      yield* knowledge.mutate(
+        isolatedFact(
+          other,
+          `other-${i}`,
+          `React component ${i} props callbacks list rows memoized rerender check ${i}.`,
+        ),
+        { kind: "user" },
+      );
+    const after = yield* recallIdsFor(knowledge, alone, query, "alone-after");
+    assert.deepEqual(before, [ProjectFactId.make("op-alone-target")]);
+    assert.deepEqual(after, before);
+    const tiedProject = ProjectId.make("isolated-ties");
+    yield* createProject(tiedProject);
+    const contents = ["cobalt kestrel lantern", "orchard harbor willow", "violet copper quartz"];
+    for (const [index, content] of contents.entries())
+      yield* knowledge.mutate(isolatedFact(tiedProject, `tie-${index}`, content), { kind: "user" });
+    const tiedQuery = contents.join(" ");
+    const tiedBefore = yield* recallIdsFor(knowledge, tiedProject, tiedQuery, "ties-before");
+    assert.equal(tiedBefore.length, 2);
+    const tiedOther = ProjectId.make("isolated-ties-other");
+    yield* createProject(tiedOther);
+    for (let i = 0; i < 100; i++)
+      yield* knowledge.mutate(isolatedFact(tiedOther, `foreign-tie-${i}`, contents[0]!), {
+        kind: "user",
+      });
+    const tiedAfter = yield* recallIdsFor(knowledge, tiedProject, tiedQuery, "ties-after");
+    assert.deepEqual(tiedAfter, tiedBefore);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("superseded history changes recall of identical active facts", () =>
+  Effect.gen(function* () {
+    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+    const target = "The quokka telemetry exporter batches spans before flushing to the collector.";
+    const query =
+      "Why does the quokka telemetry exporter batch spans before flushing to the collector?";
+    const fresh = ProjectId.make("op-fresh");
+    yield* createProject(fresh);
+    yield* knowledge.mutate(isolatedFact(fresh, "fresh-target", target), { kind: "user" });
+    for (let i = 0; i < 40; i++)
+      yield* knowledge.mutate(
+        isolatedFact(fresh, `fresh-pad-${i}`, `Garden note ${i} about alphabets.`),
+        {
+          kind: "user",
+        },
+      );
+    const freshOut = yield* recallIdsFor(knowledge, fresh, query, "fresh");
+    assert.deepEqual(freshOut, [ProjectFactId.make("fresh-target")]);
+    // Wipe so the two runs see the same corpus apart from history.
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`DELETE FROM project_knowledge_facts WHERE project_id = ${fresh}`;
+
+    const hist = ProjectId.make("op-history");
+    yield* createProject(hist);
+    let current = yield* knowledge.mutate(isolatedFact(hist, "v0", target), { kind: "user" });
+    for (let i = 1; i <= 6; i++)
+      current = yield* knowledge.mutate(
+        {
+          action: "supersede",
+          commandId: CommandId.make(`supersede:${i}`),
+          projectId: hist,
+          factId: current.id,
+          expectedRevision: current.revision,
+          replacementFactId: ProjectFactId.make(`v${i}`),
+          content: `${target} (rev ${i})`,
+          entities: [],
+          tags: [],
+          kind: "decision",
+          sources: [{ kind: "user" }],
+        },
+        { kind: "user" },
+      );
+    for (let i = 0; i < 40; i++)
+      yield* knowledge.mutate(
+        isolatedFact(hist, `hist-pad-${i}`, `Garden note ${i} about alphabets.`),
+        {
+          kind: "user",
+        },
+      );
+    const histOut = yield* recallIdsFor(knowledge, hist, query, "history");
+
+    assert.deepEqual(histOut, ["v6"]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("lost-source fact outranks a valid one", () =>
+  Effect.gen(function* () {
+    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const projectId = ProjectId.make("lost-recall");
+    yield* createProject(projectId);
+    const threadId = ThreadId.make("src-thread");
+    const messageId = MessageId.make("src-message");
+    yield* projections.apply(thread(threadId, projectId));
+    yield* projections.apply(message(threadId, messageId, "assistant", "ledger decision"));
+    const source = yield* knowledge.readSource({ projectId, threadId, messageId });
+    if (source.state !== "available") return yield* Effect.die("source unavailable");
+    const content = "The ledger labs toggle gates billing changes for invoices.";
+    yield* knowledge.mutate(
+      {
+        ...createFact(projectId, "lost"),
+        content,
+        entities: ["ledger labs"],
+        tags: [],
+        sources: [source.source],
+      },
+      { kind: "user" },
+    );
+    yield* knowledge.mutate(
+      { ...createFact(projectId, "valid"), content, entities: ["ledger labs"], tags: [] },
+      { kind: "user" },
+    );
+    for (let i = 0; i < 40; i += 1)
+      yield* knowledge.mutate(
+        {
+          ...createFact(projectId, `pad-${i}`),
+          content: `Unrelated padding subject ${i} about alphabets and gardens.`,
+          entities: [],
+          tags: [],
+        },
+        { kind: "user" },
+      );
+    yield* sql`UPDATE project_knowledge_facts SET trust = 0.9 WHERE id = 'lost'`;
+    yield* sql`UPDATE project_knowledge_facts SET trust = 0.6 WHERE id = 'valid'`;
+    const run = (id: string) =>
+      knowledge.recall({
+        projectId,
+        threadId: ThreadId.make("t-" + id),
+        requestId: CommandId.make("r-" + id),
+        query: content,
+        composer: { text: content, records: [] },
+        knowledgeAllowance: 48000,
+      });
+    const before = yield* run("before");
+    assert.deepEqual(attachedFactIds(before), [
+      ProjectFactId.make("lost"),
+      ProjectFactId.make("valid"),
+    ]);
+    const archivedThread = yield* projections.getThreadRecords(threadId, []);
+    yield* projections.apply({
+      id: EventId.make("arch"),
+      threadId,
+      type: "thread.archived",
+      occurredAt: at(5),
+      payload: { ...archivedThread.thread, archivedAt: at(5) },
+    });
+    const after = yield* run("after");
+    assert.deepEqual(attachedFactIds(after), [ProjectFactId.make("valid")]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "recall uses exact terms before the candidate bound and forwards watch notifications",
+  () =>
+    Effect.gen(function* () {
+      const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+      const projectId = ProjectId.make("exact-recall");
+      yield* createProject(projectId);
+      const query = "cobalt lantern kestrel";
+      yield* knowledge.mutate(
+        isolatedFact(projectId, "exact", `${query} ${"garden ".repeat(500)}`),
+        { kind: "user" },
+      );
+      for (let i = 0; i < 130; i++)
+        yield* knowledge.mutate(
+          isolatedFact(projectId, `prefix-${i}`, "cobalts lanterns kestrels"),
+          { kind: "user" },
+        );
+      const input = {
+        projectId,
+        threadId: ThreadId.make("exact-reader"),
+        requestId: CommandId.make("exact-read"),
+        query,
+        composer: { text: query, records: [] },
+        knowledgeAllowance: 48000,
+      };
+      assert.deepEqual(attachedFactIds(yield* knowledge.recall(input)), [
+        ProjectFactId.make("exact"),
+      ]);
+      assert.deepEqual(
+        attachedFactIds(
+          yield* knowledge.recall({
+            ...input,
+            notification: {
+              source: { kind: "monitor" },
+              outcome: "completed",
+              summary: "Checks finished",
+            },
+          }),
+        ),
+        [],
+      );
+      assert.deepEqual(
+        attachedFactIds(
+          yield* knowledge.recall({
+            ...input,
+            notification: {
+              source: { kind: "command" },
+              outcome: "completed",
+              summary: "Command finished",
+            },
+          }),
+        ),
+        [],
+      );
+    }).pipe(Effect.provide(layerTest)),
 );
