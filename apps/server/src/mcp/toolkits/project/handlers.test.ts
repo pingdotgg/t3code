@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -651,6 +652,11 @@ it.effect("an agent cannot register a worktree of a registered project as its ow
     expect((yield* register(worktree)).at(-1)?.result).toMatchObject({
       code: "invalid_request",
     });
+    expect(
+      (yield* register("~/feature").pipe(
+        Effect.provideService(HostProcess.HomeDirectory, root),
+      )).at(-1)?.result,
+    ).toMatchObject({ code: "invalid_request" });
     yield* register(outside);
     yield* register(subfolder);
     expect(created.map((create) => create.workspaceRoot)).toEqual([outside, subfolder]);

@@ -32,6 +32,8 @@ import {
   resolveProjectSettings,
 } from "@t3tools/shared/projectSettings";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -101,8 +103,10 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
 
 /** A linked worktree of a registered checkout belongs to that project; registering it duplicates it. */
 const assertNotProjectWorktree = Effect.fn("mcp.assertNotProjectWorktree")(function* (
-  workspaceRoot: string,
+  requestedRoot: string,
 ) {
+  // Project creation expands `~`, so the check must see the same folder.
+  const workspaceRoot = expandHomePath(requestedRoot.trim(), yield* HostProcess.HomeDirectory);
   const git = yield* GitVcsDriver.GitVcsDriver;
   const fileSystem = yield* FileSystem.FileSystem;
   const real = (path: string) => fileSystem.realPath(path).pipe(Effect.orElseSucceed(() => path));
