@@ -130,6 +130,13 @@ describe("provider update launch notification logic", () => {
     ).toBe(true);
   });
 
+  it("offers one-click updates for a managed runtime that has no shell command", () => {
+    const candidate = updateCandidate({ driver: driver("antigravity"), updateCommand: null });
+
+    expect(canOneClickUpdateProviderCandidate(candidate, [candidate])).toBe(true);
+    expect(isProviderSettingsUpdateCandidate(candidate)).toBe(true);
+  });
+
   it("keeps the inline update action available while a provider update is already running", () => {
     const candidate = updateCandidate({
       driver: driver("codex"),

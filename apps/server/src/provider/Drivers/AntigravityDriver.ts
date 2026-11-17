@@ -192,10 +192,20 @@ export const AntigravityDriver: ProviderDriver<
       accentColor,
       continuationGroupKey: continuationIdentity.continuationKey,
     });
-    const classifyModels = (draft: ServerProviderDraft) =>
-      currentCatalog.pipe(
-        Effect.map((catalog) => stampIdentity(ModelCatalog.applyModelCatalog(draft, catalog))),
+    // `resolve` picks the managed runtime whenever no custom executable is set.
+    const usesManagedRuntime = settings.binaryPath.trim() === "";
+    const classifyModels = Effect.fn("AntigravityDriver.classifyModels")(function* (
+      draft: ServerProviderDraft,
+    ) {
+      const catalog = yield* currentCatalog;
+      const provider = stampIdentity(ModelCatalog.applyModelCatalog(draft, catalog));
+      if (!usesManagedRuntime) return provider;
+      const versionAdvisory = AntigravityInstallation.managedRuntimeVersionAdvisory(
+        yield* installation.state,
+        provider.checkedAt,
       );
+      return versionAdvisory ? { ...provider, versionAdvisory } : provider;
+    });
 
     const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
       input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
@@ -388,8 +398,11 @@ export const AntigravityDriver: ProviderDriver<
     // The probe must not spawn. The agent is a PyInstaller one-file bundle
     // that unpacks about 1 GB per launch, and the health check runs every
     // minute.
+    const driverScope = yield* Effect.scope;
     const probe = Effect.gen(function* () {
       yield* modelCatalog.refreshInBackground;
+      // Hourly at most; a newer release republishes this instance through its install state.
+      if (usesManagedRuntime) yield* Effect.forkIn(installation.checkForUpdate, driverScope);
       if (authConfigIssue !== null) {
         return yield* new ProviderSetupError({
           instanceId,

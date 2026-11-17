@@ -19,10 +19,10 @@ export type ProviderUpdateCandidate = ServerProvider & {
   };
 };
 
+// A managed runtime (Antigravity) updates without a shell command, so `updateCommand` may be null.
 export type ProviderSettingsUpdateCandidate = ServerProvider & {
   readonly versionAdvisory: NonNullable<ServerProvider["versionAdvisory"]> & {
     readonly canUpdate: true;
-    readonly updateCommand: string;
   };
 };
 
@@ -144,8 +144,7 @@ export function isProviderSettingsUpdateCandidate(
     provider.compatibilityAdvisory?.latestVersionStatus !== "broken" &&
     provider.compatibilityAdvisory?.latestVersionStatus !== "unsupported" &&
     provider.versionAdvisory?.status === "behind_latest" &&
-    provider.versionAdvisory.canUpdate === true &&
-    provider.versionAdvisory.updateCommand !== null
+    provider.versionAdvisory.canUpdate === true
   );
 }
 
@@ -153,10 +152,7 @@ export function hasOneClickUpdateProviderCandidate(
   candidate: ProviderUpdateCandidate,
   providers: ReadonlyArray<ServerProvider>,
 ): boolean {
-  if (
-    candidate.versionAdvisory.canUpdate !== true ||
-    candidate.versionAdvisory.updateCommand === null
-  ) {
+  if (candidate.versionAdvisory.canUpdate !== true) {
     return false;
   }
 
@@ -171,10 +167,10 @@ export function hasOneClickUpdateProviderCandidate(
       continue;
     }
     const advisory = provider.versionAdvisory;
-    if (!advisory || advisory.canUpdate !== true || advisory.updateCommand === null) {
+    if (!advisory || advisory.canUpdate !== true) {
       return false;
     }
-    updateCommands.add(advisory.updateCommand);
+    updateCommands.add(advisory.updateCommand ?? "");
   }
 
   return updateCommands.size === 1;

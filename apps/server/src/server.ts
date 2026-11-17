@@ -633,7 +633,10 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
     const providers = yield* ProviderRegistry.ProviderRegistry;
     yield* Stream.merge(
       antigravity.changes.pipe(
-        Stream.changesWith((a, b) => a.installedVersion === b.installedVersion),
+        // A newly offered release changes the managed runtime's version advisory.
+        Stream.changesWith(
+          (a, b) => a.installedVersion === b.installedVersion && a.version === b.version,
+        ),
         Stream.drop(1),
       ),
       codex.changes.pipe(

@@ -5,7 +5,11 @@ import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 import { cliArchiveTarCommand } from "@t3tools/shared/cliRelease";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as EffectNodeStream from "@effect/platform-node/NodeStream";
-import { ProviderDriverKind, type ProviderInstallState } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  type ProviderInstallState,
+  type ServerProviderVersionAdvisory,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import { resolveCommandPath } from "@t3tools/shared/shell";
@@ -171,6 +175,28 @@ function isAntigravityCli(...candidates: ReadonlyArray<string>) {
   return candidates.some((candidate) =>
     /^(?:agy|antigravity)(?:\.(?:exe|cmd|bat))?$/iu.test(candidate.split(/[\\/]/u).at(-1) ?? ""),
   );
+}
+
+/** The managed runtime updates through installation, so it offers an update without a shell command. */
+export function managedRuntimeVersionAdvisory(
+  state: ProviderInstallState,
+  checkedAt: string,
+): ServerProviderVersionAdvisory | undefined {
+  const currentVersion = state.installedVersion;
+  if (currentVersion === null) return undefined;
+  const latestVersion = state.version;
+  const behind = latestVersion !== null && compareSemverVersions(currentVersion, latestVersion) < 0;
+  return {
+    status: latestVersion === null ? "unknown" : behind ? "behind_latest" : "current",
+    currentVersion,
+    latestVersion,
+    updateCommand: null,
+    canUpdate: true,
+    checkedAt,
+    message: behind
+      ? `Install Antigravity ${latestVersion} now or review provider settings.`
+      : null,
+  };
 }
 
 function isRunning(state: ProviderInstallState) {

@@ -3,6 +3,7 @@ import { describe, it, assert } from "@effect/vitest";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderInstallState,
   type ServerProvider,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
@@ -29,6 +30,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as TextGenerators from "../textGeneration/TextGenerators.ts";
+import * as ProviderInstallation from "./providerInstallation.ts";
 import * as ProviderInstallationGate from "./ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
@@ -37,11 +39,13 @@ import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
+  makeManualOnlyProviderMaintenanceCapabilities,
   makeProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilities,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
+const ANTIGRAVITY_DRIVER = ProviderDriverKind.make("antigravity");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const NATIVE_CLI_DRIVER = ProviderDriverKind.make("nativeCli");
 const OPENCODE_DRIVER = ProviderDriverKind.make("opencode");
@@ -54,6 +58,9 @@ const encoder = new TextEncoder();
 const layerNonWindowsPlatform = Layer.succeed(HostProcess.Platform, "linux");
 
 function lifecycleFor(provider: ProviderDriverKind): ProviderMaintenanceCapabilities {
+  if (provider === ANTIGRAVITY_DRIVER) {
+    return makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null });
+  }
   if (provider === NATIVE_CLI_DRIVER) {
     return makeProviderMaintenanceCapabilities({
       provider,
@@ -249,6 +256,12 @@ const makeTestRunner = (
     })),
   },
   latestVersions: Layer.Layer<ProviderLatestVersions.ProviderLatestVersions> = ProviderLatestVersions.layer,
+  installation: ProviderInstallation.ProviderInstallation["Service"] = {
+    start: () => Effect.die("unexpected managed install"),
+    cancel: () => Effect.die("unexpected managed install"),
+    subscribe: () => Stream.die("unexpected managed install"),
+    remove: () => Effect.die("unexpected managed install"),
+  },
 ) =>
   Effect.service(ProviderMaintenanceRunner.ProviderMaintenanceRunner).pipe(
     Effect.provide(
@@ -264,6 +277,7 @@ const makeTestRunner = (
               refreshInBackground: Effect.void,
             }),
             latestVersions,
+            Layer.succeed(ProviderInstallation.ProviderInstallation, installation),
             // Layers memoize by reference, so a test that provides the gate shares it.
             ProviderInstallationGate.layer,
           ),
@@ -289,6 +303,87 @@ function layerFailingLatestLookupAfterFirst() {
 }
 
 describe("providerMaintenanceRunner", () => {
+  it.effect("updates a managed runtime by reinstalling it and reports the install outcome", () =>
+    Effect.gen(function* () {
+      const antigravity: ServerProvider = {
+        ...baseProvider,
+        instanceId: ProviderInstanceId.make("antigravity"),
+        driver: ANTIGRAVITY_DRIVER,
+        versionAdvisory: {
+          status: "behind_latest",
+          currentVersion: "1.5.0",
+          latestVersion: "1.6.0",
+          updateCommand: null,
+          canUpdate: true,
+          checkedAt: baseProvider.checkedAt,
+          message: null,
+        },
+      };
+      const installState = (
+        phase: ProviderInstallState["phase"],
+        message: string | null = null,
+      ): ProviderInstallState => ({
+        driver: ANTIGRAVITY_DRIVER,
+        operationId: "op-1",
+        phase,
+        downloadedBytes: 0,
+        totalBytes: null,
+        version: "1.6.0",
+        installedVersion: "1.5.0",
+        canRemove: true,
+        message,
+      });
+      const run = (ending: ProviderInstallState) =>
+        Effect.gen(function* () {
+          const { registry, updateStatesRef } = yield* makeRegistry(antigravity);
+          const updater = yield* makeTestRunner(registry, undefined, undefined, {
+            start: () => Effect.succeed(installState("downloading")),
+            cancel: () => Effect.die("unused"),
+            // A stale operation and repeated byte progress must not reach the update state.
+            subscribe: () =>
+              Stream.make(
+                { ...installState("succeeded"), operationId: "op-0" },
+                installState("downloading"),
+                { ...installState("downloading"), downloadedBytes: 10 },
+                installState("verifying"),
+                ending,
+              ),
+            remove: () => Effect.die("unused"),
+          });
+          yield* updater.updateProvider({
+            provider: ANTIGRAVITY_DRIVER,
+            instanceId: antigravity.instanceId,
+          });
+          return (yield* Ref.get(updateStatesRef)).map((state) => [state.status, state.message]);
+        });
+
+      const progress = [
+        ["queued", "Waiting for another provider update to finish."],
+        ["running", "Starting the update"],
+        ["running", "Downloading the update"],
+        ["running", "Verifying the update"],
+      ];
+      assert.deepStrictEqual(yield* run(installState("succeeded")), [
+        ...progress,
+        ["succeeded", "Provider updated."],
+      ]);
+      assert.deepStrictEqual(yield* run(installState("failed", "Checksum mismatch.")), [
+        ...progress,
+        ["failed", "Checksum mismatch."],
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("1.0.0"),
+          layerMockSpawner(() => {
+            throw new Error("a managed runtime update must not run a command");
+          }),
+        ),
+      ),
+    ),
+  );
+
   it.effect("runs the allowlisted provider update command and records success", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     return Effect.gen(function* () {

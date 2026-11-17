@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
+import { ProviderDriverKind } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Digest from "effect/crypto/Digest";
 import * as Deferred from "effect/Deferred";
@@ -1324,3 +1325,30 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
     }),
   );
 });
+
+it.each([
+  { installedVersion: null, version: "1.6.0", expected: undefined },
+  { installedVersion: "1.5.0", version: null, expected: "unknown" },
+  { installedVersion: "1.5.0", version: "1.6.0", expected: "behind_latest" },
+  { installedVersion: "1.10.0", version: "1.9.0", expected: "current" },
+] as const)(
+  "reports a $expected managed runtime version for $installedVersion against $version",
+  ({ installedVersion, version, expected }) => {
+    const advisory = AntigravityInstallation.managedRuntimeVersionAdvisory(
+      {
+        driver: ProviderDriverKind.make("antigravity"),
+        operationId: null,
+        phase: "idle",
+        downloadedBytes: 0,
+        totalBytes: null,
+        version,
+        installedVersion,
+        canRemove: true,
+        message: null,
+      },
+      "2026-04-10T00:00:00.000Z",
+    );
+    expect(advisory?.status).toBe(expected);
+    if (advisory) expect(advisory).toMatchObject({ canUpdate: true, updateCommand: null });
+  },
+);

@@ -2,6 +2,7 @@ import {
   defaultInstanceIdForDriver,
   ProviderDriverKind,
   ServerProviderUpdateError,
+  type ProviderInstallState,
   type ProviderInstanceId,
   type ServerProvider,
   type ServerProviderUpdatedPayload,
@@ -25,6 +26,7 @@ import * as NodeUtil from "node:util";
 
 import * as ModelManifest from "./ModelManifest.ts";
 import { resolveProviderCompatibility } from "./providerCompatibility.ts";
+import * as ProviderInstallation from "./providerInstallation.ts";
 import * as ProviderInstallationGate from "./ProviderInstallationGate.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { makeProviderMaintenanceCommandCoordinator } from "./providerMaintenanceCommandCoordinator.ts";
@@ -301,6 +303,12 @@ function isStillInstalled(provider: ServerProvider): boolean {
   return provider.installed;
 }
 
+const MANAGED_INSTALL_PHASE_MESSAGES: Partial<Record<ProviderInstallState["phase"], string>> = {
+  downloading: "Downloading the update",
+  extracting: "Unpacking the update",
+  verifying: "Verifying the update",
+};
+
 function makeUpdateState(input: {
   readonly status: ServerProviderUpdateState["status"];
   readonly startedAt: string | null;
@@ -325,6 +333,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
   const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
+  const providerInstallation = yield* ProviderInstallation.ProviderInstallation;
   const runMaintenanceCommand = (
     update: ProviderMaintenanceCommandAction,
     onProgress: (line: string) => Effect.Effect<void>,
@@ -436,7 +445,15 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       provider,
     );
     const update = capabilities.update;
-    if (!update) {
+    // A runtime T3 Code installs itself updates by reinstalling, not through a command.
+    const updatesManagedRuntime =
+      update === null &&
+      targetVersion === undefined &&
+      (yield* providerRegistry.getProviders).some(
+        (candidate) =>
+          candidate.instanceId === instanceId && candidate.versionAdvisory?.canUpdate === true,
+      );
+    if (!update && !updatesManagedRuntime) {
       return yield* new ServerProviderUpdateError({
         provider,
         reason: "This provider does not support one-click updates.",
@@ -472,7 +489,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
           );
 
         const runCommandAndVerify = Effect.fn("ProviderMaintenanceRunner.runCommandAndVerify")(
-          function* () {
+          function* (update: ProviderMaintenanceCommandAction) {
             const startedAt = yield* nowIso;
             yield* Ref.set(startedAtRef, startedAt);
             const setRunningMessage = (message: string) =>
@@ -684,14 +701,67 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
           },
         );
 
-        return yield* runCommandAndVerify().pipe(Effect.catchCause(recordFailedUpdate));
+        const runManagedInstall = Effect.fn("ProviderMaintenanceRunner.runManagedInstall")(
+          function* () {
+            const startedAt = yield* nowIso;
+            yield* Ref.set(startedAtRef, startedAt);
+            const setRunningMessage = (message: string) =>
+              setUpdateState(
+                makeUpdateState({ status: "running", startedAt, finishedAt: null, message }),
+              ).pipe(Effect.asVoid);
+            yield* setRunningMessage("Starting the update");
+            const started = yield* providerInstallation.start({ instanceId });
+            const ended = yield* providerInstallation.subscribe({ instanceId }).pipe(
+              Stream.filter((state) => state.operationId === started.operationId),
+              // Byte progress would resend the provider list to every client on each chunk.
+              Stream.changesWith((a, b) => a.phase === b.phase),
+              Stream.tap((state) => {
+                const message = MANAGED_INSTALL_PHASE_MESSAGES[state.phase];
+                return message ? setRunningMessage(message) : Effect.void;
+              }),
+              Stream.filter(
+                (state) =>
+                  state.phase === "succeeded" ||
+                  state.phase === "failed" ||
+                  state.phase === "cancelled",
+              ),
+              Stream.runHead,
+            );
+            const finishedAt = yield* nowIso;
+            if (Option.isNone(ended) || ended.value.phase !== "succeeded") {
+              return yield* finish(
+                makeUpdateState({
+                  status: "failed",
+                  startedAt,
+                  finishedAt,
+                  message:
+                    Option.getOrUndefined(ended)?.message ??
+                    "The update stopped before it finished.",
+                }),
+              );
+            }
+            yield* providerRegistry.refreshInstance(instanceId);
+            return yield* finish(
+              makeUpdateState({
+                status: "succeeded",
+                startedAt,
+                finishedAt,
+                message: "Provider updated.",
+              }),
+            );
+          },
+        );
+
+        return yield* (update ? runCommandAndVerify(update) : runManagedInstall()).pipe(
+          Effect.catchCause(recordFailedUpdate),
+        );
       },
     );
 
     return yield* commandCoordinator
       .withCommandLock({
         targetKey,
-        lockKey: update.lockKey,
+        lockKey: update?.lockKey ?? `${provider}-managed`,
         onQueued: setQueuedState,
         run: runProviderUpdate(),
       })

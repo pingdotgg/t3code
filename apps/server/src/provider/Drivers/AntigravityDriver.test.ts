@@ -3,10 +3,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
   ThreadId,
   type AntigravitySettings,
+  type ProviderInstallState,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -36,6 +38,17 @@ import * as ProviderHostLive from "../ProviderHostLive.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 
 const hostPlatform = HostProcess.Platform.defaultValue();
+const idleInstallState: ProviderInstallState = {
+  driver: ProviderDriverKind.make("antigravity"),
+  operationId: null,
+  phase: "idle",
+  downloadedBytes: 0,
+  totalBytes: null,
+  version: null,
+  installedVersion: null,
+  canRemove: false,
+  message: null,
+};
 const windowsHost = hostPlatform === "win32";
 const decodeRequest = Schema.decodeEffect(
   Schema.fromJsonString(
@@ -147,6 +160,8 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
 
   const layerInstallation = Layer.mock(AntigravityInstallation.AntigravityInstallation)({
     managedDirectory: root,
+    state: Effect.succeed(idleInstallState),
+    checkForUpdate: Effect.void,
     resolve: () =>
       Effect.gen(function* () {
         if (controls.failResolution) {
@@ -570,6 +585,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           Effect.provide(
             Layer.mock(AntigravityInstallation.AntigravityInstallation)({
               managedDirectory: config.stateDir,
+              state: Effect.succeed(idleInstallState),
               resolve: () => Effect.die("unused"),
               acquire: () => Effect.die("unused"),
             }),
