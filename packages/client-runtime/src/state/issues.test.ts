@@ -2,14 +2,30 @@ import {
   EnvironmentId,
   IssueTrackerKind,
   ProjectId,
+  type IssueListResult,
   type IssueComment,
   type IssueListEntry,
+  WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/reactivity";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
 
 import {
+  AVAILABLE_CONNECTION_STATE,
+  PrimaryConnectionTarget,
+  type PreparedConnection,
+  type SupervisorConnectionState,
+} from "../connection/model.ts";
+import { EnvironmentRegistry } from "../connection/registry.ts";
+import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import type { RpcSession } from "../rpc/session.ts";
+import {
+  createIssueEnvironmentAtoms,
   createMergedIssueCandidatesAtoms,
   issueEntryKey,
   mergeIssueListPage,
@@ -130,4 +146,87 @@ describe("createMergedIssueCandidatesAtoms", () => {
       registry.dispose();
     }
   });
+});
+
+describe("issue listings", () => {
+  it.effect("reuses a fresh listing for the same labels selected in a different order", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const environmentId = EnvironmentId.make("env");
+        const target = new PrimaryConnectionTarget({
+          environmentId,
+          label: "Test environment",
+          httpBaseUrl: "https://issues.example.test",
+          wsBaseUrl: "wss://issues.example.test",
+        });
+        const answer: IssueListResult = {
+          viewers: { "github.com": "octocat" },
+          entries: [
+            entry({
+              key: "1",
+              labels: [
+                { name: "bug", color: null },
+                { name: "p1", color: null },
+              ],
+            }),
+          ],
+          trackers: [],
+          nextCursors: {},
+          errors: [],
+        };
+        let reads = 0;
+        const client = {
+          [WS_METHODS.issuesList]: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return answer;
+            }),
+        };
+        const supervisor = EnvironmentSupervisor.of({
+          target,
+          state: yield* SubscriptionRef.make<SupervisorConnectionState>({
+            ...AVAILABLE_CONNECTION_STATE,
+            phase: "connected",
+            network: "online",
+            desired: true,
+            generation: 1,
+          }),
+          session: yield* SubscriptionRef.make(Option.some({ client } as unknown as RpcSession)),
+          prepared: yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none()),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        });
+        const environment = EnvironmentRegistry.of({
+          run: (_id, effect) => Effect.provideService(effect, EnvironmentSupervisor, supervisor),
+          followStream: (_id, stream) =>
+            Stream.provideService(stream, EnvironmentSupervisor, supervisor),
+        } as Pick<
+          EnvironmentRegistry["Service"],
+          "run" | "followStream"
+        > as EnvironmentRegistry["Service"]);
+        const runtime = Atom.runtime(Layer.succeed(EnvironmentRegistry, environment));
+        const { list } = createIssueEnvironmentAtoms(runtime);
+        const registry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+        for (const labels of [
+          ["bug", "p1"],
+          ["p1", "bug"],
+        ]) {
+          const atom = list({ environmentId, input: { state: "open", labels } });
+          yield* Effect.acquireRelease(
+            Effect.sync(() => registry.mount(atom)),
+            (closePicker) => Effect.sync(closePicker),
+          ).pipe(
+            Effect.andThen(AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true })),
+            Effect.tap((value) =>
+              Effect.sync(() => expect(value.entries.map((row) => row.key)).toEqual(["1"])),
+            ),
+            Effect.scoped,
+          );
+        }
+        expect(reads, "Issue searches for the same selected labels").toBe(1);
+      }),
+    ),
+  );
 });
