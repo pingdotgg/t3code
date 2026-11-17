@@ -29,7 +29,8 @@ import {
   usePullRequestListFilters,
   type PullRequestFilterMenu,
 } from "./PullRequestListFilters";
-import { PullRequestSavedViewsMenu } from "./PullRequestSavedViewsMenu";
+import { SavedViewsMenu } from "../layout/workspace/SavedViewsMenu";
+import { pullRequestViewMatches } from "./pullRequestSavedViews";
 import { usePullRequestList } from "./usePullRequestList";
 import { usePullRequestListControls } from "./usePullRequestListControls";
 import { usePullRequestListActions } from "./usePullRequestListActions";
@@ -323,7 +324,15 @@ export function PullRequestsScreen(
             <PullRequestListFilters
               sidebar={sidebar}
               savedViewsMenu={
-                <PullRequestSavedViewsMenu
+                <SavedViewsMenu
+                  read={(preferences) => preferences.pullRequestSavedViews}
+                  write={(pullRequestSavedViews) => ({ pullRequestSavedViews })}
+                  noun="pull request"
+                  shortNoun="PR"
+                  suggestedName={
+                    controls.involvement === "reviewing" ? "PRs Requesting My Review" : ""
+                  }
+                  matches={pullRequestViewMatches}
                   scope={{
                     environmentId,
                     controls,

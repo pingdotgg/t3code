@@ -48,6 +48,8 @@ import { issueParamsKey } from "./issueParams";
 import { IssueListRow } from "./IssueListRow";
 import type { PullRequestFilterMenu } from "../pull-requests/PullRequestListFilters";
 import { issueListFiltersAtom } from "./issueListFilters";
+import { issueViewMatches } from "./issueSavedViews";
+import { SavedViewsMenu } from "../layout/workspace/SavedViewsMenu";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 const DEFAULT_ISSUE_LIST_INPUT = { state: "open", involvement: "all", limit: 50 } as const;
@@ -327,6 +329,36 @@ export function IssuesScreen(
                   : FILTER_ROW_STYLE
               }
             >
+              <SavedViewsMenu
+                read={(preferences) => preferences.issueSavedViews}
+                write={(issueSavedViews) => ({ issueSavedViews })}
+                noun="issue"
+                shortNoun="issue"
+                suggestedName={involvement === "assigned" ? "Issues Assigned to Me" : ""}
+                matches={issueViewMatches}
+                scope={{
+                  query: tab.searchMode === "resting" ? "" : tab.query,
+                  state,
+                  involvement,
+                  sort,
+                  labels,
+                  assignee,
+                }}
+                onApply={(view) => {
+                  setState(view.state);
+                  setInvolvement(view.involvement);
+                  setSort(view.sort);
+                  setFilters({ labels: view.labels, assignee: view.assignee });
+                  const viewQuery = view.query.trim();
+                  workspace.dispatch(
+                    viewQuery
+                      ? { type: "search", tab: "issues" }
+                      : { type: "cancel", tab: "issues", scrollToTop: true },
+                  );
+                  workspace.dispatch({ type: "query", tab: "issues", query: viewQuery });
+                  scrollToTop();
+                }}
+              />
               <ListFilterMenu
                 label={STATES[state]}
                 active={state !== "open"}
