@@ -29,7 +29,7 @@ export function ThreadDetailsIssueRows({
         <ThreadDetailsControl
           key={threadIssueKeyOf(link)}
           part="row"
-          aria-label={link.url}
+          aria-label={`Issue ${link.displayKey}: ${link.title}`}
           onClick={(event) => onOpenLink(event, link)}
         >
           <IssueGlyph.issue aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
