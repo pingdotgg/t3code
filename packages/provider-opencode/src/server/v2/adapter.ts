@@ -4029,7 +4029,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           ),
           Effect.option,
         );
-        if (listed._tag === "None") return new Map<string, ReadonlyArray<Rule>>();
+        if (listed._tag === "None") return undefined;
         known = new Map(listed.value.data.map((agent) => [agent.id, agent.permissions]));
         agentRules.set(directory, known);
       }
@@ -4039,7 +4039,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       directory: string,
       agents: ReadonlyArray<string>,
     ) {
-      const known = yield* agentsIn(directory);
+      const known = (yield* agentsIn(directory)) ?? new Map<string, ReadonlyArray<Rule>>();
       const paths = new Map<string, Rule>();
       for (const agent of agents) {
         for (const entry of agentPaths(known.get(agent) ?? [])) {
@@ -4050,7 +4050,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     });
 
     const hasAgentLimits = Effect.fnUntraced(function* (thread: ThreadState) {
-      const own = (yield* agentsIn(thread.directory)).get(thread.agent) ?? [];
+      const own = (yield* agentsIn(thread.directory))?.get(thread.agent) ?? [];
       return own.some((entry) => entry.effect === "deny");
     });
 
@@ -4069,7 +4069,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           ? []
           : agentLimits(
               policy,
-              (yield* agentsIn(thread.directory)).get(thread.agent) ?? [],
+              (yield* agentsIn(thread.directory))?.get(thread.agent) ?? [],
               caseless,
             );
       return sessionRules(
@@ -4082,6 +4082,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     });
 
     const writeRules = Effect.fnUntraced(function* (state: ThreadState, policy: RulesPolicy) {
+      // Without its agent's rules a subagent would lose its own denies; keep its rules for a retry.
+      if (state.subagent !== undefined && (yield* agentsIn(state.directory)) === undefined) return;
       const rules = yield* rulesFor(state, policy, rootOf(state).providerThread.appThreadId);
       if (!sameRules(state.rules, rules)) {
         yield* client.session.update({

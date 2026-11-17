@@ -2005,7 +2005,27 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   );
 
   // regression: #21979 a failed background subagent pinned its thread as busy
-  it.effect("settles the background call a foreground call joined to a failed child", () =>
+  it.effect.each([
+    {
+      name: "",
+      rules: [
+        ...listAgents,
+        out("session.update", { sessionID: CHILD, permissions: "<any>" }),
+        reply("session.update", null),
+      ],
+    },
+    {
+      // Rewriting without the agent's rules would drop its own denies.
+      name: " while its agent's rules cannot be read",
+      rules: [
+        out("agent.list", "<any>"),
+        reply("agent.list", {
+          status: 502,
+          body: { _tag: "UnknownError", message: "bad gateway" },
+        }),
+      ],
+    },
+  ])("settles the background call a foreground call joined to a failed child$name", ({ rules }) =>
     Effect.gen(function* () {
       const again = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-again" };
       const { runtime, thread } = yield* resumed([
@@ -2024,9 +2044,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ...again,
           metadata: { sessionID: CHILD, status: "running" },
         }),
-        ...listAgents,
-        out("session.update", { sessionID: CHILD, permissions: "<any>" }),
-        reply("session.update", null),
+        ...rules,
         // The child fails while the joined call is still the foreground one.
         event("session.execution.failed", {
           sessionID: CHILD,
