@@ -51,6 +51,8 @@ export class ProjectEnrichmentService extends Context.Service<
       workspaceRoot: string,
     ) => Effect.Effect<RepositoryIdentity | null>;
     readonly invalidate: (workspaceRoots: Iterable<string>) => Effect.Effect<void>;
+    /** Re-resolves past both identity caches and publishes a found identity, leaving the favicon alone. */
+    readonly refreshRepositoryIdentity: (workspaceRoot: string) => Effect.Effect<void>;
     readonly subscribeChanges: Effect.Effect<
       PubSub.Subscription<ProjectEnrichmentChange>,
       never,
@@ -340,12 +342,24 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
     );
   });
 
+  const refreshRepositoryIdentity: ProjectEnrichmentService["Service"]["refreshRepositoryIdentity"] =
+    Effect.fn("ProjectEnrichmentService.refreshRepositoryIdentity")(function* (workspaceRoot) {
+      // Remote-less folders hit this after every turn; publishing their unchanged null would
+      // push a shell frame to every subscriber.
+      if ((yield* repositoryIdentityResolver.resolve(workspaceRoot, { refresh: true })) === null) {
+        return;
+      }
+      yield* Cache.invalidate(repositoryIdentityCache, workspaceRoot);
+      yield* resolveRepositoryIdentity(workspaceRoot);
+    });
+
   return ProjectEnrichmentService.of({
     peek,
     request,
     getAvailable,
     readRepositoryIdentity,
     invalidate,
+    refreshRepositoryIdentity,
     subscribeChanges: PubSub.subscribe(changes),
   });
 });
