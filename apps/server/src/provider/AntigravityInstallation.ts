@@ -401,9 +401,11 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           );
         return installed;
       }
-      for (const candidate of yield* commandCandidates(names.executable, processEnvironment)) {
-        const selected = yield* fromExternal(candidate, "path");
-        if (selected) return selected;
+      for (const command of [names.executable, "agy"]) {
+        for (const candidate of yield* commandCandidates(command, processEnvironment)) {
+          const selected = yield* fromExternal(candidate, "path");
+          if (selected) return selected;
+        }
       }
       return yield* installationError(
         "resolve",
