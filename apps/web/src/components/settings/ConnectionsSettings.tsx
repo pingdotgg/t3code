@@ -2,7 +2,7 @@ import { SessionPermissions } from "./SessionPermissions";
 import { useSearch } from "@tanstack/react-router";
 import { ChevronRightIcon, EllipsisIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
@@ -417,6 +417,12 @@ function ConnectionsSettingsContent({
   const desktopWsl = useEnvironmentQuery(
     showsAccess && canManageLocalBackend && desktopBridge ? desktopWslStateAtom : null,
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Re-read external WSL installations when entering Access while the sidebar retains its subscription.
+  useEffect(() => {
+    if (showsAccess && canManageLocalBackend && desktopBridge) {
+      refreshDesktopWslState();
+    }
+  }, [showsAccess, canManageLocalBackend, desktopBridge]);
   const desktopWslState = desktopWsl.data;
   const desktopWslError = desktopWslMutationError ?? desktopWsl.error;
   const isLoadingWslState = desktopWsl.isPending && desktopWsl.data === null;
