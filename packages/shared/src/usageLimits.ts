@@ -952,6 +952,11 @@ export function collectProviderUsageLimits(
     ...providers.filter((provider) => provider.enabled).map(nativeReport),
     ...sources.flatMap((source) => source.accounts),
   ]);
+  // Behind a hub, a local login counts only when it is one of the accounts the hub routes to.
+  const routedKeys =
+    hubs.length > 0
+      ? new Set(hubs.flatMap((source) => source.accounts.filter(routes).map(resolveKey)))
+      : null;
   type NativeSnapshot = { provider: ServerProvider; limits: ServerProviderUsageLimits };
   const nativeByAccount = new Map<
     string,
@@ -959,8 +964,10 @@ export function collectProviderUsageLimits(
   >();
   for (const provider of providersWithLimits(providers)) {
     if (!drivers.has(provider.driver) || !provider.usageLimits) continue;
+    const accountKey = resolveKey(nativeReport(provider));
+    if (routedKeys && (accountKey === null || !routedKeys.has(accountKey))) continue;
     const snapshot = { provider, limits: provider.usageLimits };
-    const key = resolveKey(nativeReport(provider)) ?? `instance:${provider.instanceId}`;
+    const key = accountKey ?? `instance:${provider.instanceId}`;
     const previous = nativeByAccount.get(key);
     const previousUsable = previous ? limitsNotice(previous.usage.limits) === null : false;
     const usable = limitsNotice(snapshot.limits) === null;

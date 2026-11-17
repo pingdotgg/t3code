@@ -1570,10 +1570,16 @@ describe("/usage-limits", () => {
       driver: ProviderDriverKind.make("claudeAgent"),
       auth: { status: "authenticated", type: "customEndpoint", endpoint: "http://hub:8317" },
     });
+    // regression: #30778 a local login the hub does not route to is not this thread's account
+    const unrelated = provider({
+      instanceId: ProviderInstanceId.make("codex-personal"),
+      usageLimits: limits,
+      auth: { status: "authenticated", email: "personal@example.com" },
+    });
     const ids = (instance: ServerProvider, model: string | null) =>
       collectProviderUsageLimits(
         instance.instanceId,
-        [selected, proxy],
+        [selected, proxy, unrelated],
         routed,
         now,
         model,
@@ -1613,7 +1619,7 @@ describe("/usage-limits", () => {
         "gpt-5.6-sol",
       ),
     ).toBeNull();
-    expect(ids(selected, "gpt-5.6-sol")).toEqual(["codex", "hub:oss"]);
+    expect(ids(selected, "gpt-5.6-sol")).toEqual(["codex", "codex-personal", "hub:oss"]);
   });
 
   it("keeps the freshest usable native duplicate and the freshest native credits in either order", () => {

@@ -153,10 +153,17 @@ describe("Claude Agent SDK replay fixtures", () => {
           checkedAt: "",
           accounts,
         }) as UsageLimitSourceSnapshot;
-      const result = yield* runReplayFixture({
+      yield* runReplayFixture({
         fixtureName: fixture.name,
         buildInput: fixture.buildInput,
-        driver: { ...driver, assertOutput: () => undefined },
+        driver: {
+          ...driver,
+          assertOutput: (result, transcript) =>
+            assert.equal(
+              claudeUsageLimitFailure(result, transcript).resetAt,
+              "2033-05-19T07:20:00.000Z",
+            ),
+        },
         harness: ClaudeOrchestratorReplayHarness,
         providerInstances: {
           getInstance: () =>
@@ -189,8 +196,6 @@ describe("Claude Agent SDK replay fixtures", () => {
           ),
         ),
       );
-      const transcript = yield* readClaudeTranscriptFixture("usage_limit");
-      assert.equal(claudeUsageLimitFailure(result, transcript).resetAt, "2033-05-19T07:20:00.000Z");
     }),
   );
 
