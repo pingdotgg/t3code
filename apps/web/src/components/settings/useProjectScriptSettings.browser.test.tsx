@@ -7,6 +7,7 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+import * as Cause from "effect/Cause";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { NewProjectScriptInput } from "../projectScriptEditor";
@@ -134,6 +135,59 @@ function setup() {
 }
 
 describe("useProjectScriptSettings", () => {
+  it("retries all unfinished shortcut removals after the replacement action list refreshes", async () => {
+    setup();
+    const projectId = ProjectId.make("project");
+    const secondScript = { ...lint, id: "test", name: "Test" };
+    const secondBinding = {
+      command: "script.test.run" as const,
+      shortcut: { ...lintBinding[0]!.shortcut, key: "t" },
+    };
+    const target = {
+      environmentId,
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        projectSettingsOverrides: { [projectId]: { defaultProjectScripts: [lint, secondScript] } },
+      },
+      project: { id: projectId, scripts: [] },
+      keybindings: [...lintBinding, secondBinding],
+    };
+    commands.removeKeybinding.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("Shortcut removal failed"))),
+    );
+    let settings: ProjectScriptSettings | undefined;
+    const onResult = (next: ProjectScriptSettings) => (settings = next);
+    await using screen = await render(<Probe targets={[target]} onResult={onResult} />);
+    await act(async () => {
+      expect((await settings!.persist(() => []))._tag).toBe("Failure");
+    });
+    expect(commands.removeKeybinding).toHaveBeenCalledOnce();
+
+    await screen.rerender(
+      <Probe
+        targets={[
+          {
+            ...target,
+            settings: {
+              ...target.settings,
+              projectSettingsOverrides: { [projectId]: { defaultProjectScripts: [] } },
+            },
+          },
+        ]}
+        onResult={onResult}
+      />,
+    );
+    await act(async () => {
+      expect((await settings!.persist(() => []))._tag).toBe("Success");
+    });
+    expect(commands.removeKeybinding).toHaveBeenCalledTimes(3);
+    expect(commands.removeKeybinding.mock.calls.map(([request]) => request.input.command)).toEqual([
+      "script.lint.run",
+      "script.lint.run",
+      "script.test.run",
+    ]);
+  });
+
   it.each(["project", "environment"] as const)(
     "preserves the shortcut for %s action name and command edits",
     async (scope) => {

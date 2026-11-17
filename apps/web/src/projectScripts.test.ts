@@ -4,8 +4,10 @@ import { settleProjectScript, setupProjectScript } from "@t3tools/shared/project
 
 import {
   commandForProjectScript,
+  copyProjectScripts,
   nextProjectScriptId,
   primaryProjectScript,
+  projectScriptContentsEqual,
   releaseClaimedRoles,
 } from "./projectScripts";
 
@@ -27,6 +29,65 @@ describe("projectScripts helpers", () => {
     expect(nextProjectScriptId("Run Tests", [])).toBe("run-tests");
     expect(nextProjectScriptId("Run Tests", ["run-tests"])).toBe("run-tests-2");
     expect(nextProjectScriptId("!!!", [])).toBe("script");
+  });
+
+  it("copies action behavior while retaining destination shortcuts by action name", () => {
+    const source = [
+      {
+        id: "source-setup",
+        name: "Setup",
+        command: "vp i",
+        icon: "configure" as const,
+        runOnWorktreeCreate: true,
+        async: false,
+      },
+      {
+        id: "source-dev",
+        name: "Dev",
+        command: "vp run dev",
+        icon: "play" as const,
+        runOnWorktreeCreate: false,
+        stopOnSettle: true,
+        previewUrl: "http://localhost:3000",
+        autoOpenPreview: true,
+      },
+    ];
+    const destination = [
+      { ...source[0]!, id: "local-setup", name: "SETUP", command: "old setup" },
+      { ...source[0]!, id: "obsolete", name: "Obsolete" },
+    ];
+    const copied = copyProjectScripts(source, destination, ["dev", "dev-2", "local-setup"]);
+
+    expect(copied).toEqual([
+      { ...source[0], id: "local-setup" },
+      { ...source[1], id: "dev-3" },
+    ]);
+    expect(
+      copyProjectScripts(
+        source,
+        copied,
+        copied.map((script) => script.id),
+      ),
+    ).toEqual(copied);
+    expect(projectScriptContentsEqual(source, copied)).toBe(true);
+    expect(projectScriptContentsEqual(source, destination)).toBe(false);
+    expect(copyProjectScripts([], destination, [])).toEqual([]);
+    expect(destination[0]!.command).toBe("old setup");
+  });
+
+  it("allocates distinct shortcut IDs for copied actions with the same name", () => {
+    const script = {
+      id: "source",
+      name: "Dev",
+      command: "vp run dev",
+      icon: "play" as const,
+      runOnWorktreeCreate: false,
+    };
+    expect(
+      copyProjectScripts([script, script], [{ ...script, id: "local" }], ["local", "dev"]).map(
+        (copied) => copied.id,
+      ),
+    ).toEqual(["local", "dev-2"]);
   });
 
   it("resolves primary, setup, and settle scripts", () => {
