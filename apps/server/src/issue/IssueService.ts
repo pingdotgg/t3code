@@ -314,6 +314,7 @@ const make = Effect.gen(function* () {
   const list: IssueService["Service"]["list"] = Effect.fn("IssueService.list")(function* (input) {
     const { supported, unimplemented } = yield* listProjects(input);
     const limit = input.limit ?? DEFAULT_LIST_LIMIT;
+    const involvement = input.involvement ?? "all";
     // Worktrees of one repository are separate projects, and every repository of an Azure
     // DevOps project shares its work items; read each scope once.
     const scopes = new Map<string, SupportedProject>();
@@ -374,14 +375,20 @@ const make = Effect.gen(function* () {
           // A continuation names the scopes it wants; one not named has nothing to add.
           if (continuing !== undefined && continuing[key] === undefined) return;
           const cursor = continuing?.[key];
-          const page = yield* viewerRequests.get(project.host)!.pipe(
+          const viewerRequest = viewerRequests.get(project.host)!;
+          const page = yield* (
+            involvement === "all"
+              ? // Nothing is filtered by the viewer, so an account the tracker cannot name hides nothing.
+                viewerRequest.pipe(Effect.orElseSucceed(() => ""))
+              : viewerRequest
+          ).pipe(
             Effect.flatMap((viewer) =>
               project.api.listIssues({
                 cwd: project.project.workspaceRoot,
                 host: project.host,
                 scope: project.scope,
                 state: input.state,
-                involvement: input.involvement ?? "all",
+                involvement,
                 viewer,
                 limit,
                 query: input.query,
