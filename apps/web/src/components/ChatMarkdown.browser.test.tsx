@@ -8,6 +8,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import { act, render } from "../../test/render";
 import "../index.css";
 
+import type { LayoutDragContentSource } from "../layout/layoutDrag";
 import { filesystemEnvironment } from "../state/filesystem";
 import { useRightPanelStore } from "../rightPanelStore";
 import { remarkEnableOrderedListNumbers } from "@t3tools/shared/markdownPipeline";
@@ -20,6 +21,13 @@ const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
   filesystemMetadata: vi.fn(),
 }));
 const parsedSources = vi.hoisted(() => [] as string[]);
+const dragSources = vi.hoisted(() => [] as LayoutDragContentSource[]);
+vi.mock(import("../layout/layoutDrag"), async (original) => ({
+  ...(await original()),
+  beginLayoutContentDrag: (_event, source) => {
+    dragSources.push(source);
+  },
+}));
 vi.mock(import("mdast-util-from-markdown"), async (original) => {
   const actual = await original();
   return {
@@ -161,6 +169,7 @@ it("keeps compact audio playback loaded across signed URL renewals", async () =>
 function setup() {
   appearance.value = "light";
   parsedSources.length = 0;
+  dragSources.length = 0;
   settingsOverrides.mathRenderingEnabled = false;
   renderDiagram.mockReset();
   workspaceSearch.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
@@ -526,10 +535,53 @@ describe("ChatMarkdown workspace file opens", () => {
     expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/elsewhere/b.md", 9);
     expect(workspaceSearch).toHaveBeenCalledOnce();
   });
+
+  it("resolves each dragged file link on its own, and a click does not cancel it", async () => {
+    setup();
+    const lookups = new Map<string, (value: unknown) => void>();
+    workspaceSearch.mockImplementation(
+      ({ input }: { input: { query: string } }) =>
+        new Promise((resolve) => lookups.set(input.query, resolve)),
+    );
+    using openFile = vi
+      .spyOn(useRightPanelStore.getState(), "openFile")
+      .mockImplementation(() => {});
+    await using screen = await renderText(
+      "[A](physics/notes/a.md) and [B](physics/notes/b.md) and [Other](/elsewhere/c.md:9)",
+      { cwd: "/school/physics", threadRef },
+    );
+    const [first, second, other] = screen.container.querySelectorAll("a");
+    for (const link of [first!, second!]) {
+      link.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerType: "mouse" }),
+      );
+    }
+    const resolves = dragSources.map((source) =>
+      source.kind === "surface" ? source.resolve?.() : undefined,
+    );
+    expect(resolves).toHaveLength(2);
+    await vi.waitFor(() => expect(lookups.size).toBe(2));
+
+    await act(async () => other!.click());
+    expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/elsewhere/c.md", 9);
+    for (const [query, resolve] of lookups) {
+      resolve(
+        AsyncResult.success({
+          entries: [{ path: `notes/${query.endsWith("b.md") ? "b" : "a"}.md`, kind: "file" }],
+          truncated: false,
+        }),
+      );
+    }
+
+    expect(await Promise.all(resolves)).toEqual([
+      expect.objectContaining({ relativePath: expect.stringContaining("notes/a.md") }),
+      expect.objectContaining({ relativePath: expect.stringContaining("notes/b.md") }),
+    ]);
+  });
 });
 
 describe("ChatMarkdown skill chips", () => {
-  it("shows the skill's details and opens its instructions", async () => {
+  it("shows the skill's details and opens its instructions, closing the details", async () => {
     setup();
     const threadRef = {
       environmentId: EnvironmentId.make("workspace"),
@@ -556,6 +608,7 @@ describe("ChatMarkdown skill chips", () => {
     await userEvent.click(page.getByRole("button", { name: "View instructions" }));
 
     expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/skills/review/SKILL.md");
+    await expect.element(page.getByText("Reviews the current branch.")).not.toBeInTheDocument();
   });
 
   it("names a mentioned model as its provider does, without a thread", async () => {

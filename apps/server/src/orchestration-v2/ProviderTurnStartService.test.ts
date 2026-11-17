@@ -1028,19 +1028,6 @@ function makeLocalCommandHarness(input: {
     ),
   );
   const fallbackEnsureThread = vi.fn(() => Effect.succeed(providerThread));
-  const resumeFallbackSession = {
-    driver: providerThread.driver,
-    resumeThread: () =>
-      Effect.fail(
-        input.resumeFailure ??
-          new ProviderAdapter.ProviderAdapterEventStreamError({
-            driver: providerThread.driver,
-            providerSessionId,
-            cause: "native thread is gone",
-          }),
-      ),
-    ensureThread: fallbackEnsureThread,
-  };
   const providerSession = {
     id: providerSessionId,
     driver: providerThread.driver,
@@ -1058,6 +1045,20 @@ function makeLocalCommandHarness(input: {
     createdAt: now,
     updatedAt: now,
     lastError: null,
+  };
+  const resumeFallbackSession = {
+    driver: providerThread.driver,
+    providerSession,
+    resumeThread: () =>
+      Effect.fail(
+        input.resumeFailure ??
+          new ProviderAdapter.ProviderAdapterEventStreamError({
+            driver: providerThread.driver,
+            providerSessionId,
+            cause: "native thread is gone",
+          }),
+      ),
+    ensureThread: fallbackEnsureThread,
   };
   const startTurn = vi.fn((_turn: ProviderAdapter.ProviderAdapterV2TurnInput) => Effect.void);
   const sideChatThread = {

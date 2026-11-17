@@ -43,6 +43,8 @@ import {
   selectFocusedTab,
   selectFocusedWorkspace,
   type LayoutState,
+  isBlankLayoutWorkspace,
+  canCloseLayoutTab,
 } from "./layoutModel";
 import { RELATED_CHAT_COMMANDS } from "./layoutPaneContext";
 import { landPendingLayoutFocus, selectIntendedLayout, useLayoutStore } from "./layoutStore";
@@ -100,7 +102,7 @@ const WORKSPACE_HINT_COMMANDS: ReadonlySet<LayoutKeybindingCommand> = new Set([
  */
 export function countedLayoutWorkspaces(layout: LayoutState) {
   return layout.workspaces.filter(
-    (workspace) => workspace.columns.length > 0 || workspace.id === layout.focusedWorkspaceId,
+    (workspace) => !isBlankLayoutWorkspace(workspace) || workspace.id === layout.focusedWorkspaceId,
   );
 }
 
@@ -283,9 +285,14 @@ export function useLayoutKeyboardCommands(): void {
       // whether or not a chat has rendered: the layout answers it, no pane.
       // rightPanel.close (a retired default some keep) closes surfaces only.
       if (command === "tab.close" || command === "rightPanel.close") {
-        const focused = selectFocusedTab(useLayoutStore.getState().layout);
-        // Nothing focused (an empty workspace): the key keeps its native meaning.
-        if (!focused || (command === "rightPanel.close" && focused.content.kind !== "surface")) {
+        const layout = useLayoutStore.getState().layout;
+        const focused = selectFocusedTab(layout);
+        // Nothing to close (the window's last blank tab): the key keeps its native meaning.
+        if (
+          !focused ||
+          !canCloseLayoutTab(layout, focused.id) ||
+          (command === "rightPanel.close" && focused.content.kind !== "surface")
+        ) {
           return;
         }
         event.preventDefault();
