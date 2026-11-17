@@ -1448,6 +1448,9 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         aggregateRefreshSleep: @escaping @Sendable (Duration) async throws -> Void = {
             try await Task.sleep(for: $0)
         },
+        aggregateRefreshNow: @escaping @Sendable () -> ContinuousClock.Instant = {
+            ContinuousClock.now
+        },
         aggregateEnvironmentLoader: @escaping @Sendable (EnvironmentRuntime) async throws -> [Environment] = {
             try await $0.environments()
         }
@@ -1565,6 +1568,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
                 aggregateIdleRefreshInterval: aggregateIdleRefreshInterval,
                 aggregateFailureRefreshInterval: aggregateFailureRefreshInterval,
                 aggregateRefreshSleep: aggregateRefreshSleep,
+                aggregateRefreshNow: aggregateRefreshNow,
                 aggregateEnvironmentLoader: aggregateEnvironmentLoader
             )
         )
@@ -1728,13 +1732,196 @@ struct NativePassiveThreadRefreshTests {
         await fixture.client.disconnect()
     }
 
-    @Test("A failed passive environment backs off without slowing an active peer")
-    func failedPassiveEnvironmentBacksOffWithoutSlowingActivePeer() async throws {
+    @Test(
+        "A slow passive environment does not delay a peer's rows or cadence",
+        .timeLimit(.minutes(1))
+    )
+    func slowPassiveEnvironmentDoesNotDelayPeerRowsOrCadence() async throws {
         let refreshSleep = ControllableAggregateRefreshSleep()
         let fixture = try await NativeMultiEnvironmentTests.makeFixture(
             includeThirdEnvironment: true,
             aggregateRefreshSleep: {
                 try await refreshSleep.sleep(for: $0)
+            }
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let initial = try await fixture.client.initialSnapshot()
+        let thread = try #require(
+            initial.threads.first(where: { $0.environmentID == "two" })
+        )
+        let updatedTitle = "Peer work published while another computer is slow"
+        let eventProbe = ThreadTitleEventProbe(
+            events: fixture.client.events(),
+            threadID: thread.id,
+            title: updatedTitle
+        )
+        eventProbe.start()
+
+        _ = await refreshSleep.waitUntilRequested(count: 1)
+        await fixture.transport.holdNextShellRead(host: "three.example")
+        await fixture.transport.setShell(
+            multiEnvironmentShell(
+                projectID: "project-two",
+                threadID: "thread-two",
+                title: updatedTitle,
+                providerID: "claudeAgent",
+                modelID: "claude-opus-4-1"
+            ),
+            host: "two.example"
+        )
+        await refreshSleep.resume()
+
+        await fixture.transport.waitForHeldShellRead()
+        await eventProbe.waitUntilObserved()
+        let changedCadence = await refreshSleep.waitUntilRequested(count: 2)
+        #expect(changedCadence == .seconds(5))
+
+        // The held read keeps its place instead of being started again.
+        let heldShellReads = await fixture.transport.shellReadCount(host: "three.example")
+        await refreshSleep.resume()
+        _ = await refreshSleep.waitUntilRequested(count: 3)
+        #expect(await fixture.transport.shellReadCount(host: "three.example") == heldShellReads)
+
+        await fixture.transport.releaseShellRead()
+        await fixture.client.disconnect()
+    }
+
+    @Test(
+        "A late changed answer never postpones the scheduled refresh",
+        .timeLimit(.minutes(1))
+    )
+    func lateChangedAnswerDoesNotPostponeScheduledRefresh() async throws {
+        let refreshSleep = ControllableAggregateRefreshSleep()
+        let refreshClock = ManualAggregateRefreshClock()
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            includeThirdEnvironment: true,
+            aggregateRefreshSleep: {
+                try await refreshSleep.sleep(for: $0)
+            },
+            aggregateRefreshNow: {
+                refreshClock.now()
+            }
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let initial = try await fixture.client.initialSnapshot()
+        let thread = try #require(
+            initial.threads.first(where: { $0.environmentID == "three" })
+        )
+        let updatedTitle = "Work from a slow computer"
+        let eventProbe = ThreadTitleEventProbe(
+            events: fixture.client.events(),
+            threadID: thread.id,
+            title: updatedTitle
+        )
+        eventProbe.start()
+
+        _ = await refreshSleep.waitUntilRequested(count: 1)
+        await fixture.transport.setShell(
+            multiEnvironmentShell(
+                projectID: "project-three",
+                threadID: "thread-three",
+                title: updatedTitle,
+                providerID: "codex",
+                modelID: "gpt-5.6-sol"
+            ),
+            host: "three.example"
+        )
+        await fixture.transport.holdNextShellRead(host: "three.example")
+        await refreshSleep.resume()
+        await fixture.transport.waitForHeldShellRead()
+        // The unchanged peer answers first and schedules the idle refresh at 10s.
+        let idleCadence = await refreshSleep.waitUntilRequested(count: 2)
+        #expect(idleCadence == .seconds(10))
+
+        // A fast refresh from 5.8s would land at 10.8s, after the one already due.
+        refreshClock.advance(by: .milliseconds(5_800))
+        await fixture.transport.releaseShellRead()
+        await eventProbe.waitUntilObserved()
+        await refreshSleep.resume()
+        let nextCadence = await refreshSleep.waitUntilRequested(count: 3)
+        #expect(nextCadence == .seconds(10))
+        await fixture.client.disconnect()
+    }
+
+    @Test(
+        "A failure answered mid-wait backs off from when it failed",
+        .timeLimit(.minutes(1))
+    )
+    func failureAnsweredMidWaitBacksOffFromWhenItFailed() async throws {
+        let refreshSleep = ControllableAggregateRefreshSleep()
+        let refreshClock = ManualAggregateRefreshClock()
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            includeThirdEnvironment: true,
+            aggregateRefreshSleep: {
+                try await refreshSleep.sleep(for: $0)
+            },
+            aggregateRefreshNow: {
+                refreshClock.now()
+            }
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        _ = try await fixture.client.initialSnapshot()
+        let initialShellReads = await fixture.transport.shellReadCount(host: "three.example")
+        var events = fixture.client.events().makeAsyncIterator()
+
+        _ = await refreshSleep.waitUntilRequested(count: 1)
+        await fixture.transport.holdNextShellRead(host: "three.example")
+        refreshClock.advance(by: .seconds(5))
+        await refreshSleep.resume()
+        await fixture.transport.waitForHeldShellRead()
+        // The unchanged peer answers first and schedules the idle refresh at 15s.
+        let idleCadence = await refreshSleep.waitUntilRequested(count: 2)
+        #expect(idleCadence == .seconds(10))
+
+        // The slow computer fails at 11s, so it is not due again until 31s.
+        refreshClock.advance(by: .seconds(6))
+        await fixture.transport.setReachable(false, host: "three.example")
+        await fixture.transport.failHeldShellRead(host: "three.example")
+        while let event = await events.next() {
+            if case let .snapshot(snapshot) = event,
+               snapshot.environments.first(where: { $0.id == "three" })?.connectionState == .disconnected {
+                break
+            }
+        }
+
+        // With every read failing, a tick is only scheduled once each
+        // environment it read has answered, so read counts are settled.
+        await fixture.transport.setReachable(false, host: "two.example")
+        refreshClock.advance(by: .seconds(4))
+        await refreshSleep.resume()
+        let afterPeerFailure = await refreshSleep.waitUntilRequested(count: 3)
+        #expect(afterPeerFailure == .seconds(10))
+
+        // Two ten-second waits have passed, but only fourteen seconds since the failure.
+        refreshClock.advance(by: .seconds(10))
+        await refreshSleep.resume()
+        let nothingDue = await refreshSleep.waitUntilRequested(count: 4)
+        #expect(nothingDue == .seconds(5))
+        #expect(await fixture.transport.shellReadCount(host: "three.example") == initialShellReads + 1)
+
+        refreshClock.advance(by: .seconds(5))
+        await refreshSleep.resume()
+        _ = await refreshSleep.waitUntilRequested(count: 5)
+        #expect(await fixture.transport.shellReadCount(host: "three.example") == initialShellReads + 1)
+
+        refreshClock.advance(by: .seconds(5))
+        await refreshSleep.resume()
+        _ = await refreshSleep.waitUntilRequested(count: 6)
+        #expect(await fixture.transport.shellReadCount(host: "three.example") == initialShellReads + 2)
+        await fixture.client.disconnect()
+    }
+
+    @Test("A failed passive environment backs off without slowing an active peer")
+    func failedPassiveEnvironmentBacksOffWithoutSlowingActivePeer() async throws {
+        let refreshSleep = ControllableAggregateRefreshSleep()
+        let refreshClock = ManualAggregateRefreshClock()
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            includeThirdEnvironment: true,
+            aggregateRefreshSleep: {
+                try await refreshSleep.sleep(for: $0)
+            },
+            aggregateRefreshNow: {
+                refreshClock.now()
             }
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -1755,9 +1942,19 @@ struct NativePassiveThreadRefreshTests {
         )
         await fixture.transport.setReachable(false, host: "three.example")
 
+        var events = fixture.client.events().makeAsyncIterator()
         let firstCadence = await refreshSleep.waitUntilRequested(count: 1)
         #expect(firstCadence == .seconds(5))
+        refreshClock.advance(by: firstCadence)
         await refreshSleep.resume()
+        // The peer's answer alone can schedule the next refresh, so wait
+        // until the offline read has reported back before counting reads.
+        while let event = await events.next() {
+            if case let .snapshot(snapshot) = event,
+               snapshot.environments.first(where: { $0.id == "three" })?.connectionState == .disconnected {
+                break
+            }
+        }
         let secondCadence = await refreshSleep.waitUntilRequested(count: 2)
         #expect(secondCadence == .seconds(5))
         // Discovery is cached for 60 seconds. The offline read fails at the shell endpoint.
@@ -1766,6 +1963,7 @@ struct NativePassiveThreadRefreshTests {
         #expect(await fixture.transport.shellReadCount(host: "two.example") == initialPeerReads + 1)
 
         for requestCount in 2...4 {
+            refreshClock.advance(by: .seconds(5))
             await refreshSleep.resume()
             let cadence = await refreshSleep.waitUntilRequested(count: requestCount + 1)
             #expect(cadence == .seconds(5))
@@ -1774,7 +1972,10 @@ struct NativePassiveThreadRefreshTests {
             #expect(await fixture.transport.shellReadCount(host: "two.example") == initialPeerReads + requestCount)
         }
 
+        // Twenty seconds after the failure, the offline computer is read again.
+        refreshClock.advance(by: .seconds(5))
         await refreshSleep.resume()
+        await fixture.transport.waitUntilFailedShellReads(host: "three.example", count: 2)
         _ = await refreshSleep.waitUntilRequested(count: 6)
         #expect(await fixture.transport.failedShellReadCount(host: "three.example") == 2)
         #expect(await fixture.transport.shellReadCount(host: "three.example") == initialShellReads + 2)
@@ -2029,10 +2230,11 @@ private actor ControllableAggregateRefreshSleep {
         count: Int,
         continuation: CheckedContinuation<Duration, Never>
     )] = []
-    private var sleepContinuation: CheckedContinuation<Void, Never>?
+    private var sleepContinuations: [Int: CheckedContinuation<Void, Never>] = [:]
 
     func sleep(for cadence: Duration) async throws {
         requestedCadences.append(cadence)
+        let id = requestedCadences.count
         let satisfied = requestWaiters.filter { requestedCadences.count >= $0.count }
         requestWaiters.removeAll { requestedCadences.count >= $0.count }
         satisfied.forEach {
@@ -2043,11 +2245,12 @@ private actor ControllableAggregateRefreshSleep {
                 if Task.isCancelled {
                     continuation.resume()
                 } else {
-                    sleepContinuation = continuation
+                    sleepContinuations[id] = continuation
                 }
             }
         } onCancel: {
-            Task { await self.resume() }
+            // A cancelled sleep releases only itself, never the sleep that replaced it.
+            Task { await self.resume(id: id) }
         }
         try Task.checkCancellation()
     }
@@ -2059,9 +2262,28 @@ private actor ControllableAggregateRefreshSleep {
         }
     }
 
+    /// Fires the newest pending sleep, the one the refresh loop is waiting on.
     func resume() {
-        sleepContinuation?.resume()
-        sleepContinuation = nil
+        guard let id = sleepContinuations.keys.max() else { return }
+        resume(id: id)
+    }
+
+    private func resume(id: Int) {
+        sleepContinuations.removeValue(forKey: id)?.resume()
+    }
+}
+
+private final class ManualAggregateRefreshClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private let start = ContinuousClock.now
+    private var offset = Duration.zero
+
+    func now() -> ContinuousClock.Instant {
+        lock.withLock { start + offset }
+    }
+
+    func advance(by duration: Duration) {
+        lock.withLock { offset += duration }
     }
 }
 
@@ -2083,6 +2305,11 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
     private var shellReadsEnabledHosts: Set<String>
     private var shellReadCounts: [String: Int] = [:]
     private var failedShellReadCounts: [String: Int] = [:]
+    private var failedShellReadWaiters: [(
+        host: String,
+        count: Int,
+        continuation: CheckedContinuation<Void, Never>
+    )] = []
     private var dispatched: [MultiEnvironmentDispatchRecord] = []
     private var hostsDroppingNextCreateReply = Set<String>()
     private var diffRequests: [(host: String, input: JSONValue)] = []
@@ -2140,6 +2367,22 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
         failedShellReadCounts[host, default: 0]
     }
 
+    func waitUntilFailedShellReads(host: String, count: Int) async {
+        if failedShellReadCounts[host, default: 0] >= count { return }
+        await withCheckedContinuation { failedShellReadWaiters.append((host, count, $0)) }
+    }
+
+    private func recordFailedShellRead(host: String) {
+        failedShellReadCounts[host, default: 0] += 1
+        let satisfied = failedShellReadWaiters.filter {
+            $0.host == host && failedShellReadCounts[host, default: 0] >= $0.count
+        }
+        failedShellReadWaiters.removeAll {
+            $0.host == host && failedShellReadCounts[host, default: 0] >= $0.count
+        }
+        satisfied.forEach { $0.continuation.resume() }
+    }
+
     func dropNextCreateReply(host: String) {
         hostsDroppingNextCreateReply.insert(host)
     }
@@ -2175,6 +2418,13 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
         held.continuation.resume(returning: held.response)
     }
 
+    func failHeldShellRead(host: String) {
+        guard let held = heldShellRead else { return }
+        heldShellRead = nil
+        recordFailedShellRead(host: host)
+        held.continuation.resume(throwing: URLError(.cannotConnectToHost))
+    }
+
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let host = request.url?.host ?? ""
         let path = request.url?.path ?? ""
@@ -2183,7 +2433,7 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
         }
         guard reachableHosts.contains(host) else {
             if path == "/api/orchestration/shell" {
-                failedShellReadCounts[host, default: 0] += 1
+                recordFailedShellRead(host: host)
             }
             throw URLError(.cannotConnectToHost)
         }
