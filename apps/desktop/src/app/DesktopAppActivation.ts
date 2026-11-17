@@ -17,6 +17,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -328,11 +329,16 @@ export const make = Effect.gen(function* () {
   });
 
   const sendToReadyRenderer = (request: DesktopAppActivationRequest) => {
-    const target = renderers.pick(runSync(electronWindow.currentMainOrFirst));
+    const current = runSync(electronWindow.currentMainOrFirst);
+    const target = renderers.pick(current);
     // The broker treats a throw as no renderer and waits for the next one.
     if (target === undefined) throw new Error("No app window is ready.");
     dispatchedTo = target.webContents;
     target.webContents.send(DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL, request);
+    // Activation reveals the current window; a request handled elsewhere must show that window.
+    if (Option.getOrUndefined(current) !== target) {
+      void runPromise(electronWindow.reveal(target).pipe(Effect.ignoreCause));
+    }
   };
 
   const renderers = makeReadyAppRenderers((webContents) => {
