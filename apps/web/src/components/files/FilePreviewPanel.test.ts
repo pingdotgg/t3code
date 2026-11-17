@@ -5,7 +5,7 @@ import { ProjectReadFileError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { remapFileCommentAnnotations } from "./fileCommentAnnotations";
+import { promptFileCommentEntries, remapFileCommentAnnotations } from "./fileCommentAnnotations";
 import {
   filePreviewReadErrorMessage,
   isMarkdownPreviewFile,
@@ -62,6 +62,22 @@ describe("file comment annotations", () => {
         },
       },
     ]);
+  });
+
+  it("shows only drafts and comments still in the prompt", () => {
+    const entry = (id: string, kind: "draft" | "comment") => ({
+      id,
+      kind,
+      startLine: 3,
+      endLine: 3,
+      text: "",
+    });
+    expect(
+      promptFileCommentEntries(
+        [entry("sent", "comment"), entry("new", "draft"), entry("kept", "comment")],
+        new Set(["kept"]),
+      ),
+    ).toEqual([entry("new", "draft"), entry("kept", "comment")]);
   });
 });
 
@@ -342,7 +358,7 @@ Third}`;
                   output_type: "error",
                   traceback: [
                     "\u001b[31mTraceback (most recent call last):\n\u001b[0m",
-                    "\u001b[32mCell In[3], line 1\n----> 1 fail()\n\u001b[0m\u001b[39m",
+                    "\u001b[38:2::255:0:0mCell In[3], line 1\n----> 1 fail()\n\u001b[0m\u001b[39m",
                     "\u001b[31mValueError: preview proof\u001b[0m",
                     "final entry",
                   ],

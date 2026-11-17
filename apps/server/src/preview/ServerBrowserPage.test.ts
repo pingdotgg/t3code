@@ -23,6 +23,24 @@ import { SessionControl } from "./SessionControl.ts";
 
 const decodeEvaluateInput = Schema.decodeUnknownSync(PreviewAutomationEvaluateInput);
 
+describe("JPEG screenshot dimensions", () => {
+  const encode = (bytes: number[]) => Buffer.from(bytes).toString("base64");
+  const frame = [0xff, 0xd8, 0xff, 0xc0, 0, 7, 8, 0, 24, 0, 32];
+
+  it("reads valid dimensions and rejects invalid or incomplete frames", () => {
+    expect(ServerBrowserPage.jpegSize(encode(frame))).toEqual({ width: 32, height: 24 });
+    for (const bytes of [
+      [],
+      [0xff, 0xd8, 0xff, 0xe1, 0, 20, 1],
+      frame.slice(0, -1),
+      [...frame.slice(0, 7), 0, 0, 0, 32],
+      [...frame.slice(0, 9), 0, 0],
+    ]) {
+      expect(() => ServerBrowserPage.jpegSize(encode(bytes))).toThrow("Invalid JPEG screenshot.");
+    }
+  });
+});
+
 describe("snapshot deadline diagnostics", () => {
   const never = () => new Promise<never>(() => {});
   const stalledSnapshot = async (options: {
@@ -357,6 +375,25 @@ describe("server browser element refs", () => {
     expect(await page.getByRole("textbox", { name: "parent" }).inputValue()).toBe("");
   });
 
+  it("types after a click by coordinates into a shadow-root field, and refuses a field inside an editable frame", async () => {
+    await page.setContent(
+      `<div id="host"></div><div contenteditable="true"><iframe srcdoc="<input id=inner>"></iframe></div><script>document.getElementById("host").attachShadow({mode:"open"}).innerHTML = "<input id=field>";</script>`,
+    );
+    const field = page.locator("#host #field");
+    const box = (await field.boundingBox())!;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await ServerBrowserPage.type(page, { text: "shadow" });
+    expect(await field.inputValue()).toBe("shadow");
+
+    // Refused for now: focus inside a frame cannot be checked from the top document.
+    const inner = page.frameLocator("iframe").locator("#inner");
+    await inner.click();
+    await expect(ServerBrowserPage.type(page, { text: "frame" })).rejects.toMatchObject({
+      tag: "PreviewAutomationTargetNotEditableError",
+    });
+    expect(await inner.inputValue()).toBe("");
+  });
+
   it("shows dotted fields as dots wherever their value appears, keeping text values and refs", async () => {
     await page.setContent(`
       <table><tr><td>password:</td><td><input id="pw" type="password" aria-label="Password"></td></tr></table>
@@ -591,7 +628,7 @@ describe("server browser snapshot screenshot", () => {
   const screenshotOf = async (html: string) => {
     const page = await context.newPage();
     await page.setContent(html);
-    const { screenshot, fullScreenshot } = await ServerBrowserPage.snapshot({
+    const input = {
       page,
       cdp: await context.newCDPSession(page),
       renderScale: 2,
@@ -599,7 +636,8 @@ describe("server browser snapshot screenshot", () => {
       consoleEntries: [],
       networkEntries: [],
       actionTimeline: [],
-    });
+    };
+    const { screenshot, fullScreenshot } = await ServerBrowserPage.snapshot(input);
     // The server has no DOM types, so the decoder runs as page source.
     const points = [
       [0.15, 0.75],
@@ -618,7 +656,7 @@ describe("server browser snapshot screenshot", () => {
         Array.from(context.getImageData(x * bitmap.width, y * bitmap.height, 1, 1).data),
       );
     })()`)) as Array<[number, number, number, number]>;
-    return { screenshot, fullScreenshot, pixels };
+    return { screenshot, fullScreenshot, pixels, input };
   };
   const colorOf = ([red, green, blue]: readonly [number, number, number, number]) =>
     blue - red > 100 ? "blue" : red - blue > 100 ? "red" : `rgb(${red}, ${green}, ${blue})`;
@@ -633,13 +671,20 @@ describe("server browser snapshot screenshot", () => {
   });
 
   it("captures a plain page at the shrunk size with its content in place", async () => {
-    const { screenshot, fullScreenshot, pixels } = await screenshotOf(halves(""));
+    const { screenshot, fullScreenshot, pixels, input } = await screenshotOf(halves(""));
+    const metadata = await ServerBrowserPage.snapshotMetadata(input);
 
     expect({
       size: [screenshot.width, screenshot.height],
       fullSize: [fullScreenshot?.width, fullScreenshot?.height],
+      metadataSize: metadata.screenshot,
       colors: pixels.map(colorOf),
-    }).toEqual({ size: [1280, 800], fullSize: [2560, 1600], colors: ["blue", "red", "red"] });
+    }).toEqual({
+      size: [1280, 800],
+      fullSize: [2560, 1600],
+      metadataSize: { width: 1280, height: 800 },
+      colors: ["blue", "red", "red"],
+    });
   });
 
   it("records the destination of a finite entrance animation without waiting on infinite ones", async () => {
@@ -900,6 +945,55 @@ describe("server browser evaluate", () => {
         "Runtime.evaluate",
         "Runtime.terminateExecution",
       ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("server browser type", () => {
+  // As on a desktop tab whose Playwright utility world never answers.
+  const stalledPage = (focusAnswer: () => Promise<unknown>, typed: string[]) =>
+    ({
+      locator: () => ({ last: () => ({ count: () => new Promise<number>(() => {}) }) }),
+      evaluate: focusAnswer,
+      keyboard: { insertText: async (text: string) => void typed.push(text) },
+    }) as unknown as Page;
+
+  it("types into the focused field when Playwright's utility world never answers", async () => {
+    vi.useFakeTimers();
+    try {
+      const typed: string[] = [];
+      let outcome: unknown = "pending";
+      const page = stalledPage(async () => true, typed);
+      void ServerBrowserPage.type(page, { text: "hello", timeoutMs: 300 }).then(
+        () => (outcome = "typed"),
+        (error: unknown) => (outcome = error),
+      );
+      await vi.advanceTimersByTimeAsync(300);
+      expect(outcome).toBe("typed");
+      expect(typed).toEqual(["hello"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops at its timeout without typing when the page never answers", async () => {
+    vi.useFakeTimers();
+    try {
+      const typed: string[] = [];
+      let outcome: unknown = "pending";
+      const page = stalledPage(() => new Promise(() => {}), typed);
+      void ServerBrowserPage.type(page, { text: "hello", timeoutMs: 300 }).then(
+        () => (outcome = "typed"),
+        (error: unknown) => (outcome = error),
+      );
+      await vi.advanceTimersByTimeAsync(300);
+      expect(outcome).toMatchObject({
+        tag: "PreviewAutomationTimeoutError",
+        detail: { timeoutMs: 300 },
+      });
+      expect(typed).toEqual([]);
     } finally {
       vi.useRealTimers();
     }
