@@ -26,8 +26,12 @@ const AGENT_INPUT_COMMAND =
   /"method":"(?:Input\.|Page\.navigate"|Runtime\.(?:evaluate|callFunctionOn)")/;
 /** The same commands as above, by method, for the relay's sends. */
 const AGENT_INPUT_METHOD = /^(?:Input\.|Page\.navigate$|Runtime\.(?:evaluate|callFunctionOn)$)/;
-const AGENT_DOWNLOAD_WINDOW_MS = 5_000;
+const AGENT_INPUT_WINDOW_MS = 5_000;
+/** A viewer's pointer travelling over the stream activates nothing on the page. */
+const POINTER_TRAVEL = new Set<unknown>(["mouseMoved", "mouseWheel"]);
 const FOCUS_IDLE = "5 seconds";
+/** How long a screenshot waits for the client to draw its guest at full detail. */
+const CAPTURE_DRAW_WAIT = "1 second";
 /** Well inside the server's 10 s DESKTOP_ATTACH_TIMEOUT, for a first page that never reports it is up. */
 const FIRST_PAGE_TIMEOUT = "5 seconds";
 const ERR_ABORTED = -3;
@@ -60,6 +64,8 @@ interface AttachedTab {
   downloadDirectory: string | null;
   pendingDownloadGuid: string | null;
   agentInputAt: number;
+  /** When the agent last drove the page with no person's input through a viewer since. */
+  agentLedAt: number;
   focusEmulated: boolean;
   focusChange: Promise<void> | null;
   focusUses: number;
@@ -97,7 +103,11 @@ export class DesktopBrowserHost extends Context.Service<
     readonly detach: (key: DesktopBrowserTabKey) => void;
     readonly loadFailed: (key: DesktopBrowserTabKey, failure: PreviewAutomationLoadError) => void;
     readonly setShown: (key: DesktopBrowserTabKey, shown: boolean | undefined) => void;
+    /** Whether the client draws the guest at full detail while it is captured. */
+    readonly setCaptureDrawn: (key: DesktopBrowserTabKey, drawn: boolean | undefined) => void;
     readonly humanStartedDownload: (source: Electron.WebContents) => boolean;
+    /** Whether what the page does now follows the agent's input, not a viewer's. */
+    readonly agentLedPage: (source: Electron.WebContents) => boolean;
     readonly placeDownload: (source: Electron.WebContents, item: Electron.DownloadItem) => boolean;
     readonly pointers: Stream.Stream<{
       readonly key: DesktopBrowserTabKey;
@@ -132,6 +142,8 @@ export const make = Effect.gen(function* () {
   // Kept apart from attachment: the renderer can show a webview before its debugger attaches,
   // and the server forgets `shown` on detach, for example while DevTools holds the debugger.
   const shownTabs = new Map<string, boolean>();
+  const drawnTabs = new Set<string>();
+  const drawWaiters = new Map<string, Set<() => void>>();
   const emit = (event: DesktopBrowserEventType) => runFork(PubSub.publish(outbox, event));
 
   const nextScreenshot = (tab: AttachedTab) => {
@@ -260,12 +272,32 @@ export const make = Effect.gen(function* () {
     });
   };
 
+  /**
+   * A scaled guest rasters at its on-screen size until the client draws it at full detail,
+   * and a screenshot taken before that copies the blurred frame. A client that cannot draw
+   * (a hidden window, say) only delays the capture.
+   */
+  const whenDrawn = (tab: AttachedTab) =>
+    new Promise<void>((resolve) => {
+      const id = keyOf(tab.key);
+      const waiters = drawWaiters.get(id) ?? new Set();
+      drawWaiters.set(id, waiters);
+      const done = () => {
+        waiters.delete(done);
+        if (waiters.size === 0 && drawWaiters.get(id) === waiters) drawWaiters.delete(id);
+        resolve();
+      };
+      waiters.add(done);
+      runFork(Effect.sleep(CAPTURE_DRAW_WAIT).pipe(Effect.andThen(Effect.sync(done))));
+    });
+
   /** Chromium answers a capture, and frees its wake lock, only once the guest paints a frame. */
   const paintUntilAnswered = <A>(tab: AttachedTab, send: () => Promise<A>) => {
     const sent = {};
     tab.capturing.add(sent);
     syncPainting(tab);
-    return send().finally(() => {
+    // Sent at once when already drawn, so it keeps its place among the commands after it.
+    return (drawnTabs.has(keyOf(tab.key)) ? send() : whenDrawn(tab).then(send)).finally(() => {
       tab.capturing.delete(sent);
       syncPainting(tab);
     });
@@ -351,21 +383,26 @@ export const make = Effect.gen(function* () {
             if (tab.screencasts.size > 0) return Promise.resolve({});
           }
           // A person's input through a viewer, or Playwright's own housekeeping, is not the agent's.
-          if (
-            AGENT_INPUT_METHOD.test(method) &&
-            (owner === undefined || !streamingOwners.has(owner))
-          ) {
-            tab.agentUsed = true;
+          if (AGENT_INPUT_METHOD.test(method)) {
+            if (owner === undefined || !streamingOwners.has(owner)) {
+              tab.agentUsed = true;
+              tab.agentLedAt = performance.now();
+            } else if (method.startsWith("Input.") && !POINTER_TRAVEL.has(params["type"])) {
+              tab.agentLedAt = Number.NEGATIVE_INFINITY;
+            }
           }
           // Waits for focus emulation; insertText and other non-CDP input would not queue behind it.
           const forward = (current?: () => boolean) => {
             const change = tab.focusChange;
-            const run = () =>
-              tab.relay !== relay || (current !== undefined && !current())
+            const stale = () => tab.relay !== relay || (current !== undefined && !current());
+            const sendUnlessStale = () =>
+              stale()
                 ? Promise.reject(new Error("The page this screenshot was for has moved on."))
-                : current === undefined
-                  ? send(method, params, sessionId)
-                  : paintUntilAnswered(tab, () => send(method, params, sessionId));
+                : send(method, params, sessionId);
+            const run = () =>
+              current === undefined || stale()
+                ? sendUnlessStale()
+                : paintUntilAnswered(tab, sendUnlessStale);
             return change === null ? run() : change.then(run);
           };
           return method === "Page.captureScreenshot"
@@ -413,6 +450,10 @@ export const make = Effect.gen(function* () {
           dropSessionHolds(tab, owner);
         },
         receivesScreencast: (owner) => tab.screencasts.has(owner),
+        ackScreencastFrame: (frameId) =>
+          void debuggee
+            .sendCommand("Page.screencastFrameAck", { sessionId: frameId })
+            .catch(() => {}),
         targetId: () =>
           debuggee
             .sendCommand("Target.getTargetInfo")
@@ -490,6 +531,7 @@ export const make = Effect.gen(function* () {
       downloadDirectory: null,
       pendingDownloadGuid: null,
       agentInputAt: Number.NEGATIVE_INFINITY,
+      agentLedAt: Number.NEGATIVE_INFINITY,
       focusEmulated: false,
       focusChange: null,
       focusUses: 0,
@@ -574,6 +616,17 @@ export const make = Effect.gen(function* () {
     if (tabs.get(id)?.stopWaiting === null) emit({ type: "shown", ...key, shown });
   };
 
+  const setCaptureDrawn = (key: DesktopBrowserTabKey, drawn: boolean | undefined) => {
+    const id = keyOf(key);
+    if (!drawn) {
+      drawnTabs.delete(id);
+      return;
+    }
+    drawnTabs.add(id);
+    for (const done of drawWaiters.get(id) ?? []) done();
+    drawWaiters.delete(id);
+  };
+
   const loadFailed: DesktopBrowserHost["Service"]["loadFailed"] = (key, failure) => {
     if (tabs.has(keyOf(key))) emit({ type: "loadFailed", ...key, ...failure });
   };
@@ -604,7 +657,12 @@ export const make = Effect.gen(function* () {
 
   const humanStartedDownload = (source: Electron.WebContents) => {
     const tab = [...tabs.values()].find((candidate) => candidate.debuggee.webContents === source);
-    return tab !== undefined && performance.now() - tab.agentInputAt > AGENT_DOWNLOAD_WINDOW_MS;
+    return tab !== undefined && performance.now() - tab.agentInputAt > AGENT_INPUT_WINDOW_MS;
+  };
+
+  const agentLedPage = (source: Electron.WebContents) => {
+    const tab = [...tabs.values()].find((candidate) => candidate.debuggee.webContents === source);
+    return tab !== undefined && performance.now() - tab.agentLedAt <= AGENT_INPUT_WINDOW_MS;
   };
 
   const announceAll = Effect.suspend(() => {
@@ -645,8 +703,10 @@ export const make = Effect.gen(function* () {
     detach,
     loadFailed,
     setShown,
+    setCaptureDrawn,
     placeDownload,
     humanStartedDownload,
+    agentLedPage,
   });
 });
 

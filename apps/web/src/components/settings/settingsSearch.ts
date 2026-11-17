@@ -633,6 +633,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["speech voice stt advanced gpu cpu acceleration memory unload idle"],
   },
   {
+    id: "speech-streaming",
+    title: "Streaming transcription",
+    to: "/settings/voice",
+    searchTerms: ["speech voice stt advanced native live preview batch after stopping slow lag"],
+  },
+  {
     id: "microphone-test",
     title: "Test microphone",
     to: "/settings/voice",
@@ -1288,6 +1294,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["managed tunnel cloud other devices remote tunnels limit t3 chat"],
     desktopOnly: true,
     cloudOnly: true,
+  },
+  {
+    id: "connect-device-approval",
+    title: "Require approval for new devices",
+    to: "/settings/access",
+    targetId: "connections-environment",
+    searchTerms: ["t3 connect devices approve deny trust revoke pairing code security account"],
+    cloudOnly: true,
+    managedTunnelOnly: true,
   },
   {
     id: "hold-webhooks-while-offline",
