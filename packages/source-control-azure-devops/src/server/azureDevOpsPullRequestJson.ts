@@ -92,18 +92,6 @@ const RawThreadSchema = Schema.Struct({
       }),
     ),
   ),
-  pullRequestThreadContext: Schema.optional(
-    Schema.NullOr(
-      Schema.Struct({
-        iterationContext: Schema.optional(
-          Schema.NullOr(
-            Schema.Struct({ secondComparingIteration: Schema.optional(Schema.NullOr(Schema.Int)) }),
-          ),
-        ),
-        trackingCriteria: Schema.optional(Schema.NullOr(Schema.Unknown)),
-      }),
-    ),
-  ),
   comments: Schema.optional(
     Schema.NullOr(
       Schema.Array(
@@ -366,20 +354,10 @@ function toThreadAnchor(
 }
 
 /**
- * Azure moves a thread to the push it was asked to track to only when the thread's line moved, and
- * says so in `trackingCriteria`. An untracked thread from an older push may name a line that has
- * since changed, so it keeps no line.
+ * Every remark in order, and each file thread once more as a whole for the diff. Azure states a
+ * file thread's line on the push named in `trackedTo`; read without one, the line is wherever the
+ * thread was written, which a later push may have moved, so it keeps no line.
  */
-function isOnPush(
-  context: Schema.Schema.Type<typeof RawThreadSchema>["pullRequestThreadContext"],
-  trackedTo: number | undefined,
-): boolean {
-  if (trackedTo === undefined) return false;
-  if (context?.trackingCriteria != null) return true;
-  return context?.iterationContext?.secondComparingIteration === trackedTo;
-}
-
-/** Every remark in order, and each file thread once more as a whole for the diff. */
 export function decodeThreadsJson(
   raw: string,
   trackedTo?: number,
@@ -426,7 +404,7 @@ export function decodeThreadsJson(
     reviewThreads.push({
       id: String(thread.id),
       path,
-      ...(isOnPush(thread.pullRequestThreadContext, trackedTo)
+      ...(trackedTo !== undefined
         ? toThreadAnchor(thread.threadContext)
         : { line: null, side: "right" as const }),
       isResolved: RESOLVED_THREAD_STATUSES.has(thread.status?.trim().toLowerCase() ?? ""),

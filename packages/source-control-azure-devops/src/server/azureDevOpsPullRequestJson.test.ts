@@ -320,27 +320,41 @@ describe("decodeThreadsJson", () => {
     ]);
   });
 
+  // Shapes as Azure answers `$iteration=3&$baseIteration=0`: it adds `trackingCriteria` only to a
+  // thread whose file changed after it was written.
   it.each([
-    { thread: "written on the push asked for", written: 3, tracked: false, trackedTo: 3, line: 12 },
-    { thread: "moved by Azure to the push", written: 1, tracked: true, trackedTo: 3, line: 12 },
-    { thread: "left on an older push", written: 1, tracked: false, trackedTo: 3, line: null },
-    { thread: "read without a push", written: 3, tracked: false, trackedTo: undefined, line: null },
-  ])("places a file thread $thread on the line only when it is on that push", (input) => {
+    { thread: "moved by a later push", side: "right", tracked: true, trackedTo: 3, line: 12 },
+    {
+      thread: "in a file no later push touched",
+      side: "right",
+      tracked: false,
+      trackedTo: 3,
+      line: 12,
+    },
+    { thread: "on a deleted line", side: "left", tracked: false, trackedTo: 3, line: 12 },
+    {
+      thread: "read without a push",
+      side: "right",
+      tracked: false,
+      trackedTo: undefined,
+      line: null,
+    },
+  ] as const)("places a file thread $thread on its line only when read against a push", (input) => {
     const { reviewThreads } = expectSuccess(
       decodeThreadsJson(
         asJson({
           value: [
             {
               id: 1,
-              threadContext: { filePath: "/src/app.ts", rightFileStart: { line: 12, offset: 1 } },
+              threadContext: {
+                filePath: "/src/app.ts",
+                [`${input.side}FileStart`]: { line: 12, offset: 1 },
+              },
               pullRequestThreadContext: {
-                iterationContext: {
-                  firstComparingIteration: input.written,
-                  secondComparingIteration: input.written,
-                },
+                iterationContext: { firstComparingIteration: 1, secondComparingIteration: 1 },
                 ...(input.tracked
                   ? {
-                      trackingCriteria: { firstComparingIteration: 3, secondComparingIteration: 1 },
+                      trackingCriteria: { firstComparingIteration: 3, secondComparingIteration: 3 },
                     }
                   : {}),
               },
@@ -352,8 +366,8 @@ describe("decodeThreadsJson", () => {
       ),
     );
 
-    expect(reviewThreads.map((thread) => [thread.path, thread.line])).toEqual([
-      ["src/app.ts", input.line],
+    expect(reviewThreads.map((thread) => [thread.path, thread.line, thread.side])).toEqual([
+      ["src/app.ts", input.line, input.line === null ? "right" : input.side],
     ]);
   });
 
