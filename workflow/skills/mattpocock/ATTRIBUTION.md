@@ -75,6 +75,11 @@ and `writing-for-agents`.
   the last ticket.
 - `grilling`, `to-spec`, `to-tickets`, `triage-issues`, and `diff-review` end with one `**Related:**`
   line naming the skills that come before or after them in this fork's flows.
+- Tie-ins so related skills run where they belong: `wayfinder` scans existing code with
+  `improve-codebase-architecture` while mapping the frontier; `to-tickets` makes a refactor judged with
+  `codebase-design` the first ticket when it simplifies the slices, and gives human-only tickets a
+  `wizard` script; `grilling` sends external-fact questions to `research` and look-and-feel questions
+  to `prototype`.
 - `wayfinder` ends a finished map by filing implementation tickets with `to-tickets` and handing them
   to `maestro`, so charting runs straight into dispatch. One added step under "Work through the map".
 

@@ -22,13 +22,15 @@ Use the `maestro` skill and run as the maestro dispatcher for <owner/repo>. Mast
 
 ### Intake
 
+Issues that arrive without triage labels (filed by hand or from outside) go through the `triage-issues` skill first.
+
 Stress-test each requirement with `grilling`, then file tasks with `plan-to-issues`, or with `to-spec` and `to-tickets`. Plan very large work with `wayfinder` first. All of them write sub-issues of a parent, native blocking edges (`gh issue edit <n> --add-blocked-by <m>`), and `ready-for-agent`. Reach for `research`, `domain-modeling`, or `replan` when a requirement is unclear, not as a fixed step. After filing, send the maestro one line with `t3_thread_send`: `dispatch now`.
 
 To run an issue on another provider, label it `provider:<instanceId>`, for example `provider:grok`.
 
 ### needs-help
 
-The maestro sends you two kinds of line. `#<n> ready-for-human unblocked <issue url>` means a task for you or the user can start now. For a `#<n> needs-help: <reason> <issue url>` line, the issue carries a comment saying what is needed. Decide, or ask the user. Then either finish the task yourself (merge the PR, close the issue, and close its `epic` if that was the last open sub-issue), or comment your decision and remove `needs-help` so the issue rejoins the frontier and a fresh worker picks it up. Nudge the maestro afterwards.
+The maestro sends you three kinds of line. `#<n> ready-for-human unblocked <issue url>` means a task for you or the user can start now. `#<n> epic done <url>` means a whole epic shipped: offer the user the `retro` skill on it. For a `#<n> needs-help: <reason> <issue url>` line, the issue carries a comment saying what is needed. Decide, or ask the user. When the decision belongs to someone else, turn it into a questionnaire for them with the `to-questionnaire` skill. Then either finish the task yourself (merge the PR, close the issue, and close its `epic` if that was the last open sub-issue), or comment your decision and remove `needs-help` so the issue rejoins the frontier and a fresh worker picks it up. Nudge the maestro afterwards.
 
 ## Labels
 
@@ -96,7 +98,7 @@ Use the `maestro-worker` skill for issue #<n> in <owner/repo>. Maestro thread: <
 
 Name the skill; never paste its body. Use your own provider and model unless the issue has a `provider:<instanceId>` label, then set `target.providerInstanceId` to it. If that instance is not in `orchestrator_capabilities`, label `needs-help` with the reason.
 
-**4. Epics.** Close an open `epic` whose sub-issues are all closed: `gh issue close <n> --comment "maestro: every sub-issue is closed."`
+**4. Epics.** Close an open `epic` whose sub-issues are all closed: `gh issue close <n> --comment "maestro: every sub-issue is closed."`, and tell the master in one line, `#<n> epic done <url>`, so it can offer the user a `retro` of that run.
 
 **5. Human tasks.** When an open `ready-for-human` issue has just become unblocked, send the master one line, once: `#<n> ready-for-human unblocked <issue url>`.
 
@@ -109,4 +111,4 @@ gh issue edit <n> --add-label needs-help --remove-label in-progress
 gh issue comment <n> --body "maestro: needs help. <reason>"
 ```
 
-Every time an issue gains `needs-help`, from a worker or from you, `t3_thread_send` the master exactly one line, once per occurrence: `#<n> needs-help: <reason> <issue url>`. Default `mode: "auto"` queues it if the master is busy. Besides these, send the master only the `ready-for-human unblocked` line from step 5.
+Every time an issue gains `needs-help`, from a worker or from you, `t3_thread_send` the master exactly one line, once per occurrence: `#<n> needs-help: <reason> <issue url>`. Default `mode: "auto"` queues it if the master is busy. Besides these, send the master only the `ready-for-human unblocked` line from step 5 and the `epic done` line from step 4.

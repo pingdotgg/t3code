@@ -23,7 +23,7 @@ Look for opportunities to prefactor the code to make the implementation easier. 
 
 ### 3. Draft vertical slices
 
-Break the work into **tracer bullet** tickets.
+Break the work into **tracer bullet** tickets. If reshaping a module first would make the slices simpler, judge the shape with the `codebase-design` skill and make that refactor the first ticket.
 
 <vertical-slice-rules>
 
@@ -62,6 +62,8 @@ Publish the approved tickets. **How** depends on the tracker `/setup-matt-pocock
 - **A real issue tracker (GitHub, Linear, …)** → publish one issue per ticket in dependency order (blockers first) so each ticket's blocking edges can reference real identifiers. Use the platform's native blocking relationship where it has one; otherwise set each ticket's "Blocked by" to the blocking issues. If the source was an existing issue, make each ticket its sub-issue (tracker doc's operation). Apply the `ready-for-agent` triage label unless instructed otherwise; the tickets are agent-grabbable by construction.
 
 Work the **frontier**: any ticket whose blockers are all done. For a purely linear chain that means top to bottom.
+
+For a ticket only a person can do (credentials, a third-party dashboard), label it `ready-for-human` instead and attach a guided script from the `wizard` skill.
 
 Do NOT close or modify any parent issue.
 

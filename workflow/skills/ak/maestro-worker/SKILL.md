@@ -11,15 +11,16 @@ You are a maestro worker. Your task names the issue `<n>` and the repo. You own 
 2. Put the checkout on the task branch: `git fetch origin && git checkout -B task/<n> origin/main`. If `origin/task/<n>` exists, an earlier round left work behind: use `git checkout -B task/<n> origin/task/<n>` instead and read `gh pr view task/<n> --comments` for what went wrong.
 3. If `.t3/setup-done` is missing and `.t3/setup-running` names no live PID, run the repo's install step.
 4. If the issue lacks what you need to start, ask for help (below). Do not guess.
+5. If the issue is a bug, find its cause with the `diagnosing-bugs` skill before fixing, and write the failing test first with the `tdd` skill.
 
 ## Ship it with full-send
 
-5. Follow the `full-send` skill from its step 1 to its merge. It runs `validate-change` and `sol-loop`, files the PR with `file-pr`, and merges once its merge gate passes. The issue's request is the user's request, and its merge closes the issue. Three overrides, because you are a delegated child:
+6. Follow the `full-send` skill from its step 1 to its merge. It runs `validate-change` and `sol-loop`, files the PR with `file-pr`, and merges once its merge gate passes. The issue's request is the user's request, and its merge closes the issue. Three overrides, because you are a delegated child:
    - **Waiting.** Never call `watch_pull_request`. When the repo runs CI or review bots on the PR, wait with `~/.agents/skills/babysit-pr/scripts/pr-wait`, as `babysit-pr` describes. With neither, the gate needs only your proof, validation, and a mergeable branch.
    - **Asking.** Wherever `full-send` would ask the user, ask for help (below) instead.
    - **Reporting.** End with the final message below, not `full-send`'s report.
 
-6. After the merge, if the issue's parent `epic` has no open sub-issues left, close it: `gh issue close <epic> --comment "every sub-issue is closed."`
+7. After the merge, if the issue's parent `epic` has no open sub-issues left, close it: `gh issue close <epic> --comment "every sub-issue is closed."`
 
 ## Ask for help
 
