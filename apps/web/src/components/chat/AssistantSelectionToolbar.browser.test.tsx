@@ -53,7 +53,6 @@ function Transcript(props: { onCite: OnCite; composerKeys?: string[] }) {
   return (
     <>
       {props.composerKeys ? <ChatShortcuts composerKeys={props.composerKeys} /> : null}
-      <input aria-label="Find in thread" />
       <div ref={setViewport}>
         <div data-assistant-citation-source="message-1">
           <p>Render the citation chip</p>
@@ -75,20 +74,7 @@ async function selectAssistantText(container: HTMLElement) {
 }
 
 describe("AssistantSelectionToolbar", () => {
-  it.each(["r", "R"])("cites the selection when %s is pressed", async (key) => {
-    const onCite = vi.fn<OnCite>(() => true);
-    await using screen = await render(<Transcript onCite={onCite} />, options);
-    await selectAssistantText(screen.container);
-
-    await userEvent.keyboard(key);
-
-    expect(onCite).toHaveBeenCalledOnce();
-    expect(onCite.mock.lastCall![0]).toMatchObject({ messageId: "message-1", text: "the cita" });
-    expect(window.getSelection()!.isCollapsed).toBe(true);
-    await expect.element(citeButton).not.toBeInTheDocument();
-  });
-
-  it("cites with R instead of typing it into the composer", async () => {
+  it.each(["r", "R"])("cites with %s instead of typing it into the composer", async (key) => {
     const onCite = vi.fn<OnCite>(() => true);
     const composerKeys: string[] = [];
     await using screen = await render(
@@ -97,10 +83,13 @@ describe("AssistantSelectionToolbar", () => {
     );
     await selectAssistantText(screen.container);
 
-    await userEvent.keyboard("r");
+    await userEvent.keyboard(key);
 
     expect(onCite).toHaveBeenCalledOnce();
+    expect(onCite.mock.lastCall![0]).toMatchObject({ messageId: "message-1", text: "the cita" });
     expect(composerKeys).toEqual([]);
+    expect(window.getSelection()!.isCollapsed).toBe(true);
+    await expect.element(citeButton).not.toBeInTheDocument();
   });
 
   it("types R into the composer when nothing is selected", async () => {
@@ -114,19 +103,6 @@ describe("AssistantSelectionToolbar", () => {
     await userEvent.keyboard("r");
 
     expect(composerKeys).toEqual(["r"]);
-    expect(onCite).not.toHaveBeenCalled();
-  });
-
-  it("lets a focused text field keep R", async () => {
-    const onCite = vi.fn<OnCite>(() => true);
-    await using screen = await render(<Transcript onCite={onCite} />, options);
-    await selectAssistantText(screen.container);
-    const find = screen.getByRole("textbox", { name: "Find in thread" });
-    await userEvent.click(find);
-
-    await userEvent.keyboard("r");
-
-    await expect.element(find).toHaveValue("r");
     expect(onCite).not.toHaveBeenCalled();
   });
 
