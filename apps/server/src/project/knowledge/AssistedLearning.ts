@@ -138,6 +138,17 @@ const make = Effect.gen(function* () {
       // The setting can change between scheduling and running; the latest choice wins.
       if (!settings.enableAssistedLearning)
         return yield* finish("skipped", "Automatic memory is off for this project.");
+      // Without the check nothing can be saved, so don't pay for extraction.
+      if (
+        !(yield* textGeneration.supportsOperation(
+          "checkFactStanding",
+          settings.textGenerationModelSelection.instanceId,
+        ))
+      )
+        return yield* finish(
+          "skipped",
+          "The text generation model's provider can't check memories. Choose another model in Settings → Threads → Text generation.",
+        );
       const evidence = [];
       // A seat's reply published into its parent and the seat's own thread are one speaker.
       const speakerThreads = new Map<RunId, ThreadId>();

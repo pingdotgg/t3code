@@ -97,6 +97,7 @@ it.effect("rejects an unsupported selected operation before invoking a provider"
     expect(failure.detail).toContain("does not support");
     expect(generateConversationSummary).not.toHaveBeenCalled();
     expect(test.getInstance.mock.calls).toEqual([[selected]]);
+    expect(yield* service.supportsOperation("generateConversationSummary", selected)).toBe(false);
   }),
 );
 
@@ -113,6 +114,7 @@ it.effect("uses the exact selected instance and model for a supported operation"
     expect(yield* service.generateConversationSummary(input)).toEqual(result);
     expect(generateConversationSummary).toHaveBeenCalledExactlyOnceWith(input);
     expect(test.getInstance.mock.calls).toEqual([[selected]]);
+    expect(yield* service.supportsOperation("generateConversationSummary", selected)).toBe(true);
   }),
 );
 

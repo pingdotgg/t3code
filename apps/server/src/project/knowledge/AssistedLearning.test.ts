@@ -55,12 +55,15 @@ const makeLayer = (
   generate: Generate,
   settings: Parameters<typeof ServerSettings.layerTest>[0] = {},
   check: Check = allStanding,
+  canCheck = true,
 ) =>
   AssistedLearning.layerRunner.pipe(
     Layer.provide(
       Layer.mock(TextGeneration.TextGeneration)({
         generateKnowledgeCandidates: generate,
         checkFactStanding: check,
+        supportsOperation: (operation) =>
+          Effect.succeed(operation !== "checkFactStanding" || canCheck),
       }),
     ),
     Layer.provideMerge(ProjectKnowledge.layer.pipe(Layer.provide(HolographicMemory.layer))),
@@ -402,6 +405,36 @@ it.effect("saves nothing when the check fails, and retries the batch before givi
     assert.deepEqual(yield* sql`SELECT * FROM project_knowledge_learning_queue`, []);
     assert.deepEqual((yield* knowledge.list({ projectId, status: "saved" })).facts, []);
   }).pipe(Effect.provide(makeLayer(model.generate, {}, check)));
+});
+
+it.effect("skips a batch with no model call when the provider cannot run the check", () => {
+  const model = scripted([{ candidates: [snakeCase] }]);
+  let checks = 0;
+  const check: Check = (input) => {
+    checks += 1;
+    return allStanding(input);
+  };
+  return Effect.gen(function* () {
+    yield* seedRun;
+    yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.add(at, { minutes: 10 })));
+    const runner = yield* AssistedLearningRunner;
+    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+    const sql = yield* SqlClient.SqlClient;
+    yield* runner.enqueueRun({ threadId, runId, runOutcome: "completed" });
+    yield* TestClock.adjust("30 minutes");
+    yield* runner.drainDue;
+    assert.deepEqual([model.calls.length, checks], [0, 0]);
+    const lastRun = (yield* knowledge.status({ projectId })).assistedLearning?.lastRun;
+    assert.deepEqual(
+      [lastRun?.result, lastRun?.reason],
+      [
+        "skipped",
+        "The text generation model's provider can't check memories. Choose another model in Settings → Threads → Text generation.",
+      ],
+    );
+    // Finished on the first attempt: nothing waits in the queue for a retry.
+    assert.deepEqual(yield* sql`SELECT * FROM project_knowledge_learning_queue`, []);
+  }).pipe(Effect.provide(makeLayer(model.generate, {}, check, false)));
 });
 
 /** Marks a message as a peer's reply, as a group conversation's published turn item does. */

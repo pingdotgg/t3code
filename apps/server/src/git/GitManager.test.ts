@@ -315,6 +315,7 @@ function createTextGeneration(
     generateKnowledgeCandidates: () => Effect.succeed({ candidates: [] }),
     generateConversationSummary: () => Effect.succeed({ statements: [] }),
     checkFactStanding: () => Effect.succeed({ verdicts: [] }),
+    supportsOperation: () => Effect.succeed(true),
     generateModelEvaluation: () => Effect.die("Unused evaluation fixture"),
     generateThreadTitle: () =>
       Effect.succeed({
@@ -376,6 +377,8 @@ function createTextGeneration(
     generateConversationSummary: (input) => implementation.generateConversationSummary(input),
     generateModelEvaluation: (input) => implementation.generateModelEvaluation(input),
     checkFactStanding: (input) => implementation.checkFactStanding(input),
+    supportsOperation: (operation, instanceId) =>
+      implementation.supportsOperation(operation, instanceId),
     generateTranscriptionPostProcessing: (input) =>
       implementation.generateTranscriptionPostProcessing(input),
   };
