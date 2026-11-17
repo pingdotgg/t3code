@@ -120,6 +120,10 @@ protection takes effect at once. The server's protection from the kernel's
 out-of-memory killer takes effect after `t3 service restart`. `t3 service status` reports whether
 the protection is in place, and `t3 service protect --undo` removes it.
 
+While the host is badly short on memory, the sidebar (or the top of the thread
+list on mobile) shows **Low on memory**. On Linux it names the agents using the
+most memory, and you can force stop one there to free memory for the rest.
+
 ## Troubleshooting
 
 Start with `t3 service status` on the host. It prints the log path and, on Linux,
