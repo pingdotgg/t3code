@@ -13,8 +13,10 @@ import {
 import * as Option from "effect/Option";
 import type { ReactNode } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import { Button } from "../../components/ui/Button";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useEnvironments } from "../../state/environments";
 import { issueTrackerEnvironment } from "../../state/issueTrackers";
@@ -171,6 +173,11 @@ export function SettingsIssueTrackerRouteScreen({
           <Text selectable className="px-2 text-sm text-foreground-muted">
             {issueTrackerSummary(tracker, query.data?.bindings ?? {})}
           </Text>
+          {tracker.unavailable ? (
+            <View className="px-2">
+              <Button label="Try again" tone="secondary" onPress={query.refresh} />
+            </View>
+          ) : null}
           <SettingsSection title={tracker.credential.label}>
             <IssueTrackerCredentialForm
               environmentId={environmentId}

@@ -84,6 +84,8 @@ export function IssueTrackerSettings({ environmentId }: { readonly environmentId
           environmentId={environmentId}
           tracker={tracker}
           bindings={query.data?.bindings ?? {}}
+          onRetry={query.refresh}
+          retrying={query.isPending}
         />
       ))}
     </SettingsSection>
@@ -94,10 +96,14 @@ function TrackerRow({
   environmentId,
   tracker,
   bindings,
+  onRetry,
+  retrying,
 }: {
   readonly environmentId: EnvironmentId;
   readonly tracker: IssueTrackerConnection;
   readonly bindings: IssueTrackerConnectionList["bindings"];
+  readonly onRetry: () => void;
+  readonly retrying: boolean;
 }) {
   const Icon = TRACKER_ICONS[tracker.tracker];
   const canEdit = useAtomValue(issueTrackerEnvironment.connect.permissionAtom(environmentId));
@@ -151,6 +157,11 @@ function TrackerRow({
           </div>
           <p className="text-xs leading-normal text-muted-foreground/80">{summary}</p>
         </div>
+        {tracker.unavailable ? (
+          <Button size="xs" variant="outline" disabled={retrying} onClick={onRetry}>
+            Retry
+          </Button>
+        ) : null}
         <Button
           size="icon-xs"
           variant="ghost-muted"
