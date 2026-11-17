@@ -2984,10 +2984,21 @@ describe("PiAdapterV2", () => {
   );
 
   it.effect.each([
-    { historical: false, moved: false, label: "the latest turn" },
-    { historical: true, moved: false, label: "a historical turn" },
-    { historical: true, moved: true, label: "a historical turn after a session switch" },
-  ])("natively forks $label into an independent session", ({ historical, moved }) =>
+    { historical: false, moved: false, split: false, label: "the latest turn" },
+    { historical: true, moved: false, split: false, label: "a historical turn" },
+    {
+      historical: true,
+      moved: true,
+      split: false,
+      label: "a historical turn after a session switch",
+    },
+    {
+      historical: true,
+      moved: true,
+      split: true,
+      label: "the last turn before a switch to a fresh session",
+    },
+  ])("natively forks $label into an independent session", ({ historical, moved, split }) =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
       const forkFake = yield* makeFakePi;
@@ -3004,15 +3015,22 @@ describe("PiAdapterV2", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
+      const freshSession = {
+        driver: PI_PROVIDER,
+        nativeId: "/fake/new-session.jsonl",
+        strength: "strong",
+      } as const;
       const turn = (ordinal: number): OrchestrationV2ProviderTurn => ({
         id: ProviderTurnId.make(`turn-${ordinal}`),
         providerThreadId: source.id,
         nodeId: NodeId.make(`node-${ordinal}`),
         runAttemptId: null,
         nativeTurnRef: { driver: PI_PROVIDER, nativeId: `u${ordinal}`, strength: "strong" },
-        ...(moved && source.nativeThreadRef !== null
-          ? { nativeThreadRef: source.nativeThreadRef }
-          : {}),
+        ...(split && ordinal === 2
+          ? { nativeThreadRef: freshSession }
+          : moved && source.nativeThreadRef !== null
+            ? { nativeThreadRef: source.nativeThreadRef }
+            : {}),
         ordinal,
         status: "completed",
         startedAt: null,
@@ -3028,16 +3046,7 @@ describe("PiAdapterV2", () => {
       fake.queueState({ sessionFile: forkFile });
       const target = ThreadId.make("fork-target");
       const forked = yield* runtime.forkThread({
-        sourceProviderThread: moved
-          ? {
-              ...source,
-              nativeThreadRef: {
-                driver: PI_PROVIDER,
-                nativeId: "/fake/new-session.jsonl",
-                strength: "strong",
-              },
-            }
-          : source,
+        sourceProviderThread: moved ? { ...source, nativeThreadRef: freshSession } : source,
         sourceProviderTurns: historical ? [turn(1), turn(2)] : [turn(1)],
         providerTurnId: turn(1).id,
         targetThreadId: target,
@@ -3057,7 +3066,7 @@ describe("PiAdapterV2", () => {
           .allRequests()
           .filter((request) => request.type === "fork")
           .map((request) => request.entryId),
-        historical ? ["u2"] : [],
+        historical && !split ? ["u2"] : [],
       );
       assert.isFalse(
         fake.allRequests().some((request) => request.type === "fork" || request.type === "clone"),

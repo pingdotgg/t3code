@@ -2889,7 +2889,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         sourceFile: string,
         boundary: PiForkBoundary,
         providerThreadCreatedAt: DateTime.Utc,
-        expectedAncestor?: string,
       ) {
         const forkLaunch = buildPiRpcLaunch({
           launchArgs: resolvedLaunchArgs.args,
@@ -2921,20 +2920,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     providerThreadCreatedAt,
                     forkConnection.request({ type: "get_entries" }),
                   );
-            if (expectedAncestor !== undefined && boundary.type !== "uncaptured") {
-              const listing = piSessionListing(
-                yield* forkConnection.request({ type: "get_entries" }),
-              );
-              const end = beforeEntry ?? listing?.leafId ?? null;
-              if (
-                listing === null ||
-                listing.entries.get(expectedAncestor)?.isUserMessage !== true ||
-                beforeEntry === expectedAncestor ||
-                walkPiBranch(listing.entries, end, expectedAncestor)?.reachedStop !== true
-              ) {
-                return yield* protocolError("Pi fork boundary does not follow the requested turn");
-              }
-            }
             if (beforeEntry !== null) {
               const result = yield* forkConnection.request({
                 type: "fork",
@@ -4005,28 +3990,19 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (forkInput.providerTurnId !== undefined && target === undefined) {
               return yield* protocolError("Pi fork target turn is missing");
             }
+            const targetFile = target?.nativeThreadRef?.nativeId ?? undefined;
             const boundary: PiForkBoundary =
               target === undefined
                 ? { type: "nothing" }
                 : piForkBoundary({
                     target: { type: "provider_turn", providerTurn: target },
                     providerThreadTurns: sourceTurns,
+                    sessionFile: targetFile,
                   });
-            const targetFile = target?.nativeThreadRef?.nativeId;
             const boundaryFile =
               boundary.type === "nothing" ? undefined : boundary.turn.nativeThreadRef?.nativeId;
-            const sourceFile = boundaryFile ?? currentFile;
-            const differentSessions = targetFile != null && sourceFile !== targetFile;
-            const expectedAncestor = differentSessions ? piTurnEntryId(target) : undefined;
-            if (differentSessions && expectedAncestor === undefined) {
-              return yield* protocolError("Pi cannot verify the fork point across session files");
-            }
-            const nativeId = yield* forkSessionIntoCwd(
-              sourceFile,
-              boundary,
-              source.createdAt,
-              expectedAncestor,
-            ).pipe(
+            const sourceFile = targetFile ?? boundaryFile ?? currentFile;
+            const nativeId = yield* forkSessionIntoCwd(sourceFile, boundary, source.createdAt).pipe(
               Effect.catchTags({
                 PiRpcError: (error) => {
                   if (
@@ -4214,10 +4190,17 @@ function piForkBoundary(input: {
     | { readonly type: "thread_start" }
     | { readonly type: "provider_turn"; readonly providerTurn: OrchestrationV2ProviderTurn };
   readonly providerThreadTurns: ReadonlyArray<OrchestrationV2ProviderTurn>;
+  /** Only turns recorded in this session can bound a fork from it. */
+  readonly sessionFile?: string | undefined;
 }): PiForkBoundary {
   const target = input.target.type === "thread_start" ? null : input.target.providerTurn;
   const boundary = input.providerThreadTurns
-    .filter((turn) => turn.ordinal > (target?.ordinal ?? 0) && turn.nativeTurnRef !== null)
+    .filter(
+      (turn) =>
+        turn.ordinal > (target?.ordinal ?? 0) &&
+        turn.nativeTurnRef !== null &&
+        (input.sessionFile === undefined || turn.nativeThreadRef?.nativeId === input.sessionFile),
+    )
     .sort((a, b) => a.ordinal - b.ordinal)[0];
   const ref = boundary?.nativeTurnRef;
   if (boundary === undefined || ref == null) return { type: "nothing" };
