@@ -5444,7 +5444,11 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("does not start Git auto-maintenance from background upstream fetches", () =>
+    it.effect.each([
+      { fetch: "statusDetailsRemote" },
+      // Storage cleanup's merge check fetches the default branch on every sweep.
+      { fetch: "fetchRemoteTrackingBranch" },
+    ] as const)("does not start Git auto-maintenance from background $fetch fetches", ({ fetch }) =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const remote = yield* makeTmpDir("git-vcs-driver-remote-");
@@ -5461,12 +5465,21 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["config", "gc.autoPackLimit", "1"]);
         yield* git(cwd, ["config", "gc.autoDetach", "false"]);
         yield* git(cwd, ["config", "maintenance.autoDetach", "false"]);
+        // The test template's global config turns auto-maintenance off.
+        yield* git(cwd, ["config", "maintenance.auto", "true"]);
         const packCount = git(cwd, ["count-objects", "-v"]).pipe(
           Effect.map((stdout) => stdout.match(/^packs: (\d+)$/m)?.[1]),
         );
         assert.equal(yield* packCount, "2");
 
-        yield* (yield* GitVcsDriver.GitVcsDriver).statusDetailsRemote(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        if (fetch === "statusDetailsRemote") yield* driver.statusDetailsRemote(cwd);
+        else
+          yield* driver.fetchRemoteTrackingBranch({
+            cwd,
+            remoteName: "origin",
+            remoteBranch: initialBranch,
+          });
 
         assert.equal(yield* packCount, "2");
       }),
