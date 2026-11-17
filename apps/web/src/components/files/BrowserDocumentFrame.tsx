@@ -168,7 +168,8 @@ function FileDocument(props: { readonly src: string; readonly title: string }) {
     <iframe
       src={src}
       title={props.title}
-      className="min-h-0 flex-1 border-0 bg-white"
+      className="min-h-0 flex-1 border-0"
+      style={{ backgroundColor: "Canvas" }}
       sandbox="allow-scripts allow-forms allow-popups allow-downloads"
     />
   );
@@ -301,7 +302,7 @@ export function HtmlRenderDocument(props: {
     }
     const imageRequest = readHtmlRenderImageRequest(event.data);
     if (imageRequest !== undefined) {
-      setExpandedImage({ images: [{ src: imageRequest.src, name: imageRequest.name }], index: 0 });
+      setExpandedImage({ images: [...imageRequest.images], index: imageRequest.index });
     }
   });
   // Attach at commit because a fast page may post its initial height before passive effects run.
