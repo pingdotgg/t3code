@@ -39,6 +39,7 @@ vi.mock(
 
 import { applyThemeBackground, startThemeBackground } from "./themeBackground";
 import {
+  applyThemeColorPreview,
   CUSTOM_THEMES_STORAGE_KEY,
   getThemeDefinition,
   invalidateCustomThemes,
@@ -60,6 +61,7 @@ function setup(storage: Record<string, string> = {}) {
   vi.stubGlobal("document", {
     documentElement: {
       dataset: { themeId: "nightfall" },
+      classList: { toggle: () => {} },
       style: {
         setProperty: (name: string, value: string) => properties.set(name, value),
         removeProperty: (name: string) => properties.delete(name),
@@ -155,6 +157,17 @@ describe("theme backgrounds", () => {
     applyThemeBackground("nightfall");
     await vi.advanceTimersByTimeAsync(0);
     expect(t.fetchBackground).not.toHaveBeenCalled();
+    expect(t.properties.has(BACKGROUND)).toBe(false);
+  });
+
+  it("shows no published background under a theme draft", async () => {
+    using t = setup();
+    t.fetchBackground.mockImplementation(loaded);
+    applyThemeBackground("nightfall");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.properties.get(BACKGROUND)).toMatch(/^url\("blob:/);
+
+    applyThemeColorPreview({ canvas: "#f4f1ff", accent: "#6d5ae6" }, "light");
     expect(t.properties.has(BACKGROUND)).toBe(false);
   });
 });
