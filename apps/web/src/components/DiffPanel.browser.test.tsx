@@ -151,7 +151,8 @@ function setup(failedBaseRef: string | null) {
   state.patch = patch;
   state.threadRef = {
     environmentId: EnvironmentId.make("environment"),
-    threadId: ThreadId.make("thread"),
+    // Diff scroll positions persist per thread for the session; a fresh thread starts at the top.
+    threadId: ThreadId.make(`thread:${expect.getState().currentTestName}`),
   };
   state.thread = makeThreadFixture({
     ...state.threadRef,
