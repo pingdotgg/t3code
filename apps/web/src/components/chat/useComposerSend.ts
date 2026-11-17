@@ -181,6 +181,33 @@ function withReplyReference(prompt: string, replyTo: ResponseContextRecord | nul
     : prompt;
 }
 
+function showKeptDraftToast(title: string, failedText: string) {
+  const hasText = failedText.trim().length > 0;
+  // An image-only message has nothing to copy, but its failure still needs a notice.
+  toastManager.add(
+    stackedThreadToast({
+      type: "error",
+      title,
+      description: hasText
+        ? "Your new draft was kept. Copy the failed message to send it again."
+        : "Your new draft was kept.",
+      // The toast holds the only trace of the failed message, so it stays until dismissed.
+      timeout: 0,
+      data: { hideCopyButton: true },
+      ...(hasText
+        ? {
+            actionProps: {
+              children: "Copy message",
+              onClick: () => {
+                void writeTextToClipboard(failedText, "failed message").catch(() => undefined);
+              },
+            },
+          }
+        : {}),
+    }),
+  );
+}
+
 function draftHasNonPromptContent(target: ComposerThreadTarget) {
   const draft = useComposerDraftStore.getState().getComposerDraft(target);
   return draft ? composerDraftHasUserContent({ ...draft, prompt: "" }) : false;
@@ -669,6 +696,7 @@ export function useComposerSend(input: ComposerSendInput) {
         // A restore clones the images first, so the sent previews can go either way.
         if (restore)
           restoreComposerDraft(composerDraftTarget, { ...snapshot, draftText: promptAtSend });
+        else if (!startedOk) showKeptDraftToast("Side chat not started", promptAtSend);
         for (const image of snapshot.images) {
           if (image.previewUrl.startsWith("blob:")) URL.revokeObjectURL(image.previewUrl);
         }
@@ -1570,34 +1598,9 @@ export function useComposerSend(input: ComposerSendInput) {
         )
       ) {
         // A draft typed meanwhile keeps the composer, so the failed text stays reachable here.
-        const failedText = sendSnapshot.draftText;
-        const hasText = failedText.trim().length > 0;
-        // An image-only message has nothing to copy, but its failure still needs a notice.
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: isAtomCommandInterrupted(failure)
-              ? "Message may not have been sent"
-              : "Message not sent",
-            description: hasText
-              ? "Your new draft was kept. Copy the failed message to send it again."
-              : "Your new draft was kept.",
-            // The toast holds the only trace of the failed message, so it stays until dismissed.
-            timeout: 0,
-            data: { hideCopyButton: true },
-            ...(hasText
-              ? {
-                  actionProps: {
-                    children: "Copy message",
-                    onClick: () => {
-                      void writeTextToClipboard(failedText, "failed message").catch(
-                        () => undefined,
-                      );
-                    },
-                  },
-                }
-              : {}),
-          }),
+        showKeptDraftToast(
+          isAtomCommandInterrupted(failure) ? "Message may not have been sent" : "Message not sent",
+          sendSnapshot.draftText,
         );
       } else {
         const retryComposerImages = restoreComposerDraft(composerDraftTarget, sendSnapshot);

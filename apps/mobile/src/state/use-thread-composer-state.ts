@@ -725,11 +725,12 @@ export function useThreadComposerState(input: {
           scheduleUnusedComposerAttachmentCleanup(attachments);
         } else {
           // Restore with uncapped append; a capped merge could drop attachments added meanwhile.
-          void mergeComposerDraftContent(threadKey, {
+          // A failed disk write still leaves the merged draft in memory, and the append saves again.
+          await mergeComposerDraftContent(threadKey, {
             text: draft.text,
             context: draft.context,
             attachments: [],
-          });
+          }).catch(() => undefined);
           appendComposerDraftAttachments(threadKey, attachments, { restore: true });
           if (AsyncResult.isFailure(started)) {
             const error = squashAtomCommandFailure(started);
