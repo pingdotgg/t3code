@@ -3578,6 +3578,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 Effect.gen(function* () {
                   const state = threadState;
                   if (state?.activeTurn === turn) {
+                    // Probes answered before Stop may carry a session file the extension already left.
+                    turn.settleProbeGeneration += 1;
                     const liveState = yield* request({ type: "get_state" }, 2_000).pipe(
                       Effect.orElseSucceed(() => undefined),
                     );
