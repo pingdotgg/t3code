@@ -3259,9 +3259,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               }
               const threadId = rollbackInput.providerThread.appThreadId ?? input.threadId;
               const { target } = rollbackInput;
-              yield* Ref.set(told, null);
-              yield* Ref.set(interruptedPrompt, null);
-              yield* Ref.set(resumedAgent, null);
+              const forgetConversation = Effect.all([
+                Ref.set(told, null),
+                Ref.set(interruptedPrompt, null),
+                Ref.set(resumedAgent, null),
+              ]);
               const now = yield* DateTime.now;
               if (target.type === "provider_turn") {
                 const keptRunId = target.providerTurn.nativeTurnRef?.nativeId;
@@ -3286,6 +3288,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   });
                 }
                 yield* agent.session.rewindAfterRun(keptRunId);
+                yield* forgetConversation;
                 yield* agent.session.close.pipe(Effect.ignore);
                 yield* Ref.set(liveAgent, null);
                 return {
@@ -3307,6 +3310,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 modelSelection: input.modelSelection,
                 runtimePolicy: input.runtimePolicy,
               });
+              yield* forgetConversation;
               return {
                 providerThread: {
                   ...rollbackInput.providerThread,

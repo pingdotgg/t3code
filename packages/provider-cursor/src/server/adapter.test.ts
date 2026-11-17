@@ -760,6 +760,7 @@ describe("CursorAdapterV2", () => {
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-device-" });
       const sentMessages: Array<string> = [];
       const rewoundAfter: Array<string> = [];
+      let rewindFails = false;
       let createdAgents = 0;
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-device-thread");
@@ -793,7 +794,15 @@ describe("CursorAdapterV2", () => {
               agentId,
               listMessages: Effect.succeed([]),
               close: Effect.void,
-              rewindAfterRun: (runId) => Effect.sync(() => void rewoundAfter.push(runId)),
+              rewindAfterRun: (runId) =>
+                rewindFails
+                  ? Effect.fail(
+                      new CursorAgentSdk.CursorAgentSdkRunnerError({
+                        method: "agent.rewind",
+                        cause: "store unavailable",
+                      }),
+                    )
+                  : Effect.sync(() => void rewoundAfter.push(runId)),
               send: (input) =>
                 Effect.sync(() => {
                   sentMessages.push(
@@ -911,7 +920,7 @@ describe("CursorAdapterV2", () => {
 
       const keptTurn = lastProviderTurn!;
       yield* send();
-      const rewound = yield* runtime.rollbackThread({
+      const rollbackToKept = runtime.rollbackThread({
         providerThread,
         target: {
           type: "provider_turn",
@@ -921,6 +930,15 @@ describe("CursorAdapterV2", () => {
         },
         providerThreadTurns: [keptTurn],
       });
+      rewindFails = true;
+      yield* Effect.flip(rollbackToKept);
+      rewindFails = false;
+      assert.deepEqual(
+        yield* send(false, true),
+        told(false, false),
+        "a failed rewind leaves the conversation, and what it was told, unchanged",
+      );
+      const rewound = yield* rollbackToKept;
       assert.deepEqual(rewoundAfter, [keptTurn.nativeTurnRef?.nativeId]);
       assert.deepEqual(
         rewound.providerThread.nativeThreadRef,
