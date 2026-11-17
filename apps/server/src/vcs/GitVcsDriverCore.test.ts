@@ -1903,7 +1903,8 @@ it.effect("does not report a separate git dir as the worktree of its branch", ()
     Effect.gen(function* () {
       const driver = yield* GitVcsDriver.GitVcsDriver;
       const cwd = yield* makeTmpDir();
-      const gitDir = yield* makeTmpDir();
+      const path = yield* Path.Path;
+      const gitDir = path.join(yield* makeTmpDir(), "metadata\u00a0");
       yield* git(cwd, ["init", `--separate-git-dir=${gitDir}`]);
       yield* git(cwd, ["config", "user.email", "test@test.com"]);
       yield* git(cwd, ["config", "user.name", "Test"]);
