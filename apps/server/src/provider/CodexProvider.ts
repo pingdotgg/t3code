@@ -4,6 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -676,8 +677,30 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   );
   const initialize = yield* client.request("initialize", buildCodexInitializeParams());
   yield* client.notify("initialized", undefined);
-  return { client, initialize };
+  return { client, initialize, pid: child.pid };
 });
+
+// Codex runs git (ssh for ssh URLs) for plugin marketplaces at launch and exits without waiting
+// for it, so stopping a short probe mid-fetch strands ssh in an SSH-agent request.
+const CODEX_STARTUP_WORK_GRACE = Duration.minutes(1);
+
+const codexProcessGroupIsBusy = Effect.fn("codexProcessGroupIsBusy")(
+  function* (pid: number) {
+    const { stdout } = yield* spawnAndCollect(
+      "pgrep",
+      ChildProcess.make("pgrep", ["-g", `${pid}`]),
+    );
+    return stdout.split("\n").some((line) => line.trim() !== "" && Number(line) !== pid);
+  },
+  Effect.orElseSucceed(() => false),
+);
+
+const stopCodexAfterStartupWork = (pid: number, processScope: Scope.Closeable) =>
+  codexProcessGroupIsBusy(pid).pipe(
+    Effect.repeat({ schedule: Schedule.spaced("500 millis"), while: (busy) => busy }),
+    Effect.timeoutOption(CODEX_STARTUP_WORK_GRACE),
+    Effect.ensuring(Scope.close(processScope, Exit.void)),
+  );
 
 // Usage is an enrichment: a failure or a slow answer degrades to "no usage this
 // probe" rather than costing the account and models.
@@ -713,7 +736,22 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   readonly skipNativeUsage?: boolean;
 }) {
   const spawnedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
-  const { client, initialize } = yield* withCodexAppServerClient(input);
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const processScope = yield* Scope.make();
+  let pid: number | undefined;
+  // Returning the snapshot must not wait for Codex's own startup work.
+  yield* Effect.addFinalizer(() =>
+    pid === undefined
+      ? Scope.close(processScope, Exit.void)
+      : stopCodexAfterStartupWork(pid, processScope).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.forkDetach,
+          Effect.asVoid,
+        ),
+  );
+  const opened = yield* withCodexAppServerClient(input).pipe(Scope.provide(processScope));
+  pid = opened.pid;
+  const { client, initialize } = opened;
 
   const versionMatch = initialize.userAgent.match(/\/([^\s]+)/);
   const version = versionMatch ? versionMatch[1] : undefined;

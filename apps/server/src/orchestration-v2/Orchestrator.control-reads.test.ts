@@ -23,14 +23,15 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
-import type * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 import {
@@ -1251,19 +1252,35 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
     });
     const parent = yield* projections.getThreadProjection(parentThreadId);
     const parentRun = parent.runs[0]!;
-    yield* orchestrator.dispatch({
-      type: "delegated_task.request",
-      commandId: CommandId.make("delegate-parent-pr"),
-      parentThreadId,
-      parentRunId: parentRun.id,
-      parentNodeId: parentRun.rootNodeId!,
-      task: "Review the changes",
-      modelSelection,
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      createdBy: "agent",
-      creationSource: "mcp",
+    const failedSpans: Array<string> = [];
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options);
+        const end = span.end.bind(span);
+        span.end = (time, exit) => {
+          end(time, exit);
+          if (Exit.isFailure(exit)) failedSpans.push(span.name);
+        };
+        return span;
+      },
     });
+    yield* orchestrator
+      .dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make("delegate-parent-pr"),
+        parentThreadId,
+        parentRunId: parentRun.id,
+        parentNodeId: parentRun.rootNodeId!,
+        task: "Review the changes",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "mcp",
+      })
+      .pipe(Effect.withTracer(tracer));
+    // The child thread is created by this command; a failed span here reads as an error in traces.
+    assert.deepEqual(failedSpans, []);
     const updatedParent = yield* projections.getThreadProjection(parentThreadId);
     assert.deepEqual(updatedParent.subagents[0]!.modelSelection, modelSelection);
     const childThreadId = updatedParent.subagents[0]!.childThreadId!;
@@ -1880,7 +1897,21 @@ it.effect.each([false, true])("rejects thread.create for an existing id (deleted
         ref: { driver: adapter.driver, nativeId: "native-original", strength: "strong" },
       },
     } as const;
-    yield* orchestrator.dispatch(create);
+    const failedSpans: Array<string> = [];
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options);
+        const end = span.end.bind(span);
+        span.end = (time, exit) => {
+          end(time, exit);
+          if (Exit.isFailure(exit)) failedSpans.push(span.name);
+        };
+        return span;
+      },
+    });
+    yield* orchestrator.dispatch(create).pipe(Effect.withTracer(tracer));
+    // The id check expects a miss; a failed span there reads as an error in Tempo.
+    assert.deepEqual(failedSpans, []);
     if (deleted) {
       yield* orchestrator.dispatch({
         type: "thread.delete",

@@ -76,7 +76,9 @@ describe("V2 preview upgrade", () => {
         [94, "TurnItemMessageOrdinalIndex"],
         [95, "TurnItemInlineWorkOutput"],
         [96, "RepairStaleTitleRegeneration"],
-        [97, "ScheduledTaskSendMode"],
+        [97, "IssueTrackerBindings"],
+        [98, "ActiveShellIndexIndexes"],
+        [99, "ScheduledTaskSendMode"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -196,7 +198,9 @@ describe("V2 preview upgrade", () => {
         [94, "TurnItemMessageOrdinalIndex"],
         [95, "TurnItemInlineWorkOutput"],
         [96, "RepairStaleTitleRegeneration"],
-        [97, "ScheduledTaskSendMode"],
+        [97, "IssueTrackerBindings"],
+        [98, "ActiveShellIndexIndexes"],
+        [99, "ScheduledTaskSendMode"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
