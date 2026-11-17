@@ -21,6 +21,7 @@ import {
 } from "@t3tools/source-control-core/server/IssueTracker";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
+import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import {
   azureDevOpsReactionType,
   closedStateNames,
@@ -215,9 +216,12 @@ function reasonFor(error: AzureDevOpsCli.AzureDevOpsCliError): IssueTrackerError
 export const make: Effect.Effect<
   IssueTrackerApi,
   never,
-  AzureDevOpsCli.AzureDevOpsCli | FileSystem.FileSystem
+  | AzureDevOpsCli.AzureDevOpsCli
+  | AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli
+  | FileSystem.FileSystem
 > = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
+  const pullRequests = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
   const fs = yield* FileSystem.FileSystem;
 
   const fail = (operation: string) => (error: AzureDevOpsCli.AzureDevOpsCliError) =>
@@ -622,6 +626,11 @@ export const make: Effect.Effect<
         Effect.filterOrFail(
           (login) => login !== null,
           () => refused("getViewer", "Azure DevOps could not name the signed-in account."),
+        ),
+        // A PAT saved for one organization does not authenticate the account service, which `az`
+        // keys apart; the pull request lookup resolves `me` through the organization instead.
+        Effect.catch((profileError) =>
+          pullRequests.getViewer({ cwd: input.cwd }).pipe(Effect.mapError(() => profileError)),
         ),
       ),
 
