@@ -485,6 +485,7 @@ function AssistantChangedFilesSectionInner({
 
   return (
     <ChangedFilesCard
+      threadRef={ctx.threadRef}
       runId={turnSummary.runId}
       files={checkpointFiles}
       totals={checkpointFileTotals(turnSummary)}

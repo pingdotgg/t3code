@@ -471,6 +471,21 @@ export function PullRequestDetailPanel({
   } else if (!tabMountState.tabs.has(tab)) {
     setTabMountState({ key: tabScopeKey, tabs: new Set(tabMountState.tabs).add(tab) });
   }
+  // A pointer on the Code tab reads the page it opens on; only intent costs the host a read.
+  const [codeIntentKey, setCodeIntentKey] = useState<string | null>(null);
+  useEnvironmentQuery(
+    codeIntentKey === pullRequestKey && !mountedTabs.has("code")
+      ? pullRequestEnvironment.diff({ environmentId, input: { ...reference } })
+      : null,
+  );
+  // A pointer passing over the Code tab is not intent; it must rest like a list row does.
+  const codeIntentTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- A rest timer still pending when the panel unmounts must not read for a closed panel.
+  useEffect(() => () => clearTimeout(codeIntentTimer.current), []);
+  const intendCodeTab = () => {
+    void loadCodeTab();
+    setCodeIntentKey(pullRequestKey);
+  };
   const [condensedByTab, setCondensedByTab] = useState<
     Partial<Record<PullRequestDetailTab, boolean>>
   >({});
@@ -1872,8 +1887,18 @@ export function PullRequestDetailPanel({
                   key={item.value}
                   value={item.value}
                   className="@container/pr-tab flex-1"
-                  onPointerEnter={item.value === "code" ? () => void loadCodeTab() : undefined}
-                  onFocus={item.value === "code" ? () => void loadCodeTab() : undefined}
+                  onPointerEnter={
+                    item.value === "code"
+                      ? () => {
+                          clearTimeout(codeIntentTimer.current);
+                          codeIntentTimer.current = setTimeout(intendCodeTab, 150);
+                        }
+                      : undefined
+                  }
+                  onPointerLeave={
+                    item.value === "code" ? () => clearTimeout(codeIntentTimer.current) : undefined
+                  }
+                  onFocus={item.value === "code" ? intendCodeTab : undefined}
                 >
                   <item.icon aria-hidden className="hidden @max-[4.25em]/pr-tab:block" />
                   <span className="@max-[4.25em]/pr-tab:sr-only">{item.label}</span>

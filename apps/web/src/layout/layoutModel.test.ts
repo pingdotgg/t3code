@@ -3,11 +3,16 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  canCloseLayoutTab,
   closeLayoutTab,
   closedLayoutTabIds,
   moveLayoutTabToNewWorkspace,
   createLayoutState,
+  decodePersistedLayoutState,
+  findLayoutTab,
+  focusLayoutTab,
   ghostLoneLayoutChats,
+  isBlankLayoutWorkspace,
   layoutChatSwaps,
   moveLayoutTab,
   moveLayoutTabToWorkspace,
@@ -18,7 +23,9 @@ import {
   placeLayoutTabs,
   replaceLayoutTabContent,
   resizeLayoutColumnEdge,
+  sameLayoutSpan,
   selectFocusedTab,
+  selectFocusedLayoutGhostId,
   selectFocusedWorkspace,
   selectLayoutPaneSlots,
   selectLayoutStripSize,
@@ -51,8 +58,8 @@ const columnsOf = (state: LayoutState) =>
 
 /*
  * Layouts as text: workspaces of columns of panes of tabs. `A` is a kept chat of thread A, `~A`
- * its ghost, `t:A` A's terminal, `+` a launcher, `PR` the pull requests page; `*` marks a pane's
- * active tab and `!` the focused one.
+ * its ghost, `t:A` A's terminal, `+` (or `+2`) a launcher, `+:A` one opened from A, `PR` the pull
+ * requests page; `*` marks a pane's active tab and `!` the focused one.
  */
 type Shape = string[][][];
 
@@ -68,14 +75,17 @@ const draftOf = (name: string): LayoutTabContent => ({
 
 function tabOf(label: string): LayoutTab {
   const name = label.replace(/^~/, "");
-  const content: LayoutTabContent =
-    name === "+"
-      ? { kind: "launcher", id: "launcher", context: null }
-      : name === "PR"
-        ? { kind: "pull-requests" }
-        : name.startsWith("t:")
-          ? { kind: "surface", threadRef: refOf(name.slice(2)), surfaceId: "thread-terminal" }
-          : chatOf(name);
+  const content: LayoutTabContent = name.startsWith("+")
+    ? {
+        kind: "launcher",
+        id: name,
+        context: name.startsWith("+:") ? { kind: "server", threadRef: refOf(name.slice(2)) } : null,
+      }
+    : name === "PR"
+      ? { kind: "pull-requests" }
+      : name.startsWith("t:")
+        ? { kind: "surface", threadRef: refOf(name.slice(2)), surfaceId: "thread-terminal" }
+        : chatOf(name);
   return { id: name, content, ...(label.startsWith("~") ? { ghostOf: null } : {}) };
 }
 
@@ -114,7 +124,7 @@ function layoutOf(...shapes: Shape[]): LayoutState {
 function shapeOf(state: LayoutState): Shape[] {
   const focused = selectFocusedTab(state);
   return state.workspaces
-    .filter((workspace) => workspace.columns.length > 0)
+    .filter((workspace, index, all) => index < all.length - 1 || !isBlankLayoutWorkspace(workspace))
     .map((workspace) =>
       workspace.columns.map((column) =>
         column.panes.map((pane) =>
@@ -337,7 +347,7 @@ describe("placeLayoutTabs", () => {
       case: "into another workspace from an empty middle one",
       layout: focusOn(layoutOf([[["A"]]], [], [[["C"]]], []), "w1"),
       placement: { kind: "after", tabId: "C" },
-      expected: [[[["A"]]], [[["C*", "X"]]]],
+      expected: [[[["A"]]], [[["+!"]]], [[["C*", "X"]]]],
     },
     {
       case: "into another workspace from the empty last one",
@@ -349,7 +359,7 @@ describe("placeLayoutTabs", () => {
       case: "into a new workspace from an empty middle one",
       layout: focusOn(layoutOf([[["A"]]], [], [[["C"]]], []), "w1"),
       placement: { kind: "column", workspaceId: "w3", index: 0 },
-      expected: [[[["A"]]], [[["C"]]], [[["X"]]]],
+      expected: [[[["A"]]], [[["+!"]]], [[["C"]]], [[["X"]]]],
     },
     {
       case: "an exact side split from an empty workspace preserves focus",
@@ -388,9 +398,185 @@ describe("ghost tabs", () => {
     expect(opened && shapeOf(opened)).toEqual([[[["A", "~child!"]]]]);
   });
 
+  it("are kept by opening them again while focused, even as a lone tab", () => {
+    const ghostOfD = (layout: LayoutState) => selectFocusedLayoutGhostId(layout, chatOf("D"));
+    expect(ghostOfD(layoutOf([[["A", "~D!"]]]))).toBe("D");
+    expect(ghostOfD(layoutOf([[["~D"]], [["A!"]]]))).toBeNull();
+    expect(ghostOfD(layoutOf([[["A", "D!"]]]))).toBeNull();
+    expect(ghostOfD(layoutOf([[["~D!"]]]))).toBe("D");
+    const lineage = openLayoutGhostChat(layoutOf([[["A!"]]]), refOf("A"), {
+      kind: "server",
+      threadRef: refOf("D"),
+    })!;
+    expect(ghostOfD(lineage)).toBe(selectFocusedTab(lineage)!.id);
+  });
+
   it("start as the lone chat of a layout saved before ghosts", () => {
     expect(shapeOf(ghostLoneLayoutChats(layoutOf([[["A!"]]])))).toEqual([[[["~A!"]]]]);
     expect(shapeOf(ghostLoneLayoutChats(layoutOf([[["A!", "B"]]])))).toEqual([[[["A!", "B"]]]]);
+  });
+});
+
+describe("blank workspaces", () => {
+  const launcher: LayoutTabContent = { kind: "launcher", id: "new", context: null };
+  it.each<{ case: string; open: (state: LayoutState) => LayoutState; expected: Shape[] }>([
+    {
+      case: "a thread opened as a new tab takes the blank tab's place",
+      open: (state) => openLayoutTab(state, chatOf("D"), { placement: "active-pane" }),
+      expected: [[[["D!"]]]],
+    },
+    {
+      case: "a thread opened in a new column takes the blank tab's place",
+      open: (state) => openLayoutTab(state, chatOf("D"), { placement: "new-column" }),
+      expected: [[[["D!"]]]],
+    },
+    {
+      case: "a thread split below takes the blank tab's place",
+      open: (state) => openLayoutTab(state, chatOf("D"), { placement: "split-down" }),
+      expected: [[[["D!"]]]],
+    },
+    {
+      case: "a surface placed in the background takes the blank tab's place",
+      open: (state) =>
+        placeLayoutTabs(
+          state,
+          [tabOf("t:A")],
+          { kind: "column", workspaceId: "w0", index: 1 },
+          { activate: null, focus: false },
+        ),
+      expected: [[[["t:A!"]]]],
+    },
+    {
+      case: "another blank tab sits beside it",
+      open: (state) => openLayoutTab(state, launcher, { placement: "active-pane" }),
+      expected: [[[["+", "+!"]]]],
+    },
+  ])("$case", ({ open, expected }) => {
+    expect(shapeOf(open(layoutOf([[["+!"]]])))).toEqual(expected);
+  });
+
+  it("gives up the spare's blank tab to a tab moved down into it", () => {
+    const moved = moveLayoutTabToWorkspace(layoutOf([[["A!"], ["B"]]], [[["+"]]]), 1);
+    expect(shapeOf(moved)).toEqual([[[["B"]]], [[["A!"]]]]);
+    expect(moved.workspaces.map(isBlankLayoutWorkspace)).toEqual([false, false, true]);
+  });
+
+  it("loads a layout saved with tabless empty workspaces as blank tabs", () => {
+    const saved = JSON.parse(
+      JSON.stringify({ ...layoutOf([[["A"]]], [], []), focusedWorkspaceId: "w1" }),
+    );
+    const loaded = decodePersistedLayoutState(saved);
+    expect(tabContents(loaded)).toEqual([
+      [chatOf("A")],
+      [{ kind: "launcher", id: expect.any(String), context: null }],
+    ]);
+    expect(selectFocusedTab(loaded)?.content.kind).toBe("launcher");
+  });
+});
+
+describe("closeLayoutTab", () => {
+  it.each<{ case: string; layout: Shape[]; close: string; expected: Shape[] }>([
+    {
+      case: "a workspace's last thread gives way to a blank tab",
+      layout: [[[["A!"]]], [[["B"]]], [[["+"]]]],
+      close: "A",
+      expected: [[[["+!"]]], [[["B"]]]],
+    },
+    {
+      case: "a workspace's last surface gives way to a blank tab",
+      layout: [[[["t:A!"]]], [[["B"]]], [[["+"]]]],
+      close: "t:A",
+      expected: [[[["+!"]]], [[["B"]]]],
+    },
+    {
+      case: "a blank tab beside other tabs closes like any tab",
+      layout: [[[["A", "+!"]]], [[["+2"]]]],
+      close: "+",
+      expected: [[[["A!"]]]],
+    },
+    {
+      case: "a workspace's last blank tab closes it and lands in the one above",
+      layout: [[[["A"]]], [[["+!"]]], [[["B"]]], [[["+2"]]]],
+      close: "+",
+      expected: [[[["A!"]]], [[["B"]]]],
+    },
+    {
+      case: "the top workspace's last blank tab closes it and lands in the one below",
+      layout: [[[["+!"]]], [[["A"]]], [[["+2"]]]],
+      close: "+",
+      expected: [[[["A!"]]]],
+    },
+    {
+      case: "the spare's blank tab goes back up and the spare stays",
+      layout: [[[["A"]]], [[["+!"]]]],
+      close: "+",
+      expected: [[[["A!"]]]],
+    },
+  ])("$case", ({ layout, close, expected }) => {
+    const state = layoutOf(...layout);
+    const closed = closeLayoutTab(state, close);
+    expect(shapeOf(closed)).toEqual(expected);
+    expect(closed.workspaces.map(isBlankLayoutWorkspace).at(-1)).toBe(true);
+    expect(closed.workspaces).toHaveLength(expected.length + 1);
+    expect(canCloseLayoutTab(state, close)).toBe(true);
+  });
+
+  it.each<{ case: string; after: (state: LayoutState) => LayoutState; thread: string | null }>([
+    {
+      case: "a blank tab loses its thread once the thread's chat closes",
+      after: (state) => closeLayoutTab(state, "A"),
+      thread: null,
+    },
+    {
+      case: "a blank tab loses its thread once the thread's chat moves to another workspace",
+      after: (state) => moveLayoutTabToWorkspace(focusLayoutTab(state, "A"), 1),
+      thread: null,
+    },
+    {
+      case: "a blank tab keeps its thread while one of the thread's surfaces stays",
+      after: (state) =>
+        closeLayoutTab(
+          placeLayoutTabs(
+            state,
+            [tabOf("t:A")],
+            { kind: "after", tabId: "A" },
+            {
+              activate: null,
+              focus: false,
+            },
+          ),
+          "A",
+        ),
+      thread: "A",
+    },
+  ])("$case", ({ after, thread }) => {
+    const state = after(layoutOf([[["A", "C", "+:A!"]]], [[["B"]]]));
+    const blank = findLayoutTab(state, (tab) => tab.id === "+:A")?.tab.content;
+    expect(blank?.kind === "launcher" ? blank.context : undefined).toEqual(
+      thread === null ? null : { kind: "server", threadRef: refOf(thread) },
+    );
+  });
+
+  it("keeps a blank tab's thread when the draft it was opened from becomes a thread", () => {
+    const drafted = showLayoutContent(createLayoutState(), draftOf("draft"));
+    const draftTab = selectFocusedTab(drafted)!;
+    const withBlank = openLayoutTab(drafted, {
+      kind: "launcher",
+      id: "blank",
+      context: { kind: "draft", draftId: "draft" as DraftId },
+    });
+    const promoted = replaceLayoutTabContent(withBlank, draftTab.id, chatOf("D"));
+    const blank = findLayoutTab(promoted, (tab) => tab.content.kind === "launcher")?.tab.content;
+    expect(blank?.kind === "launcher" ? blank.context : undefined).toEqual({
+      kind: "server",
+      threadRef: refOf("D"),
+    });
+  });
+
+  it("leaves the window's last blank tab, which has no close", () => {
+    const state = layoutOf([[["+!"]]]);
+    expect(closeLayoutTab(state, "+")).toBe(state);
+    expect(canCloseLayoutTab(state, "+")).toBe(false);
   });
 });
 
@@ -572,6 +758,42 @@ describe("selectLayoutStripSize", () => {
   });
 });
 
+describe("sameLayoutSpan", () => {
+  const workspace = {
+    id: "workspace",
+    name: null,
+    focusedPaneId: "chat-pane",
+    cameraWidth: 1094,
+    columns: [column("chat", 0.75), column("pulls", 0.75)],
+  };
+  const spanAt = (width: number, at = workspace, index = 0) => {
+    const { slots, stripWidth } = selectLayoutPaneSlots(at, {
+      width,
+      whenNoRoom: "shrink-then-scroll",
+    });
+    const slot = slots[index]!;
+    return {
+      paneId: slot.paneId,
+      left: slot.rect.left,
+      width: slot.rect.width,
+      px: Math.round(slot.rect.width * stripWidth * width),
+    };
+  };
+
+  it("keeps the focused pane's span at every strip width, where its pixel width rounds either way", () => {
+    const widths = Array.from({ length: 532 }, (_, index) => 900 + index);
+    const resting = spanAt(1174);
+    expect(widths.filter((width) => spanAt(width).px !== resting.px).length).toBeGreaterThan(0);
+    for (const width of widths) expect(sameLayoutSpan(spanAt(width), resting)).toBe(true);
+  });
+
+  it("tells a resized column and another pane apart", () => {
+    const resized = { ...workspace, columns: [column("chat", 0.76), column("pulls", 0.74)] };
+    expect(sameLayoutSpan(spanAt(1174, resized), spanAt(1174))).toBe(false);
+    expect(sameLayoutSpan(spanAt(1174, workspace, 1), spanAt(1174))).toBe(false);
+  });
+});
+
 describe("moveLayoutTabToWorkspace", () => {
   it("moves the top workspace's tab into a new workspace above it", () => {
     const first = chatFor("first");
@@ -584,7 +806,8 @@ describe("moveLayoutTabToWorkspace", () => {
 
     const moved = moveLayoutTabToWorkspace(state, -1);
 
-    expect(tabContents(moved)).toEqual([[second], [first], []]);
+    expect(tabContents(moved).slice(0, 2)).toEqual([[second], [first]]);
+    expect(moved.workspaces.map(isBlankLayoutWorkspace)).toEqual([false, false, true]);
     expect(selectFocusedWorkspace(moved)).toBe(moved.workspaces[0]);
     expect(selectFocusedTab(moved)?.content).toBe(second);
   });
