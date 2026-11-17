@@ -59,6 +59,7 @@ import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
 import { useFabScroll } from "../home/FabScrollContext";
 import { WorkspaceListHeader } from "../layout/workspace/WorkspaceListHeader";
+import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { WorkspaceSidebarColumn } from "../layout/workspace/WorkspaceSidebarColumn";
 import {
   ThreadListV2PendingRow,
@@ -125,6 +126,8 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const drawerColor = materialTheme["--color-drawer"];
 
   const insets = useSafeAreaInsets();
+  // Set where the sidebar draws the workspace tabs at its foot (iPad before iPadOS 26).
+  const workspace = useWorkspaceTabs();
   const { fabClearance, fabSize } = useAndroidControlSizing();
   const projects = useProjects();
   const threads = useAtomValue(steadyNavigationThreadShellsAtom);
@@ -620,7 +623,10 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 contentContainerStyle={[
                   styles.threadListContent,
                   {
-                    paddingBottom: Math.max(insets.bottom, 16) + 16,
+                    paddingBottom: Math.max(
+                      Math.max(insets.bottom, 16) + 16,
+                      workspace?.bottomClearance ?? 0,
+                    ),
                     paddingTop: 6,
                   },
                 ]}
