@@ -530,6 +530,7 @@ describe("mergePathValues", () => {
     expect(mergePathValues("/opt/bin :/opt/bin", "/opt/bin :/usr/bin", "linux")).toBe(
       "/opt/bin :/opt/bin:/usr/bin",
     );
+    expect(mergePathValues('/opt/bin"', "/opt/bin", "linux")).toBe('/opt/bin":/opt/bin');
   });
 });
 
