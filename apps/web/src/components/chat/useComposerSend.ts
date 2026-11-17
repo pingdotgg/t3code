@@ -388,6 +388,11 @@ export function useComposerSend(input: ComposerSendInput) {
     },
   ) => {
     e?.preventDefault();
+    if (
+      draftId !== null &&
+      useComposerDraftStore.getState().getDraftSession(draftId)?.workspaceDefaultsPending
+    )
+      return;
     // What the user pressed send on; uploads below can take a while, and a redirect must not
     // decline approvals for a draft that changed meanwhile.
     const promptAtSend = promptRef.current;

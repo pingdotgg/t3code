@@ -997,18 +997,22 @@ export default function GitActionsControl({
       return;
     }
 
-    if (!activeDraftThread || activeDraftThread.branch === branch) {
+    if (!activeDraftThread || (!manualSelection && activeDraftThread.branch === branch)) {
       return;
     }
 
-    setDraftThreadContext(draftId ?? activeThreadRef, {
-      branch,
-      worktreePath: activeDraftThread.worktreePath,
-      environmentSelection: manualSelection
-        ? "manual"
-        : (activeDraftThread.environmentSelection ??
-          (activeDraftThread.branch ? "manual" : "auto")),
-    });
+    setDraftThreadContext(
+      draftId ?? activeThreadRef,
+      {
+        branch,
+        worktreePath: activeDraftThread.worktreePath,
+        environmentSelection: manualSelection
+          ? "manual"
+          : (activeDraftThread.environmentSelection ??
+            (activeDraftThread.branch ? "manual" : "auto")),
+      },
+      { explicit: manualSelection },
+    );
   };
   const persistLiveThreadBranch = useEffectEvent((branch: string | null) => {
     persistThreadBranchSync(branch);

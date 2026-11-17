@@ -373,6 +373,7 @@ import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/at
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { assetEnvironment } from "../state/assets";
 import { readEnvironmentScope, readPreparedConnection } from "../state/session";
+import { completeDraftWorkspaceDefaults } from "../lib/t3ProjectFileDefaults";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
@@ -779,6 +780,20 @@ export default function ChatView(props: ChatViewProps) {
     ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
     : null;
   const fallbackDraftProject = useProject(fallbackDraftProjectRef);
+  const workspaceDefaultsPending = draftThread?.workspaceDefaultsPending === true;
+  const liveServerConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the project file over RPC once the landing draft's project and config are known
+  useEffect(() => {
+    if (
+      draftId === null ||
+      !workspaceDefaultsPending ||
+      !fallbackDraftProject ||
+      !canOperateThread ||
+      liveServerConfig === null
+    )
+      return;
+    void completeDraftWorkspaceDefaults(draftId);
+  }, [draftId, workspaceDefaultsPending, fallbackDraftProject, canOperateThread, liveServerConfig]);
   const localDraftError = serverThread
     ? null
     : ((draftId ? localDraftErrorsByDraftId[draftId]?.message : null) ?? null);
@@ -1680,9 +1695,7 @@ export default function ChatView(props: ChatViewProps) {
   });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const backgroundThread = use(BackgroundThreadContext);
-  const scriptKeybindings =
-    useAtomValue(serverEnvironment.configValueAtom(environmentId))?.keybindings ??
-    DEFAULT_RESOLVED_KEYBINDINGS;
+  const scriptKeybindings = liveServerConfig?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS;
   const openInEnvironmentId = activeThread?.environmentId ?? environmentId;
   const availableEditors =
     useAtomValue(serverEnvironment.configValueAtom(openInEnvironmentId))?.availableEditors ?? [];
@@ -3672,17 +3685,19 @@ export default function ChatView(props: ChatViewProps) {
                                 sendDisabledReason={
                                   !canOperateThread
                                     ? "This connection cannot change threads."
-                                    : isEnvironmentChanging
-                                      ? "Preparing machine"
-                                      : isRevertingCheckpoint
-                                        ? "Rewinding conversation"
-                                        : feedbackUploading
-                                          ? "Sending feedback"
-                                          : threadDetailLoading
-                                            ? "Messages loading"
-                                            : worktreeSetupBlocksSend
-                                              ? "Preparing worktree"
-                                              : projectCloneSendBlockReason
+                                    : workspaceDefaultsPending
+                                      ? "Preparing workspace"
+                                      : isEnvironmentChanging
+                                        ? "Preparing machine"
+                                        : isRevertingCheckpoint
+                                          ? "Rewinding conversation"
+                                          : feedbackUploading
+                                            ? "Sending feedback"
+                                            : threadDetailLoading
+                                              ? "Messages loading"
+                                              : worktreeSetupBlocksSend
+                                                ? "Preparing worktree"
+                                                : projectCloneSendBlockReason
                                 }
                                 isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
                                 bannerItems={

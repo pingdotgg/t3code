@@ -243,14 +243,18 @@ export function useComposerSelection(input: ComposerSelectionInput) {
       return;
     }
     if (isLocalDraftThread) {
-      setDraftThreadContext(composerDraftTarget, {
-        envMode: mode,
-        startFromOrigin: resolveNewDraftStartFromOrigin({
+      setDraftThreadContext(
+        composerDraftTarget,
+        {
           envMode: mode,
-          newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
-        }),
-        ...(mode === "worktree" && draftThread?.worktreePath ? { worktreePath: null } : {}),
-      });
+          startFromOrigin: resolveNewDraftStartFromOrigin({
+            envMode: mode,
+            newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
+          }),
+          ...(mode === "worktree" && draftThread?.worktreePath ? { worktreePath: null } : {}),
+        },
+        { explicit: true },
+      );
     }
     scheduleComposerFocus();
   };
@@ -269,9 +273,11 @@ export function useComposerSelection(input: ComposerSelectionInput) {
       return;
     }
     if (isLocalDraftThread) {
-      setDraftThreadContext(composerDraftTarget, {
-        startFromOrigin: nextStartFromOrigin,
-      });
+      setDraftThreadContext(
+        composerDraftTarget,
+        { startFromOrigin: nextStartFromOrigin },
+        { explicit: true },
+      );
     }
   };
   return {

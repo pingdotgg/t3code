@@ -205,7 +205,7 @@ vi.mock("../lib/chatThreadActions", async (importOriginal) => ({
 }));
 vi.mock("../providerInstances", () => ({ resolveDefaultProviderModelSelection: () => null }));
 vi.mock("../lib/t3ProjectFileDefaults", () => ({
-  readT3ProjectFile: () => testState.projectFileRead,
+  readT3ProjectFile: vi.fn(() => testState.projectFileRead),
 }));
 vi.mock("../lib/utils", () => ({
   newDraftId: () => "draft-delayed",
@@ -252,6 +252,7 @@ vi.mock("../uiStateStore", () => ({
 vi.mock("./useSettings", () => ({ getClientSettings: () => ({}) }));
 
 import { resolveDefaultProjectRef, useNewThreadHandler } from "./useHandleNewThread";
+import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 
 describe.each([
   ["new", null],
@@ -265,6 +266,26 @@ describe.each([
     },
   ],
 ])("useNewThreadHandler with a %s draft", (_, draft) => {
+  it("opens a landing draft without waiting for the project file", async () => {
+    testState.reset(draft, { envMode: null, startFromOrigin: false });
+    vi.mocked(readT3ProjectFile).mockClear();
+    const projectRef = { environmentId: "environment-ssh", projectId: "project-remote" } as never;
+    const pendingOpen = useNewThreadHandler()(projectRef, {
+      replace: true,
+      deferWorkspaceDefaults: true,
+    });
+
+    expect(readT3ProjectFile).not.toHaveBeenCalled();
+    testState.completeProjectFileRead(null);
+    const opened = await pendingOpen;
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      "remote-project",
+      projectRef,
+      opened!.draftId,
+      expect.objectContaining({ workspaceDefaultsPending: true }),
+    );
+  });
+
   it("abandons a delayed draft open when the user navigates elsewhere", async () => {
     testState.reset(draft);
     const openThread = useNewThreadHandler();

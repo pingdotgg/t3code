@@ -79,7 +79,7 @@ export function usePullRequestDraftThread(input: PullRequestDraftThreadInput) {
     );
     const storedDraftSession = getDraftSessionByLogicalProjectKey(logicalProjectKey);
     if (storedDraftSession) {
-      setDraftThreadContext(storedDraftSession.draftId, input);
+      setDraftThreadContext(storedDraftSession.draftId, input, { explicit: true });
       setLogicalProjectDraftThreadId(
         logicalProjectKey,
         activeProjectRef,
@@ -100,7 +100,7 @@ export function usePullRequestDraftThread(input: PullRequestDraftThreadInput) {
 
     const activeDraftSession = routeKind === "draft" && draftId ? getDraftSession(draftId) : null;
     if (!isServerThread && activeDraftSession?.logicalProjectKey === logicalProjectKey && draftId) {
-      setDraftThreadContext(draftId, input);
+      setDraftThreadContext(draftId, input, { explicit: true });
       setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, draftId, {
         threadId: activeDraftSession.threadId,
         createdAt: activeDraftSession.createdAt,

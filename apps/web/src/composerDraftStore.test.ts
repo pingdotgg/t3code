@@ -19,6 +19,7 @@ import {
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import {
   defaultInstanceIdForDriver,
+  DEFAULT_SERVER_SETTINGS,
   DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
   EnvironmentId,
@@ -869,6 +870,117 @@ describe("composerDraftStore project draft thread mapping", () => {
   beforeEach(() => {
     resetComposerDraftStore();
   });
+
+  it.each(["defaults", "explicit workspace", "automatic branch sync"] as const)(
+    "settles pending workspace defaults once the project file is read: %s",
+    async (choice) => {
+      // Earlier tests reset modules; take the store from the same graph as the reconciler.
+      const { useComposerDraftStore, partializeComposerDraftStoreState } =
+        await import("./composerDraftStore");
+      const defaults = await import("./lib/t3ProjectFileDefaults");
+      const entities = await import("./state/entities");
+      const session = await import("./state/session");
+      const shelf = await import("./state/olderSettledShelf");
+      const { environmentSummaries } = await import("./state/presentation");
+      const queryRuntime = await import("@t3tools/client-runtime/state/runtime");
+      const { appAtomRegistry } = await import("./rpc/atomRegistry");
+      type ReadResult = Awaited<ReturnType<typeof queryRuntime.executeAtomQuery>>;
+      let finishRead!: (result: ReadResult) => void;
+      const readFile = vi.spyOn(queryRuntime, "executeAtomQuery").mockReturnValue(
+        new Promise<ReadResult>((resolve) => {
+          finishRead = resolve;
+        }),
+      );
+      const config = {
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          defaultThreadEnvMode: null,
+          newWorktreesStartFromOrigin: true,
+        },
+        newProjectsRoot: "/scratch",
+      };
+      const spies = [
+        readFile,
+        vi.spyOn(session, "readEnvironmentScope").mockReturnValue(true),
+        vi.spyOn(entities, "readThreadShells").mockReturnValue([]),
+        vi.spyOn(shelf, "readUnloadedThreadCount").mockReturnValue(0),
+        vi
+          .spyOn(appAtomRegistry, "get")
+          .mockImplementation(((atom: unknown) =>
+            atom === environmentSummaries.connectedEnvironmentIdsAtom
+              ? [TEST_ENVIRONMENT_ID]
+              : config) as never),
+      ];
+      const readProject = vi.spyOn(entities, "readProject").mockReturnValue(null);
+      try {
+        useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
+        const store = useComposerDraftStore.getState();
+        store.setProjectDraftThreadId(projectRef, draftId, {
+          threadId,
+          workspaceDefaultsPending: true,
+        });
+        await defaults.completeDraftWorkspaceDefaults(draftId);
+        expect(store.getDraftSession(draftId)?.workspaceDefaultsPending).toBe(true);
+
+        readProject.mockReturnValue({
+          id: projectId,
+          environmentId: TEST_ENVIRONMENT_ID,
+          title: "Project",
+          workspaceRoot: "/repo",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        });
+        const completion = defaults.completeDraftWorkspaceDefaults(draftId);
+        store.setPrompt(draftId, "Typed while the project file loads");
+        if (choice === "explicit workspace") {
+          store.setDraftThreadContext(
+            draftId,
+            { envMode: "local", branch: "chosen-branch", startFromOrigin: false },
+            { explicit: true },
+          );
+        } else if (choice === "automatic branch sync") {
+          store.setDraftThreadContext(draftId, { branch: "main", environmentSelection: "auto" });
+        }
+        const merge = useComposerDraftStore.persist.getOptions().merge!;
+        useComposerDraftStore.setState(
+          merge(
+            JSON.parse(
+              JSON.stringify(partializeComposerDraftStoreState(useComposerDraftStore.getState())),
+            ),
+            useComposerDraftStore.getInitialState(),
+          ),
+        );
+        expect(store.getDraftSession(draftId)?.workspaceDefaultsPending).toBe(true);
+
+        finishRead(
+          AsyncResult.success({
+            relativePath: "t3.json",
+            contents: '{"defaultThreadEnvMode":"worktree"}',
+            byteLength: 35,
+            truncated: false,
+          }),
+        );
+        await completion;
+
+        expect(store.getDraftSession(draftId)).toMatchObject(
+          choice === "explicit workspace"
+            ? { envMode: "local", branch: "chosen-branch", startFromOrigin: false }
+            : {
+                envMode: "worktree",
+                startFromOrigin: true,
+                ...(choice === "automatic branch sync" ? { branch: "main" } : {}),
+              },
+        );
+        expect(store.getDraftSession(draftId)?.workspaceDefaultsPending).toBeUndefined();
+        expect(store.getComposerDraft(draftId)?.prompt).toBe("Typed while the project file loads");
+      } finally {
+        readProject.mockRestore();
+        for (const spy of spies) spy.mockRestore();
+      }
+    },
+  );
 
   it("clears composer data for one environment without touching another", () => {
     const store = useComposerDraftStore.getState();

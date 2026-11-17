@@ -635,12 +635,16 @@ export const BranchToolbar = memo(function BranchToolbar({
     : null;
   const onUsePreviousWorktree = () => {
     if (!previousWorktreeSeed) return;
-    setDraftThreadContext(draftId ?? threadRef, {
-      branch: previousWorktreeSeed.branch,
-      worktreePath: previousWorktreeSeed.worktreePath,
-      envMode: "worktree",
-      projectRef: activeProjectRef,
-    });
+    setDraftThreadContext(
+      draftId ?? threadRef,
+      {
+        branch: previousWorktreeSeed.branch,
+        worktreePath: previousWorktreeSeed.worktreePath,
+        envMode: "worktree",
+        projectRef: activeProjectRef,
+      },
+      { explicit: true },
+    );
   };
 
   useImperativeHandle(

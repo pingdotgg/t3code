@@ -65,6 +65,7 @@ export function readLastUsedProjectKey(): string | null {
 }
 
 interface NewThreadWorkspaceOptions {
+  workspaceDefaultsPending?: boolean;
   branch?: string | null;
   worktreePath?: string | null;
   envMode?: DraftThreadEnvMode;
@@ -100,6 +101,8 @@ export function createNewThreadHandler(router: AnyRouter) {
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
       replace?: boolean;
+      /** Open the draft now and let ChatView apply the project file's defaults once they load. */
+      deferWorkspaceDefaults?: boolean;
       /** Composer text for the draft, set before it shows. A draft with user text keeps it. */
       prompt?: string;
     },
@@ -201,6 +204,7 @@ export function createNewThreadHandler(router: AnyRouter) {
       // Environment queries wait for a connection, so reading the project file on an
       // offline machine would never settle and the draft would never open.
       const consultProjectFile =
+        !options?.deferWorkspaceDefaults &&
         project !== undefined &&
         projectSettings.settings.defaultThreadEnvMode === null &&
         appAtomRegistry
@@ -237,6 +241,8 @@ export function createNewThreadHandler(router: AnyRouter) {
     const hasWorktreePathOption = options?.worktreePath !== undefined;
     const hasEnvModeOption = options?.envMode !== undefined;
     const hasStartFromOriginOption = options?.startFromOrigin !== undefined;
+    const hasExplicitWorkspaceOption =
+      hasBranchOption || hasWorktreePathOption || hasEnvModeOption || hasStartFromOriginOption;
     const storedDraftThread = getDraftSessionByLogicalProjectKey(logicalProjectKey);
     const storedDraftThreadRef = storedDraftThread
       ? scopeThreadRef(storedDraftThread.environmentId, storedDraftThread.threadId)
@@ -266,11 +272,12 @@ export function createNewThreadHandler(router: AnyRouter) {
         const isDraftAlreadyOpen =
           currentRouteTarget?.kind === "draft" &&
           currentRouteTarget.draftId === emptyStoredDraftThread.draftId;
-        const hasExplicitWorkspaceOption =
-          hasBranchOption || hasWorktreePathOption || hasEnvModeOption || hasStartFromOriginOption;
         let workspaceContext: NewThreadWorkspaceOptions | null = null;
         if (hasExplicitWorkspaceOption) {
-          workspaceContext = pickExplicitWorkspaceOptions(options);
+          workspaceContext = {
+            ...pickExplicitWorkspaceOptions(options),
+            workspaceDefaultsPending: false,
+          };
         } else if (!isDraftAlreadyOpen) {
           const defaultEnvMode = await resolveDefaultEnvMode();
           if (abandonedSinceRequest()) {
@@ -296,6 +303,7 @@ export function createNewThreadHandler(router: AnyRouter) {
             branch: null,
             worktreePath: null,
             envMode: defaultEnvMode,
+            workspaceDefaultsPending: options?.deferWorkspaceDefaults === true,
             startFromOrigin: resolveNewDraftStartFromOrigin({
               envMode: defaultEnvMode,
               newWorktreesStartFromOrigin: projectSettings.settings.newWorktreesStartFromOrigin,
@@ -362,13 +370,10 @@ export function createNewThreadHandler(router: AnyRouter) {
       latestActiveDraftThread.promotedTo == null &&
       !composerDraftHasUserContent(getComposerDraft(currentRouteTarget.draftId))
     ) {
-      if (
-        hasBranchOption ||
-        hasWorktreePathOption ||
-        hasEnvModeOption ||
-        hasStartFromOriginOption
-      ) {
-        setDraftThreadContext(currentRouteTarget.draftId, pickExplicitWorkspaceOptions(options));
+      if (hasExplicitWorkspaceOption) {
+        setDraftThreadContext(currentRouteTarget.draftId, pickExplicitWorkspaceOptions(options), {
+          explicit: true,
+        });
       }
       setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, currentRouteTarget.draftId, {
         threadId: latestActiveDraftThread.threadId,
@@ -399,6 +404,11 @@ export function createNewThreadHandler(router: AnyRouter) {
         racedDraft.draftId !== storedDraftThread?.draftId &&
         readThreadShell(scopeThreadRef(racedDraft.environmentId, racedDraft.threadId)) === null
       ) {
+        if (hasExplicitWorkspaceOption) {
+          setDraftThreadContext(racedDraft.draftId, pickExplicitWorkspaceOptions(options), {
+            explicit: true,
+          });
+        }
         setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, racedDraft.draftId, {
           threadId: racedDraft.threadId,
           createdAt: racedDraft.createdAt,
@@ -420,6 +430,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         branch: options?.branch ?? null,
         worktreePath: options?.worktreePath ?? null,
         envMode: initialEnvMode,
+        workspaceDefaultsPending: options?.deferWorkspaceDefaults === true,
         startFromOrigin:
           options?.startFromOrigin ??
           resolveNewDraftStartFromOrigin({

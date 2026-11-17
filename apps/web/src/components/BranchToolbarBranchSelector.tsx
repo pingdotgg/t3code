@@ -238,13 +238,17 @@ export function BranchToolbarBranchSelector({
       currentWorktreePath: activeWorktreePath,
       effectiveEnvMode,
     });
-    setDraftThreadContext(draftId ?? threadRef, {
-      branch,
-      worktreePath,
-      envMode: nextDraftEnvMode,
-      environmentSelection: automatic ? (draftThread?.environmentSelection ?? "auto") : "manual",
-      projectRef: scopeProjectRef(environmentId, activeProject.id),
-    });
+    setDraftThreadContext(
+      draftId ?? threadRef,
+      {
+        branch,
+        worktreePath,
+        envMode: nextDraftEnvMode,
+        environmentSelection: automatic ? (draftThread?.environmentSelection ?? "auto") : "manual",
+        projectRef: scopeProjectRef(environmentId, activeProject.id),
+      },
+      { explicit: !automatic },
+    );
     return true;
   };
 
