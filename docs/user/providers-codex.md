@@ -78,10 +78,9 @@ the variable too; setting it only in a provider's environment does not configure
 the T3 server.
 
 Choose a directory outside Git repositories; inside one, threads without a
-project are turned off. The setting applies to all
-new projectless threads on that server. Existing threads keep their directories
-and files. Unset the variable to use the default T3 scratch directory for new
-threads again. Codex's directory recognition can change between releases, and
+project are turned off. The setting applies to all new projectless threads on
+that server. Existing threads keep their directories and files. Unset the
+variable to use the default T3 scratch directory for new threads again. Codex's directory recognition can change between releases, and
 this does not reclassify older threads in Codex.
 
 ## Use multiple accounts

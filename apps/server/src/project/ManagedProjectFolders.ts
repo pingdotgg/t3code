@@ -74,7 +74,7 @@ export class ScratchProjectError extends Schema.TaggedError<ScratchProjectError>
 export const scratchFolderRoot = (baseDir: string, path: Path.Path) =>
   path.resolve(baseDir, "scratch");
 
-/** Every folder whose children can be No project thread folders: the default root and T3CODE_SCRATCH_DIR. */
+/** Folders whose children can be No project thread folders: the default root and T3CODE_SCRATCH_DIR. */
 export const scratchThreadParents = (
   config: { readonly baseDir: string; readonly scratchDir?: string | undefined },
   path: Path.Path,
@@ -269,31 +269,37 @@ const make = Effect.gen(function* () {
     gitWorkflow
       .repositoryRoot(directory)
       .pipe(Effect.catchIf(isGitMissing, () => Effect.succeed(null)));
-  // Scratch inside a checkout would inherit its git status and checkpoints; keep both roots outside work trees.
+  // Scratch inside a checkout would inherit its git status and checkpoints; keep it outside work trees.
   const [probe, invalidate] = yield* Effect.cachedInvalidateWithTTL(
     Effect.gen(function* () {
-      let repositoryRoot = yield* repositoryRootOf(config.baseDir);
-      let scratchDir: string | undefined;
-      if (repositoryRoot === null && config.scratchDir !== undefined) {
-        // The configured folder may not exist yet; ask Git about its nearest existing ancestor.
-        let existing = config.scratchDir;
-        while (!(yield* fileSystem.exists(existing)) && path.dirname(existing) !== existing) {
-          existing = path.dirname(existing);
-        }
-        repositoryRoot = yield* repositoryRootOf(existing);
-        scratchDir = config.scratchDir;
+      const baseRepository = yield* repositoryRootOf(config.baseDir);
+      if (baseRepository !== null || config.scratchDir === undefined) {
+        return { repositoryRoot: baseRepository, scratchDir: undefined };
       }
-      if (repositoryRoot === null) {
-        return Result.succeed(scratchFolderRoot(config.baseDir, path));
+      // The configured folder may not exist yet; ask Git about its nearest existing ancestor.
+      let existing = config.scratchDir;
+      while (!(yield* fileSystem.exists(existing)) && path.dirname(existing) !== existing) {
+        existing = path.dirname(existing);
       }
-      const unavailable = new ScratchUnavailableError({
-        baseDir: config.baseDir,
-        repositoryRoot,
-        scratchDir,
-      });
-      yield* Effect.logWarning(unavailable.message);
-      return Result.fail(unavailable);
-    }),
+      return { repositoryRoot: yield* repositoryRootOf(existing), scratchDir: config.scratchDir };
+    }).pipe(
+      Effect.flatMap(
+        ({
+          repositoryRoot,
+          scratchDir,
+        }): Effect.Effect<Result.Result<string, ScratchUnavailableError>> => {
+          if (repositoryRoot === null) {
+            return Effect.succeed(Result.succeed(scratchFolderRoot(config.baseDir, path)));
+          }
+          const unavailable = new ScratchUnavailableError({
+            baseDir: config.baseDir,
+            repositoryRoot,
+            scratchDir,
+          });
+          return Effect.logWarning(unavailable.message).pipe(Effect.as(Result.fail(unavailable)));
+        },
+      ),
+    ),
     // A failed git check (say, a timeout on a busy machine) is not an answer; ask again next time.
     Exit.match({ onSuccess: () => Duration.infinity, onFailure: () => Duration.zero }),
   );
