@@ -78,6 +78,9 @@ function hash(text: string): string {
   return (value >>> 0).toString(16).padStart(8, "0");
 }
 
+// Request input reaches git as a revision argument, so anything but a SHA could pass an option.
+const COMMIT_SHA = /^[0-9a-f]{7,64}$/i;
+
 const callFile = (method: string, input: unknown) => `${method}-${hash(stableKey(input))}.json`;
 const repositorySlug = (repository: string) => repository.replace("/", "__");
 
@@ -208,12 +211,22 @@ const replayProvider = Effect.fn("PullRequestFixtures.replayProvider")(function*
       );
     }),
   });
+  const checkedCommit = (operation: string, commit: string | undefined) =>
+    Effect.suspend(() =>
+      commit === undefined || commit === "" || COMMIT_SHA.test(commit)
+        ? Effect.succeed(commit ?? "")
+        : Effect.fail(notRecorded(operation, `Not a commit SHA: ${commit}`)),
+    );
   const patchesFor = (input: {
     readonly repository: string;
     readonly number: number;
     readonly commit?: string | undefined;
   }) =>
-    Cache.get(filePatches, `${input.repository}\u0000${input.number}\u0000${input.commit ?? ""}`);
+    checkedCommit("getDiff", input.commit).pipe(
+      Effect.flatMap((commit) =>
+        Cache.get(filePatches, `${input.repository}\u0000${input.number}\u0000${commit}`),
+      ),
+    );
 
   const page = <A>(items: ReadonlyArray<A>, cursor: string | undefined, size: number) => {
     const start = cursor === undefined ? 0 : Number(cursor);
@@ -239,6 +252,7 @@ const replayProvider = Effect.fn("PullRequestFixtures.replayProvider")(function*
   const getDiffFileContents: NonNullable<PullRequestProviderApi["getDiffFileContents"]> = Effect.fn(
     "PullRequestFixtures.getDiffFileContents",
   )(function* (input) {
+    yield* checkedCommit("getDiffFileContents", input.commit);
     const { baseSha, headSha } = input.commit
       ? { baseSha: `${input.commit}^`, headSha: input.commit }
       : yield* revisions(input.repository, input.number);
@@ -309,7 +323,8 @@ const replayProvider = Effect.fn("PullRequestFixtures.replayProvider")(function*
     setFilesViewed: () => Effect.void,
   };
   for (const method of RECORDED_READS) {
-    if (method === "getViewer" || provider[method] === undefined) continue;
+    // Skips methods overridden above, such as getFilesViewed's empty fallback.
+    if (provider[method] === undefined || replayed[method] !== provider[method]) continue;
     replayed[method] = (input: unknown) => recorded(method, input);
   }
   return replayed as unknown as PullRequestProviderApi;

@@ -198,6 +198,7 @@ async function main() {
       );
     const samples: Array<{ atMs: number; heapMb: number; nodes: number }> = [];
     const before = await metrics();
+    const beforeHeapMb = Math.round((before.JSHeapUsedSize ?? 0) / 2 ** 20);
     await cdp.send("Profiler.start");
     await cdp.send("Tracing.start", { categories: "toplevel", transferMode: "ReturnAsStream" });
     await page.evaluate(() =>
@@ -286,9 +287,9 @@ async function main() {
         topScripts: longFrameScripts(probe.longFrames),
       },
       memory: {
-        heapMbStart: samples[0]?.heapMb ?? 0,
-        heapMbEnd: samples.at(-1)?.heapMb ?? 0,
-        heapMbMax: Math.max(0, ...samples.map((sample) => sample.heapMb)),
+        heapMbStart: beforeHeapMb,
+        heapMbEnd: samples.at(-1)?.heapMb ?? beforeHeapMb,
+        heapMbMax: Math.max(beforeHeapMb, ...samples.map((sample) => sample.heapMb)),
         domNodesEnd: samples.at(-1)?.nodes ?? 0,
         samples,
       },

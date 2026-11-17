@@ -53,9 +53,20 @@ function recordRevisions() {
     .trim()
     .split(" ");
   if (!baseSha || !headSha) throw new Error(`No base and head for ${repository}#${number}`);
+  // `base.sha` is the base branch tip; diffing from it would show base-only changes as reverts.
+  const mergeBase = run(
+    "gh",
+    [
+      "api",
+      `repos/${repository}/compare/${baseSha}...${headSha}?per_page=1`,
+      "--jq",
+      ".merge_base_commit.sha",
+    ],
+    repo,
+  ).trim();
   const gitDir = NodePath.join(fixturesDir, "repos", `${slug}.git`);
   if (!NodeFS.existsSync(gitDir)) run("git", ["init", "-q", "--bare", gitDir], repo);
-  log(`fetching ${baseSha.slice(0, 10)} and ${headSha.slice(0, 10)} from ${repository}`);
+  log(`fetching ${mergeBase.slice(0, 10)} and ${headSha.slice(0, 10)} from ${repository}`);
   run(
     "git",
     [
@@ -65,13 +76,13 @@ function recordRevisions() {
       "-q",
       "--depth=1",
       `https://github.com/${repository}.git`,
-      baseSha,
+      mergeBase,
       headSha,
     ],
     repo,
   );
   NodeFS.mkdirSync(NodePath.dirname(changeFile(repository, number)), { recursive: true });
-  const change: RecordedChange = { baseSha, headSha, title: titleWords.join(" ") };
+  const change: RecordedChange = { baseSha: mergeBase, headSha, title: titleWords.join(" ") };
   NodeFS.writeFileSync(changeFile(repository, number), JSON.stringify(change));
   return change;
 }
