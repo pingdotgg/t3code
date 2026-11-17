@@ -10352,6 +10352,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           undefined,
           undefined,
           undefined,
+          undefined,
+          undefined,
           providerSettings,
         );
         const now = yield* DateTime.now;
