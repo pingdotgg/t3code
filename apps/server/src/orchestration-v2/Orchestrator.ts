@@ -6770,6 +6770,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const source = projection.runs.find((run) => run.id === command.steerFollowUpOfRunId);
       if (
         source === undefined ||
+        // Already re-sent as its own run; a second follow-up would run it twice.
+        source.userMessageId === command.messageId ||
         command.dispatchMode.type !== "queue_after_active" ||
         !projection.messages.some(
           (message) => message.id === command.messageId && message.runId === source.id,

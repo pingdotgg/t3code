@@ -2925,6 +2925,27 @@ it.effect.each([
         ],
       );
       assert.equal(started.length, 1);
+
+      // A retried steer effect re-dispatching from the message's new run must not run it twice.
+      const resentRun = projection.runs.find((run) => run.userMessageId === messageId)!;
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("steer-follow-up-again"),
+        threadId,
+        messageId,
+        steerFollowUpOfRunId: resentRun.id,
+        text: "follow up",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(threadId)).runs.filter(
+          (run) => run.userMessageId === messageId,
+        ).length,
+        1,
+      );
     }).pipe(Effect.provide(layer));
   }),
 );
