@@ -56,7 +56,7 @@ export interface HeroLayout {
 export const HERO_LAYOUT = {
   gap: 10,
   minCardWidth: 340,
-  pool: { min: 232, ideal: 268, max: 330 },
+  pool: { min: 232, ideal: 268, max: 300 },
   lower: { min: 214, ideal: 248, max: 316 },
 } as const;
 
@@ -377,11 +377,17 @@ export interface RefillEvent {
   readonly amount: number;
 }
 
-export interface EmptyBand {
-  readonly driver: string;
+/** A stretch with nothing left: one provider's pool, or the whole pool. */
+export interface DrySpan {
   readonly from: number;
-  /** null when the pool is still empty at the end of the projection. */
+  /** null when still dry at the end of the projection. */
   readonly to: number | null;
+  /** to - from, null while open-ended. */
+  readonly duration: number | null;
+}
+
+export interface ProviderDrySpan extends DrySpan {
+  readonly driver: string;
 }
 
 export interface PoolProjection {
@@ -389,8 +395,34 @@ export interface PoolProjection {
   readonly step: number;
   /** Total percent left per provider at start + index * step. */
   readonly series: ReadonlyMap<string, ReadonlyArray<number>>;
+  /** Percent left per account key at start + index * step. */
+  readonly accountSeries: ReadonlyMap<string, ReadonlyArray<number>>;
   readonly refills: ReadonlyArray<RefillEvent>;
-  readonly bands: ReadonlyArray<EmptyBand>;
+  /** Per provider, sorted by start. */
+  readonly dry: ReadonlyArray<ProviderDrySpan>;
+  /** When every provider is dry at once. */
+  readonly poolDry: ReadonlyArray<DrySpan>;
+}
+
+function drySpan(from: number, to: number | null): DrySpan {
+  return { from, to, duration: to === null ? null : to - from };
+}
+
+/** Where every list has a span at once; each list is sorted and non-overlapping. */
+function intersectSpans(lists: ReadonlyArray<ReadonlyArray<DrySpan>>): ReadonlyArray<DrySpan> {
+  if (lists.length === 0) return [];
+  return lists.slice(1).reduce<ReadonlyArray<DrySpan>>(
+    (current, next) =>
+      current.flatMap((left) =>
+        next.flatMap((right) => {
+          const from = Math.max(left.from, right.from);
+          const ends = [left.to, right.to].filter((to): to is number => to !== null);
+          const to = ends.length === 0 ? null : Math.min(...ends);
+          return to === null || to > from ? [drySpan(from, to)] : [];
+        }),
+      ),
+    lists[0]!,
+  );
 }
 
 /**
@@ -405,15 +437,18 @@ export function projectPool(
   step = 10 * MINUTE_MS,
 ): PoolProjection {
   const series = new Map<string, number[]>();
+  const accountSeries = new Map<string, number[]>();
   const refills: RefillEvent[] = [];
-  const bands: EmptyBand[] = [];
+  const dryByDriver: ProviderDrySpan[][] = [];
   const steps = Math.max(1, Math.ceil((end - now) / step));
   for (const provider of providers) {
     const burn = (burnByDriver.get(provider.driver) ?? 0) * (step / HOUR_MS);
     const state = provider.accounts.map((account) => ({ ...account }));
     const total = () => state.reduce((sum, account) => sum + account.left, 0);
+    const dry: ProviderDrySpan[] = [];
     let emptySince: number | null = total() <= 1e-6 ? now : null;
     const values: number[] = [];
+    const accountValues = state.map(() => [] as number[]);
     for (let index = 0; index <= steps; index += 1) {
       const t = now + index * step;
       for (const account of state) {
@@ -428,7 +463,7 @@ export function projectPool(
             });
           }
           if (emptySince !== null) {
-            bands.push({ driver: provider.driver, from: emptySince, to: account.resetsAt });
+            dry.push({ driver: provider.driver, ...drySpan(emptySince, account.resetsAt) });
             emptySince = null;
           }
           account.left = 100;
@@ -436,6 +471,7 @@ export function projectPool(
         }
       }
       values.push(total());
+      state.forEach((account, position) => accountValues[position]!.push(account.left));
       if (burn <= 0 || emptySince !== null) continue;
       let need = burn;
       const order = state
@@ -455,19 +491,43 @@ export function projectPool(
         emptySince = t + ((burn - need) / burn) * step;
       }
     }
-    if (emptySince !== null) bands.push({ driver: provider.driver, from: emptySince, to: null });
+    if (emptySince !== null) dry.push({ driver: provider.driver, ...drySpan(emptySince, null) });
     series.set(provider.driver, values);
+    state.forEach((account, position) => accountSeries.set(account.key, accountValues[position]!));
+    dryByDriver.push(dry);
   }
   refills.sort((left, right) => left.at - right.at);
-  bands.sort((left, right) => left.from - right.from);
-  return { start: now, step, series, refills, bands };
+  return {
+    start: now,
+    step,
+    series,
+    accountSeries,
+    refills,
+    dry: dryByDriver.flat().toSorted((left, right) => left.from - right.from),
+    poolDry: intersectSpans(dryByDriver),
+  };
 }
 
-export function projectedAt(projection: PoolProjection, driver: string, t: number): number | null {
-  const values = projection.series.get(driver);
+function seriesAt(
+  projection: PoolProjection,
+  values: ReadonlyArray<number> | undefined,
+  t: number,
+): number | null {
   if (!values || t < projection.start) return null;
   const index = Math.min(values.length - 1, Math.floor((t - projection.start) / projection.step));
   return values[index] ?? null;
+}
+
+export function projectedAt(projection: PoolProjection, driver: string, t: number): number | null {
+  return seriesAt(projection, projection.series.get(driver), t);
+}
+
+export function projectedAccountAt(
+  projection: PoolProjection,
+  accountKey: string,
+  t: number,
+): number | null {
+  return seriesAt(projection, projection.accountSeries.get(accountKey), t);
 }
 
 // Client-side history of the pool: the server keeps no past usedPercent.
@@ -476,10 +536,13 @@ export interface PoolSample {
   readonly t: number;
   /** driver -> [percent left, capacity] */
   readonly p: Readonly<Record<string, readonly [number, number]>>;
+  /** account key -> percent left; older samples lack it. */
+  readonly a?: Readonly<Record<string, number>>;
 }
 
 const POOL_SAMPLE_EVERY_MS = 10 * MINUTE_MS;
-const POOL_SAMPLE_KEEP_MS = 8 * DAY_MS;
+/** The chart shows at most a day of history; a little more survives a reload near the edge. */
+const POOL_SAMPLE_KEEP_MS = 2 * DAY_MS;
 
 export function appendPoolSample(
   samples: ReadonlyArray<PoolSample>,
@@ -489,7 +552,9 @@ export function appendPoolSample(
   const kept = filtered.length === samples.length ? samples : filtered;
   const last = kept.at(-1);
   if (last) {
-    const same = JSON.stringify(last.p) === JSON.stringify(sample.p);
+    const same =
+      JSON.stringify(last.p) === JSON.stringify(sample.p) &&
+      JSON.stringify(last.a ?? null) === JSON.stringify(sample.a ?? null);
     if (sample.t < last.t) return kept;
     if (same && sample.t - last.t < POOL_SAMPLE_EVERY_MS) return kept;
   }
@@ -517,6 +582,28 @@ export function sampleAt(
   if (found < 0) return null;
   const sample = samples[found]!;
   return t - sample.t <= maxGapMs ? sample : null;
+}
+
+/**
+ * Where the unbroken recorded history ending at `now` starts: walking back from `now`, no two
+ * neighbouring samples are more than `maxGapMs` apart. Never more than `capMs` back; `now` when
+ * nothing recent was recorded.
+ */
+export function recordedSince(
+  samples: ReadonlyArray<PoolSample>,
+  now: number,
+  maxGapMs: number,
+  capMs: number,
+): number {
+  let since = now;
+  for (let index = samples.length - 1; index >= 0; index -= 1) {
+    const t = samples[index]!.t;
+    if (t > now) continue;
+    if (since - t > maxGapMs) break;
+    since = t;
+    if (since <= now - capMs) break;
+  }
+  return Math.max(now - capMs, since);
 }
 
 // Machines: a client-side CPU history from hostResources polling.

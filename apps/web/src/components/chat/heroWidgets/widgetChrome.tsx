@@ -5,7 +5,6 @@ import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 
 export const GHOST = "color-mix(in oklab, var(--foreground) 8%, transparent)";
-export const FAINT = "color-mix(in oklab, var(--foreground) 4%, transparent)";
 
 export function useNow(intervalMs: number): number {
   const [now, setNow] = useState(() => Date.now());
