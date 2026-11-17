@@ -837,12 +837,11 @@ describe("thread outbox recovery rollback", () => {
       });
     const attachment = {
       id: "late-paste",
-      type: "image" as const,
-      name: "pasted.png",
-      mimeType: "image/png",
+      type: "file" as const,
+      name: "pasted.txt",
+      mimeType: "text/plain",
       sizeBytes: 1,
-      dataUrl: "data:image/png;base64,AA==",
-      previewUri: "data:image/png;base64,AA==",
+      fileUri: "file:///pasted.txt",
     };
     try {
       const recovering = recoverFailedThreadDraft(message);
@@ -855,11 +854,11 @@ describe("thread outbox recovery rollback", () => {
       const restored = composerDrafts.getComposerDraftSnapshot(targetKey);
       expect(restored.attachments).toContainEqual(attachment);
       expect(restored.context?.records).toHaveLength(201);
-      const imageRecord = restored.context?.records.find(
+      const fileRecord = restored.context?.records.find(
         (record) => "attachmentId" in record && record.attachmentId === attachment.id,
       );
-      expect(imageRecord).toBeDefined();
-      expect(restored.text).toContain(`/${imageRecord!.contextId})`);
+      expect(fileRecord).toBeDefined();
+      expect(restored.text).toContain(`/${fileRecord!.contextId})`);
       expect(composerDrafts.getComposerDraftSnapshot(sourceKey).attachments).toEqual([]);
     } finally {
       resume.resolve();
