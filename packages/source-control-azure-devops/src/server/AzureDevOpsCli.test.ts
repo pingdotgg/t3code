@@ -287,6 +287,36 @@ describe("AzureDevOpsCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("sends a title that looks like `@path` as text, not as a file for az to read", () =>
+    Effect.gen(function* () {
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      for (const title of ["@notes.txt", "a=@notes.txt"]) {
+        mockRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
+        yield* az.createPullRequest({
+          cwd: "/somewhere",
+          baseBranch: "main",
+          headSelector: "feature",
+          title,
+          bodyFile: "/tmp/body.md",
+        });
+
+        // az replaces an argument that starts with `@`, or whose text after the first `=` does, with that file's contents.
+        const fileReads = (mockRun.mock.calls.at(-1)?.[0].args ?? []).flatMap((arg) => {
+          const value = arg.startsWith("@") ? arg : arg.slice(arg.indexOf("=") + 1);
+          return (arg.startsWith("@") || arg.includes("=")) && value.startsWith("@")
+            ? [value.slice(1)]
+            : [];
+        });
+        expect(fileReads).not.toContain("notes.txt");
+        expect(mockRun.mock.calls.at(-1)?.[0].stdin).toBe(
+          title.startsWith("@") ? title : undefined,
+        );
+        // az expands a separate `@file` value a second time, so a body of `@notes.txt` read notes.txt.
+        expect(mockRun.mock.calls.at(-1)?.[0].args).toContain("--description=@/tmp/body.md");
+      }
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("preserves VCS causes without copying upstream details into messages", () =>
     Effect.gen(function* () {
       const cause = new VcsProcessExitError({

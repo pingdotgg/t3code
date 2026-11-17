@@ -21,6 +21,8 @@ export function handlePullRequestDiffDebugEvent(
   event: Parameters<NonNullable<NativeReviewDiffViewProps["onDebug"]>>[0],
   input: {
     readonly rowCount: number;
+    /** The last row native can draw: a folded final file ends at its header. */
+    readonly lastShownRowIndex: number;
     readonly targetFileId: string | undefined;
     readonly focusIndex: number;
     readonly isIos: boolean;
@@ -60,5 +62,9 @@ export function handlePullRequestDiffDebugEvent(
   }
   if (!drawn) return;
   const lastRow = event.nativeEvent.lastRowIndex;
-  if (typeof lastRow === "number" && lastRow >= input.rowCount - 40) input.loadMore();
+  if (
+    typeof lastRow === "number" &&
+    lastRow >= Math.min(input.rowCount - 40, input.lastShownRowIndex)
+  )
+    input.loadMore();
 }

@@ -18,6 +18,8 @@ export function visibleResourceTelemetryProcesses(
   const hidden = new Set<string>();
   const hideDescendants = (pid: number): void => {
     for (const child of childrenByParent.get(pid) ?? []) {
+      // Depth 0 rows are their own roots, e.g. the server launched by Electron main.
+      if (child.depth === 0) continue;
       const key = processIdentityKey(child);
       if (hidden.has(key)) continue;
       hidden.add(key);
