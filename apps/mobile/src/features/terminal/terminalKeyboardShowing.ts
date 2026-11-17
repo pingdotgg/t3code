@@ -8,9 +8,17 @@ const subscribers = new Set<() => void>();
 let showEpoch = 1;
 let keyboardShowing = KeyboardController.isVisible();
 let hiddenSinceShow = !keyboardShowing;
+let keyboardMoving = false;
+const settleRuns = new Map<object, () => void>();
 
 const notify = () => {
   for (const subscriber of subscribers) subscriber();
+};
+const settle = () => {
+  keyboardMoving = false;
+  const runs = [...settleRuns.values()];
+  settleRuns.clear();
+  for (const run of runs) run();
 };
 const show = () => {
   if (hiddenSinceShow) showEpoch += 1;
@@ -18,16 +26,34 @@ const show = () => {
   keyboardShowing = true;
   notify();
 };
-KeyboardEvents.addListener("keyboardWillShow", show);
-KeyboardEvents.addListener("keyboardDidShow", show);
+KeyboardEvents.addListener("keyboardWillShow", () => {
+  keyboardMoving = true;
+  show();
+});
+KeyboardEvents.addListener("keyboardDidShow", () => {
+  show();
+  settle();
+});
 KeyboardEvents.addListener("keyboardWillHide", () => {
+  keyboardMoving = true;
   keyboardShowing = false;
   hiddenSinceShow = true;
   notify();
 });
 KeyboardEvents.addListener("keyboardDidHide", () => {
   hiddenSinceShow = true;
+  settle();
 });
+
+// Runs now, or once the keyboard stops moving; a later call for the same owner replaces it.
+export function runWhenKeyboardSettles(owner: object, run: () => void) {
+  if (!keyboardMoving) {
+    settleRuns.delete(owner);
+    run();
+    return;
+  }
+  settleRuns.set(owner, run);
+}
 
 export function subscribeKeyboardShowing(onChange: () => void) {
   subscribers.add(onChange);

@@ -14,7 +14,11 @@ vi.mock("react-native-keyboard-controller", () => ({
   },
 }));
 
-import { getKeyboardShowEpoch, subscribeKeyboardShowing } from "./terminalKeyboardShowing";
+import {
+  getKeyboardShowEpoch,
+  runWhenKeyboardSettles,
+  subscribeKeyboardShowing,
+} from "./terminalKeyboardShowing";
 
 function emit(name: string) {
   for (const listener of listeners.get(name) ?? []) listener();
@@ -63,4 +67,21 @@ it("keeps the accessory through Android's did-only repair and starts a new show 
     subscribersInSync: true,
   });
   for (const unsubscribe of unsubscribes) unsubscribe();
+});
+
+it("runs only the latest deferred call once the keyboard stops moving", () => {
+  emit("keyboardDidHide");
+  const owner = {};
+  const reported: number[] = [];
+  runWhenKeyboardSettles(owner, () => reported.push(1));
+  emit("keyboardWillShow");
+  for (const rows of [40, 35, 30]) runWhenKeyboardSettles(owner, () => reported.push(rows));
+  const whileOpening = [...reported];
+  emit("keyboardDidShow");
+  emit("keyboardWillHide");
+  runWhenKeyboardSettles(owner, () => reported.push(45));
+  emit("keyboardDidHide");
+  emit("keyboardDidHide");
+
+  expect({ whileOpening, reported }).toEqual({ whileOpening: [1], reported: [1, 30, 45] });
 });
