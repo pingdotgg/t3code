@@ -213,8 +213,8 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   readonly profileDirectory: string;
   readonly authMethod: AntigravitySettings["authMethod"];
   /**
-   * False for the `agy` CLI, which keeps its sign-in outside the profile. A failure keeps the
-   * last answer, so a runtime that stops resolving is still read as the kind it was.
+   * False for the `agy` CLI, which keeps its sign-in outside the profile. A failure means the
+   * runtime cannot be identified, so no limits are shown rather than trusting a profile token.
    */
   readonly credentialsInProfile: Effect.Effect<boolean, E>;
 }) {
@@ -229,8 +229,6 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     | { fingerprint: string; account: string; accessToken: string; expiresAt: number }
     | undefined;
   let generation = 0;
-  // Outlives `clear`: signing out does not change which runtime is installed.
-  let credentialsInProfile = true;
 
   const request = (request: HttpClientRequest.HttpClientRequest) =>
     client.execute(request).pipe(
@@ -245,10 +243,17 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     if (input.authMethod !== "oauth-personal" && input.authMethod !== "oauth-business") {
       return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
     }
-    credentialsInProfile = yield* input.credentialsInProfile.pipe(
-      Effect.orElseSucceed(() => credentialsInProfile),
-    );
-    if (!credentialsInProfile) {
+    const credentialsInProfile = yield* Effect.option(input.credentialsInProfile);
+    if (Option.isNone(credentialsInProfile)) {
+      // The runtime may now be the CLI, so a profile token could belong to another account.
+      cached = undefined;
+      return makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "unsupported",
+        message: "Antigravity limits are unavailable while its runtime cannot be resolved.",
+      });
+    }
+    if (!credentialsInProfile.value) {
       // A leftover ACP token here can belong to another account than the CLI's.
       cached = undefined;
       return makeUnavailableUsageLimits({

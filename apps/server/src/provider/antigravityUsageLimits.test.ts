@@ -700,9 +700,16 @@ describe("Antigravity subscription limits", () => {
           message: "Antigravity limits are unavailable when using the agy CLI.",
         },
       };
+      const unresolved = {
+        windows: [],
+        unavailable: {
+          reason: "unsupported",
+          message: "Antigravity limits are unavailable while its runtime cannot be resolved.",
+        },
+      };
       expect(yield* probe).toMatchObject(cli);
       credentialsInProfile = "unresolved";
-      expect(yield* probe).toMatchObject(cli);
+      expect(yield* probe).toMatchObject(unresolved);
       expect(requests).toEqual([]);
 
       credentialsInProfile = true;
@@ -714,11 +721,23 @@ describe("Antigravity subscription limits", () => {
       credentialsInProfile = true;
       yield* probe;
       expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(2);
+
+      // An ACP runtime that stops resolving may have been replaced by the CLI, so its limits go.
+      const requestsBeforeLoss = requests.length;
+      credentialsInProfile = "unresolved";
+      const lost = yield* probe;
+      expect(lost).toMatchObject(unresolved);
+      expect(lost.credentialFingerprint).toBeUndefined();
+      expect(requests).toHaveLength(requestsBeforeLoss);
+      credentialsInProfile = true;
+      expect((yield* probe).credentialFingerprint).toMatch(/^[0-9a-f]{64}$/);
+      expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(3);
       expect(cliTokenAccesses).toEqual([]);
 
-      // A runtime that never resolved keeps the profile path, so a removed ACP runtime keeps its limits.
+      // A runtime that never resolved could be either kind, so no profile token is trusted.
       const neverResolved = yield* fixture({ credentialsInProfile: Effect.fail("unresolved") });
-      expect((yield* neverResolved.probe).windows).toHaveLength(4);
+      expect(yield* neverResolved.probe).toMatchObject(unresolved);
+      expect(neverResolved.requests).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });
