@@ -1392,7 +1392,7 @@
   "43821aa7ab710301": "Caducado",
   "9d930e0fd885ec31": "Caduca en un momento",
   "64e17b9414ed5dd4": "Caduca en {duration}",
-  "812f9d5c41830d6b": "El archivo no está disponible en este Mac.",
+  "85632ff85a7d923d": "El archivo no está disponible en este equipo.",
   "3d2036743bbda4c9": "No se puede arrastrar el archivo",
   "111a308f2cba6e4b": "Las versiones no coinciden. Prueba a sincronizar el cliente y el servidor a la misma versión de T3 Code.",
   "4eb599c7f36c99ba": "Ese archivo de tema no es un JSON válido.",

@@ -1392,7 +1392,7 @@
   "43821aa7ab710301": "Expiré",
   "9d930e0fd885ec31": "Expire dans un instant",
   "64e17b9414ed5dd4": "Expire dans {duration}",
-  "812f9d5c41830d6b": "Le fichier n’est pas disponible sur ce Mac.",
+  "85632ff85a7d923d": "Le fichier n’est pas disponible sur cet ordinateur.",
   "3d2036743bbda4c9": "Impossible de faire glisser le fichier",
   "111a308f2cba6e4b": "Versions incompatibles. Essayez d’aligner le client et le serveur sur la même version de T3 Code.",
   "4eb599c7f36c99ba": "Ce fichier de thème n’est pas un JSON valide.",
