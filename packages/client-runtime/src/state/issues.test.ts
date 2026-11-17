@@ -5,6 +5,7 @@ import {
   type IssueListResult,
   type IssueComment,
   type IssueListEntry,
+  type IssueListInput,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -226,6 +227,58 @@ describe("issue listings", () => {
           );
         }
         expect(reads, "Issue searches for the same selected labels").toBe(1);
+      }),
+    ),
+  );
+
+  it.effect("loads the next page using the search that produced its cursor", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const environmentId = EnvironmentId.make("env");
+        const target = new PrimaryConnectionTarget({
+          environmentId,
+          label: "Test environment",
+          httpBaseUrl: "https://issues.example.test",
+          wsBaseUrl: "wss://issues.example.test",
+        });
+        const cursors = { "github.com acme/app": "opaque-cursor" };
+        const client = {
+          [WS_METHODS.issuesList]: (input: IssueListInput) =>
+            Effect.succeed({
+              entries:
+                input.cursors?.["github.com acme/app"] === cursors["github.com acme/app"] &&
+                input.labels?.join(",") === "bug,p1"
+                  ? [entry({ key: "2" })]
+                  : [],
+              viewers: {},
+              trackers: [],
+              nextCursors: {},
+              errors: [],
+            } satisfies IssueListResult),
+        };
+        const supervisor = EnvironmentSupervisor.of({
+          target,
+          state: yield* SubscriptionRef.make<SupervisorConnectionState>(AVAILABLE_CONNECTION_STATE),
+          session: yield* SubscriptionRef.make(Option.some({ client } as unknown as RpcSession)),
+          prepared: yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none()),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        });
+        const environment = EnvironmentRegistry.of({
+          run: (_id, effect) => Effect.provideService(effect, EnvironmentSupervisor, supervisor),
+        } as Pick<EnvironmentRegistry["Service"], "run"> as EnvironmentRegistry["Service"]);
+        const runtime = Atom.runtime(Layer.succeed(EnvironmentRegistry, environment));
+        const { listPage } = createIssueEnvironmentAtoms(runtime);
+        const registry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+        const page = yield* Effect.promise(() =>
+          listPage.run(registry, {
+            environmentId,
+            input: { state: "open", labels: ["p1", "bug"], cursors },
+          }),
+        );
+        expect(page).toMatchObject({ _tag: "Success", value: { entries: [{ key: "2" }] } });
       }),
     ),
   );

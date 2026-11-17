@@ -22,6 +22,7 @@ import {
   createEnvironmentRpcQueryAtomFamily,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import { requestGuarded } from "../rpc/client.ts";
 
 /** One row's identity across list pages and detail reads; hosts compare case-insensitively. */
 export function issueEntryKey(
@@ -56,6 +57,11 @@ export function prependIssueComments(
   if (older.length === 0) return current;
   const seen = new Set(current.map((comment) => comment.id));
   return [...older.filter((comment) => !seen.has(comment.id)), ...current];
+}
+
+/** Every label must match, but a tracker cursor can depend on the literal search string. */
+function canonicalIssueListInput(input: IssueListInput): IssueListInput {
+  return input.labels === undefined ? input : { ...input, labels: [...input.labels].sort() };
 }
 
 /**
@@ -94,12 +100,8 @@ export function createIssueEnvironmentAtoms<R, E>(
     staleTimeMs: 30_000,
   });
   return {
-    /** An issue must carry every label asked, so the same labels in any order are one listing. */
     list: ({ environmentId, input }: Parameters<typeof listing>[0]) =>
-      listing({
-        environmentId,
-        input: input.labels === undefined ? input : { ...input, labels: [...input.labels].sort() },
-      }),
+      listing({ environmentId, input: canonicalIssueListInput(input) }),
     /**
      * A continuation of the listing, run as a command rather than read as a query: a page is
      * asked for once and laid over the rows held, and a refresh of the first page forgets it.
@@ -107,10 +109,12 @@ export function createIssueEnvironmentAtoms<R, E>(
     listPage: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:list-page",
       tag: WS_METHODS.issuesList,
+      execute: (input) => requestGuarded(WS_METHODS.issuesList, canonicalIssueListInput(input)),
       scheduler: commandScheduler,
       concurrency: {
         mode: "singleFlight",
-        key: ({ environmentId, input }) => JSON.stringify([environmentId, input]),
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, canonicalIssueListInput(input)]),
       },
     }),
     detail,
@@ -179,6 +183,15 @@ export interface IssueListTarget {
   readonly input: IssueListInput;
 }
 
+export function issueListTargetsKey(targets: ReadonlyArray<IssueListTarget>): string {
+  return JSON.stringify(
+    targets.map(({ environmentId, input }) => ({
+      environmentId,
+      input: canonicalIssueListInput(input),
+    })),
+  );
+}
+
 export interface MergedIssueList {
   /** One answer per environment that has one, in target order. */
   readonly answers: ReadonlyArray<readonly [EnvironmentId, IssueListResult]>;
@@ -225,7 +238,7 @@ export function createMergedIssueListAtoms<E>(
   return {
     atom: (targets: ReadonlyArray<IssueListTarget>) => {
       if (targets.length === 0) return empty;
-      const key = JSON.stringify(targets);
+      const key = issueListTargetsKey(targets);
       asked.set(key, targets);
       return family(key);
     },
