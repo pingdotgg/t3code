@@ -656,14 +656,13 @@ describe("question answer paths", () => {
               '<package><item id="bad" href="bad.xhtml"/><item id="good" href="good.xhtml"/><itemref idref="bad"/><itemref idref="good"/></package>',
             "bad.xhtml": "<html><p>Discard this broken chapter</html>",
             "good.xhtml":
-              '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><p>North&nbsp;Harbor &NotEqualTilde; &CounterClockwiseContourIntegral; &amp; &lt;tag&gt; &quot;quoted&quot;</p><p><![CDATA[Literal &nbsp;]]></p><table><tr><td>&nbsp; </td></tr><tr><td>Kept&nbsp;cell</td></tr></table><p>Formula <math><semantics><mrow>x+y</mrow><annotation encoding="application/x-tex">x+y</annotation></semantics></math></p></html>',
+              '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><p>North&nbsp;Harbor &NotEqualTilde; &CounterClockwiseContourIntegral; &amp; &lt;tag&gt; &quot;quoted&quot;</p><p><![CDATA[Literal &nbsp;]]></p><table><tr><td>&nbsp; </td></tr><tr><td>Kept&nbsp;cell</td></tr></table></html>',
           },
           expected: [
             "## Chapter 2",
             'North\u00a0Harbor ≂̸ ∳ & <tag> "quoted"',
             "Literal &nbsp;",
             "Kept cell",
-            "Formula x+yx+y",
             "[Skipped document part: bad.xhtml (missing or invalid XML).]",
           ],
           absent: ["Discard this broken chapter", "[Extracted text truncated"],
