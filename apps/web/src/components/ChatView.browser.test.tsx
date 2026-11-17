@@ -26,6 +26,7 @@ import { selectThreadDiffPanelSelection, useDiffPanelStore } from "~/diffPanelSt
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { environmentContextRecord } from "~/lib/composerContextRecords";
 import { startWorkspaceFocus } from "~/lib/workspaceFocus";
+import * as keybindingCommands from "~/keybindings";
 import { usePromptStashStore } from "~/promptStashStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
@@ -47,6 +48,8 @@ import {
   type FakeDriver,
 } from "../../test/fakeEnvironment";
 import { act, fakeTimers, render } from "../../test/render";
+
+vi.mock(import("~/keybindings"), { spy: true });
 
 const PNG = Uint8Array.from(
   atob(
@@ -579,6 +582,99 @@ it("a mounted thread view lets go of the thread structures it has replaced", asy
   // The thread keeps its latest structure, and the timeline may remember the one before it.
   const kept = shown.slice(0, -2).flatMap((structure, round) => (structure.deref() ? [round] : []));
   expect(kept).toEqual([]);
+});
+
+it("thread title shortcuts ignore closed dialogs but stop for open dialogs and confirmations", async () => {
+  const thread = threadWithHistory("thread-title-dialog-guard", 1);
+  using _environment = installFakeEnvironment([thread]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using screen = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  using _command = vi
+    .spyOn(keybindingCommands, "resolveChatShortcutCommand")
+    .mockImplementation((...args) =>
+      args[0].ctrlKey && args[0].shiftKey && args[0].key.toLowerCase() === "r"
+        ? "thread.rename"
+        : null,
+    );
+  using overlays = new DisposableStack();
+  const dialog = document.createElement("div");
+  document.body.append(dialog);
+  overlays.defer(() => dialog.remove());
+  const composer = screen.getByTestId("composer-editor");
+  const title = screen.getByRole("textbox", { name: "Thread title", exact: true });
+  for (const role of ["alertdialog", "dialog"]) {
+    dialog.setAttribute("role", role);
+    dialog.removeAttribute("data-closed");
+    await composer.click();
+    await userEvent.keyboard("{Control>}{Shift>}r{/Shift}{/Control}");
+    await expect.element(title).not.toBeInTheDocument();
+
+    dialog.setAttribute("data-closed", "");
+    await userEvent.keyboard("{Control>}{Shift>}r{/Shift}{/Control}");
+    await expect.element(title).toBeVisible();
+    await title.click();
+    await userEvent.keyboard("{Escape}");
+    await expect.element(title).not.toBeInTheDocument();
+  }
+});
+
+it("renaming temporarily hides a maximized narrow panel and restores it on completion", async () => {
+  await page.viewport(900, 800);
+  const thread = threadWithHistory("thread-title-panel-focus", 1);
+  using _environment = installFakeEnvironment([thread]);
+  const threadRef = scopeThreadRef(ENVIRONMENT_ID, thread.id);
+  useRightPanelStore.getState().open(threadRef, "diff");
+  useRightPanelStore.getState().setMaximized(threadRef, true);
+  const panelState = useRightPanelStore.getState().byThreadKey;
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using screen = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  using _command = vi
+    .spyOn(keybindingCommands, "resolveChatShortcutCommand")
+    .mockImplementation((...args) =>
+      args[0].ctrlKey && args[0].shiftKey && args[0].key.toLowerCase() === "r"
+        ? "thread.rename"
+        : null,
+    );
+  await expect
+    .element(screen.getByRole("button", { name: "Toggle right panel", exact: true }))
+    .toBeVisible();
+  const title = screen.getByRole("textbox", { name: "Thread title", exact: true });
+  for (const finish of ["{Escape}", "{Enter}", "blur"]) {
+    await userEvent.keyboard("{Control>}{Shift>}r{/Shift}{/Control}");
+    await expect.element(title).toBeVisible();
+    await expect.element(title).toHaveFocus();
+    await expect
+      .element(screen.getByRole("dialog", { name: "Workspace panel" }))
+      .not.toBeInTheDocument();
+    expect(useRightPanelStore.getState().byThreadKey).toEqual(panelState);
+    if (finish === "blur") await screen.getByTestId("composer-editor").click();
+    else await userEvent.keyboard(finish);
+    await expect.element(title).not.toBeInTheDocument();
+    await expect
+      .element(screen.getByRole("button", { name: "Restore panel size", exact: true }))
+      .toBeVisible();
+    expect(useRightPanelStore.getState().byThreadKey).toEqual(panelState);
+  }
 });
 
 it("a shortcut conditioned on rightPanelOpen sees the thread's open right panel", async () => {

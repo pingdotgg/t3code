@@ -14,6 +14,8 @@ import { ChevronDownIcon } from "lucide-react";
 import {
   memo,
   useEffect,
+  useImperativeHandle,
+  type Ref,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -44,10 +46,17 @@ import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
 
+export interface ChatHeaderHandle {
+  startRename: () => void;
+}
+
 interface ChatHeaderProps {
+  ref?: Ref<ChatHeaderHandle>;
   activeThreadEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
   activeThreadTitle: string;
+  renamingTitle: string | null;
+  onRenamingTitleChange: (title: string | null) => void;
   activeThreadLinkOrigin?: string | null | undefined;
   isServerThread: boolean;
   activeProject: EnvironmentProject | null;
@@ -70,9 +79,12 @@ function resolveRenameCommit(input: {
 }
 
 export const ChatHeader = memo(function ChatHeader({
+  ref,
   activeThreadEnvironmentId,
   activeThreadId,
   activeThreadTitle,
+  renamingTitle,
+  onRenamingTitleChange: setRenaming,
   activeThreadLinkOrigin,
   isServerThread,
   activeProject,
@@ -97,25 +109,6 @@ export const ChatHeader = memo(function ChatHeader({
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
-  const [renaming, setRenaming] = useState<{
-    threadId: ThreadId;
-    environmentId: EnvironmentId;
-    title: string;
-  } | null>(null);
-  if (
-    renaming !== null &&
-    (renaming.threadId !== activeThreadId ||
-      renaming.environmentId !== activeThreadEnvironmentId ||
-      !canOperateThread)
-  ) {
-    setRenaming(null);
-  }
-  const renamingTitle =
-    canOperateThread &&
-    renaming?.threadId === activeThreadId &&
-    renaming.environmentId === activeThreadEnvironmentId
-      ? renaming.title
-      : null;
   const isRenamingTitle = renamingTitle !== null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the breadcrumb list DOM via ResizeObserver, a frame and font loads to collapse the parent title
   useEffect(() => {
@@ -165,12 +158,9 @@ export const ChatHeader = memo(function ChatHeader({
     )
       return;
     renameCommittedRef.current = false;
-    setRenaming({
-      environmentId: activeThreadEnvironmentId,
-      threadId: activeThreadId,
-      title: activeThreadTitle,
-    });
+    setRenaming(activeThreadTitle);
   };
+  useImperativeHandle(ref, () => ({ startRename }));
   const commitRename = (title: string) => {
     setRenaming(null);
     if (!readEnvironmentScope(activeThreadEnvironmentId, AuthOrchestrationOperateScope)) return;
