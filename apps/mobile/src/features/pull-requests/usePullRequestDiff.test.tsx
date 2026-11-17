@@ -22,7 +22,7 @@ function patch(path: string, nextCursor: string | null = null): PullRequestDiffR
   };
 }
 
-function setup() {
+function setup(guideHeadSha?: string) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const registry = AtomRegistry.make();
   const requests: {
@@ -30,33 +30,38 @@ function setup() {
     resolve: (value: PullRequestDiffResult) => void;
     reject: (error: Error) => void;
   }[] = [];
-  const queries = Atom.family((cursor: string | null) =>
+  const queries = Atom.family((key: string) =>
     Atom.make(
       Effect.tryPromise({
         try: () =>
           new Promise<PullRequestDiffResult>((resolve, reject) => {
-            requests.push({ cursor, resolve, reject });
+            requests.push({
+              cursor: (JSON.parse(key) as { cursor: string | null }).cursor,
+              resolve,
+              reject,
+            });
           }),
         catch: (cause) =>
           new PullRequestOperationError({ operation: "diff", detail: "Connection lost", cause }),
       }),
     ).pipe(Atom.keepAlive),
   );
-  mocks.diff.mockImplementation((target: { input: { cursor?: string } }) =>
-    queries(target.input.cursor ?? null),
+  mocks.diff.mockImplementation((target: { input: { cursor?: string; cacheHeadSha?: string } }) =>
+    queries(
+      JSON.stringify({ cursor: target.input.cursor ?? null, head: target.input.cacheHeadSha }),
+    ),
   );
   const root = createRoot(document.createElement("div"));
   let current: ReturnType<typeof usePullRequestDiff>;
   function Probe() {
-    const result = usePullRequestDiff(
-      {
-        environmentId: "environment",
-        projectId: "project",
-        repository: "repo",
-        number: 1,
-      },
-      sourceControlClients.get("github").changeRequest,
-    );
+    const params = {
+      environmentId: "environment",
+      projectId: "project",
+      repository: "repo",
+      number: 1,
+      guideHeadSha,
+    };
+    const result = usePullRequestDiff(params, sourceControlClients.get("github").changeRequest);
     useLayoutEffect(() => {
       current = result;
     });
@@ -71,7 +76,8 @@ function setup() {
   );
   return {
     requests,
-    remount() {
+    remount(nextGuideHeadSha = guideHeadSha) {
+      guideHeadSha = nextGuideHeadSha;
       act(() =>
         root.render(
           <RegistryContext.Provider value={registry}>
@@ -245,4 +251,21 @@ it("still refreshes from page one after successfully loading a continuation", as
   await screen.succeed(2, patch("refreshed.ts"));
   if (screen.current.parsed.kind !== "files") throw new Error("Expected files");
   expect(screen.current.parsed.files.map((file) => file.path)).toEqual(["refreshed.ts"]);
+});
+
+it("does not show the previous push's patch when a rewritten guide opens", async () => {
+  using screen = setup("old-head");
+  await screen.succeed(0, {
+    ...patch("shared.ts"),
+    patch: patch("shared.ts").patch.replace("+new", "+previous code"),
+  });
+  expect(screen.current.patch).toContain("+previous code");
+
+  screen.remount("new-head");
+  expect(screen.current.patch).not.toContain("+previous code");
+  await screen.succeed(1, {
+    ...patch("shared.ts"),
+    patch: patch("shared.ts").patch.replace("+new", "+current code"),
+  });
+  expect(screen.current.patch).toContain("+current code");
 });
