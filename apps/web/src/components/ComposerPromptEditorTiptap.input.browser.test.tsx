@@ -470,6 +470,14 @@ it("proposes no completion for pasted text or a name crossing formatting", async
 
   await userEvent.keyboard(" mac");
   await vi.waitFor(() => expect(ghost()).not.toBeNull());
+
+  // Revealing and then hiding the bold's Markdown source rewrites the document without typing.
+  await act(async () => {
+    editor.commands.setTextSelection(2);
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+  });
+  expect(editor.state.doc.textContent).toContain("mi mac mac");
+  expect(ghost()).toBeNull();
 });
 
 it("lets composition replace selected text without surrounding it", async () => {

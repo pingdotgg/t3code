@@ -841,7 +841,9 @@ const ComposerInlineSuggestionExtension = Extension.create<unknown, InlineSugges
               isClipboardEdit(tr) ||
               tr.getMeta("history$") ||
               tr.getMeta("preventUpdate") ||
-              tr.getMeta("composition") !== undefined
+              tr.getMeta("composition") !== undefined ||
+              // Markdown-source normalization after a caret move rewrites text nobody typed.
+              (tr.getMeta("appendedTransaction") && previous.suggestion === null)
             ) {
               return none;
             }
