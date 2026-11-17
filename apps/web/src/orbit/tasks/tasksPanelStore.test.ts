@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { DEFAULT_TASKS_NAVIGATION, useTasksPanelStore } from "./tasksPanelStore";
+import {
+  DEFAULT_TASKS_NAVIGATION,
+  TASKS_NAVIGATION_THREAD_LIMIT,
+  useTasksPanelStore,
+} from "./tasksPanelStore";
 
 const store = () => useTasksPanelStore.getState();
 const at = (threadKey: string) => store().byThreadKey[threadKey] ?? DEFAULT_TASKS_NAVIGATION;
@@ -56,5 +60,38 @@ describe("tasksPanelStore", () => {
     store().openSubtask("env:d", null);
     store().saveDetailScroll("env:d", 0);
     expect(store().byThreadKey).toBe(before);
+  });
+
+  it("keeps only the threads changed most recently", () => {
+    useTasksPanelStore.setState({ byThreadKey: {} });
+    let now = 1_000;
+    using _now = vi.spyOn(Date, "now").mockImplementation(() => now++);
+    for (let index = 0; index < TASKS_NAVIGATION_THREAD_LIMIT; index += 1) {
+      store().openTask(`env:cap-${index}`, index);
+    }
+    // Touching the oldest thread makes it recent, so the next oldest goes instead.
+    store().saveDetailScroll("env:cap-0", 40);
+    store().openTask("env:cap-new", 999);
+
+    const keys = Object.keys(store().byThreadKey);
+    expect(keys).toHaveLength(TASKS_NAVIGATION_THREAD_LIMIT);
+    expect(keys).toContain("env:cap-0");
+    expect(keys).toContain("env:cap-new");
+    expect(keys).not.toContain("env:cap-1");
+  });
+  it("caps old persisted navigation when it is restored", async () => {
+    const { name, storage } = useTasksPanelStore.persist.getOptions();
+    if (!name || !storage) throw new Error("Missing navigation storage");
+    const entries = Object.fromEntries(
+      Array.from({ length: 70 }, (_, index) => [
+        `old:${index}`,
+        { ...DEFAULT_TASKS_NAVIGATION, taskId: index, updatedAt: 500 },
+      ]),
+    );
+    useTasksPanelStore.setState({ byThreadKey: {} });
+    await storage.setItem(name, { state: { byThreadKey: entries }, version: 1 });
+    await useTasksPanelStore.persist.rehydrate();
+    expect(Object.keys(store().byThreadKey)).toHaveLength(TASKS_NAVIGATION_THREAD_LIMIT);
+    expect(Object.values(store().byThreadKey).every((entry) => entry.updatedAt === 0)).toBe(true);
   });
 });

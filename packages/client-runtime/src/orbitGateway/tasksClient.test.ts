@@ -166,14 +166,16 @@ describe("createOrbitTasksClient", () => {
   it.each([
     [403, "peer.identity_unknown", "not-a-node"],
     [403, "node_access.required", "access-required"],
-    [404, "extension.disabled", "extension-disabled"],
+    [409, "extension.disabled", "extension-disabled"],
     [404, "http.404", "not-found"],
     [500, "server.error", "unreachable"],
   ])("maps %i %s to %s", async (status, code, reason) => {
     const client = createOrbitTasksClient(
       transport(status, { status, error: { code, message: "Refused.", details: {} } }),
     );
-    expect(await client.getTask(1)).toEqual({ status: "error", reason, message: "Refused." });
+    const expected = { status: "error", reason, message: "Refused." };
+    expect.soft(await client.listTasks()).toEqual(expected);
+    expect.soft(await client.getTask(1)).toEqual(expected);
   });
 
   it("reports a failed transport and an off-contract body", async () => {
@@ -181,8 +183,55 @@ describe("createOrbitTasksClient", () => {
       throw new Error("ECONNREFUSED");
     });
     expect(await down.listTasks()).toMatchObject({ status: "error", reason: "unreachable" });
-    const odd = createOrbitTasksClient(transport(200, { data: [{ ...ROW, status: "blocked" }] }));
+    const odd = createOrbitTasksClient(transport(200, { data: { id: 1 } }));
     expect(await odd.listTasks()).toMatchObject({ status: "error", reason: "invalid-response" });
+  });
+
+  it("skips list rows off the contract and keeps the rest", async () => {
+    const client = createOrbitTasksClient(
+      transport(200, {
+        data: [
+          { ...ROW, id: 1, status: "blocked" },
+          ROW,
+          { ...ROW, id: 2, attention: { kind: "escalation", question: null, reason: null } },
+          { ...ROW, id: 3, pull_request: { ...ROW.pull_request, state: "draft" } },
+        ],
+      }),
+    );
+    const result = await client.listTasks();
+    if (result.status !== "ok") throw new Error(result.message);
+    expect(result.value.tasks.map((task) => task.id)).toEqual([5753]);
+    expect(result.value.skipped).toBe(3);
+  });
+
+  it("degrades an unknown subtask or agent literal to that item, not the task", async () => {
+    const [second, first] = DETAIL.subtasks;
+    const [working, unobserved] = DETAIL.agents;
+    const result = await createOrbitTasksClient(
+      transport(200, {
+        data: {
+          ...DETAIL,
+          subtasks: [
+            {
+              ...second,
+              status: "paused",
+              attention: { kind: "escalation", question: null, reason: null },
+            },
+            { ...first, attention: { kind: "escalation", question: null, reason: null } },
+          ],
+          agents: [{ ...working, role: "planner", state: "sleeping" }, unobserved],
+        },
+      }),
+    ).getTask(5753);
+    if (result.status !== "ok") throw new Error(result.message);
+    expect(result.value.subtasks.map((sub) => [sub.id, sub.status, sub.attention])).toEqual([
+      [5754, "unknown", null],
+      [5755, "unknown", null],
+    ]);
+    expect(result.value.agents.map((agent) => [agent.id, agent.role, agent.state])).toEqual([
+      [2570, "unknown", "unknown"],
+      [2568, "implementer", null],
+    ]);
   });
 
   it("tells subscribers to read again until they leave", () => {

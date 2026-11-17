@@ -1,12 +1,11 @@
 import {
-  orbitTaskEnvironment,
   orbitTaskLabel,
   type OrbitTaskLabelTone,
   type OrbitTasksPage,
   type OrbitTasksResult,
   type OrbitTaskSummary,
 } from "@t3tools/client-runtime/orbit-gateway";
-import { ChevronLeftIcon, ListTodoIcon, LockIcon, UnplugIcon } from "lucide-react";
+import { ListTodoIcon, LockIcon, UnplugIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -21,6 +20,7 @@ import { Spinner } from "~/components/ui/spinner";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { cn } from "~/lib/utils";
 
+import { TaskDetail } from "./TaskDetail";
 import { loadOrbitTasksClient, orbitTasksAvailability } from "./orbitTasksClient";
 import { taskCardDetail, tasksBoardLanes, tasksErrorNotice } from "./tasksBoard.logic";
 import { tasksPanelActions, useTasksNavigation } from "./tasksPanelStore";
@@ -79,6 +79,20 @@ function TasksPanelContent(props: { threadKey: string; orbitProjectId: number | 
   const { state, retry } = useOrbitTaskList(props.orbitProjectId);
   const navigation = useTasksNavigation(props.threadKey);
 
+  if (navigation.view === "task" && navigation.taskId !== null) {
+    return (
+      <TaskDetail
+        key={`${props.threadKey}:${navigation.taskId}`}
+        threadKey={props.threadKey}
+        navigation={{ ...navigation, taskId: navigation.taskId }}
+        listTitle={
+          state.status === "ok"
+            ? (state.value.tasks.find((task) => task.id === navigation.taskId)?.title ?? null)
+            : null
+        }
+      />
+    );
+  }
   if (state.status === "loading") {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center">
@@ -102,15 +116,6 @@ function TasksPanelContent(props: { threadKey: string; orbitProjectId: number | 
     );
   }
   const { tasks } = state.value;
-  if (navigation.view === "task" && navigation.taskId !== null) {
-    return (
-      <TaskDetailPlaceholder
-        threadKey={props.threadKey}
-        task={tasks.find((task) => task.id === navigation.taskId) ?? null}
-        scrollTop={navigation.detailScrollTop}
-      />
-    );
-  }
   if (tasks.length === 0) {
     return (
       <TasksNotice
@@ -238,60 +243,5 @@ function TaskCard(props: { task: OrbitTaskSummary; onOpen: () => void }) {
         </span>
       </button>
     </li>
-  );
-}
-
-const ENVIRONMENT_TEXT = {
-  "not-started": "Not started yet.",
-  disposed: "The task's workspace was removed.",
-  stopped: "The task's workspace is asleep.",
-  unreachable: "The task's conversations are not reachable from this device.",
-} as const;
-
-/** Slice 2 replaces this with the task brief, subtasks and agents. */
-function TaskDetailPlaceholder(props: {
-  threadKey: string;
-  task: OrbitTaskSummary | null;
-  scrollTop: number;
-}) {
-  const scrollRef = useRestoredScroll(props.scrollTop, 0);
-  const environment = props.task ? orbitTaskEnvironment(props.task) : null;
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <nav
-        aria-label="Tasks path"
-        className="flex h-9 shrink-0 items-center gap-1 border-b border-(--shell-divider)! px-2 text-ui"
-      >
-        <Button
-          size="xs"
-          variant="ghost-muted"
-          onClick={() => tasksPanelActions().showBoard(props.threadKey)}
-        >
-          <ChevronLeftIcon aria-hidden />
-          Tasks
-        </Button>
-        {props.task ? (
-          <>
-            <span aria-hidden className="text-muted-foreground">
-              /
-            </span>
-            <span className="min-w-0 truncate px-1 text-foreground">{props.task.title}</span>
-          </>
-        ) : null}
-      </nav>
-      <div
-        ref={scrollRef}
-        onScrollEnd={(event) =>
-          tasksPanelActions().saveDetailScroll(props.threadKey, event.currentTarget.scrollTop)
-        }
-        className="scrollbar-inset min-h-0 flex-1 overflow-y-auto p-4 text-ui text-muted-foreground"
-      >
-        {environment === null
-          ? "This task is no longer available."
-          : environment.kind === "ready"
-            ? null
-            : ENVIRONMENT_TEXT[environment.kind]}
-      </div>
-    </div>
   );
 }

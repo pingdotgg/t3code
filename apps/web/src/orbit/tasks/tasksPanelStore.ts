@@ -17,6 +17,23 @@ export interface TasksNavigation {
   readonly tab: TasksDetailTab;
   readonly boardScroll: { readonly top: number; readonly left: number };
   readonly detailScrollTop: number;
+  /** When this thread's Tasks navigation last changed, for the cap below. */
+  readonly updatedAt: number;
+}
+
+/** Only the threads changed most recently keep their place, so storage stays bounded. */
+export const TASKS_NAVIGATION_THREAD_LIMIT = 50;
+
+function capThreads(
+  byThreadKey: Readonly<Record<string, TasksNavigation>>,
+): Readonly<Record<string, TasksNavigation>> {
+  const entries = Object.entries(byThreadKey);
+  if (entries.length <= TASKS_NAVIGATION_THREAD_LIMIT) return byThreadKey;
+  return Object.fromEntries(
+    entries
+      .toSorted(([, a], [, b]) => b.updatedAt - a.updatedAt)
+      .slice(0, TASKS_NAVIGATION_THREAD_LIMIT),
+  );
 }
 
 export const DEFAULT_TASKS_NAVIGATION: TasksNavigation = {
@@ -26,6 +43,7 @@ export const DEFAULT_TASKS_NAVIGATION: TasksNavigation = {
   tab: "brief",
   boardScroll: { top: 0, left: 0 },
   detailScrollTop: 0,
+  updatedAt: 0,
 };
 
 interface TasksPanelState {
@@ -47,7 +65,12 @@ export const useTasksPanelStore = create<TasksPanelState>()(
           const current = state.byThreadKey[threadKey] ?? DEFAULT_TASKS_NAVIGATION;
           const next = change(current);
           if (next === current) return state;
-          return { byThreadKey: { ...state.byThreadKey, [threadKey]: next } };
+          return {
+            byThreadKey: capThreads({
+              ...state.byThreadKey,
+              [threadKey]: { ...next, updatedAt: Date.now() },
+            }),
+          };
         });
       return {
         byThreadKey: {},
@@ -92,7 +115,20 @@ export const useTasksPanelStore = create<TasksPanelState>()(
     },
     {
       name: "conn:tasks-panel:v1",
-      version: 1,
+      version: 2,
+      // Version 1 entries had no `updatedAt`; they count as oldest.
+      migrate: (persisted) => {
+        const byThreadKey =
+          (persisted as { byThreadKey?: Record<string, TasksNavigation> } | null)?.byThreadKey ??
+          {};
+        return {
+          byThreadKey: capThreads(
+            Object.fromEntries(
+              Object.entries(byThreadKey).map(([key, entry]) => [key, { ...entry, updatedAt: 0 }]),
+            ),
+          ),
+        };
+      },
       storage: createJSONStorage(() =>
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
       ),

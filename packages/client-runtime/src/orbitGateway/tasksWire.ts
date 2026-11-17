@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 
 import type {
   OrbitSubtask,
+  OrbitSubtaskStatus,
   OrbitTaskAgent,
   OrbitTaskAttention,
   OrbitTaskDetail,
@@ -22,6 +23,24 @@ const Attention = Schema.NullOr(
     reason: Schema.NullOr(Schema.String),
   }),
 );
+
+// Subtask and agent literals decode as strings and narrow below, so a value Orbit adds later
+// degrades that one item to "unknown" instead of failing the whole task.
+const SUBTASK_STATUSES = [
+  "todo",
+  "reserved",
+  "running",
+  "reviewing",
+  "completed",
+  "failed",
+  "cancelled",
+] as const satisfies ReadonlyArray<OrbitSubtaskStatus>;
+const AGENT_ROLES = ["implementer", "reviewer"] as const;
+const AGENT_STATES = ["idle", "working", "asking_for_input", "done", "failed"] as const;
+
+function known<const T extends string>(values: ReadonlyArray<T>, value: string): T | "unknown" {
+  return values.find((entry) => entry === value) ?? "unknown";
+}
 
 const Metrics = Schema.Struct({
   duration_ms: Schema.NullOr(Schema.Number),
@@ -91,30 +110,22 @@ const Subtask = Schema.Struct({
   deliverables: Schema.Array(
     Schema.Struct({ id: Schema.String, type: Schema.String, description: Schema.String }),
   ),
-  status: Schema.Literals([
-    "todo",
-    "reserved",
-    "running",
-    "reviewing",
-    "completed",
-    "failed",
-    "cancelled",
-  ]),
-  attention: Attention,
+  status: Schema.String,
+  attention: Schema.Unknown,
   current_implementer_agent_id: Schema.NullOr(Schema.Int),
   metrics: Metrics,
 });
 
 const Agent = Schema.Struct({
   id: Schema.Int,
-  role: Schema.Literals(["implementer", "reviewer"]),
+  role: Schema.String,
   subtask_ids: Schema.Array(Schema.Int),
   current: Schema.Boolean,
   attempt: Schema.Int,
   provider: Schema.NullOr(Schema.String),
   model: Schema.NullOr(Schema.String),
   effort: Schema.NullOr(Schema.String),
-  state: Schema.NullOr(Schema.Literals(["idle", "working", "asking_for_input", "done", "failed"])),
+  state: Schema.NullOr(Schema.String),
   needs_input: Schema.Boolean,
   created_at: Schema.String,
   observed_at: Schema.NullOr(Schema.String),
@@ -130,8 +141,9 @@ const Detail = Schema.Struct({
   agents: Schema.Array(Agent),
 });
 
+// Rows decode one by one, so one row off the contract hides that task, not the page.
 const ListEnvelope = Schema.Struct({
-  data: Schema.Array(ListRow),
+  data: Schema.Array(Schema.Unknown),
   meta: Schema.optionalKey(
     Schema.Struct({ next_cursor: Schema.optionalKey(Schema.NullOr(Schema.Int)) }),
   ),
@@ -145,6 +157,7 @@ export const decodeOrbitTasksErrorEnvelope = Schema.decodeUnknownOption(
 );
 
 const attention = (value: typeof Attention.Type): OrbitTaskAttention | null => value;
+const decodeAttention = Schema.decodeUnknownOption(Attention);
 
 const metrics = (value: typeof Metrics.Type): OrbitTaskMetrics => ({
   durationMs: value.duration_ms,
@@ -184,8 +197,11 @@ const subtask = (value: typeof Subtask.Type): OrbitSubtask => ({
   title: value.title,
   brief: value.brief,
   deliverables: value.deliverables,
-  status: value.status,
-  attention: attention(value.attention),
+  status: Option.isNone(decodeAttention(value.attention))
+    ? "unknown"
+    : known(SUBTASK_STATUSES, value.status),
+  // Unknown attention leaves the brief readable, with an unknown subtask state.
+  attention: Option.getOrNull(decodeAttention(value.attention)),
   currentImplementerAgentId: value.current_implementer_agent_id,
   // Orbit records no per-subtask line delta; never derive one from the task's branch snapshot.
   metrics: { ...metrics(value.metrics), linesAdded: null, linesDeleted: null },
@@ -193,14 +209,14 @@ const subtask = (value: typeof Subtask.Type): OrbitSubtask => ({
 
 const agent = (value: typeof Agent.Type): OrbitTaskAgent => ({
   id: value.id,
-  role: value.role,
+  role: known(AGENT_ROLES, value.role),
   subtaskIds: value.subtask_ids,
   current: value.current,
   attempt: value.attempt,
   provider: value.provider,
   model: value.model,
   effort: value.effort,
-  state: value.state,
+  state: value.state === null ? null : known(AGENT_STATES, value.state),
   needsInput: value.needs_input,
   createdAt: value.created_at,
   observedAt: value.observed_at,
@@ -211,15 +227,22 @@ const agent = (value: typeof Agent.Type): OrbitTaskAgent => ({
 });
 
 const decodeList = Schema.decodeUnknownOption(ListEnvelope);
+const decodeListRow = Schema.decodeUnknownOption(ListRow);
 const decodeDetail = Schema.decodeUnknownOption(DetailEnvelope);
 
 export function decodeOrbitTasksPage(json: unknown): OrbitTasksPage | null {
   return Option.match(decodeList(json), {
     onNone: () => null,
-    onSome: (envelope) => ({
-      tasks: envelope.data.map(summary),
-      nextCursor: envelope.meta?.next_cursor ?? null,
-    }),
+    onSome: (envelope) => {
+      const rows = envelope.data.flatMap((row) =>
+        Option.match(decodeListRow(row), { onNone: () => [], onSome: (value) => [value] }),
+      );
+      return {
+        tasks: rows.map(summary),
+        skipped: envelope.data.length - rows.length,
+        nextCursor: envelope.meta?.next_cursor ?? null,
+      };
+    },
   });
 }
 

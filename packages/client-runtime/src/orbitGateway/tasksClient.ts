@@ -21,7 +21,7 @@ const ERROR_REASONS: ReadonlyArray<{
 }> = [
   { status: 403, code: "peer.identity_unknown", reason: "not-a-node" },
   { status: 403, code: "node_access.required", reason: "access-required" },
-  { status: 404, code: "extension.disabled", reason: "extension-disabled" },
+  { status: 409, code: "extension.disabled", reason: "extension-disabled" },
   { status: 404, code: "http.404", reason: "not-found" },
 ];
 
