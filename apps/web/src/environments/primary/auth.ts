@@ -151,7 +151,7 @@ export function stripPairingTokenFromUrl() {
   if (next.toString() === url.toString()) {
     return;
   }
-  window.history.replaceState({}, document.title, next.toString());
+  window.history.replaceState(window.history.state, document.title, next.toString());
 }
 
 export function takePairingTokenFromUrl(): string | null {
