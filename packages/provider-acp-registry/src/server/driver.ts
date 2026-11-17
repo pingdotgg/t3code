@@ -18,6 +18,8 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as FileSystem from "effect/FileSystem";
+import * as HttpClient from "effect/http/HttpClient";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
@@ -27,6 +29,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { AcpRegistryAdapterV2Driver, type AcpRegistryAdapterV2DriverEnv } from "./adapter.ts";
+import { kimiCliCandidates, KimiUsageLimits } from "./kimiUsageLimits.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
@@ -601,7 +604,9 @@ export const checkAcpRegistryProviderReadiness = Effect.fn(
 export type AcpRegistryDriverEnv =
   | AcpRegistryAdapterV2DriverEnv
   | Digest.Digest
-  | ProviderHost.ProviderHost;
+  | ProviderHost.ProviderHost
+  | HttpClient.HttpClient
+  | FileSystem.FileSystem;
 
 export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryDriverEnv> = {
   driverKind: DRIVER_KIND,
@@ -732,9 +737,32 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             }),
           );
     });
+    // Kimi Code reports subscription limits outside ACP; attach them to the
+    // readiness probe like the CLI's own `.user-menu-usage` display. Snapshot
+    // publication overwrites enrichment's usage limits with the managed
+    // provider's authoritative value, so the probe is where they must flow.
+    const kimiCandidates = kimiCliCandidates(effectiveConfig);
+    const kimiUsageLimits = yield* KimiUsageLimits;
+    const withKimiUsageLimits = Effect.fn("AcpRegistryDriver.withKimiUsageLimits")(function* (
+      provider: ServerProvider,
+    ) {
+      if (
+        kimiCandidates === undefined ||
+        !provider.enabled ||
+        !provider.installed ||
+        provider.status !== "ready"
+      ) {
+        return provider;
+      }
+      const usageLimits = yield* Effect.option(
+        kimiUsageLimits.read({ candidates: kimiCandidates, environment: processEnvironment }),
+      );
+      if (Option.isNone(usageLimits) || usageLimits.value === undefined) return provider;
+      return { ...provider, usageLimits: usageLimits.value };
+    });
     // A local executable's version comes only from probing it, so readiness checks reuse the last report.
     const reportedLocalVersion = yield* Ref.make<string | null>(null);
-    const checkProvider = checkAcpRegistryProviderReadiness(readinessInput).pipe(
+    const checkReadiness = checkAcpRegistryProviderReadiness(readinessInput).pipe(
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
       Effect.flatMap((provider) =>
         Ref.get(reportedLocalVersion).pipe(
@@ -747,6 +775,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       ),
       Effect.flatMap(withLiveRuntimeState),
     );
+    const checkProvider = checkReadiness.pipe(Effect.flatMap(withKimiUsageLimits));
     const enrichProvider = checkAcpRegistryProviderStatus(
       {
         ...readinessInput,
@@ -996,6 +1025,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       snapshot: {
         ...snapshot,
         refresh: snapshot.refresh.pipe(Effect.tap(() => controller.refreshMethods ?? Effect.void)),
+        ...(kimiCandidates === undefined
+          ? {}
+          : { refreshUsage: snapshot.refresh.pipe(Effect.asVoid) }),
       },
       invalidateCaches: (Option.isSome(runtimeCoordinator)
         ? runtimeCoordinator.value.clearLiveConfiguration(instanceId)
