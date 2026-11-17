@@ -282,11 +282,8 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
         new CliUninstallError({
           reason: `Could not schedule removal of ${runtimeDir}. Delete it yourself once this window is closed.`,
         });
-      yield* Effect.try({
-        try: () => spawnWindowsRemoval(comspec, runtimeDir),
-        catch: notScheduled,
-      }).pipe(
-        Effect.flatMap((child) => awaitDetachedSpawn(child).pipe(Effect.mapError(notScheduled))),
+      yield* awaitDetachedSpawn(() => spawnWindowsRemoval(comspec, runtimeDir)).pipe(
+        Effect.mapError(notScheduled),
       );
       yield* Console.log(`${runtimeDir} will be removed once t3 exits.`);
     } else {

@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Effect's spawner has no windowsVerbatimArguments option.
 import * as NodeChildProcess from "node:child_process";
 
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
@@ -10,8 +11,15 @@ export type WindowsVerbatimSpawner = (
 ) => Effect.Effect<void, Error>;
 
 /** Succeeds once a detached child has started and no longer holds this process open; fails if it cannot start. */
-export const awaitDetachedSpawn = (child: NodeChildProcess.ChildProcess) =>
+export const awaitDetachedSpawn = (spawn: () => NodeChildProcess.ChildProcess) =>
   Effect.callback<void, Error>((resume) => {
+    let child: NodeChildProcess.ChildProcess;
+    try {
+      child = spawn();
+    } catch (error) {
+      resume(Effect.fail(error instanceof Error ? error : new Cause.UnknownError(error)));
+      return;
+    }
     child.once("error", (error) => resume(Effect.fail(error)));
     child.once("spawn", () => {
       child.unref();
@@ -20,14 +28,12 @@ export const awaitDetachedSpawn = (child: NodeChildProcess.ChildProcess) =>
   });
 
 const spawnDetachedVerbatim: WindowsVerbatimSpawner = (command, args) =>
-  Effect.suspend(() =>
-    awaitDetachedSpawn(
-      NodeChildProcess.spawn(command, args, {
-        detached: true,
-        stdio: "ignore",
-        windowsVerbatimArguments: true,
-      }),
-    ),
+  awaitDetachedSpawn(() =>
+    NodeChildProcess.spawn(command, args, {
+      detached: true,
+      stdio: "ignore",
+      windowsVerbatimArguments: true,
+    }),
   );
 
 export const WindowsVerbatimSpawn = Context.Reference<WindowsVerbatimSpawner>(
