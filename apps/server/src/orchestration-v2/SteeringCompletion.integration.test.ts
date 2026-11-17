@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as TestClock from "effect/testing/TestClock";
 import {
   ChatAttachmentId,
+  COMPOSER_CONTEXT_TERMINAL_TEXT_MAX_CHARS,
   ComposerContextId,
   CommandId,
   EnvironmentId,
@@ -20,7 +21,10 @@ import {
   type ModelSelection,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
-import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
+import {
+  expandAssistantCitationsForProvider,
+  serializeAssistantCitation,
+} from "@t3tools/shared/assistantCitations";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -2213,36 +2217,40 @@ it.effect.each(["auto", "deferred", "promote-edited"] as const)(
             environmentId: EnvironmentId.make("env"),
             threadId,
             messageId: MessageId.make("assistant"),
-            text: "\u0001".repeat(5_000),
+            text: "\u0001".repeat(8_000),
             start: 0,
-            end: 5_000,
+            end: 8_000,
             prefix: "",
             suffix: "",
           });
-          const text = `${"x".repeat(80_000)}${citation}[log](t3-context://v1/terminal/log)`;
+          const text = `${"x".repeat(80_000)}${citation}`;
+          // Context excerpts are not part of the limit, matching the web composer's check.
+          const largeContextText =
+            "Read [one](t3-context://v1/terminal/one) and [two](t3-context://v1/terminal/two)";
           const context = {
             version: 1 as const,
-            records: [
-              {
-                version: 1 as const,
-                kind: "terminal" as const,
-                contextId: ComposerContextId.make("log"),
-                label: "log",
-                terminalId: "terminal",
-                terminalLabel: "Terminal",
-                lineStart: 1,
-                lineEnd: 1,
-                text: "y".repeat(20_000),
-              },
-            ],
+            records: (["one", "two"] as const).map((id) => ({
+              version: 1 as const,
+              kind: "terminal" as const,
+              contextId: ComposerContextId.make(id),
+              label: id,
+              terminalId: "terminal",
+              terminalLabel: "Terminal",
+              lineStart: 1,
+              lineEnd: 1,
+              text: "y".repeat(COMPOSER_CONTEXT_TERMINAL_TEXT_MAX_CHARS),
+            })),
           };
           assert.isBelow(text.length, PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
-          assert.isBelow(
-            projectComposerContextForProvider({ text, records: [] }).length,
+          assert.isAbove(
+            expandAssistantCitationsForProvider(text).length,
             PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
           );
           assert.isAbove(
-            projectComposerContextForProvider({ text, records: context.records }).length,
+            projectComposerContextForProvider({
+              text: largeContextText,
+              records: context.records,
+            }).length,
             PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
           );
           if (delivery === "deferred") {
@@ -2266,7 +2274,6 @@ it.effect.each(["auto", "deferred", "promote-edited"] as const)(
             threadId,
             messageId: MessageId.make("oversized"),
             text,
-            context,
             attachments: [],
             dispatchMode: { type: "start_immediately" },
             deliveryIntent: delivery === "deferred" ? "steer" : "auto",
@@ -2290,7 +2297,6 @@ it.effect.each(["auto", "deferred", "promote-edited"] as const)(
               threadId,
               runId: queued.id,
               text,
-              context,
             });
             command = {
               type: "queued-message.promote-to-steer",
@@ -2306,7 +2312,7 @@ it.effect.each(["auto", "deferred", "promote-edited"] as const)(
           assert.instanceOf(error, Orchestrator.OrchestratorCommandRejectedError);
           assert.equal(
             userFacingDispatchErrorMessage(error),
-            "Message exceeds 120,000 characters after expanding context and quotes. Shorten it and try again.",
+            "Message exceeds 120,000 characters after expanding quotes. Shorten it and try again.",
           );
           assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
           assert.deepEqual(yield* sink.readByCommandId({ commandId }).pipe(Stream.runCollect), []);
@@ -2316,6 +2322,23 @@ it.effect.each(["auto", "deferred", "promote-edited"] as const)(
           assert.deepEqual(steered, []);
           assert.deepEqual(interrupted, []);
           assert.lengthOf(started, 1);
+          if (delivery === "auto") {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("large-context-steer"),
+              threadId,
+              messageId: MessageId.make("large-context"),
+              text: largeContextText,
+              context,
+              attachments: [],
+              dispatchMode: { type: "start_immediately" },
+              deliveryIntent: "auto",
+              createdBy: "user",
+              creationSource: "mobile",
+            });
+            yield* worker.drain();
+            assert.lengthOf(steered, 1);
+          }
         }).pipe(Effect.provide(layer));
       }),
     ),

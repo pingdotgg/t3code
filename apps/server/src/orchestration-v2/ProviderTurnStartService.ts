@@ -1,5 +1,6 @@
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
+import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
 import {
   CommandId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
@@ -602,11 +603,10 @@ export const layer: Layer.Layer<
           });
         },
       );
-      const userText = projectComposerContextForProvider({
-        text: providerMessage.text,
-        records: providerMessage.context?.records ?? [],
-      });
-      if (userText.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+      if (
+        expandAssistantCitationsForProvider(providerMessage.text).length >
+        PROVIDER_SEND_TURN_MAX_INPUT_CHARS
+      ) {
         yield* settleRunBeforeStart({
           run,
           rootNode,
@@ -622,7 +622,7 @@ export const layer: Layer.Layer<
             title: "Message is too long",
             failure: makeProviderFailure({
               class: "validation_error",
-              message: `Message exceeds ${PROVIDER_SEND_TURN_MAX_INPUT_CHARS.toLocaleString("en-US")} characters after expanding context and quotes. Shorten it and try again.`,
+              message: `Message exceeds ${PROVIDER_SEND_TURN_MAX_INPUT_CHARS.toLocaleString("en-US")} characters after expanding quotes. Shorten it and try again.`,
             }),
           },
         });
@@ -663,7 +663,10 @@ export const layer: Layer.Layer<
           : yield* Effect.result(
               providerAuth.tryHandlePromptCommand({
                 instanceId: authInstanceId,
-                text: userText,
+                text: projectComposerContextForProvider({
+                  text: providerMessage.text,
+                  records: providerMessage.context?.records ?? [],
+                }),
                 hasAttachments: false,
               }),
             );
@@ -917,6 +920,10 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
+      const userText = projectComposerContextForProvider({
+        text: providerMessage.text,
+        records: providerMessage.context?.records ?? [],
+      });
       // Native goal commands go verbatim; handoff history waits a turn.
       const goalDriver =
         session.driver === "codex" ||
