@@ -98,6 +98,15 @@ describe("ssh config", () => {
           `Host unicode-${index}\n  HostName unicode-${index}.example.com\n`,
         );
       }
+      for (const [file, hostname] of [
+        ["Ｚ.conf", "first.example.com"],
+        ["🚀.conf", "second.example.com"],
+      ] as const) {
+        yield* fs.writeFileString(
+          path.join(sshDir, "config.d", file),
+          `Host ordered\n  HostName ${hostname}\n`,
+        );
+      }
       // OpenSSH's `?` matches one byte, so it never matches a multi-byte line separator.
       yield* fs.writeFileString(
         path.join(sshDir, "single.d", "team\u2028one.conf"),
@@ -142,6 +151,7 @@ describe("ssh config", () => {
           ["enabled", "enabled.example.com", "ssh-config"],
           ["known.example.com", "known.example.com", "known-hosts"],
           ["literal", "literal.example.com", "ssh-config"],
+          ["ordered", "first.example.com", "ssh-config"],
           ["real", "real.example.com", "ssh-config"],
           ["single-ascii", "single-ascii.example.com", "ssh-config"],
           ["svc\u2028x", "correct.example.com", "ssh-config"],
