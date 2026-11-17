@@ -3238,6 +3238,13 @@ describe("OrchestratorMcpService provider resolution", () => {
             "always",
             "a cancelled blocking delegation left the task settled_only, so its result never reaches the still-live parent run",
           );
+          const status = yield* service.taskStatus(scope, task!.id);
+          assert.include(["starting", "running"], status.status);
+          assert.equal(
+            status.next,
+            ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
+            "a running task whose completion wakes the parent must say so, or the parent polls",
+          );
         }).pipe(Effect.provide(layerTest));
       }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
