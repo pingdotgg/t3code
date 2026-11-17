@@ -1,5 +1,6 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { useNavigation } from "@react-navigation/native";
+import { useGT } from "gt-react-native";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { useNavigateToPullRequest } from "../../native/useOpenPullRequest";
@@ -10,6 +11,7 @@ import {
 
 /** Called once per thread list so virtualized rows share one stable handler. */
 export function useOpenThreadPullRequests() {
+  const gt = useGT();
   const navigation = useNavigation();
   const navigateToPullRequest = useNavigateToPullRequest();
   return (thread: EnvironmentThreadShell, pr: ThreadPrPresentation) => {
@@ -26,8 +28,8 @@ export function useOpenThreadPullRequests() {
     }).then((opened) => {
       if (!opened)
         Dialog.alert(
-          `Unable to open ${pr.changeRequest.shortLabel}`,
-          `The ${pr.changeRequest.singular} could not be opened.`,
+          gt("Unable to open {shortLabel}", { shortLabel: pr.changeRequest.shortLabel }),
+          gt("The {singular} could not be opened.", { singular: pr.changeRequest.singular }),
         );
     });
   };

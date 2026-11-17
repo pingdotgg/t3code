@@ -10,6 +10,7 @@ import {
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import type { EnvironmentThread } from "@t3tools/client-runtime/state/shell";
 import { Atom } from "effect/reactivity";
+import { T, useGT } from "gt-react-native";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
 
@@ -82,6 +83,7 @@ export function ThreadWorkflowOpening(props: {
   readonly threadId: ThreadId;
   readonly opening: WorkflowOpeningValue;
 }) {
+  const gt = useGT();
   const openLinkedThread = useOpenLinkedThread();
   const { opening } = props;
   const headline = workflowOpeningHeadline(opening);
@@ -94,7 +96,7 @@ export function ThreadWorkflowOpening(props: {
       <Pressable
         key={member.id}
         accessibilityRole={threadId === null ? undefined : "link"}
-        accessibilityHint={threadId === null ? undefined : "Opens this agent's thread"}
+        accessibilityHint={threadId === null ? undefined : gt("Opens this agent's thread")}
         disabled={threadId === null}
         onPress={() => {
           if (threadId !== null)
@@ -115,7 +117,9 @@ export function ThreadWorkflowOpening(props: {
       <View className="mb-5 gap-3">
         <View className="flex-row items-start gap-2">
           <View className="min-w-0 flex-1 gap-0.5">
-            <Text className="font-t3-medium text-2xs text-foreground-muted">Workflow started</Text>
+            <Text className="font-t3-medium text-2xs text-foreground-muted">
+              <T>Workflow started</T>
+            </Text>
             <Text numberOfLines={1} className="font-t3-medium text-sm text-foreground">
               {headline.title}
             </Text>
@@ -147,6 +151,7 @@ export function ThreadWorkflowOpening(props: {
 }
 
 function WorkflowScript(props: { readonly script: string }) {
+  const gt = useGT();
   const [expanded, setExpanded] = useState(false);
   const { themeAppearance } = useAppearancePreferences();
   const script = props.script.trimEnd();
@@ -191,7 +196,7 @@ function WorkflowScript(props: { readonly script: string }) {
           className="self-start py-1 active:opacity-70"
         >
           <Text className="font-t3-medium text-xs text-foreground-muted">
-            {expanded ? "Show less" : "Show full script"}
+            {expanded ? gt("Show less") : gt("Show full script")}
           </Text>
         </Pressable>
       ) : null}

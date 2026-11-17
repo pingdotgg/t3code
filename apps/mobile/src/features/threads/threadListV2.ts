@@ -1,3 +1,4 @@
+import { msg } from "gt-react-native";
 import {
   canSnooze,
   effectiveSnoozed,
@@ -41,6 +42,7 @@ import type { ThreadMoveAvailability } from "./threadOrder";
 
 import { relativeTime } from "../../lib/time";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
+import { m, type MessageResolver } from "../../i18n/messages";
 
 import {
   applyPendingThreadOrder,
@@ -141,13 +143,16 @@ export function resolveThreadListV2SwipeActions(input: {
 
 // Nested keeps iOS menus short: UIKit scrolls a taller menu, and that scroll
 // cancels press-drag-release selection.
-export function layoutThreadListV2RowMenuActions(input: {
-  readonly nested: boolean;
-  readonly direct: readonly MenuAction[];
-  readonly reorder: readonly MenuAction[];
-  readonly pin: readonly MenuAction[];
-  readonly secondary: readonly MenuAction[];
-}): MenuAction[] {
+export function layoutThreadListV2RowMenuActions(
+  input: {
+    readonly nested: boolean;
+    readonly direct: readonly MenuAction[];
+    readonly reorder: readonly MenuAction[];
+    readonly pin: readonly MenuAction[];
+    readonly secondary: readonly MenuAction[];
+  },
+  resolve: MessageResolver = m,
+): MenuAction[] {
   if (!input.nested) {
     return [...input.direct, ...input.reorder, ...input.pin, ...input.secondary];
   }
@@ -156,14 +161,14 @@ export function layoutThreadListV2RowMenuActions(input: {
     ...input.pin,
     {
       id: "more",
-      title: "More",
+      title: resolve(msg("More", { $context: "menu that holds more thread actions" })),
       image: "ellipsis.circle",
       subactions: [
         ...(input.reorder.length > 1
           ? [
               {
                 id: "arrange-menu",
-                title: "Arrange",
+                title: resolve(msg("Arrange", { $context: "submenu for reordering threads" })),
                 image: "arrow.up.arrow.down",
                 subactions: [...input.reorder],
               },
@@ -301,30 +306,33 @@ export function resolveThreadListV2Status(
   return "ready";
 }
 
-export function threadListV2RowAccessibilityLabel(input: {
-  readonly title: string;
-  readonly variant: "card" | "slim";
-  readonly woke: boolean;
-  readonly statusLabel: string | undefined;
-  readonly timeLabel: string;
-  readonly snoozeWakeLabel: string | undefined;
-  readonly providerNameLabel: string | null;
-  readonly hasQueuedMessages: boolean;
-  readonly regeneratingTitle: boolean;
-}): string {
+export function threadListV2RowAccessibilityLabel(
+  input: {
+    readonly title: string;
+    readonly variant: "card" | "slim";
+    readonly woke: boolean;
+    readonly statusLabel: string | undefined;
+    readonly timeLabel: string;
+    readonly snoozeWakeLabel: string | undefined;
+    readonly providerNameLabel: string | null;
+    readonly hasQueuedMessages: boolean;
+    readonly regeneratingTitle: boolean;
+  },
+  resolve: MessageResolver = m,
+): string {
   // Mirrors the row's meta line: a card shows Woke, else its status, else the time.
   const meta =
     input.variant === "slim"
       ? (input.snoozeWakeLabel ?? input.timeLabel)
       : input.woke
-        ? "Woke"
+        ? resolve(msg("Woke", { $context: "thread came back from snooze" }))
         : (input.statusLabel ?? input.timeLabel);
   return [
     input.title,
     meta,
     input.providerNameLabel,
-    input.hasQueuedMessages ? "messages queued to send" : null,
-    input.regeneratingTitle ? "regenerating title" : null,
+    input.hasQueuedMessages ? resolve(msg("messages queued to send")) : null,
+    input.regeneratingTitle ? resolve(msg("regenerating title")) : null,
   ]
     .filter((part) => part !== null)
     .join(", ");
