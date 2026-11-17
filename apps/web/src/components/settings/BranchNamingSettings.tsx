@@ -7,7 +7,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Textarea } from "../ui/textarea";
 import { SettingsRow, SettingResetButton } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -21,6 +21,7 @@ const MODES = {
 } satisfies Record<BranchNamingMode, string>;
 
 export function BranchNamingSettings() {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const m = useMessages();
   const settings = useScopedSettings();
@@ -50,7 +51,7 @@ export function BranchNamingSettings() {
         resetAction={
           settings.branchNamingMode !== DEFAULT_SERVER_SETTINGS.branchNamingMode || modeMixed ? (
             <SettingResetButton
-              label={gt("branch naming")}
+              ariaLabel={gt("Reset branch naming to default")}
               onClick={() =>
                 updateSettings({ branchNamingMode: DEFAULT_SERVER_SETTINGS.branchNamingMode })
               }
@@ -97,7 +98,7 @@ export function BranchNamingSettings() {
             prefixMixed ||
             settings.branchNamePrefix !== DEFAULT_SERVER_SETTINGS.branchNamePrefix ? (
               <SettingResetButton
-                label={gt("branch prefix")}
+                ariaLabel={gt("Reset branch prefix to default")}
                 onClick={() =>
                   updateSettings({ branchNamePrefix: DEFAULT_SERVER_SETTINGS.branchNamePrefix })
                 }
@@ -140,7 +141,7 @@ export function BranchNamingSettings() {
           resetAction={
             instructionsMixed || settings.branchNameInstructions !== "" ? (
               <SettingResetButton
-                label={gt("branch naming instructions")}
+                ariaLabel={gt("Reset branch naming instructions to default")}
                 onClick={() => updateSettings({ branchNameInstructions: "" })}
               />
             ) : null

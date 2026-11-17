@@ -286,7 +286,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
           <p className="text-xs text-muted-foreground">
             <Tooltip>
               <TooltipTrigger render={<span />}>
-                {formatExpiresInLabel(pairingLink.expiresAt, nowMs)}
+                {formatExpiresInLabel(pairingLink.expiresAt, nowMs, m)}
               </TooltipTrigger>
               <TooltipPopup side="top">{expiresAbsolute}</TooltipPopup>
             </Tooltip>
@@ -513,13 +513,14 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
   canRevoke,
 }: ConnectedClientListRowProps) {
   const gt = useGT();
+  const m = useMessages();
   const nowMs = useNowSecond();
   const isLive = clientSession.current || clientSession.connected;
   const lastConnectedAt = clientSession.lastConnectedAt;
   const statusTooltip = isLive
     ? lastConnectedAt
       ? gt("Connected for {duration}", {
-          duration: formatElapsedDurationLabel(lastConnectedAt, nowMs),
+          duration: formatElapsedDurationLabel(lastConnectedAt, nowMs, m),
         })
       : gt("Connected")
     : lastConnectedAt

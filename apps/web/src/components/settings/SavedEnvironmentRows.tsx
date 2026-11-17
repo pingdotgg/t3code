@@ -176,7 +176,7 @@ export function SavedBackendListRow({
       );
     },
   });
-  const versionMismatch = resolveServerConfigVersionMismatch(environment.serverConfig);
+  const versionMismatch = resolveServerConfigVersionMismatch(environment.serverConfig, messages);
   const serverUpdateState = useAtomValue(serverEnvironment.updateStateAtom(environmentId));
   const resumingServerUpdate =
     serverUpdateState.status === "running" && serverUpdateState.stage === "resuming";
@@ -221,7 +221,7 @@ export function SavedBackendListRow({
   );
   const routeCount = connectionRoutes(environment.entry).length;
   const subtitleText = [
-    environmentTransportLabel(environment, connectedTarget),
+    environmentTransportLabel(environment, connectedTarget, messages),
     // The headline below names the failure in full.
     diagnosis ? null : resumingServerUpdate ? gt("Restarting") : status.text,
     enabled && versionMismatch ? serverVersion : null,
@@ -237,9 +237,9 @@ export function SavedBackendListRow({
 
   const statusTooltip = `${
     unsupported
-      ? (environment.connection.error ?? connectionStatusText(environment.connection))
+      ? (environment.connection.error ?? connectionStatusText(environment.connection, messages))
       : enabled
-        ? connectionStatusText(environment.connection)
+        ? connectionStatusText(environment.connection, messages)
         : gt("Switched off")
   }${
     versionMismatch

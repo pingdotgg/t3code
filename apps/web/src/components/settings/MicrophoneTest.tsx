@@ -1,6 +1,6 @@
 import { MICROPHONE_PERMISSION_ERROR } from "@t3tools/client-runtime/voice-input";
 import { MicIcon, PauseIcon, PlayIcon, RotateCcwIcon, SquareIcon, XIcon } from "lucide-react";
-import { T, useGT } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -10,7 +10,7 @@ import { VoiceWaveform } from "../chat/VoiceInputPill";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { SettingsRow } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const LOOPBACK_SECONDS = 10;
 const formatTime = (seconds: number) =>
@@ -39,7 +39,9 @@ export function MicrophoneTest({
   /** Labels and device ids become readable once the browser grants access. */
   onMicrophoneAccess: () => void;
 }) {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
+  const messages = useMessages();
   const [phase, setPhase] = useState<"idle" | "starting" | "recording" | "ready">("idle");
   const [recording, setRecording] = useState<{ url: string; duration: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -179,7 +181,7 @@ export function MicrophoneTest({
       const name = typeof cause === "object" && cause !== null && "name" in cause && cause.name;
       setError(
         name === "NotAllowedError"
-          ? MICROPHONE_PERMISSION_ERROR
+          ? messages(MICROPHONE_PERMISSION_ERROR)
           : name === "NotFoundError"
             ? gt("No microphone found.")
             : cause instanceof Error

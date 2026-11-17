@@ -401,6 +401,48 @@ const COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "thread.steerQueuedMessage": msg("Queue: Send First Queued Message"),
   "thread.editQueuedMessage": msg("Queue: Edit Last Queued Message"),
   "thread.copyReference": msg("Pull Request: Copy Link or Thread"),
+  "sidebar.toggle": msg("Sidebar: Toggle"),
+  "navigation.back": msg("Navigation: Back"),
+  "navigation.forward": msg("Navigation: Forward"),
+  "terminal.toggle": msg("Terminal: Toggle"),
+  "terminal.split": msg("Terminal: Split"),
+  "terminal.splitVertical": msg("Terminal: Split Vertical"),
+  "terminal.new": msg("Terminal: New"),
+  "terminal.close": msg("Terminal: Close"),
+  "rightPanel.toggle": msg("Right Panel: Toggle"),
+  "rightPanel.new": msg("Right Panel: New"),
+  "threadPanel.toggle": msg("Thread Panel: Toggle"),
+  "rightPanel.toggleMaximized": msg("Right Panel: Toggle Maximized"),
+  "rightPanel.close": msg("Right Panel: Close"),
+  "pullRequest.copyNumber": msg("Pull Request: Copy Number"),
+  "diff.toggle": msg("Diff: Toggle"),
+  "preview.toggle": msg("Preview: Toggle"),
+  "preview.refresh": msg("Preview: Refresh"),
+  "preview.zoomIn": msg("Preview: Zoom In"),
+  "preview.zoomOut": msg("Preview: Zoom Out"),
+  "preview.resetZoom": msg("Preview: Reset Zoom"),
+  "commandPalette.toggle": msg("Command Palette: Toggle"),
+  "filePicker.toggle": msg("File Picker: Toggle"),
+  "projectSearch.toggle": msg("Project Search: Toggle"),
+  "usage.open": msg("Usage: Open"),
+  "theme.select": msg("Theme: Select"),
+  "appearance.cycle": msg("Appearance: Cycle"),
+  "themeEditor.toggle": msg("Theme Editor: Toggle"),
+  "composer.stash": msg("Composer: Stash"),
+  "composer.host": msg("Composer: Host"),
+  "composer.cycleHost": msg("Composer: Cycle Host"),
+  "composer.effort": msg("Composer: Effort"),
+  "composer.increaseEffort": msg("Composer: Increase Effort"),
+  "composer.decreaseEffort": msg("Composer: Decrease Effort"),
+  "composer.mode": msg("Composer: Mode"),
+  "composer.workspace": msg("Composer: Workspace"),
+  "composer.previousWorktree": msg("Composer: Previous Worktree"),
+  "composer.branch": msg("Composer: Branch"),
+  "chat.new": msg("Chat: New"),
+  "chat.newLocal": msg("Chat: New Local"),
+  "chat.newWithoutProject": msg("Chat: New Without Project"),
+  "chat.find": msg("Chat: Find"),
+  "editor.openFavorite": msg("Editor: Open Favorite"),
 };
 
 const LATE_COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
@@ -413,9 +455,10 @@ export function commandLabel(command: KeybindingCommand, resolve: MessageResolve
   const label = COMMAND_LABELS[command];
   if (label) return resolve(label);
   const usageMetric = METRIC_OPTIONS.find((option) => option.command === command);
-  if (usageMetric) return resolve(msg("Usage: {metric}", { metric: usageMetric.label }));
+  if (usageMetric) return resolve(msg("Usage: {metric}", { metric: resolve(usageMetric.label) }));
   const usagePeriod = WINDOW_OPTIONS.find((option) => option.command === command);
-  if (usagePeriod) return resolve(msg("Usage: Period: {period}", { period: usagePeriod.label }));
+  if (usagePeriod)
+    return resolve(msg("Usage: Period: {period}", { period: resolve(usagePeriod.label) }));
   const lateLabel = LATE_COMMAND_LABELS[command];
   if (lateLabel) return resolve(lateLabel);
   const raw = String(command);

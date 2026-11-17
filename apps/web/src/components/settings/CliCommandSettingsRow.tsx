@@ -11,7 +11,7 @@ import { Button } from "../ui/button";
 import { m } from "../../i18n/messages";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { SettingsRow } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const FAILURE_TITLES = {
   install: msg("Could not install t3"),
@@ -50,6 +50,7 @@ export function useDesktopCliCommand() {
 }
 
 export function CliCommandSettingsRow() {
+  const searchableSetting = useSearchableSetting();
   const { state, busy, run } = useDesktopCliCommand();
   const resolve = useMessages();
 

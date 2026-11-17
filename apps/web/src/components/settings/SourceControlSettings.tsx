@@ -48,7 +48,7 @@ import {
   SettingsSection,
   useSettingsSearchTargetId,
 } from "./settingsLayout";
-import { searchableSetting, sourceControlHostSettingsSearchId } from "./settingsSearch";
+import { useSearchableSetting, sourceControlHostSettingsSearchId } from "./settingsSearch";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { isSourceControlProviderOffered } from "@t3tools/client-runtime/operations/projects";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -417,6 +417,7 @@ function EmptySourceControlDiscovery({
   readonly isPending: boolean;
   readonly onScan: () => void;
 }) {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const hasError = error !== null;
 
@@ -450,6 +451,7 @@ function EmptySourceControlDiscovery({
 }
 
 export function SourceControlSettingsPanel() {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const { scope, environment, connectedEnvironments } = useSettingsScope();
 

@@ -28,6 +28,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
  * the headline do not re-render on every attempt.
  */
 export function useConnectionDiagnosis(environment: EnvironmentPresentation) {
+  const m = useMessages();
   const environmentId = environment.environmentId;
   const state = AsyncResult.getOrElse(
     useAtomValue(environmentCatalog.stateAtom(environmentId)),
@@ -39,15 +40,18 @@ export function useConnectionDiagnosis(environment: EnvironmentPresentation) {
   const phase = environment.connection.phase;
   const diagnosis =
     environment.entry.enabled && phase !== "connected" && phase !== "unsupported"
-      ? presentConnectionDiagnosis({
-          hostLabel: environment.label,
-          state,
-          via: relayOnly ? "relay" : "direct",
-          // With a direct route as well, the relay's health says nothing about the route in use.
-          relayStatus: relayOnly ? Option.getOrNull(relayStatus ?? Option.none()) : null,
-          clientVersion: APP_VERSION,
-          serverVersion: environment.serverConfig?.environment.serverVersion,
-        })
+      ? presentConnectionDiagnosis(
+          {
+            hostLabel: environment.label,
+            state,
+            via: relayOnly ? "relay" : "direct",
+            // With a direct route as well, the relay's health says nothing about the route in use.
+            relayStatus: relayOnly ? Option.getOrNull(relayStatus ?? Option.none()) : null,
+            clientVersion: APP_VERSION,
+            serverVersion: environment.serverConfig?.environment.serverVersion,
+          },
+          m,
+        )
       : null;
   return { diagnosis, state, relayOnly };
 }

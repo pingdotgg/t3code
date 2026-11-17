@@ -1,11 +1,18 @@
 import type { EnvironmentSpeechStatus } from "@t3tools/contracts";
 import { effectiveSpeechLanguage } from "@t3tools/shared/speech";
-import { useGT } from "gt-react";
+import { useGT, useLocale } from "gt-react";
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 
-const languageNames = new Intl.DisplayNames(["en"], { type: "language" });
-export const languageLabel = (code: string) => languageNames.of(code) ?? code;
+const languageNamesByLocale = new Map<string, Intl.DisplayNames>();
+export function languageLabel(code: string, locale = "en"): string {
+  let languageNames = languageNamesByLocale.get(locale);
+  if (!languageNames) {
+    languageNames = new Intl.DisplayNames([locale], { type: "language" });
+    languageNamesByLocale.set(locale, languageNames);
+  }
+  return languageNames.of(code) ?? code;
+}
 
 type ModelLanguages = Pick<
   Extract<EnvironmentSpeechStatus, { supported: true }>,
@@ -14,6 +21,7 @@ type ModelLanguages = Pick<
 
 export function SpeechLanguageSelect({ model }: { readonly model: ModelLanguages | null }) {
   const gt = useGT();
+  const locale = useLocale();
   const preference = useClientSettings((settings) => settings.speechLanguage);
   const languages = model?.languages ?? [];
   const resolved = model
@@ -22,10 +30,10 @@ export function SpeechLanguageSelect({ model }: { readonly model: ModelLanguages
         preference,
       )
     : preference;
-  const effectiveLabel = resolved === "auto" ? gt("Auto-detect") : languageLabel(resolved);
+  const effectiveLabel = resolved === "auto" ? gt("Auto-detect") : languageLabel(resolved, locale);
   const unavailable =
     preference !== "auto" && preference !== resolved
-      ? gt("{language} unavailable", { language: languageLabel(preference) })
+      ? gt("{language} unavailable", { language: languageLabel(preference, locale) })
       : null;
   const label = unavailable
     ? gt("{language} ({unavailable})", { language: effectiveLabel, unavailable })
@@ -53,10 +61,12 @@ export function SpeechLanguageSelect({ model }: { readonly model: ModelLanguages
           </SelectItem>
         ) : null}
         {languages
-          .toSorted((left, right) => languageLabel(left).localeCompare(languageLabel(right)))
+          .toSorted((left, right) =>
+            languageLabel(left, locale).localeCompare(languageLabel(right, locale)),
+          )
           .map((code) => (
             <SelectItem key={code} value={code}>
-              {languageLabel(code)}
+              {languageLabel(code, locale)}
             </SelectItem>
           ))}
       </SelectPopup>

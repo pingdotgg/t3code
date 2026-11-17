@@ -39,8 +39,8 @@ export function environmentTransportLabel(
             (route) => connectionRouteId(route.target) === connectionRouteId(activeTarget),
           );
     return active === undefined
-      ? connectionRouteLabel(routes[0]!)
-      : resolve(msg("via {route}", { route: connectionRouteLabel(active) }));
+      ? resolve(connectionRouteLabel(routes[0]!))
+      : resolve(msg("via {route}", { route: resolve(connectionRouteLabel(active)) }));
   }
   if (environment.relayManaged) return T3_CONNECT_NAME;
   if (isDesktopLocalConnectionTarget(entry.target)) return "WSL";

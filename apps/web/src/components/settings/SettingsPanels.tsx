@@ -8,6 +8,7 @@ import { useRef, useState } from "react";
 import {
   type DesktopUpdateChannel,
   IDLE_COMPACTION_MODES,
+  type IdleCompactionMode,
   globalIdleCompaction,
   managedUpdatesDenial,
   managedUpdatesMessage,
@@ -110,7 +111,7 @@ import {
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
-import { searchableSetting, type SettingsSearchItemId } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { nativeLanguageName, SYSTEM_LANGUAGE } from "@t3tools/client-runtime/locales";
 import { SUPPORTED_LOCALES } from "../../i18n/locales";
 import { BackgroundActivitySettingsRow } from "./BackgroundActivitySettings";
@@ -163,8 +164,9 @@ const QUIT_CONFIRMATION_MODE_LABELS: Record<QuitConfirmationMode, string> = {
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 function AboutVersionSection() {
-  const setting = useTranslatedSearchableSetting();
+  const setting = useSearchableSetting();
   const gt = useGT();
+  const messages = useMessages();
   const updateState = useDesktopUpdateState();
   const [switchChannel, setSwitchChannel] = useState<DesktopUpdateChannel | null>(null);
   const [isUpdateActionPending, setIsUpdateActionPending] = useState(false);
@@ -289,7 +291,7 @@ function AboutVersionSection() {
   };
 
   const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
-  const buttonTooltip = updateState ? getDesktopUpdateButtonTooltip(updateState) : null;
+  const buttonTooltip = updateState ? getDesktopUpdateButtonTooltip(updateState, messages) : null;
   const buttonDisabled =
     action === "none"
       ? !canCheckForUpdate(updateState)
@@ -307,13 +309,13 @@ function AboutVersionSection() {
   const description =
     action === "download" || action === "install"
       ? gt("Update available.")
-      : (getDesktopUpdateDisabledReason(updateState, updatesDenial) ??
+      : (getDesktopUpdateDisabledReason(updateState, updatesDenial, messages) ??
         gt("Current version of the application."));
 
   return (
     <>
       <SettingsRow
-        id={searchableSetting("app-version").id}
+        id={setting("app-version").id}
         title={<AboutVersionTitle />}
         description={description}
         managed={updatesDenial}
@@ -358,6 +360,7 @@ function AboutVersionSection() {
                     count: unswitchedMachines,
                     track: channelSwitchLabel(
                       selectedUpdateChannel === "nightly" ? "latest" : "nightly",
+                      messages,
                     ),
                   },
                 )}{" "}
@@ -393,7 +396,7 @@ function AboutVersionSection() {
                 aria-label={gt("Update track")}
                 disabled={switchChannel !== null || updateRun !== null}
               >
-                <SelectValue>{channelSwitchLabel(selectedUpdateChannel)}</SelectValue>
+                <SelectValue>{channelSwitchLabel(selectedUpdateChannel, messages)}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 <SelectItem hideIndicator value="latest">
@@ -801,19 +804,10 @@ function AutoSettleDaysInput({
   );
 }
 
-/** Row anchor props with the registry title in the active language. */
-function useTranslatedSearchableSetting() {
-  const m = useMessages();
-  return (id: SettingsSearchItemId) => {
-    const setting = searchableSetting(id);
-    return { ...setting, title: m(setting.title) };
-  };
-}
-
 export function GeneralSettingsPanel() {
   const gt = useGT();
   const m = useMessages();
-  const setting = useTranslatedSearchableSetting();
+  const setting = useSearchableSetting();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
@@ -853,7 +847,7 @@ export function GeneralSettingsPanel() {
             settings.sidebarProjectGroupingMode !==
             DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode ? (
               <SettingResetButton
-                label={gt("project grouping")}
+                ariaLabel={gt("Reset project grouping to default")}
                 onClick={() =>
                   updateSettings({
                     sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
@@ -888,7 +882,7 @@ export function GeneralSettingsPanel() {
             settings.sidebarProjectSortOrder !==
             DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder ? (
               <SettingResetButton
-                label={gt("project order")}
+                ariaLabel={gt("Reset project order to default")}
                 onClick={() =>
                   updateSettings({
                     sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
@@ -933,7 +927,7 @@ export function GeneralSettingsPanel() {
             settings.sidebarWorkingShelfEnabled !==
             DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled ? (
               <SettingResetButton
-                label={gt("working section")}
+                ariaLabel={gt("Reset working section to default")}
                 onClick={() =>
                   updateSettings({
                     sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
@@ -961,7 +955,7 @@ export function GeneralSettingsPanel() {
           resetAction={
             settings.confirmThreadUnpin !== DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin ? (
               <SettingResetButton
-                label={gt("unpin confirmation")}
+                ariaLabel={gt("Reset unpin confirmation to default")}
                 onClick={() =>
                   updateSettings({
                     confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
@@ -988,7 +982,7 @@ export function GeneralSettingsPanel() {
           resetAction={
             settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive ? (
               <SettingResetButton
-                label={gt("archive confirmation")}
+                ariaLabel={gt("Reset archive confirmation to default")}
                 onClick={() =>
                   updateSettings({
                     confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
@@ -1013,7 +1007,7 @@ export function GeneralSettingsPanel() {
           resetAction={
             settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete ? (
               <SettingResetButton
-                label={gt("delete confirmation")}
+                ariaLabel={gt("Reset delete confirmation to default")}
                 onClick={() =>
                   updateSettings({
                     confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
@@ -1039,7 +1033,7 @@ export function GeneralSettingsPanel() {
             resetAction={
               settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? (
                 <SettingResetButton
-                  label={gt("quit shortcut behavior")}
+                  ariaLabel={gt("Reset quit shortcut behavior to default")}
                   onClick={() =>
                     updateSettings({ confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit })
                   }
@@ -1084,7 +1078,7 @@ export function GeneralSettingsPanel() {
           resetAction={
             settings.language !== DEFAULT_UNIFIED_SETTINGS.language ? (
               <SettingResetButton
-                label="language"
+                ariaLabel={gt("Reset language to default")}
                 onClick={() =>
                   updateSettings({
                     language: DEFAULT_UNIFIED_SETTINGS.language,
@@ -1128,7 +1122,7 @@ export function GeneralSettingsPanel() {
           resetAction={
             settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat ? (
               <SettingResetButton
-                label={gt("time format")}
+                ariaLabel={gt("Reset time format to default")}
                 onClick={() =>
                   updateSettings({
                     timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
@@ -1173,7 +1167,7 @@ export function GeneralSettingsPanel() {
 }
 
 export function ChatSettingsPanel() {
-  const setting = useTranslatedSearchableSetting();
+  const setting = useSearchableSetting();
   const gt = useGT();
   const modifierLabel = isMacPlatform(navigator.platform) ? "⌘" : "Ctrl";
   const sendShortcutOptions = [
@@ -1197,7 +1191,7 @@ export function ChatSettingsPanel() {
             settings.composerRichTextEnabled !==
             DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled ? (
               <SettingResetButton
-                label={gt("rich text composer")}
+                ariaLabel={gt("Reset rich text composer to default")}
                 onClick={() =>
                   updateSettings({
                     composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
@@ -1222,7 +1216,7 @@ export function ChatSettingsPanel() {
           resetAction={
             settings.sendShortcut !== DEFAULT_UNIFIED_SETTINGS.sendShortcut ? (
               <SettingResetButton
-                label={gt("send shortcut")}
+                ariaLabel={gt("Reset send shortcut to default")}
                 onClick={() =>
                   updateSettings({ sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut })
                 }
@@ -1262,7 +1256,7 @@ export function ChatSettingsPanel() {
             </Select>
           }
         />
-        <AdvancedSettings targetIds={[searchableSetting("skills-in-slash-menu").id]}>
+        <AdvancedSettings targetIds={[setting("skills-in-slash-menu").id]}>
           <SettingsRow
             {...setting("skills-in-slash-menu")}
             description={gt(
@@ -1271,7 +1265,7 @@ export function ChatSettingsPanel() {
             resetAction={
               settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu ? (
                 <SettingResetButton
-                  label={gt("skills in slash menu")}
+                  ariaLabel={gt("Reset skills in slash menu to default")}
                   onClick={() =>
                     updateSettings({
                       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
@@ -1315,7 +1309,7 @@ export function ChatSettingsPanel() {
           resetAction={
             settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior ? (
               <SettingResetButton
-                label={gt("follow-up behavior")}
+                ariaLabel={gt("Reset follow-up behavior to default")}
                 onClick={() =>
                   updateSettings({
                     followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
@@ -1378,7 +1372,7 @@ const isToolCallVisibility = Schema.is(ToolCallVisibility);
 
 function ToolCallVisibilityRow() {
   const messages = useMessages();
-  const setting = useTranslatedSearchableSetting();
+  const setting = useSearchableSetting();
   const gt = useGT();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -1391,7 +1385,7 @@ function ToolCallVisibilityRow() {
       resetAction={
         settings.toolCallVisibility !== DEFAULT_UNIFIED_SETTINGS.toolCallVisibility ? (
           <SettingResetButton
-            label={gt("tool calls in chat")}
+            ariaLabel={gt("Reset tool calls in chat to default")}
             onClick={() =>
               updateSettings({ toolCallVisibility: DEFAULT_UNIFIED_SETTINGS.toolCallVisibility })
             }
@@ -1433,7 +1427,7 @@ const isScreenReaderAnnouncements = Schema.is(ScreenReaderAnnouncements);
 
 function ScreenReaderAnnouncementsRow() {
   const messages = useMessages();
-  const setting = useTranslatedSearchableSetting();
+  const setting = useSearchableSetting();
   const gt = useGT();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -1447,7 +1441,7 @@ function ScreenReaderAnnouncementsRow() {
         settings.screenReaderAnnouncements !==
         DEFAULT_UNIFIED_SETTINGS.screenReaderAnnouncements ? (
           <SettingResetButton
-            label={gt("screen reader announcements")}
+            ariaLabel={gt("Reset screen reader announcements to default")}
             onClick={() =>
               updateSettings({
                 screenReaderAnnouncements: DEFAULT_UNIFIED_SETTINGS.screenReaderAnnouncements,
@@ -1488,7 +1482,7 @@ function ScreenReaderAnnouncementsRow() {
 }
 
 function ScreenReaderWindowTitleRow() {
-  const setting = useTranslatedSearchableSetting();
+  const setting = useSearchableSetting();
   const gt = useGT();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -1501,7 +1495,7 @@ function ScreenReaderWindowTitleRow() {
       resetAction={
         settings.screenReaderWindowTitle !== DEFAULT_UNIFIED_SETTINGS.screenReaderWindowTitle ? (
           <SettingResetButton
-            label={gt("screen reader window title")}
+            ariaLabel={gt("Reset screen reader window title to default")}
             onClick={() =>
               updateSettings({
                 screenReaderWindowTitle: DEFAULT_UNIFIED_SETTINGS.screenReaderWindowTitle,
@@ -1522,7 +1516,7 @@ function ScreenReaderWindowTitleRow() {
 }
 
 function DiffColorsSettingsRow() {
-  const setting = useTranslatedSearchableSetting();
+  const setting = useSearchableSetting();
   const gt = useGT();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -1533,7 +1527,7 @@ function DiffColorsSettingsRow() {
       resetAction={
         settings.diffColorScheme !== DEFAULT_UNIFIED_SETTINGS.diffColorScheme ? (
           <SettingResetButton
-            label={gt("diff colors")}
+            ariaLabel={gt("Reset diff colors to default")}
             onClick={() =>
               updateSettings({ diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme })
             }
@@ -1584,7 +1578,7 @@ function DiffColorsSettingsRow() {
 
 export function DiffsSettingsPanel() {
   const messages = useMessages();
-  const setting = useTranslatedSearchableSetting();
+  const setting = useSearchableSetting();
   const gt = useGT();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -1600,7 +1594,7 @@ export function DiffsSettingsPanel() {
           resetAction={
             settings.diffLayout !== DEFAULT_UNIFIED_SETTINGS.diffLayout ? (
               <SettingResetButton
-                label={gt("diff layout")}
+                ariaLabel={gt("Reset diff layout to default")}
                 onClick={() => updateSettings({ diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout })}
               />
             ) : null
@@ -1634,7 +1628,7 @@ export function DiffsSettingsPanel() {
           resetAction={
             settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace ? (
               <SettingResetButton
-                label={gt("diff whitespace changes")}
+                ariaLabel={gt("Reset diff whitespace changes to default")}
                 onClick={() =>
                   updateSettings({
                     diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
@@ -1661,7 +1655,7 @@ export function DiffsSettingsPanel() {
           resetAction={
             settings.diffFilesCollapsed !== DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed ? (
               <SettingResetButton
-                label={gt("default diff file state")}
+                ariaLabel={gt("Reset default diff file state to default")}
                 onClick={() =>
                   updateSettings({
                     diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
@@ -1711,7 +1705,7 @@ export function DiffsSettingsPanel() {
           resetAction={
             settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled ? (
               <SettingResetButton
-                label={gt("proactive panels")}
+                ariaLabel={gt("Reset proactive panels to default")}
                 onClick={() =>
                   updateSettings({
                     proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
@@ -1741,9 +1735,16 @@ export function CompactIdleThreadsRow() {
   return useOptionalSettingsScope() === null ? null : <ScopedCompactIdleThreadsRow />;
 }
 
+const IDLE_COMPACTION_MODE_LABELS: Record<IdleCompactionMode, string> = {
+  onReturn: msg("When you return"),
+  beforeCacheExpires: msg("Before the cache expires (beta)"),
+  off: msg("Never", { $context: "idle thread compaction mode" }),
+};
+
 function ScopedCompactIdleThreadsRow() {
-  const setting = useTranslatedSearchableSetting();
+  const setting = useSearchableSetting();
   const gt = useGT();
+  const messages = useMessages();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const { targets } = useSettingsScope();
@@ -1761,7 +1762,7 @@ function ScopedCompactIdleThreadsRow() {
       resetAction={
         globalIdleCompaction(settings) !== globalIdleCompaction(DEFAULT_UNIFIED_SETTINGS) ? (
           <SettingResetButton
-            label={gt("compact idle threads")}
+            ariaLabel={gt("Reset compact idle threads to default")}
             onClick={() =>
               updateSettings({ idleCompaction: globalIdleCompaction(DEFAULT_UNIFIED_SETTINGS) })
             }
@@ -1785,7 +1786,9 @@ function ScopedCompactIdleThreadsRow() {
               {(value: string | null) =>
                 value === null
                   ? gt("Mixed")
-                  : IDLE_COMPACTION_MODES.find((mode) => mode.value === value)?.label
+                  : IDLE_COMPACTION_MODES.some((mode) => mode.value === value)
+                    ? messages(IDLE_COMPACTION_MODE_LABELS[value as IdleCompactionMode])
+                    : undefined
               }
             </SelectValue>
           </SelectTrigger>
@@ -1798,7 +1801,7 @@ function ScopedCompactIdleThreadsRow() {
                 // A server from before modes has only the on/off switch, so it cannot store "Never".
                 disabled={mode.value === "off" && !idleCompaction.neverAvailable}
               >
-                {mode.label}
+                {messages(IDLE_COMPACTION_MODE_LABELS[mode.value])}
               </SelectItem>
             ))}
           </SelectPopup>
@@ -1809,8 +1812,8 @@ function ScopedCompactIdleThreadsRow() {
 }
 
 export function ThreadsSettingsPanel() {
+  const setting = useSearchableSetting();
   const messages = useMessages();
-  const setting = useTranslatedSearchableSetting();
   const gt = useGT();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -1883,7 +1886,7 @@ export function ThreadsSettingsPanel() {
             settings.addProjectBaseDirectory !==
             DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory ? (
               <SettingResetButton
-                label={gt("add project base directory")}
+                ariaLabel={gt("Reset add project base directory to default")}
                 onClick={() =>
                   updateSettings({
                     addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
@@ -1913,7 +1916,7 @@ export function ThreadsSettingsPanel() {
           resetAction={
             settings.ghqCloneLayout !== DEFAULT_UNIFIED_SETTINGS.ghqCloneLayout ? (
               <SettingResetButton
-                label={gt("clone into host folders")}
+                ariaLabel={gt("Reset clone into host folders to default")}
                 onClick={() =>
                   updateSettings({ ghqCloneLayout: DEFAULT_UNIFIED_SETTINGS.ghqCloneLayout })
                 }
@@ -1991,7 +1994,7 @@ export function ThreadsSettingsPanel() {
               settings.sidebarAutoSettleOnMerge !==
               DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge ? (
                 <SettingResetButton
-                  label={gt("auto-settle on merge")}
+                  ariaLabel={gt("Reset auto-settle on merge to default")}
                   onClick={() =>
                     updateSettings({
                       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -2021,7 +2024,7 @@ export function ThreadsSettingsPanel() {
               settings.sidebarAutoSettleAfterDays !==
               DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ? (
                 <SettingResetButton
-                  label="auto-settle"
+                  ariaLabel={gt("Reset auto-settle to default")}
                   onClick={() =>
                     updateSettings({
                       sidebarAutoSettleAfterDays:
@@ -2094,7 +2097,7 @@ export function ThreadsSettingsPanel() {
           resetAction={
             hasServerTargets && isTextGenerationModelDirty ? (
               <SettingResetButton
-                label={gt("text generation model")}
+                ariaLabel={gt("Reset text generation model to default")}
                 onClick={() =>
                   updateSettings({
                     textGenerationModelSelection:
@@ -2191,10 +2194,7 @@ export function ThreadsSettingsPanel() {
           }
         />
         <AdvancedSettings
-          targetIds={[
-            searchableSetting("thread-title-instructions").id,
-            searchableSetting("response-streaming").id,
-          ]}
+          targetIds={[setting("thread-title-instructions").id, setting("response-streaming").id]}
         >
           <ThreadTitleInstructionsSettings />
           <SettingsRow
@@ -2209,7 +2209,7 @@ export function ThreadsSettingsPanel() {
             resetAction={
               settings.responseStreamingMode !== DEFAULT_UNIFIED_SETTINGS.responseStreamingMode ? (
                 <SettingResetButton
-                  label={gt("response streaming")}
+                  ariaLabel={gt("Reset response streaming to default")}
                   onClick={() =>
                     updateSettings({
                       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
@@ -2256,7 +2256,7 @@ export function ThreadsSettingsPanel() {
 }
 
 export function MaintenanceSettingsPanel() {
-  const setting = useTranslatedSearchableSetting();
+  const setting = useSearchableSetting();
   const gt = useGT();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -2279,7 +2279,7 @@ export function MaintenanceSettingsPanel() {
             settings.enableProviderUpdateChecks !==
             DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks ? (
               <SettingResetButton
-                label={gt("provider update checks")}
+                ariaLabel={gt("Reset provider update checks to default")}
                 onClick={() =>
                   updateSettings({
                     enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
@@ -2316,7 +2316,7 @@ export function MaintenanceSettingsPanel() {
             settings.continueThreadsAfterServerUpdate !==
               DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate ? (
               <SettingResetButton
-                label={gt("continue threads after restarts")}
+                ariaLabel={gt("Reset continue threads after restarts to default")}
                 onClick={() =>
                   updateSettings({
                     continueThreadsAfterServerUpdate:
@@ -2353,7 +2353,7 @@ export function MaintenanceSettingsPanel() {
             settings.keepAwakeWhileAgentsWork !==
             DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileAgentsWork ? (
               <SettingResetButton
-                label={gt("keep awake while agents work")}
+                ariaLabel={gt("Reset keep awake while agents work to default")}
                 onClick={() =>
                   updateSettings({
                     keepAwakeWhileAgentsWork: DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileAgentsWork,
@@ -2403,12 +2403,13 @@ export function MaintenanceSettingsPanel() {
 }
 
 export function AboutSettingsPanel() {
-  const setting = useTranslatedSearchableSetting();
+  const setting = useSearchableSetting();
   const gt = useGT();
+  const messages = useMessages();
   const primaryPolicy = usePrimaryManagedPolicy();
   // The Welcome page sets up this computer, so it needs one.
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const telemetryOff = managedTelemetryOffMessage(primaryPolicy);
+  const telemetryOff = managedTelemetryOffMessage(primaryPolicy, messages);
   return (
     <SettingsPageContainer>
       <SettingsSection id="about" title={gt("App")}>
@@ -2439,7 +2440,7 @@ export function AboutSettingsPanel() {
         ) : (
           <>
             <SettingsRow
-              id={searchableSetting("app-version").id}
+              id={setting("app-version").id}
               title={<AboutVersionTitle />}
               description={gt("Current version of the application.")}
             />

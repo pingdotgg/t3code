@@ -74,7 +74,7 @@ import {
 } from "./KeybindingsSettings.logic";
 import { SettingsGroup } from "./SettingsGroup";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
-import { keybindingSearchAnchorId, searchableSetting } from "./settingsSearch";
+import { keybindingSearchAnchorId, useSearchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -888,14 +888,14 @@ function KeybindingKeyControl({
 }
 
 function WhenClauseControl({
-  label,
+  editLabel,
   expression,
   value,
   variables,
   onChange,
   onValidityChange,
 }: {
-  label: string;
+  editLabel: string;
   expression: string;
   value: KeybindingWhenNode | undefined;
   variables: ReadonlyArray<WhenVariableOption>;
@@ -918,7 +918,7 @@ function WhenClauseControl({
             className="min-w-0 shrink"
           />
         }
-        aria-label={gt("Edit when clause for {command}", { command: label })}
+        aria-label={editLabel}
       >
         <span className="truncate font-mono">{expression || gt("Always")}</span>
         <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
@@ -1025,7 +1025,7 @@ function KeybindingRowWhen({
         {gt("When", { $context: "heading for keybinding conditions" })}
       </span>
       <WhenClauseControl
-        label={commandLabel(row.command, m)}
+        editLabel={gt("Edit when clause for {command}", { command: commandLabel(row.command, m) })}
         expression={editor.whenDraftExpression}
         value={editor.whenDraft}
         variables={variables}
@@ -1087,7 +1087,6 @@ function useNewKeybindingDraft({
   allRows: ReadonlyArray<KeybindingRow>;
   onSave: (input: ServerUpsertKeybindingInput) => void;
 }) {
-  const gt = useGT();
   const m = useMessages();
   const [commandDraft, setCommandDraft] = useState<KeybindingCommand | "">("");
   const [draft, setDraft] = useReducer(keybindingRowDraftReducer, {
@@ -1108,7 +1107,7 @@ function useNewKeybindingDraft({
     navigator.platform,
     m,
   );
-  const commandLabelText = commandDraft ? commandLabel(commandDraft, m) : gt("new keybinding");
+  const commandLabelText = commandDraft ? commandLabel(commandDraft, m) : null;
   const canSave = Boolean(commandDraft) && keyDraft.trim().length > 0 && isWhenDraftValid;
 
   const save = () => {
@@ -1208,7 +1207,11 @@ function NewKeybindingKeyInput({
     <Input
       data-keybinding-capture=""
       autoFocus={autoFocus}
-      aria-label={gt("Keybinding for {command}", { command: draft.commandLabelText })}
+      aria-label={
+        draft.commandLabelText === null
+          ? gt("Keybinding for new keybinding")
+          : gt("Keybinding for {command}", { command: draft.commandLabelText })
+      }
       value={draft.isRecording ? "" : draft.keyDraft}
       placeholder={draft.isRecording ? gt("Press shortcut") : gt("Unassigned")}
       size="sm"
@@ -1229,9 +1232,14 @@ function NewKeybindingWhen({
   draft: NewKeybindingDraft;
   variables: ReadonlyArray<WhenVariableOption>;
 }) {
+  const gt = useGT();
   return (
     <WhenClauseControl
-      label={draft.commandLabelText}
+      editLabel={
+        draft.commandLabelText === null
+          ? gt("Edit when clause for new keybinding")
+          : gt("Edit when clause for {command}", { command: draft.commandLabelText })
+      }
       expression={draft.whenDraftExpression}
       value={draft.whenDraft}
       variables={variables}
@@ -1377,6 +1385,7 @@ function useKeybindingCatalog() {
 }
 
 export function KeybindingsSettingsPanel() {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const m = useMessages();
   const { environment: primaryEnvironment, connectedEnvironments } = useSettingsScope();

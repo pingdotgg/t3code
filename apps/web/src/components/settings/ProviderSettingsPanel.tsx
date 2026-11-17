@@ -105,7 +105,7 @@ import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
 import { CodexSetupSection, CodexManagedRuntimeFields } from "./CodexSetupSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import { providerClients } from "./providerDriverMeta";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { CompactIdleThreadsRow } from "./SettingsPanels";
 import {
   backgroundActivityOverrideSettings,
@@ -248,6 +248,7 @@ function ProviderSettingsPlaceholder({
   readonly description: string;
   readonly children?: ReactNode;
 }) {
+  const searchableSetting = useSearchableSetting();
   return (
     <SettingsSection {...searchableSetting("providers")} variant="plain">
       {deviceTabs ? (
@@ -283,6 +284,7 @@ function EnvironmentUnavailablePlaceholder({
   readonly deviceTabs?: ReactNode;
 }) {
   const gt = useGT();
+  const m = useMessages();
   const isLoading = access.kind === "loading";
   const title = isLoading
     ? gt("Loading provider settings")
@@ -293,7 +295,7 @@ function EnvironmentUnavailablePlaceholder({
     ? access.reason === "permissions"
       ? gt("Checking what this session is allowed to change.")
       : gt("Waiting for {environment}''s configuration.", { environment: environment.label })
-    : connectionStatusTitle(environment.connection);
+    : connectionStatusTitle(environment.connection, m);
   const error = isLoading ? null : environment.connection.error;
   // Wedged devices can remain here indefinitely; a spinner would continuously repaint.
   return (
@@ -336,6 +338,7 @@ export function ProviderSettingsPanel(target: ProviderSettingsTarget) {
 }
 
 function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const m = useMessages();
   const { environments, isReady } = useEnvironments();
@@ -407,7 +410,7 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
           {options.map((environment) => {
             const machine = resolveEnvironmentMachineKind(environment.serverConfig);
             const detail = providerEnvironmentDetail(environment, m);
-            const statusText = connectionStatusTitle(environment.connection);
+            const statusText = connectionStatusTitle(environment.connection, m);
             return (
               <Tooltip key={environment.environmentId}>
                 <TooltipTrigger
@@ -568,6 +571,7 @@ export function EnvironmentProviderSettings({
   readonly projectIds?: readonly ProjectId[];
   readonly readOnly?: boolean;
 }) {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const settings = useEnvironmentSettings(environmentId);
   const managedPolicy = useManagedPolicy(environmentId);
@@ -1166,7 +1170,7 @@ export function EnvironmentProviderSettings({
                 className={!canWriteSettings ? "opacity-50" : undefined}
               >
                 <SettingResetButton
-                  label={gt("provider health check interval")}
+                  ariaLabel={gt("Reset provider health check interval to default")}
                   onClick={() =>
                     updateSettings(
                       backgroundActivityOverrideSettings(
@@ -1190,7 +1194,11 @@ export function EnvironmentProviderSettings({
               )}
             >
               <IntervalSecondsField
-                label={gt("provider health check interval")}
+                labels={{
+                  decrease: gt("Decrease provider health check interval"),
+                  input: gt("Provider health check interval in seconds"),
+                  increase: gt("Increase provider health check interval"),
+                }}
                 value={providerHealthRefreshIntervalSeconds}
                 min={0}
                 step={PROVIDER_HEALTH_INTERVAL_STEP_SECONDS}
@@ -1439,7 +1447,9 @@ function ProviderInstanceRow({
       headerAction={
         mode === "editor" && isDefault && isDirty ? (
           <SettingResetButton
-            label={gt("{provider} provider settings", { provider: resetLabel })}
+            ariaLabel={gt("Reset {provider} provider settings to default", {
+              provider: resetLabel,
+            })}
             onClick={() => actions.resetDefaultInstance(driver)}
           />
         ) : null

@@ -1,4 +1,3 @@
-import { useGT } from "gt-react";
 import { useState } from "react";
 import {
   NumberField,
@@ -10,19 +9,18 @@ import {
 import { normalizeIntervalSeconds } from "./SettingsPanels.logic";
 
 export function IntervalSecondsField({
-  label,
+  labels,
   value,
   min,
   step,
   onCommit,
 }: {
-  label: string;
+  labels: { readonly decrease: string; readonly input: string; readonly increase: string };
   value: number;
   min: number;
   step: number;
   onCommit: (seconds: number, options: { onFailed: () => void }) => void;
 }) {
-  const gt = useGT();
   const [field, setField] = useState({
     saved: value,
     draft: value as number | null,
@@ -68,13 +66,9 @@ export function IntervalSecondsField({
       }}
     >
       <NumberFieldGroup>
-        <NumberFieldDecrement aria-label={gt("Decrease {label}", { label })} />
-        <NumberFieldInput
-          aria-label={gt("{label} in seconds", {
-            label: `${label.charAt(0).toUpperCase()}${label.slice(1)}`,
-          })}
-        />
-        <NumberFieldIncrement aria-label={gt("Increase {label}", { label })} />
+        <NumberFieldDecrement aria-label={labels.decrease} />
+        <NumberFieldInput aria-label={labels.input} />
+        <NumberFieldIncrement aria-label={labels.increase} />
       </NumberFieldGroup>
     </NumberField>
   );

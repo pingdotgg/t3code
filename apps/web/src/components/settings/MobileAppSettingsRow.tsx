@@ -5,7 +5,7 @@ import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { QRCodeSvg } from "../ui/qr-code";
 import { SettingsRow } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const stores = [
   {
@@ -23,6 +23,7 @@ const stores = [
 ];
 
 export function MobileAppSettingsRow() {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const m = useMessages();
   return (

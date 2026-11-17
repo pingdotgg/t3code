@@ -82,6 +82,7 @@ export function TextGeneratorsSettings({
 }) {
   const setting = useSearchableSetting();
   const gt = useGT();
+  const messages = useMessages();
   const settings = useEnvironmentSettings(environmentId);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const [editing, setEditing] = useState<Editing | null>(null);
@@ -114,7 +115,7 @@ export function TextGeneratorsSettings({
           />
         ) : null}
         {generators.map(([id, config]) => {
-          const name = textGeneratorDisplayName(config);
+          const name = textGeneratorDisplayName(config, messages);
           return (
             <SettingsRow
               key={id}
@@ -211,7 +212,11 @@ export function TextGeneratorsSettings({
           <AlertDialogHeader>
             <AlertDialogTitle>
               <T>
-                Remove <Var>{removingConfig ? textGeneratorDisplayName(removingConfig) : ""}</Var>?
+                Remove{" "}
+                <Var>
+                  {removingConfig ? textGeneratorDisplayName(removingConfig, messages) : ""}
+                </Var>
+                ?
               </T>
             </AlertDialogTitle>
             <AlertDialogDescription>
@@ -311,7 +316,9 @@ function TextGeneratorWizard({
       ? preset.id === "custom"
       : !["openai", "anthropic", "openrouter"].includes(textGeneratorBrand(existing));
   const canConnect = keyValid && Option.isSome(config) && (!keyRequired || apiKey !== "");
-  const name = Option.isSome(config) ? textGeneratorDisplayName(config.value) : preset.label;
+  const name = Option.isSome(config)
+    ? textGeneratorDisplayName(config.value, messages)
+    : messages(preset.label);
 
   const connect = async () => {
     if (!canConnect || checking) return;
@@ -342,7 +349,7 @@ function TextGeneratorWizard({
         <WizardHeader
           title={
             existing
-              ? gt("Edit {name}", { name: textGeneratorDisplayName(existing) })
+              ? gt("Edit {name}", { name: textGeneratorDisplayName(existing, messages) })
               : gt("Add a text generator")
           }
           description={gt(
@@ -456,10 +463,10 @@ function TextGeneratorWizard({
                     id="text-generator-label"
                     placeholder={
                       existing !== null
-                        ? textGeneratorDisplayName(existing)
+                        ? textGeneratorDisplayName(existing, messages)
                         : preset.id === "custom"
                           ? gt("e.g. My local model")
-                          : preset.label
+                          : messages(preset.label)
                     }
                     value={label}
                     onChange={(event) => setLabel(event.target.value)}
@@ -726,7 +733,8 @@ function TextGeneratorModelsDialog({
   readonly onClose: () => void;
 }) {
   const gt = useGT();
-  const name = textGeneratorDisplayName(saved.config);
+  const messages = useMessages();
+  const name = textGeneratorDisplayName(saved.config, messages);
   const result = useTextGeneratorModels(environmentId, saved.id, saved.config);
   const [refreshing, setRefreshing] = useState(false);
   const refresh = async () => {

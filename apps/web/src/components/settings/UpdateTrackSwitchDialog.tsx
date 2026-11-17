@@ -46,12 +46,13 @@ export function UpdateTrackSwitchDialog({
   readonly onClose: () => void;
 }) {
   const gt = useGT();
+  const m = useMessages();
   // npm dist-tags match the desktop channel names.
   const release = useAtomValue(npmReleaseAtom(channel));
   if (AsyncResult.isSuccess(release) && release.value !== null) {
     return <SwitchPlan release={{ channel, ...release.value }} onClose={onClose} />;
   }
-  const label = channelSwitchLabel(channel);
+  const label = channelSwitchLabel(channel, m);
   return (
     <AlertDialog open onOpenChange={(open) => !open && onClose()}>
       <AlertDialogPopup>
@@ -63,7 +64,7 @@ export function UpdateTrackSwitchDialog({
           </AlertDialogTitle>
           <AlertDialogDescription>
             {AsyncResult.isFailure(release)
-              ? npmReleaseFailureMessage(release.cause)
+              ? npmReleaseFailureMessage(release.cause, m)
               : AsyncResult.isSuccess(release)
                 ? gt(
                     "Could not find the latest {label} release in this environment's npm registry.",
@@ -101,7 +102,7 @@ function SwitchPlan({
   const switchesLocal = crossesLocal && !updatesOff;
   const [checking, setChecking] = useState(false);
   const everything = useUpdateEverything(switchesLocal ? release.version : null, release);
-  const label = channelSwitchLabel(release.channel);
+  const label = channelSwitchLabel(release.channel, m);
   const idle = nothingToMove(
     {
       label,
@@ -124,6 +125,7 @@ function SwitchPlan({
     })),
     window.desktopBridge?.getLocalEnvironmentBootstraps().length ?? 0,
     !isLocalEnvironmentDisabled(),
+    m,
   );
 
   const run = async () => {

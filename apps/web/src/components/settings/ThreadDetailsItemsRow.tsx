@@ -28,7 +28,7 @@ export function ThreadDetailsItemsRow() {
       resetAction={
         isDefaultThreadDetailsVisibility(visibility) ? null : (
           <SettingResetButton
-            label={gt("thread details")}
+            ariaLabel={gt("Reset thread details to default")}
             onClick={() => updateClientSettings(RESET_THREAD_DETAILS_ITEMS)}
           />
         )

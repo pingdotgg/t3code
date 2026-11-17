@@ -66,6 +66,7 @@ export function ProjectFaviconPickerDialog(props: {
   const { onPickExternal: pickExternal, onSelect } = props;
   const fileManagerName = getLocalFileManagerName(
     typeof navigator === "undefined" ? "" : navigator.platform,
+    m,
   );
   const items: CommandPaletteActionItem[] = getProjectFilePickerMatches(
     result.entries,

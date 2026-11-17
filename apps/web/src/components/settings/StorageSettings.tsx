@@ -42,7 +42,7 @@ import { SettingsScopeNotice } from "./SettingsScopeNotice";
 import { SettingsGroup } from "./SettingsGroup";
 import type { ScopedSettingsTarget } from "./scopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { searchableSetting, useSearchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import {
   useClearScopedSettings,
   useScopedSettings,
@@ -80,7 +80,7 @@ export function WorktreesDirectoryRow() {
       resetAction={
         mixed || settings.worktreesDirectory !== "" ? (
           <SettingResetButton
-            label={gt("worktree location")}
+            ariaLabel={gt("Reset worktree location to default")}
             onClick={() => updateSettings({ worktreesDirectory: "" })}
           />
         ) : null
@@ -458,12 +458,12 @@ function CleanupSection() {
               "{count, plural, one {Last run {when}. {bytes} recovered. {count} item couldn't be removed.} other {Last run {when}. {bytes} recovered. {count} items couldn't be removed.}}",
               {
                 count: report.counts.failed,
-                when: formatRelativeTimeLabel(report.finishedAt, nowMs),
+                when: formatRelativeTimeLabel(report.finishedAt, nowMs, messages),
                 bytes: formatBytes(report.bytesFreed),
               },
             )
           : gt("Last run {when}. {bytes} recovered.", {
-              when: formatRelativeTimeLabel(report.finishedAt, nowMs),
+              when: formatRelativeTimeLabel(report.finishedAt, nowMs, messages),
               bytes: formatBytes(report.bytesFreed),
             })
         : query?.failed
@@ -758,7 +758,7 @@ export function WorktreeCleanupSection() {
             />
             <AdvancedSettings
               // The keep-when search result lands on this section, not its row.
-              targetIds={["storage-worktrees", searchableSetting("storage-worktree-keep-when").id]}
+              targetIds={["storage-worktrees", setting("storage-worktree-keep-when").id]}
             >
               {connectedEnvironments.length > 0 &&
                 connectedEnvironments.every(

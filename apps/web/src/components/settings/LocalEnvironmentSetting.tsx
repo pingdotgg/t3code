@@ -15,10 +15,11 @@ import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
 import { SettingsRow } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 // Toggling relaunches desktop; the switch reflects startup state.
 export function LocalEnvironmentSetting() {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const setEnabled = window.desktopBridge?.setLocalEnvironmentEnabled;
   const [enabled] = useState(() => !isLocalEnvironmentDisabled());

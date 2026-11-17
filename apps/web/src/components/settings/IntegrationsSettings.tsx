@@ -115,7 +115,7 @@ import {
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { BrowserImportWizard, type WizardTarget } from "./BrowserImportWizard";
@@ -329,6 +329,7 @@ const rotateViewport = (
 });
 
 function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const m = useMessages();
   const viewport = useClientSettings((settings) => settings.browserDefaultViewport);
@@ -386,7 +387,7 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
       resetAction={
         !disabled && viewport._tag !== DEFAULT_BROWSER_VIEWPORT._tag ? (
           <SettingResetButton
-            label={gt("default browser viewport")}
+            ariaLabel={gt("Reset default browser viewport to default")}
             onClick={() => updateSettings({ browserDefaultViewport: DEFAULT_BROWSER_VIEWPORT })}
           />
         ) : null
@@ -494,6 +495,7 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
 }
 
 function BrowserZoomSetting({ disabled }: { readonly disabled: boolean }) {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const zoomFactor = useClientSettings((settings) => settings.browserDefaultZoomFactor);
   const updateSettings = useUpdateScopedSettings();
@@ -506,7 +508,7 @@ function BrowserZoomSetting({ disabled }: { readonly disabled: boolean }) {
       resetAction={
         !disabled && zoomFactor !== DEFAULT_PREVIEW_ZOOM_FACTOR ? (
           <SettingResetButton
-            label={gt("default browser zoom")}
+            ariaLabel={gt("Reset default browser zoom to default")}
             onClick={() =>
               updateSettings({ browserDefaultZoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR })
             }
@@ -543,6 +545,7 @@ function BrowserZoomSetting({ disabled }: { readonly disabled: boolean }) {
 }
 
 function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const m = useMessages();
   const appearance = useClientSettings((settings) => settings.browserDefaultAppearance);
@@ -556,7 +559,7 @@ function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) 
       resetAction={
         !disabled && appearance !== DEFAULT_PREVIEW_APPEARANCE ? (
           <SettingResetButton
-            label={gt("default browser appearance")}
+            ariaLabel={gt("Reset default browser appearance to default")}
             onClick={() => updateSettings({ browserDefaultAppearance: DEFAULT_PREVIEW_APPEARANCE })}
           />
         ) : null
@@ -592,6 +595,7 @@ function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) 
 }
 
 function BrowserRecordingInputSettings({ disabled }: { readonly disabled: boolean }) {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const showKeys = useClientSettings((settings) => settings.browserRecordingShowKeyPresses);
   const showMouse = useClientSettings((settings) => settings.browserRecordingShowMousePresses);
@@ -635,6 +639,7 @@ function BrowserRecordingInputSettings({ disabled }: { readonly disabled: boolea
 }
 
 function BrowserRecordingFrameRateSetting({ disabled }: { readonly disabled: boolean }) {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const frameRate = useClientSettings((settings) => settings.browserRecordingFrameRate);
   const updateSettings = useUpdateScopedSettings();
@@ -647,7 +652,7 @@ function BrowserRecordingFrameRateSetting({ disabled }: { readonly disabled: boo
       resetAction={
         !disabled && frameRate !== DEFAULT_BROWSER_RECORDING_FRAME_RATE ? (
           <SettingResetButton
-            label={gt("browser recording frame rate")}
+            ariaLabel={gt("Reset browser recording frame rate to default")}
             onClick={() =>
               updateSettings({ browserRecordingFrameRate: DEFAULT_BROWSER_RECORDING_FRAME_RATE })
             }
@@ -691,6 +696,7 @@ const LINK_TARGET_LABELS: Readonly<Record<BrowserLinkTarget, string>> = {
 };
 
 function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const m = useMessages();
   const linkTarget = useClientSettings((settings) => settings.browserLinkTarget);
@@ -706,7 +712,7 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
       resetAction={
         !disabled && linkTarget !== DEFAULT_BROWSER_LINK_TARGET ? (
           <SettingResetButton
-            label={gt("link target")}
+            ariaLabel={gt("Reset link target to default")}
             onClick={() => updateSettings({ browserLinkTarget: DEFAULT_BROWSER_LINK_TARGET })}
           />
         ) : null
@@ -748,6 +754,7 @@ const SEARCH_ENGINE_LABELS: Readonly<Record<BrowserSearchEngine, string>> = {
 };
 
 function BrowserSearchEngineSetting() {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const m = useMessages();
   const engine = useClientSettings((settings) => settings.browserSearchEngine);
@@ -763,7 +770,7 @@ function BrowserSearchEngineSetting() {
         resetAction={
           engine !== DEFAULT_BROWSER_SEARCH_ENGINE || customUrl !== "" ? (
             <SettingResetButton
-              label={gt("search engine")}
+              ariaLabel={gt("Reset search engine to default")}
               onClick={() =>
                 updateSettings({
                   browserSearchEngine: DEFAULT_BROWSER_SEARCH_ENGINE,
@@ -827,6 +834,7 @@ function BrowserSearchEngineSetting() {
 }
 
 export function PullRequestLinksOpenInAppSetting() {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const openInApp = useClientSettings((settings) => settings.pullRequestLinksOpenInApp);
   const updateSettings = useUpdatePrimarySettings();
@@ -840,7 +848,7 @@ export function PullRequestLinksOpenInAppSetting() {
       resetAction={
         openInApp ? null : (
           <SettingResetButton
-            label={gt("open pull requests in T3 Code")}
+            ariaLabel={gt("Reset open pull requests in T3 Code to default")}
             onClick={() => updateSettings({ pullRequestLinksOpenInApp: true })}
           />
         )
@@ -894,6 +902,7 @@ function DeviceIntegrationControls({
   enabled: boolean;
   agentAccessEnabled: boolean;
 }) {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const canConfigure = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const { state, loaded } = useDeviceState(environmentId);
@@ -1089,6 +1098,7 @@ function DeviceIntegrationControls({
 }
 
 function AgentBrowserAccessSetting() {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const { scope } = useSettingsScope();
   const settings = useScopedSettings();
@@ -1110,7 +1120,7 @@ function AgentBrowserAccessSetting() {
       resetAction={
         settings.enableAgentBrowserAccess !== DEFAULT_SERVER_SETTINGS.enableAgentBrowserAccess ? (
           <SettingResetButton
-            label={gt("default browser access")}
+            ariaLabel={gt("Reset default browser access to default")}
             onClick={() =>
               updateSettings({
                 enableAgentBrowserAccess: DEFAULT_SERVER_SETTINGS.enableAgentBrowserAccess,
@@ -1132,6 +1142,7 @@ function AgentBrowserAccessSetting() {
 }
 
 function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled: boolean }) {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const autoShow = useClientSettings((settings) => settings.browserAutoShowFloatingPreview);
   const updateSettings = useUpdateScopedSettings();
@@ -1146,7 +1157,7 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
       resetAction={
         !disabled && autoShow !== DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW ? (
           <SettingResetButton
-            label={gt("auto-show floating preview")}
+            ariaLabel={gt("Reset auto-show floating preview to default")}
             onClick={() =>
               updateSettings({
                 browserAutoShowFloatingPreview: DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW,
@@ -1170,6 +1181,7 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
 }
 
 function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
   const defaultProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
@@ -1672,6 +1684,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
 }
 
 export function BrowserSettingsPanel() {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const desktopOnly = !isElectron;
   const desktopOnlyMessage = desktopOnly ? gt("Only available in the desktop app.") : undefined;

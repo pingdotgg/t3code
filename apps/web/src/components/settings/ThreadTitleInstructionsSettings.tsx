@@ -30,7 +30,7 @@ export function ThreadTitleInstructionsSettings() {
       resetAction={
         mixed || settings.threadTitleInstructions !== "" ? (
           <SettingResetButton
-            label={gt("thread title instructions")}
+            ariaLabel={gt("Reset thread title instructions to default")}
             onClick={() => updateSettings({ threadTitleInstructions: "" })}
           />
         ) : null

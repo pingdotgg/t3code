@@ -264,7 +264,7 @@ export function SnapShotSettings() {
     ? gt("Press your shortcut. Esc cancels.")
     : candidateConflict
       ? gt('T3 Code already uses this for "{command}".', {
-          command: commandLabel(candidateConflict),
+          command: commandLabel(candidateConflict, messages),
         })
       : shortcutCheck.status === "checking"
         ? gt("Checking shortcut…")

@@ -649,7 +649,7 @@ function ProcessTable({
                   {process.cpuPercent.toFixed(1)}%
                 </td>
                 <td className="px-3 py-2 text-right font-mono tabular-nums">
-                  {formatCpuTime(process.cpuTimeMs / 1_000)}
+                  {formatCpuTime(process.cpuTimeMs / 1_000, messages)}
                 </td>
                 <td className="px-3 py-2 text-right font-mono tabular-nums">
                   {formatBytes(process.residentBytes)}
@@ -776,7 +776,7 @@ function HistoryProcessTable({
                   {categoryLabel(process.category, messages)}
                 </td>
                 <td className="px-3 py-2 text-right font-mono tabular-nums">
-                  {formatCpuTime(process.cpuTimeMs / 1_000)}
+                  {formatCpuTime(process.cpuTimeMs / 1_000, messages)}
                 </td>
                 <td className="px-3 py-2 text-right font-mono tabular-nums">
                   {process.maxCpuPercent.toFixed(1)}%
@@ -1109,7 +1109,9 @@ function ResourceTelemetryDiagnosticsBody({
               value={allT3 ? `${allT3.currentCpuPercent.toFixed(1)}%` : "..."}
               detail={
                 allT3
-                  ? gt("{time} observed CPU time", { time: formatCpuTime(allT3.cpuTimeMs / 1_000) })
+                  ? gt("{time} observed CPU time", {
+                      time: formatCpuTime(allT3.cpuTimeMs / 1_000, messages),
+                    })
                   : undefined
               }
             />

@@ -26,7 +26,7 @@ import {
   pendingRouteOrder,
 } from "@t3tools/client-runtime/connection";
 import { GripVerticalIcon, PlusIcon, XIcon } from "lucide-react";
-import { T, useGT } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
@@ -56,6 +56,7 @@ export function EnvironmentRoutesList({
   const routes = order.flatMap((id) => byId.get(id) ?? []);
 
   const gt = useGT();
+  const messages = useMessages();
   const prepared = usePreparedConnection(environment.environmentId);
   const activeRouteId =
     prepared._tag === "Some" && environment.connection.phase === "connected"
@@ -72,8 +73,11 @@ export function EnvironmentRoutesList({
     const address = connectionRouteAddress(route);
     const confirmed = await requestConfirmDialog(
       address === null
-        ? gt("Remove {route} route?", { route: connectionRouteLabel(route) })
-        : gt("Remove {route} route?\n{address}", { route: connectionRouteLabel(route), address }),
+        ? gt("Remove {route} route?", { route: messages(connectionRouteLabel(route)) })
+        : gt("Remove {route} route?\n{address}", {
+            route: messages(connectionRouteLabel(route)),
+            address,
+          }),
       { variant: "destructive" },
     );
     if (confirmed !== true) return;
@@ -150,8 +154,9 @@ function SortableRouteRow({
   readonly onRemove: () => void;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const id = connectionRouteId(route.target);
-  const label = connectionRouteLabel(route);
+  const label = messages(connectionRouteLabel(route));
   const address = connectionRouteAddress(route);
   const {
     attributes,

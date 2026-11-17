@@ -77,6 +77,7 @@ function InterfaceFontRow({ preview }: { preview?: ReactNode }) {
   return (
     <FontFamilySettingsRow
       {...searchableSetting("interface-font")}
+      resetLabel={gt("Reset interface font to default")}
       description={gt("Everything outside code blocks and the terminal.")}
       defaultFamily={defaults.sans}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilySans}
@@ -110,6 +111,7 @@ function PromptFontRow() {
   return (
     <FontFamilySettingsRow
       {...searchableSetting("prompt-font")}
+      resetLabel={gt("Reset prompt font to default")}
       description={gt("Only the box you write prompts in. Mono works well here.")}
       defaultFamily={defaults.interfaceFamily}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer}
@@ -136,10 +138,12 @@ function PromptFontRow() {
 
 function CodeFontRow({
   title,
+  resetLabel,
   description,
   preview,
 }: {
   title?: string;
+  resetLabel?: string;
   description?: string;
   preview?: ReactNode;
 }) {
@@ -152,6 +156,7 @@ function CodeFontRow({
     <FontFamilySettingsRow
       {...searchableSetting("code-font")}
       {...(title !== undefined ? { title } : {})}
+      resetLabel={resetLabel ?? gt("Reset code font to default")}
       description={description ?? gt("Code blocks, diffs, and file previews.")}
       defaultFamily={defaults.code}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyCode}
@@ -186,6 +191,7 @@ function TerminalFontRow() {
   return (
     <FontFamilySettingsRow
       {...searchableSetting("terminal-font")}
+      resetLabel={gt("Reset terminal font to default")}
       description={gt("Terminal output, independent from code blocks and diffs.")}
       defaultFamily={defaults.code}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal}
@@ -233,7 +239,7 @@ function FontSmoothingRow() {
       resetAction={
         settings.fontSmoothing !== DEFAULT_UNIFIED_SETTINGS.fontSmoothing ? (
           <SettingResetButton
-            label={gt("font smoothing")}
+            ariaLabel={gt("Reset font smoothing to default")}
             onClick={() =>
               updateSettings({ fontSmoothing: DEFAULT_UNIFIED_SETTINGS.fontSmoothing })
             }
@@ -263,7 +269,7 @@ function WordWrapRow() {
       resetAction={
         settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? (
           <SettingResetButton
-            label={gt("word wrapping")}
+            ariaLabel={gt("Reset word wrapping to default")}
             onClick={() => updateSettings({ wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap })}
           />
         ) : null
@@ -324,6 +330,7 @@ function SimpleFontRows() {
       <InterfaceFontRow preview={<PromptFontPreview />} />
       <CodeFontRow
         title={gt("Monospace font")}
+        resetLabel={gt("Reset monospace font to default")}
         description={gt("Code blocks, diffs, file previews, and the terminal.")}
         preview={
           <>
@@ -382,6 +389,7 @@ export function TypographySection() {
 function FontFamilySettingsRow({
   id,
   title,
+  resetLabel,
   description,
   defaultFamily,
   defaultValue,
@@ -394,6 +402,7 @@ function FontFamilySettingsRow({
 }: {
   id?: string;
   title: string;
+  resetLabel: string;
   description: string;
   defaultFamily: string;
   defaultValue: string;
@@ -461,7 +470,7 @@ function FontFamilySettingsRow({
   };
   const resetAction =
     value !== defaultValue || size.value !== size.defaultValue ? (
-      <SettingResetButton label={title.toLowerCase()} onClick={resetToDefault} />
+      <SettingResetButton ariaLabel={resetLabel} onClick={resetToDefault} />
     ) : null;
   const fontEnumeration = useFontEnumeration();
   const [inputFocused, setInputFocused] = useState(false);

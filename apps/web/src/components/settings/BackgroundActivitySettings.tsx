@@ -35,7 +35,7 @@ import {
 } from "./SettingsPanels.logic";
 import { IntervalSecondsField } from "./IntervalSecondsField";
 import { PolicyTooltip, SettingResetButton, SettingsRow } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const BACKGROUND_ACTIVITY_PROFILE_LABELS: Record<BackgroundActivityProfile, string> = {
   balanced: msg("Balanced"),
@@ -95,6 +95,7 @@ function BackgroundActivityAdvancedDialog({
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
 }) {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const m = useMessages();
   const canWriteSettings = useScopedSettingsWriteAllowed();
@@ -186,7 +187,11 @@ function BackgroundActivityAdvancedDialog({
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <IntervalSecondsField
-                  label={gt("Git fetch interval")}
+                  labels={{
+                    decrease: gt("Decrease Git fetch interval"),
+                    input: gt("Git fetch interval in seconds"),
+                    increase: gt("Increase Git fetch interval"),
+                  }}
                   value={automaticGitFetchIntervalSeconds}
                   min={0}
                   step={5}
@@ -221,7 +226,11 @@ function BackgroundActivityAdvancedDialog({
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <IntervalSecondsField
-                  label={gt("provider health interval")}
+                  labels={{
+                    decrease: gt("Decrease provider health interval"),
+                    input: gt("Provider health interval in seconds"),
+                    increase: gt("Increase provider health interval"),
+                  }}
                   value={providerHealthRefreshIntervalSeconds}
                   min={0}
                   step={PROVIDER_HEALTH_INTERVAL_STEP_SECONDS}
@@ -253,7 +262,11 @@ function BackgroundActivityAdvancedDialog({
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <IntervalSecondsField
-                  label={gt("active host power interval")}
+                  labels={{
+                    decrease: gt("Decrease active host power interval"),
+                    input: gt("Active host power interval in seconds"),
+                    increase: gt("Increase active host power interval"),
+                  }}
                   value={hostPowerMonitorActiveIntervalSeconds}
                   min={5}
                   step={5}
@@ -285,7 +298,11 @@ function BackgroundActivityAdvancedDialog({
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <IntervalSecondsField
-                  label={gt("idle host power interval")}
+                  labels={{
+                    decrease: gt("Decrease idle host power interval"),
+                    input: gt("Idle host power interval in seconds"),
+                    increase: gt("Increase idle host power interval"),
+                  }}
                   value={hostPowerMonitorIdleIntervalSeconds}
                   min={5}
                   step={30}
@@ -351,6 +368,7 @@ function BackgroundActivityAdvancedDialog({
 }
 
 export function BackgroundActivitySettingsRow() {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const m = useMessages();
   const settings = useScopedSettings();
@@ -393,7 +411,7 @@ export function BackgroundActivitySettingsRow() {
       resetAction={
         canResetBackgroundActivity ? (
           <SettingResetButton
-            label={gt("background activity")}
+            ariaLabel={gt("Reset background activity to default")}
             onClick={() => updateSettings(resetBackgroundActivitySettings())}
           />
         ) : null

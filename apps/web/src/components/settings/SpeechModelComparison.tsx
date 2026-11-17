@@ -1,5 +1,5 @@
 import type { EnvironmentSpeechModel, SpeechBenchmarkTier } from "@t3tools/contracts";
-import { T, Var } from "gt-react";
+import { T, useLocale, Var } from "gt-react";
 
 import { languageLabel } from "./SpeechLanguageSelect";
 
@@ -34,13 +34,17 @@ const commonLanguages = [
   "yo",
 ];
 
-export function orderSpeechLanguages(languages: readonly string[], preferred: readonly string[]) {
+export function orderSpeechLanguages(
+  languages: readonly string[],
+  preferred: readonly string[],
+  locale = "en",
+) {
   const order = [...new Set([...preferred, ...commonLanguages])];
   const rank = new Map(order.map((code, index) => [code, index]));
   return languages.toSorted(
     (left, right) =>
       (rank.get(left) ?? order.length) - (rank.get(right) ?? order.length) ||
-      languageLabel(left).localeCompare(languageLabel(right)),
+      languageLabel(left, locale).localeCompare(languageLabel(right, locale)),
   );
 }
 
@@ -56,6 +60,7 @@ export function ModelBenchmarks({
   /** Plain facts, such as language count and size, shown after the scores. */
   facts: readonly string[];
 }) {
+  const locale = useLocale();
   const data = model.benchmark;
   const seconds = data?.secondsPer30s[tier];
   const visible = !data
@@ -73,7 +78,7 @@ export function ModelBenchmarks({
           <span key={code}>
             {score ? (
               <T>
-                <Var>{languageLabel(code)}</Var>:{" "}
+                <Var>{languageLabel(code, locale)}</Var>:{" "}
                 <strong className="font-medium text-foreground">
                   <Var>{score.grade}</Var>
                 </strong>{" "}
@@ -81,7 +86,7 @@ export function ModelBenchmarks({
               </T>
             ) : (
               <T>
-                <Var>{languageLabel(code)}</Var>: not benchmarked
+                <Var>{languageLabel(code, locale)}</Var>: not benchmarked
               </T>
             )}
           </span>

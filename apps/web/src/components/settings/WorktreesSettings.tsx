@@ -33,7 +33,7 @@ function StartFromRemoteRow() {
         settings.newWorktreesStartFromOrigin !==
         DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin ? (
           <SettingResetButton
-            label={gt("new worktrees start from remote")}
+            ariaLabel={gt("Reset new worktrees start from remote to default")}
             onClick={() =>
               updateSettings({
                 newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,

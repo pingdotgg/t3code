@@ -15,7 +15,7 @@ import {
 import { Navigate, useLocation, useNavigate } from "@tanstack/react-router";
 import { InfoIcon, Trash2Icon } from "lucide-react";
 import { lazy, Suspense, useRef, useState, type ReactNode } from "react";
-import { T, useGT } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { releaseProjectDraftUploads } from "../../lib/composerDraftUploads";
@@ -81,6 +81,7 @@ function isGroupingSelection(value: unknown): value is SidebarProjectGroupingMod
 // Grouping overrides are client settings, so they stay editable without project write access.
 function CheckoutGroupingSelect({ member }: { member: SidebarProjectGroupMember }) {
   const gt = useGT();
+  const m = useMessages();
   const overrideKey = derivePhysicalProjectKey(member);
   const globalMode = useClientSettings((settings) => settings.sidebarProjectGroupingMode);
   const selection = useClientSettings(
@@ -121,8 +122,8 @@ function CheckoutGroupingSelect({ member }: { member: SidebarProjectGroupMember 
       >
         <SelectValue>
           {selection === "inherit"
-            ? gt("Default ({mode})", { mode: PROJECT_GROUPING_MODE_LABELS[globalMode] })
-            : PROJECT_GROUPING_MODE_LABELS[selection]}
+            ? gt("Default ({mode})", { mode: m(PROJECT_GROUPING_MODE_LABELS[globalMode]) })
+            : m(PROJECT_GROUPING_MODE_LABELS[selection])}
         </SelectValue>
       </SelectTrigger>
       <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -130,13 +131,13 @@ function CheckoutGroupingSelect({ member }: { member: SidebarProjectGroupMember 
           <T>Use global default</T>
         </SelectItem>
         <SelectItem hideIndicator value="repository">
-          {PROJECT_GROUPING_MODE_LABELS.repository}
+          {m(PROJECT_GROUPING_MODE_LABELS.repository)}
         </SelectItem>
         <SelectItem hideIndicator value="repository_path">
-          {PROJECT_GROUPING_MODE_LABELS.repository_path}
+          {m(PROJECT_GROUPING_MODE_LABELS.repository_path)}
         </SelectItem>
         <SelectItem hideIndicator value="separate">
-          {PROJECT_GROUPING_MODE_LABELS.separate}
+          {m(PROJECT_GROUPING_MODE_LABELS.separate)}
         </SelectItem>
       </SelectPopup>
     </Select>
@@ -552,7 +553,7 @@ function ProjectDetail({
             resetAction={
               canResetScratchTitle ? (
                 <SettingResetButton
-                  label={gt("project name")}
+                  ariaLabel={gt("Reset project name to default")}
                   disabled={!canEditGroup}
                   onClick={() =>
                     void updateAllMembers(
@@ -600,7 +601,7 @@ function ProjectDetail({
             resetAction={
               group.memberProjects.some((member) => !hasDefaultProjectIcon(member)) ? (
                 <SettingResetButton
-                  label={gt("project icon")}
+                  ariaLabel={gt("Reset project icon to default")}
                   disabled={isSavingFavicon || !canEditGroup}
                   onClick={() => void setProjectIcon(defaultProjectIcon)}
                 />

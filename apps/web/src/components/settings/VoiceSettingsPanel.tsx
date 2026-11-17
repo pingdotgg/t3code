@@ -50,7 +50,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { cn } from "~/lib/utils";
@@ -134,7 +134,7 @@ import {
   SettingsSearchTarget,
   SettingsSection,
 } from "./settingsLayout";
-import { searchableSetting, useSearchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
@@ -213,6 +213,7 @@ function ModelBadge(props: { icon: ReactNode; label: string; tooltip: string }) 
 
 function ModelCard(props: ModelCardProps) {
   const gt = useGT();
+  const locale = useLocale();
   const { model } = props;
   const downloading = model.state === "downloading" || model.state === "verifying";
   const progress = model.downloaded === undefined ? 0 : (model.downloaded / model.size) * 100;
@@ -272,10 +273,14 @@ function ModelCard(props: ModelCardProps) {
             tier={props.benchmarkTier}
             facts={[
               ...(model.languages.length > 1
-                ? [`${model.languages.length} languages`]
+                ? [
+                    gt("{count, plural, one {{count} language} other {{count} languages}}", {
+                      count: model.languages.length,
+                    }),
+                  ]
                 : model.benchmark
                   ? []
-                  : [languageLabel(model.languages[0] ?? "")]),
+                  : [languageLabel(model.languages[0] ?? "", locale)]),
               formatSize(model.size),
             ]}
           />
@@ -767,12 +772,7 @@ function AdvancedSpeechSettings({
   if (!status?.supported) return null;
   const supported = status;
   return (
-    <AdvancedSettings
-      targetIds={[
-        searchableSetting("speech-streaming").id,
-        searchableSetting("speech-hardware").id,
-      ]}
-    >
+    <AdvancedSettings targetIds={[setting("speech-streaming").id, setting("speech-hardware").id]}>
       <SettingsRow
         {...setting("speech-streaming")}
         title={gt("Streaming transcription")}
@@ -881,6 +881,7 @@ function SpeechModelBrowser(props: {
 }) {
   const setting = useSearchableSetting();
   const gt = useGT();
+  const locale = useLocale();
   const {
     prepared,
     catalog: { status, models, run, controlsDisabled, canCancel, requestedDownload },
@@ -896,11 +897,13 @@ function SpeechModelBrowser(props: {
   const supportedLanguages = [...new Set(models.flatMap((model) => model.languages))];
   const defaultLanguage = preferred.find((code) => supportedLanguages.includes(code));
   const selectedLanguages = selection ?? (defaultLanguage ? [defaultLanguage] : []);
-  const languages = orderSpeechLanguages(supportedLanguages, preferred);
+  const languages = orderSpeechLanguages(supportedLanguages, preferred, locale);
   const needle = languageSearch.trim().toLocaleLowerCase();
   const visibleLanguages = languages.filter(
     (code) =>
-      !needle || code.includes(needle) || languageLabel(code).toLocaleLowerCase().includes(needle),
+      !needle ||
+      code.includes(needle) ||
+      languageLabel(code, locale).toLocaleLowerCase().includes(needle),
   );
   const accuracyLanguage = selectedLanguages[0] ?? "en";
   const sortLabels: Record<SpeechModelSort, string> = {
@@ -912,7 +915,7 @@ function SpeechModelBrowser(props: {
   const languagesLabel =
     selectedLanguages.length === 0
       ? gt("All languages")
-      : selectedLanguages.map(languageLabel).join(", ");
+      : selectedLanguages.map((code) => languageLabel(code, locale)).join(", ");
   const sortedModels = filterSpeechModels(models, {
     search,
     languages: selectedLanguages,
@@ -1004,7 +1007,7 @@ function SpeechModelBrowser(props: {
                     )
                   }
                 >
-                  {languageLabel(code)}
+                  {languageLabel(code, locale)}
                 </MenuCheckboxItem>
               ))}
               {visibleLanguages.length === 0 && (
@@ -1041,7 +1044,7 @@ function SpeechModelBrowser(props: {
                     <span className="flex items-center justify-between gap-3">
                       {value === "accuracy"
                         ? gt("Most accurate in {language}", {
-                            language: languageLabel(accuracyLanguage),
+                            language: languageLabel(accuracyLanguage, locale),
                           })
                         : sortLabels[value]}
                       <MenuRadioItemIndicator />
@@ -1704,7 +1707,7 @@ export function VoiceSettingsPanel() {
         <ProjectDictionaryRow />
       </SettingsSection>
 
-      <SettingsSection id={searchableSetting("speech-post-processing").id} title={gt("Cleanup")}>
+      <SettingsSection id={setting("speech-post-processing").id} title={gt("Cleanup")}>
         <SettingsRow
           title={gt("Clean up transcripts")}
           description={gt(
