@@ -178,9 +178,9 @@ export const definition = defineSourceControl({
       .filter((part) => part !== "")
       .map(decodeUrlPathSegment);
     const at = segments.indexOf("_git");
-    const repository = segments[at + 1];
     if (at === 2) return segments.slice(0, at).join("/");
-    if (repository === undefined || (at !== 0 && at !== 1)) return null;
+    const repository = segments[at + 1];
+    if ((at !== 0 && at !== 1) || repository === undefined) return null;
     const host = identity.canonicalKey?.split("/", 1)[0]?.toLowerCase() ?? "";
     const legacy = host.endsWith(".visualstudio.com");
     const [first = ""] = segments;

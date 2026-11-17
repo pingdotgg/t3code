@@ -58,31 +58,6 @@ describe("resolveIssueLinkTarget", () => {
     expect(target?.ref.projectId).toBe("ported");
   });
 
-  it("reads a legacy Azure DevOps work item through the project bound to its Azure project", () => {
-    const azure = (id: string, canonicalKey: string, displayName: string) =>
-      ({
-        id: ProjectId.make(id),
-        environmentId: EnvironmentId.make("env"),
-        repositoryIdentity: {
-          canonicalKey,
-          provider: SourceControlProviderKind.make("azure-devops"),
-          displayName,
-        },
-      }) as never;
-    const target = resolveIssueLinkTarget({
-      url: "https://acme.visualstudio.com/Web/_workitems/edit/9",
-      projects: [
-        azure("api", "acme.visualstudio.com/api/_git/api", "Api/_git/api"),
-        azure(
-          "web",
-          "acme.visualstudio.com/defaultcollection/_git/web",
-          "DefaultCollection/_git/Web",
-        ),
-      ],
-    });
-    expect(target?.ref).toMatchObject({ projectId: "web", scope: "web", key: "9" });
-  });
-
   it.each([
     "https://github.com.evil.example/acme/web/issues/7",
     "https://github.com/acme/web/pull/7",

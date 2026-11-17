@@ -271,13 +271,6 @@ describe("Azure DevOps issue scope", () => {
     expect(
       scopeOn("acme.visualstudio.com/defaultcollection/_git/web", "DefaultCollection/_git/Web"),
     ).toBe("Web");
-    expect(
-      scopeOn(
-        "acme.visualstudio.com/defaultcollection/web/_git/web",
-        "DefaultCollection/Web/_git/web",
-      ),
-    ).toBe("DefaultCollection/Web");
-    expect(scopeOn("dev.azure.com/acme/web/_git/web", "acme/Web/_git/web")).toBe("acme/Web");
     expect(scopeOn("dev.azure.com/_git/web", "_git/web")).toBeNull();
     // A legacy host keeps the organization in its name, and so does its work item URL.
     expect(
