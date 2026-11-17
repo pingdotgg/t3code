@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import {
   CommandId,
+  ComposerContextId,
   EnvironmentId,
   MessageId,
   ProjectId,
@@ -838,6 +839,83 @@ describe("thread outbox recovery rollback", () => {
       expect(composerDrafts.getComposerDraftSnapshot(targetKey).attachments).toContainEqual(
         attachment,
       );
+    } finally {
+      resume.resolve();
+      writeSpy.mockRestore();
+      await composerDrafts.flushComposerDrafts();
+    }
+  });
+
+  it("keeps a late attachment and its reference when recovery fills the context limit", async () => {
+    const message: QueuedThreadMessage = {
+      ...queuedMessage({ messageId: "failed-full-context", text: "Original prompt" }),
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+      creation: {
+        projectId: ProjectId.make("project-1"),
+        workspaceMode: "local",
+        branch: null,
+        worktreePath: null,
+      },
+    };
+    const sourceKey = `${message.environmentId}:${message.threadId}`;
+    const targetKey = "new-task:restored-failed-full-context";
+    await composerDrafts.waitForComposerDraftsLoaded();
+    const contextDraft = (start: number) => {
+      const records = Array.from({ length: 100 }, (_, index) => ({
+        version: 1 as const,
+        contextId: ComposerContextId.make(`skill-${start + index}`),
+        kind: "skill" as const,
+        label: "Skill",
+        name: "skill",
+      }));
+      return {
+        text: records
+          .map((record) => `[Skill](t3-context://v1/skill/${record.contextId})`)
+          .join(" "),
+        context: { version: 1 as const, records },
+        attachments: [],
+      };
+    };
+    appAtomRegistry.set(composerDrafts.composerDraftsAtom, {
+      [targetKey]: contextDraft(0),
+      [sourceKey]: contextDraft(100),
+    });
+    const saving = Promise.withResolvers<void>();
+    const resume = Promise.withResolvers<void>();
+    const write = harness.draftFile.File.prototype.write;
+    const writeSpy = vi
+      .spyOn(harness.draftFile.File.prototype, "write")
+      .mockImplementationOnce(async function (value) {
+        write(value);
+        saving.resolve();
+        await resume.promise;
+      });
+    const attachment = {
+      id: "late-paste",
+      type: "image" as const,
+      name: "pasted.png",
+      mimeType: "image/png",
+      sizeBytes: 1,
+      dataUrl: "data:image/png;base64,AA==",
+      previewUri: "data:image/png;base64,AA==",
+    };
+    try {
+      const recovering = recoverFailedThreadDraft(message);
+      await saving.promise;
+      composerDrafts.appendComposerDraftAttachments(sourceKey, [attachment], {
+        appendReference: true,
+      });
+      resume.resolve();
+      await recovering;
+      const restored = composerDrafts.getComposerDraftSnapshot(targetKey);
+      expect(restored.attachments).toContainEqual(attachment);
+      expect(restored.context?.records).toHaveLength(201);
+      const imageRecord = restored.context?.records.find(
+        (record) => "attachmentId" in record && record.attachmentId === attachment.id,
+      );
+      expect(imageRecord).toBeDefined();
+      expect(restored.text).toContain(`/${imageRecord!.contextId})`);
+      expect(composerDrafts.getComposerDraftSnapshot(sourceKey).attachments).toEqual([]);
     } finally {
       resume.resolve();
       writeSpy.mockRestore();
