@@ -26,15 +26,6 @@ import * as Stream from "effect/Stream";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
-export {
-  MAX_INLINE_COMMAND_OUTPUT_CHARS,
-  MAX_INLINE_COMMAND_OUTPUT_LINES,
-  COMMAND_OUTPUT_PREVIEW_CHARS,
-  shouldSpilloverCommandOutput,
-  spilloverCommandOutputTurnItem,
-  type CommandSpilloverOptions,
-} from "./CommandOutputSpillover.ts";
-
 /** Output bypasses orchestration events; expanded rows receive tails, coalesced appends, then persisted output. */
 
 /** Fastest a subscriber receives frames while output flows. */

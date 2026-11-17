@@ -2,6 +2,7 @@ import {
   CommandId,
   type MessageId,
   type OrchestrationV2ThreadProjection,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -12,6 +13,7 @@ import * as Stream from "effect/Stream";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import type * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
@@ -64,6 +66,7 @@ export const layer = Layer.effectDiscard(
     const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const retryAttempts = yield* Ref.make(new Map<string, number>());
+    const continuations = yield* KeyedLock.makeRunner<ThreadId>();
 
     const clearRetryAttempt = (key: string) =>
       Ref.update(retryAttempts, (current) => {
@@ -129,7 +132,9 @@ export const layer = Layer.effectDiscard(
       },
     );
 
-    const recordContinuationErrorFallback = Effect.fn("recordContinuationErrorFallback")(function* (
+    const recordContinuationErrorFallback = Effect.fn(
+      "ProviderContinuationService.recordContinuationErrorFallback",
+    )(function* (
       request: ProviderContinuationRequests.ProviderContinuationRequest,
       errorOrCause: unknown,
     ) {
@@ -139,27 +144,27 @@ export const layer = Layer.effectDiscard(
       if (request.onRunEndedWithoutStarting !== undefined) {
         yield* request.onRunEndedWithoutStarting().pipe(Effect.ignore);
       }
-      const fallbackCommandId = yield* ids.allocate.command({
-        fixtureName: "provider-continuation",
-        commandName: "fallback",
-      });
-      const reason =
-        errorOrCause instanceof Error
-          ? errorOrCause.cause instanceof Error
-            ? `${errorOrCause.message}: ${errorOrCause.cause.message}`
-            : typeof errorOrCause.cause === "string"
-              ? `${errorOrCause.message}: ${errorOrCause.cause}`
-              : errorOrCause.message
-          : typeof errorOrCause === "string"
-            ? errorOrCause
-            : errorOrCause !== null &&
-                typeof errorOrCause === "object" &&
-                "_tag" in errorOrCause &&
-                typeof (errorOrCause as { readonly _tag?: unknown })._tag === "string"
-              ? (errorOrCause as { readonly _tag: string })._tag
-              : "Failed to dispatch continuation";
-      yield* threads
-        .dispatch({
+      yield* Effect.gen(function* () {
+        const fallbackCommandId = yield* ids.allocate.command({
+          fixtureName: "provider-continuation",
+          commandName: "fallback",
+        });
+        const reason =
+          errorOrCause instanceof Error
+            ? errorOrCause.cause instanceof Error
+              ? `${errorOrCause.message}: ${errorOrCause.cause.message}`
+              : typeof errorOrCause.cause === "string"
+                ? `${errorOrCause.message}: ${errorOrCause.cause}`
+                : errorOrCause.message
+            : typeof errorOrCause === "string"
+              ? errorOrCause
+              : errorOrCause !== null &&
+                  typeof errorOrCause === "object" &&
+                  "_tag" in errorOrCause &&
+                  typeof (errorOrCause as { readonly _tag?: unknown })._tag === "string"
+                ? (errorOrCause as { readonly _tag: string })._tag
+                : "Failed to dispatch continuation";
+        yield* threads.dispatch({
           type: "thread.continuation-fallback.record",
           commandId: fallbackCommandId,
           threadId: request.threadId,
@@ -167,16 +172,16 @@ export const layer = Layer.effectDiscard(
           notification: request.notification,
           detail: request.detail,
           reason,
-        })
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("orchestration-v2.provider-continuation.fallback-dispatch-failed", {
-              threadId: request.threadId,
-              providerThreadId: request.providerThreadId,
-              cause,
-            }),
-          ),
-        );
+        });
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("orchestration-v2.provider-continuation.fallback-dispatch-failed", {
+            threadId: request.threadId,
+            providerThreadId: request.providerThreadId,
+            cause,
+          }),
+        ),
+      );
     });
 
     const dispatchContinuation = Effect.fn("ProviderContinuationService.dispatchContinuation")(
@@ -383,6 +388,8 @@ export const layer = Layer.effectDiscard(
               }
             }),
           ),
+          // A dispatch can wait on its parent's lock, so only its own thread's later requests queue behind it.
+          (handled) => continuations.run(request.threadId, handled),
         ),
       ),
       Effect.forever,

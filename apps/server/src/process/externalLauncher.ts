@@ -142,17 +142,37 @@ function resolveCommandEditorArgs(
   target: string,
   isDirectory: boolean,
   projectRoot: string | undefined,
+  position: LaunchEditorInput["position"],
 ): ReadonlyArray<string> {
-  const parsedTarget = parseTargetPathAndPosition(target);
+  const parsedTarget =
+    position === undefined
+      ? parseTargetPathAndPosition(target)
+      : Option.fromUndefinedOr(position.line).pipe(
+          Option.map((line) => ({
+            path: target,
+            line: String(line),
+            column: Option.fromUndefinedOr(position.column).pipe(Option.map(String)),
+          })),
+        );
+  const positionedTarget = Option.match(parsedTarget, {
+    onNone: () => target,
+    onSome: ({ path, line, column }) => [path, line, ...Option.toArray(column)].join(":"),
+  });
 
   switch (editor.launchStyle) {
     case "direct-path":
-      return [target];
+      return [positionedTarget];
     case "goto":
       // An existing folder wins over a position: `build:2026` is a legal folder name.
       // Without a window flag, VS Code's window settings may replace the user's last active window.
       if (isDirectory) return ["--new-window", target];
-      return Option.isSome(parsedTarget) ? ["--goto", target] : [target];
+      // VS Code splits every numeric colon segment, including ones inside the filename.
+      if (
+        position !== undefined &&
+        target.split(":").some((segment) => !Number.isNaN(Number(segment)))
+      )
+        return [target];
+      return Option.isSome(parsedTarget) ? ["--goto", positionedTarget] : [target];
     case "line-column":
       return Option.match(parsedTarget, {
         onNone: () => [target],
@@ -526,6 +546,18 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* new ExternalLauncherUnknownEditorError({ editor: input.editor });
   }
 
+  const target = input.cwd;
+  let position = input.position;
+  if (editorDef.id === "zed" && position?.line !== undefined) {
+    // Zed resolves existing paths before positions, so ambiguous spellings must stay literal.
+    const collision =
+      /:\d+(?=:|$)/.test(target) ||
+      (yield* (yield* FileSystem.FileSystem)
+        .exists(`${target}:${position.line}${position.column ? `:${position.column}` : ""}`)
+        .pipe(Effect.orElseSucceed(() => true)));
+    if (collision) position = {};
+  }
+
   if (editorDef.commands) {
     const resolved = yield* resolveEditorCommand(editorDef, env);
     if (Option.isNone(resolved)) {
@@ -537,7 +569,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     const { command, baseArgs } = resolved.value;
     const isDirectory =
       editorDef.launchStyle === "goto" &&
-      (yield* (yield* FileSystem.FileSystem).stat(input.cwd).pipe(
+      (yield* (yield* FileSystem.FileSystem).stat(target).pipe(
         Effect.map((info) => info.type === "Directory"),
         Effect.orElseSucceed(() => false),
       ));
@@ -547,7 +579,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
       command,
       args: [
         ...baseArgs,
-        ...resolveCommandEditorArgs(editorDef, input.cwd, isDirectory, input.projectRoot),
+        ...resolveCommandEditorArgs(editorDef, target, isDirectory, input.projectRoot, position),
       ],
     };
   }
@@ -561,7 +593,6 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
   }
 
-  const target = input.cwd;
   if (input.reveal === true) {
     return yield* resolveFileManagerRevealLaunch(target, platform, env, command);
   }

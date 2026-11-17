@@ -10,7 +10,7 @@ import * as ServerConfig from "../config.ts";
 
 export const MAX_INLINE_COMMAND_OUTPUT_CHARS = 100_000;
 export const MAX_INLINE_COMMAND_OUTPUT_LINES = 1_000;
-export const COMMAND_OUTPUT_PREVIEW_CHARS = 20_000;
+const COMMAND_OUTPUT_PREVIEW_CHARS = 20_000;
 
 export interface CommandSpilloverOptions {
   readonly logsDir?: string;
@@ -20,17 +20,7 @@ export interface CommandSpilloverOptions {
   readonly previewChars?: number;
 }
 
-export function countLines(text: string): number {
-  let count = 1;
-  for (let i = 0; i < text.length; i++) {
-    if (text.charCodeAt(i) === 10) {
-      count++;
-    }
-  }
-  return count;
-}
-
-export function exceedsLineLimit(text: string, maxLines: number): boolean {
+function exceedsLineLimit(text: string, maxLines: number): boolean {
   let count = 0;
   for (let i = 0; i < text.length; i++) {
     if (text.charCodeAt(i) === 10) {
@@ -50,11 +40,11 @@ export function shouldSpilloverCommandOutput(
   return output.length > maxChars || exceedsLineLimit(output, maxLines);
 }
 
-export function sanitizeTurnItemIdForFilename(itemId: string): string {
+function sanitizeTurnItemIdForFilename(itemId: string): string {
   return itemId.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
-export function resolveCommandLogFilePath(
+function resolveCommandLogFilePath(
   path: Path.Path,
   itemId: string,
   commandLogsDir: string,
@@ -63,7 +53,7 @@ export function resolveCommandLogFilePath(
   return path.join(commandLogsDir, filename);
 }
 
-export function formatSpilloverOutputPreview(
+function formatSpilloverOutputPreview(
   rawOutput: string,
   logFilePath: string,
   previewChars: number = COMMAND_OUTPUT_PREVIEW_CHARS,

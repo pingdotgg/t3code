@@ -25,7 +25,7 @@ export const IDLE_COMPACTING_LABELS = {
 
 /** Leads the finished compaction's token counts, in place of "Context compacted". */
 export const IDLE_COMPACTION_TITLES = {
-  beforeCacheExpires: "Context automatically compacted before cache expiry",
+  beforeCacheExpires: "Auto-compacted before cache expiry",
   onReturn: "Context compacted before sending",
 } satisfies Record<OrchestrationV2IdleCompaction, string>;
 

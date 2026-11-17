@@ -5,6 +5,8 @@ import { render } from "../../test/render";
 import { useCommitOnBlur } from "../hooks/useCommitOnBlur";
 import { AppRouteModal } from "./AppRouteModal";
 
+vi.mock("./chat/GlobalVoiceInputIndicator", () => ({ GlobalVoiceInputIndicator: () => null }));
+
 function CommitOnBlurField({ onCommit }: { onCommit: (next: string) => void }) {
   return <input aria-label="Instructions" {...useCommitOnBlur("", onCommit)} />;
 }
