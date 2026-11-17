@@ -179,7 +179,6 @@ export function MarkdownCodeBlock({
     code.endsWith("\n") &&
     command.length > 0 &&
     !command.endsWith("\\") &&
-    !/^[$>] /m.test(command) &&
     // Control and invisible format characters (bidi overrides, zero-width) can
     // make the rendered command differ from what the terminal would receive.
     !/[\p{Cc}\p{Cf}]/u.test(code.slice(0, -1).replace(lineCount > 1 ? /[\n\t]/g : /\n/g, ""));

@@ -415,6 +415,7 @@ describe("ChatMarkdown streaming", () => {
       "````bash\necho four\n````",
       "- Command\n\n  ```bash\n  echo list\n  ```",
       "```bash\r\necho crlf\r\n```\r",
+      "```bash\n> build.log\n```",
     ]) {
       await rerender(message(text));
       expect(runButtons()).toHaveLength(1);
