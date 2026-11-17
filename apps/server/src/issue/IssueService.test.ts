@@ -467,6 +467,12 @@ describe("IssueService with a standalone tracker", () => {
         ["github", "github.com"],
         ["linear", "linear.app"],
       ]);
+      expect(result.scopes).toContainEqual({
+        projectId: "web",
+        tracker: "linear",
+        host: "linear.app",
+        scope: "ENG",
+      });
       // A reference picks the project's tracker by kind; both are the project's own, so writable.
       const linearRef = {
         projectId: "web" as ProjectId,
