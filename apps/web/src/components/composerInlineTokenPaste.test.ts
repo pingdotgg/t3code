@@ -1,21 +1,41 @@
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
-import { type ComposerContextClipboardFragment, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  type ComposerContextClipboardFragment,
+  ComposerContextId,
+  EnvironmentId,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   encodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
-import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
+import {
+  formatComposerContextReference,
+  threadContextRecord,
+} from "@t3tools/shared/composerContextReferences";
 import { describe, expect, it } from "vite-plus/test";
 
 import { importPastedComposerText } from "./composerInlineTokenPaste";
+
+const sourceThread = threadContextRecord(
+  {
+    environmentId: EnvironmentId.make("environment-elsewhere"),
+    threadId: ThreadId.make("thread-source"),
+  },
+  "Source Thread Ready",
+);
+const pastedText = `Read this: ${formatComposerContextReference(sourceThread)} and continue.`;
+
+function clipboard(data: Record<string, string>) {
+  return { getData: (format: string) => data[format] ?? "" };
+}
+
+const importNothing = () => new Map<string, string>();
 
 const thread = {
   environmentId: EnvironmentId.make("env-1"),
   threadId: ThreadId.make("thread-1"),
 };
-const clipboard = (data: Record<string, string>) => ({
-  getData: (type: string) => data[type] ?? "",
-});
 const chip = (title: string) =>
   `[${title}](t3-context://v1/thread/${threadContextRecord(thread, title).contextId})`;
 
@@ -28,6 +48,80 @@ const importAll =
   };
 
 describe("importPastedComposerText", () => {
+  const reference = formatComposerContextReference(sourceThread);
+  const codeThread = threadContextRecord(
+    { environmentId: sourceThread.environmentId, threadId: ThreadId.make("thread-code") },
+    "Fix `foo` bug",
+  );
+  const localId = ComposerContextId.make("thread-local");
+  const importAsLocal = (pasted: ComposerContextClipboardFragment) =>
+    new Map(pasted.records.map((record) => [record.contextId, localId]));
+  it.each([
+    {
+      name: "a reference without a fragment becomes its label",
+      text: pastedText,
+      expected: "Read this: Source Thread Ready and continue.",
+    },
+    {
+      name: "a reference whose record the import dropped becomes its label",
+      text: pastedText,
+      records: [sourceThread],
+      expected: "Read this: Source Thread Ready and continue.",
+    },
+    {
+      name: "a reference the draft already holds stays",
+      text: pastedText,
+      held: [sourceThread.contextId],
+      expected: pastedText,
+    },
+    {
+      name: "references inside fenced and inline code stay as written",
+      text: `\`\`\`md\n${reference}\n\`\`\`\nInline \`${reference}\` and ${reference}`,
+      expected: `\`\`\`md\n${reference}\n\`\`\`\nInline \`${reference}\` and Source Thread Ready`,
+    },
+    {
+      name: "a fence holding a fence marker mid-line stays open",
+      text: `\`\`\`js\nconsole.log("\`\`\`");\n${reference}\n\`\`\``,
+      expected: `\`\`\`js\nconsole.log("\`\`\`");\n${reference}\n\`\`\``,
+    },
+    {
+      name: "a reference between escaped backticks is imported",
+      text: `\\\`${reference}\\\``,
+      records: [sourceThread],
+      importContext: importAsLocal,
+      expected: `\\\`${formatComposerContextReference({ ...sourceThread, contextId: localId })}\\\``,
+    },
+    {
+      name: "a CR-only fence closes before a reference after it",
+      text: `~~~\rcode\r~~~\r${reference}`,
+      records: [sourceThread],
+      importContext: importAsLocal,
+      expected: `~~~\ncode\n~~~\n${formatComposerContextReference({ ...sourceThread, contextId: localId })}`,
+    },
+    {
+      name: "backticks in a reference's label do not open code",
+      text: `Quote with \`, see ${formatComposerContextReference(codeThread)}`,
+      records: [codeThread],
+      importContext: importAsLocal,
+      expected: `Quote with \`, see ${formatComposerContextReference({ ...codeThread, contextId: localId })}`,
+    },
+  ])("$name", ({ text, records, importContext = importNothing, held = [], expected }) => {
+    const fragment = records
+      ? encodeComposerContextFragment({
+          version: 1,
+          source: { environmentId: sourceThread.environmentId },
+          records,
+        })!
+      : "";
+    expect(
+      importPastedComposerText(
+        clipboard({ "text/plain": text, [COMPOSER_CONTEXT_CLIPBOARD_MIME]: fragment }),
+        importContext,
+        new Set<string>(held),
+      ),
+    ).toBe(expected);
+  });
+
   it("pastes a copied thread link back as the chip it was copied from", () => {
     const target = threadChipCopyTarget(thread, "Fix the login flow");
     const imported: Array<ComposerContextClipboardFragment> = [];

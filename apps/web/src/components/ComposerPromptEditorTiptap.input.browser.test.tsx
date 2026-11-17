@@ -2,10 +2,12 @@ import type { ComposerFileAttachment } from "../composerDraftStore";
 import { formatInlineContextReference } from "../lib/composerContextReferences";
 import { fileContextReference } from "../lib/composerContextRecords";
 import {
+  heldContextIds,
   reconcileAttachmentContextReferences,
   type RetainedContextPayloads,
   useRetainedContextPayloads,
 } from "./chat/composerContextUndo";
+import { importPastedComposerText } from "./composerInlineTokenPaste";
 
 import {
   ComposerContextId,
@@ -64,7 +66,7 @@ function Composer({
   skills,
   onChange,
   onCommandKeyDown = () => false,
-  importContextFragment,
+  importPastedText,
   literalText = false,
 }: {
   value: string;
@@ -72,7 +74,7 @@ function Composer({
   skills: ReadonlyArray<ServerProviderSkill>;
   onChange?: ComposerPromptEditorProps["onChange"] | undefined;
   onCommandKeyDown?: ComposerPromptEditorProps["onCommandKeyDown"] | undefined;
-  importContextFragment?: ComposerPromptEditorProps["importContextFragment"];
+  importPastedText?: ComposerPromptEditorProps["importPastedText"];
   literalText?: boolean;
 }) {
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
@@ -92,7 +94,7 @@ function Composer({
       }}
       onPaste={() => {}}
       onCommandKeyDown={onCommandKeyDown}
-      importContextFragment={importContextFragment}
+      importPastedText={importPastedText}
       literalText={literalText}
     />
   );
@@ -514,14 +516,16 @@ it.each([
       mimeType: "image/png",
       sizeBytes: 3,
     } satisfies ComposerContextRecord;
-    const importContextFragment = vi.fn(() => new Map([[record.contextId, record.contextId]]));
+    const importPastedText = vi.fn((clipboardData: DataTransfer) =>
+      clipboardData.getData("text/plain"),
+    );
     await using screen = await render(
       <Composer
         value=""
         richTextEnabled
         skills={[]}
         literalText={literalText}
-        importContextFragment={importContextFragment}
+        importPastedText={importPastedText}
       />,
     );
     const editor = editorIn(screen.container);
@@ -543,7 +547,7 @@ it.each([
         new ClipboardEvent("paste", { clipboardData, cancelable: true }),
       );
     });
-    expect(importContextFragment).toHaveBeenCalledTimes(imports);
+    expect(importPastedText).toHaveBeenCalledTimes(imports);
   },
 );
 
@@ -907,17 +911,24 @@ describe("composer context undo lifetime", () => {
         current = draft;
         retained = payloads;
       });
+      const contextRecords = new Map(
+        draft.files.map((entry) => [
+          fileContextReference(entry).contextId,
+          { kind: "file" as const, record: entry },
+        ]),
+      );
       const editorProps = {
         draftKey: targetKey,
         editorRef,
         value: draft.value,
         cursor: 0,
-        contextRecords: new Map(
-          draft.files.map((entry) => [
-            fileContextReference(entry).contextId,
-            { kind: "file" as const, record: entry },
-          ]),
-        ),
+        contextRecords,
+        importPastedText: (clipboardData) =>
+          importPastedComposerText(
+            clipboardData,
+            () => new Map(),
+            heldContextIds(contextRecords, new Set(), payloads),
+          ),
         skills: [],
         disabled: false,
         placeholder: "",
@@ -988,6 +999,22 @@ describe("composer context undo lifetime", () => {
     await composer.deleteDraft();
     await composer.unmount();
     expect(retained.files.size).toBe(0);
+  });
+
+  // A plain-text paste carries no record, so the cut chip used to come back as its label.
+  it("restores a cut chip and its file bytes when its text is pasted back as plain text", async () => {
+    await using composer = await mountComposer();
+    await composer.deleteDraft();
+    expect(composer.draft()).toEqual({ value: "", files: [] });
+    await act(async () => {
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", composer.initialValue);
+      composer
+        .editor()
+        .view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+    });
+    expect(composer.draft().value.trimEnd()).toBe(composer.initialValue);
+    expect(composer.draft().files[0]?.file).toBe(file.file);
   });
 
   it.each(["", "Draft B"])(

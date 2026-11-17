@@ -125,17 +125,13 @@ export function ComposerEditor({
       const warnings: string[] = [];
       if (result.failures.length > 0)
         warnings.push(
-          "Some attachments could not be copied. Reconnect to the source environment and copy them again.",
+          "Some attachments could not be copied. Reconnect to the source environment and copy them again. Those references are marked unavailable.",
         );
       if (result.skippedThreads.length > 0)
         warnings.push(
-          `${result.skippedThreads.map((title) => `"${title}"`).join(", ")} ${result.skippedThreads.length === 1 ? "is" : "are"} on another machine.`,
+          `${result.skippedThreads.map((title) => `"${title}"`).join(", ")} ${result.skippedThreads.length === 1 ? "is" : "are"} on another machine, so the agent gets a link instead.`,
         );
-      if (warnings.length > 0)
-        Dialog.alert(
-          "Some context is unavailable",
-          [...warnings, "Those references are marked unavailable."].join("\n\n"),
-        );
+      if (warnings.length > 0) Dialog.alert("Some context is unavailable", warnings.join("\n\n"));
     });
     operation.finish();
     setComposerContextImporting(draftKey, false);

@@ -58,6 +58,21 @@ export function useRetainedContextPayloads(draftTargetKey: string): RetainedCont
   return retained;
 }
 
+/** Context ids a pasted reference keeps its link for: live, still importing, or cut and restorable. */
+export function heldContextIds(
+  live: ReadonlyMap<string, unknown>,
+  importing: ReadonlySet<string>,
+  retained: RetainedContextPayloads,
+): Pick<ReadonlySet<string>, "has"> {
+  const retainedMaps: ReadonlyArray<ReadonlyMap<string, unknown>> = Object.values(retained);
+  return {
+    has: (contextId) =>
+      live.has(contextId) ||
+      importing.has(contextId) ||
+      retainedMaps.some((payloads) => payloads.has(contextId)),
+  };
+}
+
 export function reconcileAttachmentContextReferences(input: {
   referencedContextIds: ReadonlySet<string>;
   files: ReadonlyArray<ComposerFileAttachment>;

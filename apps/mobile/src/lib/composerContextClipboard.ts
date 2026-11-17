@@ -14,9 +14,11 @@ import {
   encodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
 import {
+  replaceComposerContextReferences,
   threadContextsOutsideEnvironment,
   threadLinkContextReferences,
 } from "@t3tools/shared/composerContextReferences";
+import { formatHostedThreadLink } from "@t3tools/shared/threadLinks";
 import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import * as Option from "effect/Option";
@@ -116,8 +118,13 @@ export async function importComposerContextClipboard(
           environmentId: destinationEnvironmentId,
           linkedEnvironments,
         });
-  const skippedIds = new Set(skippedThreads.map((record) => record.contextId));
-  const retained = imported.context.records.filter((record) => !skippedIds.has(record.contextId));
+  const skippedById = new Map(skippedThreads.map((record) => [record.contextId, record]));
+  // The agent cannot read these threads, so each stays a link that opens it on its machine.
+  const text = replaceComposerContextReferences(imported.text, (reference) => {
+    const thread = skippedById.get(reference.contextId);
+    return thread ? formatHostedThreadLink(thread, reference.label) : reference.source;
+  });
+  const retained = imported.context.records.filter((record) => !skippedById.has(record.contextId));
   if (existingContextCount + retained.length > COMPOSER_CONTEXT_MAX_RECORDS)
     throw new Error("Remove some context items from the draft before pasting more.");
   const attachments: DraftComposerAttachment[] = [];
@@ -144,7 +151,7 @@ export async function importComposerContextClipboard(
     // The last copy can be cancelled after its own check; a cancelled import must not return files nobody will release.
     checkAborted(signal);
     return {
-      text: imported.text,
+      text,
       context: { version: 1 as const, records },
       attachments,
       failures,

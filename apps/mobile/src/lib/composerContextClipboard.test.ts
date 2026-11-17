@@ -6,6 +6,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
+import { formatHostedThreadLink } from "@t3tools/shared/threadLinks";
 import {
   collectComposerContextReferences,
   formatComposerContextReference,
@@ -245,21 +246,20 @@ describe("mobile context clipboard imports", () => {
     ]);
     expect(result!.failures).toEqual([]);
     expect(result!.skippedThreads).toEqual([foreignThread.title]);
+    // The foreign thread stays a link to its machine, not a reference with no record behind it.
+    expect(result!.text).toContain(formatHostedThreadLink(foreignThread, foreignThread.label));
     const references = collectComposerContextReferences(result!.text);
-    expect(references.map((reference) => reference.label)).toEqual(
-      mixedRecords.map((record) => record.label),
-    );
     expect(result!.context.records.map((record) => record.contextId)).toEqual(
-      references.slice(1).map((reference) => reference.contextId),
+      references.map((reference) => reference.contextId),
+    );
+    expect(references.map((reference) => reference.label)).toEqual(
+      mixedRecords.slice(1).map((record) => record.label),
     );
     expect(
       references.every(
         (reference) => !mixedRecords.some((record) => record.contextId === reference.contextId),
       ),
     ).toBe(true);
-    expect(
-      result!.context.records.some((record) => record.contextId === references[0]!.contextId),
-    ).toBe(false);
     expect(result!.text).toMatch(/^Compare these findings: .* before changing anything\.$/);
 
     const restoreHistory = createComposerContextHistory();
@@ -301,9 +301,6 @@ describe("mobile context clipboard imports", () => {
     expect(result!.failures).toEqual([image.name]);
     expect(result!.skippedThreads).toEqual([foreignThread.title]);
     const references = collectComposerContextReferences(result!.text);
-    expect(references.map((reference) => reference.label)).toEqual(
-      mixedRecords.map((record) => record.label),
-    );
     expect(
       references
         .filter(
@@ -311,7 +308,7 @@ describe("mobile context clipboard imports", () => {
             !result!.context.records.some((record) => record.contextId === reference.contextId),
         )
         .map((reference) => reference.label),
-    ).toEqual([foreignThread.label, image.label]);
+    ).toEqual([image.label]);
     expect(result!.text).toMatch(/^Compare these findings: .* before changing anything\.$/);
   });
 

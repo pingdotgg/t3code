@@ -34,6 +34,7 @@ import { compressImageForStash } from "../../lib/imageCompression";
 import { formatInlineContextReference } from "~/lib/composerContextReferences";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { pendingDraftWork } from "./pendingDraftWork";
+import { unreadableThreadLink } from "../composerInlineTokenPaste";
 import { countPreparingComposerImages } from "./preparingComposerImages";
 import {
   isResponseContextRecord,
@@ -100,7 +101,7 @@ export function useComposerStash(input: {
     records: ReadonlyArray<ComposerContextRecord>,
     sourceEnvironmentId: EnvironmentId | null,
     threadDraftTarget?: ChatComposerProps["composerDraftTarget"],
-  ) => ReadonlyMap<string, string>;
+  ) => ReadonlyMap<string, string | null>;
   readonly expandMobileComposer: () => void;
 }) {
   const {
@@ -234,7 +235,7 @@ export function useComposerStash(input: {
 
     const rewrittenContextIds = entry.records
       ? importContextRecords(entry.records, null, composerDraftTarget)
-      : new Map<string, string>();
+      : new Map<string, string | null>();
     // A reply only makes sense in the thread that holds the response, and one already pending wins.
     const stashedReply = entry.records?.find(isResponseContextRecord);
     if (
@@ -248,6 +249,7 @@ export function useComposerStash(input: {
     }
     const restoredPrompt = replaceComposerContextReferences(entry.prompt, (reference) => {
       const contextId = rewrittenContextIds.get(reference.contextId);
+      if (contextId === null) return unreadableThreadLink(entry.records ?? [], reference);
       return contextId
         ? formatInlineContextReference({
             ...reference,
