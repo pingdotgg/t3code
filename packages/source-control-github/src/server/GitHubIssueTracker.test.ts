@@ -626,18 +626,28 @@ Redact secrets before uploading.`);
           closesIssue: true,
         },
       ]);
-      const lockedResponse = DETAIL_RESPONSE.replace(
-        '"viewerPermission":"TRIAGE"',
-        '"viewerPermission":"WRITE"',
-      ).replace('"locked":false', '"locked":true');
-      const writerApi = yield* tracker(() => {}, undefined, lockedResponse);
-      const lockedIssue = yield* writerApi.getIssue({
-        cwd: "/w",
-        host: "github.com",
-        scope: "acme/web",
-        key: "42",
-      });
-      expect(lockedIssue.viewerPermissions.comment).toBe(true);
+      for (const [permission, comment, metadata] of [
+        ["READ", false, false],
+        ["WRITE", true, true],
+        [null, true, false],
+      ] as const) {
+        const lockedResponse = DETAIL_RESPONSE.replace(
+          '"viewerPermission":"TRIAGE"',
+          `"viewerPermission":${JSON.stringify(permission)}`,
+        ).replace('"locked":false', '"locked":true');
+        const viewerApi = yield* tracker(() => {}, undefined, lockedResponse);
+        const lockedIssue = yield* viewerApi.getIssue({
+          cwd: "/w",
+          host: "github.com",
+          scope: "acme/web",
+          key: "42",
+        });
+        expect(lockedIssue.viewerPermissions).toMatchObject({
+          comment,
+          labels: metadata,
+          assignees: metadata,
+        });
+      }
       // An event kind this page has no vocabulary for is dropped rather than guessed at.
       expect(issue.events.map((event) => [event.kind, event.detail])).toEqual([
         ["labeled", "bug"],

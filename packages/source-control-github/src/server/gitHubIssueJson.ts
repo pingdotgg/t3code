@@ -17,7 +17,7 @@ import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import type { TrackerIssueSummary } from "@t3tools/source-control-core/server/IssueTracker";
 
 import type * as Issues from "./issues.graphql.ts";
-import { toReactions } from "./gitHubPullRequestJson.ts";
+import { toCanWrite, toReactions } from "./gitHubPullRequestJson.ts";
 
 type DetailIssue = NonNullable<NonNullable<Issues.IssueDetail.Result["repository"]>["issue"]>;
 type Actor = {
@@ -225,8 +225,7 @@ function toViewerPermissions(raw: {
     setState:
       raw.issue === null ||
       (raw.issue.state === "CLOSED" ? raw.issue.viewerCanReopen : raw.issue.viewerCanClose),
-    // A locked conversation takes comments only from collaborators with write access.
-    comment: raw.issue?.locked !== true || canWrite,
+    comment: raw.issue?.locked !== true || toCanWrite(raw.viewerPermission),
     edit: canUpdate,
     labels: canTriage,
     assignees: canTriage,
