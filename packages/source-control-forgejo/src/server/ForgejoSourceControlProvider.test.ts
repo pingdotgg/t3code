@@ -1991,6 +1991,69 @@ it.effect("prefers fj for HTTP and ported SSH aliases on root servers", () => {
   );
 });
 
+it.effect("uses the fj login whose alias names an SCP host-alias remote", () => {
+  const requests: string[] = [];
+  return Effect.gen(function* () {
+    const cli = yield* ForgejoCli.make;
+    // The issue tracker passes the project's host, which for an SSH alias remote is the alias.
+    const result = yield* cli.api({
+      cwd: "/repo",
+      repository: "owner/repo",
+      host: "myforge",
+      path: "repos/owner/repo/issues",
+    });
+    assert.strictEqual(result.stdout, "[]");
+    assert.deepStrictEqual(requests, ["https://forge.example.com/api/v1/repos/owner/repo/issues"]);
+  }).pipe(
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        exists: () => Effect.succeed(true),
+        readFileString: () =>
+          Effect.succeed(
+            encodeJson({
+              hosts: { "forge.example.com": { type: "Application", token: "test-token" } },
+              aliases: { myforge: "forge.example.com" },
+            }),
+          ),
+      }),
+    ),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make((request) => {
+        requests.push(request.url);
+        assert.strictEqual(request.headers.authorization, "token test-token");
+        return Effect.succeed(HttpClientResponse.fromWeb(request, new Response("[]")));
+      }),
+    ),
+    Effect.provide(
+      TestSourceControlHost.layer({
+        process: {
+          run: (input) => {
+            if (input.command === "git")
+              return Effect.succeed(
+                processOutput(
+                  "origin\tmyforge:owner/repo.git (fetch)\norigin\tmyforge:owner/repo.git (push)",
+                ),
+              );
+            if (input.command === "tea")
+              return Effect.fail(
+                new VcsProcessSpawnError({
+                  operation: "ForgejoCli.execute",
+                  command: "tea",
+                  cwd: input.cwd,
+                  cause: new Error("ENOENT"),
+                }),
+              );
+            assert.deepStrictEqual(input.args, ["--host", "https://forge.example.com", "whoami"]);
+            return Effect.succeed(processOutput(""));
+          },
+        },
+      }),
+    ),
+  );
+});
+
 it.effect("loads later fj review pages when the server caps pages below the requested size", () => {
   const pages: number[] = [];
   let issueCommentRequests = 0;
