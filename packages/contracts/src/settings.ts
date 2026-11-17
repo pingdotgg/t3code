@@ -134,6 +134,24 @@ export const AutoArchiveSettledAfterDays = Schema.Int.check(
 );
 export type AutoArchiveSettledAfterDays = typeof AutoArchiveSettledAfterDays.Type;
 export const DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS: AutoArchiveSettledAfterDays = 10;
+export const MAX_THREAD_HISTORY_TRIM_AFTER_DAYS = 365;
+/** Days without user interaction before a thread's tool output and reasoning are deleted; 0 turns the rule off. */
+export const ThreadHistoryTrimAfterDays = Schema.Int.check(
+  Schema.isBetween({ minimum: 0, maximum: MAX_THREAD_HISTORY_TRIM_AFTER_DAYS }),
+);
+export type ThreadHistoryTrimAfterDays = typeof ThreadHistoryTrimAfterDays.Type;
+export const DEFAULT_THREAD_HISTORY_TRIM_AFTER_DAYS: ThreadHistoryTrimAfterDays = 30;
+
+/** What a trim pass removes, or would remove when `dryRun`. */
+export const ThreadHistoryTrimReport = Schema.Struct({
+  dryRun: Schema.Boolean,
+  afterDays: ThreadHistoryTrimAfterDays,
+  threadCount: Schema.Int,
+  itemCount: Schema.Int,
+  /** Stored size of the removed rows; the file shrinks by about this once free pages are reclaimed. */
+  estimatedBytes: Schema.Number,
+});
+export type ThreadHistoryTrimReport = typeof ThreadHistoryTrimReport.Type;
 
 export const MAX_SNOOZE_PRESET_MINUTES = 30 * 24 * 60;
 export const MAX_SNOOZE_PRESETS = 8;
@@ -1637,6 +1655,9 @@ export const ServerSettings = Schema.Struct({
   autoArchiveSettledAfterDays: AutoArchiveSettledAfterDays.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS)),
   ),
+  threadHistoryTrimAfterDays: ThreadHistoryTrimAfterDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_THREAD_HISTORY_TRIM_AFTER_DAYS)),
+  ),
   // Legacy field accepted from deployed clients; settlement now uses only idle age.
   sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   backgroundActivity: BackgroundActivitySettings,
@@ -2071,6 +2092,7 @@ export const ServerSettingsPatch = Schema.Struct({
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   autoSettleFinishedChildrenAfterHours: Schema.optionalKey(AutoSettleFinishedChildrenAfterHours),
   autoArchiveSettledAfterDays: Schema.optionalKey(AutoArchiveSettledAfterDays),
+  threadHistoryTrimAfterDays: Schema.optionalKey(ThreadHistoryTrimAfterDays),
   autoResumeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   snoozeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   snoozePresets: Schema.optionalKey(SnoozePresetSettings),

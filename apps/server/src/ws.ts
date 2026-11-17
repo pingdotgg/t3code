@@ -191,6 +191,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import { invalidateSettingsSecrets } from "./sourceControl/sourceControlHostSecrets.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
+import * as ThreadHistoryTrim from "./orchestration-v2/ThreadHistoryTrim.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { makePrepareTerminalLaunch } from "./workspace/restoreMissingWorktree.ts";
 import { terminalOutputStream, withOutputWindow } from "./terminal/OutputProtocol.ts";
@@ -1466,6 +1467,7 @@ export const layerWsRpc = (
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const storageCleanup = yield* StorageCleanup.StorageCleanup;
       const databaseStorage = yield* DatabaseStorage.DatabaseStorage;
+      const threadHistoryTrim = yield* ThreadHistoryTrim.ThreadHistoryTrim;
       const agentGateway = yield* HeadlessGatewayHost.HeadlessGatewayHost;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const secretResolver = yield* SecretResolver.SecretResolver;
@@ -2653,6 +2655,9 @@ export const layerWsRpc = (
         [WS_METHODS.serverGetStorageCleanupReport]: () => storageCleanup.reports,
         [WS_METHODS.serverGetDatabaseStorage]: () => databaseStorage.status,
         [WS_METHODS.serverReclaimDatabaseSpace]: () => databaseStorage.requestReclaim,
+        [WS_METHODS.serverPreviewThreadHistoryTrim]: () =>
+          threadHistoryTrim.preview.pipe(Effect.orDie),
+        [WS_METHODS.serverTrimThreadHistory]: () => threadHistoryTrim.trimNow.pipe(Effect.orDie),
         [WS_METHODS.serverGetAgentGateway]: () => agentGateway.status,
         [WS_METHODS.serverUpdateAgentGateway]: (input) => agentGateway.update(input),
         [WS_METHODS.serverRevealAgentGatewayToken]: () =>

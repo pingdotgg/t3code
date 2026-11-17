@@ -66,6 +66,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverGetStorageCleanupReport]: "server",
   [WS_METHODS.serverGetDatabaseStorage]: "server",
   [WS_METHODS.serverReclaimDatabaseSpace]: "server",
+  [WS_METHODS.serverPreviewThreadHistoryTrim]: "server",
+  [WS_METHODS.serverTrimThreadHistory]: "server",
   [WS_METHODS.serverGetAgentGateway]: "server",
   [WS_METHODS.serverUpdateAgentGateway]: "server",
   [WS_METHODS.serverRevealAgentGatewayToken]: "server",

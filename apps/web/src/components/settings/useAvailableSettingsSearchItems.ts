@@ -49,6 +49,9 @@ export function useAvailableSettingsSearchItems() {
   const hasThreadAutoArchive =
     getThreadAutoSettlementSearchAvailability(environments, undefined, "threadAutoArchive")
       .eligibleEnvironmentIds.length > 0;
+  const hasThreadHistoryTrim =
+    getThreadAutoSettlementSearchAvailability(environments, undefined, "threadHistoryTrim")
+      .eligibleEnvironmentIds.length > 0;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const canMaintain = useEnvironmentScope(primaryEnvironmentId, AuthEnvironmentMaintainScope);
   const localEnvironmentDisabled = isLocalEnvironmentDisabled() === true;
@@ -68,6 +71,7 @@ export function useAvailableSettingsSearchItems() {
     hasThreadAutoSettlement,
     hasThreadAutoSettleFinishedChildren,
     hasThreadAutoArchive,
+    hasThreadHistoryTrim,
     hasFastWorktreeCheckoutEnvironment,
     hasTextGeneratorsEnvironment,
     hasPrimaryEnvironment: primaryEnvironmentId !== null,

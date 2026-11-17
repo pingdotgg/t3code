@@ -1399,6 +1399,16 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverReclaimDatabaseSpace,
       concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
     }),
+    previewThreadHistoryTrim: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:preview-thread-history-trim",
+      tag: WS_METHODS.serverPreviewThreadHistoryTrim,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
+    trimThreadHistory: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:trim-thread-history",
+      tag: WS_METHODS.serverTrimThreadHistory,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
     agentGateway: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:agent-gateway",
       tag: WS_METHODS.serverGetAgentGateway,

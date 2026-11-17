@@ -130,6 +130,7 @@ import { SUPPORTED_LOCALES } from "../../i18n/locales";
 import { BackgroundActivitySettingsRow } from "./BackgroundActivitySettings";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { PullRequestLinksOpenInAppSetting } from "./IntegrationsSettings";
+import { SettingIntegerInput } from "./SettingIntegerInput";
 import { StorageCleanupSections } from "./StorageSettings";
 import { UpdateTrackSwitchDialog } from "./UpdateTrackSwitchDialog";
 import { environmentIdsKey } from "~/state/environmentAtomList";
@@ -534,6 +535,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     DEFAULT_UNIFIED_SETTINGS.autoArchiveSettledAfterDays
       ? ["Auto-archive settled threads"]
       : []),
+    ...(settings.threadHistoryTrimAfterDays !== DEFAULT_UNIFIED_SETTINGS.threadHistoryTrimAfterDays
+      ? ["Trim old threads"]
+      : []),
     ...(settings.autoResumeLimitedThreads !== DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads
       ? ["Resume after usage limits"]
       : []),
@@ -710,6 +714,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       autoArchiveSettledAfterDays: DEFAULT_UNIFIED_SETTINGS.autoArchiveSettledAfterDays,
+      threadHistoryTrimAfterDays: DEFAULT_UNIFIED_SETTINGS.threadHistoryTrimAfterDays,
       autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
       snoozePresets: DEFAULT_UNIFIED_SETTINGS.snoozePresets,
@@ -762,47 +767,6 @@ export function useSettingsRestore(onRestored?: () => void) {
 }
 
 const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ?? 7;
-
-function SettingIntegerInput({
-  value,
-  min,
-  max,
-  onCommit,
-  "aria-label": ariaLabel,
-}: {
-  value: number;
-  min: number;
-  max: number;
-  onCommit: (value: number) => void;
-  "aria-label": string;
-}) {
-  const [draft, setDraft] = useState(String(value));
-  const [draftSource, setDraftSource] = useState(value);
-  if (draftSource !== value) {
-    setDraftSource(value);
-    setDraft(String(value));
-  }
-
-  return (
-    <Input
-      size="sm"
-      type="number"
-      min={min}
-      max={max}
-      className="w-full sm:w-24"
-      value={draft}
-      onChange={(event) => {
-        setDraft(event.target.value);
-        const parsed = Number(event.target.value);
-        if (Number.isInteger(parsed) && parsed >= min && parsed <= max) {
-          onCommit(parsed);
-        }
-      }}
-      onBlur={() => setDraft(String(value))}
-      aria-label={ariaLabel}
-    />
-  );
-}
 
 function AutoSettleDaysInput({
   value,
