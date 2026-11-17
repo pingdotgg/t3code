@@ -488,9 +488,9 @@ const effectOf = (
       wildcardMatch(resource, entry.resource, windows),
   )?.effect ?? "ask";
 
-// OpenCode copies a root session's rules into each subagent session it creates and applies them
-// after the subagent agent's own, where saved approvals can still outrank an ask but never a deny.
-// So a root session is never written an allow: each becomes an ask that T3 answers from `rules`.
+// OpenCode copies a session's rules into each subagent session it creates and applies them after
+// that subagent's own agent rules, where saved approvals can outrank an ask but never a deny.
+// So no session is written an allow or an agent's denies: allows become asks T3 answers itself.
 const inheritable = (rules: ReadonlyArray<Rule>) =>
   rules.flatMap((entry): ReadonlyArray<Rule> =>
     entry.effect !== "allow"
@@ -504,8 +504,6 @@ const sessionRules = (
   policy: RulesPolicy,
   paths: ReadonlyArray<Rule>,
   grants: ReadonlyArray<Rule>,
-  mcpServerName: string | null,
-  own: ReadonlyArray<Rule> = [],
 ): ReadonlyArray<Rule> => [
   ...(policy.runtimeMode === "full-access"
     ? [rule("*", "allow")]
@@ -518,8 +516,6 @@ const sessionRules = (
   // Plan edits are re-allowed only for plan paths; free-tier sessions refuse denied shell/read.
   ...(policy.interactionMode === "plan" ? [rule("edit", "deny")] : []),
   ...paths,
-  ...own,
-  ...mcpRules(mcpServerName),
 ];
 
 const sameRules = (left: ReadonlyArray<Rule> | undefined, right: ReadonlyArray<Rule>) =>
@@ -615,7 +611,7 @@ const agentPaths = (rules: ReadonlyArray<Rule>) =>
 const agentDenies = (rules: ReadonlyArray<Rule>, policy: RulesPolicy): ReadonlyArray<Rule> => {
   const first = rules.findIndex((entry) => entry.effect === "deny");
   if (first < 0) return [];
-  const mode = sessionRules(policy, [], [], null);
+  const mode = sessionRules(policy, [], []);
   return rules.slice(first).map((entry) => {
     if (entry.effect === "deny" || agentPaths([entry]).length > 0) return entry;
     const effects = mode
@@ -4076,35 +4072,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const plan = policy.interactionMode === "plan";
       const full = policy.runtimeMode === "full-access";
       const agents =
-        full && !plan && !thread.child
+        full && !plan
           ? undefined
           : yield* agentsIn(thread.directory, thread.child ? thread.agent : undefined);
-      // Rules written without a subagent's denies would let it do what its agent forbids.
-      if (thread.child && agents?.has(thread.agent) !== true) {
-        return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-          driver: OPENCODE_PROVIDER,
-          detail: "Could not read the OpenCode agents a subagent's rules depend on",
-        });
-      }
       const paths = new Map<string, Rule>();
       for (const agent of plan ? [thread.agent, "plan"] : full ? [] : [thread.agent]) {
         for (const entry of agentPaths(agents?.get(agent) ?? [])) {
           paths.set(`${entry.action}\u0000${entry.resource}`, entry);
         }
       }
-      const rules = sessionRules(
-        policy,
-        [...paths.values()],
-        full ? [] : thread.grants,
-        null,
-        thread.child ? agentDenies(agents?.get(thread.agent) ?? [], policy) : [],
-      );
+      const rules = sessionRules(policy, [...paths.values()], full ? [] : thread.grants);
       const mcp = mcpRules(appThreadId === null ? null : yield* mcpServerNameFor(appThreadId));
-      // `rules` is what T3 enforces; `written` is what the OpenCode session is given.
-      return {
-        rules: [...rules, ...mcp],
-        written: [...(thread.child ? rules : inheritable(rules)), ...mcp],
-      };
+      // T3 enforces `rules` then `mcp`; `written` is what the OpenCode session is given.
+      return { rules, mcp, written: [...inheritable(rules), ...mcp] };
     });
 
     const writeRules = Effect.fnUntraced(function* (state: ThreadState, policy: RulesPolicy) {
@@ -4138,19 +4118,22 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         root.providerThread.appThreadId,
       ).pipe(Effect.option);
       // A full-access root's rules open with an allow for everything, which outranks its agent's rules.
-      const rules = session._tag === "None" ? undefined : session.value.rules;
+      const rules = session._tag === "None" ? undefined : session.value;
       const own =
-        child || rules?.[0]?.action !== "*"
+        child || rules?.rules[0]?.action !== "*"
           ? (yield* agentsIn(directory, child ? agent : undefined))?.get(agent)
           : [];
       // A subagent whose agent rules cannot be read is refused; a root's request goes to the user.
       if (!child && (own === undefined || rules === undefined)) return false;
-      const effects =
+      // A subagent's own denies outrank the mode here only, never in rules its own subagents would copy.
+      const enforced =
         own === undefined || rules === undefined
+          ? undefined
+          : [...own, ...rules.rules, ...(child ? agentDenies(own, root.policy) : []), ...rules.mcp];
+      const effects =
+        enforced === undefined
           ? ["deny" as const]
-          : data.resources.map((resource) =>
-              effectOf(data.action, resource, [...own, ...rules], windows),
-            );
+          : data.resources.map((resource) => effectOf(data.action, resource, enforced, windows));
       const denied = effects.includes("deny");
       if (!denied && (effects.length === 0 || effects.includes("ask"))) return false;
       yield* client.permission
