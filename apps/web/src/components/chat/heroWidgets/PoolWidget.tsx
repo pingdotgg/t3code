@@ -1006,13 +1006,14 @@ function drawPool(
     if (dry.from > model.now) {
       drawDottedLine(context, [x0, plotTop], [x0, baseline - 1], rose, 3, 1);
     }
-    // A checkered 4px strip under the baseline for as long as the provider stays dry.
+    // A checkered 4px strip under the baseline for as long as the provider stays dry. The
+    // checker is phased to the canvas, so two providers dry at once share one strip.
     context.fillStyle = rose;
-    for (let x = x0; x < x1; x += 2) {
-      for (let row = 0; row < 2; row += 1) {
-        if (((x - x0) / 2 + row) % 2 !== 0) continue;
-        context.fillRect(x, baseline + 2 + row * 2, Math.min(2, x1 - x), 2);
-      }
+    for (let cell = Math.floor(x0 / 2); cell * 2 < x1; cell += 1) {
+      const left = Math.max(x0, cell * 2);
+      const right = Math.min(x1, cell * 2 + 2);
+      if (right <= left) continue;
+      context.fillRect(left, baseline + 2 + (cell % 2) * 2, right - left, 2);
     }
   }
 
