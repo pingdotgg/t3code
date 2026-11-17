@@ -3592,6 +3592,142 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
       }),
     );
 
+    it.effect("a progress wake while awaited work still runs does not notify the parent", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const parentThreadId = ThreadId.make("thread:progress-wake-parent");
+        const projectId = ProjectId.make("project:progress-wake");
+        const parentRunId = RunId.make("run:progress-wake-parent");
+        const rootNodeId = NodeId.make("node:progress-wake-parent");
+        yield* seedParentWithTerminalTask({
+          threadId: parentThreadId,
+          projectId,
+          runId: parentRunId,
+          rootNodeId,
+          taskId: NodeId.make("node:progress-wake-seed"),
+          deliveryState: "acknowledged",
+          now,
+        });
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId,
+          projectId,
+          parentRunId,
+          rootNodeId,
+          name: "progress-wake-child",
+          completionWake: "always",
+          continuationPending: false,
+          runStatus: "completed",
+          now,
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+        const childProviderThread = {
+          ...parent.providerThreads[0]!,
+          id: ProviderThreadId.make("provider-thread:progress-wake-child"),
+          appThreadId: child.childThreadId,
+          pendingBackgroundTasks: [
+            { taskId: "build", kind: "command" as const, awaited: true as const },
+          ],
+        };
+        yield* eventSink.write({
+          commandId: reconcileCommandId("progress-wake-build"),
+          events: [
+            {
+              id: EventId.make("event:progress-wake-build"),
+              type: "provider-thread.updated",
+              threadId: child.childThreadId,
+              runId: child.childRunId,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: now,
+              payload: childProviderThread,
+            },
+          ],
+        });
+
+        // Claude wakes the child with progress on the build it is still awaiting.
+        const wakeMessageId = MessageId.make("message:progress-wake");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "agent",
+          creationSource: "provider",
+          commandId: CommandId.make("command:progress-wake"),
+          threadId: child.childThreadId,
+          messageId: wakeMessageId,
+          text: "Background activity updated",
+          notification: {
+            source: { kind: "background_task" },
+            outcome: "updated",
+            summary: "Background activity updated",
+          },
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+        });
+        const wakeRun = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
+          (run) => run.userMessageId === wakeMessageId,
+        )!;
+        yield* eventSink.write({
+          commandId: reconcileCommandId("progress-wake-ended"),
+          events: [
+            {
+              id: EventId.make("event:progress-wake-roster"),
+              type: "provider-thread.updated",
+              threadId: child.childThreadId,
+              runId: wakeRun.id,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: now,
+              payload: childProviderThread,
+            },
+            {
+              id: EventId.make("event:progress-wake-reply"),
+              type: "message.updated",
+              threadId: child.childThreadId,
+              runId: wakeRun.id,
+              occurredAt: now,
+              payload: {
+                id: MessageId.make("message:progress-wake-reply"),
+                threadId: child.childThreadId,
+                runId: wakeRun.id,
+                nodeId: null,
+                role: "assistant",
+                text: "Still running the build.",
+                attachments: [],
+                streaming: false,
+                createdBy: "agent",
+                creationSource: "server",
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+            {
+              id: EventId.make("event:progress-wake-run-completed"),
+              type: "run.updated",
+              threadId: child.childThreadId,
+              runId: wakeRun.id,
+              occurredAt: now,
+              payload: { ...wakeRun, status: "completed", startedAt: now, completedAt: now },
+            },
+          ],
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+
+        const notices = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.filter(
+          (task) =>
+            task.childThreadId === child.childThreadId &&
+            task.id !== child.taskId &&
+            task.result !== null,
+        );
+        assert.deepEqual(
+          notices.map((task) => task.result),
+          [],
+          "a progress wake reached the parent while the child still awaited its build",
+        );
+      }),
+    );
+
     it.effect("settles a follow-up when its own work ends while another's still runs", () =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
