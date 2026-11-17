@@ -194,6 +194,21 @@ export function decodeUserIdsJson(
   );
 }
 
+/** The issue's current assignees as GitLab writes them: lower-cased username to numeric id. */
+export function decodeIssueAssigneeIdsJson(
+  raw: string,
+): Result.Result<ReadonlyMap<string, number>, DecodeFailure> {
+  return Result.map(
+    decodeIssue(raw),
+    (issue) =>
+      new Map(
+        (issue.assignees ?? []).flatMap((user) =>
+          user.id === undefined ? [] : [[user.username.toLowerCase(), user.id] as const],
+        ),
+      ),
+  );
+}
+
 export function decodeCreatedIssueJson(
   raw: string,
 ): Result.Result<{ readonly number: number; readonly url: string }, DecodeFailure> {

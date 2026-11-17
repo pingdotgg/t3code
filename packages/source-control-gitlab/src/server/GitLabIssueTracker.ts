@@ -20,6 +20,7 @@ import {
 import * as GitLabCli from "./GitLabCli.ts";
 import {
   decodeCreatedIssueJson,
+  decodeIssueAssigneeIdsJson,
   decodeUserIdsJson,
   decodeIssueDetailJson,
   decodeIssueListJson,
@@ -266,31 +267,57 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
 
     /**
      * GitLab writes assignees by numeric id, which the candidates carry as a global id. An issue
-     * names the people it already has by username, so a kept assignee is looked up.
+     * names the people it already has by username, so a kept assignee is looked up. A bare number
+     * is a kept username only when the issue holds it; otherwise it is a candidate id from before
+     * candidates carried global ids, and guessing which account it means could assign the wrong one.
      */
-    const assigneeIds = (
+    const assigneeIds = Effect.fn("GitLabIssueTracker.assigneeIds")(function* (
       input: { readonly cwd: string; readonly host: string },
       operation: string,
       assignees: ReadonlyArray<string>,
-    ): Effect.Effect<ReadonlyArray<number>, IssueTrackerError> =>
-      Effect.forEach(assignees, (assignee) => {
-        const picked = /^gid:\/\/gitlab\/User\/([1-9]\d*)$/.exec(assignee);
-        return picked !== null
-          ? Effect.succeed(Number(picked[1]))
+      issue: string | null,
+    ) {
+      const held = yield* Effect.cached(
+        issue === null
+          ? Effect.succeed(new Map<string, number>())
           : read({
               cwd: input.cwd,
               host: input.host,
               operation,
-              path: `users?${query([["username", assignee]])}`,
-              decode: decodeUserIdsJson,
-            }).pipe(
-              Effect.flatMap(([id]) =>
-                id === undefined
-                  ? Effect.fail(refused(operation, `GitLab has no user named ${assignee}.`))
-                  : Effect.succeed(id),
-              ),
-            );
+              path: issue,
+              decode: decodeIssueAssigneeIdsJson,
+            }),
+      );
+      return yield* Effect.forEach(assignees, (assignee) => {
+        const picked = /^gid:\/\/gitlab\/User\/([1-9]\d*)$/.exec(assignee);
+        if (picked !== null) return Effect.succeed(Number(picked[1]));
+        if (/^\d+$/.test(assignee)) {
+          return held.pipe(
+            Effect.flatMap((ids) => {
+              const id = ids.get(assignee);
+              return id === undefined
+                ? Effect.fail(
+                    refused(operation, "The assignee list is out of date. Pick assignees again."),
+                  )
+                : Effect.succeed(id);
+            }),
+          );
+        }
+        return read({
+          cwd: input.cwd,
+          host: input.host,
+          operation,
+          path: `users?${query([["username", assignee]])}`,
+          decode: decodeUserIdsJson,
+        }).pipe(
+          Effect.flatMap(([id]) =>
+            id === undefined
+              ? Effect.fail(refused(operation, `GitLab has no user named ${assignee}.`))
+              : Effect.succeed(id),
+          ),
+        );
       });
+    });
 
     const paged = (path: string, page: number) =>
       `${path}?${query([
@@ -536,7 +563,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
       },
 
       create: (input) =>
-        assigneeIds(input, "create", input.assignees).pipe(
+        assigneeIds(input, "create", input.assignees, null).pipe(
           Effect.flatMap((assignee_ids) =>
             read({
               cwd: input.cwd,
@@ -575,13 +602,16 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
         ),
 
       update: (input) =>
-        Effect.all([
-          issuePath(input, "update"),
-          input.assignees === undefined
-            ? Effect.void
-            : assigneeIds(input, "update", input.assignees),
-        ]).pipe(
-          Effect.flatMap(([{ path }, assignee_ids]) =>
+        issuePath(input, "update").pipe(
+          Effect.flatMap(({ path }) =>
+            Effect.all([
+              Effect.succeed(path),
+              input.assignees === undefined
+                ? Effect.void
+                : assigneeIds(input, "update", input.assignees, path),
+            ]),
+          ),
+          Effect.flatMap(([path, assignee_ids]) =>
             write({
               cwd: input.cwd,
               host: input.host,
