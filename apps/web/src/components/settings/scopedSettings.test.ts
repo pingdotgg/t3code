@@ -248,6 +248,17 @@ describe("scoped settings writes", () => {
       addProjectBaseDirectory: "/Users/me/code/",
     }).serverWrites.filter((write) => write.patch.addProjectBaseDirectory !== undefined);
     expect(targets.length).toBeLessThanOrEqual(1);
+
+    const shownOnServer = planScopedSettingsPatch(
+      all,
+      environments,
+      { addProjectBaseDirectory: "/srv/code/", ghqCloneLayout: true },
+      server.environmentId,
+    ).serverWrites;
+    expect(shownOnServer.map(({ environmentId, patch }) => [environmentId, patch])).toEqual([
+      [laptop.environmentId, { ghqCloneLayout: true }],
+      [server.environmentId, { addProjectBaseDirectory: "/srv/code/", ghqCloneLayout: true }],
+    ]);
   });
 
   describe("an environment that saves but drops keys it does not know", () => {

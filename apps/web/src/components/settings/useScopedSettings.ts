@@ -20,6 +20,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import {
+  MACHINE_LOCAL_SETTING_KEYS,
   persistScopedSettingsPatch,
   planProjectOverridesClear,
   planScopedSettingsClear,
@@ -38,8 +39,11 @@ export function useScopedSettings<T = UnifiedSettings>(
 }
 
 export function useScopedSettingsMixed(keys: readonly (keyof ServerSettings)[]): boolean {
-  const { targets } = useSettingsScope();
-  return scopedSettingsAreMixed(targets, keys);
+  const { scope, targets } = useSettingsScope();
+  return scopedSettingsAreMixed(
+    targets,
+    scope.kind === "all" ? keys.filter((key) => !MACHINE_LOCAL_SETTING_KEYS.has(key)) : keys,
+  );
 }
 
 export function useScopedSettingSource(keys: readonly (keyof ServerSettings)[]) {
@@ -98,11 +102,14 @@ function useRunScopedPlan() {
 }
 
 export function useUpdateScopedSettings() {
-  const { scope, environments } = useSettingsScope();
+  const { scope, environments, environment } = useSettingsScope();
   const run = useRunScopedPlan();
   /** `onFailed` runs when any target rejects or drops the patch, so a draft can fall back. */
   return (patch: ScopedSettingsPatch, options?: { readonly onFailed?: () => void }) =>
-    run(planScopedSettingsPatch(scope, environments, patch), options?.onFailed);
+    run(
+      planScopedSettingsPatch(scope, environments, patch, environment?.environmentId ?? null),
+      options?.onFailed,
+    );
 }
 
 export function useClearScopedSettings() {

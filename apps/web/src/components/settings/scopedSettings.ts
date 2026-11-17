@@ -41,6 +41,11 @@ const SERVER_KEYS = new Set<string>(Object.keys(ServerSettings.fields));
 const CLIENT_KEYS = new Set<string>(Object.keys(ClientSettingsSchema.fields));
 const PROJECT_SCOPED_KEYS = new Set<string>(PROJECT_SCOPED_SERVER_SETTING_KEYS);
 
+// A path on one machine may not exist on another, so "All environments" saves it on the shown one only.
+export const MACHINE_LOCAL_SETTING_KEYS: ReadonlySet<string> = new Set<keyof ServerSettings>([
+  "addProjectBaseDirectory",
+]);
+
 export function isProjectScopedSettingKey(key: string): key is ProjectScopedServerSettingKey {
   return PROJECT_SCOPED_KEYS.has(key);
 }
@@ -221,6 +226,7 @@ export function planScopedSettingsPatch(
   scope: ResolvedSettingsScope,
   environments: readonly ScopedSettingsEnvironment[],
   patch: ScopedSettingsPatch,
+  primaryEnvironmentId: EnvironmentId | null = null,
 ) {
   const clientPatch = Object.fromEntries(
     Object.entries(patch).filter(([key]) => CLIENT_KEYS.has(key) && !SERVER_KEYS.has(key)),
@@ -229,7 +235,11 @@ export function planScopedSettingsPatch(
     Object.entries(patch).filter(([key]) => SERVER_KEYS.has(key)),
   ) as ServerSettingsPatch;
   const serverKeys = Object.keys(serverPatch);
-  const { connectedEnvironments } = selectScopedSettingsEnvironments(scope, environments, null);
+  const { connectedEnvironments, environment: shownEnvironment } = selectScopedSettingsEnvironments(
+    scope,
+    environments,
+    primaryEnvironmentId,
+  );
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const unscopableKeys = isProjectScope
     ? serverKeys.filter((key) => !isProjectScopedSettingKey(key))
@@ -287,6 +297,15 @@ export function planScopedSettingsPatch(
           ? connectedEnvironments.flatMap((environment) => {
               const previous = environment.serverConfig?.settings;
               if (!previous) return [];
+              const ownPatch =
+                environment === shownEnvironment
+                  ? serverPatch
+                  : (Object.fromEntries(
+                      Object.entries(serverPatch).filter(
+                        ([key]) => !MACHINE_LOCAL_SETTING_KEYS.has(key),
+                      ),
+                    ) as ServerSettingsPatch);
+              if (Object.keys(ownPatch).length === 0) return [];
               return [
                 {
                   environmentId: environment.environmentId,
@@ -295,25 +314,23 @@ export function planScopedSettingsPatch(
                   patch: forDestination(
                     previous,
                     previous.worktreeCleanup != null &&
-                      serverPatch.storageCleanup &&
-                      Object.keys(serverPatch.storageCleanup).some((key) =>
-                        key.startsWith("worktree"),
-                      )
+                      ownPatch.storageCleanup &&
+                      Object.keys(ownPatch.storageCleanup).some((key) => key.startsWith("worktree"))
                       ? {
-                          ...serverPatch,
+                          ...ownPatch,
                           worktreeCleanup: {
                             mode: "custom",
                             rules: {
                               ...resolveWorktreeCleanup(previous, null),
                               ...Object.fromEntries(
-                                Object.entries(serverPatch.storageCleanup).filter(([key]) =>
+                                Object.entries(ownPatch.storageCleanup).filter(([key]) =>
                                   key.startsWith("worktree"),
                                 ),
                               ),
                             },
                           },
                         }
-                      : serverPatch,
+                      : ownPatch,
                   ),
                 },
               ];
