@@ -158,8 +158,12 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
     followStream,
     stateChanges: () => SubscriptionRef.changes(supervisorState),
   } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+  // Atoms run their own fibers; share the test clock so their sleeps follow `TestClock.adjust`.
   const runtime = Atom.runtime(
-    Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+    Layer.mergeAll(
+      Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+      Layer.succeed(Clock.Clock, yield* Clock.Clock),
+    ),
   );
   const family = createEnvironmentQueryAtomFamily(runtime, {
     label: "test.environment-query",
@@ -1440,8 +1444,14 @@ describe("environment query lifecycle", () => {
       yield* Deferred.succeed(yield* Queue.take(requests), page([]));
       expect(yield* archivedIds).toEqual([]);
 
-      // Another client archives the thread, then deletes it from the archive.
+      // Another client archives the thread, then deletes it from the archive. A burst of removals
+      // reloads once, after it goes quiet.
+      registry.set(shellState, { removedAt: new Map([[v2ThreadId, 1]]) });
+      yield* TestClock.adjust("400 millis");
       registry.set(shellState, { removedAt: new Map([[v2ThreadId, 2]]) });
+      yield* TestClock.adjust("400 millis");
+      expect(registry.get(atom).waiting).toBe(false);
+      yield* TestClock.adjust("100 millis");
       expect(registry.get(atom).waiting).toBe(true);
       yield* Deferred.succeed(
         yield* Queue.take(requests),
@@ -1449,8 +1459,10 @@ describe("environment query lifecycle", () => {
       );
       expect(yield* archivedIds).toEqual([v2ThreadId]);
       registry.set(shellState, { removedAt: new Map([[v2ThreadId, 3]]) });
+      yield* TestClock.adjust("500 millis");
       yield* Deferred.succeed(yield* Queue.take(requests), page([]));
       expect(yield* archivedIds).toEqual([]);
+      expect(yield* Queue.size(requests)).toBe(0);
     }),
   );
 });
