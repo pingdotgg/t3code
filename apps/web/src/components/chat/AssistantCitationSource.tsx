@@ -212,6 +212,14 @@ function observeAssistantCitationSource({
       if (rect.bottom <= scrollRect.top || rect.top >= scrollRect.bottom) return;
       activation.scrolled = true;
       request.onComplete();
+      // Screen readers follow focus, not scroll; leave someone already typing alone.
+      const active = root.ownerDocument.activeElement;
+      if (
+        !(active instanceof HTMLElement) ||
+        !(active.isContentEditable || active.matches("input, textarea, select"))
+      ) {
+        root.focus({ preventScroll: true });
+      }
       if (!range && !wholeResponse) {
         toastManager.add({
           type: "warning",
@@ -374,6 +382,8 @@ export function AssistantCitationSource({
   return (
     <div
       ref={rootRef}
+      tabIndex={-1}
+      className="outline-none"
       data-assistant-citation-source={messageId}
       data-assistant-citation-environment={threadRef?.environmentId}
       data-assistant-citation-thread={threadRef?.threadId}
