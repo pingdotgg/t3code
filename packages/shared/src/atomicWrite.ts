@@ -16,11 +16,12 @@ export const isWindowsRenameLock = (error: PlatformError.PlatformError) => {
 // Bound denial delays to about two seconds because settings saves hold their write lock.
 const LOCKED_RENAME_RETRIES = 20;
 const LOCKED_RENAME_RETRY_DELAY = "100 millis";
+const CHUNK_WRITE_LENGTH = 1 << 20;
 
-/** Resolves symlink targets before renaming so writes preserve the link. */
+/** Resolves symlink targets before renaming so writes preserve the link. Iterable contents stream in bounded batches. */
 export const writeFileStringAtomically = (input: {
   readonly filePath: string;
-  readonly contents: string;
+  readonly contents: string | Iterable<string>;
 }) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -35,13 +36,35 @@ export const writeFileStringAtomically = (input: {
       const tempDirectory = yield* Effect.acquireRelease(
         fs.makeTempDirectory({
           directory: targetDirectory,
-          prefix: `${path.basename(targetPath)}.`,
+          prefix: "t3-write-",
         }),
         (directory) => fs.remove(directory, { recursive: true }).pipe(Effect.ignore({ log: true })),
       );
       const tempPath = path.join(tempDirectory, "contents.tmp");
 
-      yield* fs.writeFileString(tempPath, input.contents);
+      const contents = input.contents;
+      if (typeof contents === "string") {
+        yield* fs.writeFileString(tempPath, contents);
+      } else {
+        // Closed before the rename, which Windows refuses for open files.
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const file = yield* fs.open(tempPath, { flag: "w" });
+            const encoder = new TextEncoder();
+            let batch: string[] = [];
+            let batchLength = 0;
+            for (const chunk of contents) {
+              batch.push(chunk);
+              batchLength += chunk.length;
+              if (batchLength < CHUNK_WRITE_LENGTH) continue;
+              yield* file.writeAll(encoder.encode(batch.join("")));
+              batch = [];
+              batchLength = 0;
+            }
+            if (batchLength > 0) yield* file.writeAll(encoder.encode(batch.join("")));
+          }),
+        );
+      }
       if (platform !== "win32") return yield* fs.rename(tempPath, targetPath);
 
       // Stop retrying if another save changes the target; read-only targets also return permanent EPERM.
