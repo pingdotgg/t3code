@@ -18,7 +18,8 @@ export interface OpenCodeSession {
 
 type Row = Record<string, unknown>;
 
-const MAX_SESSIONS = 5_000;
+const MAX_SESSIONS = 1_000;
+const MAX_TOTAL_HISTORY_CHARS = 32 * 1024 * 1024;
 const MAX_MESSAGES_PER_SESSION = 200;
 const MAX_MESSAGE_CHARS = 100_000;
 
@@ -106,9 +107,14 @@ function readV2(db: NodeSqlite.DatabaseSync): OpenCodeSession[] {
     `SELECT * FROM session_v2 ORDER BY "${updatedColumn}" DESC LIMIT ?`,
   ).all(MAX_SESSIONS) as Row[];
   const messageOrderColumn = pickColumn(messageColumns, "seq", "time_created") ?? "rowid";
+  const messageTypeColumn = pickColumn(messageColumns, "type");
   const readMessages = db.prepare(
-    `SELECT * FROM session_message WHERE "${messageSessionColumn}" = ? ORDER BY "${messageOrderColumn}" ASC LIMIT ?`,
+    `SELECT * FROM session_message WHERE "${messageSessionColumn}" = ? ORDER BY "${messageOrderColumn}" DESC LIMIT ?`,
   );
+  const readFirstUser = messageTypeColumn === null ? null : db.prepare(
+    `SELECT * FROM session_message WHERE "${messageSessionColumn}" = ? AND "${messageTypeColumn}" = 'user' ORDER BY "${messageOrderColumn}" ASC LIMIT 1`,
+  );
+  let historyCharactersRemaining = MAX_TOTAL_HISTORY_CHARS;
   return sessions.flatMap((session): OpenCodeSession[] => {
     if (typeof session[idColumn] !== "string" ||
         typeof session[directoryColumn] !== "string" ||
@@ -116,20 +122,27 @@ function readV2(db: NodeSqlite.DatabaseSync): OpenCodeSession[] {
     const id = session[idColumn] as string;
     const createdAt = isoTime(session[createdColumn], new Date(0).toISOString());
     const updatedAt = isoTime(session[updatedColumn], createdAt);
-    const messages = (readMessages.all(id, MAX_MESSAGES_PER_SESSION) as Row[])
-      .flatMap((row): OpenCodeSessionMessage[] => {
+    const recentRows = (readMessages.all(id, Math.max(0, MAX_MESSAGES_PER_SESSION - 1)) as Row[]).reverse();
+    const firstUserRow = readFirstUser?.get(id) as Row | undefined;
+    const messageRows = [
+      ...(firstUserRow === undefined ? [] : [firstUserRow]),
+      ...recentRows.filter((row) => row.id !== firstUserRow?.id),
+    ];
+    const messages = messageRows.flatMap((row): OpenCodeSessionMessage[] => {
         const data = parseJson(row[messageDataColumn]);
         if (!data) return [];
         const roleValue = data.role ?? row.type;
         if (roleValue !== "user" && roleValue !== "assistant") return [];
         const text = textFromContent(data.content ?? data.text);
-        if (!text) return [];
+        if (!text || historyCharactersRemaining <= 0) return [];
+        const retainedText = text.slice(0, Math.min(MAX_MESSAGE_CHARS, historyCharactersRemaining));
+        historyCharactersRemaining -= retainedText.length;
         const timestamp = data.time !== null && typeof data.time === "object"
           ? (data.time as Row).created
           : row.time_created;
         return [{
           role: roleValue,
-          text: text.slice(0, MAX_MESSAGE_CHARS),
+          text: retainedText,
           createdAt: isoTime(timestamp, updatedAt),
         }];
       });
@@ -168,8 +181,12 @@ function readV1(db: NodeSqlite.DatabaseSync): OpenCodeSession[] {
     `SELECT * FROM session ORDER BY "${updatedColumn}" DESC LIMIT ?`,
   ).all(MAX_SESSIONS) as Row[];
   const readMessages = db.prepare(
-    `SELECT * FROM message WHERE "${messageSessionColumn}" = ? ORDER BY rowid ASC LIMIT ?`,
+    `SELECT * FROM message WHERE "${messageSessionColumn}" = ? ORDER BY rowid DESC LIMIT ?`,
   );
+  const readFirstMessage = db.prepare(
+    `SELECT * FROM message WHERE "${messageSessionColumn}" = ? ORDER BY rowid ASC LIMIT 1`,
+  );
+  let historyCharactersRemaining = MAX_TOTAL_HISTORY_CHARS;
   const readParts = db.prepare(
     `SELECT * FROM part WHERE "${partMessageColumn}" = ? ORDER BY rowid ASC`,
   );
@@ -180,8 +197,14 @@ function readV1(db: NodeSqlite.DatabaseSync): OpenCodeSession[] {
     const id = session[sessionIdColumn] as string;
     const createdAt = isoTime(session[createdColumn], new Date(0).toISOString());
     const updatedAt = isoTime(session[updatedColumn], createdAt);
-    const messages = (readMessages.all(id, MAX_MESSAGES_PER_SESSION) as Row[])
-      .flatMap((row): OpenCodeSessionMessage[] => {
+    const recentRows = (readMessages.all(id, Math.max(0, MAX_MESSAGES_PER_SESSION - 1)) as Row[]).reverse();
+    const firstRow = readFirstMessage.get(id) as Row | undefined;
+    const firstData = firstRow === undefined ? null : parseJson(firstRow[messageDataColumn]);
+    const messageRows = [
+      ...(firstData?.role === "user" ? [firstRow!] : []),
+      ...recentRows.filter((row) => row[messageIdColumn] !== firstRow?.[messageIdColumn]),
+    ];
+    const messages = messageRows.flatMap((row): OpenCodeSessionMessage[] => {
         const data = parseJson(row[messageDataColumn]);
         if (!data || (data.role !== "user" && data.role !== "assistant")) return [];
         const text = (readParts.all(row[messageIdColumn]) as Row[])
@@ -193,13 +216,15 @@ function readV1(db: NodeSqlite.DatabaseSync): OpenCodeSession[] {
           })
           .filter(Boolean)
           .join("\n");
-        if (!text) return [];
+        if (!text || historyCharactersRemaining <= 0) return [];
+        const retainedText = text.slice(0, Math.min(MAX_MESSAGE_CHARS, historyCharactersRemaining));
+        historyCharactersRemaining -= retainedText.length;
         const time = data.time !== null && typeof data.time === "object"
           ? (data.time as Row).created
           : row.time_created;
         return [{
           role: data.role,
-          text: text.slice(0, MAX_MESSAGE_CHARS),
+          text: retainedText,
           createdAt: isoTime(time, updatedAt),
         }];
       });
