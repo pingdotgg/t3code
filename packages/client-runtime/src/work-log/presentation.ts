@@ -30,6 +30,7 @@ import {
   type T3ToolSummaryCall,
 } from "@t3tools/client-runtime/t3ToolSummary";
 import { mFallback, msg } from "gt-i18n";
+import { t3ToolSentence } from "./t3ToolSentences.ts";
 import type { MFunctionType } from "gt-i18n/types";
 
 export type WorkLogToolLifecycleStatus = RuntimeItemStatus | "stopped" | "idle";
@@ -170,25 +171,24 @@ function workEntryToolOutput(
     : (data?.output ?? data?.result ?? data?.rawOutput ?? data?.content);
 }
 
+function t3ToolStatusKey(status: string | undefined) {
+  return status === "inProgress" ||
+    status === "completed" ||
+    status === "failed" ||
+    status === "declined" ||
+    status === "stopped"
+    ? status
+    : "other";
+}
+
 function resolveT3McpToolPresentation(
   definition: T3McpToolDefinition | null,
   status: string | undefined,
-  data?: unknown,
+  data: unknown,
+  resolve: MFunctionType,
 ) {
   if (!definition) return null;
-  const [action, running, completed, detail] = definition.labels;
-  const verb =
-    status === "inProgress"
-      ? running
-      : status === "completed"
-        ? completed
-        : status === "failed"
-          ? `Failed to ${action.toLowerCase()}`
-          : status === "declined"
-            ? `Declined to ${action.toLowerCase()}`
-            : status === "stopped"
-              ? `Stopped ${running.toLowerCase()}`
-              : running;
+  const detail = definition.labels[3];
 
   const actionKind =
     definition.summaryAction === "link-pr" ||
@@ -206,16 +206,42 @@ function resolveT3McpToolPresentation(
   const number = urlTarget?.link.number ?? input?.number;
   const { shortLabel } = (urlTarget?.definition ?? sourceControlClients.get(undefined))
     .changeRequest;
-  const target =
+  const pullRequestNumber =
     actionKind !== undefined &&
     actionKind !== "list-prs" &&
     typeof number === "number" &&
     Number.isSafeInteger(number) &&
     number > 0
-      ? `${shortLabel} #${number}`
-      : detail;
+      ? number
+      : null;
+  const sentence = t3ToolSentence(definition.labels);
+  const statusKey = t3ToolStatusKey(status);
+  // A tool added to the shared table after `t3ToolSentences.ts` was generated.
+  const [action, running, completed] = definition.labels;
+  const fallbackVerb =
+    status === "inProgress"
+      ? running
+      : status === "completed"
+        ? completed
+        : status === "failed"
+          ? `Failed to ${action.toLowerCase()}`
+          : status === "declined"
+            ? `Declined to ${action.toLowerCase()}`
+            : status === "stopped"
+              ? `Stopped ${running.toLowerCase()}`
+              : running;
+  const displayName =
+    sentence === undefined
+      ? `${fallbackVerb} ${pullRequestNumber === null ? detail : `${shortLabel} #${pullRequestNumber}`}`
+      : pullRequestNumber !== null && sentence.changeRequest !== undefined
+        ? resolve(sentence.changeRequest, {
+            status: statusKey,
+            changeRequest: shortLabel,
+            number: String(pullRequestNumber),
+          })
+        : resolve(sentence.detail, { status: statusKey });
   return {
-    displayName: `${verb} ${target}`,
+    displayName,
     icon: definition.icon,
     ...(actionKind === undefined ? {} : { action: actionKind }),
   };
@@ -235,6 +261,7 @@ export function resolveWorkEntryToolPresentation(
     "label" | "toolTitle" | "toolData" | "toolLifecycleStatus" | "structuredPayload"
   >,
   fallbackStatus?: "inProgress" | "completed",
+  resolve: MFunctionType = mFallback,
 ) {
   const definition = resolveT3McpToolDefinition(
     workEntryToolName(entry),
@@ -245,6 +272,7 @@ export function resolveWorkEntryToolPresentation(
     definition,
     definition && t3ToolResultIndicatesFailure(workEntryToolOutput(entry)) ? "failed" : status,
     entry.toolData,
+    resolve,
   );
 }
 
@@ -689,7 +717,7 @@ export function summarizeToolGroup(
     count: group.entries.length,
     priority: summaryActionPriority(action),
     ...(group.t3Action
-      ? summarizeT3ToolCalls(group.t3Action, group.entries.map(t3ToolSummaryCall))
+      ? summarizeT3ToolCalls(group.t3Action, group.entries.map(t3ToolSummaryCall), resolve)
       : {
           label: toolGroupActionLabel(
             group.action,

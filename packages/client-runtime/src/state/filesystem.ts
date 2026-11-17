@@ -8,9 +8,13 @@ import {
 import { scoreQueryMatch } from "@t3tools/shared/searchRanking";
 import { Atom } from "effect/reactivity";
 
-import type {
-  EnvironmentConnectionPhase,
-  EnvironmentConnectionPresentation,
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
+
+import {
+  connectionErrorText,
+  type EnvironmentConnectionPhase,
+  type EnvironmentConnectionPresentation,
 } from "../connection/presentation.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
@@ -25,12 +29,18 @@ import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 
 const BROWSE_IDLE_TTL_MS = 5_000;
 
-export function resolveFilesystemReadAccess(input: {
-  readonly isCatalogReady: boolean;
-  readonly connection: Pick<EnvironmentConnectionPresentation, "phase" | "error"> | null;
-  readonly session: SessionGrantInput | null;
-  readonly sessionError: string | null;
-}) {
+export function resolveFilesystemReadAccess(
+  input: {
+    readonly isCatalogReady: boolean;
+    readonly connection: Pick<
+      EnvironmentConnectionPresentation,
+      "phase" | "error" | "i18nError"
+    > | null;
+    readonly session: SessionGrantInput | null;
+    readonly sessionError: string | null;
+  },
+  resolve: MFunctionType = mFallback,
+) {
   if (input.sessionError !== null) {
     return { canReadFiles: false, isPending: false, error: input.sessionError };
   }
@@ -45,7 +55,10 @@ export function resolveFilesystemReadAccess(input: {
     return {
       canReadFiles: false,
       isPending,
-      error: isPending ? null : (input.connection?.error ?? "This environment is not connected."),
+      error: isPending
+        ? null
+        : ((input.connection === null ? null : connectionErrorText(input.connection, resolve)) ??
+          resolve(msg("This environment is not connected."))),
     };
   }
   return {

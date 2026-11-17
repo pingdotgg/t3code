@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableMessage } from "../errors/translatable.ts";
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import {
   type ThreadLinkedPullRequest,
@@ -315,7 +317,11 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
         Effect.fail(
           new EnvironmentRpcUnavailableError({
             environmentId: supervisor.target.environmentId,
-            message: `${supervisor.target.label} did not confirm the message within 60 seconds.`,
+            ...translatableMessage(
+              msg("{host} did not confirm the message within 60 seconds.", {
+                host: supervisor.target.label,
+              }),
+            ),
           }),
         ),
     }),

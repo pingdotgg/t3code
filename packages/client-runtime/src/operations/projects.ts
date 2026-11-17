@@ -83,8 +83,13 @@ export function addProjectRemoteSourceLabel(
   return source === "url" ? resolve(msg("Git URL")) : sourceControlClients.get(source).pickerLabel;
 }
 
-export function addProjectRemoteSourcePathHint(source: AddProjectRemoteSource): string {
-  return source === "url" ? "URL" : sourceControlClients.get(source).repositoryPathHint;
+export function addProjectRemoteSourcePathHint(
+  source: AddProjectRemoteSource,
+  resolve: MFunctionType = mFallback,
+): string {
+  return source === "url"
+    ? resolve(msg("URL", { $context: "placeholder for a git URL field" }))
+    : sourceControlClients.get(source).repositoryPathHint;
 }
 
 export function addProjectRemoteSourceProvider(
@@ -117,8 +122,6 @@ export function defaultHostCloneUrl(repository: string): string | null {
 /** Owner present, repository name missing: `owner/` or `owner//`. */
 const INCOMPLETE_GITHUB_OWNER_PATH = /^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,38})\/+$/;
 
-const INCOMPLETE_GITHUB_OWNER_REPOSITORY_MESSAGE = "Enter the full owner/repository name.";
-
 /**
  * Message to show when a GitHub add-project field is only `owner/`.
  * Lookup would send that to GitHub and come back as a generic failure.
@@ -127,10 +130,11 @@ const INCOMPLETE_GITHUB_OWNER_REPOSITORY_MESSAGE = "Enter the full owner/reposit
 export function githubIncompleteOwnerRepositoryMessage(
   source: AddProjectRemoteSource,
   input: string,
+  resolve: MFunctionType = mFallback,
 ): string | null {
   if (source !== "github") return null;
   if (!INCOMPLETE_GITHUB_OWNER_PATH.test(input.trim())) return null;
-  return INCOMPLETE_GITHUB_OWNER_REPOSITORY_MESSAGE;
+  return resolve(msg("Enter the full owner/repository name."));
 }
 
 export function normalizePastedCloneUrl(input: string): string {

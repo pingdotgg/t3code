@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "../errors/translatable.ts";
 import * as Schema from "effect/Schema";
 import { replaceTextRange } from "@t3tools/shared/composerTrigger";
 
@@ -245,7 +246,7 @@ function preparationErrorMessage(error: unknown, resolve: MFunctionType): string
     return resolve(msg("Voice transcription is not available for this language."));
   }
   return isVoiceTranscriptionError(error) && error.message.trim()
-    ? error.message
+    ? (errorDisplayMessage(error, resolve) ?? error.message)
     : resolve(msg("Could not prepare voice transcription."));
 }
 
@@ -254,7 +255,7 @@ function transcriptionErrorMessage(error: unknown, resolve: MFunctionType): stri
     return resolve(msg("Voice transcription is still finishing. Try again shortly."));
   }
   return isVoiceTranscriptionError(error)
-    ? error.message
+    ? (errorDisplayMessage(error, resolve) ?? error.message)
     : resolve(msg("Could not transcribe this recording."));
 }
 

@@ -95,6 +95,8 @@ export interface ThreadRunSummary {
    * instead of "Thinking".
    */
   readonly providerStartingLabel?: string;
+  /** `providerStartingLabel` as a `msg()` string; display sites resolve this one. */
+  readonly providerStartingLabelMsg?: string;
   readonly sourcePlanRef?: {
     readonly threadId: ThreadId;
     readonly planId: PlanId;

@@ -386,16 +386,23 @@ export function pickSnoozePreset(input: {
   return (setting && resolveSnoozePreset(setting, input.now, input.formatTime)) ?? ahead;
 }
 
-export function snoozeWakeLabel(snoozedUntil: string, options: { readonly now: string }): string {
+export function snoozeWakeLabel(
+  snoozedUntil: string,
+  options: { readonly now: string },
+  resolve: MFunctionType = mFallback,
+): string {
   const wakeMs = Date.parse(snoozedUntil);
   const nowMs = Date.parse(options.now);
-  if (Number.isNaN(wakeMs) || Number.isNaN(nowMs)) return "now";
-  if (wakeMs <= nowMs) return "now";
+  const now = () => resolve(msg("now", { $context: "a snoozed thread wakes now" }));
+  if (Number.isNaN(wakeMs) || Number.isNaN(nowMs)) return now();
+  if (wakeMs <= nowMs) return now();
   // Count clock minutes: callers pass a minute-floored or live `now`, and durations keep seconds.
   const minutes = Math.max(1, Math.floor(wakeMs / 60_000) - Math.floor(nowMs / 60_000));
-  if (minutes < 60) return `${minutes}m`;
-  if (minutes < 24 * 60) return `${Math.ceil(minutes / 60)}h`;
-  return `${Math.ceil(minutes / (24 * 60))}d`;
+  if (minutes < 60) return resolve(msg("{minutes}m", { minutes: String(minutes) }));
+  if (minutes < 24 * 60) {
+    return resolve(msg("{hours}h", { hours: String(Math.ceil(minutes / 60)) }));
+  }
+  return resolve(msg("{days}d", { days: String(Math.ceil(minutes / (24 * 60))) }));
 }
 
 export type CustomSnoozeInput =

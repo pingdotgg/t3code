@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "./errors/translatable.ts";
 import {
   type AuthMcpClientAccess,
   type EnvironmentId,
@@ -406,7 +407,7 @@ export function linkRequestFailureMessage(
     typeof failure.message === "string" &&
     failure.message.trim().length > 0
   ) {
-    return failure.message;
+    return errorDisplayMessage(failure, resolve) ?? failure.message;
   }
   return resolve(msg("Could not answer the request. Try again."));
 }

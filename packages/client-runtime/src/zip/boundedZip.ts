@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableError } from "../errors/translatable.ts";
 import JSZip from "jszip";
 import { checkZipDirectory } from "./zipDirectory.ts";
 
@@ -17,12 +19,12 @@ export async function boundedZip(
   } = {},
 ) {
   if (bytes.byteLength > ARCHIVE_MAX_BYTES)
-    throw new Error("Preview limited to files under 50 MB.");
+    throw translatableError(msg("Preview limited to files under 50 MB."));
   checkZipDirectory(bytes, ARCHIVE_MAX_ENTRIES);
   const zip = await JSZip.loadAsync(bytes);
   const entries = Object.values(zip.files);
   if (entries.length > ARCHIVE_MAX_ENTRIES)
-    throw new Error("This archive contains more than 2,048 entries.");
+    throw translatableError(msg("This archive contains more than 2,048 entries."));
   const files = new Map<
     string,
     { bytes: Uint8Array<ArrayBuffer>; date: Date; directory: boolean }
@@ -30,7 +32,8 @@ export async function boundedZip(
   let total = 0;
   let markup = 0;
   for (const entry of entries) {
-    if (entry.name.length > 1024) throw new Error("An archive path is too long to preview.");
+    if (entry.name.length > 1024)
+      throw translatableError(msg("An archive path is too long to preview."));
     const chunks: Uint8Array<ArrayBuffer>[] = [];
     let length = 0;
     await new Promise<void>((resolve, reject) => {
@@ -56,8 +59,8 @@ export async function boundedZip(
           ) {
             stream.pause();
             reject(
-              new Error(
-                "The expanded archive exceeds the preview size or compression ratio limit.",
+              translatableError(
+                msg("The expanded archive exceeds the preview size or compression ratio limit."),
               ),
             );
           } else chunks.push(chunk);

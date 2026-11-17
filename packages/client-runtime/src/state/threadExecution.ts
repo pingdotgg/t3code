@@ -49,6 +49,7 @@ import {
 import { commandDisplayText } from "../work-log/commandLabel.ts";
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
 import { mFallback, msg } from "gt-i18n";
+import { markedTextEnglish } from "../errors/translatable.ts";
 import type { MFunctionType } from "gt-i18n/types";
 
 const ACTIVITY_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
@@ -108,15 +109,19 @@ function latestMatchingRun(
   );
 }
 
-function providerStartingLabel(
+function providerStarting(
   projection: ThreadStructure,
   run: OrchestrationV2ThreadProjection["runs"][number],
-): string {
+): Pick<ThreadRunSummary, "providerStartingLabel" | "providerStartingLabelMsg"> {
   const driver = projection.providerSessions.findLast(
     (session) => session.providerInstanceId === run.providerInstanceId,
   )?.driver;
   const name = driver === undefined ? undefined : PROVIDER_DISPLAY_NAMES[driver];
-  return name === undefined ? "Starting" : `Starting ${name}`;
+  const label =
+    name === undefined
+      ? msg("Starting", { $context: "a provider is launching" })
+      : msg("Starting {provider}", { provider: name });
+  return { providerStartingLabel: markedTextEnglish([label]), providerStartingLabelMsg: label };
 }
 
 function summarizeThreadRun(
@@ -140,7 +145,7 @@ function summarizeThreadRun(
     // the provider can still be launching for minutes.
     ...(turnStatus === undefined
       ? PROVIDER_STARTING_RUN_STATUSES.has(run.status)
-        ? { providerStartingLabel: providerStartingLabel(projection, run) }
+        ? providerStarting(projection, run)
         : {}
       : turnStatus === "pending" || turnStatus === "running"
         ? {}

@@ -347,6 +347,8 @@ function helpSection(
   }
 }
 
+const T3_CONNECT_NAME = "T3 Connect";
+
 const HOP_ORDER = {
   relay: ["device", "relay", "tunnel", "server"],
   direct: ["device", "server"],
@@ -357,7 +359,7 @@ function hopLabel(hop: ConnectionHop, host: string, resolve: MFunctionType): str
     case "device":
       return resolve(msg("This device"));
     case "relay":
-      return "T3 Connect";
+      return T3_CONNECT_NAME;
     case "tunnel":
       return resolve(msg("{host} tunnel", { host }));
     case "server":

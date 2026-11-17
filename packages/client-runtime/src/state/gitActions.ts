@@ -157,9 +157,13 @@ export function resolveQuickAction(
       disabled: true,
       kind: "show_hint",
       hint: resolve(
-        msg("Create and checkout a branch before pushing or opening {changeRequest}.", {
-          changeRequest: terminology.shortLabelWithArticle,
-        }),
+        msg(
+          "{kind, select, pr {Create and checkout a branch before pushing or opening a PR.} mr {Create and checkout a branch before pushing or opening an MR.} generic {Create and checkout a branch before pushing or opening a change request.} other {Create and checkout a branch before pushing or opening {changeRequest}.}}",
+          {
+            kind: changeRequestKind(terminology),
+            changeRequest: terminology.shortLabelWithArticle,
+          },
+        ),
       ),
     };
   }
@@ -203,9 +207,13 @@ export function resolveQuickAction(
         disabled: true,
         kind: "show_hint",
         hint: resolve(
-          msg('Add an "origin" remote before pushing or creating {changeRequest}.', {
-            changeRequest: terminology.shortLabelWithArticle,
-          }),
+          msg(
+            '{kind, select, pr {Add an "origin" remote before pushing or creating a PR.} mr {Add an "origin" remote before pushing or creating an MR.} generic {Add an "origin" remote before pushing or creating a change request.} other {Add an "origin" remote before pushing or creating {changeRequest}.}}',
+            {
+              kind: changeRequestKind(terminology),
+              changeRequest: terminology.shortLabelWithArticle,
+            },
+          ),
         ),
       };
     }
@@ -344,35 +352,55 @@ export function getGitActionDisabledReason(
   }
   if (!hasBranch) {
     return resolve(
-      msg("Detached HEAD: checkout a branch before creating {changeRequest}.", {
-        changeRequest: terminology.shortLabelWithArticle,
-      }),
+      msg(
+        "{kind, select, pr {Detached HEAD: checkout a branch before creating a PR.} mr {Detached HEAD: checkout a branch before creating an MR.} generic {Detached HEAD: checkout a branch before creating a change request.} other {Detached HEAD: checkout a branch before creating {changeRequest}.}}",
+        { kind: changeRequestKind(terminology), changeRequest: terminology.shortLabelWithArticle },
+      ),
     );
   }
   if (!gitStatus.hasUpstream && !hasOriginRemote) {
     return resolve(
-      msg('Add an "origin" remote before creating {changeRequest}.', {
-        changeRequest: terminology.shortLabelWithArticle,
-      }),
+      msg(
+        '{kind, select, pr {Add an "origin" remote before creating a PR.} mr {Add an "origin" remote before creating an MR.} generic {Add an "origin" remote before creating a change request.} other {Add an "origin" remote before creating {changeRequest}.}}',
+        { kind: changeRequestKind(terminology), changeRequest: terminology.shortLabelWithArticle },
+      ),
     );
   }
   if ((gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) <= 0) {
     return resolve(
-      msg("No local commits to include in {changeRequest}.", {
-        changeRequest: terminology.shortLabelWithArticle,
-      }),
+      msg(
+        "{kind, select, pr {No local commits to include in a PR.} mr {No local commits to include in an MR.} generic {No local commits to include in a change request.} other {No local commits to include in {changeRequest}.}}",
+        { kind: changeRequestKind(terminology), changeRequest: terminology.shortLabelWithArticle },
+      ),
     );
   }
   if (isBehind) {
     return resolve(
-      msg("Branch is behind upstream. Pull/rebase before creating {changeRequest}.", {
-        changeRequest: terminology.shortLabelWithArticle,
-      }),
+      msg(
+        "{kind, select, pr {Branch is behind upstream. Pull/rebase before creating a PR.} mr {Branch is behind upstream. Pull/rebase before creating an MR.} generic {Branch is behind upstream. Pull/rebase before creating a change request.} other {Branch is behind upstream. Pull/rebase before creating {changeRequest}.}}",
+        { kind: changeRequestKind(terminology), changeRequest: terminology.shortLabelWithArticle },
+      ),
     );
   }
   return resolve(
     msg("Create {shortLabel} is currently unavailable.", { shortLabel: terminology.shortLabel }),
   );
+}
+
+/** Picks the whole sentence for the provider's term; English keeps `shortLabelWithArticle`. */
+function changeRequestKind(
+  terminology: ChangeRequestTerminology,
+): "pr" | "mr" | "generic" | "other" {
+  switch (terminology.shortLabelWithArticle) {
+    case "a PR":
+      return "pr";
+    case "an MR":
+      return "mr";
+    case "a change request":
+      return "generic";
+    default:
+      return "other";
+  }
 }
 
 export function requiresDefaultBranchConfirmation(
@@ -432,8 +460,12 @@ export function resolveDefaultBranchActionDialogCopy(
       ),
       description: resolve(
         msg(
-          'This action will commit, push, and create {changeRequest} on "{branch}". You can continue on this branch or create a feature branch and run the same action there.',
-          { changeRequest: shortLabelWithArticle, branch: branchLabel },
+          '{kind, select, pr {This action will commit, push, and create a PR on "{branch}". You can continue on this branch or create a feature branch and run the same action there.} mr {This action will commit, push, and create an MR on "{branch}". You can continue on this branch or create a feature branch and run the same action there.} generic {This action will commit, push, and create a change request on "{branch}". You can continue on this branch or create a feature branch and run the same action there.} other {This action will commit, push, and create {changeRequest} on "{branch}". You can continue on this branch or create a feature branch and run the same action there.}}',
+          {
+            kind: changeRequestKind(input.terminology),
+            changeRequest: shortLabelWithArticle,
+            branch: branchLabel,
+          },
         ),
       ),
       continueLabel: resolve(msg("Commit, push & create {shortLabel}", { shortLabel })),
@@ -443,8 +475,12 @@ export function resolveDefaultBranchActionDialogCopy(
     title: resolve(msg("Push & create {shortLabel} from default branch?", { shortLabel })),
     description: resolve(
       msg(
-        'This action will push local commits and create {changeRequest} on "{branch}". You can continue on this branch or create a feature branch and run the same action there.',
-        { changeRequest: shortLabelWithArticle, branch: branchLabel },
+        '{kind, select, pr {This action will push local commits and create a PR on "{branch}". You can continue on this branch or create a feature branch and run the same action there.} mr {This action will push local commits and create an MR on "{branch}". You can continue on this branch or create a feature branch and run the same action there.} generic {This action will push local commits and create a change request on "{branch}". You can continue on this branch or create a feature branch and run the same action there.} other {This action will push local commits and create {changeRequest} on "{branch}". You can continue on this branch or create a feature branch and run the same action there.}}',
+        {
+          kind: changeRequestKind(input.terminology),
+          changeRequest: shortLabelWithArticle,
+          branch: branchLabel,
+        },
       ),
     ),
     continueLabel: resolve(msg("Push & create {shortLabel}", { shortLabel })),
