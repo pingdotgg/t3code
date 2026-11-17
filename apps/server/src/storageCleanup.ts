@@ -995,13 +995,21 @@ const make = Effect.gen(function* () {
       const activityAt = Math.max(...group.map(storageCleanupActivityAt));
       const deleted = "workspaceRoot" in thread;
       const members = deleted ? [thread, ...group] : group;
-      // Without a single owner, no one thread's settlement speaks for the shared worktree.
       const owner = worktreeOwner(members);
       const settlementChain =
         deleted || owner === undefined
           ? []
           : worktreeSettlementChain(thread, threadsById, now, serverSettings);
       const settledThread = settlementChain.at(-1);
+      // Without a single owner, the worktree is settled only once every sharer is.
+      const settledAt =
+        owner === undefined
+          ? group.every((member) => member.settledAt !== null)
+            ? Math.max(...group.map((member) => DateTime.toEpochMillis(member.settledAt!)))
+            : null
+          : settledThread?.settledAt == null
+            ? null
+            : DateTime.toEpochMillis(settledThread.settledAt);
       const project = deleted
         ? { workspaceRoot: thread.workspaceRoot }
         : snapshot.projects.find((entry) => entry.id === thread.projectId);
@@ -1038,7 +1046,12 @@ const make = Effect.gen(function* () {
         );
         if (!exists) return;
         if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
-        if (deleted && owner === undefined) return keep(`shared by ${members.length} threads`);
+        // Sharers from other projects may have cleanup policies this candidate's settings do not see.
+        if (
+          owner === undefined &&
+          (deleted || members.some((member) => member.projectId !== thread.projectId))
+        )
+          return keep(`shared by ${members.length} threads`);
         if (project === undefined) return keep("project is unavailable");
         if (
           thread.branch === null ||
@@ -1061,10 +1074,7 @@ const make = Effect.gen(function* () {
           !deleted &&
           settings.worktreeAfterDays !== null &&
           activityAt < now - settings.worktreeAfterDays * DAY_MS;
-        const settledFor =
-          settledThread?.settledAt == null
-            ? null
-            : now - Math.max(DateTime.toEpochMillis(settledThread.settledAt), activityAt);
+        const settledFor = settledAt === null ? null : now - Math.max(settledAt, activityAt);
         const settledDays = settledFor === null ? null : Math.floor(settledFor / DAY_MS);
         const settled =
           settledFor !== null &&
@@ -1233,6 +1243,7 @@ const make = Effect.gen(function* () {
               const previous = group.find((member) => member.id === shell.id);
               return (
                 previous === undefined ||
+                shell.projectId !== previous.projectId ||
                 shell.branch !== thread.branch ||
                 !Equal.equals(shell.settledAt, previous.settledAt) ||
                 (shell.settledAt !== null && !Equal.equals(shell.updatedAt, previous.updatedAt)) ||

@@ -954,6 +954,7 @@ describe("subagent worktree ownership", () => {
     "missing-parent",
     "cycle",
     "two-tops",
+    "two-tops-settled",
     "wrong-root",
     "running",
     "pending",
@@ -1007,7 +1008,7 @@ describe("subagent worktree ownership", () => {
               ? ThreadId.make("missing")
               : scenario === "cycle"
                 ? ThreadId.make("child")
-                : scenario === "two-tops"
+                : scenario === "two-tops" || scenario === "two-tops-settled"
                   ? null
                   : root.id,
           rootThreadId:
@@ -1028,7 +1029,10 @@ describe("subagent worktree ownership", () => {
             : scenario === "recent-grace"
               ? at(-30_000)
               : null,
-        settledAt: scenario === "child-settled-only" ? at(-20 * DAY_MS) : null,
+        settledAt:
+          scenario === "child-settled-only" || scenario === "two-tops-settled"
+            ? at(-20 * DAY_MS)
+            : null,
       });
       const grandchild = {
         ...child,
@@ -1052,15 +1056,21 @@ describe("subagent worktree ownership", () => {
           root,
         ]);
       const report = yield* fixture.service.runNow;
-      const removed = ["idle", "grandchild", "isolated-owner", "fork-owner", "side-chat"].includes(
-        scenario,
-      );
+      const removed = [
+        "idle",
+        "grandchild",
+        "isolated-owner",
+        "fork-owner",
+        "side-chat",
+        "two-tops-settled",
+      ].includes(scenario);
       const shared = [
         "unrelated",
         "fork",
         "missing-parent",
         "cycle",
         "two-tops",
+        "two-tops-settled",
         "wrong-root",
       ].includes(scenario);
       expect(yield* fixture.fs.exists(fixture.worktree)).toBe(!removed);
@@ -1084,35 +1094,46 @@ describe("subagent worktree ownership", () => {
     }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
   );
 
-  it.effect("removes a worktree shared by top-level threads once every one is eligible", () =>
-    Effect.gen(function* () {
-      yield* TestClock.setTime(NOW_MS);
-      const fixture = yield* cleanupFixture();
-      fixture.setSettings({
-        storageCleanup: {
-          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
-          worktreeAfterDays: 8,
-        },
-      });
-      const first = shell({
-        branch: "feature",
-        worktreePath: fixture.worktree,
-        latestRunCompletedAt: at(-20 * DAY_MS),
-      });
-      const second = shell({
-        ...first,
-        id: ThreadId.make("thread-2"),
-        lineage: { ...first.lineage, rootThreadId: ThreadId.make("thread-2") },
-        latestRunCompletedAt: at(-15 * DAY_MS),
-      });
-      fixture.setThreads([first, second]);
-      const report = yield* fixture.service.runNow;
-      expect(report.entries[0]).toMatchObject({
-        outcome: "removed",
-        reason: "Inactive for 15 days",
-      });
-      expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
-    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+  it.effect.each(["same-project", "cross-project"] as const)(
+    "removes a worktree shared by top-level threads once every one is eligible (%s)",
+    (scenario) =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const fixture = yield* cleanupFixture();
+        fixture.setSettings({
+          storageCleanup: {
+            ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+            worktreeAfterDays: 8,
+          },
+          ...(scenario === "cross-project"
+            ? {
+                projectSettingsOverrides: {
+                  [ProjectId.make("project-2")]: { worktreeCleanup: { mode: "off" } },
+                },
+              }
+            : {}),
+        });
+        const first = shell({
+          branch: "feature",
+          worktreePath: fixture.worktree,
+          latestRunCompletedAt: at(-20 * DAY_MS),
+        });
+        const second = shell({
+          ...first,
+          id: ThreadId.make("thread-2"),
+          lineage: { ...first.lineage, rootThreadId: ThreadId.make("thread-2") },
+          latestRunCompletedAt: at(-15 * DAY_MS),
+          ...(scenario === "cross-project" ? { projectId: ProjectId.make("project-2") } : {}),
+        });
+        fixture.setThreads([first, second]);
+        const report = yield* fixture.service.runNow;
+        expect(report.entries[0]).toMatchObject(
+          scenario === "cross-project"
+            ? { outcome: "kept", reason: "Shared by 2 threads" }
+            : { outcome: "removed", reason: "Inactive for 15 days" },
+        );
+        expect(yield* fixture.fs.exists(fixture.worktree)).toBe(scenario === "cross-project");
+      }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
   );
 
   it.live.each([
