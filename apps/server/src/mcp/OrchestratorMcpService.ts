@@ -3127,6 +3127,7 @@ const make = Effect.gen(function* () {
                 initialMessage !== undefined &&
                 !created.storedEvents.some(({ event }) => event.type === "run.created")
               ) {
+                const refused = yield* Ref.make<DispatchModeRefusal | undefined>(undefined);
                 yield* threadManagement
                   .dispatch({
                     ...initialMessage,
@@ -3144,6 +3145,11 @@ const make = Effect.gen(function* () {
                     dispatchMode: { type: "start_immediately" },
                   })
                   .pipe(
+                    Effect.provideService(DispatchModeLimit, {
+                      runtimeMode: parent.thread.runtimeMode,
+                      interactionMode: parent.thread.interactionMode,
+                      refused,
+                    }),
                     Effect.mapError((error) =>
                       error._tag === "ThreadManagementProviderInstanceDisabledError"
                         ? threadManagementFailure(error)
@@ -3151,6 +3157,20 @@ const make = Effect.gen(function* () {
                             "orchestration_error",
                             `Unable to start thread ${index + 1}: ${userFacingDispatchErrorMessage(error) ?? errorMessage(error)}`,
                           ),
+                    ),
+                    Effect.catch((error) =>
+                      Effect.flatMap(Ref.get(refused), (refusal) =>
+                        Effect.fail(
+                          refusal === undefined
+                            ? error
+                            : failure(
+                                refusal.mode === "runtime"
+                                  ? "runtime_mode_escalation_denied"
+                                  : "interaction_mode_escalation_denied",
+                                `Thread ${refusal.threadId} now runs in ${refusal.runtimeMode}/${refusal.interactionMode} mode, above this thread's.`,
+                              ),
+                        ),
+                      ),
                     ),
                   );
               }
