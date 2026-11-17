@@ -90,7 +90,12 @@ vi.mock("react", () => ({
 vi.mock("expo-crypto", () => ({ randomUUID: () => "uuid" }));
 vi.mock("gt-react-native", async (importOriginal) => {
   const gt = await importOriginal<typeof import("gt-react-native")>();
-  return { ...gt, useGT: () => gt.mFallback, useMessages: () => gt.mFallback };
+  return {
+    ...gt,
+    useGT: () => gt.mFallback,
+    useLocale: () => "en",
+    useMessages: () => gt.mFallback,
+  };
 });
 vi.mock("@t3tools/client-runtime/state/context-window", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/state/context-window")>()),
