@@ -40,10 +40,15 @@ env:
 
 jobs:
   build:
-    name: Conn Server prerequisites
+    name: Conn Server prerequisites (${{ matrix.profile }})
     runs-on: ubuntu-24.04
     timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [release, debug]
     env:
+      CONN_CHECK_BUILD_PROFILE: ${{ matrix.profile }}
       # Comparisons need release semantics, not size optimization of every fixture binary.
       # conn-server-ci.yml still builds the production musl profile without these overrides.
       CARGO_PROFILE_RELEASE_OPT_LEVEL: "0"
@@ -99,21 +104,21 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             apps/conn-server/target
-          key: conn-server-build-v4-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('apps/conn-server/Cargo.lock') }}
-          restore-keys: conn-server-build-v4-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
+          key: conn-server-build-v4-${{ matrix.profile }}-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('apps/conn-server/Cargo.lock') }}
+          restore-keys: conn-server-build-v4-${{ matrix.profile }}-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
 
       - name: Build comparison binaries
         working-directory: apps/conn-server
         run: tools/check.sh --group build
 
       - name: Pack comparison binaries
-        run: tar -C apps/conn-server/target/check-binaries -czf /tmp/conn-check-binaries.tar.gz .
+        run: tar -C apps/conn-server/target/check-binaries -czf /tmp/conn-check-binaries-${{ matrix.profile }}.tar.gz .
 
       - name: Upload comparison binaries
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: conn-check-binaries
-          path: /tmp/conn-check-binaries.tar.gz
+          name: conn-check-binaries-${{ matrix.profile }}
+          path: /tmp/conn-check-binaries-${{ matrix.profile }}.tar.gz
           retention-days: 1
 
       - name: Save Cargo on main
@@ -128,7 +133,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
       - name: Save pnpm store on main
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.pnpm-cache.outputs.cache-hit != 'true'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.profile == 'release' && steps.pnpm-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.local/share/pnpm/store
@@ -259,13 +264,16 @@ jobs:
       - name: Download comparison binaries
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: conn-check-binaries
+          pattern: conn-check-binaries-*
+          merge-multiple: true
           path: /tmp/conn-check-binaries
 
       - name: Unpack comparison binaries
         run: |
           mkdir -p apps/conn-server/target/check-binaries
-          tar -C apps/conn-server/target/check-binaries -xzf /tmp/conn-check-binaries/conn-check-binaries.tar.gz
+          for archive in /tmp/conn-check-binaries/*.tar.gz; do
+            tar -C apps/conn-server/target/check-binaries -xzf "$archive"
+          done
 
       - name: Compare
         working-directory: apps/conn-server

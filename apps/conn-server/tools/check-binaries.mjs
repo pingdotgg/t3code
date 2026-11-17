@@ -43,17 +43,26 @@ function build(profile, pkg, names = [], withServer = false) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.argv[2] === "--build") {
+    const selectedProfile = process.argv[4] ?? "all";
+    if (!["all", "release", "debug"].includes(selectedProfile)) {
+      throw new Error(`Unknown build profile: ${selectedProfile}`);
+    }
     const out = resolve(process.argv[3]);
     mkdirSync(join(out, "release/examples"), { recursive: true });
     for (const [profile, pkg, ...names] of examples) {
+      if (selectedProfile !== "all" && selectedProfile !== profile) continue;
+      console.time(`${profile}/${pkg}`);
       build(profile, pkg, names, pkg === "conn-server");
+      console.timeEnd(`${profile}/${pkg}`);
       if (profile === "debug") mkdirSync(join(out, pkg), { recursive: true });
       for (const name of names) {
         const source = join(repoRoot, "target", profile, "examples", name);
         copyFileSync(source, profile === "release" ? join(out, "release/examples", name) : join(out, pkg, name));
       }
     }
-    copyFileSync(join(repoRoot, "target/release/conn-server"), join(out, "release/conn-server"));
+    if (selectedProfile !== "debug") {
+      copyFileSync(join(repoRoot, "target/release/conn-server"), join(out, "release/conn-server"));
+    }
   } else {
     console.log(exampleBinary(process.argv[2], process.argv[3]));
   }
