@@ -468,6 +468,35 @@ describe("VS Code theme import", () => {
     expect(getThemeColorsForMode(themes[2]!, "light")).toBeNull();
   });
 
+  it.each([
+    { name: "shared", light: "a {}", dark: "a {}", expected: [["Aurora", "a {}"]] },
+    { name: "light-only", light: "a {}", dark: undefined, expected: [["Aurora", "a {}"]] },
+    { name: "dark-only", light: undefined, dark: "a {}", expected: [["Aurora", "a {}"]] },
+    {
+      name: "conflicting",
+      light: "a {}",
+      dark: "b {}",
+      expected: [
+        ["Aurora Light", "a {}"],
+        ["Aurora Dark", "b {}"],
+      ],
+    },
+  ])("pairs light and dark halves with $name custom CSS", ({ light, dark, expected }) => {
+    const themes = pairVsCodeThemes(
+      (["light", "dark"] as const).map((appearance) => {
+        const css = appearance === "light" ? light : dark;
+        return parseThemeFile({
+          version: THEME_FILE_VERSION,
+          name: `Aurora ${appearance === "light" ? "Light" : "Dark"}`,
+          appearance,
+          colors: { canvas: appearance === "light" ? "#fafafa" : "#101014" },
+          ...(css ? { css } : {}),
+        });
+      }),
+    );
+    expect(themes.map((theme) => [theme.label, theme.css])).toEqual(expected);
+  });
+
   it("does not guess when a family is ambiguous", () => {
     const make = (name: string, type: "light" | "dark") =>
       parseVsCodeThemeFile({
