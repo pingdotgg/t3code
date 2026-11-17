@@ -13,7 +13,7 @@ import {
 import { GlobeIcon, SquareIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { type MouseEvent, useState } from "react";
 
-import { resolveDiscoveredServerUrl } from "../../browser/browserTargetResolver";
+import { resolveExternalServerUrl } from "../../browser/browserTargetResolver";
 import { readLocalApi } from "../../localApi";
 import { cn, isMacPlatform } from "../../lib/utils";
 import { useThreadDiscoveredPorts } from "../../portDiscoveryState";
@@ -79,7 +79,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
     // Like links: modified and middle clicks go to the system browser.
     if (event.metaKey || event.ctrlKey || event.button === 1) {
       event.preventDefault();
-      const url = resolveDiscoveredServerUrl(props.environmentId, server.url);
+      const url = resolveExternalServerUrl(props.environmentId, server.url);
       await readLocalApi()
         ?.shell.openExternal(url)
         .catch((error: unknown) => reportFailure("Unable to open in browser", error));

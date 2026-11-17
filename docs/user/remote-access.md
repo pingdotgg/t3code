@@ -277,6 +277,17 @@ directly. Every other device, and the desktop app for other environments,
 streams them from the host. Agents keep using them while no device is
 connected, and `localhost` addresses reach servers on the host.
 
+A tab you open yourself in the desktop app for another environment loads on
+your computer instead, so the element picker, screenshots, and annotations work
+as they do locally. Its `localhost` addresses still reach servers on the host,
+over the connection the app already has, whichever way you connected. If the
+host cannot be reached, the tab shows a connection error; a `localhost`,
+`127.0.0.1`, or `[::1]` address never opens a server on your own computer.
+Other names that point at your computer, such as `/etc/hosts` entries, still
+do. These tabs ignore your system proxy settings, so they can't reach a host
+you connect to only through a proxy or over HTTPS with a privately issued
+certificate. The web and mobile apps keep streaming.
+
 The first tab downloads a headless Chrome, about 120 MB, into the T3 home. It
 is the same browser [HTML renders](html-renders.md) use, so a host downloads it
 only once. Some Linux hosts need [setup](#browser-host-setup) before it can
