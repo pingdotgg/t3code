@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic */
 /** @jsxImportSource @alchemy.run/sigil */
 import {
   measureElement,
@@ -7,17 +8,12 @@ import {
   useStdout,
   type DOMElement,
 } from "@alchemy.run/sigil";
-import {
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "@alchemy.run/sigil/react";
-import type { JSX, ReactNode } from "react";
 import { stringWidth } from "@alchemy.run/sigil/ansi";
-import type { AwaitExternalOptions, Choice, CycleChoice } from "../types.ts";
+import { useEffect, useLayoutEffect, useRef, useState } from "@alchemy.run/sigil/react";
+import type { JSX, ReactNode } from "react";
+import { copyToClipboard } from "../../../Util/Terminal.ts";
 import { theme } from "../../../Util/Theme.ts";
-import { copyToClipboard, truncate } from "../../../Util/Terminal.ts";
+import type { Choice, CycleChoice } from "../types.ts";
 import { useCliEnvironment, useGlyphs, useKeyGlyphs } from "./Environment.tsx";
 import { KeyBar, Spinner } from "./Feedback.tsx";
 import { Box, overflowListWindow } from "./Layout.tsx";
@@ -46,8 +42,8 @@ export interface TerminalKey {
 export const useTerminalInput = (
   handler: (input: string, key: TerminalKey) => void,
   options?: { readonly active?: boolean },
-) => {
-  return useInput(
+) =>
+  useInput(
     (input, key) =>
       handler(input, {
         up: key.upArrow,
@@ -69,7 +65,6 @@ export const useTerminalInput = (
       }),
     { isActive: options?.active ?? true },
   );
-};
 
 /** Bracketed-paste input scoped the same way as {@link useTerminalInput}. */
 export const useTerminalPaste = (
@@ -126,18 +121,10 @@ export const jumpSkippingDisabled = (
   const clamped = Math.max(0, Math.min(disabled.length - 1, target));
   if (!disabled[clamped]) return clamped;
   const direction = clamped >= cursor ? 1 : -1;
-  for (
-    let next = clamped + direction;
-    next >= 0 && next < disabled.length;
-    next += direction
-  ) {
+  for (let next = clamped + direction; next >= 0 && next < disabled.length; next += direction) {
     if (!disabled[next]) return next;
   }
-  for (
-    let next = clamped - direction;
-    next >= 0 && next < disabled.length;
-    next -= direction
-  ) {
+  for (let next = clamped - direction; next >= 0 && next < disabled.length; next -= direction) {
     if (!disabled[next]) return next;
   }
   return cursor;
@@ -156,8 +143,7 @@ function OverflowRow({
   return (
     <Text tone="muted">
       {" "}
-      {direction === "up" ? glyphs.overflowUp : glyphs.overflowDown} {count}{" "}
-      more
+      {direction === "up" ? glyphs.overflowUp : glyphs.overflowDown} {count} more
     </Text>
   );
 }
@@ -194,10 +180,7 @@ const focusedLabelColor = (focused: boolean): string | undefined =>
 const labelColumnWidth = (
   labels: ReadonlyArray<{ readonly label: string; readonly sticky?: boolean }>,
 ): number =>
-  Math.max(
-    0,
-    ...labels.map(({ label, sticky }) => (sticky ? 0 : stringWidth(label))),
-  ) + 1;
+  Math.max(0, ...labels.map(({ label, sticky }) => (sticky ? 0 : stringWidth(label)))) + 1;
 
 export interface MenuProps<Value> {
   readonly choices: ReadonlyArray<Choice<Value>>;
@@ -221,24 +204,15 @@ export function Menu<Value>({
   if (choices.length === 0) return <Text tone="muted">{empty}</Text>;
   // A sticky heading renders outside the window, in addition to the overflow
   // rows the shared windowing already reserves.
-  const { start, end } = overflowListWindow(
-    choices.length,
-    cursor,
-    visibleCount,
-  );
+  const { start, end } = overflowListWindow(choices.length, cursor, visibleCount);
   const stickyIndex =
-    start === 0
-      ? -1
-      : choices.findLastIndex(
-          (choice, index) => index < start && choice.sticky,
-        );
+    start === 0 ? -1 : choices.findLastIndex((choice, index) => index < start && choice.sticky);
   const visible = [
     ...(stickyIndex === -1 ? [] : [stickyIndex]),
     ...Array.from({ length: end - start }, (_, offset) => start + offset),
   ];
   const alignDescriptions =
-    descriptionPlacement === "inline" &&
-    choices.some((choice) => choice.description !== undefined);
+    descriptionPlacement === "inline" && choices.some((choice) => choice.description !== undefined);
   const labelWidth = alignDescriptions ? labelColumnWidth(choices) : undefined;
   return (
     <Box
@@ -252,12 +226,10 @@ export function Menu<Value>({
         if (choice === undefined) return null;
         const focused = index === cursor;
         const checked = selected?.has(index);
-        const disabled =
-          choice.disabled !== undefined && choice.disabled !== false;
+        const disabled = choice.disabled !== undefined && choice.disabled !== false;
         const previous = choices[index - 1];
         const showGroup =
-          choice.group !== undefined &&
-          (index === start || previous?.group !== choice.group);
+          choice.group !== undefined && (index === start || previous?.group !== choice.group);
         return (
           <Box
             key={index}
@@ -284,24 +256,16 @@ export function Menu<Value>({
             >
               <Pointer focused={focused} />
               {selected === undefined ? null : (
-                <Text
-                  color={checked ? theme.color.success : theme.color.muted}
-                  dimColor={disabled}
-                >
+                <Text color={checked ? theme.color.success : theme.color.muted} dimColor={disabled}>
                   {checked ? glyphs.checked : glyphs.unchecked}
                 </Text>
               )}
               <Box
-                flexDirection={
-                  descriptionPlacement === "inline" ? "row" : "column"
-                }
+                flexDirection={descriptionPlacement === "inline" ? "row" : "column"}
                 flexGrow={1}
                 gap={descriptionPlacement === "inline" ? 1 : 0}
               >
-                <Box
-                  width={choice.sticky ? undefined : labelWidth}
-                  flexShrink={0}
-                >
+                <Box width={choice.sticky ? undefined : labelWidth} flexShrink={0}>
                   <Text
                     bold={focused || choice.sticky || checked}
                     color={
@@ -333,6 +297,8 @@ export function Menu<Value>({
 
 export interface TextFieldProps {
   readonly placeholder?: string;
+  /** Text Tab fills into the empty field, e.g. the prompt's default. */
+  readonly completion?: string;
   readonly initialValue?: string;
   readonly value?: string;
   readonly mask?: string;
@@ -362,10 +328,7 @@ export const sanitizeTextInsert = (input: string): string =>
   input.replace(/[\u0000-\u001f\u007f]/g, "");
 
 /** Readline-style whitespace word boundary to the left of `cursor`. */
-const wordBoundaryLeft = (
-  chars: ReadonlyArray<string>,
-  cursor: number,
-): number => {
+const wordBoundaryLeft = (chars: ReadonlyArray<string>, cursor: number): number => {
   let index = cursor;
   while (index > 0 && chars[index - 1] === " ") index--;
   while (index > 0 && chars[index - 1] !== " ") index--;
@@ -373,10 +336,7 @@ const wordBoundaryLeft = (
 };
 
 /** Readline-style whitespace word boundary to the right of `cursor`. */
-const wordBoundaryRight = (
-  chars: ReadonlyArray<string>,
-  cursor: number,
-): number => {
+const wordBoundaryRight = (chars: ReadonlyArray<string>, cursor: number): number => {
   let index = cursor;
   while (index < chars.length && chars[index] === " ") index++;
   while (index < chars.length && chars[index] !== " ") index++;
@@ -423,6 +383,7 @@ const visibleWindow = (
  */
 export function TextField({
   placeholder,
+  completion,
   initialValue = "",
   value: controlledValue,
   mask,
@@ -432,7 +393,7 @@ export function TextField({
   active,
   ariaLabel,
 }: TextFieldProps) {
-  // Prompts are serialized by the CliKit runtime, so an enabled field owns
+  // Prompts are serialized by the Sigil renderer, so an enabled field owns
   // the input stream outright — no Sigil focus negotiation. (Coupling this to
   // useFocus({autoFocus}) silently disabled the field whenever any other
   // focusable was already mounted.)
@@ -440,9 +401,7 @@ export function TextField({
   const [internalValue, setInternalValue] = useState(initialValue);
   const value = controlledValue ?? internalValue;
   const chars = toGraphemes(value);
-  const [cursor, setCursor] = useState(
-    () => toGraphemes(controlledValue ?? initialValue).length,
-  );
+  const [cursor, setCursor] = useState(() => toGraphemes(controlledValue ?? initialValue).length);
   const fieldRef = useRef<DOMElement>(null);
   const [metrics, setMetrics] = useState({ x: 0, y: 0, measured: false });
   const { setCursorPosition } = useCursor();
@@ -461,11 +420,7 @@ export function TextField({
       if (key.enter) onSubmit(value);
       else if (key.escape) onCancel?.();
       else if (key.left)
-        setCursor(
-          key.ctrl || key.meta
-            ? wordBoundaryLeft(chars, cursor)
-            : Math.max(0, cursor - 1),
-        );
+        setCursor(key.ctrl || key.meta ? wordBoundaryLeft(chars, cursor) : Math.max(0, cursor - 1));
       else if (key.right)
         setCursor(
           key.ctrl || key.meta
@@ -484,15 +439,15 @@ export function TextField({
         const target = wordBoundaryLeft(chars, cursor);
         update([...chars.slice(0, target), ...chars.slice(cursor)], target);
       } else if (key.ctrl && input === "u") update(chars.slice(cursor), 0);
-      else if (key.ctrl && input === "k")
-        update(chars.slice(0, cursor), cursor);
+      else if (key.ctrl && input === "k") update(chars.slice(0, cursor), cursor);
       else if (key.home || (key.ctrl && input === "a")) setCursor(0);
       else if (key.end || (key.ctrl && input === "e")) setCursor(chars.length);
-      else if (key.meta && input === "b")
-        setCursor(wordBoundaryLeft(chars, cursor));
-      else if (key.meta && input === "f")
-        setCursor(wordBoundaryRight(chars, cursor));
-      else if (!key.ctrl && !key.meta && !key.tab) {
+      else if (key.meta && input === "b") setCursor(wordBoundaryLeft(chars, cursor));
+      else if (key.meta && input === "f") setCursor(wordBoundaryRight(chars, cursor));
+      else if (key.tab && completion !== undefined && chars.length === 0) {
+        const completed = toGraphemes(completion);
+        update(completed, completed.length);
+      } else if (!key.ctrl && !key.meta && !key.tab) {
         const inserted = toGraphemes(sanitizeTextInsert(input));
         if (inserted.length > 0) {
           update(
@@ -548,17 +503,12 @@ export function TextField({
     if (fieldRef.current === null) return;
     const { x, y } = measureElement(fieldRef.current);
     setMetrics((current) =>
-      current.measured && current.x === x && current.y === y
-        ? current
-        : { x, y, measured: true },
+      current.measured && current.x === x && current.y === y ? current : { x, y, measured: true },
     );
   });
   return (
     <Box ref={fieldRef} aria-role="textbox" aria-label={ariaLabel}>
-      <Text
-        tone={shownChars.length === 0 ? "muted" : "default"}
-        wrap="truncate-end"
-      >
+      <Text tone={shownChars.length === 0 ? "muted" : "default"} wrap="truncate-end">
         {display}
       </Text>
     </Box>
@@ -572,9 +522,7 @@ export interface CycleListProps<State> {
   readonly visibleCount?: number;
 }
 
-const stateColor = (
-  variant: CycleChoice<unknown>["states"][number]["variant"],
-) =>
+const stateColor = (variant: CycleChoice<unknown>["states"][number]["variant"]) =>
   variant === undefined || variant === "neutral"
     ? undefined
     : theme.color[variant === "error" ? "danger" : variant];
@@ -586,20 +534,14 @@ export function CycleList<State>({
   visibleCount = 12,
 }: CycleListProps<State>) {
   const glyphs = useGlyphs();
-  const { start, end } = overflowListWindow(
-    choices.length,
-    cursor,
-    visibleCount,
-  );
+  const { start, end } = overflowListWindow(choices.length, cursor, visibleCount);
   const labelWidth = labelColumnWidth(choices);
   // The state word ("add", "remove", …) gets its own column too, so the
   // descriptions line up whether or not a row's current state carries one.
   const stateWidth = Math.max(
     0,
     ...choices.flatMap((choice) =>
-      choice.states.map((state) =>
-        state.label === undefined ? 0 : stringWidth(state.label),
-      ),
+      choice.states.map((state) => (state.label === undefined ? 0 : stringWidth(state.label))),
     ),
   );
   return (
@@ -623,9 +565,7 @@ export function CycleList<State>({
             </Box>
             {stateWidth === 0 ? null : (
               <Box width={stateWidth} flexShrink={0}>
-                {state?.label === undefined ? null : (
-                  <Text color={color}>{state.label}</Text>
-                )}
+                {state?.label === undefined ? null : <Text color={color}>{state.label}</Text>}
               </Box>
             )}
             {choice.description === undefined ? null : (
@@ -641,9 +581,7 @@ export function CycleList<State>({
 
 export const useCycleNavigation = (stateCounts: ReadonlyArray<number>) => {
   const { cursor, move, setCursor } = useListNavigation(stateCounts.length);
-  const [indices, setIndices] = useState<ReadonlyArray<number>>(() =>
-    stateCounts.map(() => 0),
-  );
+  const [indices, setIndices] = useState<ReadonlyArray<number>>(() => stateCounts.map(() => 0));
   const cycle = (delta: number) =>
     setIndices((current) =>
       current.map((value, index) => {
@@ -655,7 +593,20 @@ export const useCycleNavigation = (stateCounts: ReadonlyArray<number>) => {
   return { cursor, indices, move, setCursor, cycle } as const;
 };
 
-export interface ExternalWaitProps extends AwaitExternalOptions {
+export interface BrowserLoginWaitProps {
+  readonly message: string;
+  readonly waitingLabel: string;
+  readonly url: string;
+  /** Short code the user confirms on the login page. */
+  readonly code?: string;
+  readonly openFailed?: boolean;
+  /** Open the login URL again from the waiting screen. */
+  readonly onOpen?: () => Promise<void>;
+  /** Allow Enter to switch to manual code entry. */
+  readonly allowManualInput: boolean;
+  readonly inputLabel?: string;
+  readonly placeholder?: string;
+  readonly validate?: (value: string) => string | Error | undefined;
   readonly onSubmit: (value: string) => void;
   readonly onCancel: () => void;
 }
@@ -727,12 +678,7 @@ export function InlineConfirm({
       <KeyBar
         marginTop={0}
         keys={[
-          [
-            confirmLabel === "Yes" && cancelLabel === "No"
-              ? keys.yesNo
-              : keys.leftRight,
-            "choose",
-          ],
+          [confirmLabel === "Yes" && cancelLabel === "No" ? keys.yesNo : keys.leftRight, "choose"],
           [keys.enter, "confirm"],
           [keys.escape, "cancel"],
         ]}
@@ -768,13 +714,8 @@ export function ChoiceGroup<Value>({
     (_input, key) => {
       if (onChange === undefined || choices.length === 0) return;
       const previous =
-        key.tab && key.shift
-          ? true
-          : orientation === "horizontal"
-            ? key.left
-            : key.up;
-      const next =
-        key.tab || (orientation === "horizontal" ? key.right : key.down);
+        key.tab && key.shift ? true : orientation === "horizontal" ? key.left : key.up;
+      const next = key.tab || (orientation === "horizontal" ? key.right : key.down);
       if (!previous && !next) return;
       const delta = previous ? -1 : 1;
       const index = (selected + delta + choices.length) % choices.length;
@@ -800,10 +741,7 @@ export function ChoiceGroup<Value>({
             aria-label={choice.label}
             aria-state={{ checked: selected }}
           >
-            <Text
-              bold={selected}
-              color={selected ? theme.color.onAccent : undefined}
-            >
+            <Text bold={selected} color={selected ? theme.color.onAccent : undefined}>
               {choice.label}
             </Text>
             {choice.description === undefined ? null : (
@@ -816,39 +754,35 @@ export function ChoiceGroup<Value>({
   );
 }
 
-/** Browser/OAuth waiting screen with URL controls and manual-entry fallback. */
-export function ExternalWait({
+/** Browser login waiting screen with URL controls and manual-entry fallback. */
+export function BrowserLoginWait({
   message,
   waitingLabel,
   url,
   code,
   openFailed = false,
   onOpen,
-  allowManualInput = true,
+  allowManualInput,
   inputLabel,
   placeholder,
   validate,
   onSubmit,
   onCancel,
-}: ExternalWaitProps) {
+}: BrowserLoginWaitProps) {
   const { stdout } = useStdout();
   const glyphs = useGlyphs();
   const keyGlyphs = useKeyGlyphs();
   const [manual, setManual] = useState(false);
-  const [showFull, setShowFull] = useState(false);
   const [copied, setCopied] = useState(false);
   const [browserFailed, setBrowserFailed] = useState(openFailed);
   const [error, setError] = useState<string>();
-  const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
-    undefined,
-  );
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(
     () => () => {
       clearTimeout(copiedTimer.current);
     },
     [],
   );
-  const { columns } = useTerminalSize();
   // Ctrl+C is handled centrally by the screen runner (SigilRuntime.run).
   useTerminalInput((input, key) => {
     if (manual) {
@@ -863,20 +797,18 @@ export function ExternalWait({
     else if (key.escape) onCancel();
     // Ctrl+C must fall through to the runner's cancel guard, not copy the URL.
     else if (key.ctrl || key.meta) return;
-    else if (shortcut === "u") setShowFull((current) => !current);
     else if (shortcut === "o" && onOpen !== undefined) {
       setBrowserFailed(false);
       void onOpen().catch(() => setBrowserFailed(true));
-    } else if (shortcut === "c" && (code ?? url) !== undefined) {
-      copyToClipboard(code ?? url!, stdout ?? process.stdout);
+    } else if (shortcut === "c") {
+      copyToClipboard(url, stdout ?? process.stdout);
       setCopied(true);
       clearTimeout(copiedTimer.current);
       copiedTimer.current = setTimeout(() => setCopied(false), 2000);
     }
   });
   if (manual) {
-    const manualInputLabel =
-      inputLabel ?? "Paste the authorization code or callback URL";
+    const manualInputLabel = inputLabel ?? "Paste the authorization code or callback URL";
     return (
       <PromptFrame
         message={manualInputLabel}
@@ -911,25 +843,9 @@ export function ExternalWait({
     <PromptFrame
       message={message}
       keys={[
-        ...(allowManualInput
-          ? ([[keyGlyphs.enter, "enter code manually"]] as const)
-          : []),
-        ...(url === undefined
-          ? []
-          : ([
-              ...(onOpen === undefined
-                ? []
-                : ([["o", "open browser"]] as const)),
-              [
-                "c",
-                copied
-                  ? `${glyphs.success} copied`
-                  : code === undefined
-                    ? "copy URL"
-                    : "copy code",
-              ],
-              ["u", showFull ? "collapse URL" : "full URL"],
-            ] as const)),
+        ...(allowManualInput ? ([[keyGlyphs.enter, "enter code manually"]] as const) : []),
+        ...(onOpen === undefined ? [] : ([["o", "open browser"]] as const)),
+        ["c", copied ? `${glyphs.success} copied` : "copy URL"],
         [keyGlyphs.escape, "cancel"],
       ]}
     >
@@ -945,15 +861,10 @@ export function ExternalWait({
         )}
         {browserFailed ? (
           <Text tone="warning">
-            {glyphs.warning} Could not open the browser. Copy and open the URL
-            manually.
+            {glyphs.warning} Could not open the browser. Copy and open the URL manually.
           </Text>
         ) : null}
-        {url === undefined ? null : (
-          <Link href={url}>
-            {showFull ? url : truncate(url, Math.max(24, columns - 8))}
-          </Link>
-        )}
+        <Link href={url}>{url}</Link>
       </Box>
     </PromptFrame>
   );
@@ -1029,10 +940,7 @@ export function PromptFrame({
   );
 }
 
-export const filterChoices = <Value,>(
-  choices: ReadonlyArray<Choice<Value>>,
-  query: string,
-) => {
+export const filterChoices = <Value,>(choices: ReadonlyArray<Choice<Value>>, query: string) => {
   const normalized = query.trim().toLowerCase();
   const indexed = choices.map((choice, index) => ({ choice, index }));
   return normalized === ""
@@ -1048,8 +956,8 @@ export const filterChoices = <Value,>(
 export const useSelectedChoices = <Value,>(
   choices: ReadonlyArray<Choice<Value>>,
   initialValues: ReadonlyArray<Value>,
-) => {
-  return useState<ReadonlySet<number>>(
+) =>
+  useState<ReadonlySet<number>>(
     () =>
       new Set(
         initialValues.flatMap((value) => {
@@ -1058,4 +966,3 @@ export const useSelectedChoices = <Value,>(
         }),
       ),
   );
-};

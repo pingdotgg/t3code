@@ -19,15 +19,9 @@ export interface LoopbackProps {
   readonly handler: LoopbackServer.RouteHandler;
 }
 
-export const local = ({
-  binding,
-  name,
-  handler,
-}: LoopbackProps): BindingHook<Loopback.Loopback> =>
+export const local = ({ binding, name, handler }: LoopbackProps): BindingHook<Loopback.Loopback> =>
   Effect.map(
-    Plugin.use(Loopback.Loopback, (loopback) =>
-      loopback.api.route(name, handler),
-    ),
+    Plugin.use(Loopback.Loopback, (loopback) => loopback.api.route(name, handler)),
     (service) => ({
       name: binding,
       service,

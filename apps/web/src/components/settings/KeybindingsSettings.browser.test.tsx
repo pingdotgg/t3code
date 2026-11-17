@@ -163,6 +163,25 @@ it("shows Unassign only while recording and keeps it clickable without blurring 
   );
 });
 
+it("Esc in the keybindings search clears the query without closing Settings", async () => {
+  const onOpenChange = vi.fn();
+  await using _screen = await render(
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogPopup>
+        <DialogTitle>Settings</DialogTitle>
+        <KeybindingsSettingsPanel />
+      </DialogPopup>
+    </Dialog>,
+  );
+  const search = page.getByRole("searchbox", { name: "Search keybindings" });
+  await search.fill("sidebar");
+
+  await userEvent.keyboard("{Escape}");
+
+  await expect.element(search).toHaveValue("");
+  expect(onOpenChange).not.toHaveBeenCalled();
+});
+
 it("re-enables Save when a When editor closes on an expression it could not parse", async () => {
   await using screen = await render(
     <RegistryProvider>

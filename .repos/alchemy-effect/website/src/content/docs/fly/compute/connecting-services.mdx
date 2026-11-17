@@ -30,7 +30,7 @@ bound callers call the methods directly.
 
 ```typescript
 // src/users.ts
-import * as Fly from "alchemy/Fly";
+import * as Fly from "@alchemy.run/fly";
 import * as Effect from "effect/Effect";
 
 export interface User {
@@ -95,7 +95,7 @@ when the Service owns its App; combining it with `app` fails with
 
 ```typescript
 // src/orders.ts
-import * as Fly from "alchemy/Fly";
+import * as Fly from "@alchemy.run/fly";
 import * as Effect from "effect/Effect";
 
 const ORDERS = [
@@ -166,7 +166,7 @@ is public:
 
 ```typescript
 // src/gateway.ts
-import * as Fly from "alchemy/Fly";
+import * as Fly from "@alchemy.run/fly";
 import * as Effect from "effect/Effect";
 
 export default class Gateway extends Fly.Service<Gateway>()(
@@ -238,7 +238,7 @@ Yield the three Services and return their URLs:
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Fly from "alchemy/Fly";
+import * as Fly from "@alchemy.run/fly";
 import * as Effect from "effect/Effect";
 import Gateway from "./src/gateway.ts";
 import Orders from "./src/orders.ts";

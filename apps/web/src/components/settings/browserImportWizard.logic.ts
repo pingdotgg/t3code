@@ -45,7 +45,12 @@ export type ImportOutcome =
       readonly skippedDomains: ReadonlyArray<string>;
       readonly targetName: string;
     }
-  | { readonly kind: "blocked"; readonly reason: BrowserImportFailureReason };
+  | {
+      readonly kind: "blocked";
+      readonly reason: BrowserImportFailureReason;
+      /** Shown instead of the reason's copy, such as a managed policy's refusal. */
+      readonly message?: string;
+    };
 
 export type WizardStep =
   | { readonly step: "quit" }
@@ -64,7 +69,11 @@ export type WizardStep =
       readonly skippedDomains: ReadonlyArray<string>;
       readonly targetName: string;
     }
-  | { readonly step: "blocked"; readonly reason: BrowserImportFailureReason };
+  | {
+      readonly step: "blocked";
+      readonly reason: BrowserImportFailureReason;
+      readonly message?: string;
+    };
 
 export function canCloseWizard(step: WizardStep): boolean {
   return step.step !== "importing";
@@ -94,7 +103,9 @@ export function outcomeToStep(outcome: ImportOutcome): WizardStep {
   if (outcome.reason === "needsFullDiskAccess") {
     return { step: "fullDiskAccess", resume: "import", checked: true };
   }
-  return { step: "blocked", reason: outcome.reason };
+  return outcome.message === undefined
+    ? { step: "blocked", reason: outcome.reason }
+    : { step: "blocked", reason: outcome.reason, message: outcome.message };
 }
 
 export function refreshedSourceStep(source: BrowserImportSource | undefined): WizardStep {

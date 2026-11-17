@@ -219,6 +219,157 @@ class ReviewDiffGeometryTest {
     }
   }
 
+  @Test
+  fun headerPathLimitsKeepFirstMatchAndNeverReadCodeRows() {
+    val parent = T3ReviewDiffView(RuntimeEnvironment.getApplication(), AppContext())
+    val reference = T3ReviewDiffView(RuntimeEnvironment.getApplication(), AppContext())
+    val canvas = parent.getChildAt(0)
+    val oracle = reference.getChildAt(0)
+    val spec = View.MeasureSpec.makeMeasureSpec(390, View.MeasureSpec.EXACTLY)
+    for (view in listOf(canvas, oracle)) {
+      view.measure(spec, spec)
+      view.layout(0, 0, 390, 600)
+    }
+    val longPath = "long/directory/".repeat(12)
+    val ordinary = headerRows(longPath)
+    val input = listOf(row("impostor", "value").copy(fileId = "f9")) + ordinary + listOf(
+      row("duplicate:header", "").copy(kind = "file", fileId = "f9", filePath = "short.kt"),
+      row("id-fallback", "").copy(kind = "file", fileId = "", filePath = longPath + "fallback.kt"),
+      row("", "").copy(kind = "file", fileId = "", filePath = longPath + "empty.kt"),
+      row("orphan:line:0", "code ".repeat(100)).copy(fileId = "orphan"),
+    )
+    try {
+      // Drive the production collapse path from its full decoded payload boundary.
+      parent.javaClass.getDeclaredField("rows").apply { isAccessible = true }.set(parent, input)
+      call(parent, "rebuildVisibleRows")
+      for (wrap in listOf(false, true)) {
+        parent.setStyleJson("{\"wordWrap\":$wrap}")
+        reference.setStyleJson("{\"wordWrap\":$wrap}")
+        for (collapsed in listOf("[]", "[\"f0\",\"f5\"]", "[]")) {
+          parent.setCollapsedFileIdsJson(collapsed)
+          checkHeaderLimits(canvas, oracle, input, wrap, collapsed)
+        }
+      }
+      parent.setStyleJson("{\"wordWrap\":false}")
+      val counted = CountingRows(ordinary)
+      call(canvas, "setRows", counted)
+      val target = panTarget(canvas, "f9", "FILE_HEADER_PATH")
+      call(canvas, "resetHorizontalOffsets")
+      counted.reads = 0
+      counted.codeReads = 0
+      repeat(120) { call(canvas, "scrollByHorizontal", 1, target) }
+      val panReads = counted.reads
+      val panCodeReads = counted.codeReads
+      counted.reads = 0
+      counted.codeReads = 0
+      repeat(120) { call(canvas, "clampHeaderPathOffsets") }
+      val clampReads = counted.reads
+      val clampCodeReads = counted.codeReads
+      println(
+        "HEADER_LOOKUP Android updates=120 panReads=$panReads panCodeReads=$panCodeReads " +
+          "clampReads=$clampReads clampCodeReads=$clampCodeReads"
+      )
+      call(
+        canvas,
+        "setRows",
+        listOf(row("replacement", "").copy(kind = "file", fileId = "f9", filePath = "short.kt"))
+      )
+      assertEquals(0, headerLimit(canvas, "f9"))
+      assertEquals(0, headerOffset(canvas, "f9"))
+      parent.setContentResetKey("new-content")
+      assertEquals(0, headerLimit(canvas, "f9"))
+      assertTrue((field(canvas, "fileHeaderIndices") as IntArray).isEmpty())
+      assertTrue((field(canvas, "headerPathOffsetsByFileId") as Map<*, *>).isEmpty())
+      println(
+        "Passed Android header limits: first/middle/last, duplicate, empty/missing IDs, rename, " +
+          "collapse/reexpand, replacement/reset, wrap and code bounds"
+      )
+      assertEquals("Header pans must not inspect code rows", 0, panCodeReads)
+      assertEquals("Header clamps must not inspect code rows", 0, clampCodeReads)
+      assertTrue("Header pans must read only preceding headers", panReads <= 1320)
+      assertTrue("Header clamps must read only preceding headers", clampReads <= 1320)
+    } finally {
+      parent.cleanup()
+      reference.cleanup()
+    }
+  }
+
+  private fun headerRows(longPath: String): List<DiffRow> = (0 until 10).flatMap { file ->
+    listOf(
+      row("f$file:header", "").copy(
+        kind = "file",
+        fileId = "f$file",
+        filePath = "${longPath}new-$file.kt",
+        previousPath = "old-$file.kt",
+        additions = file + 1,
+        deletions = file * 2,
+      )
+    ) +
+      List(100) { line -> row("f$file:line:$line", "code ".repeat(100)).copy(fileId = "f$file") }
+  }
+
+  private fun checkHeaderLimits(
+    canvas: View,
+    oracle: View,
+    input: List<DiffRow>,
+    wrap: Boolean,
+    collapsed: String
+  ) {
+    for ((caseIndex, id) in listOf(
+      "f0",
+      "f5",
+      "f9",
+      "id-fallback",
+      "",
+      "orphan",
+      "missing"
+    ).withIndex()) {
+      val header = input.firstOrNull { it.kind == "file" && it.resolvedFileId == id }
+      call(oracle, "setRows", listOfNotNull(header))
+      val expected = headerLimit(oracle, id)
+      val actual = headerLimit(canvas, id)
+      println("HEADER_LIMIT Android wrap=$wrap collapsed=$collapsed case=$caseIndex limit=$actual")
+      assertEquals("wrap=$wrap collapsed=$collapsed id=$id", expected, actual)
+      if (header != null) assertTrue("Long rename/header path must overflow", expected > 0)
+      val target = panTarget(canvas, id, "FILE_HEADER_PATH")
+      assertEquals(expected, call(canvas, "maxHorizontalOffset", target))
+      call(canvas, "scrollByHorizontal", 1_000_000, target)
+      assertEquals(expected, headerOffset(canvas, id))
+      call(canvas, "scrollByHorizontal", -1_000_000, target)
+      assertEquals(0, headerOffset(canvas, id))
+      call(canvas, "scrollByHorizontal", 1, target)
+      call(canvas, "clampHeaderPathOffsets")
+      assertEquals(minOf(1, expected), headerOffset(canvas, id))
+    }
+    val codeTarget = panTarget(canvas, "f9", "CODE")
+    val codeLimit = call(canvas, "maxHorizontalOffset") as Int
+    assertEquals(codeLimit, call(canvas, "maxHorizontalOffset", codeTarget))
+    if (wrap) assertEquals(0, codeLimit) else assertTrue(codeLimit > 0)
+    call(canvas, "scrollByHorizontal", 1_000_000, codeTarget)
+    assertEquals(codeLimit, call(canvas, "horizontalOffset"))
+    call(canvas, "scrollByHorizontal", -1_000_000, codeTarget)
+    assertEquals(0, call(canvas, "horizontalOffset"))
+  }
+
+  private fun headerLimit(canvas: View, id: String): Int = canvas.javaClass
+    .getDeclaredMethod("maxHeaderPathOffset", String::class.java).apply { isAccessible = true }
+    .invoke(canvas, id) as Int
+
+  private fun headerOffset(canvas: View, id: String): Int =
+    (field(canvas, "headerPathOffsetsByFileId") as Map<*, *>)[id] as Int? ?: 0
+
+  private fun panTarget(canvas: View, id: String, kind: String): Any {
+    val targetClass = canvas.javaClass.declaredMethods.single {
+      it.name == "scrollByHorizontal"
+    }.parameterTypes[1]
+    val constructor = targetClass.declaredConstructors.single().apply { isAccessible = true }
+    val enumValue = constructor.parameterTypes[1].enumConstants.single {
+      (it as Enum<*>).name ==
+        kind
+    }
+    return constructor.newInstance(id, enumValue)
+  }
+
   private fun call(target: Any, name: String, vararg args: Any): Any? = target.javaClass
     .declaredMethods.single { it.name == name && it.parameterCount == args.size }
     .apply { isAccessible = true }.invoke(target, *args)
@@ -235,9 +386,11 @@ class ReviewDiffGeometryTest {
 
   private class CountingRows(private val rows: List<DiffRow>) : AbstractList<DiffRow>() {
     var reads = 0
+    var codeReads = 0
     override val size: Int get() = rows.size
     override fun get(index: Int): DiffRow {
       reads += 1
+      if (rows[index].kind != "file") codeReads += 1
       return rows[index]
     }
   }

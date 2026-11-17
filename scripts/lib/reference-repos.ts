@@ -10,8 +10,8 @@ export interface ReferenceRepo {
 
 export const referenceRepos: ReadonlyArray<ReferenceRepo> = [
   {
-    id: "effect-smol",
-    prefix: ".repos/effect-smol",
+    id: "effect",
+    prefix: ".repos/effect",
     repository: "https://github.com/Effect-TS/effect.git",
     latestRef: "main",
     versionSourcePath: "pnpm-workspace.yaml",

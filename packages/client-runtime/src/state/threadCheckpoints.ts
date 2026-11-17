@@ -31,12 +31,35 @@ export interface ThreadCheckpointSummary {
 export function deriveThreadCheckpointSummaries(
   projection: Pick<OrchestrationV2ThreadProjection, "checkpoints" | "messages">,
 ): ReadonlyArray<ThreadCheckpointSummary> {
+  let assistantMessageIdsByRun: Map<RunId, MessageId | null | undefined> | undefined;
+  let nextMessageIndex = -1;
   return projection.checkpoints.flatMap((checkpoint) => {
     if (checkpoint.appRunOrdinal === null || checkpoint.runId === null) return [];
-    const assistantMessageId =
-      projection.messages.findLast(
-        (message) => message.runId === checkpoint.runId && message.role === "assistant",
-      )?.id ?? null;
+    const messages = projection.messages;
+    if (assistantMessageIdsByRun === undefined) {
+      assistantMessageIdsByRun = new Map();
+      for (const entry of projection.checkpoints) {
+        if (entry.appRunOrdinal !== null && entry.runId !== null) {
+          assistantMessageIdsByRun.set(entry.runId, undefined);
+        }
+      }
+      nextMessageIndex = messages.length - 1;
+    }
+    // Resume the reverse scan only as far as this checkpoint needs. Recent
+    // checkpoints must not force a traversal of unrelated older history.
+    while (nextMessageIndex >= 0 && assistantMessageIdsByRun.get(checkpoint.runId) === undefined) {
+      const message = messages[nextMessageIndex--]!;
+      const { runId, role } = message;
+      if (
+        role === "assistant" &&
+        runId !== null &&
+        assistantMessageIdsByRun.has(runId) &&
+        assistantMessageIdsByRun.get(runId) === undefined
+      ) {
+        assistantMessageIdsByRun.set(runId, message.id ?? null);
+      }
+    }
+    const assistantMessageId = assistantMessageIdsByRun.get(checkpoint.runId) ?? null;
     return [
       {
         checkpointId: checkpoint.id,

@@ -1,4 +1,4 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -17,9 +17,8 @@ import { RemoteObject } from "./remote-object.ts";
  *   is an independent cold start and the account's container cap isn't exhausted.
  *
  * TIMING: the clock runs HERE in the Worker, around the entire DO call — not
- * inside the DO. The container layer eagerly calls `container.start()` during
- * DO construction, so a clock started inside `boot()` would miss instance
- * allocation and start entirely, undercounting the cold start. Wrapping the
+ * inside the DO, so it also covers DO creation. `boot()` starts the container
+ * and waits for it. Wrapping the
  * `getByName(name).boot()` call captures DO creation + container start +
  * readiness probe, while staying inside Cloudflare (no client network in the
  * number) — symmetric with the MicroVM hosts, which start the clock before
@@ -53,8 +52,8 @@ export default class ContainerWorker extends Cloudflare.Worker<ContainerWorker>(
         const variant = url.searchParams.get("variant") ?? "effectful";
 
         if (url.pathname === "/boot") {
-          // Time the WHOLE thing: DO creation, eager container start during
-          // layer construction, and the readiness probe inside boot().
+          // Time the WHOLE thing: DO creation, then the container start and
+          // readiness probe inside boot().
           const start = yield* Effect.sync(() => Date.now());
           yield* objectFor(variant).getByName(name).boot();
           const readyMs = (yield* Effect.sync(() => Date.now())) - start;

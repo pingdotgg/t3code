@@ -4,8 +4,8 @@ export async function getLatestPosts(limit = 10) {
   const db = getDb();
   const runtime = db.runtime();
 
-  return runtime.execute(
-    db.sql.post
+  return runtime.query(
+    db.sql.public.post
       .select("title", "excerpt")
       .orderBy("createdAt", { direction: "desc" })
       .limit(limit)
@@ -16,5 +16,5 @@ export async function getLatestPosts(limit = 10) {
 export async function checkDatabaseReady() {
   const db = getDb();
   const runtime = db.runtime();
-  await runtime.execute(db.sql.user.select("id").limit(1).build());
+  await runtime.query(db.sql.public.user.select("id").limit(1).build());
 }
