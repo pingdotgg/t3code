@@ -173,14 +173,18 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
   private exitEvent: PtyAdapter.PtyExitEvent | undefined;
   private readonly exitListeners = new Set<(event: PtyAdapter.PtyExitEvent) => void>();
   private readonly exitSubscription: import("node-pty").IDisposable;
+  private pendingData: string[] | undefined = [];
+  private readonly startupDataSubscription: import("node-pty").IDisposable;
 
   constructor(process: import("node-pty").IPty, platform: NodeJS.Platform) {
     this.process = process;
     this.platform = platform;
+    this.startupDataSubscription = process.onData((data) => this.pendingData?.push(data));
     this.exitSubscription = process.onExit((event) => {
       if (this.exitEvent) return;
       this.exitEvent = { exitCode: event.exitCode, signal: event.signal ?? null };
       this.exitSubscription.dispose();
+      this.startupDataSubscription.dispose();
       for (const listener of this.exitListeners) listener(this.exitEvent);
       this.exitListeners.clear();
     });
@@ -205,6 +209,10 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
 
   onData(callback: (data: string) => void): () => void {
     const disposable = this.process.onData(callback);
+    const pending = this.pendingData;
+    this.pendingData = undefined;
+    this.startupDataSubscription.dispose();
+    if (pending) for (const data of pending) callback(data);
     return () => {
       disposable.dispose();
     };
@@ -221,7 +229,9 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
     };
   }
 
-  disposeExitSubscription(): void {
+  disposeSubscriptions(): void {
+    this.startupDataSubscription.dispose();
+    this.pendingData = undefined;
     this.exitSubscription.dispose();
     this.exitListeners.clear();
   }
@@ -283,7 +293,7 @@ const make = Effect.fn("NodePtyAdapter.make")(function* () {
       if (platform === "win32") {
         yield* waitForWindowsPid(ptyProcess.nativeProcess, ptyProcess.process, input.shell).pipe(
           Effect.onError(() =>
-            Effect.sync(() => ptyProcess.process.disposeExitSubscription()).pipe(
+            Effect.sync(() => ptyProcess.process.disposeSubscriptions()).pipe(
               Effect.andThen(killStartingWindowsPty(ptyProcess.nativeProcess)),
             ),
           ),

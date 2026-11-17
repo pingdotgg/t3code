@@ -104,6 +104,7 @@ it.effect("waits for the Windows PID without requiring output", () =>
     assert.deepEqual(exits, [{ exitCode: 0, signal: null }]);
     stopData();
     stopExit();
+    assert.equal(nativeProcess.events.listenerCount("data"), 0);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -125,6 +126,7 @@ it.effect.each(["exit", "close", "error", "invalid-pid"] as const)(
       assert.equal(nativeProcess._socket.listenerCount("error"), 0);
       assert.equal(nativeProcess._socket.listenerCount("close"), 0);
       assert.equal(nativeProcess.events.listenerCount("exit"), 0);
+      assert.equal(nativeProcess.events.listenerCount("data"), 0);
       assert.equal(nativeProcess._agent.kill.mock.calls.length, 1);
     }).pipe(Effect.provide(layerTest)),
 );
@@ -140,6 +142,7 @@ it.effect("cancels the Windows connection without waiting for output", () =>
     assert.equal(nativeProcess.kill.mock.calls.length, 0);
     assert.equal(nativeProcess._socket.listenerCount("ready_datapipe"), 0);
     assert.equal(nativeProcess.events.listenerCount("exit"), 0);
+    assert.equal(nativeProcess.events.listenerCount("data"), 0);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -158,15 +161,21 @@ it.effect("reports an incompatible Windows readiness API instead of hanging", ()
 );
 
 it.effect.each([2048, 8])(
-  "preserves an exit during readiness handoff with scheduler budget %s",
+  "preserves output and exit during readiness handoff with scheduler budget %s",
   (budget) =>
     Effect.gen(function* () {
       const { nativeProcess, subscribed } = preparePendingProcess();
       const adapter = yield* PtyAdapter.PtyAdapter;
+      const output: string[] = [];
       const exits: PtyAdapter.PtyExitEvent[] = [];
       const fiber = yield* Effect.gen(function* () {
         const process = yield* adapter.spawn(spawnInput);
+        process.onData((data) => output.push(data));
         process.onExit((event) => exits.push(event));
+        const laterOutput: string[] = [];
+        const stopLaterData = process.onData((data) => laterOutput.push(data));
+        assert.deepEqual(laterOutput, []);
+        stopLaterData();
       }).pipe(
         Effect.provideService(Scheduler.MaxOpsBeforeYield, budget),
         Effect.provideService(Scheduler.PreventSchedulerYield, false),
@@ -175,8 +184,11 @@ it.effect.each([2048, 8])(
       yield* subscribed;
       nativeProcess.pid = 12345;
       nativeProcess._socket.emit("ready_datapipe");
+      nativeProcess.events.emit("data", "shell startup output");
+      nativeProcess.events.emit("data", "next output");
       nativeProcess.events.emit("exit", { exitCode: 0 });
       yield* Fiber.join(fiber);
+      assert.deepEqual(output, ["shell startup output", "next output"]);
       assert.equal(exits.length, 1);
     }).pipe(Effect.provide(layerTest)),
 );
