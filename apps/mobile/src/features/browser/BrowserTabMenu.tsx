@@ -1,6 +1,7 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import type { MenuAction } from "@react-native-menu/menu";
+import { useNavigation } from "@react-navigation/native";
 import {
   DEFAULT_PREVIEW_ZOOM_FACTOR,
   type EnvironmentId,
@@ -16,6 +17,7 @@ import { ControlPill } from "../../components/ui/ControlPill";
 import { Menu } from "../../components/ui/Menu";
 import { previewEnvironment } from "../../state/preview";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { browserTabUrl, loopbackUrlForDevice } from "./browserTabs";
 
 const APPEARANCES = [
   { id: "system", title: "System" },
@@ -43,12 +45,15 @@ export function BrowserTabMenu({
   tab,
   streaming,
   onPaste,
+  onReleaseControl,
 }: {
   readonly environmentId: EnvironmentId;
   readonly tab: PreviewSessionSnapshot;
   readonly streaming: boolean;
   readonly onPaste?: () => void;
+  readonly onReleaseControl?: () => void;
 }) {
+  const navigation = useNavigation();
   const adjust = useAtomCommand(previewEnvironment.adjust, "browser tab change");
   const resize = useAtomCommand(previewEnvironment.resize, "browser viewport change");
   const close = useAtomCommand(previewEnvironment.close, "browser tab close");
@@ -74,8 +79,13 @@ export function BrowserTabMenu({
     image: "xmark",
     attributes: { destructive: true, disabled: !canClose },
   };
+  const deviceUrl = loopbackUrlForDevice(browserTabUrl(tab));
   const actions: MenuAction[] = [
+    ...(deviceUrl ? [{ id: "open-on-device", title: "Open on this device", image: "iphone" }] : []),
     ...(onPaste ? [{ id: "paste", title: "Paste", image: "doc.on.clipboard" }] : []),
+    ...(onReleaseControl
+      ? [{ id: "release-control", title: "Release control", image: "hand.raised" }]
+      : []),
     { id: "hard-reload", title: "Hard reload", image: "arrow.clockwise.circle" },
     {
       id: "appearance",
@@ -131,7 +141,11 @@ export function BrowserTabMenu({
       });
       return;
     }
+    if (id === "open-on-device" && deviceUrl) {
+      return navigation.navigate("ThreadLocalPreview", { environmentId, url: deviceUrl });
+    }
     if (id === "paste") return onPaste?.();
+    if (id === "release-control") return onReleaseControl?.();
     if (id === "hard-reload") return void run({ hardReload: true });
     if (id === "zoom:in") return void run({ zoomFactor: zoomTo(1) });
     if (id === "zoom:out") return void run({ zoomFactor: zoomTo(-1) });
