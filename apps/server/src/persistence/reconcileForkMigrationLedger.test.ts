@@ -6,8 +6,8 @@ import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { migrationManifest, runMigrations } from "./Migrations.ts";
-import DesktopPairingMigration from "./Migrations/097_AuthDesktopPairingSessionTtl.ts";
-import RealtimeVoiceHistoryResumeMigration from "./Migrations/098_RealtimeVoiceHistoryResume.ts";
+import DesktopPairingMigration from "./Migrations/099_AuthDesktopPairingSessionTtl.ts";
+import RealtimeVoiceHistoryResumeMigration from "./Migrations/100_RealtimeVoiceHistoryResume.ts";
 import { reconcileForkMigrationLedger } from "./reconcileForkMigrationLedger.ts";
 
 const forkHistory = [
@@ -394,7 +394,7 @@ describe("desktop pairing backport upgrade", () => {
           "ScheduledTaskWebhooks",
         );
         assert.strictEqual(
-          history.find((row) => row.migration_id === 97)?.name,
+          history.find((row) => row.migration_id === 99)?.name,
           "AuthDesktopPairingSessionTtl",
         );
         assert.strictEqual(history.length, migrationManifest.length);
@@ -446,15 +446,17 @@ const forkRenumberTail = [
   [94, "TurnItemMessageOrdinalIndex"],
   [95, "TurnItemInlineWorkOutput"],
   [96, "RepairStaleTitleRegeneration"],
-  [97, "AuthDesktopPairingSessionTtl"],
-  [98, "RealtimeVoiceHistoryResume"],
+  [97, "IssueTrackerBindings"],
+  [98, "ActiveShellIndexIndexes"],
+  [99, "AuthDesktopPairingSessionTtl"],
+  [100, "RealtimeVoiceHistoryResume"],
 ];
 
 const readRenumberTail = Effect.map(readHistory, (history) =>
   history.filter((row) => row.migration_id >= 69).map((row) => [row.migration_id, row.name]),
 );
 
-// Upstream 070–096 must have run, not just been recorded.
+// Upstream 070–098 must have run, not just been recorded.
 const assertUpstreamSchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const hasColumn = (table: string, column: string) =>
@@ -472,16 +474,18 @@ const assertUpstreamSchema = Effect.gen(function* () {
   assert.isTrue(yield* hasColumn("projection_projects", "has_custom_title"));
   assert.isTrue(yield* hasColumn("auth_pairing_links", "connect_denied"));
   assert.isTrue(yield* hasColumn("auth_pairing_links", "desktop_session_ttl_days"));
+  assert.isTrue(yield* hasColumn("issue_tracker_bindings", "scope"));
   const indexes = yield* sql`
     SELECT name FROM sqlite_master
     WHERE type = 'index' AND name IN (
       'orchestration_v2_projection_turn_items_waiting_link_idx',
       'orchestration_v2_projection_turn_items_active_ordinal_idx',
       'orchestration_v2_projection_runs_delegated_delivery_idx',
-      'orchestration_v2_projection_turn_items_queued_input_idx'
+      'orchestration_v2_projection_turn_items_queued_input_idx',
+      'orchestration_v2_projection_threads_active_shell_idx'
     )
   `;
-  assert.strictEqual(indexes.length, 4);
+  assert.strictEqual(indexes.length, 5);
 });
 
 describe("fork migration renumber", () => {
@@ -493,6 +497,7 @@ describe("fork migration renumber", () => {
     [79, 80, 81],
     [80, 81, 82],
     [92, 93, 94],
+    [96, 97, 98],
   ] as const)(
     "reruns fork migrations recorded after upstream migration %i",
     ([throughId, pairingId, voiceId]) =>
@@ -526,16 +531,16 @@ describe("fork migration renumber", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
-  it.effect("adds only the fork migrations to an upstream database at 096", () =>
+  it.effect("adds only the fork migrations to an upstream database at 098", () =>
     Effect.gen(function* () {
-      yield* runMigrations({ toMigrationInclusive: 96 });
+      yield* runMigrations({ toMigrationInclusive: 98 });
       const before = yield* readHistory;
       const executed = yield* runMigrations();
       assert.deepStrictEqual(
         executed.map(([id, name]) => [id, name]),
         [
-          [97, "AuthDesktopPairingSessionTtl"],
-          [98, "RealtimeVoiceHistoryResume"],
+          [99, "AuthDesktopPairingSessionTtl"],
+          [100, "RealtimeVoiceHistoryResume"],
         ],
       );
       assert.deepStrictEqual((yield* readHistory).slice(0, before.length), before);

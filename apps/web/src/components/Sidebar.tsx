@@ -3358,7 +3358,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 role="status"
                 className="px-2 py-6 text-center text-xs text-sidebar-muted-foreground"
               >
-                {threadSearch.isPending ? "Searching thread messages…" : "No threads found"}
+                {threadSearch.isPending
+                  ? "Searching thread messages…"
+                  : threadSearch.failed
+                    ? "Couldn't search thread messages"
+                    : "No threads found"}
               </p>
             )
           ) : null}

@@ -15,7 +15,8 @@ type TextPart = string | typeof CELL_START | typeof CELL_END | { fallback: strin
 
 const TRUNCATED = "\n\n[Extracted text truncated at document extraction limits.]";
 // Parts the document never displays: the XHTML head, tracked deletions and moves, field codes,
-// phonetic guides, paragraph properties such as tab-stop definitions.
+// phonetic guides, paragraph properties such as tab-stop definitions, drawing anchor layout
+// values and encoded field data.
 const HIDDEN = new Set([
   "head",
   "script",
@@ -28,6 +29,11 @@ const HIDDEN = new Set([
   "delInstrText",
   "tracked-changes",
   "pPr",
+  "positionH",
+  "positionV",
+  "sizeRelH",
+  "sizeRelV",
+  "fldData",
 ]);
 
 // @effect-diagnostics-next-line extendsNativeError:off - this worker loads no Effect runtime; Truncation is a local throw sentinel.
@@ -99,7 +105,10 @@ function xml(source: string, extension: string): XmlNode {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
-    if (extension === ".docx" && node.name === "del") {
+    if (
+      (extension === ".docx" && node.name === "del") ||
+      (odf && node.name === "annotation" && parent.name !== "semantics")
+    ) {
       parent.children.pop();
       return;
     }
@@ -109,7 +118,7 @@ function xml(source: string, extension: string): XmlNode {
       parent.children.pop();
       return;
     }
-    if (!node.hasText && node.name !== "noBreakHyphen") return;
+    if (HIDDEN.has(node.name) || (!node.hasText && node.name !== "noBreakHyphen")) return;
     parent.hasText = true;
     if (node.name === "Choice") parent.hasTextChoice = true;
   });
@@ -445,7 +454,13 @@ function* rtf(source: string): Generator<string, void> {
             "object",
             "fldinst",
             "header",
+            "headerf",
+            "headerl",
+            "headerr",
             "footer",
+            "footerf",
+            "footerl",
+            "footerr",
           ].includes(control)
         )
           state.skip = true;
@@ -732,5 +747,5 @@ export async function extractDocumentText(path: string, extension: string): Prom
   }
   result = result.replaceAll(/\n(?:[ \t]*\n){2,}/g, "\n\n").trim();
   if (!result && !truncated) throw new Error("No text extracted");
-  return result + (truncated ? TRUNCATED : "");
+  return truncated ? result.replace(/[\uD800-\uDBFF]$/, "").trimEnd() + TRUNCATED : result;
 }
