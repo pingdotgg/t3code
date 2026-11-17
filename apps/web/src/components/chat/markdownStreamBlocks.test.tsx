@@ -5,16 +5,24 @@ import {
 } from "@t3tools/shared/markdownPipeline";
 import { renderToStaticMarkup } from "react-dom/server";
 import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import type { PluggableList } from "unified";
 import { describe, expect, it } from "vite-plus/test";
 
 import { splitMarkdownBlocks } from "./markdownStreamBlocks";
 import { rehypeHeadingIds } from "./markdownFragments";
 
+const MATH_PLUGINS: PluggableList = [[remarkMath, { singleDollarTextMath: true }]];
+
 // Whitespace between top-level blocks collapses in the rendered message.
-const html = (source: string) =>
+const html = (source: string, math = false) =>
   renderToStaticMarkup(
     <ReactMarkdown
-      remarkPlugins={[remarkAssistantInsights, ...CHAT_MARKDOWN_REMARK_PLUGINS]}
+      remarkPlugins={[
+        remarkAssistantInsights,
+        ...(math ? MATH_PLUGINS : []),
+        ...CHAT_MARKDOWN_REMARK_PLUGINS,
+      ]}
       rehypePlugins={[...CHAT_MARKDOWN_REHYPE_PLUGINS, rehypeHeadingIds]}
     >
       {source}
@@ -52,6 +60,8 @@ describe("splitMarkdownBlocks", () => {
     "## Done:\n\n## Done",
     "## `Setup`\n\n## Setup",
     "## a ` x ` b\n\n## a x b",
+    "# Setup\n\n# $$ Setup $$\n\n[second](#setup-1)",
+    "# Setup\n\n# $ Setup $\n\n[second](#setup-1)",
     "# Setup\n\n# Setup\n\n[Second setup](#setup-1)",
     "\ufeff# Setup\n\n# Setup\n\n[second](#setup-1)",
     "> Setup\n> ===\n\n> Setup\n> ===",
@@ -76,7 +86,8 @@ describe("splitMarkdownBlocks", () => {
       const source = text.slice(0, end);
       const blocks = splitMarkdownBlocks(source) ?? [source];
       expect(blocks.join("")).toBe(source);
-      expect(blocks.map(html).join("")).toBe(html(source));
+      expect(blocks.map((block) => html(block)).join("")).toBe(html(source));
+      expect(blocks.map((block) => html(block, true)).join("")).toBe(html(source, true));
     }
   });
 

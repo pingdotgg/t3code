@@ -36,7 +36,7 @@ export function splitMarkdownBlocks(text: string): string[] | null {
   const needsWholeHeading = (headingText: string | undefined) => {
     if (headingText === undefined) return false;
     // Inline syntax and path/directive colons need the renderer before their slug is known.
-    if (/[`*_~[\]<&\\!]|:(?!\s|$)/.test(headingText)) return true;
+    if (/[`*_~[\]<&\\!$]|:(?!\s|$)/.test(headingText)) return true;
     const key = githubHeadingSlug(headingText);
     if (!key) return false;
     if (headingKeys.has(key)) return true;
