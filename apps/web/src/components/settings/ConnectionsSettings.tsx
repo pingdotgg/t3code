@@ -2,7 +2,7 @@ import { SessionPermissions } from "./SessionPermissions";
 import { useSearch } from "@tanstack/react-router";
 import { ChevronRightIcon, EllipsisIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useState } from "react";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
@@ -94,13 +94,12 @@ import {
   useEnvironmentScope,
   useEnvironmentSessionState,
 } from "~/state/session";
-import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useEnvironmentQuery } from "~/state/query";
 import {
   desktopNetworkAccessStateAtom,
   refreshDesktopNetworkAccessState,
 } from "~/state/desktopNetworkAccess";
-import { desktopWslStateAtom, refreshDesktopWslState } from "~/state/desktopWslState";
+import { desktopWslAccessStateAtom, refreshDesktopWslState } from "~/state/desktopWslState";
 import { useDesktopUpdateState } from "~/state/desktopUpdate";
 import {
   type EnvironmentPresentation,
@@ -416,19 +415,8 @@ function ConnectionsSettingsContent({
     showsAccess && canManageLocalBackend && desktopBridge ? desktopNetworkAccessStateAtom : null,
   );
   const desktopWsl = useEnvironmentQuery(
-    showsAccess && canManageLocalBackend && desktopBridge ? desktopWslStateAtom : null,
+    showsAccess && canManageLocalBackend && desktopBridge ? desktopWslAccessStateAtom : null,
   );
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Re-read external WSL installations when entering Access while the sidebar retains its subscription.
-  useEffect(() => {
-    if (
-      showsAccess &&
-      canManageLocalBackend &&
-      desktopBridge &&
-      !appAtomRegistry.get(desktopWslStateAtom).waiting
-    ) {
-      refreshDesktopWslState();
-    }
-  }, [showsAccess, canManageLocalBackend, desktopBridge]);
   const desktopWslState = desktopWsl.data;
   const desktopWslError = desktopWslMutationError ?? desktopWsl.error;
   const isLoadingWslState = desktopWsl.isPending && desktopWsl.data === null;

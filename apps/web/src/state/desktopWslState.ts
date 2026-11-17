@@ -1,11 +1,13 @@
 import type { DesktopBridge, DesktopWslState } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { Atom } from "effect/reactivity";
+import { Atom, type AsyncResult } from "effect/reactivity";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
 type DesktopWslStateBridge = Pick<DesktopBridge, "getWslState">;
+const WSL_SEARCH_STALE_TIME_MS = 30_000;
 
 class DesktopWslStateUnavailableError extends Schema.TaggedError<DesktopWslStateUnavailableError>()(
   "DesktopWslStateUnavailableError",
@@ -41,12 +43,47 @@ function createDesktopWslStateAtom(getBridge: () => DesktopWslStateBridge | unde
     });
   });
 
-  // Not kept alive: each Settings mount reads WSL again, so newly installed distros appear.
-  return Atom.make(loadDesktopWslState()).pipe(Atom.withLabel("desktop:wsl-state:load"));
+  return Atom.make(loadDesktopWslState()).pipe(
+    Atom.keepAlive,
+    Atom.withLabel("desktop:wsl-state:load"),
+  );
 }
 
-export const desktopWslStateAtom = createDesktopWslStateAtom(getDesktopWslStateBridge);
+const desktopWslStateCache = createDesktopWslStateAtom(getDesktopWslStateBridge);
+
+function shouldRevalidate(
+  result: AsyncResult.AsyncResult<DesktopWslState, unknown>,
+  staleTimeMs: number,
+) {
+  if (result.waiting || result._tag === "Initial") return false;
+  if (staleTimeMs === 0) return true;
+  const success =
+    result._tag === "Success" ? result : Option.getOrUndefined(result.previousSuccess);
+  return success === undefined || Date.now() - success.timestamp >= staleTimeMs;
+}
+
+function readDesktopWslStateOnMount(staleTimeMs: number) {
+  return Atom.transform(desktopWslStateCache, (get) => {
+    const current = get(desktopWslStateCache);
+    if (Option.isNone(get.self()) && shouldRevalidate(current, staleTimeMs)) {
+      let active = true;
+      get.addFinalizer(() => {
+        active = false;
+      });
+      // Defer the refresh so it can't notify another reader during React render.
+      queueMicrotask(() => {
+        if (active && shouldRevalidate(get.once(desktopWslStateCache), staleTimeMs)) {
+          get.refresh(desktopWslStateCache);
+        }
+      });
+    }
+    return current;
+  });
+}
+
+export const desktopWslStateAtom = readDesktopWslStateOnMount(WSL_SEARCH_STALE_TIME_MS);
+export const desktopWslAccessStateAtom = readDesktopWslStateOnMount(0);
 
 export function refreshDesktopWslState(): void {
-  appAtomRegistry.refresh(desktopWslStateAtom);
+  appAtomRegistry.refresh(desktopWslStateCache);
 }

@@ -52,3 +52,61 @@ it("reloads WSL distributions when stale state is mounted again", async () => {
     vi.unstubAllGlobals();
   }
 });
+
+it("keeps cached search data while Access refreshes with search still subscribed", async () => {
+  const { desktopWslAccessStateAtom } = await import("./desktopWslState");
+  const initial: DesktopWslState = {
+    enabled: false,
+    distro: null,
+    available: true,
+    wslOnly: false,
+    distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+    preflightError: null,
+  };
+  const updated: DesktopWslState = {
+    ...initial,
+    distros: [...initial.distros, { name: "Debian", isDefault: false, version: 2 }],
+  };
+  const pending = Promise.withResolvers<DesktopWslState>();
+  const getWslState = vi.fn().mockResolvedValueOnce(initial).mockReturnValue(pending.promise);
+  vi.stubGlobal("window", { desktopBridge: { getWslState } });
+  const tasks: Array<() => void> = [];
+  const registry = AtomRegistry.make({
+    scheduleTask: (task) => {
+      tasks.push(task);
+      return () => {};
+    },
+  });
+  const readSearch = () =>
+    new Promise<DesktopWslState>((resolve) => {
+      const unsubscribe = registry.subscribe(desktopWslStateAtom, (result) => {
+        if (result._tag === "Success" && !result.waiting) {
+          unsubscribe();
+          resolve(result.value);
+        }
+      });
+    });
+  try {
+    const closeSearch = registry.mount(desktopWslStateAtom);
+    expect(await readSearch()).toEqual(initial);
+    closeSearch();
+    for (const task of tasks.splice(0)) task();
+
+    registry.mount(desktopWslStateAtom);
+    expect(AsyncResult.getOrThrow(registry.get(desktopWslStateAtom))).toEqual(initial);
+    await Promise.resolve();
+    expect(getWslState).toHaveBeenCalledTimes(1);
+
+    registry.mount(desktopWslAccessStateAtom);
+    await Promise.resolve();
+    expect(getWslState).toHaveBeenCalledTimes(2);
+    expect(AsyncResult.getOrThrow(registry.get(desktopWslStateAtom))).toEqual(initial);
+    const refreshed = readSearch();
+    pending.resolve(updated);
+    expect(await refreshed).toEqual(updated);
+    expect(AsyncResult.getOrThrow(registry.get(desktopWslAccessStateAtom))).toEqual(updated);
+  } finally {
+    registry.dispose();
+    vi.unstubAllGlobals();
+  }
+});
