@@ -426,6 +426,7 @@ export function McpAppFrame(props: {
           variant="ghost"
           onClick={() => {
             setSrc(null);
+            setHeight(MCP_APP_DEFAULT_HEIGHT);
             setDocumentGeneration((value) => value + 1);
             setClosed(false);
           }}
