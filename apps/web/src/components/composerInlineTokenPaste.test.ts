@@ -92,6 +92,13 @@ describe("importPastedComposerText", () => {
       expected: `\\\`${formatComposerContextReference({ ...sourceThread, contextId: localId })}\\\``,
     },
     {
+      name: "a CR-only fence closes before a reference after it",
+      text: `~~~\rcode\r~~~\r${reference}`,
+      records: [sourceThread],
+      importContext: importAsLocal,
+      expected: `~~~\ncode\n~~~\n${formatComposerContextReference({ ...sourceThread, contextId: localId })}`,
+    },
+    {
       name: "backticks in a reference's label do not open code",
       text: `Quote with \`, see ${formatComposerContextReference(codeThread)}`,
       records: [codeThread],

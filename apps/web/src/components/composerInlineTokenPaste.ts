@@ -120,7 +120,7 @@ export function readPastedPlainText(clipboardData: Pick<DataTransfer, "getData">
 export function readPastedComposerContext(
   clipboardData: Pick<DataTransfer, "getData">,
 ): ComposerContextClipboardFragment | null {
-  const pastedText = clipboardData.getData("text/plain");
+  const pastedText = readPastedPlainText(clipboardData);
   const decodedFragment =
     decodeComposerContextFragment(clipboardData.getData(COMPOSER_CONTEXT_CLIPBOARD_MIME)) ??
     decodeComposerContextClipboardHtml(clipboardData.getData("text/html"));
