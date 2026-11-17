@@ -12,6 +12,7 @@ import {
 } from "@t3tools/client-runtime/preview/server-browser-stream";
 import type { EnvironmentId, PreviewStreamHostSetup } from "@t3tools/contracts";
 import {
+  useCallback,
   useEffectEvent,
   useImperativeHandle,
   useLayoutEffect,
@@ -164,6 +165,8 @@ function AuthorizedPreviewStream({
   ...props
 }: PreviewStreamConfiguration & NativeStreamBridge) {
   const [attempt, setAttempt] = useState(0);
+  // Outlives reconnects, which remount the document view.
+  const [accessible, setAccessible] = useState(false);
   const [previousAccess, setPreviousAccess] = useState(props.access);
   // Wait for refreshed access, including cookie credentials with unchanged JSON.
   if (props.access !== previousAccess) {
@@ -185,6 +188,8 @@ function AuthorizedPreviewStream({
       {...props}
       ref={ref}
       configuration={configuration}
+      accessible={accessible}
+      onAccessibleChange={setAccessible}
       onUnauthorized={() => {
         const refusals = ++unauthorized.current;
         if (refusals >= MAX_REFUSALS) return false;
@@ -225,8 +230,12 @@ function PreviewStreamDocumentView({
   onRetry,
   onStreaming,
   onRecoverProcess,
+  accessible,
+  onAccessibleChange,
 }: Omit<NativeStreamBridge, "onUnauthorized" | "onRefused"> & {
   readonly configuration: string;
+  readonly accessible: boolean;
+  readonly onAccessibleChange: (accessible: boolean) => void;
   readonly background: string;
   readonly onUnauthorized: () => boolean;
   readonly onRetry: () => void;
@@ -260,6 +269,15 @@ function PreviewStreamDocumentView({
     webView.current?.injectJavaScript(
       `window.T3PreviewStream?.command(${JSON.stringify(input)}); true;`,
     );
+  const showAccessible = useCallback(
+    (next: boolean) =>
+      webView.current?.injectJavaScript(`window.T3PreviewStream?.accessibility(${next}); true;`),
+    [],
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- PDF transitions release the WebView's semantic stream and cached document without changing the user's preference.
+  useLayoutEffect(() => {
+    showAccessible(accessible && pdfUri == null);
+  }, [accessible, pdfUri, showAccessible]);
   // Reads here rather than in the screen: a tab switch during the iOS paste prompt unmounts
   // this view and nulls its WebView ref, so the text can never type into another tab.
   const paste = () =>
@@ -328,16 +346,26 @@ function PreviewStreamDocumentView({
           <AppText className="text-xs text-foreground-muted">
             {previewStreamControlLabel(control)}
           </AppText>
-          {control?.canOperate ? (
+          <View className="flex-row items-center gap-2">
             <Button
-              label={control.controller === "you" ? "Release control" : "Take control"}
+              label={accessible ? "Hide accessible view" : "Accessible view"}
               tone="secondary"
-              disabled={control.controller === "another-viewer"}
-              onPress={() =>
-                command({ type: control.controller === "you" ? "releaseControl" : "takeControl" })
-              }
+              disabled={pdfUri != null && !accessible}
+              onPress={() => {
+                onAccessibleChange(!accessible);
+              }}
             />
-          ) : null}
+            {control?.canOperate ? (
+              <Button
+                label={control.controller === "you" ? "Release control" : "Take control"}
+                tone="secondary"
+                disabled={control.controller === "another-viewer"}
+                onPress={() =>
+                  command({ type: control.controller === "you" ? "releaseControl" : "takeControl" })
+                }
+              />
+            ) : null}
+          </View>
         </View>
       ) : null}
       <View className="relative flex-1">
@@ -405,13 +433,14 @@ function PreviewStreamDocumentView({
                 onPictureInPicture?.(message, message.detail);
                 return;
               case "status":
+                if (message.status === "connecting") showAccessible(accessible && pdfUri == null);
                 if (message.status !== "connecting") clearBootstrapTimer();
                 if (message.status === "error") {
                   fail(message.detail ?? "Browser stream failed.");
                   return;
                 }
                 setStatus(message.status);
-                if (message.status === "connecting") {
+                if (message.status === "connecting" && !message.preserveControl) {
                   // Dialogs may have closed and reopened while this viewer was disconnected.
                   dialogRef.current = null;
                   setControl(null);
@@ -425,6 +454,46 @@ function PreviewStreamDocumentView({
         {pdfUri ? (
           <View className="absolute inset-0">
             <PdfPreview key={pdfUri} uri={pdfUri} />
+          </View>
+        ) : null}
+        {status !== "streaming" ? (
+          <View
+            className="absolute inset-0 items-center justify-center gap-4 px-6"
+            style={{ backgroundColor: background }}
+          >
+            {status === "connecting" ? <AppActivityIndicator colorClassName="accent-icon" /> : null}
+            {compact ? null : (
+              <AppText
+                accessibilityLiveRegion="polite"
+                className="text-center text-sm text-foreground-muted"
+              >
+                {status === "error" ? error : "Connecting to browser..."}
+              </AppText>
+            )}
+            {status === "error" && hostSetup && !compact ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Copy ${hostSetup.command}`}
+                className="w-full flex-row items-center gap-2 rounded-xl border border-secondary-border bg-secondary px-4 py-3"
+                onPress={() => {
+                  void Clipboard.setStringAsync(hostSetup.command).catch(() => undefined);
+                }}
+              >
+                <AppText selectable className="flex-1 font-mono text-sm text-secondary-foreground">
+                  {hostSetup.command}
+                </AppText>
+                <AppText className="text-xs text-foreground-muted">Copy</AppText>
+              </Pressable>
+            ) : null}
+            {status === "error" && !gone && !compact ? (
+              <View className="items-center">
+                <Button
+                  label={hostSetup ? "Try again" : "Reconnect"}
+                  tone="secondary"
+                  onPress={onRetry}
+                />
+              </View>
+            ) : null}
           </View>
         ) : null}
       </View>
@@ -480,46 +549,6 @@ function PreviewStreamDocumentView({
           ) : (
             <AppText className="text-xs text-foreground-muted">Take control to respond.</AppText>
           )}
-        </View>
-      ) : null}
-      {status !== "streaming" ? (
-        <View
-          className="absolute inset-0 items-center justify-center gap-4 px-6"
-          style={{ backgroundColor: background }}
-        >
-          {status === "connecting" ? <AppActivityIndicator colorClassName="accent-icon" /> : null}
-          {compact ? null : (
-            <AppText
-              accessibilityLiveRegion="polite"
-              className="text-center text-sm text-foreground-muted"
-            >
-              {status === "error" ? error : "Connecting to browser..."}
-            </AppText>
-          )}
-          {status === "error" && hostSetup && !compact ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Copy ${hostSetup.command}`}
-              className="w-full flex-row items-center gap-2 rounded-xl border border-secondary-border bg-secondary px-4 py-3"
-              onPress={() => {
-                void Clipboard.setStringAsync(hostSetup.command).catch(() => undefined);
-              }}
-            >
-              <AppText selectable className="flex-1 font-mono text-sm text-secondary-foreground">
-                {hostSetup.command}
-              </AppText>
-              <AppText className="text-xs text-foreground-muted">Copy</AppText>
-            </Pressable>
-          ) : null}
-          {status === "error" && !gone && !compact ? (
-            <View className="items-center">
-              <Button
-                label={hostSetup ? "Try again" : "Reconnect"}
-                tone="secondary"
-                onPress={onRetry}
-              />
-            </View>
-          ) : null}
         </View>
       ) : null}
     </View>

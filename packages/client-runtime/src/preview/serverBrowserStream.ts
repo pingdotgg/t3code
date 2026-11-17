@@ -2,9 +2,13 @@
 import { type DeviceHubAccess, withDeviceHubQuery } from "../device/hubAccess.ts";
 import {
   PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE,
+  PreviewAccessibilityDocument,
+  type PreviewAccessibilityAction,
   type PreviewStreamHostSetup,
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 export const PREVIEW_STREAM_BASE_PATH = "/api/preview-stream";
 
@@ -91,7 +95,8 @@ export type PreviewStreamInput =
   | { readonly type: "history"; readonly delta: -1 | 1 }
   | { readonly type: "reload"; readonly ignoreCache?: boolean }
   | { readonly type: "stopLoading" }
-  | { readonly type: "probe"; readonly x: number; readonly y: number };
+  | { readonly type: "probe"; readonly x: number; readonly y: number }
+  | PreviewAccessibilityAction;
 
 export interface PreviewStreamDownload {
   readonly fileName: string;
@@ -198,12 +203,19 @@ export interface PreviewStreamEvents {
   readonly onUnauthorized: () => void;
   readonly onGone?: () => void;
   readonly onHostSetup?: (setup: PreviewStreamHostSetup) => void;
+  /** `null` clears the view: turned off, disconnected, or the server reset it. */
+  readonly onAccessibility?: (document: PreviewAccessibilityDocument | null) => void;
+  readonly onAccessibilityNotice?: (message: string) => void;
 }
 
 export interface PreviewStreamClient {
   readonly send: (input: PreviewStreamInput) => boolean;
+  /** Not a page mutation, so read-only viewers may subscribe. Survives reconnects. */
+  readonly accessibility: (enabled: boolean) => void;
   readonly stop: () => void;
 }
+
+const decodeAccessibilityDocument = Schema.decodeUnknownOption(PreviewAccessibilityDocument);
 
 const ACK_MESSAGE = JSON.stringify({ type: "ack" });
 export function createPreviewStreamClient(
@@ -224,6 +236,13 @@ export function createPreviewStreamClient(
   let failures = 0;
   let control: PreviewStreamControl | null = null;
   let fileChooser: string | null = null;
+  let accessible = false;
+  let accessibilityShown = false;
+  const clearAccessibility = () => {
+    if (!accessibilityShown) return;
+    accessibilityShown = false;
+    events.onAccessibility?.(null);
+  };
 
   // The server re-offers a picker still open, under a new id, when this viewer reattaches.
   const withdrawFileChooser = () => {
@@ -242,6 +261,7 @@ export function createPreviewStreamClient(
       if (socket !== ws) return;
       opened = true;
       events.onConnectedChange(true);
+      if (accessible) ws.send(JSON.stringify({ type: "accessibility", enabled: true }));
     });
     ws.addEventListener("message", (event) => {
       if (socket !== ws) return;
@@ -279,8 +299,22 @@ export function createPreviewStreamClient(
         phase,
         sequence,
         tabId,
+        document,
+        message: noticeText,
       } = message as Record<string, unknown>;
-      if (
+      if (type === "accessibility") {
+        if (!accessible) return;
+        if (document === null) {
+          clearAccessibility();
+          return;
+        }
+        const decoded = decodeAccessibilityDocument(document);
+        if (Option.isNone(decoded)) return;
+        accessibilityShown = true;
+        events.onAccessibility?.(decoded.value);
+      } else if (type === "accessibilityNotice" && typeof noticeText === "string") {
+        if (accessible) events.onAccessibilityNotice?.(noticeText);
+      } else if (
         type === "fileChooser" &&
         typeof id === "string" &&
         typeof multiple === "boolean" &&
@@ -354,6 +388,7 @@ export function createPreviewStreamClient(
       if (socket !== ws) return;
       socket = null;
       control = null;
+      clearAccessibility();
       withdrawFileChooser();
       if (opened) events.onConnectedChange(false);
       if (stopped) return;
@@ -388,8 +423,18 @@ export function createPreviewStreamClient(
       socket.send(JSON.stringify(input));
       return true;
     },
+    accessibility: (enabled) => {
+      if (enabled === accessible) return;
+      accessible = enabled;
+      if (!enabled) clearAccessibility();
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: "accessibility", enabled }));
+      }
+    },
     stop: () => {
       stopped = true;
+      accessible = false;
+      clearAccessibility();
       if (retryTimer !== null) clearTimeout(retryTimer);
       const ws = socket;
       socket = null;
