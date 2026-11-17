@@ -19,7 +19,7 @@ describe("tokenizeCliArgs", () => {
     ]);
   });
 
-  it("preserves values and escaped spaces", () => {
+  it("preserves quoted values and escaped spaces", () => {
     expect(
       tokenizeCliArgs(
         String.raw`--config model="gpt 5" --enable foo\ bar --config=profile='work profile'`,
