@@ -2386,3 +2386,49 @@ it.effect("does not call a valid fj login on an HTTP-only server unauthenticated
     Effect.provideService(HostProcess.HomeDirectory, "/home/maria"),
   ),
 );
+
+it.effect("tries the next fj login when the first one is rejected", () =>
+  Effect.gen(function* () {
+    const spec = yield* ForgejoSourceControlProvider.makeDiscovery;
+    assert.strictEqual(spec.type, "managed-cli");
+    if (spec.type !== "managed-cli") return;
+    const result = yield* spec.probe("/repo");
+    assert.strictEqual(result.executable, "fj");
+    assert.strictEqual(result.auth.status, "authenticated");
+    assert.deepStrictEqual(result.auth.host, Option.some("forgejo.work"));
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          listLogins: () =>
+            Effect.succeed([
+              { name: "codeberg.org", url: "https://codeberg.org", user: "", default: "false" },
+              { name: "forgejo.work", url: "https://forgejo.work", user: "", default: "false" },
+            ]),
+          getAccount: () => Effect.succeed("maria"),
+        }),
+        TestSourceControlHost.layer({
+          process: {
+            run: (input) => {
+              // Settings has no project in scope, so there is no origin remote.
+              if (input.command === "git")
+                return Effect.succeed(
+                  processOutput("", { exitCode: ChildProcessSpawner.ExitCode(2) }),
+                );
+              if (input.args[0] === "version") return Effect.succeed(processOutput("fj v0.7.0"));
+              return Effect.succeed(
+                input.args.includes("https://forgejo.work")
+                  ? processOutput("currently signed into maria@forgejo.work")
+                  : processOutput("", {
+                      exitCode: ChildProcessSpawner.ExitCode(1),
+                      stderr: "Error: unauthorized: access token does not exist",
+                    }),
+              );
+            },
+          },
+        }),
+      ),
+    ),
+    Effect.provideService(HostProcess.HomeDirectory, "/home/maria"),
+  ),
+);
