@@ -130,6 +130,19 @@ describe("issueFilterScopes", () => {
     ]);
   });
 
+  it("offers a bound tracker's scope the answer names when a search matches nothing", () => {
+    const scope = {
+      projectId: api,
+      tracker: "linear" as IssueTrackerKind,
+      host: "linear.app",
+      scope: "ENG",
+    };
+    const held = new Map([
+      [environmentId, hold(answer({ trackers: [tracker({})], entries: [], scopes: [scope] }))],
+    ]);
+    expect(issueFilterScopes(held, [])).toEqual([{ environmentId, input: scope }]);
+  });
+
   it("skips a tracker that cannot be read", () => {
     const held = new Map([
       [
