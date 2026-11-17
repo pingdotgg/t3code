@@ -44,6 +44,7 @@ import {
   type LayoutTab,
   type LayoutViewport,
   type LayoutWorkspace,
+  isBlankLayoutWorkspace,
 } from "./layoutModel";
 import { useLayoutStore } from "./layoutStore";
 import { observeResize } from "../lib/observeResize";
@@ -435,7 +436,8 @@ export function selectOverviewStage(
   // An empty workspace only shows while it is the focused one.
   const rows = layout.workspaces
     .filter(
-      (workspace) => workspace.columns.length > 0 || workspace.id === layout.focusedWorkspaceId,
+      (workspace) =>
+        !isBlankLayoutWorkspace(workspace) || workspace.id === layout.focusedWorkspaceId,
     )
     .map((workspace, index) => ({
       workspace,

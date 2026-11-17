@@ -357,7 +357,14 @@ export function useThreadSurfaceOpeners(threadRef: ScopedThreadRef) {
       });
     });
   };
-  return { available, browserUnavailableReason, open, runShellCommand };
+  return {
+    available,
+    browserUnavailableReason,
+    pullRequestNumber: pullRequestTarget?.number ?? null,
+    linkedPullRequestCount: linkedCount,
+    open,
+    runShellCommand,
+  };
 }
 
 /** A new shell in a surface's folder: its checkout, or the server's home. */

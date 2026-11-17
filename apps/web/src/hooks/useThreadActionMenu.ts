@@ -60,6 +60,8 @@ function failureToast(title: string, error: unknown) {
   );
 }
 
+const NEW_SIDE_CHAT_MENU_ID = "thread:new-side-chat";
+
 export function useThreadActionMenu(input: {
   readonly threadRef: ScopedThreadRef | null;
   readonly projectCwd: string | null;
@@ -69,6 +71,7 @@ export function useThreadActionMenu(input: {
   /** Tab actions prepended to the thread menu, read when it opens. */
   readonly leadingItems?: () => readonly ContextMenuItem<string>[];
   readonly onLeadingAction?: (id: string) => void;
+  readonly onNewSideChat?: (() => void) | undefined;
 }) {
   const {
     threadRef,
@@ -78,6 +81,7 @@ export function useThreadActionMenu(input: {
     canShareWithGuest,
     leadingItems,
     onLeadingAction,
+    onNewSideChat,
   } = input;
   const router = useRouter();
   const projects = useProjects();
@@ -159,17 +163,26 @@ export function useThreadActionMenu(input: {
       });
       const leading = leadingItems?.() ?? [];
       const leadingIds = new Set(leading.map((item) => item.id));
-      const menuItems: ContextMenuItem<string>[] =
-        leading.length > 0
-          ? [
-              ...leading,
-              ...items.map((item, index) =>
-                index === 0 ? { ...item, separatorBefore: true } : item,
-              ),
-            ]
-          : [...items];
+      const sideChatItems: ContextMenuItem<string>[] = onNewSideChat
+        ? [{ id: NEW_SIDE_CHAT_MENU_ID, label: "New side chat", icon: "messages-square" }]
+        : [];
+      const menuItems: ContextMenuItem<string>[] = [
+        ...sideChatItems,
+        ...leading.map((item, index) =>
+          index === 0 && sideChatItems.length > 0 ? { ...item, separatorBefore: true } : item,
+        ),
+        ...items.map((item, index) =>
+          index === 0 && (leading.length > 0 || sideChatItems.length > 0)
+            ? { ...item, separatorBefore: true }
+            : item,
+        ),
+      ];
       const clicked = await settlePromise(() => api.contextMenu.show(menuItems, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;
+      if (clicked.value === NEW_SIDE_CHAT_MENU_ID) {
+        onNewSideChat?.();
+        return;
+      }
       if (leadingIds.has(clicked.value)) {
         onLeadingAction?.(clicked.value);
         return;

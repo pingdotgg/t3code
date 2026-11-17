@@ -18,7 +18,12 @@ import {
   type LayoutDragState,
   type LayoutDropTarget,
 } from "./layoutDrag";
-import { findLayoutTab, type LayoutTab } from "./layoutModel";
+import {
+  findLayoutPane,
+  findLayoutTab,
+  isBlankLayoutWorkspace,
+  type LayoutTab,
+} from "./layoutModel";
 import { useLayoutStore } from "./layoutStore";
 import { useLayoutTabLabel } from "./PaneTabs";
 import { surfaceTabTitle } from "./surfaceTabLabels";
@@ -313,10 +318,20 @@ function DropPill({ x, y, children }: { x: number; y: number; children: ReactNod
 /** A window overlay keeps webviews and iframes from swallowing layout drags. */
 export function LayoutDropZones() {
   const state = useLayoutDragState();
+  const fillsBlank = useLayoutStore(({ layout }) => {
+    if (state?.target?.kind !== "into") return false;
+    const found = findLayoutPane(layout, state.target.paneId);
+    if (!found || !isBlankLayoutWorkspace(found.workspace)) return false;
+    const { source } = state;
+    return (
+      source.kind !== "tab" ||
+      findLayoutTab(layout, (tab) => tab.id === source.tabId)?.tab.content.kind !== "launcher"
+    );
+  });
   const threadGhost = useThreadContextDragGhost();
   if (!state) return null;
   const zone = state.target ? targetZone(state, state.target) : null;
-  const into = state.target ? intoTabs(state, state.target) : null;
+  const into = state.target && !fillsBlank ? intoTabs(state, state.target) : null;
   return createPortal(
     <div
       data-layout-drag-overlay=""

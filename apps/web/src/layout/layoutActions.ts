@@ -215,8 +215,8 @@ let openBesideAction: OpenBesideAction | null = null;
 
 /**
  * The focused chat registers what it can open beside itself, so "Open
- * beside…" in the palette and its notch's "+" can open its surfaces and
- * terminal as tabs of its pane.
+ * beside…" in the palette can open its surfaces and terminal as tabs of
+ * its pane.
  */
 export function registerLayoutOpenBesideAction(action: OpenBesideAction): () => void {
   openBesideAction = action;

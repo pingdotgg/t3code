@@ -233,7 +233,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const browserBesideAvailable = canOperatePreview && browserAvailable;
   const diffBesideAvailable = isServerThread && isGitRepo;
   const projectBesideAvailable = activeProject !== null;
-  // Also what the header's "+" offers after a new thread.
   const besideAvailable = (() => {
     const available = new Set<LayoutBesideKind>();
     if (diffBesideAvailable) available.add("diff");
@@ -252,7 +251,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   ) => {
     if (activeThreadRef === null) return;
     const targetPaneId = paneId === undefined ? layoutPane.paneId : paneId;
-    // The palette and the "+" menu open the surface as a tab of their pane.
+    // The palette opens the surface as a tab of its pane.
     if (targetPaneId !== null) {
       requestLayoutSurfacePlacement(activeThreadRef, { kind: "pane", paneId: targetPaneId });
     }
@@ -309,8 +308,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
 
   return {
     shortcuts,
-    besideAvailable,
-    openBesideStable,
     onOpenToolDiffStable,
     onOpenTurnDiffStable,
     openChangesFromThreadPanelStable,
