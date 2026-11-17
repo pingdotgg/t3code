@@ -135,35 +135,6 @@ describe("AntigravityAdapterV2 flavor", () => {
       outcome: { outcome: "selected", optionId: "opt-dev" },
     });
   });
-
-  it("omits additionalDirectories from runtime options so agent cwd remains in workspace", () =>
-    Effect.gen(function* () {
-      let runtimeOptions: Record<string, unknown> | undefined;
-      const testFlavor = makeAntigravityAcpAdapterFlavor({
-        instanceId: ProviderInstanceId.make("antigravity-test"),
-        random: undefined as never,
-        fileSystem: undefined as never,
-        path: undefined as never,
-        host: { paths: { attachmentsDir: "/test/attachments" } } as never,
-        selfInvocation: undefined as never,
-        makeRuntime: (input) => {
-          runtimeOptions = input as unknown as Record<string, unknown>;
-          return Effect.succeed({
-            handleSessionUpdate: () => Effect.void,
-            handleReadTextFile: () => Effect.void,
-          } as never);
-        },
-        withProcess: (_stop, task) => task,
-        defaultModel: Effect.undefined,
-      });
-
-      yield* testFlavor.makeRuntime({
-        cwd: "/test/project",
-        mcpServers: [],
-      } as never).pipe(Effect.scoped);
-
-      assert.isUndefined(runtimeOptions?.additionalDirectories);
-    }));
 });
 
 const layerSession = Layer.mergeAll(
@@ -376,17 +347,26 @@ describe("AntigravityAdapterV2 client file system", () => {
         runtimePolicy,
       });
       yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
-      const initialize = (yield* fileSystem.readFileString(requestLog))
+      const requests = (yield* fileSystem.readFileString(requestLog))
         .trim()
         .split("\n")
         .map(
           (line) =>
             JSON.parse(line) as {
               method?: string;
-              params?: { clientCapabilities?: { fs?: unknown }; clientInfo?: { name?: string } };
+              params?: {
+                clientCapabilities?: { fs?: unknown };
+                clientInfo?: { name?: string };
+                additionalDirectories?: unknown;
+              };
             },
-        )
-        .find((request) => request.method === "initialize");
+        );
+      const initialize = requests.find((request) => request.method === "initialize");
+      // agy runs shell commands from its lexicographically first root, so attachments
+      // must reach it through client reads, never as an extra workspace root.
+      assert.isUndefined(
+        requests.find((request) => request.method === "session/new")?.params?.additionalDirectories,
+      );
       assert.deepEqual(initialize?.params?.clientCapabilities?.fs, {
         readTextFile: true,
         writeTextFile: false,
