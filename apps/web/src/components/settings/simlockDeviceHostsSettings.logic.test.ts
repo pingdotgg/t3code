@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import type { EnvironmentId } from "@t3tools/contracts";
+import { SecretProviderId, type EnvironmentId } from "@t3tools/contracts";
 
 import {
   newSimlockDeviceHost,
@@ -36,7 +36,7 @@ describe("Simlock device host settings", () => {
     expect(updateSimlockDeviceHosts(renamed, host, true)).toEqual([other]);
   });
 
-  it("saves the shared fields everywhere and each environment's own token", () => {
+  it("saves the shared fields everywhere and each environment's own token, if it has one", () => {
     const mbp = "mbp" as EnvironmentId;
     const cups = "cups" as EnvironmentId;
     const environments = [
@@ -48,7 +48,10 @@ describe("Simlock device host settings", () => {
     expect(
       planSimlockDeviceHostSave(environments, draft, new Map([[mbp, { kind: "saved" }]])),
     ).toEqual({
-      problem: "Add an agent token for cups.",
+      patches: [
+        { environmentId: mbp, hosts: [{ ...draft, agentToken: "<redacted>" }] },
+        { environmentId: cups, hosts: [{ ...draft, agentToken: "" }] },
+      ],
     });
     expect(
       planSimlockDeviceHostSave(
@@ -64,6 +67,16 @@ describe("Simlock device host settings", () => {
         { environmentId: mbp, hosts: [{ ...draft, agentToken: "<redacted>" }] },
         { environmentId: cups, hosts: [{ ...draft, agentToken: "cups-token" }] },
       ],
+    });
+    const reference = { provider: SecretProviderId.make("homelab"), reference: "simlock#token" };
+    expect(
+      planSimlockDeviceHostSave(
+        environments,
+        draft,
+        new Map([[cups, { kind: "new", value: reference }]]),
+      ),
+    ).toMatchObject({
+      patches: [{}, { environmentId: cups, hosts: [{ ...draft, agentToken: reference }] }],
     });
   });
 });

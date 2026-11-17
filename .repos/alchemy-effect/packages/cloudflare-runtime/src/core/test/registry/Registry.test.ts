@@ -55,12 +55,8 @@ describe.each(watcherModes)(
         const fs = yield* FileSystem.FileSystem;
         const registry = yield* Registry.Registry;
 
-        const {
-          entryPath,
-          subscriberEntry,
-          registryEntry,
-          registryServiceMap,
-        } = yield* makeTestData("1");
+        const { entryPath, subscriberEntry, registryEntry, registryServiceMap } =
+          yield* makeTestData("1");
 
         const scope = yield* Scope.make();
         yield* registry.write(registryEntry).pipe(Scope.provide(scope));
@@ -92,38 +88,32 @@ describe.each(watcherModes)(
     // instance's unregister finalizer must not delete the replacement's
     // registration — removal is owner-aware (only removes the file while it
     // still holds that write's content).
-    it.live(
-      "unregistering a superseded entry keeps the replacement registration",
-      () =>
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const registry = yield* Registry.Registry;
-          const { entryPath, registryEntry } = yield* makeTestData("7");
-          const replacementEntry: RegistryEntry = {
-            ...registryEntry,
-            debugPortAddress: "127.0.0.1:23456",
-          };
+    it.live("unregistering a superseded entry keeps the replacement registration", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const registry = yield* Registry.Registry;
+        const { entryPath, registryEntry } = yield* makeTestData("7");
+        const replacementEntry: RegistryEntry = {
+          ...registryEntry,
+          debugPortAddress: "127.0.0.1:23456",
+        };
 
-          const oldScope = yield* Scope.make();
-          yield* registry.write(registryEntry).pipe(Scope.provide(oldScope));
+        const oldScope = yield* Scope.make();
+        yield* registry.write(registryEntry).pipe(Scope.provide(oldScope));
 
-          const replacementScope = yield* Scope.make();
-          yield* registry
-            .write(replacementEntry)
-            .pipe(Scope.provide(replacementScope));
+        const replacementScope = yield* Scope.make();
+        yield* registry.write(replacementEntry).pipe(Scope.provide(replacementScope));
 
-          // Closing the superseded instance's scope must not delete the file —
-          // it now belongs to the replacement.
-          yield* Scope.close(oldScope, Exit.void);
-          expect(yield* fs.exists(entryPath)).toBe(true);
-          expect(JSON.parse(yield* fs.readFileString(entryPath))).toEqual(
-            replacementEntry,
-          );
+        // Closing the superseded instance's scope must not delete the file —
+        // it now belongs to the replacement.
+        yield* Scope.close(oldScope, Exit.void);
+        expect(yield* fs.exists(entryPath)).toBe(true);
+        expect(JSON.parse(yield* fs.readFileString(entryPath))).toEqual(replacementEntry);
 
-          // Closing the replacement's own scope removes it.
-          yield* Scope.close(replacementScope, Exit.void);
-          expect(yield* fs.exists(entryPath)).toBe(false);
-        }).pipe(Effect.provide(services)),
+        // Closing the replacement's own scope removes it.
+        yield* Scope.close(replacementScope, Exit.void);
+        expect(yield* fs.exists(entryPath)).toBe(false);
+      }).pipe(Effect.provide(services)),
     );
 
     it.live("read skips entries that don't match the subscriber", () =>
@@ -142,19 +132,13 @@ describe.each(watcherModes)(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const registry = yield* Registry.Registry;
-        const {
-          entryPath,
-          subscriberEntry,
-          registryServiceMap,
-          registryEntry,
-        } = yield* makeTestData("4");
+        const { entryPath, subscriberEntry, registryServiceMap, registryEntry } =
+          yield* makeTestData("4");
 
         yield* registry.write(registryEntry);
         yield* waitForRegistryEntry(subscriberEntry, { toBeDefined: true });
 
-        expect(yield* registry.read([subscriberEntry])).toEqual(
-          registryServiceMap,
-        );
+        expect(yield* registry.read([subscriberEntry])).toEqual(registryServiceMap);
 
         const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
         yield* fs.utimes(entryPath, tenMinAgo, tenMinAgo);
@@ -181,8 +165,7 @@ describe.each(watcherModes)(
             ConfigProvider.layer(
               ConfigProvider.fromUnknown({
                 CLOUDFLARE_RUNTIME_HOME: home,
-                CLOUDFLARE_RUNTIME_FILE_SYSTEM_SUPPORTS_WATCHER:
-                  fileSystemSupportsWatcher,
+                CLOUDFLARE_RUNTIME_FILE_SYSTEM_SUPPORTS_WATCHER: fileSystemSupportsWatcher,
               }),
             ),
           ),
@@ -213,55 +196,49 @@ describe.each(watcherModes)(
       }).pipe(Effect.provide(NodeServices.layer)),
     );
 
-    it.live(
-      "publishes complete entries atomically during creation and replacement",
-      () =>
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          let publishedPath: string;
-          let previous: string | undefined;
-          const observedFs = FileSystem.FileSystem.of({
-            ...fs,
-            writeFileString: (file, content, options) =>
-              fs.writeFileString(file, content, options).pipe(
-                Effect.tap(() =>
-                  Effect.gen(function* () {
-                    // Inspect the public file after the bytes are written, before rename.
-                    const published = yield* fs
-                      .readFileString(publishedPath)
-                      .pipe(Effect.orElseSucceed(() => undefined));
-                    expect(published).toBe(previous);
-                  }),
-                ),
+    it.live("publishes complete entries atomically during creation and replacement", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        let publishedPath: string;
+        let previous: string | undefined;
+        const observedFs = FileSystem.FileSystem.of({
+          ...fs,
+          writeFileString: (file, content, options) =>
+            fs.writeFileString(file, content, options).pipe(
+              Effect.tap(() =>
+                Effect.gen(function* () {
+                  // Inspect the public file after the bytes are written, before rename.
+                  const published = yield* fs
+                    .readFileString(publishedPath)
+                    .pipe(Effect.orElseSucceed(() => undefined));
+                  expect(published).toBe(previous);
+                }),
               ),
-          });
-          const registryServices = Registry.RegistryLive.pipe(
-            Layer.provideMerge(Paths.PathsLive),
-            Layer.provide(configProvider({ fileSystemSupportsWatcher })),
-            Layer.provide(Layer.succeed(FileSystem.FileSystem)(observedFs)),
-          );
-          yield* Effect.gen(function* () {
-            const directory = yield* Paths.state("alchemy", "registry");
-            publishedPath = path.join(directory, "atomic-write.json");
-            const registry = yield* Registry.Registry;
-            const entry = registryEntry("atomic-write");
-            yield* registry.write(entry);
-            previous = JSON.stringify(entry, null, 2);
-            expect(yield* fs.readFileString(publishedPath)).toBe(previous);
-            const replacement = {
-              ...entry,
-              debugPortAddress: "127.0.0.1:23456",
-            };
-            yield* registry.write(replacement);
-            expect(JSON.parse(yield* fs.readFileString(publishedPath))).toEqual(
-              replacement,
-            );
-            expect(yield* fs.readDirectory(directory)).toEqual([
-              "atomic-write.json",
-            ]);
-          }).pipe(Effect.provide(registryServices));
-        }).pipe(Effect.provide(NodeServices.layer)),
+            ),
+        });
+        const registryServices = Registry.RegistryLive.pipe(
+          Layer.provideMerge(Paths.PathsLive),
+          Layer.provide(configProvider({ fileSystemSupportsWatcher })),
+          Layer.provide(Layer.succeed(FileSystem.FileSystem)(observedFs)),
+        );
+        yield* Effect.gen(function* () {
+          const directory = yield* Paths.state("alchemy", "registry");
+          publishedPath = path.join(directory, "atomic-write.json");
+          const registry = yield* Registry.Registry;
+          const entry = registryEntry("atomic-write");
+          yield* registry.write(entry);
+          previous = JSON.stringify(entry, null, 2);
+          expect(yield* fs.readFileString(publishedPath)).toBe(previous);
+          const replacement = {
+            ...entry,
+            debugPortAddress: "127.0.0.1:23456",
+          };
+          yield* registry.write(replacement);
+          expect(JSON.parse(yield* fs.readFileString(publishedPath))).toEqual(replacement);
+          expect(yield* fs.readDirectory(directory)).toEqual(["atomic-write.json"]);
+        }).pipe(Effect.provide(registryServices));
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("a partial external write does not stop registry updates", () =>
@@ -280,9 +257,7 @@ describe.each(watcherModes)(
               .readFileString(path, encoding)
               .pipe(
                 Effect.tap((content) =>
-                  content === "{"
-                    ? Deferred.succeed(partialRead, undefined)
-                    : Effect.void,
+                  content === "{" ? Deferred.succeed(partialRead, undefined) : Effect.void,
                 ),
               ),
         });
@@ -292,8 +267,7 @@ describe.each(watcherModes)(
             ConfigProvider.layer(
               ConfigProvider.fromUnknown({
                 CLOUDFLARE_RUNTIME_HOME: home,
-                CLOUDFLARE_RUNTIME_FILE_SYSTEM_SUPPORTS_WATCHER:
-                  fileSystemSupportsWatcher,
+                CLOUDFLARE_RUNTIME_FILE_SYSTEM_SUPPORTS_WATCHER: fileSystemSupportsWatcher,
               }),
             ),
           ),
@@ -313,9 +287,9 @@ describe.each(watcherModes)(
           yield* fs.writeFileString(entryPath, "{");
           yield* Deferred.await(partialRead);
           yield* fs.writeFileString(entryPath, JSON.stringify(entry));
-          expect(
-            yield* Queue.take(queue).pipe(Effect.timeout("3 seconds")),
-          ).toEqual(registryServiceMap(entry.scriptName));
+          expect(yield* Queue.take(queue).pipe(Effect.timeout("3 seconds"))).toEqual(
+            registryServiceMap(entry.scriptName),
+          );
         }).pipe(Effect.provide(registryServices));
       }).pipe(Effect.provide(NodeServices.layer)),
     );
@@ -323,8 +297,7 @@ describe.each(watcherModes)(
     it.live("subscribe fires when the registry changes", () =>
       Effect.gen(function* () {
         const registry = yield* Registry.Registry;
-        const { registryEntry, subscriberEntry, registryServiceMap } =
-          yield* makeTestData("5");
+        const { registryEntry, subscriberEntry, registryServiceMap } = yield* makeTestData("5");
         const queue = yield* Queue.unbounded<ResolvedTargetMap, Done<void>>();
         yield* registry
           .subscribe([subscriberEntry])

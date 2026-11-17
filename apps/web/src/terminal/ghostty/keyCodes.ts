@@ -1,4 +1,4 @@
-import { US_SHIFTED_TO_UNSHIFTED_KEYS } from "@t3tools/shared/keybindings";
+import { isMacPlatform, US_SHIFTED_TO_UNSHIFTED_KEYS } from "@t3tools/shared/keybindings";
 
 // This order mirrors GhosttyKey in ghostty/vt/key/event.h. The values are
 // intentionally derived from the official W3C-aligned enum instead of
@@ -190,9 +190,32 @@ export function ghosttyKeyForCode(code: string): number {
   return codeToGhosttyKey.get(code) ?? 0;
 }
 
+// With NumLock off, keypad digits report navigation keys; Ghostty encodes those as keypad variants.
+const NUMPAD_NAVIGATION_KEYS = new Map<string, number>(
+  (
+    [
+      ["ArrowDown", "NumpadArrowDown"],
+      ["ArrowLeft", "NumpadArrowLeft"],
+      ["ArrowRight", "NumpadArrowRight"],
+      ["ArrowUp", "NumpadArrowUp"],
+      ["Clear", "NumpadBegin"],
+      ["Delete", "NumpadDelete"],
+      ["End", "NumpadEnd"],
+      ["Home", "NumpadHome"],
+      ["Insert", "NumpadInsert"],
+      ["PageDown", "NumpadPageDown"],
+      ["PageUp", "NumpadPageUp"],
+    ] as const
+  ).map(([key, code]) => [key, ghosttyKeyForCode(code)]),
+);
+
 export function ghosttyKeyForEvent(event: Pick<KeyboardEvent, "code" | "key">): number {
-  // Android browsers can omit the physical code for keys such as Backspace.
-  return ghosttyKeyForCode(event.code) || ghosttyKeyForCode(event.key);
+  return (
+    (event.code.startsWith("Numpad") && NUMPAD_NAVIGATION_KEYS.get(event.key)) ||
+    ghosttyKeyForCode(event.code) ||
+    // Android browsers can omit the physical code for keys such as Backspace.
+    ghosttyKeyForCode(event.key)
+  );
 }
 
 export interface GhosttyKeyboardLayoutMap {
@@ -216,12 +239,14 @@ export function loadGhosttyKeyboardLayoutMap(): Promise<GhosttyKeyboardLayoutMap
   return promise;
 }
 
-// Browsers omit consumed modifiers; treat Shift as consumed for unchorded characters.
+// Browsers omit consumed modifiers; macOS Option composes layout characters too.
 export function ghosttyConsumedMods(
   event: Pick<KeyboardEvent, "altKey" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
+  platform = navigator.platform,
 ): number {
-  if (!event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return 0;
-  return [...event.key].length === 1 ? 1 : 0;
+  if (event.ctrlKey || event.metaKey || [...event.key].length !== 1) return 0;
+  if (event.altKey && !isMacPlatform(platform)) return 0;
+  return (event.shiftKey ? 1 : 0) | (event.altKey ? 1 << 2 : 0);
 }
 
 export function ghosttyUnshiftedCodepoint(
