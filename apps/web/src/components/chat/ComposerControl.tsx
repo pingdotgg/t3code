@@ -26,7 +26,7 @@ function composerControlClassName(
     variant === "settings"
       ? "surface-well text-foreground"
       : "hover:surface-ghost-hover data-pressed:surface-ghost-hover",
-    variant === "settings" && "h-7 sm:h-7",
+    variant === "settings" && "h-7 font-normal sm:h-7",
     className,
   );
 }
@@ -46,6 +46,7 @@ export function ComposerControl({
   const defaultProps = {
     className: composerControlClassName(size, className, variant),
     type: render ? undefined : ("button" as const),
+    "data-settings-picker": variant === "settings" ? "" : undefined,
   };
   return useRender({
     defaultTagName: "button",
