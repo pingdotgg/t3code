@@ -417,7 +417,11 @@ describe("GitHubIssueTracker", () => {
         .pipe(Effect.result);
       expect(result).toMatchObject({
         _tag: "Failure",
-        failure: { operation: "create", reason: "failed" },
+        failure: {
+          operation: "create",
+          reason: "failed",
+          detail: expect.stringContaining("https://github.com/acme/web/issues/43"),
+        },
       });
     }),
   );
