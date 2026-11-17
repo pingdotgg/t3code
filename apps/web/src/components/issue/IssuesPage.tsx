@@ -227,9 +227,15 @@ export function IssuesPage() {
   );
   const list = {
     ...listing,
-    error: unsupportedProjects
-      ? "Update the selected environment's T3 Code server to filter issues by project."
-      : listing.error,
+    error:
+      [
+        listing.error,
+        unsupportedProjects
+          ? "Update the selected environment's T3 Code server to filter issues by project."
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" ") || null,
   };
   useLiveRefresh(list.refresh, { key: JSON.stringify(targets) });
 

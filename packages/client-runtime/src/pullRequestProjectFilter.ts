@@ -8,7 +8,7 @@ interface FilterProject {
   readonly workspaceRoot: string;
 }
 
-export function distinguishTitles<Project extends FilterProject>(
+function distinguishTitles<Project extends FilterProject>(
   projects: ReadonlyArray<Project>,
   suffix: (project: Project) => string,
 ) {
@@ -40,8 +40,15 @@ export function pullRequestFilterProjects<Project extends FilterProject>(
     if (!byRepository.has(key) || selected) byRepository.set(key, project);
   }
 
+  return distinctProjectTitles([...byRepository.values()], environmentLabels);
+}
+
+export function distinctProjectTitles<Project extends FilterProject>(
+  projects: ReadonlyArray<Project>,
+  environmentLabels: ReadonlyMap<EnvironmentId, string>,
+) {
   const byServer = distinguishTitles(
-    [...byRepository.values()],
+    projects,
     (project) => environmentLabels.get(project.environmentId) ?? project.environmentId,
   );
   const byPath = distinguishTitles(byServer, (project) => project.workspaceRoot);

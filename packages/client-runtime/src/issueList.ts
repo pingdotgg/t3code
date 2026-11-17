@@ -14,7 +14,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { mergeIssueListPage, type IssueListTarget } from "./state/issues.ts";
-import { distinguishTitles } from "./pullRequestProjectFilter.ts";
+import { distinctProjectTitles } from "./pullRequestProjectFilter.ts";
 import { sourceControlClients } from "./sourceControlClients.ts";
 import type { EnvironmentProject } from "./state/shell.ts";
 
@@ -72,15 +72,7 @@ export function issueFilterProjects<
     readonly workspaceRoot: string;
   },
 >(projects: ReadonlyArray<Project>, environmentLabels: ReadonlyMap<EnvironmentId, string>) {
-  const byServer = distinguishTitles(
-    projects,
-    (project) => environmentLabels.get(project.environmentId) ?? project.environmentId,
-  );
-  const byPath = distinguishTitles(byServer, (project) => project.workspaceRoot);
-  const byEnvironment = distinguishTitles(byPath, (project) => project.environmentId);
-  return distinguishTitles(byEnvironment, (project) => project.id).sort((left, right) =>
-    left.title.localeCompare(right.title),
-  );
+  return distinctProjectTitles(projects, environmentLabels);
 }
 
 /** Continuations are laid over the first page they continue; a new first page forgets them. */
