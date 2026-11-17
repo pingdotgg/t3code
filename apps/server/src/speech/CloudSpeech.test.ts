@@ -49,7 +49,12 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
     yield* service.setKey(provider === "openai" ? "xai" : "openai", Redacted.make("other"));
     expect((yield* Effect.flip(transcribe()))._tag).toBe("CloudSpeechError");
     yield* service.setKey(provider, Redacted.make("chosen"));
-    expect(yield* service.configured).toEqual({ openai: true, xai: true, openrouter: false });
+    expect(yield* service.configured).toEqual({
+      openai: true,
+      xai: true,
+      gemini: false,
+      openrouter: false,
+    });
     yield* Effect.flip(transcribe(new Uint8Array(3)));
     expect(upstream).not.toHaveBeenCalled();
     expect(yield* transcribe()).toBe("hello");
@@ -196,5 +201,70 @@ it.effect("removing a key while a catalog read is pending prevents the upload", 
     const exit = yield* Fiber.await(job);
     expect(uploads).toEqual([]);
     expect(exit._tag).toBe("Failure");
+  }),
+);
+
+it.effect("sends audio to Gemini with API key and differentiates 400 errors", () =>
+  Effect.gen(function* () {
+    const upstream = vi.fn<typeof fetch>(async () =>
+      Response.json({
+        candidates: [
+          {
+            content: {
+              parts: [{ text: "Gemini transcribed text" }],
+            },
+          },
+        ],
+      }),
+    );
+    const service = yield* CloudSpeech.CloudSpeech.pipe(
+      Effect.provide(
+        CloudSpeech.layer.pipe(
+          Layer.provide(FetchHttpClient.layer),
+          Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+          Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+        ),
+      ),
+    );
+    const transcribe = () =>
+      service
+        .transcribe("gemini", new Uint8Array(new Float32Array([0, 0.5]).buffer), {
+          ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+          speechLanguage: "en",
+          speechRemoveFillerWords: true,
+          speechCustomWords: [{ term: "T3 Code", aliases: [] }],
+        })
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
+
+    yield* service.setKey("gemini", Redacted.make("gemini-test-key"));
+    expect(yield* transcribe()).toBe("Gemini transcribed text");
+
+    const [url, init] = upstream.mock.calls[0]!;
+    expect(String(url)).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent",
+    );
+    expect(new Headers(init?.headers).get("x-goog-api-key")).toBe("gemini-test-key");
+
+    // 400 with API_KEY_INVALID reason should report rejected-key
+    upstream.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: { details: [{ reason: "API_KEY_INVALID" }] } }), {
+        status: 400,
+      }),
+    );
+    expect(yield* Effect.flip(transcribe())).toMatchObject({
+      provider: "gemini",
+      reason: "rejected-key",
+    });
+
+    // 400 without API_KEY_INVALID (e.g. invalid argument) should report unavailable
+    upstream.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: { message: "Invalid payload" } }), {
+        status: 400,
+      }),
+    );
+    expect(yield* Effect.flip(transcribe())).toMatchObject({
+      provider: "gemini",
+      reason: "unavailable",
+    });
   }),
 );
