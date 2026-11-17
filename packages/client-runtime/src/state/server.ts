@@ -63,6 +63,8 @@ import {
   type ServerConfigProjection,
   withoutEnvironmentThemes,
 } from "./serverConfigProjection.ts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 export type { ServerConfigProjection } from "./serverConfigProjection.ts";
 
@@ -319,8 +321,11 @@ export function serverUpdateStateForServerVersion(
     : IDLE_SERVER_UPDATE_STATE;
 }
 
-export function serverUpdateFailureMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Server update failed.";
+export function serverUpdateFailureMessage(
+  error: unknown,
+  resolve: MFunctionType = mFallback,
+): string {
+  return error instanceof Error ? error.message : resolve(msg("Server update failed."));
 }
 
 function isRpcSocketError(error: unknown): boolean {

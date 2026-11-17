@@ -13,6 +13,7 @@ import {
   type ConnectionRoute,
 } from "./catalog.ts";
 import { BearerConnectionTarget, type ConnectionTarget } from "./model.ts";
+import { msg } from "gt-i18n";
 
 export type ConnectionRouteKind =
   | "relay"
@@ -186,12 +187,13 @@ function routeAddressKey(route: ConnectionRoute): string | null {
   }
 }
 
+/** Callers resolve the result with `useMessages()` or `m`: this one is passed point-free to `map`. */
 export function connectionRouteLabel(route: ConnectionRoute): string {
   switch (connectionRouteKind(route)) {
     case "relay":
       return "T3 Connect";
     case "loopback":
-      return "This device";
+      return msg("This device");
     case "lan":
       return "LAN";
     case "tailnet":
@@ -205,7 +207,7 @@ export function connectionRouteLabel(route: ConnectionRoute): string {
         : "SSH";
     }
     case "public":
-      return routeHostname(route) ?? "Remote link";
+      return routeHostname(route) ?? msg("Remote link");
   }
 }
 

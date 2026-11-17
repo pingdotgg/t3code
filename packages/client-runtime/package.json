@@ -601,6 +601,7 @@
     "@t3tools/source-control-core": "workspace:*",
     "@t3tools/source-control-definitions": "workspace:*",
     "effect": "catalog:",
+    "gt-i18n": "1.0.40",
     "jszip": "3.10.1",
     "remark-gfm": "catalog:",
     "remark-parse": "catalog:",

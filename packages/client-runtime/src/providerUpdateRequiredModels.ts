@@ -1,5 +1,7 @@
 import { PROVIDER_DISPLAY_NAMES, type ServerProvider } from "@t3tools/contracts";
 import { compareSemverVersions } from "@t3tools/shared/semver";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 const RUNTIME_NAMES: Partial<Record<string, string>> = {
   claudeAgent: "Claude Code",
@@ -14,6 +16,7 @@ function formatModelList(names: ReadonlyArray<string>): string {
 export function formatProviderUpdateRequiredNotice(
   provider: Pick<ServerProvider, "driver" | "updateRequiredModels">,
   searchQuery = "",
+  resolve: MFunctionType = mFallback,
 ): string | null {
   const query = searchQuery.trim().toLocaleLowerCase();
   const models = (provider.updateRequiredModels ?? []).filter(
@@ -32,5 +35,11 @@ export function formatProviderUpdateRequiredNotice(
     RUNTIME_NAMES[provider.driver] ?? PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver;
   const version = minVersion.startsWith("v") ? minVersion : `v${minVersion}`;
   const names = formatModelList(models.map((model) => model.name));
-  return `Update ${providerName} to ${version} or newer to use ${names}.`;
+  return resolve(
+    msg("Update {providerName} to {version} or newer to use {names}.", {
+      providerName,
+      version,
+      names,
+    }),
+  );
 }

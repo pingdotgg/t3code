@@ -1,5 +1,7 @@
 import type { ServerConfig } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 import type { ConnectionCatalogEntry } from "./catalog.ts";
 import type { ConnectionTarget, SupervisorConnectionState } from "./model.ts";
@@ -82,40 +84,48 @@ export function presentConnectionState(
   }
 }
 
-export function connectionStatusText(connection: EnvironmentConnectionPresentation): string {
+export function connectionStatusText(
+  connection: EnvironmentConnectionPresentation,
+  resolve: MFunctionType = mFallback,
+): string {
   switch (connection.phase) {
     case "available":
-      return "Available";
+      return resolve(msg("Available", { $context: "connection status" }));
     case "offline":
-      return "Offline";
+      return resolve(msg("Offline", { $context: "connection status" }));
     case "connecting":
-      return "Connecting...";
+      return resolve(msg("Connecting..."));
     case "reconnecting":
       if (connection.awaitingApproval) {
-        return connection.error ?? "Waiting for approval on the host";
+        return connection.error ?? resolve(msg("Waiting for approval on the host"));
       }
       return connection.error
-        ? `Failed to connect. Reconnecting... Reason: ${connection.error}`
-        : "Reconnecting...";
+        ? resolve(
+            msg("Failed to connect. Reconnecting... Reason: {error}", { error: connection.error }),
+          )
+        : resolve(msg("Reconnecting..."));
     case "connected":
-      return "Connected";
+      return resolve(msg("Connected", { $context: "connection status" }));
     case "unsupported":
-      return "Client not supported";
+      return resolve(msg("Client not supported"));
     case "error":
       return connection.error
-        ? `Connection failed. Reason: ${connection.error}`
-        : "Connection failed";
+        ? resolve(msg("Connection failed. Reason: {error}", { error: connection.error }))
+        : resolve(msg("Connection failed"));
   }
 }
 
-export function connectionStatusTitle(connection: EnvironmentConnectionPresentation): string {
+export function connectionStatusTitle(
+  connection: EnvironmentConnectionPresentation,
+  resolve: MFunctionType = mFallback,
+): string {
   if (connection.awaitingApproval) {
-    return "Waiting for approval";
+    return resolve(msg("Waiting for approval"));
   }
   if (connection.phase === "reconnecting" && connection.error) {
-    return "Failed to connect. Reconnecting...";
+    return resolve(msg("Failed to connect. Reconnecting..."));
   }
-  return connectionStatusText({ ...connection, error: null });
+  return connectionStatusText({ ...connection, error: null }, resolve);
 }
 
 /**
