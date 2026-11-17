@@ -496,6 +496,8 @@ export function showContextMenuFallback<T extends string>(
       menu.style.top = `${preferredTop}px`;
       menu.dataset.level = String(level);
       menu.dataset.contextMenu = "true";
+      // Theme CSS styles menus through this documented hook, like the component menus.
+      menu.dataset.slot = "menu-popup";
       menu.setAttribute("role", "menu");
       menu.setAttribute("aria-label", parentTrigger?.textContent ?? "Context menu");
       menu.tabIndex = -1;
