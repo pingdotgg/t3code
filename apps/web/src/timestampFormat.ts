@@ -116,6 +116,21 @@ export function parseTimestampDate(isoDate: string): Date | null {
 
 // English keeps its ordinal day-before-month form; other UI languages use their own long date.
 const monthNameFormatter = new Intl.DateTimeFormat("en-US", { month: "long", timeZone: "UTC" });
+const longDateFormatterCache = new Map<string, Intl.DateTimeFormat>();
+
+function getLongDateFormatter(locale: string): Intl.DateTimeFormat {
+  let formatter = longDateFormatterCache.get(locale);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locale, {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+      timeZone: "UTC",
+    });
+    longDateFormatterCache.set(locale, formatter);
+  }
+  return formatter;
+}
 
 function ordinalSuffix(day: number): string {
   const lastTwo = day % 100;
@@ -142,12 +157,7 @@ export function formatChatTimestampTooltip(
   const time = formatTime(date, timestampFormat);
   const locale = getActiveLocale();
   if (locale !== DEFAULT_LOCALE) {
-    const longDate = new Intl.DateTimeFormat(locale, {
-      day: "numeric",
-      month: "long",
-      year: "numeric",
-      timeZone: "UTC",
-    }).format(wallClockAsUtc(date));
+    const longDate = getLongDateFormatter(locale).format(wallClockAsUtc(date));
     return resolve(
       msg("{time}, {date}", { time, date: longDate, $context: "message time, then its date" }),
     );
