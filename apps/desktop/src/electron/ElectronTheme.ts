@@ -26,7 +26,13 @@ export class ElectronTheme extends Context.Service<
   ElectronTheme,
   {
     readonly shouldUseDarkColors: Effect.Effect<boolean>;
+    /**
+     * The OS scheme while the app forces its own theme, which web content would otherwise
+     * inherit; `null` while web content already follows the OS, or the OS scheme is unknown.
+     */
+    readonly systemColorScheme: Effect.Effect<LinuxColorScheme>;
     readonly setSource: (theme: DesktopTheme) => Effect.Effect<void, ElectronThemeSetSourceError>;
+    /** Also runs when the OS scheme changes behind a forced theme. */
     readonly onUpdated: (listener: () => void) => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("@t3tools/desktop/electron/ElectronTheme") {}
@@ -35,15 +41,33 @@ type WatchSystemColorScheme = (onChange: (scheme: LinuxColorScheme) => void) => 
   readonly stop: () => void;
 };
 
+// The global default, unlike NSApp.effectiveAppearance, is not overridden by themeSource.
+const readMacColorScheme = (): LinuxColorScheme =>
+  Electron.systemPreferences.getUserDefault("AppleInterfaceStyle", "string") === "Dark"
+    ? "dark"
+    : "light";
+
+const watchMacColorScheme: WatchSystemColorScheme = (onChange) => {
+  const id = Electron.systemPreferences.subscribeNotification(
+    "AppleInterfaceThemeChangedNotification",
+    () => onChange(readMacColorScheme()),
+  );
+  onChange(readMacColorScheme());
+  return { stop: () => Electron.systemPreferences.unsubscribeNotification(id) };
+};
+
 export const makeWith = Effect.fn("ElectronTheme.make")(function* (
   watchSystemColorScheme: WatchSystemColorScheme | undefined,
+  resolvesSystemSource = true,
 ) {
   let source: DesktopTheme = Electron.nativeTheme.themeSource;
   let systemScheme: LinuxColorScheme = null;
+  const listeners = new Set<() => void>();
   // On Linux, Electron reads the desktop color scheme once and then ignores the settings
   // portal (electron/electron#48736), so "system" is resolved from the portal directly.
   const apply = () => {
-    Electron.nativeTheme.themeSource = source === "system" ? (systemScheme ?? source) : source;
+    Electron.nativeTheme.themeSource =
+      resolvesSystemSource && source === "system" ? (systemScheme ?? source) : source;
   };
 
   if (watchSystemColorScheme) {
@@ -51,8 +75,11 @@ export const makeWith = Effect.fn("ElectronTheme.make")(function* (
       Effect.sync(() => {
         try {
           return watchSystemColorScheme((scheme) => {
+            const changed = scheme !== systemScheme;
             systemScheme = scheme;
-            apply();
+            if (resolvesSystemSource) apply();
+            // Under a forced theme nativeTheme does not see the change.
+            if (changed && source !== "system") for (const listener of listeners) listener();
           });
         } catch {
           return undefined;
@@ -64,6 +91,7 @@ export const makeWith = Effect.fn("ElectronTheme.make")(function* (
 
   return ElectronTheme.of({
     shouldUseDarkColors: Effect.sync(() => Electron.nativeTheme.shouldUseDarkColors),
+    systemColorScheme: Effect.sync(() => (source === "system" ? null : systemScheme)),
     setSource: Effect.fn("ElectronTheme.setSource")(function (theme) {
       return Effect.try({
         try: () => {
@@ -77,11 +105,13 @@ export const makeWith = Effect.fn("ElectronTheme.make")(function* (
       return Effect.acquireRelease(
         Effect.suspend(() => {
           Electron.nativeTheme.on("updated", listener);
+          listeners.add(listener);
           return Effect.void;
         }),
         () =>
           Effect.suspend(() => {
             Electron.nativeTheme.removeListener("updated", listener);
+            listeners.delete(listener);
             return Effect.void;
           }),
       );
@@ -92,7 +122,10 @@ export const makeWith = Effect.fn("ElectronTheme.make")(function* (
 /** @public */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
-  return yield* makeWith(platform === "linux" ? watchLinuxColorScheme : undefined);
+  if (platform === "linux") return yield* makeWith(watchLinuxColorScheme);
+  // macOS reports its scheme without overriding Electron's own system appearance.
+  if (platform === "darwin") return yield* makeWith(watchMacColorScheme, false);
+  return yield* makeWith(undefined);
 });
 
 export const layer = Layer.effect(ElectronTheme, make);

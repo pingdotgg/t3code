@@ -5,7 +5,11 @@ import { vi } from "vite-plus/test";
 import type { LinuxColorScheme } from "./LinuxColorScheme.ts";
 
 const { nativeTheme } = vi.hoisted(() => ({
-  nativeTheme: { themeSource: "system" as "system" | "light" | "dark" },
+  nativeTheme: {
+    themeSource: "system" as "system" | "light" | "dark",
+    on: () => undefined,
+    removeListener: () => undefined,
+  },
 }));
 
 vi.mock("electron", () => ({ nativeTheme }));
@@ -49,14 +53,26 @@ describe("ElectronTheme", () => {
     Effect.gen(function* () {
       const { portal, watch } = setup();
       const theme = yield* ElectronTheme.makeWith(watch);
+      let updates = 0;
+      yield* theme.onUpdated(() => updates++);
       portal.report("dark");
+      assert.equal(updates, 0);
 
       yield* theme.setSource("light");
       portal.report("dark");
       assert.equal(nativeTheme.themeSource, "light");
+      // Web content inherits the forced theme, so it is told the desktop's own scheme.
+      assert.equal(yield* theme.systemColorScheme, "dark");
+      assert.equal(updates, 0);
+      portal.report("light");
+      assert.equal(updates, 1);
+      assert.equal(yield* theme.systemColorScheme, "light");
 
       yield* theme.setSource("system");
+      portal.report("dark");
       assert.equal(nativeTheme.themeSource, "dark");
+      assert.isNull(yield* theme.systemColorScheme);
+      assert.equal(updates, 1);
     }),
   );
 
