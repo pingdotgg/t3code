@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import * as Dialog from "../../components/ui/Dialog";
@@ -139,8 +140,8 @@ function platformFromOs(os: string | null | undefined): string {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error && error.message.trim().length > 0
-    ? error.message
+  return error instanceof Error && errorDisplayMessage(error, m) !== null
+    ? (errorDisplayMessage(error, m) ?? error.message)
     : m(msg("An error occurred."));
 }
 
@@ -200,6 +201,37 @@ function ListSection(props: { readonly children: ReactNode }) {
     >
       {props.children}
     </View>
+  );
+}
+
+/** Reads the presentation for the connection error's marked text, which runtime state drops. */
+function EnvironmentOptionRow(
+  props: Omit<Parameters<typeof ListRow>[0], "subtitle"> & {
+    readonly environment: EnvironmentOption;
+  },
+) {
+  const { environment, ...row } = props;
+  const messages = useMessages();
+  const presented = useEnvironmentPresentation(environment.environmentId).presentation?.connection;
+  const i18nError =
+    presented?.error === environment.connectionError ? presented?.i18nError : undefined;
+  return (
+    <ListRow
+      {...row}
+      subtitle={
+        canCreateProjectInEnvironment(environment.connectionState)
+          ? undefined
+          : connectionStatusText(
+              {
+                phase: environment.connectionState,
+                error: environment.connectionError,
+                ...(i18nError ? { i18nError } : {}),
+                traceId: environment.connectionErrorTraceId,
+              },
+              messages,
+            )
+      }
+    />
   );
 }
 
@@ -595,21 +627,10 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
           <SectionTitle>{gt("Environments")}</SectionTitle>
           <ListSection>
             {environmentOptions.map((environment, index) => (
-              <ListRow
+              <EnvironmentOptionRow
                 key={environment.environmentId}
+                environment={environment}
                 title={environment.label}
-                subtitle={
-                  canCreateProjectInEnvironment(environment.connectionState)
-                    ? undefined
-                    : connectionStatusText(
-                        {
-                          phase: environment.connectionState,
-                          error: environment.connectionError,
-                          traceId: environment.connectionErrorTraceId,
-                        },
-                        messages,
-                      )
-                }
                 icon={
                   <EnvironmentMachineSymbol
                     kind={environment.machine}
@@ -706,7 +727,7 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
                   !canCloneProject
                     ? gt("This connection cannot clone projects.")
                     : readiness(candidate).ready
-                      ? addProjectRemoteSourcePathHint(candidate)
+                      ? addProjectRemoteSourcePathHint(candidate, messages)
                       : (readiness(candidate).hint ?? "")
                 }
                 isFirst={false}
@@ -927,7 +948,11 @@ export function AddProjectRepositoryScreen(props: {
 
   const lookupRepository = async () => {
     if (!environment || repositoryInput.trim().length === 0 || isSubmitting) return;
-    const incompleteOwnerMessage = githubIncompleteOwnerRepositoryMessage(source, repositoryInput);
+    const incompleteOwnerMessage = githubIncompleteOwnerRepositoryMessage(
+      source,
+      repositoryInput,
+      m,
+    );
     if (incompleteOwnerMessage) {
       setError(incompleteOwnerMessage);
       return;
@@ -990,7 +1015,7 @@ export function AddProjectRepositoryScreen(props: {
             placeholder={
               source === "url"
                 ? (defaultHostCloneUrl("org/repo") ?? "https://example.com/org/repo.git")
-                : addProjectRemoteSourcePathHint(source)
+                : addProjectRemoteSourcePathHint(source, messages)
             }
             returnKeyType="next"
             onSubmitEditing={() => void lookupRepository()}
@@ -1020,6 +1045,7 @@ function FolderBrowser(props: {
   readonly pinnedDirectoryName?: string;
   readonly cloning?: boolean;
 }) {
+  const messages = useMessages();
   const browsePath = getFilesystemBrowsePath(props.pathInput, props.environment.platform);
   const browseInput =
     browsePath.directoryPath.length > 0 ? { partialPath: browsePath.directoryPath } : null;
@@ -1027,12 +1053,15 @@ function FolderBrowser(props: {
     environmentSession.sessionStateAtom(props.environment.environmentId),
   );
   const fileEnvironment = useEnvironmentPresentation(props.environment.environmentId);
-  const fileAccess = resolveFilesystemReadAccess({
-    isCatalogReady: fileEnvironment.isReady,
-    connection: fileEnvironment.presentation?.connection ?? null,
-    session: fileAccessSession.data,
-    sessionError: fileAccessSession.error,
-  });
+  const fileAccess = resolveFilesystemReadAccess(
+    {
+      isCatalogReady: fileEnvironment.isReady,
+      connection: fileEnvironment.presentation?.connection ?? null,
+      session: fileAccessSession.data,
+      sessionError: fileAccessSession.error,
+    },
+    messages,
+  );
   const { canReadFiles } = fileAccess;
   const browseState = useEnvironmentQuery(
     !canReadFiles || browseInput === null

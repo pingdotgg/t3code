@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useGT } from "gt-react-native";
 import type { EnvironmentId, SourceControlSignInPrompt } from "@t3tools/contracts";
 import {
@@ -10,6 +11,7 @@ import * as Cause from "effect/Cause";
 import * as Clipboard from "expo-clipboard";
 import { useRef, useState } from "react";
 import { Linking } from "react-native";
+import { m } from "../../../i18n/messages";
 
 import * as Dialog from "../../../components/ui/Dialog";
 import { useEnvironmentQuery } from "../../../state/query";
@@ -22,7 +24,7 @@ import { SettingsSection } from "./SettingsSection";
 
 const failureMessage = (cause: Cause.Cause<unknown>) => {
   const error = Cause.squash(cause);
-  return error instanceof Error ? error.message : String(error);
+  return error instanceof Error ? (errorDisplayMessage(error, m) ?? error.message) : String(error);
 };
 
 const openUrl = (url: string) => void Linking.openURL(url).catch(() => undefined);

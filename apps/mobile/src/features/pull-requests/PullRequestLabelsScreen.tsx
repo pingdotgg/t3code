@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { LegendList } from "@legendapp/list/react-native";
 import { useAtomValue } from "@effect/atom-react";
@@ -29,6 +30,7 @@ import { pullRequestLabelColor } from "./pullRequestList";
 import { PullRequestSearchSheet } from "./PullRequestSearchSheet";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
+import { m } from "../../i18n/messages";
 
 export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequestParams>) {
   const navigation = useNavigation();
@@ -89,7 +91,9 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
             applied
               ? gt("Couldn't add {labels}", { labels: names.join(", ") })
               : gt("Couldn't remove {labels}", { labels: names.join(", ") }),
-            cause instanceof Error ? cause.message : gt("The provider refused the change."),
+            cause instanceof Error
+              ? (errorDisplayMessage(cause, m) ?? cause.message)
+              : gt("The provider refused the change."),
           );
         };
         const send = async (labels: ReadonlyArray<PullRequestLabelCandidate>, applied: boolean) => {

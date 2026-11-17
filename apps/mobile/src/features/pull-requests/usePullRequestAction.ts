@@ -1,8 +1,10 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { AsyncResult } from "effect/reactivity";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomRefresh } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermKind } from "./changeRequestTerm";
 import type {
   PullRequestAction,
   PullRequestDetail,
@@ -15,6 +17,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { canPerformPullRequestAction, pullRequestActionLabel } from "./pullRequestActions";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
+import { m as resolveMessage } from "../../i18n/messages";
 
 export function usePullRequestAction(params: PullRequestParams, pr: PullRequestDetail | null) {
   const target = pullRequestTarget(params);
@@ -40,10 +43,15 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
     if (AsyncResult.isFailure(response)) {
       const cause = squashAtomCommandFailure(response);
       Dialog.alert(
-        gt("Couldn't update this {term}", {
-          term: sourceControlClients.get(pr?.provider).changeRequest.singular,
-        }),
-        cause instanceof Error ? cause.message : gt("Try again."),
+        gt(
+          "Couldn't update this {term, select, mr {merge request} cr {change request} other {pull request}}",
+          {
+            term: changeRequestTermKind(sourceControlClients.get(pr?.provider).changeRequest),
+          },
+        ),
+        cause instanceof Error
+          ? (errorDisplayMessage(cause, resolveMessage) ?? cause.message)
+          : gt("Try again."),
       );
       return;
     }
@@ -63,7 +71,12 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
     confirm(
       "close",
       pullRequestActionLabel("close", terminology, m),
-      gt("Close this {term} without merging its changes?", { term: terminology.singular }),
+      gt(
+        "Close this {term, select, mr {merge request} cr {change request} other {pull request}} without merging its changes?",
+        {
+          term: changeRequestTermKind(terminology),
+        },
+      ),
     );
   };
   return { available, perform, confirm, confirmClose, busy };

@@ -19,7 +19,8 @@ import {
   pickedQuery,
   threadRecentUse,
 } from "@t3tools/shared/paletteSearch";
-import { T, useGT } from "gt-react-native";
+import { searchMatchHintLabel } from "@t3tools/shared/paletteSearchCopy";
+import { T, useGT, useMessages } from "gt-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   KeyboardAvoidingView,
@@ -122,6 +123,7 @@ function PaletteRow(props: {
   const mutedForegroundClassName = props.selected
     ? "text-thread-selected-foreground-muted"
     : "text-foreground-muted";
+  const m = useMessages();
   return (
     <RowPressable
       accessibilityRole="button"
@@ -173,8 +175,8 @@ function PaletteRow(props: {
               lives, unless the hint already names it. */}
           {(props.searchMatch ||
             (props.item.matchHint &&
-              props.item.matchHint.label !== "Project" &&
-              props.item.matchHint.label !== "Environment")) &&
+              props.item.matchHint.field !== "project" &&
+              props.item.matchHint.field !== "environment")) &&
           props.item.detail ? (
             <Text
               numberOfLines={1}
@@ -193,7 +195,7 @@ function PaletteRow(props: {
           />
         ) : props.item.matchHint ? (
           <Text numberOfLines={1} className={cn("text-sm", mutedForegroundClassName)}>
-            {props.item.matchHint.label}:{" "}
+            {searchMatchHintLabel(props.item.matchHint.field, m)}:{" "}
             {splitSearchText(props.item.matchHint.text, props.item.matchHint.ranges).map((part) => (
               <Text key={part.start} className={cn("text-sm", part.highlighted && "font-t3-bold")}>
                 {part.text}

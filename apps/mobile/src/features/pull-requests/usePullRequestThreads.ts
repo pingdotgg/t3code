@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useAtomValue } from "@effect/atom-react";
 import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import { AsyncResult } from "effect/reactivity";
@@ -20,6 +21,7 @@ import {
 } from "@t3tools/contracts";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermKind } from "./changeRequestTerm";
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
 import { useRef, useState } from "react";
 import { pullRequestComposerContext } from "../../lib/composerContext";
@@ -45,6 +47,7 @@ import {
   pullRequestAgentPrompt,
   type PullRequestAgentTask,
 } from "./pullRequestAgentTasks";
+import { m } from "../../i18n/messages";
 
 type LinkedThread = PullRequestLinkedThreadsResult["threads"][number];
 
@@ -106,9 +109,12 @@ export function usePullRequestThreads(
     const result = await settlePromise(async () => {
       if (connected && !thread && !canCheckout)
         throw new Error(
-          gt("Starting work from this {term} requires source control write access.", {
-            term: terminology.shortLabel,
-          }),
+          gt(
+            "Starting work from this {term, select, mr {MR} cr {change request} other {PR}} requires source control write access.",
+            {
+              term: changeRequestTermKind(terminology),
+            },
+          ),
         );
       await waitForComposerDraftsLoaded();
       const draftKey = thread
@@ -183,7 +189,9 @@ export function usePullRequestThreads(
       const cause = squashAtomCommandFailure(result);
       Dialog.alert(
         gt("Couldn't open a thread"),
-        cause instanceof Error ? cause.message : gt("Try again."),
+        cause instanceof Error
+          ? (errorDisplayMessage(cause, m) ?? cause.message)
+          : gt("Try again."),
       );
     }
   };

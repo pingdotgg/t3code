@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Dialog from "../../components/ui/Dialog";
 import { m } from "../../i18n/messages";
 import Constants from "expo-constants";
@@ -326,7 +327,9 @@ export const incomingShareImports = makeIncomingShareImports({
   onImportFailure: (target, error) => {
     Dialog.alert(
       m(msg("Could not import shared content")),
-      error instanceof Error ? error.message : m(msg("The shared content could not be saved.")),
+      error instanceof Error
+        ? (errorDisplayMessage(error, m) ?? error.message)
+        : m(msg("The shared content could not be saved.")),
       [
         {
           text: m(msg("Cancel import")),
@@ -342,7 +345,7 @@ export const incomingShareImports = makeIncomingShareImports({
     Dialog.alert(
       m(msg("Could not cancel import")),
       error instanceof Error
-        ? error.message
+        ? (errorDisplayMessage(error, m) ?? error.message)
         : m(msg("The shared content could not be restored safely.")),
       [
         { text: m(msg("Retry import")), onPress: () => incomingShareImports.retry(target) },

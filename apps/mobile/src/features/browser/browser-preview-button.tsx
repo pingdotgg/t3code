@@ -34,7 +34,7 @@ export function BrowserPreviewButton(props: {
           <T>
             <Plural
               n={props.count}
-              one="One tab open"
+              singular="One tab open"
               other={
                 <>
                   <Var>{props.count}</Var> tabs open

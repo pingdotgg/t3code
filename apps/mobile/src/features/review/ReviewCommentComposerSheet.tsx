@@ -76,7 +76,9 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
         : gt("File comment")
       : firstNumber !== null && lastNumber !== null
         ? gt("Lines {first}-{last}", { first: firstNumber, last: lastNumber })
-        : gt("{count} lines selected", { count: selectedLines.length });
+        : gt("{count, plural, one {{count} lines selected} other {{count} lines selected}}", {
+            count: selectedLines.length,
+          });
   const previewHeight = Math.max(
     Math.min(selectedLines.length, REVIEW_COMMENT_PREVIEW_MAX_LINES) * codeSurface.rowHeight,
     codeSurface.rowHeight,

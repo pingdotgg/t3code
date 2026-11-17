@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Updates from "expo-updates";
 // Metro namespace imports evaluate unrelated React Native getters, including unavailable native modules.
 import { AppState } from "react-native";
@@ -468,7 +469,7 @@ function reportUpdateFailure(
   if (isAppUpdateUnavailableError(error)) return;
 
   reportAtomCommandResult(result, { label: "app update check" });
-  onFailure?.(error instanceof Error ? error.message : fallback);
+  onFailure?.(error instanceof Error ? (errorDisplayMessage(error, m) ?? error.message) : fallback);
 }
 
 function isAppUpdateUnavailableError(error: unknown): boolean {

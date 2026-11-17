@@ -12,6 +12,7 @@ import { msg } from "gt-react-native";
 
 import type { AppSymbolName } from "../../components/ui/AppSymbol";
 import { m, type MessageResolver } from "../../i18n/messages";
+import { changeRequestTermKind } from "./changeRequestTerm";
 import { PullRequestGlyph } from "./pullRequestGlyphs";
 
 type ActionDetail = Pick<
@@ -48,23 +49,40 @@ export const MERGE_METHODS = {
   },
 } as const satisfies Record<PullRequestMergeMethod, { title: string; description: string }>;
 
+/** Select key for a merge method in translated sentences; ICU keys cannot contain "-". */
+export function mergeMethodKind(method: PullRequestMergeMethod | undefined) {
+  return method === "fast-forward" ? "fastForward" : (method ?? "other");
+}
+
 export function pullRequestActionLabel(
   action: PullRequestAction,
   terminology: ChangeRequestTerminology,
   resolve: MessageResolver = m,
 ): string {
-  const term = terminology.singular;
+  const term = changeRequestTermKind(terminology);
   switch (action) {
     case "merge":
-      return resolve(msg("Merge {term}", { term }));
+      return resolve(
+        msg("Merge {term, select, mr {merge request} cr {change request} other {pull request}}", {
+          term,
+        }),
+      );
     case "ready":
       return resolve(msg("Mark ready for review"));
     case "draft":
       return resolve(msg("Convert to draft"));
     case "close":
-      return resolve(msg("Close {term}", { term }));
+      return resolve(
+        msg("Close {term, select, mr {merge request} cr {change request} other {pull request}}", {
+          term,
+        }),
+      );
     case "reopen":
-      return resolve(msg("Reopen {term}", { term }));
+      return resolve(
+        msg("Reopen {term, select, mr {merge request} cr {change request} other {pull request}}", {
+          term,
+        }),
+      );
     case "update-branch":
       return resolve(msg("Update branch"));
     case "enable-auto-merge":
@@ -72,7 +90,12 @@ export function pullRequestActionLabel(
     case "disable-auto-merge":
       return resolve(msg("Disable auto-merge"));
     case "revert":
-      return resolve(msg("Create revert {term}", { term }));
+      return resolve(
+        msg(
+          "Create revert {term, select, mr {merge request} cr {change request} other {pull request}}",
+          { term },
+        ),
+      );
     case "delete-branch":
       return resolve(msg("Delete branch"));
     case "approve-workflows":
@@ -152,14 +175,31 @@ export function mergeUnavailableReason(
   terminology: ChangeRequestTerminology,
   resolve: MessageResolver = m,
 ) {
-  const term = terminology.singular;
-  if (pr.state === "merged") return resolve(msg("This {term} has been merged.", { term }));
-  if (pr.state === "closed") return resolve(msg("Reopen this {term} before merging.", { term }));
+  const term = changeRequestTermKind(terminology);
+  if (pr.state === "merged")
+    return resolve(
+      msg(
+        "This {term, select, mr {merge request} cr {change request} other {pull request}} has been merged.",
+        { term },
+      ),
+    );
+  if (pr.state === "closed")
+    return resolve(
+      msg(
+        "Reopen this {term, select, mr {merge request} cr {change request} other {pull request}} before merging.",
+        { term },
+      ),
+    );
   if (!connectionAllowsWrites) return resolve(msg("This environment connection is read-only."));
   if (!pr.capabilities.actions.includes("merge"))
     return resolve(msg("This provider does not support merging here."));
   if (!pr.viewerPermissions.actions.includes("merge"))
-    return resolve(msg("Your account cannot merge this {term}.", { term }));
+    return resolve(
+      msg(
+        "Your account cannot merge this {term, select, mr {merge request} cr {change request} other {pull request}}.",
+        { term },
+      ),
+    );
   if (pr.isDraft) return resolve(msg("Mark this draft ready for review before merging."));
   if (pr.mergeability === "conflicting")
     return resolve(msg("Resolve the branch conflicts before merging."));

@@ -36,7 +36,7 @@ export function DevicePreviewButton(props: {
           <T>
             <Plural
               n={props.count}
-              one="One device open"
+              singular="One device open"
               other={
                 <>
                   <Var>{props.count}</Var> devices open

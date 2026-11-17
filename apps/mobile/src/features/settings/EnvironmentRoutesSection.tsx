@@ -1,4 +1,4 @@
-import { T, useGT } from "gt-react-native";
+import { T, useGT, useMessages } from "gt-react-native";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
@@ -8,7 +8,7 @@ import {
   connectionRouteAddress,
   connectionRouteId,
   connectionRouteKind,
-  connectionRouteLabel,
+  connectionRouteLabelText,
   connectionRoutes,
   isLearned,
   pendingRouteOrder,
@@ -60,6 +60,7 @@ export function EnvironmentRoutesSection({
   readonly onAddRoute: () => void;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const entry = useAtomValue(environmentCatalog.catalogValueAtom).entries.get(environmentId);
   const prepared = useAtomValue(environmentSession.preparedConnectionValueAtom(environmentId));
   const refusedRouteIds =
@@ -117,7 +118,7 @@ export function EnvironmentRoutesSection({
   };
   const confirmRemove = (route: ConnectionRoute) =>
     Dialog.alert(
-      gt("Remove {route}?", { route: connectionRouteLabel(route) }),
+      gt("Remove {route}?", { route: connectionRouteLabelText(route, messages) }),
       connectionRouteAddress(route) ?? undefined,
       [
         { text: gt("Cancel"), style: "cancel" },
@@ -167,21 +168,24 @@ export function EnvironmentRoutesSection({
               {AUTH_SCOPE_OPTIONS.map(({ scope, title }) => (
                 <Text key={scope} className="text-sm text-foreground">
                   {sessionGrantsScope(session, scope)
-                    ? gt("{scope}: Allowed", { scope: title })
-                    : gt("{scope}: Not granted", { scope: title })}
+                    ? gt("{scope}: Allowed", { scope: messages(title) })
+                    : gt("{scope}: Not granted", { scope: messages(title) })}
                 </Text>
               ))}
             </>
           ) : (
             <Text className="text-sm text-foreground-muted">
-              {sessionPermissionsUnavailableMessage({
-                connected: activeRouteId !== null,
-                failed: sessionResult._tag === "Failure",
-                rejected:
-                  sessionResult._tag !== "Failure" &&
-                  !sessionResult.waiting &&
-                  session?.authenticated === false,
-              })}
+              {sessionPermissionsUnavailableMessage(
+                {
+                  connected: activeRouteId !== null,
+                  failed: sessionResult._tag === "Failure",
+                  rejected:
+                    sessionResult._tag !== "Failure" &&
+                    !sessionResult.waiting &&
+                    session?.authenticated === false,
+                },
+                messages,
+              )}
             </Text>
           )}
         </View>
@@ -250,8 +254,9 @@ function RouteRow(props: {
   readonly onRemove: (() => void) | undefined;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const { route, lifted, offset } = props;
-  const label = connectionRouteLabel(route);
+  const label = connectionRouteLabelText(route, messages);
   const address = connectionRouteAddress(route);
   const refusedHint =
     props.refused && address !== null

@@ -3,10 +3,8 @@ import { usePullRequestConnected } from "./usePullRequestConnected";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import type { PullRequestAction, PullRequestDetail } from "@t3tools/contracts";
-import {
-  capitalizeTerm,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermKind } from "./changeRequestTerm";
 import Animated from "react-native-reanimated";
 import { PR_ROW_LAYOUT, PR_DISCLOSURE_ENTER, PR_ROW_EXIT } from "./pullRequestAnimations";
 import { T, useGT, useMessages } from "gt-react-native";
@@ -63,11 +61,14 @@ export function PullRequestStatusMenu(props: RowProps) {
   const m = useMessages();
   const status = pullRequestStatus(props.pr, m);
   const terminology = sourceControlClients.get(props.pr.provider).changeRequest;
-  const term = capitalizeTerm(terminology.singular);
+  const term = changeRequestTermKind(terminology);
   const trigger = (
     <Pressable
       accessibilityRole={actions.length ? "button" : undefined}
-      accessibilityLabel={gt("{term} status, {status}", { term, status: status.label })}
+      accessibilityLabel={gt(
+        "{term, select, mr {Merge request} cr {Change request} other {Pull request}} status, {status}",
+        { term, status: status.label },
+      )}
       disabled={!actions.length}
       className="min-h-8 flex-row items-center gap-1.5 active:opacity-70"
     >
@@ -81,7 +82,10 @@ export function PullRequestStatusMenu(props: RowProps) {
   if (!actions.length) return trigger;
   return (
     <Menu
-      title={gt("{term} status", { term })}
+      title={gt(
+        "{term, select, mr {Merge request} cr {Change request} other {Pull request}} status",
+        { term },
+      )}
       actions={actions.map((id) => ({
         id,
         title: pullRequestActionLabel(id, terminology, m),
@@ -96,7 +100,10 @@ export function PullRequestStatusMenu(props: RowProps) {
           action.confirm(
             selected,
             pullRequestActionLabel("revert", terminology, m),
-            gt("Open a new {term} that reverses these changes?", { term: terminology.singular }),
+            gt(
+              "Open a new {term, select, mr {merge request} cr {change request} other {pull request}} that reverses these changes?",
+              { term },
+            ),
           );
         else void action.perform(selected);
       }}
@@ -145,16 +152,20 @@ export function PullRequestChecksRow(props: RowProps) {
             <PullRequestCardRow
               title={gt("Approve workflows")}
               icon="checkmark"
-              detail={gt("{count} waiting for approval", {
-                count: props.pr.workflowApprovalsRequired ?? 0,
-              })}
+              detail={gt(
+                "{count, plural, one {{count} waiting for approval} other {{count} waiting for approval}}",
+                {
+                  count: props.pr.workflowApprovalsRequired ?? 0,
+                },
+              )}
               onPress={() =>
                 action.confirm(
                   "approve-workflows",
                   gt("Approve workflows"),
-                  gt("Allow this {term}''s workflows to run? Review the workflow changes first.", {
-                    term: definition.changeRequest.singular,
-                  }),
+                  gt(
+                    "Allow this {term, select, mr {merge request} cr {change request} other {pull request}}''s workflows to run? Review the workflow changes first.",
+                    { term: changeRequestTermKind(definition.changeRequest) },
+                  ),
                 )
               }
             />
@@ -244,7 +255,12 @@ export function PullRequestBranchRow(props: RowProps) {
         ...(canResolve ? [agent.menuAction("conflicts")] : []),
         ...methods.map((id) => ({
           id,
-          title: gt("Update with {method}", { method: id }),
+          title: gt(
+            "Update with {method, select, merge {merge} rebase {rebase} other {{method}}}",
+            {
+              method: id,
+            },
+          ),
           image: "arrow.up.circle",
         })),
       ]}

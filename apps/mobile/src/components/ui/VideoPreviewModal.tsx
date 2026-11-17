@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Dialog from "./Dialog";
 import { requireNativeModule } from "expo";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -136,7 +137,7 @@ function NativeVideoPreview(props: {
               ),
             )
           : error instanceof Error
-            ? error.message
+            ? (errorDisplayMessage(error, m) ?? error.message)
             : m(msg("Could not load this video.")),
       );
       onRequestClose();

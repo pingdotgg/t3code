@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { T, useGT } from "gt-react-native";
 import { ListRow } from "../../components/ui/ListRow";
 import * as Dialog from "../../components/ui/Dialog";
@@ -32,6 +33,7 @@ import { autoConnectReport, devAutoConnectAttemptAtom } from "./devAutoConnect";
 import { splitEnvironmentSections } from "./environmentSections";
 import { leaveSettingsPage } from "../settings/settings-navigation";
 import { workspaceHasColumns } from "../layout/workspace/workspace-selection-store";
+import { m } from "../../i18n/messages";
 
 type ConnectionsNewRouteParams = {
   readonly mode?: string;
@@ -149,7 +151,9 @@ function PairingForm({
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Dialog.alert(
         gt("Invalid QR code"),
-        error instanceof Error ? error.message : gt("Scanned QR code was not recognized."),
+        error instanceof Error
+          ? (errorDisplayMessage(error, m) ?? error.message)
+          : gt("Scanned QR code was not recognized."),
       );
       setTimeout(() => {
         setScannerLocked(false);

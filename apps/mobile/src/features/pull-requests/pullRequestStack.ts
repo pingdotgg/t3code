@@ -3,6 +3,7 @@ import type { PullRequestRef, PullRequestStack, ThreadPullRequestLink } from "@t
 import { msg } from "gt-react-native";
 
 import { m, type MessageResolver } from "../../i18n/messages";
+import { changeRequestTermKind } from "./changeRequestTerm";
 
 export function pullRequestStackMerge(
   stack: PullRequestStack,
@@ -10,7 +11,7 @@ export function pullRequestStackMerge(
   terminology: ChangeRequestTerminology,
   resolve: MessageResolver = m,
 ) {
-  const term = terminology.singular;
+  const term = changeRequestTermKind(terminology);
   const position = stack.layers.findIndex((layer) => layer.number === number);
   const layers = stack.layers.slice(0, position + 1).filter((layer) => layer.state !== "merged");
   const heads = layers.flatMap((layer) =>
@@ -18,9 +19,19 @@ export function pullRequestStackMerge(
   );
   const reason =
     position < 0
-      ? resolve(msg("This {term} is no longer in the stack. Refresh it.", { term }))
+      ? resolve(
+          msg(
+            "This {term, select, mr {merge request} cr {change request} other {pull request}} is no longer in the stack. Refresh it.",
+            { term },
+          ),
+        )
       : stack.layers[position]?.state !== "open" || layers.length === 0
-        ? resolve(msg("There are no open layers to merge through this {term}.", { term }))
+        ? resolve(
+            msg(
+              "There are no open layers to merge through this {term, select, mr {merge request} cr {change request} other {pull request}}.",
+              { term },
+            ),
+          )
         : layers.some((layer) => layer.state !== "open")
           ? resolve(msg("Reopen the closed layers before merging this stack."))
           : layers.some((layer) => layer.isDraft)

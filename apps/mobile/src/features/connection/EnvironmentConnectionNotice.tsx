@@ -3,6 +3,7 @@ import { Button } from "../../components/ui/Button";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ConnectionTraceId } from "./ConnectionTraceId";
 import {
+  connectionErrorText,
   type EnvironmentConnectionPhase,
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
@@ -130,7 +131,7 @@ export function EnvironmentConnectionNotice(props: {
           {noticeDetail(
             props.connection.phase,
             props.resource,
-            props.connection.error,
+            connectionErrorText(props.connection, m),
             props.connection.awaitingApproval === true,
             m,
           )}

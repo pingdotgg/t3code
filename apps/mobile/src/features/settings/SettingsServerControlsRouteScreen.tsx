@@ -362,8 +362,8 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                   {runtimeModeChoices.map((choice, index) => (
                     <SettingsChoiceRow
                       key={choice.mode}
-                      label={choice.label}
-                      description={choice.disabledReason ?? choice.description}
+                      label={m(choice.label)}
+                      description={choice.disabledReason ?? m(choice.description)}
                       selected={uniform("defaultRuntimeMode") === choice.mode}
                       separated={index > 0}
                       disabled={

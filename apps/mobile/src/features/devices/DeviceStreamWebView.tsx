@@ -8,14 +8,14 @@ import {
   useState,
   type Ref,
 } from "react";
-import { msg, useGT } from "gt-react-native";
+import { decodeOptions, msg, useGT } from "gt-react-native";
 import { Platform, View } from "react-native";
 import { WebView } from "react-native-webview";
 import type { DeviceStreamStatus } from "@t3tools/client-runtime/device/stream";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText } from "../../components/ui/AppText";
-import { m } from "../../i18n/messages";
+import { m, type MessageResolver } from "../../i18n/messages";
 
 import {
   deviceStreamBaseUrl,
@@ -23,6 +23,24 @@ import {
   deviceStreamMessage,
   type DeviceStreamConfiguration,
 } from "./device-stream-document";
+
+/** Resolves a status detail the WebView left marked, including marked variables inside it. */
+function streamDetailText(detail: string, resolve: MessageResolver): string {
+  const options = decodeOptions(detail);
+  if (typeof options?.$_source !== "string") return detail;
+  const { $_source: source, ...variables } = options;
+  return resolve(
+    source,
+    Object.fromEntries(
+      Object.entries(variables).map(([key, value]) => [
+        key,
+        typeof value === "string" && !key.startsWith("$")
+          ? streamDetailText(value, resolve)
+          : value,
+      ]),
+    ),
+  );
+}
 
 export interface DeviceStreamRef {
   home: () => void;
@@ -193,7 +211,12 @@ function DeviceStreamDocumentView({
           else if (message?.type === "retry") onRetry();
           else if (message?.type === "status") {
             clearBootstrapTimer();
-            if (message.status === "error") fail(message.detail ?? m(msg("Device stream failed.")));
+            if (message.status === "error")
+              fail(
+                message.detail === undefined
+                  ? m(msg("Device stream failed."))
+                  : streamDetailText(message.detail, m),
+              );
             else {
               setStatus(message.status);
               if (message.status === "streaming") onStreaming();

@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -73,7 +74,10 @@ export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullReq
       return {
         ...current,
         presses: rest,
-        error: cause instanceof Error ? cause.message : m(msg("Could not update viewed files.")),
+        error:
+          cause instanceof Error
+            ? (errorDisplayMessage(cause, m) ?? cause.message)
+            : m(msg("Could not update viewed files.")),
       };
     });
     refresh();

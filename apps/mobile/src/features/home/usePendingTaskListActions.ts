@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Dialog from "../../components/ui/Dialog";
 import { msg } from "gt-react-native";
 import { useCallback } from "react";
@@ -103,7 +104,7 @@ export function usePendingTaskListActions(
                 Dialog.alert(
                   m(msg("Could not delete pending task")),
                   error instanceof Error
-                    ? error.message
+                    ? (errorDisplayMessage(error, m) ?? error.message)
                     : m(msg("The pending task could not be removed.")),
                 );
               });

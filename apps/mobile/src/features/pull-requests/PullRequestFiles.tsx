@@ -95,7 +95,7 @@ function describeFiles(
         ),
     viewed.supported
       ? resolve(
-          msg("{count} viewed", {
+          msg("{count, plural, one {{count} viewed} other {{count} viewed}}", {
             count: parsed.files.filter((file) => viewed.isViewed(file.path)).length,
           }),
         )

@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -32,7 +33,9 @@ const preparedPdfAtom = Atom.family((uri: string) =>
           return prepared;
         },
         catch: (cause) =>
-          cause instanceof Error ? cause.message : m(msg("The PDF could not be loaded.")),
+          cause instanceof Error
+            ? (errorDisplayMessage(cause, m) ?? cause.message)
+            : m(msg("The PDF could not be loaded.")),
       }).pipe(
         Effect.filterOrElse(
           (file) => file !== null,

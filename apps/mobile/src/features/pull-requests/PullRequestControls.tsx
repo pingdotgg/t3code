@@ -1,4 +1,5 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermKind } from "./changeRequestTerm";
 import Animated from "react-native-reanimated";
 import { PR_ROW_LAYOUT } from "./pullRequestAnimations";
 import { useNavigation } from "@react-navigation/native";
@@ -126,16 +127,19 @@ export function PullRequestActionToolbar(props: {
   const pendingReview = canReview && draft.comments.length > 0;
   const showAgentControls = agent.canAsk || !permissions.connected;
   const canOpenThread = agent.threads.length > 0 || showAgentControls;
-  const { shortLabel } = sourceControlClients.get(
-    (props.pr ?? props.params.initialSummary)?.provider,
-  ).changeRequest;
+  const term = changeRequestTermKind(
+    sourceControlClients.get((props.pr ?? props.params.initialSummary)?.provider).changeRequest,
+  );
   const threadLabel = agent.threads.length
     ? gt("Continue thread")
-    : gt("Work on {term}", { term: shortLabel });
+    : gt("Work on {term, select, mr {MR} cr {change request} other {PR}}", { term });
   const primaryLabel = pendingReview
     ? gt("Submit review · {count}", { count: draft.comments.length })
     : threadLabel;
-  const agentActionsLabel = gt("{term} agent actions", { term: shortLabel });
+  const agentActionsLabel = gt(
+    "{term, select, mr {MR} cr {change request} other {PR}} agent actions",
+    { term },
+  );
   const chooseThread = agent.chooseThread;
   const agentActions = agent.actions.filter((action) => action.task !== "ask");
   const open = (mode: "review" | "comment") =>

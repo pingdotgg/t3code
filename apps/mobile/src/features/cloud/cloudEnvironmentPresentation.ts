@@ -3,6 +3,7 @@ import {
   orchestrationProtocolCompatibilityError,
   type EnvironmentConnectionPhase,
 } from "@t3tools/client-runtime/connection";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { relayOfflineReasonMessage } from "@t3tools/client-runtime/relay";
 import { msg } from "gt-react-native";
 
@@ -29,11 +30,12 @@ export function availableCloudEnvironmentPresentation(
       ? null
       : orchestrationProtocolCompatibilityError(input.status.descriptor);
   if (compatibilityError !== null) {
+    const message = errorDisplayMessage(compatibilityError, resolve) ?? compatibilityError.message;
     return {
-      connectionError: compatibilityError.message,
+      connectionError: message,
       connectionErrorTraceId: null,
       connectionState: "unsupported",
-      statusText: compatibilityError.message,
+      statusText: message,
     };
   }
   if (input.status?.status === "online") {

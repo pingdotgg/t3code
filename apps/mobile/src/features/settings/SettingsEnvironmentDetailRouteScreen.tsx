@@ -1,15 +1,16 @@
-import { T, useGT, Var } from "gt-react-native";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { T, useGT, useMessages, Var } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtom, useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import {
   AuthProvidersManageScope,
   AuthOrchestrationReadScope,
-  managedUpdatesDenial,
   type EnvironmentId,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { managedUpdatesDenial } from "@t3tools/client-runtime/contract-labels";
 import { sessionPermissionsUnavailableMessage } from "@t3tools/shared/authScopeOptions";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
@@ -17,6 +18,7 @@ import { AsyncResult } from "effect/reactivity";
 import { useRef, useState } from "react";
 import { Linking, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { m } from "../../i18n/messages";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
@@ -55,6 +57,7 @@ export function SettingsEnvironmentDetailRouteScreen({
 
 function EnvironmentDetail({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const gt = useGT();
+  const messages = useMessages();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const connections = useRemoteConnections();
@@ -100,7 +103,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
   const managedPolicy = config?.managedPolicy;
   const supportUrl = managedPolicy?.supportUrl;
   // The server refuses checks and installs; say so instead of offering them.
-  const updatesDenial = managedUpdatesDenial(managedPolicy);
+  const updatesDenial = managedUpdatesDenial(managedPolicy, messages);
 
   async function run(label: string, action: () => Promise<void>) {
     if (pendingRef.current) return;
@@ -115,7 +118,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
       const cause = squashAtomCommandFailure(result);
       setError(
         cause instanceof Error
-          ? cause.message
+          ? (errorDisplayMessage(cause, m) ?? cause.message)
           : gt("The action could not be completed. Try again."),
       );
     }
@@ -229,12 +232,15 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
             ) : !allowed ? (
               <Text className="px-2 text-sm text-foreground-muted">
                 {AsyncResult.isFailure(sessionResult) || session === null || !session.authenticated
-                  ? sessionPermissionsUnavailableMessage({
-                      connected,
-                      failed: AsyncResult.isFailure(sessionResult),
-                      rejected:
-                        !AsyncResult.isFailure(sessionResult) && session?.authenticated === false,
-                    })
+                  ? sessionPermissionsUnavailableMessage(
+                      {
+                        connected,
+                        failed: AsyncResult.isFailure(sessionResult),
+                        rejected:
+                          !AsyncResult.isFailure(sessionResult) && session?.authenticated === false,
+                      },
+                      messages,
+                    )
                   : gt("This connection does not have permission to manage the environment.")}
               </Text>
             ) : null}

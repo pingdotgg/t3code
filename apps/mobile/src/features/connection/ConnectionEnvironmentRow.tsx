@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
 import { ConnectionTraceId } from "./ConnectionTraceId";
@@ -11,6 +12,7 @@ import { AsyncResult } from "effect/reactivity";
 import { useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
+import { m as resolveMessage } from "../../i18n/messages";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
@@ -96,7 +98,9 @@ export function ConnectionEnvironmentRow(props: {
     const error = Cause.squash(result.cause);
     Dialog.alert(
       gt("Could not update environment"),
-      error instanceof Error ? error.message : gt("The environment could not be updated."),
+      error instanceof Error
+        ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+        : gt("The environment could not be updated."),
     );
   };
 

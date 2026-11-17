@@ -45,6 +45,16 @@ function localCalendarDay(date: Date): number {
   return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / DAY;
 }
 
+const WEEKDAY_KEYS = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+] as const;
+
 export function formatNextScheduledTaskRun(
   nextRunAt: string,
   now: number,
@@ -79,10 +89,10 @@ export function formatNextScheduledTaskRun(
   if (days === 1) return resolve(msg("Next run tomorrow at {time}", { time }));
   if (days <= 7) {
     return resolve(
-      msg("Next run next {weekday} at {time}", {
-        weekday: next.toLocaleDateString([], { weekday: "long" }),
-        time,
-      }),
+      msg(
+        "{day, select, sunday {Next run next Sunday at {time}} monday {Next run next Monday at {time}} tuesday {Next run next Tuesday at {time}} wednesday {Next run next Wednesday at {time}} thursday {Next run next Thursday at {time}} friday {Next run next Friday at {time}} other {Next run next Saturday at {time}}}",
+        { day: WEEKDAY_KEYS[next.getDay()] ?? "saturday", time },
+      ),
     );
   }
   const date = next.toLocaleDateString([], {

@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -23,7 +24,10 @@ export class EnvironmentUpdateCheckError extends Schema.TaggedError<EnvironmentU
 
 const asError = (cause: unknown) =>
   new EnvironmentUpdateCheckError({
-    message: cause instanceof Error ? cause.message : m(msg("Could not check for updates.")),
+    message:
+      cause instanceof Error
+        ? (errorDisplayMessage(cause, m) ?? cause.message)
+        : m(msg("Could not check for updates.")),
     cause,
   });
 

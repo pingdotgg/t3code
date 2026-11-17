@@ -40,8 +40,10 @@ export function TerminalContextSheet(props: {
       version: 1 as const,
       kind: "terminal" as const,
       contextId: ComposerContextId.make(uuidv4()),
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- context label sent to the agent with the terminal text
       label: `${props.terminalLabel} · visible lines ${range.start + 1}–${range.end + 1}`,
       terminalId: props.terminalId,
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- context label sent to the agent with the terminal text
       terminalLabel: `${props.terminalLabel} (visible output)`,
       lineStart: range.start + 1,
       lineEnd: range.end + 1,

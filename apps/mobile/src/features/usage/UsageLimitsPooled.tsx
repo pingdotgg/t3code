@@ -5,16 +5,18 @@ import { providerClients } from "@t3tools/client-runtime/provider-clients";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
   collectLimitAccounts,
-  collectExternalUsageLinks,
-  collectLimitNotices,
   collectLimitPools,
-  cursorUsageWindowDetails,
   displayLimitWindows,
   paceRemainingPercent,
   remainingPercent,
   type LimitAccount,
   type LimitPoolWindow,
 } from "@t3tools/shared/usageLimits";
+import {
+  collectExternalUsageLinks,
+  collectLimitNotices,
+  cursorUsageWindowDetails,
+} from "@t3tools/shared/usageLimitsCopy";
 import { msg, T, useGT, useMessages, Var } from "gt-react-native";
 import { Fragment, type ReactNode, useId, useState } from "react";
 import { Linking, Pressable, View } from "react-native";
@@ -28,7 +30,7 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import type { MessageResolver } from "../../i18n/messages";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
-import { ResetCredits, resetLabels } from "./UsageLimitsSection";
+import { refillLabel, ResetCredits, resetLabels } from "./UsageLimitsSection";
 import { usageProviderKind, useProviderColors } from "./usageProviders";
 
 const PACE_LABEL = {
@@ -208,11 +210,13 @@ function PoolWindowCard({
             <Text className="text-sm font-t3-medium text-foreground">{label ?? pool.label}</Text>
           ) : null}
           <View className="flex-row items-baseline gap-1.5">
-            <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
-              {pool.remainingPercent}%
-            </Text>
             <Text className="text-sm text-foreground-muted">
-              {gt("left", { $context: "after a remaining percentage, as in 40% left" })}
+              <T>
+                <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
+                  <Var>{pool.remainingPercent}</Var>%
+                </Text>{" "}
+                left
+              </T>
             </Text>
           </View>
         </View>
@@ -223,7 +227,7 @@ function PoolWindowCard({
       {description ? <Text className="text-xs text-foreground-muted">{description}</Text> : null}
       {nextRefill ? (
         <Text className="text-xs tabular-nums text-foreground-muted">
-          ↻ +{nextRefill.restoresPercent}% {resetLabels(nextRefill.member.window, now, m)?.refill}
+          {refillLabel(nextRefill.member.window, now, nextRefill.restoresPercent, m)}
         </Text>
       ) : null}
     </>
@@ -477,8 +481,9 @@ export function UsageLimitsSection({
       ? presentations
       : new Map([...presentations].filter(([id]) => selectedEnvironmentIds.has(id)));
   const pools = collectLimitPools(collectLimitAccounts(selected), now);
-  const notices = collectLimitNotices(selected);
-  const externalLinks = collectExternalUsageLinks(selected);
+  const m = useMessages();
+  const notices = collectLimitNotices(selected, m);
+  const externalLinks = collectExternalUsageLinks(selected, m);
   const colors = useProviderColors();
   const gt = useGT();
   return (
@@ -506,7 +511,9 @@ export function UsageLimitsSection({
               </View>
               {windows.map((window) => {
                 const details =
-                  pool.driver === "cursor" ? cursorUsageWindowDetails(window.id, pool) : undefined;
+                  pool.driver === "cursor"
+                    ? cursorUsageWindowDetails(window.id, pool, m)
+                    : undefined;
                 return (
                   <PoolWindowCard
                     key={`${window.kind}:${window.id}`}

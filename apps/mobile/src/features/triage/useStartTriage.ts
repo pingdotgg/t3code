@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { pipe } from "effect/Function";
 import {
   isAtomCommandInterrupted,
@@ -7,6 +8,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useNavigation } from "@react-navigation/native";
 import * as Clipboard from "expo-clipboard";
 import { useGT } from "gt-react-native";
+import { m } from "../../i18n/messages";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { projectEnvironment } from "../../state/projects";
@@ -54,7 +56,7 @@ export function useStartTriage() {
       ],
     );
   const errorMessage = (error: unknown, fallback: string) =>
-    error instanceof Error ? error.message : fallback;
+    error instanceof Error ? (errorDisplayMessage(error, m) ?? error.message) : fallback;
 
   const activeRoute = () => {
     const state = navigation.getState();

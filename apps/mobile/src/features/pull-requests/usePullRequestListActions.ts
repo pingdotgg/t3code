@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Dialog from "../../components/ui/Dialog";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import {
@@ -19,11 +20,13 @@ import {
   pullRequestActionLabel,
 } from "./pullRequestActions";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermKind } from "./changeRequestTerm";
 import { scopedPullRequestListKey, type EnvironmentPullRequestListEntry } from "./pullRequestList";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestTarget } from "./usePullRequestDiff";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { useOpenWorkspaceDetail } from "../layout/useOpenWorkspaceDetail";
+import { m as resolveMessage } from "../../i18n/messages";
 
 export function usePullRequestListActions(
   environmentIds: readonly EnvironmentId[],
@@ -82,9 +85,12 @@ export function usePullRequestListActions(
           !pr.viewerPermissions.requestReviewers
         )
           throw new Error(
-            gt("Review requests aren't available for this {term}.", {
-              term: terminology.singular,
-            }),
+            gt(
+              "Review requests aren't available for this {term, select, mr {merge request} cr {change request} other {pull request}}.",
+              {
+                term: changeRequestTermKind(terminology),
+              },
+            ),
           );
         openDetail(
           { name: "PullRequest", params: params(entry) },
@@ -97,7 +103,12 @@ export function usePullRequestListActions(
         !canPerformPullRequestAction(pr, action)
       )
         throw new Error(
-          gt("This action isn't available for this {term}.", { term: terminology.singular }),
+          gt(
+            "This action isn't available for this {term, select, mr {merge request} cr {change request} other {pull request}}.",
+            {
+              term: changeRequestTermKind(terminology),
+            },
+          ),
         );
       const result = await run({ ...target, input: { ...target.input, action } });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
@@ -116,8 +127,13 @@ export function usePullRequestListActions(
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
       Dialog.alert(
-        gt("Couldn't update this {term}", { term: terminology.singular }),
-        cause instanceof Error ? cause.message : gt("Try again."),
+        gt(
+          "Couldn't update this {term, select, mr {merge request} cr {change request} other {pull request}}",
+          { term: changeRequestTermKind(terminology) },
+        ),
+        cause instanceof Error
+          ? (errorDisplayMessage(cause, resolveMessage) ?? cause.message)
+          : gt("Try again."),
       );
     }
   };
@@ -165,7 +181,10 @@ export function usePullRequestListActions(
     return [
       {
         id: "open",
-        title: gt("Open {term}", { term: terminology.singular }),
+        title: gt(
+          "Open {term, select, mr {merge request} cr {change request} other {pull request}}",
+          { term: changeRequestTermKind(terminology) },
+        ),
         image: "arrow.up.right",
       },
       ...(writableEnvironments.has(entry.environmentId) && entry.state === "open"

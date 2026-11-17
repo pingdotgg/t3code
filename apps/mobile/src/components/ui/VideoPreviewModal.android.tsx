@@ -1,5 +1,6 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { videoMimeType } from "@t3tools/shared/video";
-import { T, useGT } from "gt-react-native";
+import { T, useGT, useMessages } from "gt-react-native";
 import { Modal, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -60,10 +61,13 @@ function useMediaPlayback(source: MediaVideoPreviewSource): PlaybackState {
 
 function useLocalPlayback(source: LocalVideoPreviewSource): PlaybackState {
   const gt = useGT();
+  const messages = useMessages();
   const { attachment } = source;
   const preview = useLocalAttachmentPreview(attachment);
   const { uri } = preview;
-  const error = preview.error ? preview.error.message || gt("Could not load this video.") : null;
+  const error = preview.error
+    ? errorDisplayMessage(preview.error, messages) || gt("Could not load this video.")
+    : null;
   const mimeType = videoMimeType(attachment) ?? attachment.mimeType;
   return {
     uri,

@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { AppBar, type AppBarSearch } from "../../components/ui/AppBar";
 import { AsyncResult } from "effect/reactivity";
@@ -7,6 +8,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermKind } from "./changeRequestTerm";
 import {
   hostReviewerQuery,
   reviewerCandidateView,
@@ -20,7 +22,7 @@ import {
   toggleSelection,
 } from "@t3tools/client-runtime/pull-request-selection";
 import type { PullRequestReviewerCandidate } from "@t3tools/contracts";
-import { msg, T, useGT, useMessages, Var } from "gt-react-native";
+import { msg, T, useGT, useMessages } from "gt-react-native";
 import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
@@ -37,6 +39,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { PullRequestAvatar } from "./PullRequestPresentation";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import type { MessageResolver } from "../../i18n/messages";
+import { m as resolveMessage } from "../../i18n/messages";
 
 const TRUNCATED_LABELS: Record<
   ReviewerTruncation,
@@ -69,9 +72,9 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
   const target = pullRequestTarget(route.params);
   const detail = useEnvironmentQuery(composerPullRequests.detail(target));
   const pr = detail.data;
-  const { singular } = sourceControlClients.get(
-    (pr ?? route.params.initialSummary)?.provider,
-  ).changeRequest;
+  const term = changeRequestTermKind(
+    sourceControlClients.get((pr ?? route.params.initialSummary)?.provider).changeRequest,
+  );
   const canWrite = useAtomValue(
     composerPullRequests.requestReviewers.permissionAtom(target.environmentId),
   );
@@ -147,7 +150,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
       const cause = squashAtomCommandFailure(response);
       setError(
         cause instanceof Error
-          ? cause.message
+          ? (errorDisplayMessage(cause, resolveMessage) ?? cause.message)
           : gt("Couldn't update this review request. Try again."),
       );
       return;
@@ -187,7 +190,9 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
             requested
               ? gt("Couldn't request a review from {logins}", { logins })
               : gt("Couldn't remove the review request from {logins}", { logins }),
-            cause instanceof Error ? cause.message : gt("The provider refused the change."),
+            cause instanceof Error
+              ? (errorDisplayMessage(cause, resolveMessage) ?? cause.message)
+              : gt("The provider refused the change."),
           );
         };
         const send = async (
@@ -249,9 +254,10 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
               </Text>
               {!allowed ? (
                 <Text className="text-xs text-foreground-muted">
-                  <T>
-                    Requesting reviews requires write access and an open <Var>{singular}</Var>.
-                  </T>
+                  {gt(
+                    "Requesting reviews requires write access and an open {term, select, mr {merge request} cr {change request} other {pull request}}.",
+                    { term },
+                  )}
                 </Text>
               ) : null}
             </View>
@@ -348,7 +354,11 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
               <AppActivityIndicator />
             ) : (
               <Text className="text-danger-foreground">
-                {detail.error ?? gt("Couldn't load this {term}.", { term: singular })}
+                {detail.error ??
+                  gt(
+                    "Couldn't load this {term, select, mr {merge request} cr {change request} other {pull request}}.",
+                    { term },
+                  )}
               </Text>
             )
           ) : (

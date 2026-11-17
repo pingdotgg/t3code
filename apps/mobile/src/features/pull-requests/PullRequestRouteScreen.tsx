@@ -131,10 +131,8 @@ import { PullRequestStackCard } from "./PullRequestStackCard";
 import { usePullRequestStack, type PullRequestStackState } from "./usePullRequestStack";
 import { usePullRequestEnvironmentFallback } from "./usePullRequestEnvironmentFallback";
 import { pullRequestFileJumpScope, subscribePullRequestFileJump } from "./pullRequestFileJump";
-import {
-  capitalizeTerm,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermKind } from "./changeRequestTerm";
 
 function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityFilter) {
   const navigation = useNavigation();
@@ -602,7 +600,10 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
           onBack={layout.usesSplitView ? undefined : returnToList}
           menus={[
             {
-              title: gt("{term} actions", { term: capitalizeTerm(terminology.singular) }),
+              title: gt(
+                "{term, select, mr {Merge request} cr {Change request} other {Pull request}} actions",
+                { term: changeRequestTermKind(terminology) },
+              ),
               icon: "ellipsis",
               items: [
                 ...(permissions.verdicts.length
@@ -1445,9 +1446,12 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
           ) : !result.isPending && !result.error && !seekingFile ? (
             <EmptyState
               title={gt("Diff unavailable")}
-              detail={gt("Open this {term} on its provider to view the changes.", {
-                term: terminology.singular,
-              })}
+              detail={gt(
+                "Open this {term, select, mr {merge request} cr {change request} other {pull request}} on its provider to view the changes.",
+                {
+                  term: changeRequestTermKind(terminology),
+                },
+              )}
               variant="plain"
             />
           ) : null}

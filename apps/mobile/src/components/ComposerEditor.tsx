@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Dialog from "./ui/Dialog";
 import { ComposerContextId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -39,6 +40,7 @@ import {
   composerMentionPath,
   type ComposerDocumentAttachment,
 } from "../lib/composerContext";
+import { m } from "../i18n/messages";
 
 export type ComposerEditorProps = NativeComposerEditorProps & {
   readonly draftKey?: string | null;
@@ -153,7 +155,9 @@ export function ComposerEditor({
       const error = squashAtomCommandFailure(settled);
       Dialog.alert(
         gt("Could not paste context"),
-        error instanceof Error ? error.message : gt("Try copying again."),
+        error instanceof Error
+          ? (errorDisplayMessage(error, m) ?? error.message)
+          : gt("Try copying again."),
       );
     }
   };

@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Dialog from "../../components/ui/Dialog";
 import { RegistryContext, useAtomMount, useAtomValue } from "@effect/atom-react";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
@@ -12,13 +13,12 @@ import {
 } from "@t3tools/contracts";
 import {
   type ResetCreditChoice,
-  resetCreditChoices,
-  formatDuration,
-  limitsNotice,
   paceOf,
   paceRemainingPercent,
   remainingPercent,
+  resetCountdown,
 } from "@t3tools/shared/usageLimits";
+import { formatDuration, limitsNotice, resetCreditChoices } from "@t3tools/shared/usageLimitsCopy";
 import { msg, T, useGT, useMessages, Var } from "gt-react-native";
 import { type ReactNode, useContext, useRef, useState } from "react";
 import { Atom } from "effect/reactivity";
@@ -185,8 +185,9 @@ export function AccountLimits(props: {
   const { limits, now, dense = false } = props;
   const providerColor = useBarColor(props.driver);
   const color = normalizeProviderAccentColor(props.accentColor) ?? providerColor;
+  const m = useMessages();
   if (!limits) return null;
-  const notice = limitsNotice(limits);
+  const notice = limitsNotice(limits, m);
   const externalUsage = limits.externalUsage;
   const padding = dense ? "px-4 py-3" : "p-4";
   return (
@@ -257,6 +258,7 @@ export function ResetCredits(props: {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const gt = useGT();
+  const m = useMessages();
   if (dense && credits.availableCount === 0 && status === null) return null;
 
   const redeem = async (choice: ResetCreditChoice) => {
@@ -271,7 +273,7 @@ export function ResetCredits(props: {
     }
     setStatus(
       "error" in result.cause && result.cause.error instanceof Error
-        ? result.cause.error.message
+        ? (errorDisplayMessage(result.cause.error, resolveNow) ?? result.cause.error.message)
         : resolveNow(msg("Could not use the reset credit.")),
     );
   };
@@ -286,7 +288,7 @@ export function ResetCredits(props: {
 
   return (
     <View className="gap-1">
-      {resetCreditChoices(credits, input, now).map((choice) => (
+      {resetCreditChoices(credits, input, now, false, m).map((choice) => (
         <View key={choice.key} className="flex-row flex-wrap items-center gap-x-3 gap-y-1">
           <Text className="text-xs tabular-nums text-foreground-tertiary">{choice.summary}</Text>
           {choice.availableCount > 0 ? (
@@ -379,25 +381,40 @@ export function resetLabels(
   window: ServerProviderUsageWindow,
   now: number,
   resolve: MessageResolver,
-): { readonly full: string; readonly refill: string; readonly compact: string } | null {
-  const resetsAt = window.resetsAt === undefined ? Number.NaN : Date.parse(window.resetsAt);
-  if (!Number.isFinite(resetsAt)) return null;
-  if (resetsAt <= now) {
+): { readonly full: string; readonly compact: string } | null {
+  const countdown = resetCountdown(window, now);
+  if (countdown === null) return null;
+  if (countdown.kind === "now") {
     const full = resolve(msg("resets now", { $context: "usage limit" }));
-    return {
-      full,
-      refill: resolve(msg("now", { $context: "usage limit resets now" })),
-      compact: full,
-    };
+    return { full, compact: full };
   }
-  if (resetsAt - now < 60_000) {
+  if (countdown.kind === "momentarily") {
     const momentarily = resolve(msg("Resets momentarily"));
-    return { full: momentarily, refill: momentarily, compact: momentarily };
+    return { full: momentarily, compact: momentarily };
   }
-  const duration = formatDuration(resetsAt - now);
-  return {
-    full: resolve(msg("resets in {duration}", { duration })),
-    refill: resolve(msg("in {duration}", { duration, $context: "usage limit refill" })),
-    compact: duration,
-  };
+  const duration = formatDuration(countdown.ms, resolve);
+  return { full: resolve(msg("resets in {duration}", { duration })), compact: duration };
+}
+
+export function refillLabel(
+  window: ServerProviderUsageWindow,
+  now: number,
+  percent: number,
+  resolve: MessageResolver,
+): string | null {
+  const countdown = resetCountdown(window, now);
+  if (countdown === null) return null;
+  if (countdown.kind === "now") {
+    return resolve(msg("↻ +{percent}% now", { percent, $context: "usage limit refill" }));
+  }
+  if (countdown.kind === "momentarily") {
+    return resolve(msg("↻ +{percent}% Resets momentarily", { percent }));
+  }
+  return resolve(
+    msg("↻ +{percent}% in {duration}", {
+      percent,
+      duration: formatDuration(countdown.ms, resolve),
+      $context: "usage limit refill",
+    }),
+  );
 }

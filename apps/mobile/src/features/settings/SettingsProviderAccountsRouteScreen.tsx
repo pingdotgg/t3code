@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { T, useGT, Var } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
 import {
@@ -15,6 +16,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useRef, useState } from "react";
 import { Linking, Pressable, ScrollView, TextInput, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { m } from "../../i18n/messages";
 
 import type { MenuAction } from "@react-native-menu/menu";
 
@@ -206,7 +208,9 @@ function ProviderAccount({
     if (!isAtomCommandInterrupted(result)) {
       const failure = squashAtomCommandFailure(result);
       setError(
-        failure instanceof Error ? failure.message : gt("Could not update provider sign-in."),
+        failure instanceof Error
+          ? (errorDisplayMessage(failure, m) ?? failure.message)
+          : gt("Could not update provider sign-in."),
       );
     }
     return false;

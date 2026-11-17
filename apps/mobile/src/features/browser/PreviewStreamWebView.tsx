@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { Button } from "../../components/ui/Button";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import * as Dialog from "../../components/ui/Dialog";
@@ -104,7 +105,7 @@ function offerDownload(download: PreviewStreamDownload) {
         }).catch((cause: unknown) =>
           Dialog.alert(
             m(msg("Could not save the download")),
-            cause instanceof Error ? cause.message : undefined,
+            cause instanceof Error ? (errorDisplayMessage(cause, m) ?? cause.message) : undefined,
           ),
         ),
     },
@@ -264,7 +265,7 @@ function PreviewStreamDocumentView({
     void sendFilesToPage(chooser, pick).catch((cause: unknown) =>
       Dialog.alert(
         m(msg("Could not send the files to the page")),
-        cause instanceof Error ? cause.message : undefined,
+        cause instanceof Error ? (errorDisplayMessage(cause, m) ?? cause.message) : undefined,
       ),
     );
   };

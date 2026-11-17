@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import {
   descriptionDraftInForce,
@@ -15,6 +16,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
+import { m } from "../../i18n/messages";
 
 /** The description with checkbox ticks shown before the host confirms them. */
 export function usePullRequestDescription(
@@ -45,7 +47,9 @@ export function usePullRequestDescription(
       const cause = squashAtomCommandFailure(response);
       Dialog.alert(
         gt("Could not save the description"),
-        cause instanceof Error ? cause.message : gt("Try again."),
+        cause instanceof Error
+          ? (errorDisplayMessage(cause, m) ?? cause.message)
+          : gt("Try again."),
       );
     }
     if (savesRunning.current === 0) refreshDetail();

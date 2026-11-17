@@ -22,11 +22,10 @@ import {
   formatHourShort,
   formatPercent,
   formatTokens,
-  formatUsageContractMismatch,
   formatUsd,
   makeWindow,
-  usageSourceMessages,
 } from "@t3tools/shared/usageFormat";
+import { formatUsageContractMismatch, usageSourceMessages } from "@t3tools/shared/usageFormatCopy";
 import { msg, T, useGT, useMessages, Var } from "gt-react-native";
 import { use, useRef, useState, type ReactNode } from "react";
 import { View } from "react-native";
@@ -143,6 +142,7 @@ function UsageScreen(props: {
   );
   const sourceMessages = usageSourceMessages(
     selectedEnvironments.flatMap((environment) => environment.summary?.sources ?? []),
+    m,
   );
   const canReadDiagnostics = selectedEnvironments.some(
     (environment) => environment.canReadDiagnostics,
@@ -674,7 +674,10 @@ function TotalsSection(props: {
               ? gt("{ratio}x the raw cost", {
                   ratio: (merged.costQuality.cacheSavingsUsd / merged.costUsd).toFixed(1),
                 })
-              : gt("vs full input rates")
+              : gt("vs full input rates", {
+                  $context:
+                    "detail under the cache savings amount, compared with full input prices",
+                })
           }
         />
         <MetricCell
@@ -699,7 +702,9 @@ function TotalsSection(props: {
           columns={props.columns}
           label={gt("Unpriced", { $context: "share of usage records with no known price" })}
           value={formatPercent(merged.costQuality.unpricedShare)}
-          detail={gt("of records, excluded from cost")}
+          detail={gt("of records, excluded from cost", {
+            $context: "detail under a percentage of usage records that have no known price",
+          })}
         />
       </View>
     </SettingsSection>
@@ -910,12 +915,16 @@ function usageEnvironmentStatus(
     environment.summary &&
     !isCompatibleUsageContractVersion(environment.summary.contractVersion, USAGE_CONTRACT_VERSION)
   ) {
-    return formatUsageContractMismatch(environment.label, {
-      direction:
-        environment.summary.contractVersion < USAGE_CONTRACT_VERSION
-          ? "serverBehind"
-          : "clientBehind",
-    });
+    return formatUsageContractMismatch(
+      environment.label,
+      {
+        direction:
+          environment.summary.contractVersion < USAGE_CONTRACT_VERSION
+            ? "serverBehind"
+            : "clientBehind",
+      },
+      resolve,
+    );
   }
   if (environment.error)
     return environment.summary

@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { T, useGT } from "gt-react-native";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { AppText as Text, AppTextInput } from "../../components/ui/AppText";
@@ -203,7 +204,9 @@ function ProjectOverviewContent(props: {
           const error = squashAtomCommandFailure(result);
           Dialog.alert(
             gt('Failed to update "{project}"', { project: member.title }),
-            error instanceof Error ? error.message : gt("An error occurred."),
+            error instanceof Error
+              ? (errorDisplayMessage(error, m) ?? error.message)
+              : gt("An error occurred."),
           );
         }
         break;
@@ -273,7 +276,9 @@ function ProjectOverviewContent(props: {
                 const error = squashAtomCommandFailure(result);
                 Dialog.alert(
                   gt('Failed to remove "{project}"', { project: member.title }),
-                  error instanceof Error ? error.message : gt("An error occurred."),
+                  error instanceof Error
+                    ? (errorDisplayMessage(error, m) ?? error.message)
+                    : gt("An error occurred."),
                 );
               }
               return;

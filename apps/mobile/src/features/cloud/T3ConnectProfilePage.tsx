@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages } from "gt-react-native";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
 import {
@@ -104,7 +105,10 @@ export function T3ConnectProfilePage() {
     if (isAtomCommandInterrupted(result)) return;
 
     const cause = squashAtomCommandFailure(result);
-    const message = cause instanceof Error ? cause.message : gt("Could not deregister the server.");
+    const message =
+      cause instanceof Error
+        ? (errorDisplayMessage(cause, m) ?? cause.message)
+        : gt("Could not deregister the server.");
     const traceId = findErrorTraceId(cause);
     console.error("[t3-connect] Could not deregister environment", {
       environmentId: environment.environmentId,

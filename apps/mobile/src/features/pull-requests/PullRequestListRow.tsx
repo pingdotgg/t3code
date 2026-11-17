@@ -1,7 +1,5 @@
-import {
-  capitalizeTerm,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermKind } from "./changeRequestTerm";
 import { useGT, useMessages } from "gt-react-native";
 import { memo } from "react";
 import { Pressable, View } from "react-native";
@@ -92,12 +90,15 @@ export const PullRequestListRow = memo(
             accessibilityRole="button"
             accessibilityState={{ selected: props.selected, busy: props.busy }}
             accessibilityLabel={[
-              gt("{term} {number}", {
-                term: capitalizeTerm(
-                  sourceControlClients.get(item.provider).changeRequest.singular,
-                ),
-                number: item.number,
-              }),
+              gt(
+                "{term, select, mr {Merge request} cr {Change request} other {Pull request}} {number}",
+                {
+                  term: changeRequestTermKind(
+                    sourceControlClients.get(item.provider).changeRequest,
+                  ),
+                  number: item.number,
+                },
+              ),
               item.title,
               status.label,
               conflict ? conflict.label.toLowerCase() : null,

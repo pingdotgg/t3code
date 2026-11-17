@@ -1,8 +1,7 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import {
-  capitalizeTerm,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermKind } from "./changeRequestTerm";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import type { PullRequestComment } from "@t3tools/contracts";
@@ -19,6 +18,7 @@ import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff"
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import { PullRequestCompletionSuggestions } from "./PullRequestCompletionSuggestions";
 import { usePullRequestCompletions } from "./usePullRequestCompletions";
+import { m } from "../../i18n/messages";
 
 export type PullRequestEditParams = PullRequestParams &
   (
@@ -44,7 +44,7 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
   const updateComment = useAtomCommand(composerPullRequests.updateComment, {
     reportFailure: false,
   });
-  const singular = sourceControlClients.get(pr?.provider).changeRequest.singular;
+  const term = changeRequestTermKind(sourceControlClients.get(pr?.provider).changeRequest);
   const original =
     params.field === "comment"
       ? params.comment.body
@@ -83,7 +83,10 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
           ? gt("This device isn't allowed to change source control on this environment.")
           : params.field === "comment"
             ? gt("You can't edit this comment.")
-            : gt("You can't edit this {term}.", { term: singular });
+            : gt(
+                "You can't edit this {term, select, mr {merge request} cr {change request} other {pull request}}.",
+                { term },
+              );
   const unchanged = draft === null || draft === original;
   const invalid = params.field === "title" && value.trim().length === 0;
   const save = async () => {
@@ -113,7 +116,11 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
     setBusy(false);
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
-      setError(cause instanceof Error ? cause.message : gt("The provider refused the change."));
+      setError(
+        cause instanceof Error
+          ? (errorDisplayMessage(cause, m) ?? cause.message)
+          : gt("The provider refused the change."),
+      );
       return;
     }
     // updateComment refreshes the activity on its own; a title or body lives on the detail.
@@ -152,9 +159,15 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
         autoFocus
         accessibilityLabel={
           params.field === "title"
-            ? gt("{term} title", { term: capitalizeTerm(singular) })
+            ? gt(
+                "{term, select, mr {Merge request} cr {Change request} other {Pull request}} title",
+                { term },
+              )
             : params.field === "body"
-              ? gt("{term} description", { term: capitalizeTerm(singular) })
+              ? gt(
+                  "{term, select, mr {Merge request} cr {Change request} other {Pull request}} description",
+                  { term },
+                )
               : gt("Comment", { $context: "noun, field label" })
         }
         placeholder={

@@ -1,10 +1,12 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { AsyncResult } from "effect/reactivity";
 import { useAtomRefresh } from "@effect/atom-react";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermKind } from "./changeRequestTerm";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PullRequestReviewVerdict } from "@t3tools/contracts";
-import { msg, T, useGT, useMessages, Var } from "gt-react-native";
+import { msg, T, useGT, useMessages } from "gt-react-native";
 import { useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import { Pressable, View } from "react-native";
@@ -22,6 +24,7 @@ import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff"
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import { PullRequestCompletionSuggestions } from "./PullRequestCompletionSuggestions";
 import { usePullRequestCompletions } from "./usePullRequestCompletions";
+import { m as resolveMessage } from "../../i18n/messages";
 
 function useActionSubmission(params: PullRequestParams) {
   const navigation = useNavigation();
@@ -48,7 +51,7 @@ function useActionSubmission(params: PullRequestParams) {
       const cause = squashAtomCommandFailure(result);
       setError(
         cause instanceof Error
-          ? cause.message
+          ? (errorDisplayMessage(cause, resolveMessage) ?? cause.message)
           : gt("The provider could not complete this action. Try again."),
       );
     }
@@ -268,11 +271,14 @@ export function PullRequestReviewSheet({
       ) : null}
       {reviewing && !canSubmitComments ? (
         <Text className="text-sm text-danger-foreground">
-          <T>
-            You can no longer submit line comments on this{" "}
-            <Var>{sourceControlClients.get(result.data?.provider).changeRequest.singular}</Var>.
-            Your drafts are kept here.
-          </T>
+          {gt(
+            "You can no longer submit line comments on this {term, select, mr {merge request} cr {change request} other {pull request}}. Your drafts are kept here.",
+            {
+              term: changeRequestTermKind(
+                sourceControlClients.get(result.data?.provider).changeRequest,
+              ),
+            },
+          )}
         </Text>
       ) : null}
       {submission.error || result.error || store.error ? (

@@ -1,10 +1,10 @@
-import { msg, T, useGT, useMessages, Var } from "gt-react-native";
+import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react-native";
+import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthOrchestrationOperateScope,
   clampManagedRuntimeMode,
-  managedCapabilityDenial,
   resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import { readEnvironmentScope } from "../../state/session";
@@ -40,7 +40,7 @@ import {
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
 import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
-import { m, type MessageResolver } from "../../i18n/messages";
+import type { MessageResolver } from "../../i18n/messages";
 import { useRef, useState, type ReactNode } from "react";
 import { useFocusEffect, useNavigation, usePreventRemove } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -107,15 +107,14 @@ type ScheduledTaskRoutes = {
   SettingsScheduledTaskThread: undefined;
 };
 
-const DAYS = [
-  { index: 1, label: msg("Mon", { $context: "abbreviated weekday, Monday" }) },
-  { index: 2, label: msg("Tue", { $context: "abbreviated weekday, Tuesday" }) },
-  { index: 3, label: msg("Wed", { $context: "abbreviated weekday, Wednesday" }) },
-  { index: 4, label: msg("Thu", { $context: "abbreviated weekday, Thursday" }) },
-  { index: 5, label: msg("Fri", { $context: "abbreviated weekday, Friday" }) },
-  { index: 6, label: msg("Sat", { $context: "abbreviated weekday, Saturday" }) },
-  { index: 0, label: msg("Sun", { $context: "abbreviated weekday, Sunday" }) },
-] as const;
+const DAYS = [1, 2, 3, 4, 5, 6, 0].map((index) => ({ index }));
+
+// 2024-01-07 was a Sunday, so day index 0 to 6 maps onto Sunday to Saturday.
+function weekdayLabel(index: number, locale: string): string {
+  return new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" }).format(
+    Date.UTC(2024, 0, 7 + index),
+  );
+}
 
 const THREAD_MODE_LABELS: Record<ScheduledTaskThreadMode, string> = {
   new_thread: msg("New thread each run"),
@@ -126,7 +125,8 @@ const THREAD_MODE_LABELS: Record<ScheduledTaskThreadMode, string> = {
 function describeSchedule(
   task: ScheduledTask,
   timeZone: string | undefined,
-  resolve: MessageResolver = m,
+  resolve: MessageResolver,
+  locale: string,
 ): string {
   if (task.schedule.type === "webhook") return resolve(msg("On webhook"));
   if (task.schedule.type === "once") {
@@ -138,7 +138,7 @@ function describeSchedule(
   if (task.schedule.type === "interval")
     return formatScheduledTaskInterval(task.schedule.everyMs, resolve);
   const days = task.schedule.weekdays?.length
-    ? repeatLabel(task.schedule.weekdays, resolve)
+    ? repeatLabel(task.schedule.weekdays, resolve, locale)
     : resolve(msg("Every day"));
   const zone = scheduleTimeZoneLabel(timeZone, task.nextRunAt);
   const time = formatTime(task.schedule.timeOfDay);
@@ -180,13 +180,17 @@ function isWeekdays(weekdays: ReadonlyArray<number>): boolean {
   return days.size === 5 && [1, 2, 3, 4, 5].every((day) => days.has(day));
 }
 
-function repeatLabel(weekdays: ReadonlyArray<number>, resolve: MessageResolver = m): string {
+function repeatLabel(
+  weekdays: ReadonlyArray<number>,
+  resolve: MessageResolver,
+  locale: string,
+): string {
   const days = new Set(weekdays);
   if (days.size === 7) return resolve(msg("Every day"));
   if (isWeekdays(weekdays)) return resolve(msg("Weekdays"));
   return (
     DAYS.filter((day) => days.has(day.index))
-      .map((day) => resolve(day.label))
+      .map((day) => weekdayLabel(day.index, locale))
       .join(", ") || resolve(msg("Choose days"))
   );
 }
@@ -348,6 +352,7 @@ function WebhookFilterRows(props: {
             <FormField
               label={filter.op === "in" ? gt("Values, comma-separated") : gt("Value")}
               value={filter.value}
+              // oxlint-disable-next-line t3code/no-untranslated-copy -- webhook action values
               placeholder={filter.op === "in" ? "opened, reopened" : "opened"}
               disabled={props.disabled}
               onChange={(value) => update(filter.id, { value })}
@@ -717,6 +722,7 @@ function TaskForm({
 }) {
   const gt = useGT();
   const m = useMessages();
+  const locale = useLocale();
   const { readEditor } = useScheduledTaskEditor();
   const navigation = useNavigation<NativeStackNavigationProp<ScheduledTaskRoutes>>();
   const tasks = useEnvironmentQuery(
@@ -740,7 +746,7 @@ function TaskForm({
     draft.threadId === null ? draft.modelSelection : (boundThread?.modelSelection ?? null);
   const modelOptions = buildModelOptions(config, null, undefined, draft.projectId);
   // Existing webhook tasks keep the option so they can still switch to a timer.
-  const webhookDenial = managedCapabilityDenial(config?.managedPolicy, "webhookTasks");
+  const webhookDenial = managedCapabilityDenial(config?.managedPolicy, "webhookTasks", m);
   const canOperate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
   );
@@ -1206,7 +1212,7 @@ function TaskForm({
               ) : null}
               <SelectRow
                 label={gt("Repeat", { $context: "noun, which days a task repeats on" })}
-                value={repeatLabel(draft.schedule.weekdays, m)}
+                value={repeatLabel(draft.schedule.weekdays, m, locale)}
                 borderTop
                 actions={[
                   {
@@ -1221,7 +1227,7 @@ function TaskForm({
                   },
                   ...DAYS.map((day) => ({
                     id: String(day.index),
-                    title: m(day.label),
+                    title: weekdayLabel(day.index, locale),
                     attributes: { keepsMenuPresented: true },
                     state: draft.schedule.weekdays.includes(day.index)
                       ? ("on" as const)
@@ -1569,6 +1575,7 @@ function EnvironmentTasks({
 }) {
   const gt = useGT();
   const m = useMessages();
+  const locale = useLocale();
   const environmentId = environment.environmentId;
   const tasks = useEnvironmentQuery(
     serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
@@ -1663,14 +1670,14 @@ function EnvironmentTasks({
               <Text className="text-sm text-foreground-muted" numberOfLines={2}>
                 {!task.enabled
                   ? gt("{schedule} · Paused", {
-                      schedule: describeSchedule(task, tasks.data?.timeZone, m),
+                      schedule: describeSchedule(task, tasks.data?.timeZone, m, locale),
                     })
                   : task.nextRunAt
                     ? gt("{schedule} · {nextRun}", {
-                        schedule: describeSchedule(task, tasks.data?.timeZone, m),
+                        schedule: describeSchedule(task, tasks.data?.timeZone, m, locale),
                         nextRun: formatNextScheduledTaskRun(task.nextRunAt, now, m),
                       })
-                    : describeSchedule(task, tasks.data?.timeZone, m)}
+                    : describeSchedule(task, tasks.data?.timeZone, m, locale)}
               </Text>
               {task.blockedByPolicy ? (
                 <Text className="text-sm text-foreground-muted" numberOfLines={2}>

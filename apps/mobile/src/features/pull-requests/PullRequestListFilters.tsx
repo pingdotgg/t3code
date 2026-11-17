@@ -443,7 +443,14 @@ export function PullRequestListFilters(props: {
           label={count ? String(count) : gt("Filters")}
           icon
           active={count > 0}
-          accessibilityLabel={count ? gt("Filters, {count} active", { count }) : gt("More filters")}
+          accessibilityLabel={
+            count
+              ? gt(
+                  "{count, plural, one {Filters, {count} active} other {Filters, {count} active}}",
+                  { count },
+                )
+              : gt("More filters")
+          }
           actions={[...more, reset(false)]}
           onSelect={select}
         />

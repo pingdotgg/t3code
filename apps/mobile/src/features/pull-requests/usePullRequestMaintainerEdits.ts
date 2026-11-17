@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useAtomRefresh } from "@effect/atom-react";
 import {
   maintainerEditsChoiceInForce,
@@ -12,6 +13,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
+import { m } from "../../i18n/messages";
 
 export function usePullRequestMaintainerEdits(
   params: PullRequestParams,
@@ -47,7 +49,9 @@ export function usePullRequestMaintainerEdits(
       const cause = squashAtomCommandFailure(response);
       Dialog.alert(
         gt("Could not save maintainer access"),
-        cause instanceof Error ? cause.message : gt("Try again."),
+        cause instanceof Error
+          ? (errorDisplayMessage(cause, m) ?? cause.message)
+          : gt("Try again."),
       );
       return;
     }

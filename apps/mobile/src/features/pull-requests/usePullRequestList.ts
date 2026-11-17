@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   editHeldPullRequestListEntries,
   pullRequestHostAnswer,
@@ -338,7 +339,7 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
             projectTitle: "",
             message:
               cause instanceof Error
-                ? cause.message
+                ? (errorDisplayMessage(cause, messages) ?? cause.message)
                 : messages(msg("Couldn't load pull requests.")),
           },
         ];
@@ -375,7 +376,7 @@ function requestErrors(results: readonly PromiseSettledResult<unknown>[]) {
         result.status === "rejected"
           ? [
               result.reason instanceof Error
-                ? result.reason.message
+                ? (errorDisplayMessage(result.reason, m) ?? result.reason.message)
                 : m(msg("Couldn't load pull requests.")),
             ]
           : [],

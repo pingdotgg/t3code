@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useGT } from "gt-react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import {
@@ -12,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import { TextInput, View } from "react-native";
+import { m } from "../../i18n/messages";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -53,7 +55,7 @@ function useProviderInstanceMutation(environment: SettingsTarget) {
       const failure = squashAtomCommandFailure(result);
       setError(
         failure instanceof Error
-          ? failure.message
+          ? (errorDisplayMessage(failure, m) ?? failure.message)
           : gt("Could not save the {provider} account.", { provider: "Claude" }),
       );
     }

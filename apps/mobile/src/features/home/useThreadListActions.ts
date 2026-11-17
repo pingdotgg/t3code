@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import type { ThreadMoveDestination } from "../threads/threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
@@ -308,7 +309,7 @@ export function useThreadListActions(): {
                     Dialog.alert(
                       m(msg("Could not restore snooze")),
                       error instanceof Error
-                        ? error.message
+                        ? (errorDisplayMessage(error, m) ?? error.message)
                         : m(msg("The thread could not be snoozed.")),
                     );
                     return false;
@@ -322,7 +323,9 @@ export function useThreadListActions(): {
         } catch (error) {
           Dialog.alert(
             m(msg("Could not undo thread action")),
-            error instanceof Error ? error.message : m(msg("Try again.")),
+            error instanceof Error
+              ? (errorDisplayMessage(error, m) ?? error.message)
+              : m(msg("Try again.")),
           );
         }
       },
@@ -394,8 +397,8 @@ export function useThreadListActions(): {
         const error = Cause.squash(result.cause);
         Dialog.alert(
           m(msg("Could not snooze thread")),
-          error instanceof Error && error.message.trim().length > 0
-            ? error.message
+          error instanceof Error && errorDisplayMessage(error, m) !== null
+            ? (errorDisplayMessage(error, m) ?? error.message)
             : m(msg("The thread could not be snoozed.")),
         );
         return false;
@@ -441,8 +444,8 @@ export function useThreadListActions(): {
         const error = Cause.squash(result.cause);
         Dialog.alert(
           m(msg("Could not wake thread")),
-          error instanceof Error && error.message.trim().length > 0
-            ? error.message
+          error instanceof Error && errorDisplayMessage(error, m) !== null
+            ? (errorDisplayMessage(error, m) ?? error.message)
             : m(msg("The thread could not be woken.")),
         );
         return false;
@@ -494,8 +497,8 @@ export function useThreadListActions(): {
       const error = Cause.squash(result.cause);
       Dialog.alert(
         m(msg("Could not pin thread")),
-        error instanceof Error && error.message.trim().length > 0
-          ? error.message
+        error instanceof Error && errorDisplayMessage(error, m) !== null
+          ? (errorDisplayMessage(error, m) ?? error.message)
           : m(msg("The thread could not be pinned.")),
       );
       return false;
@@ -532,8 +535,8 @@ export function useThreadListActions(): {
       const error = Cause.squash(result.cause);
       Dialog.alert(
         m(msg("Could not unpin thread")),
-        error instanceof Error && error.message.trim().length > 0
-          ? error.message
+        error instanceof Error && errorDisplayMessage(error, m) !== null
+          ? (errorDisplayMessage(error, m) ?? error.message)
           : m(msg("The thread could not be unpinned.")),
       );
       return false;
@@ -562,8 +565,8 @@ export function useThreadListActions(): {
       const error = Cause.squash(result.cause);
       Dialog.alert(
         m(msg("Could not update auto-settle")),
-        error instanceof Error && error.message.trim().length > 0
-          ? error.message
+        error instanceof Error && errorDisplayMessage(error, m) !== null
+          ? (errorDisplayMessage(error, m) ?? error.message)
           : m(msg("The auto-settle setting could not be changed.")),
       );
       return false;
@@ -599,8 +602,8 @@ export function useThreadListActions(): {
         const error = Cause.squash(result.cause);
         Dialog.alert(
           m(msg("Could not regenerate title")),
-          error instanceof Error && error.message.trim().length > 0
-            ? error.message
+          error instanceof Error && errorDisplayMessage(error, m) !== null
+            ? (errorDisplayMessage(error, m) ?? error.message)
             : m(msg("The thread title could not be regenerated.")),
         );
         return false;
@@ -634,8 +637,8 @@ export function useThreadListActions(): {
         const error = Cause.squash(result.cause);
         Dialog.alert(
           m(msg("Could not rename thread")),
-          error instanceof Error && error.message.trim().length > 0
-            ? error.message
+          error instanceof Error && errorDisplayMessage(error, m) !== null
+            ? (errorDisplayMessage(error, m) ?? error.message)
             : m(msg("The thread could not be renamed.")),
         );
       });
@@ -785,8 +788,8 @@ export function useThreadListActions(): {
           const error = Cause.squash(result.cause);
           Dialog.alert(
             m(msg("Could not move thread")),
-            error instanceof Error && error.message.trim().length > 0
-              ? error.message
+            error instanceof Error && errorDisplayMessage(error, m) !== null
+              ? (errorDisplayMessage(error, m) ?? error.message)
               : m(msg("The thread could not be moved.")),
           );
           return false;

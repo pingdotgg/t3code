@@ -63,29 +63,37 @@ export function TerminalAppearancePreview(props: { readonly fontSize: number }) 
         <Text style={span(theme.palette[1])}>main</Text>
         <Text style={span(theme.palette[4])}>)</Text>
         <Text style={span(theme.palette[3])}> ✗</Text>
+        {/* oxlint-disable-next-line t3code/no-untranslated-copy -- sample terminal output */}
         <Text style={span(theme.foreground)}> vpr dev</Text>
       </Text>
       <Text style={span(theme.foreground)}>
+        {/* oxlint-disable-next-line t3code/no-untranslated-copy -- sample terminal output */}
         <Text style={span(theme.palette[2])}>VITE v7.1.1</Text>
+        {/* oxlint-disable-next-line t3code/no-untranslated-copy -- sample terminal output */}
         <Text style={span(theme.mutedForeground)}> ready in</Text>
         <Text style={span(theme.foreground)}> 1.24s</Text>
       </Text>
       <Text style={span(theme.foreground)}>
         <Text style={span(theme.palette[2])}>→ </Text>
+        {/* oxlint-disable-next-line t3code/no-untranslated-copy -- sample terminal output */}
         <Text style={span(theme.mutedForeground)}>Local: </Text>
         <Text style={span(theme.palette[6], { textDecorationLine: "underline" })}>
           http://127.0.0.1:5173/
         </Text>
       </Text>
       <Text style={span(theme.foreground)}>
+        {/* oxlint-disable-next-line t3code/no-untranslated-copy -- sample terminal output */}
         <Text style={span(theme.palette[2])}>✓ 85 passed</Text>
+        {/* oxlint-disable-next-line t3code/no-untranslated-copy -- sample terminal output */}
         <Text style={span(theme.palette[3])}> △ 2 warnings</Text>
+        {/* oxlint-disable-next-line t3code/no-untranslated-copy -- sample terminal output */}
         <Text style={span(theme.palette[1])}> ✗ 0 failed</Text>
       </Text>
       <Text style={span(theme.foreground)}>
         <Text style={span(theme.background, { backgroundColor: theme.palette[2] })}>
           {" READY "}
         </Text>
+        {/* oxlint-disable-next-line t3code/no-untranslated-copy -- sample terminal output */}
         <Text style={span(theme.mutedForeground)}> watching for changes</Text>{" "}
         <Text style={span(theme.cursorForeground)}>▏</Text>
       </Text>
@@ -106,6 +114,7 @@ interface CodePreviewLine {
 const CODE_PREVIEW_LINES: ReadonlyArray<CodePreviewLine> = [
   {
     id: "signature",
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- sample code
     tokens: [{ text: "function", keyword: true }, { text: " formatUser(user) {" }],
   },
   {
@@ -113,6 +122,7 @@ const CODE_PREVIEW_LINES: ReadonlyArray<CodePreviewLine> = [
     tokens: [
       { text: "  " },
       { text: "return", keyword: true },
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- sample code
       { text: " `${user.name} <${user.email}>` // demonstrates how long lines behave" },
     ],
   },

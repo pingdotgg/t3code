@@ -1,6 +1,6 @@
-import { T, useGT } from "gt-react-native";
+import { T, useGT, useMessages } from "gt-react-native";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import { cloudSpeechDisclosure } from "@t3tools/shared/speech";
+import { cloudSpeechDisclosure } from "@t3tools/shared/speechCopy";
 import { setCloudSpeechKey } from "@t3tools/client-runtime/voice-input";
 import {
   configuredSecretSources,
@@ -163,7 +163,10 @@ function ModelPicker({
       ) : matches.length > shown.length ? (
         <Separated>
           <ListActionRow
-            label={gt("Show all {count} models", { count: matches.length })}
+            label={gt(
+              "{count, plural, one {Show all {count} models} other {Show all {count} models}}",
+              { count: matches.length },
+            )}
             onPress={() => setShowAll(true)}
           />
         </Separated>
@@ -179,6 +182,7 @@ function Separated({ children }: { children: ReactNode }) {
 
 function CloudChoices({ environment, active, onClose }: Props & { onClose: () => void }) {
   const gt = useGT();
+  const messages = useMessages();
   const id = environment.environmentId;
   const connection = useAtomValue(cloudVoiceConnectionAtom(id));
   const keys = useAtomValue(cloudVoiceKeysAtom(id));
@@ -333,7 +337,7 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
                   Dialog.confirm({
                     title: gt("Use {provider} for dictation?", { provider: label }),
                     message: gt("{disclosure} Select This device to stop sharing.", {
-                      disclosure: cloudSpeechDisclosure(provider, environment.label),
+                      disclosure: cloudSpeechDisclosure(provider, environment.label, messages),
                     }),
                     confirmText: gt("Use {provider}", { provider: label }),
                     onConfirm: () => enable(pendingCloudVoiceChoice(id, provider)),
@@ -349,7 +353,7 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
     const label = CLOUD_SPEECH_LABELS[provider];
     const company = CLOUD_SPEECH_PROVIDER_NAMES[provider];
     const routed = provider === "openrouter";
-    const disclosure = cloudSpeechDisclosure(provider, environment.label);
+    const disclosure = cloudSpeechDisclosure(provider, environment.label, messages);
     const key = saved[provider];
     const isActive = active?.provider === provider;
     const modelChosen = isModelId(model) && (catalog?.some((entry) => entry.id === model) ?? false);

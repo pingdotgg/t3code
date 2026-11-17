@@ -370,7 +370,7 @@ function readLiveTerminalSessions(
       cwd: summary.cwd,
       status: summary.status,
       hasRunningSubprocess: summary.hasRunningSubprocess,
-      displayLabel: resolveTerminalSessionLabel(summary.terminalId, summary),
+      displayLabel: resolveTerminalSessionLabel(summary.terminalId, summary, m),
       updatedAt: summary.updatedAt,
     }));
 }
@@ -387,6 +387,7 @@ function ThreadTerminal(props: {
 }) {
   const { params, routeEnvironmentId, thread: selectedThread, terminalId } = props;
   const gt = useGT();
+  const messages = useMessages();
   const { selectedThreadProject, selectedEnvironmentConnection } = props.selection;
   const {
     session: terminalSession,
@@ -610,18 +611,21 @@ function ThreadTerminal(props: {
   const terminalBottomInset =
     (isKeyboardVisible ? keyboardHeight : 0) + (isAccessoryVisible ? TERMINAL_ACCESSORY_HEIGHT : 0);
 
-  const terminalMenuSessions: ReadonlyArray<TerminalMenuSession> = buildTerminalMenuSessions({
-    knownSessions: knownSessions ?? [],
-    workspaceRoot: selectedThreadProject?.workspaceRoot ?? null,
-    currentSession: {
-      terminalId,
-      cwd: cwd ?? null,
-      status: terminal.status,
-      hasRunningSubprocess: terminal.hasRunningSubprocess,
-      displayLabel: resolveTerminalSessionLabel(terminalId, terminal.summary),
-      updatedAt: terminal.updatedAt,
+  const terminalMenuSessions: ReadonlyArray<TerminalMenuSession> = buildTerminalMenuSessions(
+    {
+      knownSessions: knownSessions ?? [],
+      workspaceRoot: selectedThreadProject?.workspaceRoot ?? null,
+      currentSession: {
+        terminalId,
+        cwd: cwd ?? null,
+        status: terminal.status,
+        hasRunningSubprocess: terminal.hasRunningSubprocess,
+        displayLabel: resolveTerminalSessionLabel(terminalId, terminal.summary, messages),
+        updatedAt: terminal.updatedAt,
+      },
     },
-  });
+    messages,
+  );
 
   const writeInput = async (data: string): Promise<boolean> => {
     if (
@@ -836,7 +840,7 @@ function ThreadTerminal(props: {
           environmentId={selectedThread.environmentId}
           threadId={selectedThread.id}
           terminalId={terminalId}
-          terminalLabel={resolveTerminalSessionLabel(terminalId, terminal.summary)}
+          terminalLabel={resolveTerminalSessionLabel(terminalId, terminal.summary, messages)}
           onClose={() => setCapturedOutput(null)}
           onAttach={() => {
             setCapturedOutput(null);

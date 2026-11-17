@@ -1,4 +1,6 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { T, useGT } from "gt-react-native";
+import { m } from "../i18n/messages";
 
 import { Button } from "./ui/Button";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -77,7 +79,9 @@ export function ComposerContextAttachment(props: {
       const cause = squashAtomCommandFailure(result);
       Dialog.alert(
         gt("Could not open attachment"),
-        cause instanceof Error ? cause.message : gt("Try again."),
+        cause instanceof Error
+          ? (errorDisplayMessage(cause, m) ?? cause.message)
+          : gt("Try again."),
       );
     }
   };

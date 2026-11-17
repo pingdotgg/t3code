@@ -14,6 +14,7 @@ import type {
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermKind } from "../features/pull-requests/changeRequestTerm";
 import { videoMimeType } from "@t3tools/shared/video";
 import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -192,10 +193,12 @@ export function ComposerContextSheet(props: {
     record?.kind === "review-comment" && "pullRequest" in record
       ? record.pullRequest?.url
       : undefined;
-  const changeRequestTerm = (
-    (pullRequestUrl ? sourceControlClients.findByChangeRequestUrl(pullRequestUrl) : undefined) ??
-    sourceControlClients.get(undefined)
-  ).changeRequest.singular;
+  const term = changeRequestTermKind(
+    (
+      (pullRequestUrl ? sourceControlClients.findByChangeRequestUrl(pullRequestUrl) : undefined) ??
+      sourceControlClients.get(undefined)
+    ).changeRequest,
+  );
   const terminal = record?.kind === "terminal" && !("payload" in record) ? record : null;
   return (
     <Sheet title={terminal?.terminalLabel ?? props.label} onClose={props.onClose}>
@@ -435,7 +438,10 @@ export function ComposerContextSheet(props: {
               props.onClose();
               void openPullRequest(pullRequestUrl).catch(() =>
                 Dialog.alert(
-                  gt("Could not open {changeRequestTerm}", { changeRequestTerm }),
+                  gt(
+                    "Could not open {term, select, mr {merge request} cr {change request} other {pull request}}",
+                    { term },
+                  ),
                   gt("Try again when connected."),
                 ),
               );
@@ -443,9 +449,10 @@ export function ComposerContextSheet(props: {
             className="rounded-xl bg-subtle p-4"
           >
             <Text className="text-foreground">
-              <T>
-                Open <Var>{changeRequestTerm}</Var>
-              </T>
+              {gt(
+                "Open {term, select, mr {merge request} cr {change request} other {pull request}}",
+                { term },
+              )}
             </Text>
           </Pressable>
         ) : null}
@@ -459,7 +466,10 @@ export function ComposerContextSheet(props: {
         ) : null}
         {props.onOpenPullRequest && !pullRequestUrl ? (
           <Button
-            label={gt("Open {changeRequestTerm}", { changeRequestTerm })}
+            label={gt(
+              "Open {term, select, mr {merge request} cr {change request} other {pull request}}",
+              { term },
+            )}
             tone="secondary"
             onPress={props.onOpenPullRequest}
             fullWidth

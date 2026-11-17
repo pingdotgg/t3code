@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import {
   ARCHIVE_ENTRY_MAX_BYTES,
@@ -105,7 +106,7 @@ class ZipFailureError extends Schema.TaggedError<ZipFailureError>()("ZipFailureE
 const isZipFailureError = Schema.is(ZipFailureError);
 
 function errorMessage(cause: unknown, fallback: string) {
-  return cause instanceof Error ? cause.message : fallback;
+  return cause instanceof Error ? (errorDisplayMessage(cause, m) ?? cause.message) : fallback;
 }
 
 async function readArchiveBody(
@@ -689,7 +690,8 @@ function ZipEntryView(props: {
           setContent({
             status: "failed",
             reason: "unreadable",
-            detail: cause instanceof Error ? cause.message : null,
+            detail:
+              cause instanceof Error ? (errorDisplayMessage(cause, m) ?? cause.message) : null,
           });
       });
     return () => {

@@ -51,6 +51,7 @@ export function previewStreamDocument(
   const safeScript = script.replace(/<\/script/gi, "<\\/script");
   const safeStoppedDetail = JSON.stringify(stoppedDetail).replace(/</g, "\\u003c");
   const failure = `window.ReactNativeWebView.postMessage(JSON.stringify({type:"status",status:"error",detail:${safeStoppedDetail}}));`;
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- WebView document markup
   return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <style>
   html, body { height: 100%; overflow: hidden; }

@@ -13,6 +13,11 @@ declare global {
 
 let activeClient: ReturnType<typeof createDeviceStreamClient> | null = null;
 
+// The WebView has no catalogs: status details leave marked, and React Native resolves them.
+const keepMarked = ((message: string) => message) as NonNullable<
+  Parameters<typeof createDeviceStreamClient>[3]
+>;
+
 export function stop() {
   activeClient?.stop();
   activeClient = null;
@@ -127,24 +132,29 @@ export function start(configuration: DeviceStreamConfiguration) {
   const unauthorized = () => {
     if (activeClient === client) post({ type: "unauthorized" });
   };
-  const client = createDeviceStreamClient(configuration, canvas, {
-    onStatus: reportStatus,
-    onScreen: layout,
-    onMjpegFallback: () => {
-      canvas.style.display = "none";
-      image.style.display = "block";
+  const client = createDeviceStreamClient(
+    configuration,
+    canvas,
+    {
+      onStatus: reportStatus,
+      onScreen: layout,
+      onMjpegFallback: () => {
+        canvas.style.display = "none";
+        image.style.display = "block";
+      },
+      onCanvasVideo: () => {
+        image.style.display = "none";
+        canvas.style.display = "";
+      },
+      onUnauthorized: unauthorized,
+      onInputConnected: (connected) => {
+        inputConnected = connected;
+        inputStatus.style.display = streaming && !connected ? "block" : "none";
+        post({ type: "input", connected });
+      },
     },
-    onCanvasVideo: () => {
-      image.style.display = "none";
-      canvas.style.display = "";
-    },
-    onUnauthorized: unauthorized,
-    onInputConnected: (connected) => {
-      inputConnected = connected;
-      inputStatus.style.display = streaming && !connected ? "block" : "none";
-      post({ type: "input", connected });
-    },
-  });
+    keepMarked,
+  );
   activeClient = client;
   client.setMjpegImage(image);
   const touch = (event: PointerEvent, phase: "begin" | "move" | "end") => {

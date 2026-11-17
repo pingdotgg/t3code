@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { T, useGT, useLocale, Var } from "gt-react-native";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
@@ -14,6 +15,7 @@ import {
 import { AsyncResult } from "effect/reactivity";
 import { type ReactNode, useEffect, useState } from "react";
 import { Platform, Text as NativeText, View } from "react-native";
+import { m } from "../../i18n/messages";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -63,7 +65,10 @@ export function useVoiceModels(environmentId: EnvironmentId, label: string) {
     try {
       await work();
     } catch (error) {
-      Dialog.alert(title, error instanceof Error ? error.message : String(error));
+      Dialog.alert(
+        title,
+        error instanceof Error ? (errorDisplayMessage(error, m) ?? error.message) : String(error),
+      );
     }
     if (downloadId) setRequested(null);
     else setBusy(false);

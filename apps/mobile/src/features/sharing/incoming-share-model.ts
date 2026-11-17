@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   clampFileAttachmentUploadBytes,
   fileAttachmentTooLargeMessage,
@@ -362,7 +363,9 @@ export async function buildIncomingShareDraft(input: {
         retainedFileUri = persistedFileUri ?? uri;
       } catch (error) {
         warnings.push(
-          error instanceof Error ? error.message : m(msg("Could not read ''{name}''.", { name })),
+          error instanceof Error
+            ? (errorDisplayMessage(error, m) ?? error.message)
+            : m(msg("Could not read ''{name}''.", { name })),
         );
         if (persistedFileUri !== undefined) {
           await releaseOwnedFiles(input.fileReader, [persistedFileUri]);

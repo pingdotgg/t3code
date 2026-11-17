@@ -9,6 +9,7 @@ import { useResolveClassNames } from "uniwind";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
+import { changeRequestTermKind } from "./changeRequestTerm";
 import { EmptyState } from "../../components/ui/EmptyState";
 
 export function PullRequestReadStatus(props: {
@@ -21,7 +22,12 @@ export function PullRequestReadStatus(props: {
     <AppActivityIndicator className="my-12" colorClassName="accent-icon" />
   ) : props.error ? (
     <EmptyState
-      title={gt("Couldn't load this {term}", { term: props.terminology.singular })}
+      title={gt(
+        "Couldn't load this {term, select, mr {merge request} cr {change request} other {pull request}}",
+        {
+          term: changeRequestTermKind(props.terminology),
+        },
+      )}
       detail={props.error}
       variant="plain"
     />

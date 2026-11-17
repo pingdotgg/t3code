@@ -61,12 +61,17 @@ export function PullRequestActivityFilters({
         >
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={gt("Filter activity, {count} hidden", { count: hiddenCount })}
+            accessibilityLabel={gt(
+              "{count, plural, one {Filter activity, {count} hidden} other {Filter activity, {count} hidden}}",
+              { count: hiddenCount },
+            )}
             className="min-h-11 flex-row items-center gap-1.5 active:opacity-60"
           >
             {hiddenCount > 0 ? (
               <Text className="text-xs text-foreground-muted">
-                {gt("{count} hidden", { count: hiddenCount })}
+                {gt("{count, plural, one {{count} hidden} other {{count} hidden}}", {
+                  count: hiddenCount,
+                })}
               </Text>
             ) : null}
             <SymbolView

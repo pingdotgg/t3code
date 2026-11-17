@@ -148,17 +148,29 @@ export function pullRequestChecksSummary(
   }
   if (required)
     return {
-      label: resolve(msg("{count} need attention", { count: required })),
+      label: resolve(
+        msg("{count, plural, one {{count} need attention} other {{count} need attention}}", {
+          count: required,
+        }),
+      ),
       title: resolve(msg("Checks need attention")),
-      count: resolve(msg("{count} awaiting action", { count: required })),
+      count: resolve(
+        msg("{count, plural, one {{count} awaiting action} other {{count} awaiting action}}", {
+          count: required,
+        }),
+      ),
       icon: "exclamationmark.circle",
       tint: "accent-warning-foreground",
     } as const;
   if (pending)
     return {
-      label: resolve(msg("{count} pending", { count: pending })),
+      label: resolve(
+        msg("{count, plural, one {{count} pending} other {{count} pending}}", { count: pending }),
+      ),
       title: resolve(msg("Checks running")),
-      count: resolve(msg("{count} pending", { count: pending })),
+      count: resolve(
+        msg("{count, plural, one {{count} pending} other {{count} pending}}", { count: pending }),
+      ),
       icon: "clock",
       tint: "accent-warning-foreground",
     } as const;
@@ -173,7 +185,11 @@ export function pullRequestChecksSummary(
     } as const;
   return {
     label: total
-      ? resolve(msg("{count} completed", { count: total }))
+      ? resolve(
+          msg("{count, plural, one {{count} completed} other {{count} completed}}", {
+            count: total,
+          }),
+        )
       : resolve(msg("No checks reported")),
     title: total ? resolve(msg("Checks completed")) : resolve(msg("No checks reported")),
     count,
@@ -239,7 +255,11 @@ export function pullRequestReviewSummary(
         approved.length === 1 && approved[0]?.author
           ? resolve(msg("Approved by {login}", { login: approved[0].author.login }))
           : resolve(msg("Reviews approved")),
-      count: resolve(msg("{count} approved", { count: approved.length })),
+      count: resolve(
+        msg("{count, plural, one {{count} approved} other {{count} approved}}", {
+          count: approved.length,
+        }),
+      ),
       icon: "checkmark.circle",
       tint: "accent-adaptive-emerald-600-400",
       reviews,
@@ -248,7 +268,11 @@ export function pullRequestReviewSummary(
   if (commented.length && !pr.reviewers.length)
     return {
       title: resolve(msg("Reviews")),
-      count: resolve(msg("{count} commented", { count: commented.length })),
+      count: resolve(
+        msg("{count, plural, one {{count} commented} other {{count} commented}}", {
+          count: commented.length,
+        }),
+      ),
       icon: "bubble.left",
       tint: "accent-icon-muted",
       reviews,
@@ -256,7 +280,11 @@ export function pullRequestReviewSummary(
   return {
     title: pr.reviewers.length ? resolve(msg("Awaiting review")) : resolve(msg("Request a review")),
     count: pr.reviewers.length
-      ? resolve(msg("{count} requested", { count: pr.reviewers.length }))
+      ? resolve(
+          msg("{count, plural, one {{count} requested} other {{count} requested}}", {
+            count: pr.reviewers.length,
+          }),
+        )
       : resolve(msg("None assigned")),
     icon: "person.2",
     tint: "accent-icon-muted",
@@ -272,7 +300,12 @@ export function pullRequestBranchSummary(
   if (pr.baseComparison === "behind")
     return pr.behindBy == null
       ? resolve(msg("behind {branch}", { branch: pr.baseBranch }))
-      : resolve(msg("{count} behind {branch}", { count: pr.behindBy, branch: pr.baseBranch }));
+      : resolve(
+          msg("{count, plural, one {{count} behind {branch}} other {{count} behind {branch}}}", {
+            count: pr.behindBy,
+            branch: pr.baseBranch,
+          }),
+        );
   if (pr.baseComparison === "up-to-date") return resolve(msg("Up to date"));
   return pr.mergeability === "mergeable"
     ? resolve(msg("No conflicts"))

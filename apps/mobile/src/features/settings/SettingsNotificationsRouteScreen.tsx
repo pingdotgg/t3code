@@ -1,10 +1,8 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useGT, useMessages } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
-import {
-  AuthRelayWriteScope,
-  managedCapabilityDenial,
-  type EnvironmentId,
-} from "@t3tools/contracts";
+import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
+import { AuthRelayWriteScope, type EnvironmentId } from "@t3tools/contracts";
 import { readEnvironmentScope } from "../../state/session";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
@@ -18,6 +16,7 @@ import { AsyncResult } from "effect/reactivity";
 import { useRef, useState, useSyncExternalStore } from "react";
 import { Linking, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { m as resolveMessage } from "../../i18n/messages";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import {
@@ -199,7 +198,9 @@ function ConfiguredSettingsNotificationsRouteScreen() {
         const error = squashAtomCommandFailure(result);
         Dialog.alert(
           gt("Notifications unavailable"),
-          error instanceof Error ? error.message : gt("Could not request notification permission."),
+          error instanceof Error
+            ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+            : gt("Could not request notification permission."),
         );
       }
       return;
@@ -272,7 +273,9 @@ function ConfiguredSettingsNotificationsRouteScreen() {
         const error = squashAtomCommandFailure(permission);
         Dialog.alert(
           gt("Ongoing activity unavailable"),
-          error instanceof Error ? error.message : gt("Could not enable agent notifications."),
+          error instanceof Error
+            ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+            : gt("Could not enable agent notifications."),
         );
         return;
       }
@@ -298,7 +301,9 @@ function ConfiguredSettingsNotificationsRouteScreen() {
         Platform.OS === "android"
           ? gt("Ongoing activity unavailable")
           : gt("Live Activities unavailable"),
-        error instanceof Error ? error.message : gt("Could not enable agent activity updates."),
+        error instanceof Error
+          ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+          : gt("Could not enable agent activity updates."),
       );
       return;
     }
@@ -327,7 +332,9 @@ function ConfiguredSettingsNotificationsRouteScreen() {
           Platform.OS === "android"
             ? gt("Ongoing activity unavailable")
             : gt("Live Activities unavailable"),
-          error instanceof Error ? error.message : gt("Could not enable agent activity updates."),
+          error instanceof Error
+            ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+            : gt("Could not enable agent activity updates."),
         );
       }
       return;

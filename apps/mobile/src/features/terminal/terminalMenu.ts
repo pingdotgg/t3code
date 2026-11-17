@@ -1,13 +1,14 @@
 import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import { DEFAULT_TERMINAL_ID, type ProjectScript } from "@t3tools/contracts";
-import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
+import { nextTerminalId } from "@t3tools/shared/terminalLabels";
+import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabelsCopy";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 import { msg } from "gt-react-native";
 
 import { m, type MessageResolver } from "../../i18n/messages";
 
-export { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
+export { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabelsCopy";
 
 export interface TerminalMenuSession {
   readonly terminalId: string;
@@ -81,11 +82,14 @@ export function nextOpenTerminalId(input: {
   return nextTerminalId([...listed, routeId], input.uniqueSuffix);
 }
 
-export function buildTerminalMenuSessions(input: {
-  readonly knownSessions: ReadonlyArray<KnownTerminalSession>;
-  readonly workspaceRoot: string | null;
-  readonly currentSession?: TerminalMenuSession | null;
-}): ReadonlyArray<TerminalMenuSession> {
+export function buildTerminalMenuSessions(
+  input: {
+    readonly knownSessions: ReadonlyArray<KnownTerminalSession>;
+    readonly workspaceRoot: string | null;
+    readonly currentSession?: TerminalMenuSession | null;
+  },
+  resolve: MessageResolver = m,
+): ReadonlyArray<TerminalMenuSession> {
   const sessionsById = new Map<string, TerminalMenuSession>();
 
   for (const session of input.knownSessions) {
@@ -102,7 +106,11 @@ export function buildTerminalMenuSessions(input: {
       cwd: session.state.summary?.cwd ?? input.workspaceRoot,
       status: session.state.status,
       hasRunningSubprocess: session.state.hasRunningSubprocess,
-      displayLabel: resolveTerminalSessionLabel(session.target.terminalId, session.state.summary),
+      displayLabel: resolveTerminalSessionLabel(
+        session.target.terminalId,
+        session.state.summary,
+        resolve,
+      ),
       updatedAt: session.state.updatedAt,
     });
   }

@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Dialog from "../../components/ui/Dialog";
 import {
   StackActions,
@@ -19,12 +20,12 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import {
-  parseNewThreadLink,
-  type LinkedPrompt,
-  type PromptLinkPullRequest,
-  type PromptLinkRepository,
+import type {
+  LinkedPrompt,
+  PromptLinkPullRequest,
+  PromptLinkRepository,
 } from "@t3tools/shared/promptLinks";
+import { parseNewThreadLink } from "@t3tools/shared/promptLinksCopy";
 import { Atom, type AsyncResult } from "effect/reactivity";
 import { msg } from "gt-react-native";
 
@@ -319,7 +320,7 @@ async function openScratchDraft(request: LinkedDraftRequest) {
       Dialog.alert(
         m(msg("Could not start without a project")),
         error instanceof Error
-          ? error.message
+          ? (errorDisplayMessage(error, m) ?? error.message)
           : m(msg("The folder for threads without a project could not be created.")),
       );
     }
@@ -369,7 +370,7 @@ function cloneRepository(repository: PromptLinkRepository, request: LinkedDraftR
 
 function resolveLink(linkSearch: string) {
   const threads = appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
-  const parsed = parseNewThreadLink(linkSearch);
+  const parsed = parseNewThreadLink(linkSearch, m);
   if (!parsed.ok) {
     Dialog.alert(m(msg("Could not open link")), parsed.error);
     return;
