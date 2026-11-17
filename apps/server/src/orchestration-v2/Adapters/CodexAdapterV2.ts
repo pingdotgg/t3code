@@ -8104,6 +8104,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 );
               }
 
+              const serviceTier = getCodexServiceTierOptionValue(turnInput.modelSelection);
+              if (serviceTier !== undefined) {
+                // turn/steer carries no settings, and the turns Codex starts on its own reuse the thread's.
+                yield* client.request("thread/settings/update", { threadId, serviceTier }).pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("orchestration-v2.codex-steer-service-tier-failed", {
+                      cause,
+                    }),
+                  ),
+                );
+              }
               const codexInput = yield* toCodexInput(turnInput);
               yield* client.request("turn/steer", {
                 expectedTurnId: activeTurn.nativeTurnId,
