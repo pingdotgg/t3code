@@ -1,14 +1,15 @@
 import { T, useGT, useMessages } from "gt-react";
 import { BookmarkIcon, CheckIcon, ChevronDownIcon, PlusIcon } from "lucide-react";
 import { useId, useState } from "react";
+import type * as Schema from "effect/Schema";
 import {
-  PULL_REQUEST_VIEW_NAME_MAX_LENGTH,
-  pullRequestViewNameError,
-} from "@t3tools/client-runtime/pull-request-saved-views";
+  SAVED_VIEW_NAME_MAX_LENGTH,
+  savedViewNameError,
+} from "@t3tools/client-runtime/saved-views";
 
-import { getLocalStorageItem, useLocalStorage } from "../../hooks/useLocalStorage";
-import { randomUUID } from "../../lib/utils";
-import { Button } from "../ui/button";
+import { getLocalStorageItem, useLocalStorage } from "../hooks/useLocalStorage";
+import { randomUUID } from "../lib/utils";
+import { Button } from "./ui/button";
 import {
   Dialog,
   DialogDescription,
@@ -17,56 +18,69 @@ import {
   DialogPanel,
   DialogPopup,
   DialogTitle,
-} from "../ui/dialog";
-import { Input } from "../ui/input";
-import { Label } from "../ui/label";
-import { Menu, MenuItem, MenuItemLabel, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
-import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import {
-  pullRequestListPreferences,
-  type PullRequestListPreferences,
-} from "./pullRequestListPreferences";
-import {
-  EMPTY_PULL_REQUEST_SAVED_VIEWS,
-  PULL_REQUEST_SAVED_VIEWS_KEY,
-  PullRequestSavedViews,
-  pullRequestViewMatches,
-  type PullRequestSavedView,
-} from "./pullRequestSavedViews";
+} from "./ui/dialog";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+import { Menu, MenuItem, MenuItemLabel, MenuPopup, MenuSeparator, MenuTrigger } from "./ui/menu";
+import { toastManager } from "./ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
-export function PullRequestSavedViewsMenu({
+export interface SavedView<Preferences> {
+  readonly id: string;
+  readonly name: string;
+  readonly preferences: Preferences;
+}
+
+/**
+ * What one list (pull requests, issues) stores and how it compares its list controls. `Stored`
+ * is the schema's decoded shape, which may spell absent fields as `undefined`.
+ */
+export interface SavedViewsKind<Preferences extends Stored, Stored, Encoded> {
+  readonly storageKey: string;
+  readonly schema: Schema.Codec<ReadonlyArray<SavedView<Stored>>, Encoded>;
+  readonly empty: ReadonlyArray<SavedView<Stored>>;
+  /** Picks whole translated sentences for this list; never inject it into copy. */
+  readonly list: "pullRequest" | "issue";
+  /** `msg()` text, resolved where it renders. */
+  readonly placeholder: string;
+  /** `msg()` text or "". */
+  readonly suggestedName: (preferences: Preferences) => string;
+  /** Drops the parts of the list state that a view does not keep. */
+  readonly normalize: (preferences: Stored) => Preferences;
+  readonly matches: (view: SavedView<Stored>, preferences: Preferences) => boolean;
+}
+
+export function SavedViewsMenu<Preferences extends Stored, Stored, Encoded>({
+  kind,
   preferences,
   onApply,
 }: {
-  preferences: PullRequestListPreferences;
-  onApply: (preferences: PullRequestListPreferences) => void;
+  kind: SavedViewsKind<Preferences, Stored, Encoded>;
+  preferences: Preferences;
+  onApply: (preferences: Preferences) => void;
 }) {
   const gt = useGT();
   const messages = useMessages();
-  const [views, setViews] = useLocalStorage(
-    PULL_REQUEST_SAVED_VIEWS_KEY,
-    EMPTY_PULL_REQUEST_SAVED_VIEWS,
-    PullRequestSavedViews,
-  );
+  const [views, setViews] = useLocalStorage(kind.storageKey, kind.empty, kind.schema);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editor, setEditor] = useState<{ id?: string; name: string } | null>(null);
   const inputId = useId();
   const errorId = useId();
   const selectedView =
     views.find((view) => view.id === selectedId) ??
-    views.find((view) => pullRequestViewMatches(view, preferences));
+    views.find((view) => kind.matches(view, preferences));
   if (selectedView && selectedId !== selectedView.id) setSelectedId(selectedView.id);
-  const modified = selectedView !== undefined && !pullRequestViewMatches(selectedView, preferences);
-  const nameError = editor
-    ? pullRequestViewNameError(editor.name, views, editor.id, messages)
-    : null;
-  const defaultViewName = gt("PRs Requesting My Review");
+  const modified = selectedView !== undefined && !kind.matches(selectedView, preferences);
+  const nameError = editor ? savedViewNameError(editor.name, views, editor.id, messages) : null;
+  const savedViewsLabel = gt(
+    "{list, select, pullRequest {Saved pull request views} other {Saved issue views}}",
+    { list: kind.list },
+  );
 
   function persist(
-    update: (current: ReadonlyArray<PullRequestSavedView>) => ReadonlyArray<PullRequestSavedView>,
+    update: (current: ReadonlyArray<SavedView<Stored>>) => ReadonlyArray<SavedView<Stored>>,
   ) {
-    let written: ReadonlyArray<PullRequestSavedView> | undefined;
+    let written: ReadonlyArray<SavedView<Stored>> | undefined;
     setViews((current) => {
       written = update(current);
       return written;
@@ -75,7 +89,7 @@ export function PullRequestSavedViewsMenu({
     try {
       if (
         written &&
-        JSON.stringify(getLocalStorageItem(PULL_REQUEST_SAVED_VIEWS_KEY, PullRequestSavedViews)) ===
+        JSON.stringify(getLocalStorageItem(kind.storageKey, kind.schema)) ===
           JSON.stringify(written)
       ) {
         return true;
@@ -85,7 +99,10 @@ export function PullRequestSavedViewsMenu({
     }
     toastManager.add({
       type: "error",
-      title: gt("Could not save PR views"),
+      title: gt(
+        "{list, select, pullRequest {Could not save PR views} other {Could not save issue views}}",
+        { list: kind.list },
+      ),
       description: gt(
         "Local storage is unavailable or full. Try again after freeing space or allowing storage.",
       ),
@@ -106,7 +123,7 @@ export function PullRequestSavedViewsMenu({
       }
       return editingId
         ? current.map((view) => (view.id === editingId ? { ...view, name } : view))
-        : [...current, { id, name, preferences: pullRequestListPreferences(preferences) }];
+        : [...current, { id, name, preferences: kind.normalize(preferences) }];
     });
     if (missing) {
       setEditor((current) => (current ? { name: current.name } : null));
@@ -128,10 +145,7 @@ export function PullRequestSavedViewsMenu({
         <Tooltip>
           <TooltipTrigger
             render={
-              <MenuTrigger
-                render={<Button variant="outline" />}
-                aria-label={gt("Saved pull request views")}
-              />
+              <MenuTrigger render={<Button variant="outline" />} aria-label={savedViewsLabel} />
             }
           >
             <BookmarkIcon aria-hidden className="size-4" />
@@ -141,7 +155,7 @@ export function PullRequestSavedViewsMenu({
             {modified ? <span aria-label={gt("Modified view")}>*</span> : null}
             <ChevronDownIcon aria-hidden className="size-3 shrink-0" />
           </TooltipTrigger>
-          <TooltipPopup>{selectedView?.name ?? gt("Saved pull request views")}</TooltipPopup>
+          <TooltipPopup>{selectedView?.name ?? savedViewsLabel}</TooltipPopup>
         </Tooltip>
         <MenuPopup align="start">
           {views.map((view) => (
@@ -151,7 +165,7 @@ export function PullRequestSavedViewsMenu({
                   <MenuItem
                     onClick={() => {
                       setSelectedId(view.id);
-                      onApply(pullRequestListPreferences(view.preferences));
+                      onApply(kind.normalize(view.preferences));
                     }}
                   />
                 }
@@ -167,13 +181,7 @@ export function PullRequestSavedViewsMenu({
             </Tooltip>
           ))}
           {views.length > 0 ? <MenuSeparator /> : null}
-          <MenuItem
-            onClick={() =>
-              setEditor({
-                name: preferences.involvement === "reviewing" ? defaultViewName : "",
-              })
-            }
-          >
+          <MenuItem onClick={() => setEditor({ name: messages(kind.suggestedName(preferences)) })}>
             <PlusIcon aria-hidden />
             <T>Save current view…</T>
           </MenuItem>
@@ -185,7 +193,7 @@ export function PullRequestSavedViewsMenu({
                     persist((current) =>
                       current.map((view) =>
                         view.id === selectedView.id
-                          ? { ...view, preferences: pullRequestListPreferences(preferences) }
+                          ? { ...view, preferences: kind.normalize(preferences) }
                           : view,
                       ),
                     )
@@ -225,7 +233,15 @@ export function PullRequestSavedViewsMenu({
             }}
           >
             <DialogHeader>
-              <DialogTitle>{editor?.id ? <T>Rename PR view</T> : <T>Save PR view</T>}</DialogTitle>
+              <DialogTitle>
+                {editor?.id
+                  ? gt("{list, select, pullRequest {Rename PR view} other {Rename issue view}}", {
+                      list: kind.list,
+                    })
+                  : gt("{list, select, pullRequest {Save PR view} other {Save issue view}}", {
+                      list: kind.list,
+                    })}
+              </DialogTitle>
               <DialogDescription>
                 <T>Save your search, filters, and sort order on this device.</T>
               </DialogDescription>
@@ -239,8 +255,8 @@ export function PullRequestSavedViewsMenu({
                   id={inputId}
                   autoFocus
                   value={editor?.name ?? ""}
-                  maxLength={PULL_REQUEST_VIEW_NAME_MAX_LENGTH}
-                  placeholder={defaultViewName}
+                  maxLength={SAVED_VIEW_NAME_MAX_LENGTH}
+                  placeholder={messages(kind.placeholder)}
                   aria-invalid={Boolean(editor?.name && nameError)}
                   aria-describedby={nameError && editor?.name ? errorId : undefined}
                   onChange={(event) =>

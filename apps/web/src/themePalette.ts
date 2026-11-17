@@ -1526,6 +1526,13 @@ function parseThemeColorOverrides(value: unknown): ThemeColorOverrides {
   return overrides;
 }
 
+function parseThemeSeedColor(name: string, value: unknown): string {
+  if (typeof value !== "string" || !toCanonicalThemeColor(value)) {
+    throw new Error(`The theme's "${name}" must be a literal CSS color.`);
+  }
+  return value;
+}
+
 export function parseThemeFile(value: unknown): ThemeDefinition {
   if (!isRecord(value)) {
     throw new Error(m(msg("Theme files must contain a JSON object.")));
@@ -1570,7 +1577,14 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
     );
   }
 
-  const fallback = getDefaultThemeColors(appearance);
+  const fallback =
+    value.canvas !== undefined && value.accent !== undefined
+      ? createVividThemeColors(
+          appearance,
+          parseThemeSeedColor("canvas", value.canvas),
+          parseThemeSeedColor("accent", value.accent),
+        )
+      : getDefaultThemeColors(appearance);
   const variants: Partial<Record<ThemeAppearance, ThemeColors>> = {};
   if (value.variants !== undefined) {
     if (!isRecord(value.variants)) throw new Error(m(msg("Theme variants must be an object.")));

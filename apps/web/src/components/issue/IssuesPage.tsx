@@ -54,6 +54,8 @@ import {
 import { m, type MessageResolver } from "~/i18n/messages";
 import { resolveFilterOptions } from "../pullRequest/pullRequestListOptions";
 import { IssueFiltersMenu } from "./IssueListFilterPickers";
+import { ISSUE_SAVED_VIEWS } from "./issueSavedViews";
+import { SavedViewsMenu } from "~/components/SavedViewsMenu";
 import { PullRequestCompactFilterMenu } from "../pullRequest/PullRequestCompactFilterMenu";
 import { PullRequestsUnavailableState } from "~/components/pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs } from "~/components/RightPanelTabs";
@@ -611,6 +613,22 @@ export function IssuesPage() {
                   onLabels={(label) => updateSearch({ label })}
                   assignee={search.assignee}
                   onAssignee={(assignee) => updateSearch({ assignee })}
+                />
+                <SavedViewsMenu
+                  kind={ISSUE_SAVED_VIEWS}
+                  preferences={search}
+                  onApply={(view) =>
+                    // Explicit clears replace the old list scope; the selected issue stays open.
+                    updateSearch({
+                      who: view.who,
+                      status: view.status,
+                      host: view.host,
+                      q: view.q,
+                      label: view.label,
+                      assignee: view.assignee,
+                      order: view.order,
+                    })
+                  }
                 />
                 {hostOptions.length > 1 ? (
                   <FilterMenu

@@ -58,8 +58,8 @@ import {
   type PullRequestListPreferencePatch,
   writePullRequestListPreferences,
 } from "./pullRequestListPreferences";
-import { PullRequestSavedViewsMenu } from "./PullRequestSavedViewsMenu";
-import { pullRequestSavedViewPatch } from "./pullRequestSavedViews";
+import { SavedViewsMenu } from "../SavedViewsMenu";
+import { PULL_REQUEST_SAVED_VIEWS, pullRequestSavedViewPatch } from "./pullRequestSavedViews";
 import { environmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 import {
@@ -1439,7 +1439,8 @@ export function PullRequestsPage() {
     sortMenu,
     filtersMenu,
     savedViewsMenu: (
-      <PullRequestSavedViewsMenu
+      <SavedViewsMenu
+        kind={PULL_REQUEST_SAVED_VIEWS}
         preferences={search}
         onApply={(preferences) => updateListScope(pullRequestSavedViewPatch(preferences))}
       />

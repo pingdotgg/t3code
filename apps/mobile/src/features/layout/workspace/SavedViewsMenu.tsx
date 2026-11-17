@@ -1,61 +1,92 @@
-import { pullRequestViewNameError } from "@t3tools/client-runtime/pull-request-saved-views";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import {
+  type SavedViewIdentity as SavedViewIdentitySchema,
+  savedViewNameError,
+} from "@t3tools/client-runtime/saved-views";
 import { useGT, useMessages } from "gt-react-native";
+import { AsyncResult } from "effect/reactivity";
 import { useState } from "react";
 import { Alert } from "react-native";
 
-import { prompt as showTextInputDialog } from "../../components/ui/Dialog";
-import type { MenuProps } from "../../components/ui/Menu.types";
-import { uuidv4 } from "../../lib/uuid";
-import type { PullRequestSavedView } from "../../persistence/mobile-preferences";
-import { ListFilterMenu } from "../layout/workspace/ListFilterMenu";
-import { pullRequestViewMatches, type PullRequestSavedViewScope } from "./pullRequestSavedViews";
-import { usePullRequestSavedViews } from "./usePullRequestListControls";
+import { prompt as showTextInputDialog } from "../../../components/ui/Dialog";
+import type { MenuProps } from "../../../components/ui/Menu.types";
+import { uuidv4 } from "../../../lib/uuid";
+import type { Preferences } from "../../../persistence/mobile-preferences";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
+import { ListFilterMenu } from "./ListFilterMenu";
 
-export function PullRequestSavedViewsMenu({
+type SavedViewIdentity = typeof SavedViewIdentitySchema.Type;
+const EMPTY_SAVED_VIEWS: ReadonlyArray<never> = [];
+
+export function SavedViewsMenu<Scope extends object>({
+  read,
+  write,
+  list,
+  suggestedName,
   scope,
+  matches,
   onApply,
 }: {
-  scope: PullRequestSavedViewScope;
-  onApply: (view: PullRequestSavedView) => Promise<void>;
+  read: (preferences: Preferences) => ReadonlyArray<Scope & SavedViewIdentity> | undefined;
+  write: (views: ReadonlyArray<Scope & SavedViewIdentity>) => Partial<Preferences>;
+  /** Picks whole translated sentences for this list; never inject it into copy. */
+  list: "pullRequest" | "issue";
+  suggestedName: string;
+  scope: Scope;
+  matches: (view: Scope, scope: Scope) => boolean;
+  onApply: (view: Scope & SavedViewIdentity) => Promise<void> | void;
 }) {
+  type View = Scope & SavedViewIdentity;
   const gt = useGT();
   const messages = useMessages();
-  const { views, ready, update } = usePullRequestSavedViews();
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom, { mode: "promise" });
+  const ready = AsyncResult.isSuccess(preferences) && !preferences.waiting;
+  const views: ReadonlyArray<View> = AsyncResult.isSuccess(preferences)
+    ? (read(preferences.value) ?? EMPTY_SAVED_VIEWS)
+    : EMPTY_SAVED_VIEWS;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const selectedView =
-    views.find((view) => view.id === selectedId) ??
-    views.find((view) => pullRequestViewMatches(view, scope));
+    views.find((view) => view.id === selectedId) ?? views.find((view) => matches(view, scope));
   if (selectedId === null && selectedView) setSelectedId(selectedView.id);
-  const modified = selectedView !== undefined && !pullRequestViewMatches(selectedView, scope);
+  const modified = selectedView !== undefined && !matches(selectedView, scope);
 
   // These avoid `finally`, which the React Compiler cannot lower; every path clears `busy`.
-  async function applyView(view: PullRequestSavedView) {
+  async function applyView(view: View) {
     setBusy(true);
     try {
       await onApply(view);
       setSelectedId(view.id);
     } catch {
       Alert.alert(
-        gt("Could not apply PR view"),
+        gt(
+          "{list, select, pullRequest {Could not apply PR view} other {Could not apply issue view}}",
+          {
+            list,
+          },
+        ),
         gt("The device could not save your filters. Try again."),
       );
     }
     setBusy(false);
   }
 
-  async function persist(
-    transform: (
-      current: ReadonlyArray<PullRequestSavedView>,
-    ) => ReadonlyArray<PullRequestSavedView>,
-  ) {
+  async function persist(transform: (current: ReadonlyArray<View>) => ReadonlyArray<View>) {
     setBusy(true);
     let saved = true;
     try {
-      await update(transform);
+      await savePreferences({
+        transform: (current) => write(transform(read(current) ?? EMPTY_SAVED_VIEWS)),
+      });
     } catch {
       Alert.alert(
-        gt("Could not save PR views"),
+        gt(
+          "{list, select, pullRequest {Could not save PR views} other {Could not save issue views}}",
+          {
+            list,
+          },
+        ),
         gt("The device could not save your views. Try again."),
       );
       saved = false;
@@ -64,15 +95,15 @@ export function PullRequestSavedViewsMenu({
     return saved;
   }
 
-  function editName(view?: PullRequestSavedView) {
+  function editName(view?: View) {
     showTextInputDialog({
-      title: view ? gt("Rename PR view") : gt("Save PR view"),
-      initialValue:
-        view?.name ??
-        (scope.controls.involvement === "reviewing" ? gt("PRs Requesting My Review") : ""),
+      title: view
+        ? gt("{list, select, pullRequest {Rename PR view} other {Rename issue view}}", { list })
+        : gt("{list, select, pullRequest {Save PR view} other {Save issue view}}", { list }),
+      initialValue: view?.name ?? suggestedName,
       confirmText: gt("Save"),
       onConfirm: (value) => {
-        const error = pullRequestViewNameError(value, views, view?.id, messages);
+        const error = savedViewNameError(value, views, view?.id, messages);
         if (error) {
           Alert.alert(gt("Could not save view"), error);
           return;
@@ -114,7 +145,10 @@ export function PullRequestSavedViewsMenu({
           : gt("Views", { $context: "saved filter views menu" })
       }
       active={selectedView !== undefined}
-      accessibilityLabel={gt("Saved pull request views")}
+      accessibilityLabel={gt(
+        "{list, select, pullRequest {Saved pull request views} other {Saved issue views}}",
+        { list },
+      )}
       actions={actions.map((action) => ({
         ...action,
         attributes: { ...action.attributes, disabled: !ready || busy },

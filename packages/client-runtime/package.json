@@ -23,9 +23,9 @@
       "types": "./src/workspaceBasenameLookup.ts",
       "default": "./src/workspaceBasenameLookup.ts"
     },
-    "./pull-request-saved-views": {
-      "types": "./src/pullRequestSavedViews.ts",
-      "default": "./src/pullRequestSavedViews.ts"
+    "./saved-views": {
+      "types": "./src/savedViews.ts",
+      "default": "./src/savedViews.ts"
     },
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",

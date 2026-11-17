@@ -7,6 +7,7 @@ import { assetEnvironment } from "./state/assets";
 import { themeEnvironmentIdAtom } from "./state/primaryEnvironment";
 import { themeServerEnvironmentThemesAtom } from "./state/server";
 import { environmentSession } from "./state/session";
+import { getCustomThemes } from "./themePalette";
 
 const THEME_BACKGROUND_VARIABLE = "--theme-background-image";
 const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000];
@@ -55,8 +56,9 @@ async function loadBackground(
 export function applyThemeBackground(themeId: string | undefined): void {
   if (typeof document === "undefined") return;
   const environmentId = appAtomRegistry.get(themeEnvironmentIdAtom);
+  // A saved theme wins its id over a published one, so the published image is not its.
   const revision =
-    themeId === undefined
+    themeId === undefined || getCustomThemes().some((theme) => theme.id === themeId)
       ? undefined
       : appAtomRegistry.get(themeServerEnvironmentThemesAtom)?.find((theme) => theme.id === themeId)
           ?.background;
