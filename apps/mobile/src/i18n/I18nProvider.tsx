@@ -1,4 +1,3 @@
-import "./intl-polyfills";
 import { resolveLocale } from "@t3tools/client-runtime/locales";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
@@ -17,9 +16,6 @@ import ptBR from "./translations/pt-BR.json";
 import ru from "./translations/ru.json";
 import sv from "./translations/sv.json";
 import zh from "./translations/zh.json";
-
-// Screens import GT from here so the polyfills above always load first.
-export { useGT } from "gt-react-native";
 
 // Committed catalogs, so forks and offline installs never reach GT's CDN. English is the source.
 const TRANSLATIONS: Readonly<Record<string, Record<string, string>>> = {
