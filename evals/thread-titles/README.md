@@ -17,4 +17,8 @@ pnpm thread-titles --model <codex model> --out runs/titles-new --baseline runs/t
 
 ## Add a case
 
+<<<<<<< origin/main
 Add an entry to `cases.ts` with an `id`, a `source`, the thread `messages`, the `previousTitle`, an optional `projectTitle`, and a `rubric` that says what a good title names. A case can set `instructions`, the added instruction text under test, imported from its source.
+=======
+Add an entry to `cases.ts` with an `id`, a `source`, the thread `messages`, the `previousTitle`, an optional `projectTitle`, optional `instructions` (the Thread title instructions setting), and a `rubric` that says what a good title names.
+>>>>>>> upstream/main

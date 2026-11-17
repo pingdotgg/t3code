@@ -26,8 +26,12 @@ export const IDLE_COMPACTING_LABELS = {
 
 /** Leads the finished compaction's token counts, in place of "Context compacted". */
 export const IDLE_COMPACTION_TITLES = {
+<<<<<<< origin/main
   beforeCacheExpires: "Context automatically compacted before cache expiry",
   whileIdle: "Context automatically compacted while idle",
+=======
+  beforeCacheExpires: "Auto-compacted before cache expiry",
+>>>>>>> upstream/main
   onReturn: "Context compacted before sending",
 } satisfies Record<IdleCompactionLevel, string>;
 
