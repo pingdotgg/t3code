@@ -994,11 +994,14 @@ const make = Effect.gen(function* () {
       const group = groups.get(worktreePath) ?? [];
       const activityAt = Math.max(...group.map(storageCleanupActivityAt));
       const deleted = "workspaceRoot" in thread;
-      const settlementChain = deleted
-        ? []
-        : worktreeSettlementChain(thread, threadsById, now, serverSettings);
-      const settledThread = settlementChain.at(-1);
       const members = deleted ? [thread, ...group] : group;
+      // Without a single owner, no one thread's settlement speaks for the shared worktree.
+      const owner = worktreeOwner(members);
+      const settlementChain =
+        deleted || owner === undefined
+          ? []
+          : worktreeSettlementChain(thread, threadsById, now, serverSettings);
+      const settledThread = settlementChain.at(-1);
       const project = deleted
         ? { workspaceRoot: thread.workspaceRoot }
         : snapshot.projects.find((entry) => entry.id === thread.projectId);
@@ -1035,8 +1038,7 @@ const make = Effect.gen(function* () {
         );
         if (!exists) return;
         if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
-        if (members.length > 1 && worktreeOwner(members) === undefined)
-          return keep(`shared by ${members.length} threads`);
+        if (deleted && owner === undefined) return keep(`shared by ${members.length} threads`);
         if (project === undefined) return keep("project is unavailable");
         if (
           thread.branch === null ||
@@ -1226,8 +1228,7 @@ const make = Effect.gen(function* () {
           const latestOwner = worktreeOwner(deleted ? [thread, ...latestGroup] : latestGroup);
           if (
             latestGroup.length !== group.length ||
-            latestOwner?.id !== thread.id ||
-            latestOwner?.branch !== thread.branch ||
+            latestOwner?.id !== owner?.id ||
             latestGroup.some((shell) => {
               const previous = group.find((member) => member.id === shell.id);
               return (

@@ -1071,17 +1071,15 @@ describe("subagent worktree ownership", () => {
           ? "Settled for 20 days"
           : scenario === "running" || scenario === "pending"
             ? "Thread is running or has pending work"
-            : shared
-              ? "Shared by 2 threads"
-              : scenario === "null-branch" || scenario === "stale-branch"
-                ? "A subagent thread's branch differs from this worktree's branch"
-                : scenario === "recent-activity"
-                  ? "Settled for 2 of 8 days"
-                  : scenario === "recent-inactive"
-                    ? "Inactive for 2 of 8 days"
-                    : ["recent-grace", "recent-settle", "child-settled-now"].includes(scenario)
-                      ? "Settled moments ago"
-                      : "Not settled",
+            : scenario === "null-branch" || scenario === "stale-branch"
+              ? "A subagent thread's branch differs from this worktree's branch"
+              : scenario === "recent-activity"
+                ? "Settled for 2 of 8 days"
+                : scenario === "recent-inactive"
+                  ? "Inactive for 2 of 8 days"
+                  : ["recent-grace", "recent-settle", "child-settled-now"].includes(scenario)
+                    ? "Settled moments ago"
+                    : "Not settled",
       });
     }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
   );
