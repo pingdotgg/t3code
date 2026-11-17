@@ -94,64 +94,73 @@ function pickColumn(available: Set<string>, ...names: string[]): string | null {
 function readV2(db: NodeSqlite.DatabaseSync): OpenCodeSession[] {
   const sessionColumns = columns(db, "session_v2");
   const messageColumns = columns(db, "session_message");
+  const partTableNames = tableNames(db);
+  const partColumns = partTableNames.has("session_part") ? columns(db, "session_part") : new Set<string>();
   const idColumn = pickColumn(sessionColumns, "id");
   const directoryColumn = pickColumn(sessionColumns, "directory", "path");
   const createdColumn = pickColumn(sessionColumns, "time_created", "created_at");
   const updatedColumn = pickColumn(sessionColumns, "time_updated", "updated_at");
   const messageSessionColumn = pickColumn(messageColumns, "session_id", "sessionID");
   const messageDataColumn = pickColumn(messageColumns, "data");
+  const messageTypeColumn = pickColumn(messageColumns, "type");
+  const messageIdColumn = pickColumn(messageColumns, "id");
+  const partMessageColumn = pickColumn(partColumns, "message_id");
+  const partDataColumn = pickColumn(partColumns, "data");
+  const partTypeColumn = pickColumn(partColumns, "type");
+  const partOrdinalColumn = pickColumn(partColumns, "ordinal");
   if (!idColumn || !directoryColumn || !createdColumn || !updatedColumn ||
-      !messageSessionColumn || !messageDataColumn) return [];
+      !messageSessionColumn || !messageDataColumn || !messageTypeColumn || !messageIdColumn) return [];
 
   const sessions = db.prepare(
     `SELECT * FROM session_v2 ORDER BY "${updatedColumn}" DESC LIMIT ?`,
   ).all(MAX_SESSIONS) as Row[];
   const messageOrderColumn = pickColumn(messageColumns, "seq", "time_created") ?? "rowid";
-  const messageTypeColumn = pickColumn(messageColumns, "type");
   const readMessages = db.prepare(
     `SELECT * FROM session_message WHERE "${messageSessionColumn}" = ? ORDER BY "${messageOrderColumn}" DESC LIMIT ?`,
   );
-  const readFirstUser = messageTypeColumn === null ? null : db.prepare(
+  const readFirstUser = db.prepare(
     `SELECT * FROM session_message WHERE "${messageSessionColumn}" = ? AND "${messageTypeColumn}" = 'user' ORDER BY "${messageOrderColumn}" ASC LIMIT 1`,
   );
+  const readParts = partMessageColumn && partDataColumn
+    ? db.prepare(`SELECT * FROM session_part WHERE "${partMessageColumn}" = ? ORDER BY ${partOrdinalColumn ? `"${partOrdinalColumn}"` : "rowid"} ASC`)
+    : null;
   let historyCharactersRemaining = MAX_TOTAL_HISTORY_CHARS;
   return sessions.flatMap((session): OpenCodeSession[] => {
     if (typeof session[idColumn] !== "string" ||
-        typeof session[directoryColumn] !== "string" ||
-        !session[directoryColumn]) return [];
+        typeof session[directoryColumn] !== "string" || !session[directoryColumn]) return [];
     const id = session[idColumn] as string;
     const createdAt = isoTime(session[createdColumn], new Date(0).toISOString());
     const updatedAt = isoTime(session[updatedColumn], createdAt);
     const recentRows = (readMessages.all(id, Math.max(0, MAX_MESSAGES_PER_SESSION - 1)) as Row[]).reverse();
-    const firstUserRow = readFirstUser?.get(id) as Row | undefined;
+    const firstUserRow = readFirstUser.get(id) as Row | undefined;
     const messageRows = [
       ...(firstUserRow === undefined ? [] : [firstUserRow]),
-      ...recentRows.filter((row) => row.id !== firstUserRow?.id),
+      ...recentRows.filter((row) => row[messageIdColumn] !== firstUserRow?.[messageIdColumn]),
     ];
     const messages = messageRows.flatMap((row): OpenCodeSessionMessage[] => {
-        const data = parseJson(row[messageDataColumn]);
-        if (!data) return [];
-        const roleValue = data.role ?? row.type;
-        if (roleValue !== "user" && roleValue !== "assistant") return [];
-        const text = textFromContent(data.content ?? data.text);
-        if (!text || historyCharactersRemaining <= 0) return [];
-        const retainedText = text.slice(0, Math.min(MAX_MESSAGE_CHARS, historyCharactersRemaining));
-        historyCharactersRemaining -= retainedText.length;
-        const timestamp = data.time !== null && typeof data.time === "object"
-          ? (data.time as Row).created
-          : row.time_created;
-        return [{
-          role: roleValue,
-          text: retainedText,
-          createdAt: isoTime(timestamp, updatedAt),
-        }];
-      });
+      const data = parseJson(row[messageDataColumn]);
+      const roleValue = row[messageTypeColumn] ?? data?.role;
+      if (roleValue !== "user" && roleValue !== "assistant") return [];
+      // Current OpenCode V2 stores message content in ordered session_part rows;
+      // older V2 projections may still carry content directly in message.data.
+      const partText = readParts === null ? "" : (readParts.all(row[messageIdColumn]) as Row[])
+        .flatMap((part): string[] => {
+          const partData = parseJson(part[partDataColumn!]);
+          const type = part[partTypeColumn!] ?? partData?.type;
+          return type === "text" && typeof partData?.text === "string" ? [partData.text.trim()] : [];
+        })
+        .filter(Boolean)
+        .join("\n");
+      const text = partText || textFromContent(data?.content ?? data?.text);
+      if (!text || historyCharactersRemaining <= 0) return [];
+      const retainedText = text.slice(0, Math.min(MAX_MESSAGE_CHARS, historyCharactersRemaining));
+      historyCharactersRemaining -= retainedText.length;
+      return [{ role: roleValue, text: retainedText, createdAt: isoTime(row.time_created, updatedAt) }];
+    });
     return [{
       providerSessionId: id,
       directory: session[directoryColumn] as string,
-      title: typeof session.title === "string" && session.title.trim()
-        ? session.title.trim()
-        : "Imported OpenCode session",
+      title: typeof session.title === "string" && session.title.trim() ? session.title.trim() : "Imported OpenCode session",
       model: modelName(session.model),
       createdAt,
       updatedAt,
