@@ -446,15 +446,11 @@ export const OrchestratorMcpThreadReadInput = Schema.Struct({
   itemId: Schema.optional(TurnItemId),
   textOffset: Schema.optional(NonNegativeInt),
   view: Schema.optional(Schema.Literals(["messages", "activity"])),
-  author: Schema.optional(Schema.Literals(["user", "agent"])).annotate({
-    description: "Only this author's messages.",
-  }),
+  author: Schema.optional(Schema.Literals(["user", "agent"])),
   afterPosition: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(-1))),
   beforePosition: Schema.optional(NonNegativeInt),
   limit: Schema.optional(clampedPositiveInt(100)).annotate({ description: "Max 100." }),
-  runLimit: Schema.optional(clampedPositiveInt(50)).annotate({
-    description: "Max 50. Later pages default to none.",
-  }),
+  runLimit: Schema.optional(clampedPositiveInt(50)).annotate({ description: "Max 50." }),
   maxCharsPerItem: Schema.optional(clampedPositiveInt(20_000)).annotate({
     description: "Max 20000.",
   }),
