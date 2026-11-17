@@ -206,6 +206,10 @@
     "./server/usageLimits": {
       "types": "./src/server/usageLimits.ts",
       "import": "./src/server/usageLimits.ts"
+    },
+    "./server/memoryWritingRules": {
+      "types": "./src/server/memoryWritingRules.ts",
+      "import": "./src/server/memoryWritingRules.ts"
     }
   },
   "scripts": {

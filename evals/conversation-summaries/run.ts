@@ -13,7 +13,7 @@ import * as CodexTextGeneration from "../../apps/server/src/textGeneration/Codex
 import * as ServerConfig from "../../apps/server/src/config.ts";
 import { condensedCases, leafCases, type LeafMessage } from "./cases.ts";
 import { gradeCondensed, gradeLeaf } from "./grade.ts";
-import { morphRunner } from "./morph.ts";
+import { morphRunner } from "../shared/morph.ts";
 
 /**
  * How a peer reply reaches the model. `main` sends it as a nameless assistant message, as main

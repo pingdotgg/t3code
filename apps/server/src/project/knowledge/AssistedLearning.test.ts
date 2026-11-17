@@ -1087,8 +1087,11 @@ it.effect(
       yield* sql`UPDATE orchestration_v2_projection_messages SET payload_json = json_set(payload_json, '$.createdBy', 'user') WHERE message_id = 'learning-user'`;
       yield* seedReplies(10);
       yield* sql`UPDATE orchestration_v2_projection_messages SET payload_json = json_set(payload_json, '$.text', ${"x".repeat(6_000)}) WHERE role = 'assistant'`;
+      const correction = "From now on, explain the cause before proposing a fix.";
+      yield* sql`UPDATE orchestration_v2_projection_messages SET role = 'user', payload_json = json_set(payload_json, '$.role', 'user', '$.createdBy', 'user', '$.text', ${correction}) WHERE message_id = 'learning-extra-0'`;
       yield* runner.extractRun({ threadId, runId, runOutcome: "completed" });
       assert.equal(model.calls.length, 1);
+      assert.isTrue(model.calls[0]!.messages.some((message) => message.text === correction));
       assert.isAtMost(
         model.calls[0]!.messages.reduce((total, message) => total + message.text.length, 0),
         32_000,

@@ -193,11 +193,20 @@ const make = Effect.gen(function* () {
           "skipped",
           "No user-supported or independently corroborated evidence.",
         );
-      // Keep the request and the latest replies; the middle of a long run goes first.
+      // Human corrections can occur mid-batch; reserve their evidence before verbose replies.
       const kept: typeof finalized = [];
       const textLimits = new Map<string, number>();
       let budget = MAX_TRANSCRIPT_CHARS;
-      for (const message of [finalized[0]!, ...finalized.slice(1).toReversed()]) {
+      const humanMessages = finalized.filter(
+        (message) =>
+          message.role === "user" && message.createdBy === "user" && supportsLearning(message.text),
+      );
+      const prioritized = new Set([
+        ...humanMessages.toReversed(),
+        finalized[0]!,
+        ...finalized.toReversed(),
+      ]);
+      for (const message of prioritized) {
         if (kept.length >= MAX_MESSAGES || budget <= 0) break;
         const available = Math.min(budget, MAX_MESSAGE_CHARS);
         kept.push(message);
