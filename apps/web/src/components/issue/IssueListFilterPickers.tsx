@@ -1,6 +1,6 @@
 import type { IssueCandidatesTarget } from "@t3tools/client-runtime/state/issues";
 import type { IssueInvolvement, IssueListState } from "@t3tools/contracts";
-import { LayersIcon, ListFilterIcon, TagIcon, UserIcon } from "lucide-react";
+import { FolderGit2Icon, LayersIcon, ListFilterIcon, TagIcon, UserIcon } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -19,6 +19,8 @@ import {
   MenuTrigger,
 } from "~/components/ui/menu";
 import { useIssueFilterCandidates } from "~/state/issues";
+
+import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 
 import {
   PullRequestFilterRadioSubmenu,
@@ -43,6 +45,10 @@ export function IssueFiltersMenu(props: {
   onLabels: (labels: ReadonlyArray<string>) => void;
   assignee: string | undefined;
   onAssignee: (assignee: string | undefined) => void;
+  projectOptions: ReadonlyArray<IssueProjectOption>;
+  /** Scoped project keys, as the options carry them. */
+  projects: ReadonlyArray<string>;
+  onProjects: (projects: ReadonlyArray<string>) => void;
 }) {
   const [open, setOpen] = useState(false);
   const count = [
@@ -50,7 +56,11 @@ export function IssueFiltersMenu(props: {
     props.involvement !== "all",
     props.assignee,
     ...props.labels,
+    ...props.projects,
   ].filter(Boolean).length;
+  const chosenProjects = props.projectOptions.filter((project) =>
+    props.projects.includes(project.key),
+  );
   // Read when the menu opens, not with every listing: one request per scope.
   const scopes = open ? props.scopes : [];
   return (
@@ -106,8 +116,87 @@ export function IssueFiltersMenu(props: {
             <AssigneeChoices scopes={scopes} value={props.assignee} onChange={props.onAssignee} />
           </MenuSubPopup>
         </MenuSub>
+        <MenuSeparator />
+        <MenuSub>
+          <MenuSubTrigger>
+            <FolderGit2Icon aria-hidden className="size-3.5" />
+            <span className="flex-1">Project</span>
+            <span className="min-w-0 max-w-32 truncate text-xs text-muted-foreground">
+              {props.projects.length === 0
+                ? "Any"
+                : props.projects.length === 1 && chosenProjects[0]
+                  ? chosenProjects[0].title
+                  : `${props.projects.length} projects`}
+            </span>
+          </MenuSubTrigger>
+          <MenuSubPopup>
+            <ProjectChoices
+              options={props.projectOptions}
+              value={props.projects}
+              onChange={props.onProjects}
+            />
+          </MenuSubPopup>
+        </MenuSub>
       </MenuPopup>
     </Menu>
+  );
+}
+
+export interface IssueProjectOption extends ProjectFaviconProject {
+  /** The scoped project key the filter stores. */
+  readonly key: string;
+}
+
+function ProjectChoices(props: {
+  options: ReadonlyArray<IssueProjectOption>;
+  value: ReadonlyArray<string>;
+  onChange: (value: ReadonlyArray<string>) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
+  const found = props.options.filter((project) => matches(needle, project.title));
+  // A chosen project this client no longer lists stays, so the filter can be taken off.
+  const gone = props.value.filter((key) => !props.options.some((project) => project.key === key));
+  return (
+    <>
+      <MenuSearchInput
+        autoFocus
+        value={query}
+        onChange={(event) => setQuery(event.currentTarget.value)}
+        placeholder="Search projects"
+        aria-label="Search projects"
+      />
+      {found.length === 0 && gone.length === 0 ? (
+        <MenuItem disabled>No projects found</MenuItem>
+      ) : null}
+      {gone.map((key) => (
+        <MenuCheckboxItem
+          key={key}
+          checked
+          onCheckedChange={() => props.onChange(props.value.filter((chosen) => chosen !== key))}
+        >
+          <span className="min-w-0 flex-1 truncate text-muted-foreground">{key}</span>
+        </MenuCheckboxItem>
+      ))}
+      {found.map((project) => (
+        <MenuCheckboxItem
+          key={project.key}
+          checked={props.value.includes(project.key)}
+          onCheckedChange={(next) =>
+            props.onChange(
+              next
+                ? [...props.value, project.key]
+                : props.value.filter((key) => key !== project.key),
+            )
+          }
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <ProjectFavicon project={project} className="size-3.5" />
+            <span className="min-w-0 flex-1 truncate">{project.title}</span>
+          </span>
+        </MenuCheckboxItem>
+      ))}
+    </>
   );
 }
 

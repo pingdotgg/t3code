@@ -228,12 +228,15 @@ const make = Effect.gen(function* () {
 
   const listProjects = (filter: {
     readonly projectId?: IssueListInput["projectId"];
+    readonly projectIds?: IssueListInput["projectIds"];
     readonly host?: string | undefined;
     /** The link's `host:port`, for a host whose binding keeps its port. */
     readonly authority?: string | undefined;
   }) =>
     (filter.projectId === undefined
-      ? projects.listShells()
+      ? projects.listShells(
+          filter.projectIds === undefined ? undefined : { projectIds: filter.projectIds },
+        )
       : projects.getShell(filter.projectId).pipe(Effect.map(Option.toArray))
     ).pipe(
       Effect.mapError(
@@ -314,7 +317,10 @@ const make = Effect.gen(function* () {
   const list: IssueService["Service"]["list"] = Effect.fn("IssueService.list")(function* (input) {
     // Trackers name every host so a client narrowed to one can switch to another; only the
     // narrowed host's scopes are read.
-    const { supported, unimplemented } = yield* listProjects({ projectId: input.projectId });
+    const { supported, unimplemented } = yield* listProjects({
+      projectId: input.projectId,
+      projectIds: input.projectIds,
+    });
     const host = input.host?.trim().toLowerCase();
     const limit = input.limit ?? DEFAULT_LIST_LIMIT;
     // Worktrees of one repository are separate projects, and every repository of an Azure

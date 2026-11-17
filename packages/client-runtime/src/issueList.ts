@@ -2,15 +2,17 @@ import type {
   EnvironmentId,
   IssueListCursors,
   IssueListEntry,
+  IssueListInput,
   IssueListProjectError,
   IssueListResult,
   IssueListSort,
   IssueScopeRef,
   IssueTrackerSummary,
+  ScopedProjectRef,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 
-import { mergeIssueListPage } from "./state/issues.ts";
+import { mergeIssueListPage, type IssueListTarget } from "./state/issues.ts";
 import { sourceControlClients } from "./sourceControlClients.ts";
 import type { EnvironmentProject } from "./state/shell.ts";
 
@@ -35,6 +37,26 @@ export interface HeldIssuePage {
 
 export function issueTrackerKey(tracker: Pick<IssueTrackerSummary, "tracker" | "host">): string {
   return `${tracker.tracker} ${tracker.host.toLowerCase()}`;
+}
+
+/**
+ * What each environment is asked. With projects chosen, only their environments are asked, each
+ * narrowed to its own chosen projects; project ids are unique only within an environment.
+ */
+export function issueListTargets(
+  environmentIds: ReadonlyArray<EnvironmentId>,
+  input: IssueListInput,
+  projects: ReadonlyArray<ScopedProjectRef>,
+): ReadonlyArray<IssueListTarget> {
+  if (projects.length === 0)
+    return environmentIds.map((environmentId) => ({ environmentId, input }));
+  return environmentIds.flatMap((environmentId) => {
+    const projectIds = projects
+      .filter((project) => project.environmentId === environmentId)
+      .map((project) => project.projectId)
+      .sort();
+    return projectIds.length === 0 ? [] : [{ environmentId, input: { ...input, projectIds } }];
+  });
 }
 
 /** Continuations are laid over the first page they continue; a new first page forgets them. */

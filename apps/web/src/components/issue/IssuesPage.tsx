@@ -5,10 +5,13 @@ import {
   holdIssuePages,
   issueCursorsForHost,
   issueFilterScopes,
+  issueListTargets,
   issueTrackerKey,
   type HeldIssuePage,
 } from "@t3tools/client-runtime/issue-list";
 import { issueEntryKey } from "@t3tools/client-runtime/state/issues";
+import { parseScopedProjectKey, scopedProjectKey } from "@t3tools/client-runtime/environment";
+import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import type {
   EnvironmentId,
   IssueInvolvement,
@@ -88,7 +91,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useProjects } from "~/state/entities";
 import { useEnvironments, useIssuesSupported } from "~/state/environments";
-import { issueEnvironment, useIssueList, type IssueListTarget } from "~/state/issues";
+import { issueEnvironment, useIssueList } from "~/state/issues";
 import { useDebouncedValue } from "~/state/queries";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 
@@ -189,9 +192,21 @@ export function IssuesPage() {
     ...(search.assignee ? { assignee: search.assignee } : {}),
     ...(search.order ? { sort: search.order } : {}),
   };
-  const targets: ReadonlyArray<IssueListTarget> = capableEnvironments.map((e) => ({
-    environmentId: e.environmentId,
-    input: listInput,
+  const targets = issueListTargets(
+    capableEnvironments.map((e) => e.environmentId),
+    listInput,
+    (search.project ?? []).flatMap((key) => parseScopedProjectKey(key) ?? []),
+  );
+  const projectOptions = pullRequestFilterProjects(
+    projects.filter(
+      (project) =>
+        !project.isScratch &&
+        capableEnvironments.some((e) => e.environmentId === project.environmentId),
+    ),
+    environmentLabels,
+  ).map((project) => ({
+    ...project,
+    key: scopedProjectKey({ environmentId: project.environmentId, projectId: project.id }),
   }));
   const list = useIssueList(targets);
   useLiveRefresh(list.refresh, { key: JSON.stringify(targets) });
@@ -203,10 +218,11 @@ export function IssuesPage() {
   // One tracker group's button carries on that tracker's scopes only.
   const loadMore = async (environmentId: EnvironmentId, host: string) => {
     const page = held.get(environmentId);
+    const input = targets.find((target) => target.environmentId === environmentId)?.input;
     const cursors = page ? issueCursorsForHost(page.nextCursors, host) : {};
-    if (!page || Object.keys(cursors).length === 0 || loadingMore !== null) return;
+    if (!page || !input || Object.keys(cursors).length === 0 || loadingMore !== null) return;
     setLoadingMore(`${environmentId} ${host}`);
-    const result = await loadPage({ environmentId, input: { ...listInput, cursors } });
+    const result = await loadPage({ environmentId, input: { ...input, cursors } });
     setLoadingMore(null);
     const failure = result._tag === "Failure" ? squashAtomCommandFailure(result) : null;
     setPages((current) => {
@@ -263,6 +279,7 @@ export function IssuesPage() {
       ...(merged.label?.length ? { label: merged.label } : {}),
       ...(merged.assignee ? { assignee: merged.assignee } : {}),
       ...(merged.order ? { order: merged.order } : {}),
+      ...(merged.project?.length ? { project: merged.project } : {}),
       ...(merged.selectedEnvironmentId
         ? { selectedEnvironmentId: merged.selectedEnvironmentId }
         : {}),
@@ -429,7 +446,11 @@ export function IssuesPage() {
       </EmptyMedia>
       <EmptyHeader>
         <EmptyTitle>No trackers to read</EmptyTitle>
-        <EmptyDescription>Add a project whose remote is on a supported tracker.</EmptyDescription>
+        <EmptyDescription>
+          {search.project?.length
+            ? "None of the chosen projects is on a supported tracker."
+            : "Add a project whose remote is on a supported tracker."}
+        </EmptyDescription>
       </EmptyHeader>
     </Empty>
   ) : (
@@ -607,6 +628,9 @@ export function IssuesPage() {
                   onLabels={(label) => updateSearch({ label })}
                   assignee={search.assignee}
                   onAssignee={(assignee) => updateSearch({ assignee })}
+                  projectOptions={projectOptions}
+                  projects={search.project ?? []}
+                  onProjects={(project) => updateSearch({ project })}
                 />
                 <SavedViewsMenu
                   kind={ISSUE_SAVED_VIEWS}
@@ -621,6 +645,7 @@ export function IssuesPage() {
                       label: view.label,
                       assignee: view.assignee,
                       order: view.order,
+                      project: view.project,
                     })
                   }
                 />

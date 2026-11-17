@@ -255,10 +255,16 @@ export const IssueListCursors = Schema.Record(
 );
 export type IssueListCursors = typeof IssueListCursors.Type;
 
+export const ISSUE_LIST_PROJECT_LIMIT = 100;
+
 export const IssueListInput = Schema.Struct({
   state: IssueListState,
   involvement: Schema.optional(IssueInvolvement),
   projectId: Schema.optional(ProjectId),
+  /** Narrows to these projects' scopes. Absent means every project the workspace has. */
+  projectIds: Schema.optional(
+    Schema.Array(ProjectId).check(Schema.isMaxLength(ISSUE_LIST_PROJECT_LIMIT)),
+  ),
   /** Narrows to one host, named as the host itself. Absent means every host the workspace has. */
   host: Schema.optional(TrimmedNonEmptyString),
   /** Rows per scope, which with a continuation is rows per slice. */

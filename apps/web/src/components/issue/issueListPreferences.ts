@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { IssueInvolvement, IssueListState } from "@t3tools/contracts";
+import { ISSUE_LIST_PROJECT_LIMIT, IssueInvolvement, IssueListState } from "@t3tools/contracts";
 
 /**
  * What the issues page remembers between visits; the selection in the URL is not part of it.
@@ -17,6 +17,8 @@ export interface IssueListPreferences {
   readonly label?: ReadonlyArray<string> | undefined;
   readonly assignee?: string | undefined;
   readonly order?: "created" | undefined;
+  /** Scoped project keys (`environmentId:projectId`), since a project id is unique only within its environment. */
+  readonly project?: ReadonlyArray<string> | undefined;
 }
 
 const DEFAULT_ISSUE_LIST_PREFERENCES = {
@@ -35,6 +37,9 @@ export const IssueListPreferencesSchema = Schema.Struct({
   label: Schema.optional(Schema.Array(BoundedPreference).check(Schema.isMaxLength(20))),
   assignee: Schema.optional(BoundedPreference),
   order: Schema.optional(Schema.Literal("created")),
+  project: Schema.optional(
+    Schema.Array(BoundedPreference).check(Schema.isMaxLength(ISSUE_LIST_PROJECT_LIMIT)),
+  ),
 });
 const decodePreferences = Schema.decodeUnknownOption(IssueListPreferencesSchema);
 
@@ -53,6 +58,7 @@ export function issueListPreferences(search: {
   readonly label?: ReadonlyArray<string> | undefined;
   readonly assignee?: string | undefined;
   readonly order?: "created" | undefined;
+  readonly project?: ReadonlyArray<string> | undefined;
 }): IssueListPreferences {
   return {
     who: search.who,
@@ -62,6 +68,7 @@ export function issueListPreferences(search: {
     ...(search.label?.length ? { label: search.label } : {}),
     ...(search.assignee ? { assignee: search.assignee } : {}),
     ...(search.order ? { order: search.order } : {}),
+    ...(search.project?.length ? { project: search.project } : {}),
   };
 }
 
