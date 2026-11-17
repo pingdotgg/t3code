@@ -13,6 +13,7 @@ const baseState: ThreadActionMenuState = {
   canSnoozeNow: true,
   isRegeneratingTitle: false,
   isRunning: false,
+  isWorking: false,
   supports: {
     settlement: true,
     autoSettleOptOut: true,
@@ -73,5 +74,16 @@ describe("buildThreadActionMenuItems", () => {
     });
     expect(items.find((item) => item.id === "archive")?.disabled).toBe(true);
     expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
+  });
+
+  it("offers Mark unread only to threads that are neither running nor Working", () => {
+    const offersMarkUnread = (isRunning: boolean, isWorking = false) =>
+      buildThreadActionMenuItems({ ...baseState, isRunning, isWorking }).some(
+        (item) => item.id === "mark-unread",
+      );
+    expect(offersMarkUnread(false)).toBe(true);
+    expect(offersMarkUnread(true)).toBe(false);
+    // Idle with held background work, or waiting: Working but archivable.
+    expect(offersMarkUnread(false, true)).toBe(false);
   });
 });
