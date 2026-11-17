@@ -161,6 +161,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     readonly exitCode?: Effect.Effect<number>;
     readonly options?: ReadonlyArray<ProviderOptionSelection>;
     readonly interactionMode?: ProviderAdapter.ProviderAdapterV2RuntimePolicy["interactionMode"];
+    readonly attachments?: ProviderAdapter.ProviderAdapterV2TurnInput["message"]["attachments"];
   } = {},
 ) {
   const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
@@ -251,7 +252,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
         creationSource: continuation === undefined ? "web" : "provider",
         messageId: MessageId.make(`message-opencode-${turnKey}`),
         text,
-        attachments: [],
+        attachments: turnSettings.attachments ?? [],
       },
       modelSelection: { ...modelSelection, model: continuation?.model ?? modelSelection.model },
       runtimePolicy: turnPolicy,
@@ -3293,40 +3294,62 @@ describe("OpenCodeAdapterV2", () => {
         command: string;
         arguments: string;
         model: string;
+        parts: ReadonlyArray<{ type: string; filename: string }>;
       }>();
       let promptCalls = 0;
       const sessionId = "native-command";
-      const harness = yield* makeOpenCodeRuntimeHarness("native-command", sessionId, {
-        event: {
-          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
-            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
-            return { stream: nativeEvents.stream };
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "native-command",
+        sessionId,
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          command: { list: async () => ({ data: [{ name: "git/review" }] }) },
+          session: {
+            create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+            command: async (input: {
+              messageID: string;
+              command: string;
+              arguments: string;
+              model: string;
+              parts: ReadonlyArray<{ type: string; filename: string }>;
+            }) => {
+              Queue.offerUnsafe(calls, input);
+              await release.promise;
+              return { data: true };
+            },
+            promptAsync: async () => {
+              promptCalls++;
+              return { data: true };
+            },
           },
         },
-        command: { list: async () => ({ data: [{ name: "git/review" }] }) },
-        session: {
-          create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
-          command: async (input: {
-            messageID: string;
-            command: string;
-            arguments: string;
-            model: string;
-          }) => {
-            Queue.offerUnsafe(calls, input);
-            await release.promise;
-            return { data: true };
-          },
-          promptAsync: async () => {
-            promptCalls++;
-            return { data: true };
-          },
+        { resolveAttachmentPath: () => "/workspace/review-notes.txt" },
+        {
+          attachments: [
+            {
+              type: "file",
+              id: "notes",
+              name: "review-notes.txt",
+              mimeType: "text/plain",
+              sizeBytes: 24,
+            },
+          ],
         },
-      });
+      );
       const start = yield* harness.startTurn("/git/review staged changes").pipe(Effect.forkScoped);
       const call = yield* Queue.take(calls);
       assert.equal(call.command, "git/review");
       assert.equal(call.arguments, "staged changes");
       assert.equal(call.model, "anthropic/claude-sonnet");
+      assert.deepEqual(
+        call.parts.map((part) => part.filename),
+        ["review-notes.txt"],
+      );
       yield* Effect.promise(() =>
         nativeEvents.push({
           type: "message.updated",
@@ -4486,6 +4509,62 @@ describe("OpenCodeAdapterV2", () => {
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
+  it.effect("reports an unanswered session abort as an interrupt timeout", () =>
+    Effect.gen(function* () {
+      const events = asyncEventStream();
+      const abortCalled = promiseGate<void>();
+      let abortCalls = 0;
+      const harness = yield* makeOpenCodeRuntimeHarness("abort-timeout", "root", {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => events.close(), { once: true });
+            return { stream: events.stream };
+          },
+        },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          get: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          promptAsync: async () => ({ data: true }),
+          status: async () => ({ data: { root: { type: "busy" } } }),
+          messages: async () => ({ data: [] }),
+          children: async () => ({ data: [] }),
+          abort: async (_input: unknown, options?: { readonly signal?: AbortSignal }) => {
+            // Only the Stop request hangs; session teardown still gets an answer.
+            if (++abortCalls > 1) return { data: true };
+            abortCalled.resolve();
+            await new Promise<void>((_resolve, reject) =>
+              options?.signal?.addEventListener("abort", () => reject(options.signal!.reason), {
+                once: true,
+              }),
+            );
+            return { data: true };
+          },
+        },
+        mcp: { add: async () => ({ data: true }) },
+      });
+      yield* harness.startTurn();
+      const snapshot = yield* harness.runtime.readThreadSnapshot({
+        providerThread: harness.providerThread,
+      });
+      const turn = snapshot.providerTurns.at(-1)!;
+      const interrupt = yield* harness.runtime
+        .interruptTurn({ providerThread: harness.providerThread, providerTurnId: turn.id })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Effect.promise(() => abortCalled.promise);
+      yield* TestClock.adjust("10 seconds");
+
+      const error = yield* Fiber.join(interrupt);
+      assert.strictEqual(error._tag, "ProviderAdapterInterruptTimeoutError");
+      assert.deepInclude(error, {
+        providerThreadId: harness.providerThread.id,
+        providerTurnId: turn.id,
+      });
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
   it.effect("fails an active turn when the OpenCode event stream ends cleanly", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
@@ -4898,6 +4977,13 @@ describe("OpenCodeAdapterV2", () => {
     const fullAccess = openCodePermissionRules(runtimePolicy("full-access"));
     assert.equal(permissionAction(fullAccess, "bash"), "allow");
     assert.equal(permissionAction(fullAccess, "edit"), "allow");
+    const fullAccessRulesCopiedToTaskChildren = fullAccess.filter(
+      (rule) => rule.permission === "external_directory" || rule.action === "deny",
+    );
+    assert.equal(
+      permissionAction(fullAccessRulesCopiedToTaskChildren, "external_directory"),
+      "allow",
+    );
 
     const granularApproval = openCodePermissionRules(
       runtimePolicy("full-access", {
@@ -4968,9 +5054,15 @@ describe("OpenCodeAdapterV2", () => {
     assert.equal(permissionAction(childRules, "task"), "deny");
 
     const approvalRequiredPolicy = runtimePolicy("approval-required");
-    const parentRules = openCodePermissionRules(approvalRequiredPolicy);
+    const initialChildRules = openCodePermissionRules(approvalRequiredPolicy).filter(
+      (rule) => rule.permission === "external_directory" || rule.action === "deny",
+    );
+    assert.equal(permissionAction(initialChildRules, "bash"), "deny");
+    assert.equal(permissionAction(initialChildRules, "edit"), "deny");
+    assert.equal(permissionAction(initialChildRules, "unknown_plugin_tool"), "deny");
+
     const childApprovalRules = openCodeChildPermissionRules(approvalRequiredPolicy, [
-      ...parentRules.filter((rule) => rule.action === "deny"),
+      ...initialChildRules,
       { permission: "task", pattern: "*", action: "deny" },
     ]);
     assert.equal(permissionAction(childApprovalRules, "bash"), "ask");

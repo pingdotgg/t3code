@@ -180,10 +180,15 @@ interface FakePi {
   readonly allRequests: () => ReadonlyArray<PiRpcRecord>;
   readonly promptThinkingLevels: ReadonlyArray<string>;
   readonly promptModels: ReadonlyArray<string>;
+  /** Simulates a native extension changing Pi's active selection. */
+  readonly changeNatively: (change: {
+    readonly model?: string;
+    readonly thinking?: string;
+  }) => void;
   /** T3 extension's service tier as each prompt was sent; Pi resets it with each session. */
   readonly promptServiceTiers: ReadonlyArray<string | null>;
   /** Pi reloads extensions without the adapter seeing it, e.g. a user extension's ctx.newSession(). */
-  readonly reloadExtensions: () => void;
+  readonly reloadExtensions: (newSessionFile?: string) => void;
   /** Pi before 0.99 acknowledges prompts without a disposition. */
   readonly omitPromptDisposition: () => void;
   readonly queueStats: (data: unknown) => void;
@@ -281,6 +286,15 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
           ...base,
           data: {
             ...recordedIdleState(sessionFile),
+            thinkingLevel,
+            ...(currentModel === "default"
+              ? {}
+              : {
+                  model: {
+                    provider: currentModel.slice(0, currentModel.indexOf("/")),
+                    id: currentModel.slice(currentModel.indexOf("/") + 1),
+                  },
+                }),
             isStreaming: isStreaming ?? false,
             ...stateQueue.shift(),
           },
@@ -432,9 +446,14 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     },
     promptThinkingLevels,
     promptModels,
+    changeNatively: (change) => {
+      currentModel = change.model ?? currentModel;
+      thinkingLevel = change.thinking ?? thinkingLevel;
+    },
     promptServiceTiers,
-    reloadExtensions: () => {
+    reloadExtensions: (newSessionFile) => {
       serviceTier = null;
+      if (newSessionFile !== undefined) sessionFile = newSessionFile;
     },
     omitPromptDisposition: () => {
       promptDisposition = false;
@@ -2115,6 +2134,7 @@ describe("PiAdapterV2", () => {
       assert.equal(spawn.env.T3_MCP_URL, "http://127.0.0.1:43123/mcp");
       assert.equal(spawn.env.T3_MCP_BEARER_TOKEN, "secret-pi-token");
       assert.equal(spawn.env.T3_PI_RUNTIME_MODE, "full-access");
+      assert.equal(spawn.env.T3CODE_THREAD_ID, THREAD_ID);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
@@ -2762,6 +2782,93 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("tracks the session file a user extension switches to during a turn", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      assert.equal(providerThread.nativeThreadRef?.nativeId, FAKE_SESSION_FILE);
+      const childFile = "/fake/extension-child.jsonl";
+
+      // An extension command such as /handoff calls ctx.newSession(); later prompts go to its file.
+      yield* startTurn(runtime, providerThread, "default", [], "/handoff", undefined, 1);
+      yield* fake.takeRequest("prompt");
+      fake.reloadExtensions(childFile);
+      yield* fake.emit({ type: "response", command: "prompt", success: true });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+
+      yield* startTurn(runtime, providerThread, "default", [], "prompt B", undefined, 2);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "agent_end", messages: [], willRetry: false });
+      yield* fake.emit({ type: "agent_settled" });
+      const idle = yield* takeEvent(
+        (event) =>
+          event.type === "provider_thread.updated" && event.providerThread.status === "idle",
+      );
+      yield* takeEvent((event) => event.type === "turn.terminal");
+
+      // The persisted ref is what a later resume passes to switch_session.
+      assert.equal(
+        idle.type === "provider_thread.updated"
+          ? idle.providerThread.nativeThreadRef?.nativeId
+          : undefined,
+        childFile,
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["abort", "runtime restart"] as const)(
+    "keeps the extension's session file when its handoff turn is stopped (%s)",
+    (stop) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* startTurn(runtime, providerThread, "default", [], "/handoff");
+        yield* fake.takeRequest("prompt");
+        const running = yield* takeEvent((event) => event.type === "provider_turn.updated");
+        if (running.type !== "provider_turn.updated") return yield* Effect.die("Missing turn");
+        const childFile = "/fake/extension-child.jsonl";
+        fake.reloadExtensions(childFile);
+        fake.setStreaming(true);
+        yield* fake.emit({ type: "response", command: "prompt", success: true });
+        yield* fake.emit({ type: "agent_start" });
+        yield* runtime.interruptTurn({
+          providerThread,
+          providerTurnId: running.providerTurn.id,
+          requestRuntimeRestart: stop === "runtime restart",
+        });
+        if (stop === "abort") {
+          fake.setStreaming(false);
+          yield* fake.emit({ type: "agent_settled", aborted: true });
+        }
+        const idle = yield* takeEvent(
+          (event) =>
+            event.type === "provider_thread.updated" && event.providerThread.status === "idle",
+        );
+        const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+        assert.equal(
+          terminal.type === "turn.terminal" ? terminal.status : undefined,
+          "interrupted",
+        );
+        assert.equal(
+          idle.type === "provider_thread.updated"
+            ? idle.providerThread.nativeThreadRef?.nativeId
+            : undefined,
+          childFile,
+        );
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each([false, true, "previous"] as const)(
     "resets applied thinking when returning to Pi default (failed first restore: %s)",
     (failFirstRestore) =>
@@ -3173,6 +3280,7 @@ describe("PiAdapterV2", () => {
         const cases = [
           {
             toolName: "read",
+            args: { path: "/workspace/screens/shot.png" },
             result: { content, structuredContent: { ...image, note } },
             expected: { content },
           },
@@ -3229,6 +3337,7 @@ describe("PiAdapterV2", () => {
               type: `tool_execution_${phase}`,
               toolCallId: `image-${index}`,
               toolName: test.toolName,
+              ...("args" in test ? { args: test.args } : {}),
               ...(phase === "end" ? { result: test.result } : { partialResult: test.result }),
               isError: false,
             });
@@ -3246,7 +3355,10 @@ describe("PiAdapterV2", () => {
                 ? [{ mimeType: "image/png", data: image.data }]
                 : [],
             );
-            if (index === 0) assert.equal(turnItemOutputText(event.turnItem), note);
+            if (index === 0) {
+              assert.equal(turnItemOutputText(event.turnItem), note);
+              assert.equal(event.turnItem.viewedImagePath, "/workspace/screens/shot.png");
+            }
             if (index === 5) assert.equal(turnItemOutputText(event.turnItem), "first\nsecond");
             if (index === 2) {
               assert.deepEqual(compactDynamicToolOutput(event.turnItem.output), {
@@ -3834,6 +3946,50 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect.each([
+    { change: { model: "openai/model-b", thinking: "minimal" }, setModels: 2 },
+    { change: { thinking: "minimal" }, setModels: 1 },
+  ])(
+    "reapplies the selection after an extension changes it natively (%o)",
+    ({ change, setModels }) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const selection: ModelSelection = {
+          instanceId: PI_INSTANCE_ID,
+          model: "anthropic/model-a",
+          options: [{ id: "thinking", value: "high" }],
+        };
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: selection,
+          runtimePolicy,
+        });
+        yield* startTurn(
+          runtime,
+          providerThread,
+          "anthropic/model-a",
+          [],
+          "/preset fast",
+          selection,
+        );
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({ type: "agent_start" });
+        fake.changeNatively(change);
+        yield* fake.emit({ type: "agent_settled" });
+        yield* takeEvent((event) => event.type === "turn.terminal");
+
+        yield* startTurn(runtime, providerThread, "anthropic/model-a", [], "Next", selection, 2);
+        yield* fake.takeRequest("prompt");
+        assert.deepEqual(fake.promptModels, ["anthropic/model-a", "anthropic/model-a"]);
+        assert.deepEqual(fake.promptThinkingLevels, ["high", "high"]);
+        assert.equal(
+          fake.allRequests().filter((request) => request["type"] === "set_model").length,
+          setModels,
+        );
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("records the model Pi reports on the completed provider turn", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
@@ -4370,7 +4526,27 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("fails a compact that never started", () =>
+  // A failed compact can respond before starting or after compaction_start/end.
+  it.effect.each([
+    {
+      name: "fails a compact Pi rejects before starting",
+      compactionEnd: null,
+      error: "Nothing to compact (session too small)",
+      status: "failed",
+    },
+    {
+      name: "fails a compact after compaction starts",
+      compactionEnd: { aborted: false, errorMessage: "Compaction failed: model request failed" },
+      error: "model request failed",
+      status: "failed",
+    },
+    {
+      name: "completes a compact an extension cancelled",
+      compactionEnd: { aborted: true },
+      error: "Compaction cancelled",
+      status: "completed",
+    },
+  ])("$name", ({ compactionEnd, error, status }) =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
       const { runtime, takeEvent } = yield* openRuntime(fake);
@@ -4381,17 +4557,22 @@ describe("PiAdapterV2", () => {
       });
       yield* startTurn(runtime, providerThread, "default", [], "/compact");
       yield* fake.takeRequest("compact");
-      yield* fake.emit({
-        type: "response",
-        command: "compact",
-        success: false,
-        error: "Nothing to compact (session too small)",
-      });
+      if (compactionEnd !== null) {
+        yield* fake.emit({ type: "compaction_start", reason: "manual" });
+        yield* fake.emit({
+          type: "compaction_end",
+          reason: "manual",
+          result: null,
+          ...compactionEnd,
+        });
+      }
+      yield* fake.emit({ type: "response", command: "compact", success: false, error });
       const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
-      assert.isTrue(
-        terminal.type === "turn.terminal" &&
-          terminal.status === "failed" &&
-          terminal.failure.message === "Nothing to compact (session too small)",
+      assert.deepEqual(
+        terminal.type === "turn.terminal"
+          ? { status: terminal.status, failure: terminal.failure?.message }
+          : null,
+        { status, failure: status === "failed" ? error : undefined },
       );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
@@ -4758,6 +4939,295 @@ describe("PiAdapterV2", () => {
       const response = yield* fake.takeRequest("extension_ui_response");
       assert.equal(response["value"], "");
       assert.isUndefined(response["cancelled"]);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("renders an ask_user_question select from the tool call's structured question", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "ask-call",
+        toolName: "ask_user_question",
+        args: {
+          questions: [
+            {
+              header: "Area",
+              question: "Which area should we work on?",
+              options: [
+                {
+                  label: "Docker/Compose",
+                  description: "Review or edit Compose projects",
+                  preview: "services:\n  web: {}",
+                },
+                { label: "Home Assistant", description: "Automations, dashboards or YAML" },
+              ],
+            },
+          ],
+        },
+      });
+      const dockerLine = "1. Docker/Compose — Review or edit Compose projects";
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-ask",
+        method: "select",
+        title:
+          "[Area] Which area should we work on?\n\n--- 1. Docker/Compose preview ---\nservices:\n  web: {}",
+        options: [
+          dockerLine,
+          "2. Home Assistant — Automations, dashboards or YAML",
+          "3. Type something.",
+        ],
+      });
+      const event = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+      );
+      if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request") {
+        return assert.fail("expected a user input request");
+      }
+      const question = decodeUserInputQuestions(event.turnItem.questions)[0];
+      assert.deepEqual(
+        {
+          header: question?.header,
+          question: question?.question,
+          options: question?.options.map(({ label, description }) => ({ label, description })),
+        },
+        {
+          header: "Area",
+          question:
+            "Which area should we work on?\n\n--- 1. Docker/Compose preview ---\nservices:\n  web: {}",
+          options: [
+            { label: "Docker/Compose", description: "Review or edit Compose projects" },
+            { label: "Home Assistant", description: "Automations, dashboards or YAML" },
+          ],
+        },
+      );
+      yield* runtime.respondToRuntimeRequest({
+        requestId: event.turnItem.requestId,
+        answers: { [question!.id]: question!.options[0]!.value },
+      });
+      const response = yield* fake.takeRequest("extension_ui_response");
+      assert.equal(response["id"], "ui-ask");
+      assert.equal(response["value"], dockerLine);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("matches an ask_user_question select to the question with the same full title", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      const options = [
+        { label: "Yes", description: "Go ahead" },
+        { label: "No", description: "Stop here" },
+      ];
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "ask-call",
+        toolName: "ask_user_question",
+        // Some models JSON-encode `questions`; the extension decodes it before asking.
+        args: {
+          questions: JSON.stringify([
+            { header: "Deploy", question: "Proceed?", options },
+            { header: "Deploy", question: "Proceed? Only for staging?", options },
+          ]),
+        },
+      });
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-ask",
+        method: "select",
+        title: "[Deploy] Proceed? Only for staging?",
+        options: ["1. Yes — Go ahead", "2. No — Stop here", "3. Type something."],
+      });
+      const event = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+      );
+      if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request") {
+        return assert.fail("expected a user input request");
+      }
+      const question = decodeUserInputQuestions(event.turnItem.questions)[0];
+      assert.equal(question?.question, "Proceed? Only for staging?");
+      // Option lines that differ from the recorded call keep the raw select.
+      const unmatchedLines = ["1. Yes — Go", "2. No — Stop here", "3. Type something."];
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-unmatched",
+        method: "select",
+        title: "[Deploy] Proceed?",
+        options: unmatchedLines,
+      });
+      const unmatched = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+      );
+      if (
+        unmatched.type !== "turn_item.updated" ||
+        unmatched.turnItem.type !== "user_input_request"
+      ) {
+        return assert.fail("expected a user input request");
+      }
+      const unmatchedQuestion = decodeUserInputQuestions(unmatched.turnItem.questions)[0];
+      assert.deepEqual(
+        {
+          header: unmatchedQuestion?.header,
+          question: unmatchedQuestion?.question,
+          options: unmatchedQuestion?.options.map(({ label, value }) => [label, value]),
+        },
+        {
+          header: "Question",
+          question: "[Deploy] Proceed?",
+          options: unmatchedLines.map((line) => [line, line]),
+        },
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("answers each ask_user_question custom text through its follow-up input", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      const args = {
+        questions: [
+          {
+            question: "How many replicas?",
+            options: [
+              { label: "One", description: "Single instance" },
+              { label: "Three", description: "High availability" },
+            ],
+          },
+        ],
+      };
+      // Parallel questionnaires can ask the same question.
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "ask-call",
+        toolName: "ask_user_question",
+        args,
+      });
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "ask-call-parallel",
+        toolName: "ask_user_question",
+        args,
+      });
+      const lines = ["1. One — Single instance", "2. Three — High availability"];
+      const followUpTitle = `How many replicas?\n\n${lines.join("\n")}\n\nType your answer:`;
+      const takeWaitingRequest = Effect.fnUntraced(function* () {
+        const event = yield* takeEvent(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "user_input_request" &&
+            event.turnItem.status === "waiting",
+        );
+        if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request") {
+          return assert.fail("expected a user input request");
+        }
+        return event.turnItem;
+      });
+      const answerWithCustomText = Effect.fnUntraced(function* (id: string, text: string) {
+        yield* fake.emit({
+          type: "extension_ui_request",
+          id,
+          method: "select",
+          title: "How many replicas?",
+          options: [...lines, "3. Type something."],
+        });
+        const request = yield* takeWaitingRequest();
+        yield* runtime.respondToRuntimeRequest({
+          requestId: request.requestId,
+          answers: { [request.questions[0]!.id]: text },
+        });
+        const selectResponse = yield* fake.takeRequest("extension_ui_response");
+        assert.equal(selectResponse["value"], "3. Type something.");
+      });
+      // The extension reads a bare number sent as the select's value as that option.
+      yield* answerWithCustomText("ui-ask", "2");
+      yield* answerWithCustomText("ui-ask-parallel", "5");
+      // Parallel dialogs can arrive before the follow-up input, including a multi-select of the
+      // same question, which the extension asks as an input with a non-empty placeholder.
+      const multiSelectTitle = `How many replicas?\n\n${lines.join("\n")}\n\nEnter the numbers of all that apply.`;
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-multi",
+        method: "input",
+        title: multiSelectTitle,
+        placeholder: "1,3; custom answer",
+      });
+      // Another extension's blank-placeholder input that only shares the question is asked.
+      const unrelatedTitle = "How many replicas?\n\nEnter the release note:";
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-unrelated",
+        method: "input",
+        title: unrelatedTitle,
+        placeholder: "",
+      });
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-other",
+        method: "input",
+        title: "Anything else?",
+      });
+      assert.equal((yield* takeWaitingRequest()).title, multiSelectTitle);
+      assert.equal((yield* takeWaitingRequest()).title, unrelatedTitle);
+      assert.equal((yield* takeWaitingRequest()).title, "Anything else?");
+      for (const [id, value] of [
+        ["ui-custom", "2"],
+        ["ui-custom-parallel", "5"],
+      ]) {
+        yield* fake.emit({
+          type: "extension_ui_request",
+          id,
+          method: "input",
+          title: followUpTitle,
+          placeholder: "",
+        });
+        const inputResponse = yield* fake.takeRequest("extension_ui_response");
+        assert.deepEqual({ id: inputResponse["id"], value: inputResponse["value"] }, { id, value });
+      }
+      // An answer staged when the turn ends is dropped, so a later matching input is asked.
+      yield* answerWithCustomText("ui-ask-late", "7");
+      yield* fake.emit({ type: "agent_end", messages: [], willRetry: false });
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-custom-late",
+        method: "input",
+        title: followUpTitle,
+        placeholder: "",
+      });
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-after",
+        method: "input",
+        title: "Anything else?",
+      });
+      assert.equal((yield* takeWaitingRequest()).title, followUpTitle);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
