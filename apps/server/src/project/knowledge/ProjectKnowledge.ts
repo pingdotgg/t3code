@@ -679,6 +679,8 @@ const make = Effect.gen(function* () {
                 forgottenAt: null,
                 supersedes: factId,
                 supersededBy: null,
+                // Like an edit, an agent's replacement keeps a set-aside fact out of recall.
+                ...(actor.kind !== "user" && existing.verdict ? { verdict: existing.verdict } : {}),
               };
               const replaced: ProjectFact = {
                 ...existing,
@@ -746,8 +748,10 @@ const make = Effect.gen(function* () {
                   currentRevision: existing.revision,
                 });
               fact = { ...existing, revision: existing.revision + 1, updatedAt: now };
+              // A person's edit is the owner's way back to recall; an agent's edit keeps the verdict.
               const clearsCheck =
                 input.action === "edit" &&
+                actor.kind === "user" &&
                 input.content !== existing.content &&
                 existing.verdict?.by === "check";
               switch (input.action) {
@@ -787,7 +791,6 @@ const make = Effect.gen(function* () {
                 return yield* new ProjectKnowledgeError({ reason: "conflict", projectId, factId });
               switch (input.action) {
                 case "edit":
-                  if (clearsCheck) yield* store.clearCheckVerdict(projectId, factId);
                   yield* history(fact, "edited");
                   break;
                 case "forget":

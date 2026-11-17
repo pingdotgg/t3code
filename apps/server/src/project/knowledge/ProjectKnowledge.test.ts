@@ -20,6 +20,7 @@ import {
   THREAD_SEARCH_QUERY_MAX_LENGTH,
   ThreadId,
   TurnItemId,
+  type KnowledgeOrigin,
   type OrchestrationV2DomainEvent,
   type ProjectKnowledgeMutation,
 } from "@t3tools/contracts";
@@ -2329,22 +2330,71 @@ it.effect("recall skips facts the check set aside, which search still finds", ()
         : [],
       [setAside, standing, unchecked],
     );
-    // The verdict judged the old text, so an edit leaves the fact unchecked and recallable.
-    const { fact } = yield* knowledge.readFact({ projectId, factId: setAside });
-    yield* knowledge.mutate(
-      {
-        ...createFact(projectId, setAside),
-        action: "edit",
-        commandId: CommandId.make("edit-set-aside"),
-        expectedRevision: fact.revision,
-        content: "Cache keys include tenant IDs and region codes.",
-      },
-      { kind: "user" },
+    const edit = (commandId: string, content: string, actor: KnowledgeOrigin) =>
+      Effect.gen(function* () {
+        const { fact } = yield* knowledge.readFact({ projectId, factId: setAside });
+        yield* knowledge.mutate(
+          {
+            ...createFact(projectId, setAside),
+            action: "edit",
+            commandId: CommandId.make(commandId),
+            expectedRevision: fact.revision,
+            content,
+            // Agents cannot cite the user; an agent's edit may carry no sources.
+            sources: actor.kind === "user" ? [{ kind: "user" }] : [],
+          },
+          actor,
+        );
+        return (yield* knowledge.readFact({ projectId, factId: setAside })).fact.verdict?.value;
+      });
+    // An agent rewording a set-aside fact has not decided that it should be recalled.
+    assert.equal(
+      yield* edit("agent-edit-set-aside", "Cache keys include tenant IDs and regions.", {
+        kind: "agent-thread",
+        threadId: ThreadId.make("editing-agent"),
+        providerInstanceId,
+      }),
+      "task",
     );
-    assert.isUndefined((yield* knowledge.readFact({ projectId, factId: setAside })).fact.verdict);
+    assert.deepEqual(
+      attachedFactIds(yield* recall("recall-after-agent-edit", "Add regions to cache keys.")),
+      [],
+    );
+    // A person's edit is the owner's way back: the fact is unchecked and recallable again.
+    assert.isUndefined(
+      yield* edit("edit-set-aside", "Cache keys include tenant IDs and region codes.", {
+        kind: "user",
+      }),
+    );
     assert.deepEqual(
       attachedFactIds(yield* recall("recall-after-edit", "Add region codes to cache keys.")),
       [setAside],
+    );
+    // Nor does an agent's replacement of a set-aside fact make it recallable.
+    yield* sql`UPDATE project_knowledge_facts
+      SET verdict = 'task', verdict_by = 'check', verdict_at = '2026-11-16T00:00:00.000Z'
+      WHERE id = ${setAside}`;
+    const replacement = ProjectFactId.make("agent-replacement");
+    yield* knowledge.mutate(
+      {
+        ...createFact(projectId, setAside),
+        action: "supersede",
+        commandId: CommandId.make("agent-supersede-set-aside"),
+        expectedRevision: (yield* knowledge.readFact({ projectId, factId: setAside })).fact
+          .revision,
+        replacementFactId: replacement,
+        content: "Cache keys include tenant IDs, region codes and shard numbers.",
+        sources: [],
+      },
+      { kind: "agent-thread", threadId: ThreadId.make("editing-agent"), providerInstanceId },
+    );
+    assert.equal(
+      (yield* knowledge.readFact({ projectId, factId: replacement })).fact.verdict?.value,
+      "task",
+    );
+    assert.deepEqual(
+      attachedFactIds(yield* recall("recall-after-supersede", "Add shard numbers to cache keys.")),
+      [],
     );
   }).pipe(
     Effect.provide(

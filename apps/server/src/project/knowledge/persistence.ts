@@ -191,7 +191,10 @@ export const makeStore = Effect.gen(function* () {
     CASE WHEN verdict IS NULL THEN NULL
       ELSE json_object('value', verdict, 'by', verdict_by, 'at', verdict_at) END AS verdict
   `;
-  /** The only definition of a fact automatic recall may offer. Explicit search does not use it. */
+  /**
+   * The only definition of a fact automatic recall may offer. Explicit search does not use it.
+   * Migration 115's recall-term triggers and partial index must state the same condition.
+   */
   const recallable = sql`f.status = 'saved' AND f.superseded_by_id IS NULL
     AND (f.verdict IS NULL OR f.verdict = 'standing')`;
   const find = Effect.fn("ProjectKnowledgeStore.find")(function* (
@@ -229,12 +232,13 @@ export const makeStore = Effect.gen(function* () {
     yield* sql`INSERT INTO project_knowledge_facts (
       id, project_id, status, revision, content, entities_json, tags_json, kind, trust,
       retrieval_count, created_at, updated_at, forgotten_at, sources_json, origin_json,
-      supersedes_id, superseded_by_id
+      supersedes_id, superseded_by_id, verdict, verdict_by, verdict_at
     ) VALUES (
       ${fact.id}, ${fact.projectId}, ${fact.status}, ${fact.revision}, ${fact.content},
       ${encodeLabels(fact.entities)}, ${encodeLabels(fact.tags)}, ${fact.kind}, ${fact.trust},
       ${fact.retrievalCount}, ${fact.createdAt}, ${fact.updatedAt}, ${fact.forgottenAt}, ${encodeSources(fact.sources)}, ${encodeOrigin(fact.origin)},
-      ${fact.supersedes ?? null}, ${fact.supersededBy ?? null}
+      ${fact.supersedes ?? null}, ${fact.supersededBy ?? null},
+      ${fact.verdict?.value ?? null}, ${fact.verdict?.by ?? null}, ${fact.verdict?.at ?? null}
     )`;
   });
   const update = Effect.fn("ProjectKnowledgeStore.update")(function* (
@@ -246,7 +250,9 @@ export const makeStore = Effect.gen(function* () {
       entities_json = ${encodeLabels(fact.entities)}, tags_json = ${encodeLabels(fact.tags)},
       kind = ${fact.kind}, trust = ${fact.trust}, updated_at = ${fact.updatedAt},
       forgotten_at = ${fact.forgottenAt}, sources_json = ${encodeSources(fact.sources)}, origin_json = ${encodeOrigin(fact.origin)},
-      supersedes_id = ${fact.supersedes ?? null}, superseded_by_id = ${fact.supersededBy ?? null}
+      supersedes_id = ${fact.supersedes ?? null}, superseded_by_id = ${fact.supersededBy ?? null},
+      verdict = ${fact.verdict?.value ?? null}, verdict_by = ${fact.verdict?.by ?? null},
+      verdict_at = ${fact.verdict?.at ?? null}
       WHERE id = ${fact.id} AND project_id = ${fact.projectId} AND revision = ${expectedRevision}
       RETURNING id`;
     return changed.length === 1;
@@ -260,14 +266,6 @@ export const makeStore = Effect.gen(function* () {
     yield* sql`UPDATE project_knowledge_facts
       SET verdict = ${verdict}, verdict_by = 'check', verdict_at = ${at}
       WHERE project_id = ${projectId} AND id = ${factId}`;
-  });
-  // A check verdict judged the old text; the edited fact is unchecked until something checks it.
-  const clearCheckVerdict = Effect.fn("ProjectKnowledgeStore.clearCheckVerdict")(function* (
-    projectId: ProjectId,
-    factId: ProjectFactId,
-  ) {
-    yield* sql`UPDATE project_knowledge_facts SET verdict = NULL, verdict_by = NULL, verdict_at = NULL
-      WHERE project_id = ${projectId} AND id = ${factId} AND verdict_by = 'check'`;
   });
   // A search receipt older than searchNotBefore reads as absent: its cursor has expired.
   const receipt = Effect.fn("ProjectKnowledgeStore.receipt")(function* (
@@ -370,7 +368,7 @@ export const makeStore = Effect.gen(function* () {
   ) {
     const [count] = yield* sql<{
       readonly n: number;
-    }>`SELECT count(*) AS n FROM project_knowledge_facts WHERE project_id=${projectId} AND status='saved' AND superseded_by_id IS NULL`;
+    }>`SELECT count(*) AS n FROM project_knowledge_facts f WHERE f.project_id=${projectId} AND ${recallable}`;
     const rows =
       terms.length === 0
         ? []
@@ -887,7 +885,6 @@ export const makeStore = Effect.gen(function* () {
     insert,
     update,
     writeCheckVerdict,
-    clearCheckVerdict,
     receipt,
     record,
     recordSearch,
