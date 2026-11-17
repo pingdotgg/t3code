@@ -32,6 +32,8 @@ describe("matchComposerInlineSuggestion", () => {
     ["he", "too short"],
     ["hetz ", "a finished word"],
     ["@hetz", "an @ mention, which has its own menu"],
+    ["@src/(clau", "a path in an open @ menu"],
+    ["$(hetz", "a skill in an open $ menu"],
     ["/model opus", "a command, which has its own menu"],
     ["5.5", "a run that does not start with a letter"],
     ["sohetz", "the middle of a word"],

@@ -1,3 +1,5 @@
+import { detectComposerTrigger } from "@t3tools/shared/composerTrigger";
+
 export interface ComposerInlineSuggestionCandidate {
   readonly label: string;
 }
@@ -39,14 +41,21 @@ function labelWordMatch(label: string, typed: string): number {
 /**
  * The name the user is typing, for the composer's ghost text. The longest run of words before
  * the caret wins, then the earliest candidate. A run can start at any word of a label, so "opus"
- * finds "Claude Opus 5.5". Commands and `@` mentions have their own menus, so they stay out.
+ * finds "Claude Opus 5.5". Text that opens a composer menu stays out, so Tab picks the menu item.
  */
 export function matchComposerInlineSuggestion<T extends ComposerInlineSuggestionCandidate>(
   textBeforeCaret: string,
   candidates: ReadonlyArray<T>,
 ): ComposerInlineSuggestion<T> | null {
   const line = textBeforeCaret.slice(textBeforeCaret.lastIndexOf("\n") + 1);
-  if (line.startsWith("/") || line.length === 0 || /\s$/u.test(line)) return null;
+  if (
+    line.startsWith("/") ||
+    line.length === 0 ||
+    /\s$/u.test(line) ||
+    detectComposerTrigger(line, line.length) !== null
+  ) {
+    return null;
+  }
   for (const start of typedRunStarts(line)) {
     const typed = line.slice(start);
     if (typed.length < MIN_TYPED_LENGTH || !/^\p{L}/u.test(typed)) continue;
