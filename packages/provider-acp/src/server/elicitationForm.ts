@@ -230,8 +230,10 @@ export function parseElicitationForm(
       ...(kind === "text" || kind === "number" || companions.has(id)
         ? {}
         : { allowCustomAnswer: false }),
-      ...(field?.kind === "multiChoice"
-        ? { multiSelect: true, ...(field.minItems > 0 ? { required: true } : {}) }
+      ...(kind === "multiChoice" ? { multiSelect: true } : {}),
+      // An empty selection answers "none" unless the schema demands a choice.
+      ...(field?.kind === "multiChoice" && field.minItems > 0 && required.has(id)
+        ? { required: true }
         : {}),
       ...(kind === "text" && !required.has(id) ? { required: false } : {}),
     });

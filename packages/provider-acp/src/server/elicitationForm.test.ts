@@ -105,7 +105,7 @@ describe("parseElicitationForm", () => {
     });
   });
 
-  it("requires a multi-select with a minimum and accepts none for an optional one", () => {
+  it("requires a multi-select only for a required minimum and accepts none otherwise", () => {
     const items = { type: "string", enum: ["web", "mobile"] };
     const form = parseElicitationForm(
       {
@@ -113,6 +113,7 @@ describe("parseElicitationForm", () => {
         properties: {
           targets: { type: "array", minItems: 1, items },
           extras: { type: "array", items },
+          platforms: { type: "array", minItems: 1, items },
         },
         required: ["targets"],
       },
@@ -124,9 +125,10 @@ describe("parseElicitationForm", () => {
       [
         ["targets", true],
         ["extras", undefined],
+        ["platforms", undefined],
       ],
     );
-    assert.deepStrictEqual(form.content({ targets: ["web"], extras: [] }), {
+    assert.deepStrictEqual(form.content({ targets: ["web"], extras: [], platforms: [] }), {
       targets: ["web"],
       extras: [],
     });
