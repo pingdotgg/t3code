@@ -421,7 +421,13 @@ const desktopRenders = (tabId: string) => {
 /** When set, a desktop that has not attached a tab waits for it the way the real channel does. */
 let desktopAttachesLate = false;
 let desktopAttachWaiting = Promise.withResolvers<void>();
-const shownDesktopTabs = new Set<string>();
+const shownDesktopTabs = new (class extends Set<string> {
+  override add(tabId: string) {
+    super.add(tabId);
+    desktopDetaches.emit("shown", tabId);
+    return this;
+  }
+})();
 const releasedDesktopTabs: Array<string> = [];
 const desktopLoadFailures = new Map<string, PreviewAutomationLoadError>();
 const desktopTurns = new NodeEvents.EventEmitter();
@@ -509,6 +515,16 @@ const dependencies = Layer.mergeAll(
     ),
     isAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
     isShown: (key) => shownDesktopTabs.has(key.tabId),
+    awaitShown: (key, timeout) =>
+      shownDesktopTabs.has(key.tabId)
+        ? Effect.succeed(true)
+        : Effect.callback<boolean>((resume) => {
+            const onShown = (tabId: string) => {
+              if (tabId === key.tabId) resume(Effect.succeed(true));
+            };
+            desktopDetaches.on("shown", onShown);
+            return Effect.sync(() => desktopDetaches.off("shown", onShown));
+          }).pipe(Effect.timeoutOrElse({ duration: timeout, orElse: () => Effect.succeed(false) })),
     loadFailure: (key) => desktopLoadFailures.get(key.tabId),
     endpoint: (key) =>
       Effect.acquireRelease(Effect.succeed(`ws://desktop/${key.tabId}`), () =>
