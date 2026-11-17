@@ -321,7 +321,6 @@ const makeReviewDiffFileContentsInput = (
 ): ReviewDiffFileContentsInput => ({
   cwd,
   sourceKind: "working-tree",
-  status: "modified",
   changeType: "change",
   baseRef: "HEAD",
   headRef: null,
@@ -3037,7 +3036,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           driver.getReviewDiffFileContents(
             makeReviewDiffFileContentsInput(cwd, {
               sourceKind: "commit",
-              status: "added",
               changeType: "new",
               headRef: sha,
               baseRef: emptyTree,
@@ -3229,7 +3227,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           cwd,
           sourceKind: "working-tree",
           workingTreeScope: "unstaged",
-          status: "modified",
           changeType: "change",
           baseRef: "HEAD",
           headRef: null,
@@ -4208,14 +4205,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const [added, deleted] = yield* Effect.all([
           driver.getReviewDiffFileContents(
             makeReviewDiffFileContentsInput(cwd, {
-              status: "added",
               changeType: "new",
               oldPath: "added.ts",
               newPath: "added.ts",
             }),
           ),
           driver.getReviewDiffFileContents(
-            makeReviewDiffFileContentsInput(cwd, { status: "deleted", changeType: "deleted" }),
+            makeReviewDiffFileContentsInput(cwd, { changeType: "deleted" }),
           ),
         ]);
 
