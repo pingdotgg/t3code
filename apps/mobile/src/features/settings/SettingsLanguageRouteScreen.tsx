@@ -3,7 +3,8 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { I18nProvider, useGT, useLanguagePreference } from "../../i18n/I18nProvider";
+import { useGT } from "gt-react-native";
+import { I18nProvider, useLanguagePreference } from "../../i18n/I18nProvider";
 import { SYSTEM_LANGUAGE, nativeLanguageName } from "@t3tools/client-runtime/locales";
 import { SUPPORTED_LOCALES } from "../../i18n/locales";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
