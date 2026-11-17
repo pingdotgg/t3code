@@ -584,23 +584,28 @@ it.effect.each([
   Effect.gen(function* () {
     const waiting = Promise.withResolvers<void>();
     const booted = Promise.withResolvers<void>();
-    const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(
-      () =>
-        ({
-          initializationResult: () => {
-            waiting.resolve();
-            return booted.promise;
-          },
-          // The CLI answers control requests only after it has booted.
-          setMcpServers: async () => {
-            waiting.resolve();
-            await booted.promise;
-            return { added: ["t3-code"], removed: [], errors: {} };
-          },
-          close: vi.fn(),
-          [Symbol.asyncDispose]: async () => {},
-        }) as unknown as ClaudeSdk.Query,
-    );
+    const firstDisposed = Promise.withResolvers<void>();
+    const secondStarted = Promise.withResolvers<void>();
+    const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(() => {
+      const attempt = querySpy.mock.calls.length;
+      return {
+        initializationResult: () => {
+          waiting.resolve();
+          if (attempt === 2) secondStarted.resolve();
+          return booted.promise;
+        },
+        // The CLI answers control requests only after it has booted.
+        setMcpServers: async () => {
+          waiting.resolve();
+          await booted.promise;
+          return { added: ["t3-code"], removed: [], errors: {} };
+        },
+        close: vi.fn(),
+        [Symbol.asyncDispose]: async () => {
+          if (attempt === 1) firstDisposed.resolve();
+        },
+      } as unknown as ClaudeSdk.Query;
+    });
     yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
     const runner = yield* ClaudeAgentSdkQueryRunner;
     const { resume, ...options } = resumedMcpQueryInput.options;
@@ -610,8 +615,16 @@ it.effect.each([
     yield* Effect.promise(() => waiting.promise);
     yield* TestClock.adjust(bootWait);
     if (boots) booted.resolve();
+    else {
+      yield* Effect.promise(() => firstDisposed.promise);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("5 seconds");
+      yield* Effect.promise(() => secondStarted.promise);
+      yield* TestClock.adjust("5 minutes");
+    }
     const result = yield* Fiber.join(opening);
 
+    assert.equal(querySpy.mock.calls.length, boots ? 1 : 2);
     assert.equal(result._tag, boots ? "Success" : "Failure");
     if (result._tag === "Success") yield* result.success.close;
     else
