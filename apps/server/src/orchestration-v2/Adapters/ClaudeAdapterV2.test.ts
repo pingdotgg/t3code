@@ -12191,6 +12191,63 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       > => event.type === "provider_thread.updated",
     );
 
+  it.effect("marks a background sleep timer as awaited so a restart wakes the thread", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-sleep-timer"),
+          text: "Check the training job again in 30 minutes.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "assistant",
+          message: {
+            model: "claude-sonnet-4-6",
+            id: "msg_sleep_timer",
+            type: "message",
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: WAKE_TOOL_USE_ID,
+                name: "Bash",
+                input: { command: "sleep 1740; date", run_in_background: true },
+              },
+            ],
+          },
+          parent_tool_use_id: null,
+          uuid: "sleep-timer-launch",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+      yield* Queue.offer(harness.sdkMessages, turnOneResult);
+      yield* harness.awaitTerminal(1);
+
+      const timer = providerThreadRosterEvents(harness.events)
+        .flatMap((event) => event.providerThread.pendingBackgroundTasks ?? [])
+        .findLast((task) => task.taskId === WAKE_TASK_ID);
+      assert.deepInclude(timer, { kind: "command", command: "sleep 1740; date", awaited: true });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect(
     "uses task_started as an incremental roster fallback, keeps its tool call, and clears internal work on empty snapshot",
     () =>
