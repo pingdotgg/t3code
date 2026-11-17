@@ -147,7 +147,10 @@ export function previewAnnotationTargetText(
   resolve: MessageResolver,
 ): string {
   const parts: string[] = [];
-  const elements = record.elementIds?.length ?? 0;
+  // The stored summary also counts selected elements whose details failed to normalize.
+  const summaryElements = /^(\d+) selected elements?\b/.exec(record.targetSummary)?.[1];
+  const elements =
+    summaryElements === undefined ? (record.elementIds?.length ?? 0) : Number(summaryElements);
   if (elements > 0) {
     parts.push(
       resolve(

@@ -44,13 +44,17 @@ function cutText(text: string, maxLength: number): string | null {
   return characters.length > maxLength ? characters.slice(0, maxLength).join("") : null;
 }
 
-// The label was then built as a whole "Searched ..." sentence by formatSearchToolLabel.
-function labelledFromSearchParts(work: WorkLogEntry): boolean {
+// The app builds these labels as a whole "Searched ..." sentence: a web search from its search
+// parts, a file search without a provider title from its parts or as "Searched files".
+function appLabelledSearch(work: WorkLogEntry): boolean {
   const data = work.toolData;
   const record =
     data !== null && typeof data === "object" && !Array.isArray(data)
       ? (data as Record<string, unknown>)
       : undefined;
+  if (work.itemType === "file_search") {
+    return typeof record?.title !== "string" || record.title.trim() === "";
+  }
   const { query, glob, target } = searchToolLabelParts(record);
   return Boolean(query || glob || target);
 }
@@ -59,7 +63,7 @@ function labelledFromSearchParts(work: WorkLogEntry): boolean {
 function withVerb(work: WorkLogEntry, label: string) {
   if (work.itemType === "file_change") return m(msg("Editing {label}", { label }));
   if (work.itemType !== "file_search" && work.itemType !== "web_search") return label;
-  if (work.itemType === "web_search" && labelledFromSearchParts(work)) return label;
+  if (appLabelledSearch(work)) return label;
   // Labels that did not come from the search parts are provider text, which stays English.
   if (/^search(?:ed|ing)?\s/i.test(label)) return label;
   return work.itemType === "web_search"

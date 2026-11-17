@@ -305,7 +305,7 @@ export function CloudEnvironmentConnectRows({
   if (standalone && visibleEnvironments.length === 0) {
     const discoveryProblem = environmentsState.offline
       ? gt("You appear to be offline.")
-      : errorDisplayMessage(Option.getOrNull(environmentsState.error), m);
+      : thrownErrorMessage(Option.getOrNull(environmentsState.error), m);
     if (discoveryProblem !== null && !environmentsState.refreshing) {
       return (
         <div className={ITEM_ROW_CLASSNAME}>
@@ -333,7 +333,7 @@ export function CloudEnvironmentConnectRows({
     const unsupported =
       compatibilityError !== null || savedEnvironment?.connection.phase === "unsupported";
     const unsupportedDetail =
-      (compatibilityError === null ? null : errorDisplayMessage(compatibilityError, m)) ??
+      thrownErrorMessage(compatibilityError, m) ??
       (savedEnvironment ? connectionErrorText(savedEnvironment.connection, m) : null);
     const savedConnection = unsupported
       ? presentSavedCloudEnvironmentConnection(
