@@ -51,10 +51,10 @@ const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 const DRIVER_KIND = ProviderDriverKind.make("grok");
 // npm latest matches the stable channel installed by grok update.
 const GROK_NPM_PACKAGE = "@xai-official/grok";
-// `grok update` installs under `GROK_HOME` from the resolved executable and instance environment.
 // npm 12 blocks the postinstall that moves the new binary in, yet exits 0, so allow it by env.
 // Mise and Homebrew casks upgrade through their manager; `grok update` would install a second
 // copy, so a cask its brew cannot vouch for stays manual, as does a Nix store install.
+const GROK_SCRIPT_BINARY_PATTERN = /^grok-\d[\w.+-]*(?:\.exe)?$/i;
 const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
   resolve: Effect.fn("resolveGrokMaintenance")(function* (context) {
     if (!context) {
@@ -92,6 +92,15 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
         })
       );
     }
+    const path = yield* Path.Path;
+    const installDir = path.dirname(context.realCommandPath);
+    // `grok update` installs under `$GROK_HOME`, so a script install (`<home>/bin/grok-<version>`
+    // or `<home>/downloads/grok-<version>-<target>`) keeps `<home>` even if the instance sets another.
+    const scriptHome =
+      GROK_SCRIPT_BINARY_PATTERN.test(path.basename(context.realCommandPath)) &&
+      ["bin", "downloads"].includes(path.basename(installDir))
+        ? { GROK_HOME: path.dirname(installDir) }
+        : {};
     return makeProviderMaintenanceCapabilities({
       provider: DRIVER_KIND,
       packageName: GROK_NPM_PACKAGE,
@@ -99,7 +108,7 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
       updateArgs: ["update"],
       updateLockKey: "grok",
       platform: context.platform,
-      env: { ...context.env, npm_config_allow_scripts: GROK_NPM_PACKAGE },
+      env: { ...context.env, ...scriptHome, npm_config_allow_scripts: GROK_NPM_PACKAGE },
     });
   }),
 };
