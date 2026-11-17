@@ -1910,6 +1910,79 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("a speed change with no message updates Codex's next-turn settings", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "picker-tier-thread";
+      const nativeTurnId = "picker-tier-turn";
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "picker-service-tier",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Work." }),
+            {
+              type: "expect_outbound",
+              label: "thread/settings/update",
+              frame: {
+                id: 4,
+                method: "thread/settings/update",
+                params: { threadId: nativeThreadId, serviceTier: "default" },
+              },
+            },
+            { type: "emit_inbound", frame: { id: 4, result: {} } },
+            {
+              type: "emit_inbound",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        }),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("picker-tier-attempt"),
+          text: "Work.",
+        }),
+      );
+      yield* harness.until(() =>
+        harness.events.some(
+          (event) =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.nativeTurnRef?.nativeId === nativeTurnId,
+        ),
+      );
+      assert.isDefined(harness.runtime.applyModelSelection);
+      yield* (
+        harness.runtime.applyModelSelection?.({
+          providerThread: harness.providerThread,
+          modelSelection: {
+            ...CODEX_TEST_MODEL_SELECTION,
+            options: [{ id: "serviceTier", value: "default" }],
+          },
+        }) ?? Effect.void
+      );
+      yield* harness.firstTerminal;
+      assert.equal(harness.terminalEvents()[0]?.status, "completed");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("keeps native image views available to the clients", () =>
     Effect.gen(function* () {
       const nativeThreadId = "image-view-thread";
