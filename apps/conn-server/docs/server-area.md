@@ -179,7 +179,7 @@ that list.
 
 ## Leftovers of this area (done 2026-11-14)
 
-- **Payload limits.** The generated contract types carry no schema checks. `limits.rs` now
+- **Payload limits.** The generated contract types carry no schema checks. `conn-support/src/input.rs`
   applies the length, pattern, range and entry-count checks of `assets.createUrl`,
   `server.listTextGeneratorModels` (the `ProviderInstanceId` of `id`, the base URL's length),
   `terminal.open` and `terminal.attach`, generated from the schema AST by
