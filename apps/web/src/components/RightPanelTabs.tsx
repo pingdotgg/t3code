@@ -183,7 +183,7 @@ const SURFACE_DISABLED_REASONS = {
   files: "Files are only available when a project is open.",
   diff: "Diff is only available for server threads in Git repositories.",
   pullRequest: "This thread's branch has no pull request yet.",
-  pullRequests: "No linked pull requests are available for this thread.",
+  pullRequests: "This thread has no linked items.",
   device: "Devices are only available from a thread.",
   sideChat: "Side chats start after the first message.",
 } as const;
@@ -208,7 +208,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   files: "Available when a project is open.",
   diff: "Available for Git repositories.",
   pullRequest: "No pull request on this branch yet.",
-  pullRequests: "No linked pull requests available.",
+  pullRequests: "No linked items available.",
   device: "Available from a thread.",
   sideChat: "Available after the first message.",
 } as const;
@@ -384,7 +384,7 @@ function RightPanelEmptyState(props: {
       onClick: props.onAddPullRequest,
     },
     {
-      label: "Linked pull requests",
+      label: "Linked items",
       icon: PullRequestGlyph.link,
       shortcut: "L",
       available: props.pullRequestsAvailable,
@@ -595,7 +595,7 @@ function surfaceTitle(
     case "pull-request":
       return `#${surface.number}`;
     case "pull-requests":
-      return "Pull requests";
+      return "Linked items";
     case "issue":
       // A git host numbers its issues; a tracker with keys of its own, such as Linear, names them.
       return /^\d+$/.test(surface.key) ? `#${surface.key}` : surface.key;
@@ -1178,7 +1178,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddPullRequest,
     },
     {
-      label: "Linked pull requests",
+      label: "Linked items",
       icon: PullRequestGlyph.link,
       shortcut: "L",
       available: props.pullRequestsAvailable,

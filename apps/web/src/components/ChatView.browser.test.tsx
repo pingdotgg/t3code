@@ -2,10 +2,13 @@ import { createMemoryHistory } from "@tanstack/react-router";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   EnvironmentId,
+  IssueTrackerKind,
   ORCHESTRATION_V2_WS_METHODS,
   RunId,
   ThreadId,
   WS_METHODS,
+  type IssueDetail,
+  type ThreadIssueLink,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import {
@@ -108,6 +111,87 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   ...(await original()),
   trackRpcRequestSent: () => {},
 }));
+
+it("opens a linked issue from an inactive thread's sidebar badge", async () => {
+  const first = threadWithHistory("issue-first", 1);
+  const linked = threadWithHistory("issue-linked", 1);
+  const issue: ThreadIssueLink = {
+    projectId: PROJECT_ID,
+    tracker: IssueTrackerKind.make("github"),
+    host: "github.com",
+    scope: "example/project",
+    key: "123",
+    url: "https://github.com/example/project/issues/123",
+    source: "manual",
+    linkedAt: "2026-01-01T00:00:00.000Z",
+    displayKey: "#123",
+    title: "Add keyboard support",
+  };
+  using _environment = installFakeEnvironment([first, { ...linked, issues: [issue] }]);
+  const liveTitle = "Add keyboard shortcuts to the sidebar";
+  using _detail = answerRpc(WS_METHODS.issuesDetail, () =>
+    Effect.succeed({
+      ...issue,
+      title: liveTitle,
+      author: null,
+      state: { category: "open", name: "Open" },
+      createdAt: issue.linkedAt,
+      updatedAt: issue.linkedAt,
+      closedAt: null,
+      assignees: [],
+      labels: [],
+      commentCount: 0,
+      projectTitle: "render",
+      writable: false,
+      capabilities: {
+        create: false,
+        edit: false,
+        comment: false,
+        labels: false,
+        assignees: false,
+        reactions: false,
+        templates: false,
+        linkedPullRequests: false,
+        events: false,
+        search: false,
+      },
+      viewerPermissions: {
+        setState: false,
+        comment: false,
+        edit: false,
+        labels: false,
+        assignees: false,
+      },
+      states: [],
+      viewer: null,
+      body: "",
+      comments: [],
+      commentsCursor: null,
+      events: [],
+      linkedPullRequests: [],
+    } satisfies IssueDetail),
+  );
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  await page.viewport(1400, 900);
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${first.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const name = "Issue #123: Add keyboard support";
+  await userEvent.click(page.getByRole("button", { name }));
+  await userEvent.click(
+    page.getByRole("region", { name: "Linked issues" }).getByRole("link", { name }),
+  );
+  expect(router.history.location.pathname).toBe(`/${ENVIRONMENT_ID}/${linked.id}`);
+  await expect.element(page.getByRole("heading", { name: liveTitle })).toBeVisible();
+});
 
 it("a machine chip stashed in one thread restores with its machine in another", async () => {
   const other = threadWithHistory("thread-stash-restore", 1);

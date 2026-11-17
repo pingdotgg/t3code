@@ -382,12 +382,12 @@ it("names a linked issue row by its kind, number and title, not its URL", async 
             title: "Sidebar flickers on resize",
           },
         ]}
-        onOpenLink={vi.fn()}
+        threadRef={threadRef}
       />,
     );
   });
-  const row = [...screen.container.querySelectorAll("button")].find((button) =>
-    button.textContent?.includes("Sidebar flickers on resize"),
+  const row = [...screen.container.querySelectorAll("a")].find((link) =>
+    link.textContent?.includes("Sidebar flickers on resize"),
   )!;
   const name = row.getAttribute("aria-label") ?? row.textContent ?? "";
   expect(name).not.toContain("https://");

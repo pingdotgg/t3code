@@ -1,7 +1,7 @@
-import { threadIssueKeyOf, type ThreadIssueLink } from "@t3tools/contracts";
-import type { MouseEvent as ReactMouseEvent } from "react";
+import { threadIssueKeyOf, type ScopedThreadRef, type ThreadIssueLink } from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
+import { useRightPanelStore } from "~/rightPanelStore";
 
 import { IssueGlyph } from "../issue/issuePresentation";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
@@ -17,10 +17,10 @@ import {
  */
 export function ThreadDetailsIssueRows({
   links,
-  onOpenLink,
+  threadRef,
 }: {
   links: ReadonlyArray<ThreadIssueLink>;
-  onOpenLink: (event: ReactMouseEvent<HTMLElement>, link: ThreadIssueLink) => void;
+  threadRef: ScopedThreadRef;
 }) {
   if (links.length === 0) return null;
   return (
@@ -29,8 +29,14 @@ export function ThreadDetailsIssueRows({
         <ThreadDetailsControl
           key={threadIssueKeyOf(link)}
           part="row"
+          render={<a href={link.url} target="_blank" rel="noopener noreferrer" />}
           aria-label={`Issue ${link.displayKey}: ${link.title}`}
-          onClick={(event) => onOpenLink(event, link)}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault();
+            useRightPanelStore.getState().openIssue(threadRef, link);
+          }}
         >
           <IssueGlyph.issue aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
           <span className={cn("min-w-0 flex-1 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
