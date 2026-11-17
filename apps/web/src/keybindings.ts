@@ -196,7 +196,7 @@ export function resolveShortcutCommand(
   options?: ShortcutMatchOptions,
 ): KeybindingCommand | null {
   const platform = resolvePlatform(options);
-  /** Every listener sees list focus, so a key bound to a list command inside a list never resolves to its other command. */
+  // Every listener sees list focus, so a list key inside a list never resolves to its other command.
   const context = { ...resolveContext(options), listFocus: isListFocusTarget(event.target) };
   if (options?.context?.editableFocus === undefined && typeof document !== "undefined") {
     context.editableFocus = isEditableFocused(event.target ?? document.activeElement);
@@ -205,7 +205,7 @@ export function resolveShortcutCommand(
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding) continue;
-    /** List commands act only inside a list, whatever their `when` says. */
+    // List commands act only inside a list, whatever their `when` says.
     if (binding.command.startsWith("list.") && !context.listFocus) continue;
     if (!matchesWhenClause(binding.whenAst, context)) continue;
     if (!matchesKeybindingShortcut(event, shortcutForContext(binding, context), platform)) continue;

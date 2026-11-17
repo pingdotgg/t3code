@@ -247,7 +247,7 @@ export function registerListNavigationCommands(): () => void {
     { "list.next": replayAsArrowKey("ArrowDown"), "list.previous": replayAsArrowKey("ArrowUp") },
     {
       capture: true,
-      /** Replayed keys are untrusted; skipping them stops a swapped-arrows config from looping. */
+      // Replayed keys are untrusted; skipping them stops a swapped-arrows config from looping.
       when: (event) => event.isTrusted && !event.isComposing,
     },
   );
