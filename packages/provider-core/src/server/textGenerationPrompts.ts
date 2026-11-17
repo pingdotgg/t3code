@@ -646,16 +646,16 @@ const FactStandingCheckOutput = Schema.Struct({
       Schema.decodeTo(
         Schema.toType(FactStandingCheckEntry),
         SchemaTransformation.transform({
-          decode: (entry: unknown) =>
+          decode: (entry: unknown): typeof FactStandingCheckEntry.Type =>
             Option.getOrElse(decodeFactStandingCheckEntry(entry), () => {
               const ref = Predicate.hasProperty(entry, "ref") ? entry.ref : undefined;
               return {
-                ref: Number.isSafeInteger(ref) ? (ref as number) : 0,
-                verdict: "task" as const,
+                ref: typeof ref === "number" && Number.isSafeInteger(ref) ? ref : 0,
+                verdict: "task",
                 selfContained: false,
               };
             }),
-          encode: (entry) => entry,
+          encode: (entry): unknown => entry,
         }),
       ),
     ),
