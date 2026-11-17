@@ -10,8 +10,10 @@ import { refreshUsage, usageSummaryInput } from "@t3tools/client-runtime/state/u
 import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
 import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
 import { AsyncResult, Atom } from "effect/reactivity";
+import { msg } from "gt-react-native";
 import { useCallback, useMemo } from "react";
 
+import { m } from "../i18n/messages";
 import { appAtomRegistry } from "./atom-registry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
@@ -66,7 +68,8 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         isPending: result.waiting,
         isConnected: presentation.connection.phase === "connected",
         canReadDiagnostics: true,
-        error: result._tag === "Failure" ? "This environment could not report usage." : null,
+        error:
+          result._tag === "Failure" ? m(msg("This environment could not report usage.")) : null,
         summary,
       });
     }

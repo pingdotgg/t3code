@@ -27,6 +27,8 @@ import {
 } from "@t3tools/shared/threadLinks";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 
 import { threadChipTargets } from "../lib/enrichedLinkPresentation";
 import { resolveProjectChipIcon } from "../lib/projectIcon";
@@ -69,8 +71,11 @@ const threadTitleAtom = Atom.family((key: string) => {
       }),
     );
     return AsyncResult.isSuccess(titles)
-      ? (titles.value[ref.threadId]?.title ?? (titles.waiting ? "Thread" : null))
-      : "Thread";
+      ? (titles.value[ref.threadId]?.title ??
+          (titles.waiting
+            ? m(msg("Thread", { $context: "fallback title of a linked thread" }))
+            : null))
+      : m(msg("Thread", { $context: "fallback title of a linked thread" }));
   }).pipe(Atom.withLabel(`mobile-thread-title:${key}`));
 });
 

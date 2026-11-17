@@ -80,6 +80,8 @@ import {
   mcpAppFromToolItem,
 } from "@t3tools/shared/toolOutput";
 import * as DateTime from "effect/DateTime";
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 import {
   IDLE_COMPACTION_TITLES,
   IDLE_COMPACTING_LABELS,
@@ -285,7 +287,7 @@ function compactWorkEntryText(value: string): string {
 export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = false): string {
   if (entry.itemType === "fork") return entry.label;
   if (expanded && entry.itemType === "reasoning")
-    return entry.toolLifecycleStatus === "inProgress" ? "Thinking" : "Thought";
+    return entry.toolLifecycleStatus === "inProgress" ? m(msg("Thinking")) : m(msg("Thought"));
   const presentation = resolveWorkEntryToolPresentation(entry);
   if (presentation) return presentation.displayName;
   if (entry.command?.trim()) return compactWorkEntryText(commandDisplayText(entry.command));
@@ -307,7 +309,7 @@ export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = fa
     if (firstPath) {
       return formatReadToolLabel(firstPath, Math.max(0, (entry.changedFiles?.length ?? 1) - 1));
     }
-    if (!expanded) return "Read file";
+    if (!expanded) return m(msg("Read file"));
   }
   const preview =
     entry.command ??
@@ -317,7 +319,12 @@ export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = fa
     (entry.changedFiles?.length
       ? entry.changedFiles.length === 1
         ? entry.changedFiles[0]!
-        : `${entry.changedFiles[0]!} +${entry.changedFiles.length - 1} more`
+        : m(
+            msg("{path} +{count} more", {
+              path: entry.changedFiles[0]!,
+              count: String(entry.changedFiles.length - 1),
+            }),
+          )
       : null);
   if (expanded) return preview?.trim() ? truncate(preview, WORK_LOG_LABEL_MAX_LENGTH) : entry.label;
   return preview ? compactWorkEntryText(preview) || entry.label : entry.label;
@@ -382,8 +389,8 @@ export function threadFeedCompactionLabels(feed: ReadonlyArray<ThreadFeedEntry>)
           (age === undefined
             ? undefined
             : {
-                title: `Context compacted after ${age} idle`,
-                compacting: "Compacting…",
+                title: m(msg("Context compacted after {age} idle", { age })),
+                compacting: m(msg("Compacting…")),
               });
         if (labels) labelsByEntryId.set(entry.id, labels);
         pendingResumeAgeByRunId.delete(entry.runId);
@@ -615,43 +622,49 @@ function itemSummary(
     (item.type === "dynamic_tool"
       ? dynamicToolTitle(item.toolName, item.input, item.title)
       : undefined) ?? item.title?.trim();
-  if (item.type === "subagent") return formatSubagentDisplayTitle(title || "Subagent");
+  if (item.type === "subagent") return formatSubagentDisplayTitle(title || m(msg("Subagent")));
   if (title) return toolPresentation?.displayName ?? capitalizePhrase(title);
   switch (item.type) {
     case "reasoning":
-      return "Thinking";
+      return m(msg("Thinking"));
     case "command_execution":
-      return "Command";
+      return m(msg("Command", { $context: "noun, a shell command the agent ran" }));
     case "file_change":
       return item.changes !== undefined && item.changes.length > 1
-        ? `Changed ${item.changes.length} files`
-        : `Changed ${item.fileName}`;
+        ? m(
+            msg("{count, plural, one {Changed {count} file} other {Changed {count} files}}", {
+              count: item.changes.length,
+            }),
+          )
+        : m(msg("Changed {fileName}", { fileName: item.fileName }));
     case "file_search":
-      return item.title?.trim() || formatSearchToolLabel(item) || "Searched files";
+      return item.title?.trim() || formatSearchToolLabel(item) || m(msg("Searched files"));
     case "web_search":
-      return "Searched the web";
+      return m(msg("Searched the web"));
     case "approval_request":
-      return "Approval requested";
+      return m(msg("Approval requested"));
     case "user_input_request":
-      return "Input requested";
+      return m(msg("Input requested"));
     case "checkpoint":
-      return "Checkpoint captured";
+      return m(msg("Checkpoint captured"));
     case "run_interrupt_request":
-      return "Interrupt requested";
+      return m(msg("Interrupt requested"));
     case "run_interrupt_result":
-      return "Run interrupted";
+      return m(msg("Run interrupted"));
     case "error":
-      return item.failure.class === "usage_limit" ? "Usage limit reached" : "Provider error";
+      return item.failure.class === "usage_limit"
+        ? m(msg("Usage limit reached"))
+        : m(msg("Provider error"));
     case "handoff":
-      return "Context handed off";
+      return m(msg("Context handed off"));
     case "fork":
-      return "Thread forked";
+      return m(msg("Thread forked"));
     case "thread_created":
-      return "Thread created";
+      return m(msg("Thread created"));
     case "secret_request":
       return item.label;
     case "link_request":
-      return `Link ${linkRequestTargetName(item)}`;
+      return m(msg("Link {target}", { target: linkRequestTargetName(item) }));
     case "dynamic_tool": {
       const classified = classifyToolActivity({
         itemType: "dynamic_tool_call",
@@ -662,18 +675,18 @@ function itemSummary(
         return formatReadToolLabel(path ?? "");
       }
       if (classified === "search") {
-        return formatSearchToolLabel({ input: item.input }) ?? item.toolName ?? "Tool call";
+        return formatSearchToolLabel({ input: item.input }) ?? item.toolName ?? m(msg("Tool call"));
       }
-      return toolPresentation?.displayName ?? item.toolName ?? "Tool call";
+      return toolPresentation?.displayName ?? item.toolName ?? m(msg("Tool call"));
     }
     case "proposed_plan":
-      return "Proposed plan";
+      return m(msg("Proposed plan"));
     case "todo_list":
-      return "Plan updated";
+      return m(msg("Plan updated"));
     case "user_message":
-      return "User message";
+      return m(msg("User message"));
     case "assistant_message":
-      return "Assistant message";
+      return m(msg("Assistant message"));
   }
 }
 
@@ -696,7 +709,11 @@ function itemPreview(item: OrchestrationV2TurnItem): string | null {
     case "checkpoint":
       return item.files.length === 1
         ? (item.files[0]?.path ?? null)
-        : `${item.files.length} changed files`;
+        : m(
+            msg("{count, plural, one {{count} changed file} other {{count} changed files}}", {
+              count: item.files.length,
+            }),
+          );
     case "run_interrupt_request":
     case "run_interrupt_result":
     case "system_notice":
@@ -721,7 +738,12 @@ function itemPreview(item: OrchestrationV2TurnItem): string | null {
     case "proposed_plan":
       return item.markdown || null;
     case "todo_list":
-      return `${item.steps.filter((step) => step.status === "completed").length}/${item.steps.length} completed`;
+      return m(
+        msg("{completed}/{total} completed", {
+          completed: item.steps.filter((step) => step.status === "completed").length,
+          total: item.steps.length,
+        }),
+      );
     case "user_message":
     case "assistant_message":
       return item.text || null;
@@ -757,7 +779,7 @@ function toWorkLogEntry(
         ...common,
         command: item.input,
         rawCommand: item.input,
-        toolTitle: title ?? "Command",
+        toolTitle: title ?? m(msg("Command", { $context: "noun, a shell command the agent ran" })),
         toolData: item,
       };
     case "file_change":
@@ -766,21 +788,21 @@ function toWorkLogEntry(
         changedFiles: item.changes?.length
           ? item.changes.map((change) => change.path)
           : [item.fileName],
-        toolTitle: title ?? "File change",
+        toolTitle: title ?? m(msg("File change")),
         toolData: item,
       };
     case "file_search":
       return {
         ...common,
         ...(item.pattern ? { detail: item.pattern } : {}),
-        toolTitle: title ?? "File search",
+        toolTitle: title ?? m(msg("File search")),
         toolData: item,
       };
     case "web_search":
       return {
         ...common,
         ...(item.patterns?.length ? { detail: item.patterns.join(", ") } : {}),
-        toolTitle: title ?? "Web search",
+        toolTitle: title ?? m(msg("Web search")),
         toolData: item,
       };
     case "checkpoint":
@@ -795,7 +817,8 @@ function toWorkLogEntry(
     case "dynamic_tool":
       return {
         ...common,
-        toolTitle: title ?? item.toolName ?? "Tool",
+        toolTitle:
+          title ?? item.toolName ?? m(msg("Tool", { $context: "noun, an agent tool call" })),
         toolData: { input: item.input, output: item.output },
       };
     default:
@@ -886,8 +909,8 @@ function toFeedActivity(
 function singleToolCallLabel(activity: ThreadFeedActivity, expanded: boolean): string {
   if (activity.workEntry.itemType === "reasoning")
     return expanded
-      ? "Thought"
-      : compactWorkEntryText(activity.workEntry.detail ?? "") || "Thought";
+      ? m(msg("Thought"))
+      : compactWorkEntryText(activity.workEntry.detail ?? "") || m(msg("Thought"));
   const presentation = resolveWorkEntryToolPresentation(activity.workEntry, "completed");
   if (presentation) return presentation.displayName;
   const command = activity.workEntry.command?.trim();
@@ -1280,11 +1303,11 @@ function deriveThreadFeedRunFolds(
       latestRunMatches && (latestRun.status === "interrupted" || latestRun.status === "cancelled");
     const label = interrupted
       ? duration
-        ? `You stopped after ${duration}`
-        : "You stopped this response"
+        ? m(msg("You stopped after {duration}", { duration }))
+        : m(msg("You stopped this response"))
       : duration
-        ? `Worked for ${duration}`
-        : "Worked";
+        ? m(msg("Worked for {duration}", { duration }))
+        : m(msg("Worked"));
     // The top row keeps the whole turn's time. Work after a steer folds under
     // its own row below that steer, keyed apart so each segment opens alone.
     const segments = [
@@ -1304,7 +1327,10 @@ function deriveThreadFeedRunFolds(
         return {
           runId: steerFoldRunId(runId, steer.id),
           entries,
-          label: segmentMs !== null ? `Continued for ${formatDuration(segmentMs)}` : "Continued",
+          label:
+            segmentMs !== null
+              ? m(msg("Continued for {duration}", { duration: formatDuration(segmentMs) }))
+              : m(msg("Continued")),
         };
       }),
     ];
@@ -1344,7 +1370,7 @@ function deriveThreadFeedRunFolds(
       runId: RunId.make(`deferred-work:${entry.id}`),
       createdAt: entry.createdAt,
       hiddenEntryIds: new Set([entry.id]),
-      label: "Earlier work",
+      label: m(msg("Earlier work")),
       deferredWorkItemIds,
     });
   }
@@ -1999,7 +2025,7 @@ function liveRunFoldRow(runId: RunId, startedAt: string) {
       id: `run-fold:${runId}`,
       createdAt: startedAt,
       runId,
-      label: "Working",
+      label: m(msg("Working")),
       expanded: false,
       workingSince: startedAt,
     };
@@ -2182,8 +2208,8 @@ function appendToolGroupRows(
   const summary = live
     ? (expanded || thought) && latestActivity.workEntry.itemType === "reasoning"
       ? latestActivity.lifecycleStatus === "inProgress"
-        ? "Thinking"
-        : "Thought"
+        ? m(msg("Thinking"))
+        : m(msg("Thought"))
       : liveToolActivitySummary(latestActivity, live)
     : singleActivity !== null &&
         singleActivity.toolLike &&
@@ -2277,7 +2303,8 @@ function liveToolActivitySummary(activity: ThreadFeedActivity, presentTense: boo
   const status = liveActivityToolStatus(activity.lifecycleStatus, presentTense);
   if (activity.workEntry.itemType === "reasoning") {
     return compactWorkEntryText(
-      activity.workEntry.detail?.trim() || (status === "inProgress" ? "Thinking" : "Thought"),
+      activity.workEntry.detail?.trim() ||
+        (status === "inProgress" ? m(msg("Thinking")) : m(msg("Thought"))),
     );
   }
   const presentation = resolveWorkEntryToolPresentation({
@@ -2288,17 +2315,26 @@ function liveToolActivitySummary(activity: ThreadFeedActivity, presentTense: boo
   const command = activity.workEntry.command?.trim();
   if (command) {
     const program = commandProgramName(command);
-    const verb =
-      status === "inProgress"
-        ? "Running"
+    if (program === null || program === undefined) {
+      return status === "inProgress"
+        ? m(msg("Running command"))
         : status === "failed"
-          ? "Failed"
+          ? m(msg("Failed command"))
           : status === "declined"
-            ? "Declined"
+            ? m(msg("Declined command"))
             : status === "stopped"
-              ? "Stopped"
-              : "Ran";
-    return `${verb} ${program ?? "command"}`;
+              ? m(msg("Stopped command"))
+              : m(msg("Ran command"));
+    }
+    return status === "inProgress"
+      ? m(msg("Running {program}", { program }))
+      : status === "failed"
+        ? m(msg("Failed {program}", { program }))
+        : status === "declined"
+          ? m(msg("Declined {program}", { program }))
+          : status === "stopped"
+            ? m(msg("Stopped {program}", { program }))
+            : m(msg("Ran {program}", { program }));
   }
   return compactWorkEntryText(activity.detail ?? activity.summary);
 }

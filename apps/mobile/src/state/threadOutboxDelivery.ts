@@ -30,6 +30,8 @@ import * as Fiber from "effect/Fiber";
 import * as Latch from "effect/Latch";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 
 import { createDebugLogger } from "../lib/debugLog";
 import type { DraftComposerAttachment } from "../lib/composerImages";
@@ -486,7 +488,12 @@ export const restoreRejectedQueuedMessage = Effect.fn("ThreadOutbox.restoreRejec
       if (existingAttachmentIds.size + addedAttachmentCount > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
         setThreadComposerError(
           threadKey,
-          `Remove attachments from the draft before restoring this message. Messages can contain at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
+          m(
+            msg(
+              "Remove attachments from the draft before restoring this message. Messages can contain at most {max} attachments.",
+              { max: PROVIDER_SEND_TURN_MAX_ATTACHMENTS },
+            ),
+          ),
           queuedMessage.messageId,
         );
         return "blocked" as const;
@@ -580,7 +587,7 @@ export const restoreRejectedQueuedMessage = Effect.fn("ThreadOutbox.restoreRejec
             threadKey,
             error.cause instanceof Error
               ? error.cause.message
-              : "The unsent message could not be restored.",
+              : m(msg("The unsent message could not be restored.")),
             queuedMessage.messageId,
           );
           return "retry" as const;
@@ -724,7 +731,7 @@ function reportCommandFailure(
   });
   return {
     action,
-    message: error instanceof Error ? error.message : "The message could not be sent.",
+    message: error instanceof Error ? error.message : m(msg("The message could not be sent.")),
   };
 }
 
@@ -913,7 +920,7 @@ export function createThreadOutboxDelivery(): {
       if (!shouldRetryThreadOutboxDelivery(error)) {
         return yield* restoreQueuedMessage(
           queuedMessage,
-          error instanceof Error ? error.message : "An attachment could not upload.",
+          error instanceof Error ? error.message : m(msg("An attachment could not upload.")),
         );
       }
       return yield* retryDelivery;
@@ -1079,7 +1086,7 @@ export function createThreadOutboxDelivery(): {
       if (!shouldRetryThreadOutboxDelivery(error)) {
         return yield* restoreQueuedMessage(
           queuedMessage,
-          error instanceof Error ? error.message : "An attachment could not upload.",
+          error instanceof Error ? error.message : m(msg("An attachment could not upload.")),
         );
       }
       return yield* retryDelivery;
@@ -1134,7 +1141,12 @@ export function createThreadOutboxDelivery(): {
         ).changeRequest;
         return yield* restoreQueuedMessage(
           persistedMessage,
-          `The ${shortLabel} worktree has local changes and could not update to the ${shortLabel} head. Resolve them before trying again.`,
+          m(
+            msg(
+              "The {shortLabel} worktree has local changes and could not update to the {shortLabel} head. Resolve them before trying again.",
+              { shortLabel },
+            ),
+          ),
         );
       }
       workspace = {
@@ -1568,11 +1580,15 @@ function loadThreadOutbox(isActive: () => boolean): void {
   void threadOutboxManager.load().then((loaded) => {
     if (loaded || !isActive()) return;
     Dialog.alert(
-      "Some queued messages could not be loaded",
-      "Unreadable records and attachment files are still saved. Other messages can still be sent.",
+      m(msg("Some queued messages could not be loaded")),
+      m(
+        msg(
+          "Unreadable records and attachment files are still saved. Other messages can still be sent.",
+        ),
+      ),
       [
-        { text: "Dismiss", style: "cancel" },
-        { text: "Retry", onPress: () => loadThreadOutbox(isActive) },
+        { text: m(msg("Dismiss")), style: "cancel" },
+        { text: m(msg("Retry")), onPress: () => loadThreadOutbox(isActive) },
       ],
     );
   });

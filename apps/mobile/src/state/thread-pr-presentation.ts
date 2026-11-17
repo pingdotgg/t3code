@@ -16,6 +16,9 @@ import {
   resolveThreadPullRequestBadge,
   threadPullRequestKeyOf,
 } from "@t3tools/client-runtime/thread-pull-requests";
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../i18n/messages";
 
 export type ThreadPr = NonNullable<VcsStatusResult["pr"]>;
 
@@ -39,9 +42,19 @@ const PR_STATE_TEXT_CLASS: Record<ThreadPr["state"], string> = {
   closed: "text-adaptive-rose-600-400",
 };
 
+function prStateLabel(state: ThreadPr["state"] | "draft" | null, resolve: MessageResolver): string {
+  if (state === null) return resolve(msg("status pending"));
+  if (state === "draft") return resolve(msg("draft", { $context: "pull request state" }));
+  if (state === "open") return resolve(msg("open", { $context: "pull request state" }));
+  if (state === "merged") return resolve(msg("merged", { $context: "pull request state" }));
+  return resolve(msg("closed", { $context: "pull request state" }));
+}
+
+/** Render callers pass `useMessages()` so the label follows a language switch. */
 export function presentThreadPr(
   pr: ThreadPr,
   provider: VcsStatusResult["sourceControlProvider"] | null | undefined,
+  resolve: MessageResolver = m,
 ): ThreadPrPresentation {
   const { changeRequest } = sourceControlClients.get(provider?.kind);
   const isDraft = pr.state === "open" && pr.isDraft === true;
@@ -55,13 +68,20 @@ export function presentThreadPr(
     url: pr.url,
     changeRequest,
     label: String(pr.number),
-    accessibilityLabel: `#${pr.number} ${changeRequest.singular} ${isDraft ? "draft" : pr.state}`,
+    accessibilityLabel: resolve(
+      msg("#{number} {changeRequest} {state}", {
+        number: String(pr.number),
+        changeRequest: changeRequest.singular,
+        state: prStateLabel(isDraft ? "draft" : pr.state, resolve),
+      }),
+    ),
     textClassName: isDraft ? "text-foreground-muted" : PR_STATE_TEXT_CLASS[pr.state],
   };
 }
 
 export function presentThreadLinkedPullRequests(
   links: ReadonlyArray<ThreadPullRequestLink>,
+  resolve: MessageResolver = m,
 ): ThreadPrPresentation | null {
   const link = resolveThreadCurrentPullRequestLink(links);
   const badge = resolveThreadPullRequestBadge(links);
@@ -97,10 +117,28 @@ export function presentThreadLinkedPullRequests(
     label,
     accessibilityLabel:
       badge.kind === "stack"
-        ? `${badge.layers} ${changeRequest.singular}s in stack, ${isDraft ? "draft" : (state ?? "status pending")}`
+        ? resolve(
+            msg("{count} {changeRequests} in stack, {state}", {
+              count: badge.layers,
+              changeRequests: `${changeRequest.singular}s`,
+              state: prStateLabel(isDraft ? "draft" : state, resolve),
+            }),
+          )
         : linkedCount !== null
-          ? `${linkedCount} linked ${changeRequest.plural}, overall ${badge.state}`
-          : `#${link.number} ${changeRequest.singular} ${state === null ? "status pending" : isDraft ? "draft" : state}`,
+          ? resolve(
+              msg("{count} linked {changeRequests}, overall {state}", {
+                count: linkedCount,
+                changeRequests: changeRequest.plural,
+                state: prStateLabel(badge.state, resolve),
+              }),
+            )
+          : resolve(
+              msg("#{number} {changeRequest} {state}", {
+                number: String(link.number),
+                changeRequest: changeRequest.singular,
+                state: prStateLabel(state === null ? null : isDraft ? "draft" : state, resolve),
+              }),
+            ),
     textClassName: state === null || isDraft ? "text-foreground-muted" : PR_STATE_TEXT_CLASS[state],
   };
 }
@@ -109,9 +147,10 @@ export function resolveThreadPrSource(
   thread: Pick<EnvironmentThreadShell, "pullRequests" | "linkedPullRequest" | "branchPullRequest">,
   /** False until the server config loads; the stored references serve until then. */
   supportsSnapshots: boolean,
+  resolve: MessageResolver = m,
 ) {
   const linkedPresentation = supportsSnapshots
-    ? presentThreadLinkedPullRequests(thread.pullRequests)
+    ? presentThreadLinkedPullRequests(thread.pullRequests, resolve)
     : null;
   const pullRequestRef =
     linkedPresentation !== null
@@ -122,10 +161,16 @@ export function resolveThreadPrSource(
   return { linkedPresentation, pullRequestRef };
 }
 
-export function resolveThreadPrBadgeAction(pr: ThreadPrPresentation) {
+export function resolveThreadPrBadgeAction(pr: ThreadPrPresentation, resolve: MessageResolver = m) {
   return pr.kind === "stack" || pr.others > 0
-    ? { kind: "list" as const, accessibilityLabel: `Show ${pr.accessibilityLabel}` }
-    : { kind: "open" as const, accessibilityLabel: `Open ${pr.accessibilityLabel}` };
+    ? {
+        kind: "list" as const,
+        accessibilityLabel: resolve(msg("Show {label}", { label: pr.accessibilityLabel })),
+      }
+    : {
+        kind: "open" as const,
+        accessibilityLabel: resolve(msg("Open {label}", { label: pr.accessibilityLabel })),
+      };
 }
 
 /** Records `value` as the newest entry, evicting the least recently answered beyond `limit`. */

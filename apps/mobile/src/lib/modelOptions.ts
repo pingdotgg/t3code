@@ -3,6 +3,8 @@ import {
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 
 import type {
   ModelCapabilities,
@@ -218,18 +220,26 @@ export function describeUnavailableModelSelection(
       instanceId: selection.instanceId,
     });
     return {
-      title: "Provider not allowed",
-      detail: `${disallowedProviderMessage(config?.managedPolicy?.organization, label)} Choose another model.`,
+      title: m(msg("Provider not allowed")),
+      detail: m(
+        msg("{message} Choose another model.", {
+          message: disallowedProviderMessage(config?.managedPolicy?.organization, label),
+        }),
+      ),
     };
   }
   return isDisabledForProject(config, provider, selection.instanceId, projectId)
     ? {
-        title: "Model turned off for this project",
-        detail: "Turn it back on from web or desktop, or choose another model.",
+        title: m(msg("Model turned off for this project")),
+        detail: m(msg("Turn it back on from web or desktop, or choose another model.")),
       }
     : {
-        title: "Antigravity model unavailable",
-        detail: "Set up Antigravity on web or desktop, or choose another model.",
+        title: m(msg("{provider} model unavailable", { provider: "Antigravity" })),
+        detail: m(
+          msg("Set up {provider} on web or desktop, or choose another model.", {
+            provider: "Antigravity",
+          }),
+        ),
       };
 }
 

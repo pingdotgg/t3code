@@ -1,4 +1,7 @@
 import type { RelayAgentActivityAggregateState } from "@t3tools/contracts/relay";
+import { msg } from "gt-react-native";
+
+import { m } from "../i18n/messages";
 
 import type { AgentActivityProps } from "./AgentActivity";
 
@@ -19,12 +22,12 @@ export function agentActivityWidgetTimeline(source: AgentActivityWidgetSource, n
       title: "T3 Code",
       subtitle:
         source.kind === "signed-out"
-          ? "Sign in to T3 Connect to see agents"
+          ? m(msg("Sign in to {product} to see agents", { product: "T3 Connect" }))
           : source.kind === "unavailable"
-            ? "Couldn't reach T3 Connect"
+            ? m(msg("Couldn't reach {product}", { product: "T3 Connect" }))
             : source.kind === "loading"
-              ? "Loading agents…"
-              : "No active agents",
+              ? m(msg("Loading agents…"))
+              : m(msg("No active agents")),
       activeCount: 0,
       updatedAt,
       activities: [],
@@ -51,7 +54,7 @@ export function agentActivityWidgetTimeline(source: AgentActivityWidgetSource, n
     activities: props.activities.map((row) =>
       row.phase === "completed" || row.phase === "failed"
         ? row
-        : { ...row, phase: "stale", status: "Out of date" },
+        : { ...row, phase: "stale", status: m(msg("Out of date")) },
     ),
   };
   return [

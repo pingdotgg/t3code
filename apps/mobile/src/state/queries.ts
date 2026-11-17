@@ -42,6 +42,7 @@ import { orchestrationEnvironment } from "./orchestration";
 import { olderSettledThreads, threadFamilies } from "./threads";
 import { projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
+import { msg, useMessages } from "gt-react-native";
 import { vcsEnvironment } from "./vcs";
 import { composerPullRequests } from "./pull-requests";
 import {
@@ -300,6 +301,7 @@ export function useBranches(input: {
 }
 
 export function usePaginatedBranches(target: VcsRefTarget) {
+  const resolve = useMessages();
   const query = target.query?.trim() ?? "";
   const targetKey =
     target.environmentId !== null && target.cwd !== null
@@ -372,7 +374,7 @@ export function usePaginatedBranches(target: VcsRefTarget) {
           const cause = Cause.squash(failed.cause);
           return cause instanceof Error && cause.message.trim().length > 0
             ? cause.message
-            : "Failed to load refs.";
+            : resolve(msg("Failed to load refs."));
         })()
       : null;
   const refresh = () => {
@@ -407,6 +409,7 @@ export function usePaginatedBranches(target: VcsRefTarget) {
 }
 
 export function useComposerPathSearch(target: ComposerPathSearchTarget) {
+  const resolve = useMessages();
   const query = normalizeComposerPathSearchQuery(target.query);
   const normalizedTarget = { environmentId: target.environmentId, cwd: target.cwd, query };
   const debouncedTarget = useDebouncedValue(normalizedTarget, COMPOSER_PATH_SEARCH_DEBOUNCE_MS);
@@ -452,7 +455,7 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
         ? null
         : canReadFiles
           ? result.error
-          : (fileAccess.error ?? "This connection cannot search host files."),
+          : (fileAccess.error ?? resolve(msg("This connection cannot search host files."))),
     isPending:
       !isSameCheckout ||
       normalizedTarget.query !== debouncedTarget.query ||

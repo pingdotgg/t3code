@@ -5,6 +5,9 @@ import {
   type LimitPoolWindow,
   type LimitPresentations,
 } from "@t3tools/shared/usageLimits";
+import { msg } from "gt-react-native";
+
+import { m } from "../i18n/messages";
 
 import type { WidgetTheme } from "./widgetTheme";
 
@@ -49,6 +52,14 @@ export function createWidgetRefresher<Id>(refresh: (id: Id) => Promise<unknown>)
 const isUpcoming = (reset: LimitPoolWindow["resets"][number]) =>
   reset.at > Date.parse(reset.member.account.limits.checkedAt);
 
+const resetTime = (at: number) =>
+  new Date(at).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
 function subscriptionUsageProps(
   accounts: readonly LimitAccount[],
   now: number,
@@ -72,7 +83,7 @@ function subscriptionUsageProps(
         if (!pool)
           return {
             name,
-            detail: "No limits available",
+            detail: m(msg("No limits available")),
             windows: [],
             expiresAt: 0,
             totalWindows: 0,
@@ -101,9 +112,16 @@ function subscriptionUsageProps(
         return {
           name,
           detail: !fresh
-            ? "Open T3 to refresh"
+            ? m(msg("Open {app} to refresh", { app: "T3" }))
             : pool.accounts.length > 1
-              ? `${pool.accounts.length} accounts · pooled`
+              ? m(
+                  msg(
+                    "{count, plural, one {{count} account · pooled} other {{count} accounts · pooled}}",
+                    {
+                      count: pool.accounts.length,
+                    },
+                  ),
+                )
               : "Subscription remaining",
           expiresAt: fresh ? expiresAt : 0,
           totalWindows: fresh ? pool.windows.length : 0,
@@ -113,15 +131,10 @@ function subscriptionUsageProps(
                 label: window.label,
                 remaining: Math.round(window.remainingPercent),
                 reset: window.resets[0]
-                  ? `${isUpcoming(window.resets[0]) ? "Next reset" : "Reset"} ${new Date(
-                      window.resets[0].at,
-                    ).toLocaleString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                      hour: "numeric",
-                      minute: "2-digit",
-                    })}`
-                  : "Reset time unavailable",
+                  ? isUpcoming(window.resets[0])
+                    ? m(msg("Next reset {time}", { time: resetTime(window.resets[0].at) }))
+                    : m(msg("Reset {time}", { time: resetTime(window.resets[0].at) }))
+                  : m(msg("Reset time unavailable")),
               }))
             : [],
         };
@@ -168,7 +181,12 @@ export function subscriptionUsageTimeline(snapshot: SubscriptionUsageSnapshot, n
       ...snapshot,
       providers: snapshot.providers.map((provider) =>
         provider.windows.length > 0 && provider.expiresAt <= date
-          ? { ...provider, detail: "Open T3 to refresh", windows: [], totalWindows: 0 }
+          ? {
+              ...provider,
+              detail: m(msg("Open {app} to refresh", { app: "T3" })),
+              windows: [],
+              totalWindows: 0,
+            }
           : provider,
       ),
     },
