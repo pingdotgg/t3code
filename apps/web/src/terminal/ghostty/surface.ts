@@ -21,6 +21,7 @@ import {
 import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
 import { isMonospaceFamily } from "../../appearanceFonts";
 import { observeResize } from "../../lib/observeResize";
+import { isTerminalCopyShortcut, isTerminalPasteShortcut } from "../../keybindings";
 
 const DEFAULT_TERMINAL_FONT_SIZE = 12;
 const MIN_TERMINAL_FONT_SIZE = 6;
@@ -314,18 +315,6 @@ export function terminalLinkAtPositionWithRange(
   return null;
 }
 
-export function isTerminalCopyShortcut(
-  event: Pick<KeyboardEvent, "altKey" | "code" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
-  platform = navigator.platform,
-) {
-  const keys = resolveEventKeys(event);
-  if (keys.has("insert") && !isMacPlatform(platform)) {
-    return event.ctrlKey && !event.shiftKey && !event.metaKey;
-  }
-  if (!keys.has("c")) return false;
-  return isMacPlatform(platform) ? event.metaKey : event.ctrlKey;
-}
-
 /** Primes native and Electron menu copy from the focused textarea; canvas has no DOM selection. */
 export function primeTerminalCopyInput(
   input: Pick<HTMLTextAreaElement, "value" | "select">,
@@ -354,18 +343,6 @@ export function applyTerminalCopyEvent(
   }
   clipboardData.setData("text/plain", selection);
   return { preventDefault: true, claimWriteFallback: true };
-}
-
-export function isTerminalPasteShortcut(
-  event: Pick<KeyboardEvent, "altKey" | "code" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
-  platform = navigator.platform,
-) {
-  const keys = resolveEventKeys(event);
-  if (keys.has("insert") && !isMacPlatform(platform)) {
-    return event.shiftKey && !event.ctrlKey && !event.metaKey;
-  }
-  if (!keys.has("v")) return false;
-  return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
 }
 
 // X11/Wayland expects middle-click paste; macOS and Windows use it for autoscroll.

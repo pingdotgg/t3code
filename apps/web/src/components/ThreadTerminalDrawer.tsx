@@ -55,8 +55,6 @@ import { type TerminalContextSelection } from "~/lib/terminalContext";
 import {
   GhosttyTerminalSurface,
   type GhosttyTerminalSurfaceOptions,
-  isTerminalCopyShortcut,
-  isTerminalPasteShortcut,
 } from "~/terminal/ghostty/surface";
 import { isEditableFocused } from "~/lib/editableFocus";
 import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
@@ -65,7 +63,9 @@ import { isTerminalUrl, resolveTerminalLinkTarget } from "../terminal-links";
 import {
   isDiffToggleShortcut,
   isTerminalClearShortcut,
+  isTerminalCopyShortcut,
   isTerminalNewShortcut,
+  isTerminalPasteShortcut,
   isTerminalSplitShortcut,
   isTerminalSplitVerticalShortcut,
   isTerminalToggleShortcut,

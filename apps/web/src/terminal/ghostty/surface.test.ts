@@ -6,13 +6,13 @@ import {
 } from "@t3tools/client-runtime/state/terminal";
 import { synchronizeTerminalSession } from "../../components/ThreadTerminalDrawer";
 
+import { isTerminalCopyShortcut } from "../../keybindings";
 import { GhosttyTerminalCore, type GhosttyCell, type GhosttyRow } from "./core";
 import {
   advanceTerminalSelectionClickSequence,
   applyTerminalCopyEvent,
   clearPrimedTerminalCopyInput,
   isTerminalCompositionKey,
-  isTerminalCopyShortcut,
   primeTerminalCopyInput,
   resolveTerminalMouseData,
   terminalLinkAtPositionWithRange,
