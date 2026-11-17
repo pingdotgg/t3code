@@ -20,7 +20,12 @@ import * as RpcHttp from "../rpc/http.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as RemoteEnvironmentAuthorization from "./service.ts";
 import * as TokenStore from "./tokenStore.ts";
-import { BearerConnectionCredential, BearerConnectionProfile } from "../connection/catalog.ts";
+import {
+  BearerConnectionCredential,
+  BearerConnectionProfile,
+  type ConnectionCredential,
+  DpopConnectionCredential,
+} from "../connection/catalog.ts";
 import * as ConnectionCredentialStore from "../connection/credentialStore.ts";
 import { BearerConnectionTarget } from "../connection/model.ts";
 import * as ConnectionProfileStore from "../connection/profileStore.ts";
@@ -122,6 +127,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
   readonly beforeBootstrap?: Effect.Effect<void, ManagedRelay.ManagedRelayClientError>;
   readonly beforePut?: Effect.Effect<void>;
   readonly clerkToken?: ClientCapabilities.CloudSession["Service"]["clerkToken"];
+  readonly credentials?: ReadonlyArray<readonly [string, ConnectionCredential]>;
 }) {
   const tokens = yield* Ref.make(
     new Map(
@@ -217,6 +223,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
           deviceId: Effect.succeedSome("device-1"),
         }),
         Layer.succeed(TokenStore.RemoteDpopAccessTokenStore, tokenStore),
+        ConnectionCredentialStore.layerMemory(input.credentials),
         Layer.succeed(
           ClientCapabilities.ClientPresentation,
           ClientCapabilities.ClientPresentation.of({
@@ -322,6 +329,62 @@ describe("RemoteEnvironmentAuthorization", () => {
       expect(harness.fetch.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
         "/.well-known/t3/environment",
         "/api/auth/websocket-ticket/rpc",
+      ]);
+    }),
+  );
+
+  it.effect("renews an expired direct DPoP token with the host and keeps the renewal", () =>
+    Effect.gen(function* () {
+      const renewal = (init: RequestInit) => {
+        const fields = new URLSearchParams(
+          init.body instanceof Uint8Array ? new TextDecoder().decode(init.body) : String(init.body),
+        );
+        expect(fields.get("subject_token")).toBe("expired-direct-token");
+        expect(fields.get("subject_token_type")).toBe(
+          "urn:ietf:params:oauth:token-type:access_token",
+        );
+        return accessToken("renewed-direct-token");
+      };
+      const harness = yield* makeHarness({
+        responses: [renewal, websocketTicket("direct-ticket")],
+        descriptor: DESCRIPTOR,
+        credentials: [
+          [
+            "direct-1",
+            new DpopConnectionCredential({
+              accessToken: "expired-direct-token",
+              expiresAtEpochMs: 0,
+            }),
+          ],
+        ],
+      });
+
+      const [authorized, stored] = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
+        const authorized = yield* remote.authorizeDirectDpop({
+          expectedEnvironmentId: ENVIRONMENT_ID,
+          connectionId: "direct-1",
+          httpBaseUrl: ENDPOINT.httpBaseUrl,
+          wsBaseUrl: ENDPOINT.wsBaseUrl,
+        });
+        return [authorized, yield* credentials.get("direct-1")] as const;
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(authorized.socketUrl).toContain("wsTicket=direct-ticket");
+      expect(authorized.httpAuthorization).toMatchObject({
+        _tag: "Dpop",
+        accessToken: "renewed-direct-token",
+        directConnection: { connectionId: "direct-1", httpBaseUrl: ENDPOINT.httpBaseUrl },
+      });
+      expect(Option.getOrThrow(stored)).toMatchObject({
+        _tag: "DpopConnectionCredential",
+        accessToken: "renewed-direct-token",
+      });
+      expect((yield* Ref.get(harness.proofInputs)).map((proof) => proof.url)).toEqual([
+        `${ENDPOINT.httpBaseUrl}/oauth/token`,
+        `${ENDPOINT.httpBaseUrl}/api/auth/websocket-ticket/rpc`,
+        `${ENDPOINT.httpBaseUrl}/ws`,
       ]);
     }),
   );
