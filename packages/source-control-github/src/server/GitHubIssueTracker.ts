@@ -198,6 +198,22 @@ export const make = Effect.gen(function* () {
     );
   };
 
+  // Without triage access GitHub drops labels and assignees and still answers with success.
+  const droppedMetadata = (
+    input: {
+      readonly labels?: ReadonlyArray<string> | undefined;
+      readonly assignees?: ReadonlyArray<string> | undefined;
+    },
+    body: string,
+  ) => {
+    const applied = decodeIssueMetadataJson(body);
+    return (
+      Result.isSuccess(applied) &&
+      ((input.labels !== undefined && !sameNames(input.labels, applied.success.labels)) ||
+        (input.assignees !== undefined && !sameNames(input.assignees, applied.success.assignees)))
+    );
+  };
+
   return {
     kind: KIND,
     capabilities: CAPABILITIES,
@@ -327,14 +343,7 @@ export const make = Effect.gen(function* () {
               }),
             );
           }
-          // Without triage access GitHub creates the issue without its labels and assignees.
-          const applied = decodeIssueMetadataJson(response.body);
-          if (
-            Result.isSuccess(applied) &&
-            ((input.labels !== undefined && !sameNames(input.labels, applied.success.labels)) ||
-              (input.assignees !== undefined &&
-                !sameNames(input.assignees, applied.success.assignees)))
-          ) {
+          if (droppedMetadata(input, response.body)) {
             return Effect.fail(
               invalid(
                 "create",
@@ -381,13 +390,7 @@ export const make = Effect.gen(function* () {
           },
         })
         .pipe(Effect.mapError(fail("update")));
-      // Without triage access GitHub drops labels and assignees and still answers with success.
-      const applied = decodeIssueMetadataJson(response.body);
-      if (
-        Result.isSuccess(applied) &&
-        ((input.labels !== undefined && !sameNames(input.labels, applied.success.labels)) ||
-          (input.assignees !== undefined && !sameNames(input.assignees, applied.success.assignees)))
-      ) {
+      if (droppedMetadata(input, response.body)) {
         return yield* invalid(
           "update",
           "GitHub did not apply the labels or assignees. Changing them needs triage access to the repository.",

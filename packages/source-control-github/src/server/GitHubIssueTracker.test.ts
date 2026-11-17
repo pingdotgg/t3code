@@ -268,7 +268,14 @@ describe("GitHubIssueTracker", () => {
             };
           }
           if (request.url.endsWith("/issues")) {
-            response = { number: 42, html_url: "https://github.com/acme/web/issues/42" };
+            // Without triage access GitHub creates the issue and drops its labels and assignees.
+            const dropped = body["title"] === "Dropped";
+            response = {
+              number: 42,
+              html_url: "https://github.com/acme/web/issues/42",
+              labels: dropped ? [] : [{ name: "bug" }],
+              assignees: dropped ? [] : [{ login: "octocat" }],
+            };
           } else if (request.method === "PATCH" && body["title"] === "Dropped") {
             // What GitHub answers a caller without triage access: success, metadata untouched.
             response = { labels: [{ name: "Bug" }], assignees: [] };
@@ -299,6 +306,15 @@ describe("GitHubIssueTracker", () => {
         key: "42",
         displayKey: "#42",
         url: "https://github.com/acme/web/issues/42",
+      });
+      expect(
+        yield* Effect.flip(
+          api.create({ ...target, title: "Dropped", body: "Body", labels: ["bug"], assignees: [] }),
+        ),
+      ).toMatchObject({
+        operation: "create",
+        reason: "failed",
+        detail: expect.stringContaining("https://github.com/acme/web/issues/42"),
       });
       yield* api.comment({ ...target, body: "Comment" });
       yield* api.update({ ...target, title: "Updated", body: "Edited", labels: [], assignees: [] });
@@ -351,6 +367,11 @@ describe("GitHubIssueTracker", () => {
           "https://api.github.com/repos/acme/web/issues",
           { title: "Fixture", body: "Body", labels: ["bug"], assignees: ["octocat"] },
         ],
+        [
+          "POST",
+          "https://api.github.com/repos/acme/web/issues",
+          { title: "Dropped", body: "Body", labels: ["bug"], assignees: [] },
+        ],
         ["POST", "https://api.github.com/repos/acme/web/issues/42/comments", { body: "Comment" }],
         [
           "PATCH",
@@ -382,48 +403,6 @@ describe("GitHubIssueTracker", () => {
         "AddReaction",
         "RemoveReaction",
       ]);
-    }),
-  );
-
-  it.effect("reports when GitHub creates an issue but drops requested metadata", () =>
-    Effect.gen(function* () {
-      const http = HttpClient.make((request) =>
-        Effect.succeed(
-          HttpClientResponse.fromWeb(
-            request,
-            new Response(
-              JSON.stringify({
-                number: 43,
-                html_url: "https://github.com/acme/web/issues/43",
-                labels: [],
-                assignees: [],
-              }),
-              { status: 201, headers: { "content-type": "application/json" } },
-            ),
-          ),
-        ),
-      );
-      const api = yield* GitHubIssueTracker.make.pipe(Effect.provide(transport(http)));
-      const result = yield* api
-        .create({
-          cwd: "/w",
-          host: "github.com",
-          scope: "acme/web",
-          title: "Missing metadata",
-          body: "Repro attached.",
-          labels: ["bug"],
-          assignees: ["octocat"],
-        })
-        .pipe(Effect.result);
-      expect(result).toMatchObject({
-        _tag: "Failure",
-        failure: { operation: "create", reason: "failed" },
-      });
-      expect(result).toMatchObject({
-        failure: {
-          detail: expect.stringContaining("https://github.com/acme/web/issues/43"),
-        },
-      });
     }),
   );
 
