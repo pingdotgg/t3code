@@ -7580,9 +7580,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       const hiddenAfter = local.hidden.filter((row) => row.ordinal >= start).length;
       const types = timelineViewTypes(options);
       const messagesOnly = types !== null;
+      // Another agent's t3_thread_send is a user_message too.
+      const byUser =
+        options.author === "user"
+          ? sql`AND json_extract(item.payload_json, '$.createdBy') = 'user'`
+          : sql``;
       const candidates = (yield* local.read(
         messagesOnly
-          ? sql`AND item.ordinal >= ${start} AND item.type IN ${sql.in(types)}`
+          ? sql`AND item.ordinal >= ${start} AND item.type IN ${sql.in(types)} ${byUser}`
           : sql`AND item.ordinal >= ${start}`,
         sql`LIMIT ${firstPosition - base + Math.min(options.limit, totalItems) + 1 + hiddenAfter}`,
       )).filter(local.isVisible);
@@ -7610,7 +7615,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         (base > 0 &&
           (!messagesOnly ||
             (yield* local.read(
-              sql`AND item.ordinal < ${start} AND item.type IN ${sql.in(types)}`,
+              sql`AND item.ordinal < ${start} AND item.type IN ${sql.in(types)} ${byUser}`,
               sql`LIMIT ${local.hidden.length + 1}`,
             )).some(local.isVisible)));
       return { matching, totalItems, hasEarlier };
@@ -7698,7 +7703,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 .map((row, position) => ({ ...row, position }))
                 .filter((row) =>
                   options.itemId === undefined
-                    ? types === null || types.includes(row.item.type)
+                    ? (types === null || types.includes(row.item.type)) &&
+                      (options.author !== "user" || row.item.createdBy === "user")
                     : row.sourceItemId === options.itemId,
                 )
                 .filter(

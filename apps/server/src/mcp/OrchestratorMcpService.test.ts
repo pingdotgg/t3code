@@ -4989,7 +4989,7 @@ describe("OrchestratorMcpService thread list", () => {
             cursor,
           });
           // Claude Code saves MCP results over 25k tokens to a file instead of showing them.
-          assert.isAtMost(Buffer.byteLength(JSON.stringify(page)), 50_000);
+          assert.isAtMost(Buffer.byteLength(JSON.stringify(page)), 30_000);
           listed.push(...page.threads.map((thread) => thread.threadId));
           cursor = page.nextCursor;
         }

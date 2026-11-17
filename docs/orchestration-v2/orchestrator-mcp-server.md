@@ -368,7 +368,10 @@ Reads the durable state, recent runs, and visible timeline of any thread in
 the environment by thread ID. A deleted thread returns `thread_not_found`. The
 default `messages` view returns user messages, assistant
 messages, and proposed plans. The `activity` view also returns summarized tool,
-reasoning, checkpoint, handoff, and runtime-request items. Large item text is
+reasoning, checkpoint, handoff, and runtime-request items. `author: "user"` returns
+only messages a user wrote, not ones another agent sent, and `author: "agent"`
+only assistant messages and plans. Later pages leave out `recentRuns` unless the
+read passes `runLimit`. Large item text is
 bounded and reports whether it was truncated. An agent in a T3 thread that
 reads without a cursor gets the newest items, and `beforePosition=earlierPosition`
 reads older ones. Client callers (the CLI, linked environments, outside MCP
