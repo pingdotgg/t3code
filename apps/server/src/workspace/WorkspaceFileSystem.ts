@@ -260,9 +260,10 @@ export const make = Effect.gen(function* () {
     input: ProjectReadFileInput,
   ) {
     const requestedPath = input.relativePath;
-    const hostPath = requestedPath.startsWith("~/")
-      ? expandHomePath(requestedPath, yield* HostProcess.HomeDirectory)
-      : yield* toHostPath(requestedPath);
+    const hostPath =
+      requestedPath.startsWith("~/") || requestedPath.startsWith("~\\")
+        ? expandHomePath(requestedPath, yield* HostProcess.HomeDirectory)
+        : yield* toHostPath(requestedPath);
     if (
       isNetworkPath(hostPath) &&
       !KnownWorkspaces.isWithinRoot(path, path.resolve(hostPath), path.resolve(input.cwd))
@@ -314,7 +315,17 @@ export const make = Effect.gen(function* () {
           operation: "realpath-workspace-root",
           cause,
         }),
-    });
+    }).pipe(
+      // Storage cleanup removes idle worktrees but keeps their path, so nothing below them exists.
+      Effect.catchIf(
+        (error) =>
+          input.allowMissing === true && (error.cause as NodeJS.ErrnoException).code === "ENOENT",
+        () => Effect.succeed(null),
+      ),
+    );
+    if (realWorkspaceRoot === null) {
+      return { relativePath: target.relativePath, realTargetPath: null };
+    }
     const resolved = yield* Effect.tryPromise({
       try: async () => {
         let candidate = target.absolutePath;

@@ -26,6 +26,7 @@ import {
   MCP_APP_MAX_HTML_BYTES,
 } from "@t3tools/shared/mcpApp";
 import { ORCHESTRATION_PROTOCOL_HEADER } from "@t3tools/contracts";
+import { FILE_PREVIEW_SCROLL_SCRIPT } from "@t3tools/shared/htmlRender";
 
 import * as ServerConfig from "./config.ts";
 
@@ -92,6 +93,39 @@ describe("MCP app asset responses", () => {
       yield* fs.writeFileString(file, "x".repeat(MCP_APP_MAX_HTML_BYTES + 128 * 1024 + 1));
       const response = yield* assetFileResponse({ path: file, renderIntent: "mcp-app" });
       expect(response.status).toBe(413);
+    }).pipe(Effect.provide(layerFileResponse)),
+  );
+});
+
+describe("workspace page preview responses", () => {
+  it.effect("append the scroll script only to inline HTML previews", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-file-preview-" });
+      const page = path.join(directory, "report.html");
+      const style = path.join(directory, "report.css");
+      const html = "<!doctype html><html><body>☃</body></html>";
+      yield* fs.writeFileString(page, html);
+      yield* fs.writeFileString(style, "body{}");
+      const read = (asset: Parameters<typeof assetFileResponse>[0]) =>
+        assetFileResponse(asset).pipe(
+          Effect.flatMap((response) =>
+            Effect.promise(() => HttpServerResponse.toWeb(response).text()),
+          ),
+        );
+      const response = HttpServerResponse.toWeb(
+        yield* assetFileResponse({ path: page, renderIntent: "file-preview" }, "bytes=0-1"),
+      );
+      const expected = html + FILE_PREVIEW_SCROLL_SCRIPT;
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-length")).toBe(
+        String(new TextEncoder().encode(expected).byteLength),
+      );
+      expect(yield* Effect.promise(() => response.text())).toBe(expected);
+      expect(yield* read({ path: page, renderIntent: "file-preview", download: true })).toBe(html);
+      expect(yield* read({ path: page })).toBe(html);
+      expect(yield* read({ path: style, renderIntent: "file-preview" })).toBe("body{}");
     }).pipe(Effect.provide(layerFileResponse)),
   );
 });

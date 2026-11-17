@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - the guarded file read needs open
 // flags (O_NOFOLLOW, O_NONBLOCK) the FileSystem service does not expose.
 import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 import {
   type DefaultAppearancePreference,
@@ -9,10 +10,15 @@ import {
   EnvironmentThemeFile,
   EnvironmentThemeId,
   environmentThemeFileHasColors,
+  THEME_CSS_MAX_LENGTH,
 } from "@t3tools/contracts";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { themeCssLoadsRemoteFiles } from "@t3tools/shared/themeCss";
-import { BUILT_IN_THEME_IDS, UNPUBLISHABLE_THEME_IDS } from "@t3tools/shared/themePalettes";
+import {
+  MOBILE_DEFAULT_THEME_ID,
+  MOBILE_THEME_IDS,
+  UNPUBLISHABLE_THEME_IDS,
+} from "@t3tools/shared/themePalettes";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -44,9 +50,17 @@ const isEnvironmentThemeId = Schema.is(EnvironmentThemeId);
 const THEME_FILE_SUFFIX = ".json";
 
 const MAX_THEME_FILES = 32;
-/** Shared with publishing so it cannot accept files the watcher skips. */
-export const MAX_THEME_FILE_BYTES = 32 * 1024;
-const MAX_THEME_TOTAL_BYTES = 192 * 1024;
+/**
+ * Shared with publishing so it cannot accept files the watcher skips. Fits the longest CSS in any
+ * JSON encoding, at up to 6 bytes per character for a `\uXXXX` escape, plus the colors.
+ */
+export const MAX_THEME_FILE_BYTES = 6 * THEME_CSS_MAX_LENGTH + 16 * 1024;
+// Clients cache every published theme in localStorage, which holds about 5 MB per origin.
+const MAX_THEME_TOTAL_BYTES = 2 * 1024 * 1024;
+
+/** A theme's background is `<id>.<extension>` beside `<id>.json`; earlier extensions win. */
+const THEME_BACKGROUND_EXTENSIONS = ["webp", "png", "jpg", "jpeg"] as const;
+const MAX_THEME_BACKGROUND_BYTES = 16 * 1024 * 1024;
 
 interface PublishedThemes {
   readonly seq: number;
@@ -97,6 +111,8 @@ export class EnvironmentThemeService extends Context.Service<
     readonly read: (themeId?: string) => Effect.Effect<
       {
         readonly current: string;
+        /** Where theme files and their background images live. */
+        readonly themesDir: string;
         readonly themes: ReadonlyArray<EnvironmentTheme>;
         readonly theme?: EnvironmentTheme;
       },
@@ -169,6 +185,35 @@ export const readThemeFileGuarded = (filePath: string, maxBytes: number): string
   }
 };
 
+/**
+ * The background image published beside `themeId`, if any. Symlinks and oversized files are
+ * skipped. `entries` lets a directory scan skip lookups for names it did not list.
+ */
+export function findThemeBackground(
+  themesDir: string,
+  themeId: string,
+  entries?: ReadonlySet<string>,
+): { readonly path: string; readonly revision: string } | null {
+  for (const extension of THEME_BACKGROUND_EXTENSIONS) {
+    const name = `${themeId}.${extension}`;
+    if (entries !== undefined && !entries.has(name)) continue;
+    // Native separators: the asset route refuses a path that differs from its canonical form.
+    const filePath = NodePath.join(themesDir, name);
+    let info: NodeFS.BigIntStats;
+    try {
+      info = NodeFS.lstatSync(filePath, { bigint: true });
+    } catch {
+      continue;
+    }
+    if (!info.isFile() || info.size > MAX_THEME_BACKGROUND_BYTES) continue;
+    return {
+      path: filePath,
+      revision: [info.ino, info.size, info.mtimeNs].map((part) => part.toString(36)).join("-"),
+    };
+  }
+  return null;
+}
+
 export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
   const fs = yield* FileSystem.FileSystem;
   const entries = yield* fs
@@ -176,6 +221,7 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
     .pipe(Effect.orElseSucceed((): Array<string> => []));
 
   const themes: Array<EnvironmentTheme> = [];
+  const entryNames = new Set(entries);
   let examined = 0;
   let totalBytes = 0;
   for (const entry of entries.toSorted()) {
@@ -228,7 +274,8 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
       break;
     }
 
-    themes.push({ id, ...file });
+    const background = findThemeBackground(themesDir, id, entryNames);
+    themes.push({ id, ...file, ...(background ? { background: background.revision } : {}) });
   }
   return themes;
 });
@@ -364,11 +411,13 @@ const make = Effect.gen(function* () {
     }
     // Timestamps make clients apply a set again when its value did not change. Theme and
     // appearance have one each, so setting one does not undo a later local choice of the other.
+    // The stock theme is an empty default with a set time, which clients adopt as stock.
+    const defaultTheme = themeId === MOBILE_DEFAULT_THEME_ID ? "" : themeId;
     const select = Effect.gen(function* () {
       const setAt = DateTime.formatIso(yield* DateTime.now);
       yield* settings
         .updateSettings({
-          ...(themeId === undefined ? {} : { defaultTheme: themeId, defaultThemeSetAt: setAt }),
+          ...(defaultTheme === undefined ? {} : { defaultTheme, defaultThemeSetAt: setAt }),
           ...(appearance === undefined
             ? {}
             : { defaultAppearance: appearance, defaultAppearanceSetAt: setAt }),
@@ -381,7 +430,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         if (themeId === undefined) return yield* select;
         if (theme === undefined) {
-          const known = [...BUILT_IN_THEME_IDS, ...(yield* refresh).themes.map(({ id }) => id)];
+          const known = [...MOBILE_THEME_IDS, ...(yield* refresh).themes.map(({ id }) => id)];
           if (!known.includes(themeId)) {
             return yield* new EnvironmentThemeRefusedError({
               themeId,
@@ -402,7 +451,8 @@ const make = Effect.gen(function* () {
   )(function* (themeId) {
     const { themes } = yield* refresh;
     const { defaultTheme } = yield* settings.getSettings;
-    if (themeId === undefined) return { current: defaultTheme, themes };
+    const themesDir = environmentThemesDir;
+    if (themeId === undefined) return { current: defaultTheme, themesDir, themes };
     const theme = themes.find((candidate) => candidate.id === themeId);
     if (theme === undefined) {
       return yield* new EnvironmentThemeRefusedError({
@@ -411,7 +461,7 @@ const make = Effect.gen(function* () {
         known: themes.map(({ id }) => id),
       });
     }
-    return { current: defaultTheme, themes, theme };
+    return { current: defaultTheme, themesDir, themes, theme };
   });
 
   return {
