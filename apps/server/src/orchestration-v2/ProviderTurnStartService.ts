@@ -35,7 +35,7 @@ import {
 } from "./Adapters/ClaudeAdapterV2.ts";
 import { withTurnStartReservation, withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
-import { injectThreadGoal } from "../goals/threadGoalProviderInput.ts";
+import { injectThreadGoal, threadGoalBlock } from "../goals/threadGoalProviderInput.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -56,6 +56,7 @@ import {
 } from "@t3tools/provider-core/server/handoffBudget";
 import {
   deliverContextHandoffs,
+  turnAddedContextNotification,
   isContextHandoffRedeliverable,
   withInlineContext,
 } from "./ContextHandoffDelivery.ts";
@@ -849,6 +850,7 @@ export const layer: Layer.Layer<
       const userText = goalCommand
         ? composedText
         : injectThreadGoal(composedText, projection.thread, providerMessage);
+      const goalBlock = goalCommand ? null : threadGoalBlock(projection.thread, providerMessage);
       // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.
       const noteContinuation = isRestartNoteContinuation(
         run,
@@ -1730,6 +1732,54 @@ export const layer: Layer.Layer<
           ],
         });
       });
+      const recordAddedContext = Effect.fn("ProviderTurnStartService.recordAddedContext")(
+        function* (parts: Parameters<typeof turnAddedContextNotification>[0]) {
+          const notification = turnAddedContextNotification(parts);
+          if (notification === undefined) return;
+          const id = idAllocator.derive.runSignalTurnItem({ runId, signal: "added-context" });
+          const recordedAt = yield* DateTime.now;
+          yield* eventSink.write({
+            events: [
+              {
+                id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                type: "turn-item.updated",
+                threadId: projection.thread.id,
+                runId,
+                providerInstanceId: run.providerInstanceId,
+                occurredAt: recordedAt,
+                payload: {
+                  id,
+                  threadId: projection.thread.id,
+                  runId,
+                  nodeId: rootNode.id,
+                  providerThreadId: runningProviderThread.id,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: yield* turnItemPositions.allocate({
+                    threadId: projection.thread.id,
+                    turnItemId: id,
+                    runId,
+                    runOrdinal: run.ordinal,
+                  }),
+                  status: "completed",
+                  title: null,
+                  startedAt: recordedAt,
+                  completedAt: recordedAt,
+                  updatedAt: recordedAt,
+                  type: "notification",
+                  ...notification,
+                },
+              },
+            ],
+          });
+        },
+        // The provider already accepted the turn; a failed record must not fail it.
+        Effect.catchCause(() =>
+          Effect.logWarning("Failed to record context added to a turn", { runId: run.id }),
+        ),
+      );
+      const goalPart = { label: "goal", text: goalBlock ?? "" };
       const startWithHandoffs = Effect.fn("ProviderTurnStartService.startWithHandoffs")(
         function* (turnInput: Parameters<typeof session.startTurn>[0], compact = false) {
           const delivery = yield* deliverContextHandoffs({
@@ -1764,8 +1814,9 @@ export const layer: Layer.Layer<
           const startInput = noteContinuation ? promptedInput : turnInput;
           const { resume: _resume, ...contextInput } = startInput;
           const { message: resumeMessage, resume: _resumeIntent, ...resumeInput } = startInput;
+          const resumed = turnInput.resume && context === "" && session.resumeTurn !== undefined;
           const operation =
-            turnInput.resume && context === "" && session.resumeTurn !== undefined
+            resumed && session.resumeTurn !== undefined
               ? session.resumeTurn({ ...resumeInput, messageId: resumeMessage.messageId })
               : start({
                   ...(context === "" ? startInput : contextInput),
@@ -1817,6 +1868,19 @@ export const layer: Layer.Layer<
               ),
             { discard: true },
           );
+          yield* recordAddedContext([
+            {
+              label: delivery.injected
+                ? "context handoff (injected into provider history)"
+                : "context handoff",
+              text: delivery.injected
+                ? "Earlier conversation was added to the provider's own history, not to this message."
+                : delivery.context,
+            },
+            { label: "side-chat context", text: sideChatContext },
+            { label: "restart note", text: restartNote },
+            ...(resumed || goalCommand ? [] : [goalPart]),
+          ]);
         },
         Effect.mapError((cause) =>
           cause._tag === "ProviderAdapterTurnStartError"
@@ -1836,7 +1900,15 @@ export const layer: Layer.Layer<
         sideChatHandoff === undefined &&
         restartNote === "" &&
         !noteContinuation
-          ? session
+          ? goalBlock === null
+            ? session
+            : {
+                ...session,
+                startTurn: (turnInput: Parameters<typeof session.startTurn>[0]) =>
+                  session
+                    .startTurn(turnInput)
+                    .pipe(Effect.tap(() => recordAddedContext([goalPart]))),
+              }
           : makeDeliverySession(session, startWithHandoffs);
       return runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),

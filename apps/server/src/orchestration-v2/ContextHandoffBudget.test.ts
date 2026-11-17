@@ -27,7 +27,7 @@ import {
   renderHistory,
 } from "@t3tools/provider-core/server/handoffBudget";
 import { projectContextHandoffForWire } from "./WireProjection.ts";
-import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
+import { deliverContextHandoffs, turnAddedContextNotification } from "./ContextHandoffDelivery.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeHandoff = Schema.decodeUnknownSync(OrchestrationV2ContextHandoff);
@@ -738,4 +738,24 @@ describe("handoff delivery", () => {
       assert.equal(calls, 0);
     }),
   );
+
+  it("describes only the parts T3 Code added to a turn and caps the detail", () => {
+    assert.isUndefined(turnAddedContextNotification([{ label: "restart note", text: "" }]));
+    assert.deepEqual(
+      turnAddedContextNotification([
+        { label: "context handoff", text: "History" },
+        { label: "side-chat context", text: "" },
+        { label: "restart note", text: "Stopped work" },
+      ]),
+      {
+        source: { kind: "system" },
+        outcome: "updated",
+        summary: "T3 Code added context to this turn: context handoff, restart note",
+        detail: "[context handoff]\nHistory\n\n[restart note]\nStopped work",
+      },
+    );
+    const capped = turnAddedContextNotification([{ label: "goal", text: "x".repeat(20_100) }]);
+    assert.equal(capped?.detail?.length, 20_000 + "\n[107 more characters not shown]".length);
+    assert.isTrue(capped?.detail?.endsWith("\n[107 more characters not shown]"));
+  });
 });

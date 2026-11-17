@@ -41,6 +41,14 @@ function formatThreadGoalInjection(input: {
   ].join("\n");
 }
 
+/** The goal block T3 prepends to this message, or null when it sends none. */
+export function threadGoalBlock(
+  thread: ThreadGoalState,
+  message: ProviderInputMessage,
+): string | null {
+  return isNativeMaintenanceCommand(message) ? null : getT3GoalInjection(thread);
+}
+
 export function injectThreadGoal(
   text: string,
   thread: ThreadGoalState,

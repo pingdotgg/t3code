@@ -3,6 +3,7 @@ import {
   parseGoalCommand,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ConversationMessage,
+  type OrchestrationV2Notification,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
 } from "@t3tools/contracts";
@@ -45,6 +46,28 @@ export const isContextHandoffRedeliverable = (
 export const withInlineContext = (context: string, userText: string): string =>
   context === "" ? userText : `${context}\n\nUser message:\n${userText}`;
 
+const NOTIFICATION_DETAIL_LIMIT = 20_000;
+
+/** Caps text shown in a turn item, which travels over the websocket, and says how much was cut. */
+const capNotificationDetail = (text: string): string =>
+  text.length <= NOTIFICATION_DETAIL_LIMIT
+    ? text
+    : `${text.slice(0, NOTIFICATION_DETAIL_LIMIT)}\n[${(text.length - NOTIFICATION_DETAIL_LIMIT).toLocaleString("en-US")} more characters not shown]`;
+
+/** The notification that shows the user what T3 Code added to a turn; undefined when it added nothing. */
+export const turnAddedContextNotification = (
+  parts: ReadonlyArray<{ readonly label: string; readonly text: string }>,
+): OrchestrationV2Notification | undefined => {
+  const sent = parts.filter((part) => part.text !== "");
+  if (sent.length === 0) return undefined;
+  return {
+    source: { kind: "system" },
+    outcome: "updated",
+    summary: `T3 Code added context to this turn: ${sent.map((part) => part.label).join(", ")}`,
+    detail: capNotificationDetail(sent.map((part) => `[${part.label}]\n${part.text}`).join("\n\n")),
+  };
+};
+
 /** Persist around injection; ambiguous delivery requires a fresh native thread. Call unsent if refused before prompt consumption. */
 export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextHandoffs")(
   function* <InjectError = never, PersistError = never, BudgetError = never>(input: {
@@ -66,7 +89,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
         handoff.delivery.status === "pending",
     );
     if (pending.length === 0 || (input.deferInline && input.inject === undefined))
-      return { context: "", delivered: Effect.void, unsent: Effect.void };
+      return { context: "", injected: false, delivered: Effect.void, unsent: Effect.void };
     const budget = typeof input.budget === "number" ? input.budget : yield* input.budget;
     let coverage = pending
       .map(
@@ -105,7 +128,8 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       budget,
     });
     if (historyCost(selected.messages, selected.context) > budget) {
-      if (input.deferInline) return { context: "", delivered: Effect.void, unsent: Effect.void };
+      if (input.deferInline)
+        return { context: "", injected: false, delivered: Effect.void, unsent: Effect.void };
       return yield* new ContextHandoffBudgetError();
     }
     const omittedItemIds = new Set(selected.omittedItemIds);
@@ -156,7 +180,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       });
       if (injected) {
         yield* persist("injected");
-        return { context: "", delivered: Effect.void, unsent: Effect.void };
+        return { context: "", injected: true, delivered: Effect.void, unsent: Effect.void };
       }
     } else {
       yield* persist("pending");
@@ -164,10 +188,11 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     if (input.deferInline) {
       // Compaction cannot carry inline transcripts; retain for the next turn if native injection is unsupported.
       yield* Effect.forEach(pending, input.persist, { discard: true });
-      return { context: "", delivered: Effect.void, unsent: Effect.void };
+      return { context: "", injected: false, delivered: Effect.void, unsent: Effect.void };
     }
     return {
       context: renderHistory(selected.messages, selected.context),
+      injected: false,
       delivered: persist("inline"),
       unsent: Effect.forEach(pending, input.persist, { discard: true }),
     };
