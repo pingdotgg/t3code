@@ -293,19 +293,24 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         transfers: 0,
         links: 0,
       });
+      // Asserted across whatever tables carry a project, so a later migration's table is covered.
       assert.deepStrictEqual(
-        kept.projectRows,
-        {
-          model_evaluation_resets: ["project-kept"],
-          orchestration_v2_projection_threads: ["project-kept"],
-          project_knowledge_commands: ["project-kept"],
-          project_knowledge_fact_history: ["project-kept"],
-          project_knowledge_facts: ["project-kept"],
-          projection_projects: ["project-kept"],
-          projection_threads: ["project-kept"],
-        },
-        "rows of a dropped project go with it; the kept project's facts stay",
+        [...new Set(Object.values(kept.projectRows).flat())],
+        ["project-kept"],
+        "rows of a dropped project go with it",
       );
+      for (const table of [
+        "model_evaluation_resets",
+        "project_knowledge_commands",
+        "project_knowledge_fact_history",
+        "project_knowledge_facts",
+      ]) {
+        assert.deepStrictEqual(
+          kept.projectRows[table],
+          ["project-kept"],
+          `${table} keeps its rows`,
+        );
+      }
       assert.deepStrictEqual(
         kept.factSearch,
         { found: ["fact-project-kept"], droppedBlocks: 0 },

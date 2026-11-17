@@ -401,7 +401,7 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
   );
   const searchIndexes = yield* sql<{ name: string }>`
     SELECT name FROM sqlite_master
-    WHERE type = 'table' AND sql LIKE 'CREATE VIRTUAL TABLE % USING fts5%'`;
+    WHERE type = 'table' AND sql LIKE 'CREATE VIRTUAL TABLE % USING fts5(%'`;
 
   yield* sql.withTransaction(
     Effect.gen(function* () {
