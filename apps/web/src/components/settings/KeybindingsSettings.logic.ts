@@ -456,6 +456,16 @@ const COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "chat.newWithoutProject": msg("Chat: New Without Project"),
   "chat.find": msg("Chat: Find"),
   "editor.openFavorite": msg("Editor: Open Favorite"),
+  "modelPicker.toggle": msg("Model Picker: Toggle"),
+  "modelPicker.previousProvider": msg("Model Picker: Previous Provider"),
+  "modelPicker.nextProvider": msg("Model Picker: Next Provider"),
+  "thread.stop": msg("Thread: Stop"),
+  "thread.previous": msg("Thread: Previous"),
+  "thread.next": msg("Thread: Next"),
+  "thread.settle": msg("Thread: Settle"),
+  "thread.pin": msg("Thread: Pin"),
+  "thread.regenerateTitle": msg("Thread: Regenerate Title"),
+  "thread.undo": msg("Thread: Undo"),
 };
 
 // Whole labels: search titles keep the encoded message, which cannot nest another one.
@@ -486,6 +496,12 @@ export function commandLabel(command: KeybindingCommand, resolve: MessageResolve
   const lateLabel = LATE_COMMAND_LABELS[command];
   if (lateLabel) return resolve(lateLabel);
   const raw = String(command);
+  if (raw.startsWith("thread.jump.")) {
+    return resolve(msg("Thread: Jump: {n}", { n: raw.slice("thread.jump.".length) }));
+  }
+  if (raw.startsWith("modelPicker.jump.")) {
+    return resolve(msg("Model Picker: Jump: {n}", { n: raw.slice("modelPicker.jump.".length) }));
+  }
   if (raw.startsWith("script.") && raw.endsWith(".run")) {
     return resolve(
       msg("Run Script: {name}", {
