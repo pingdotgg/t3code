@@ -1043,7 +1043,7 @@ function AdaptiveWorkspaceLayoutContent(
                 {/* Without a sidebar route (iPadOS before 26) the columns draw the thread list. */}
                 {sidebar ?? <WorkspaceThreadSidebar />}
               </RenderErrorBoundary>
-              {Platform.OS === "ios" && !nativeWorkspace && sidebarTabs && !workspacePage ? (
+              {sidebarTabs && !workspacePage ? (
                 <WorkspaceTabsContext value={sidebarTabs}>
                   <View
                     pointerEvents="box-none"
