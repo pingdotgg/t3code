@@ -656,13 +656,14 @@ describe("question answer paths", () => {
               '<package><item id="bad" href="bad.xhtml"/><item id="good" href="good.xhtml"/><itemref idref="bad"/><itemref idref="good"/></package>',
             "bad.xhtml": "<html><p>Discard this broken chapter</html>",
             "good.xhtml":
-              '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><p>North&nbsp;Harbor &NotEqualTilde; &CounterClockwiseContourIntegral; &amp; &lt;tag&gt; &quot;quoted&quot;</p><p><![CDATA[Literal &nbsp;]]></p><table><tr><td>&nbsp; </td></tr><tr><td>Kept&nbsp;cell</td></tr></table></html>',
+              '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><p>North&nbsp;Harbor &NotEqualTilde; &CounterClockwiseContourIntegral; &amp; &lt;tag&gt; &quot;quoted&quot;</p><p><![CDATA[Literal &nbsp;]]></p><table><tr><td>&nbsp; </td></tr><tr><td>Kept&nbsp;cell</td></tr></table><p>Formula <math><semantics><mrow>x+y</mrow><annotation encoding="application/x-tex">x+y</annotation></semantics></math></p></html>',
           },
           expected: [
             "## Chapter 2",
             'North\u00a0Harbor ≂̸ ∳ & <tag> "quoted"',
             "Literal &nbsp;",
             "Kept cell",
+            "Formula x+yx+y",
             "[Skipped document part: bad.xhtml (missing or invalid XML).]",
           ],
           absent: ["Discard this broken chapter", "[Extracted text truncated"],
@@ -762,6 +763,16 @@ describe("question answer paths", () => {
           },
           expected: ["Fee $700"],
           absent: ["Reviewer", "$500"],
+        },
+        {
+          ext: "odt",
+          bounded: true,
+          parts: {
+            "content.xml":
+              '<document><text><p>Fee <office:annotation><dc:creator>Reviewer</dc:creator><dc:date>2026-01-01T00:00:00</dc:date><initials>JR</initials><p>Check</p></office:annotation>$700</p><table><table-row><table-cell office:value-type="float" office:value="150"><office:annotation><p>was 120</p></office:annotation></table-cell></table-row></table><p>Formula <math:math><math:semantics><math:mrow>x+y</math:mrow><math:annotation encoding="application/x-tex">x+y</math:annotation></math:semantics></math:math></p></text></document>',
+          },
+          expected: ["Fee $700\n150\nFormula x+yx+y"],
+          absent: ["Reviewer", "2026-01-01", "JR", "Check", "was 120"],
         },
         {
           ext: "docx",
