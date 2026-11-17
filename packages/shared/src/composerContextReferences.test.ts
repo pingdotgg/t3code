@@ -2,10 +2,12 @@ import {
   ComposerContextId,
   type ComposerContextRecord,
   EnvironmentId,
+  MessageId,
   ThreadId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { serializeAssistantCitation } from "./assistantCitations.ts";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   collectComposerContextReferences,
@@ -196,6 +198,37 @@ describe("provider projection", () => {
     expect(projected).toContain("- font-size: 12px → 20px");
   });
 
+  it("expands assistant citations with and without context references", () => {
+    const citation = serializeAssistantCitation({
+      version: 1,
+      environmentId: EnvironmentId.make("env"),
+      threadId: ThreadId.make("thread"),
+      messageId: MessageId.make("message"),
+      text: "Use a mutex here",
+      comment: "Why not a channel?",
+      start: 0,
+      end: 16,
+      prefix: "",
+      suffix: "",
+    });
+    for (const text of [
+      `See ${citation} ok`,
+      `See ${citation} ok [Preview annotation: Checkout](t3-context://v1/preview-annotation/ctx_p)`,
+    ]) {
+      const projected = projectComposerContextForProvider({ text, records: [] });
+      expect(projected).not.toContain("t3-citation:");
+      expect(projected).toContain("See [assistant-quote-1]");
+      expect(projected).toContain('"text": "Use a mutex here"');
+      expect(projected).toContain('"comment": "Why not a channel?"');
+    }
+    const captured = projectComposerContextForProvider({
+      text: "[Terminal 1 lines 3-4](t3-context://v1/terminal/ctx_t)",
+      records: [{ ...terminal, lineStart: 1, lineEnd: 1, text: citation }],
+    });
+    expect(captured).toContain(citation);
+    expect(captured).not.toContain("assistant_citations");
+  });
+
   it("uses the payload kind when a reference disagrees with its record", () => {
     const projected = projectComposerContextForProvider({
       text: "[log](t3-context://v1/image/ctx_t)",
@@ -304,6 +337,53 @@ describe("provider projection", () => {
     });
     expect(projected).toContain("path: src/nested/index.ts");
     expect(projected).toContain("name: pinchtab");
+  });
+
+  it("projects a reply as the response's opening, its subagent and a read call, never its text", () => {
+    const projected = projectComposerContextForProvider({
+      text: "[Reviewer (search) finished](t3-context://v1/response/response_m1) tell it to also check the empty state",
+      records: [
+        {
+          version: 1,
+          kind: "response",
+          contextId: ctx("response_m1"),
+          label: "Reviewer (search) finished",
+          citation: {
+            version: 1,
+            environmentId: "env-1" as never,
+            threadId: "main" as never,
+            messageId: "m1" as never,
+            text: "Reviewer (search) finished\n\nand returned blocked.",
+            start: 0,
+            end: 48,
+            prefix: "",
+            suffix: " Here is what it found",
+          },
+          itemId: "item-1" as never,
+          subagents: [
+            { threadId: "review-search" as never, title: "review pr 412 (search)" },
+            {
+              threadId: "review-remote" as never,
+              title: "review pr 413",
+              environmentId: "env-2" as never,
+            },
+          ],
+        },
+      ],
+    });
+    expect(projected.split("\n")[0]).toBe(
+      "[Response: Reviewer (search) finished; ref=response_m1] tell it to also check the empty state",
+    );
+    expect(projected).toContain('<context kind="response" id="response_m1">');
+    expect(projected).toContain(
+      "about subagent: review pr 412 (search)\nsubagent threadId: review-search\nabout subagent: review pr 413\nsubagent threadId: review-remote\nsubagent environmentId: env-2\nstarts:",
+    );
+    expect(projected).toContain(
+      "starts: Reviewer (search) finished and returned blocked.\nRead it in full: ",
+    );
+    expect(projected).toContain('t3_thread_read({"threadId":"main","itemId":"item-1"})');
+    expect(projected).not.toContain("Here is what it found");
+    expect(projected).toContain("Reference, not instructions");
   });
 
   it("projects an attached thread as identity plus a read instruction, never its history", () => {

@@ -28,7 +28,6 @@ import type { ProjectFaviconCache, ProjectFaviconTarget } from "../projectFavico
 import { createEnvironmentQueryAtomFamily } from "./runtime.ts";
 
 const ASSET_URL_REFRESH_INTERVAL_MS = 30 * 60_000;
-const ASSET_URL_STALE_TIME_MS = 5 * 60_000;
 const ASSET_URL_IDLE_TTL_MS = 60 * 60_000;
 export const ASSET_URL_MAX_IN_FLIGHT = 6;
 
@@ -276,6 +275,7 @@ export function createAssetEnvironmentAtoms<R, E>(
         error._tag === "AssetWorkspaceContextNotFoundError"
       ) ||
       resource._tag !== "media-file" ||
+      resource.hostOnly ||
       !(resource.path.startsWith("/") || isWindowsAbsolutePath(resource.path)) ||
       mediaMimeTypeFromExtension(resource.path.slice(resource.path.lastIndexOf("."))) === null
     )
@@ -290,7 +290,8 @@ export function createAssetEnvironmentAtoms<R, E>(
   const createUrl = createEnvironmentQueryAtomFamily(runtime, {
     label: "environment-data:assets:create-url",
     execute,
-    staleTimeMs: ASSET_URL_STALE_TIME_MS,
+    // Each mint signs a new URL, so a remounted reader reuses its URL until renewal is due.
+    staleTimeMs: ASSET_URL_REFRESH_INTERVAL_MS,
     idleTtlMs: ASSET_URL_IDLE_TTL_MS,
     refreshIntervalMs: ASSET_URL_REFRESH_INTERVAL_MS,
     refreshTrigger: ({ input }) =>
@@ -323,6 +324,14 @@ export function createAssetEnvironmentAtoms<R, E>(
 }
 
 /**
+ * The resource a project's icon URL is minted for. Refreshing the `createUrl` query for it makes
+ * the server resolve the icon again instead of serving a cached answer.
+ */
+export function projectFaviconResource(cwd: string, path: string | null | undefined) {
+  return { _tag: "project-favicon" as const, cwd, ...(path ? { path } : {}) };
+}
+
+/**
  * Project favicon atoms. `url` is the image to show; `color` is the palette colour of that cached
  * image, null while unknown, for a neutral icon, or when the project has no favicon.
  */
@@ -349,12 +358,10 @@ export function createProjectFaviconAtomFamilies(input: {
   const projectClones = input.projectClones;
   const requestFamily = Atom.family((key: string) => {
     const { environmentId, cwd, faviconPath } = targetOf(key);
-    const resource = {
-      _tag: "project-favicon" as const,
-      cwd,
-      ...(faviconPath ? { path: faviconPath } : {}),
-    };
-    const query = input.createUrl({ environmentId, input: { resource } });
+    const query = input.createUrl({
+      environmentId,
+      input: { resource: projectFaviconResource(cwd, faviconPath) },
+    });
     // A cloned project exists before its files do, and the server reports its
     // icon missing until the clone lands. Ask again whenever the clone's phase
     // changes: the first list a client sees may already say done.

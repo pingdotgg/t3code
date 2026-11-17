@@ -36,7 +36,7 @@ function normalizeWhitespace(text: string): string {
   return text.replace(/\s+/g, " ");
 }
 
-function splitsSurrogatePair(text: string, offset: number): boolean {
+export function splitsSurrogatePair(text: string, offset: number): boolean {
   const before = text.charCodeAt(offset - 1);
   const after = text.charCodeAt(offset);
   return before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff;

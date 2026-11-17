@@ -27,6 +27,7 @@ import {
   parseComposerContextHref,
 } from "@t3tools/shared/composerContextReferences";
 import { hasThreadLinks, parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+import { EXTENSIONLESS_FILE_NAMES } from "@t3tools/shared/markdownLinks";
 
 export function enrichedContextLinkPresentation(
   href: string,
@@ -101,8 +102,14 @@ export function enrichedLinkVariantPattern(url: string) {
   return `^${url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`;
 }
 
-export const ENRICHED_INLINE_FILE_LINK_REGEX =
-  /^(?!\S*:\/\/)(?:(?:\.{1,2}[\\/]|~[\\/]|\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|private|root|usr|bin|sbin|lib|lib64|srv|dev|proc|sys|run|boot|media|workspace|workspaces)\/|[A-Za-z]:[\\/])[^\s`]+|(?:[A-Za-z0-9._-]+[\\/])+[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+(?::\d+(?::\d+|-\d+)?)?|[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+:\d+(?::\d+|-\d+)?)$/;
+const EXTENSIONLESS_FILE_NAME_PATTERN = [...EXTENSIONLESS_FILE_NAMES]
+  .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+  .join("|");
+
+export const ENRICHED_INLINE_FILE_LINK_REGEX = new RegExp(
+  String.raw`^(?!\S*:\/\/)(?:(?:\.{1,2}[\\/]|~[\\/]|\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|private|root|usr|bin|sbin|lib|lib64|srv|dev|proc|sys|run|boot|media|workspace|workspaces)\/|[A-Za-z]:[\\/])[^\s\x60]+|(?:[\p{L}\p{M}\p{N}._-]+[\\/])+(?:[\p{L}\p{M}\p{N}._-]+\.[A-Za-z0-9_-]+|(?:${EXTENSIONLESS_FILE_NAME_PATTERN}))(?::\d+(?::\d+|-\d+)?)?|[\p{L}\p{M}\p{N}._-]+\.[A-Za-z0-9_-]+:\d+(?::\d+|-\d+)?)$`,
+  "u",
+);
 
 export function enrichedSkillLinkRegex(skills?: ReadonlyArray<SelectableMarkdownSkill>) {
   const names = [...new Set(skills?.map((skill) => skill.name) ?? [])].filter(Boolean);
@@ -112,17 +119,6 @@ export function enrichedSkillLinkRegex(skills?: ReadonlyArray<SelectableMarkdown
   return new RegExp(
     `(?<![A-Za-z0-9_-])(?<!\\p{Sc})\\p{Sc}(?:${alternatives.join("|")})(?![A-Za-z0-9_-])`,
     "u",
-  );
-}
-
-export function enrichedSkillDisplayName(skill: SelectableMarkdownSkill) {
-  return (
-    skill.displayName?.trim() ||
-    skill.name
-      .split(/[\s:_-]+/)
-      .filter(Boolean)
-      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(" ")
   );
 }
 

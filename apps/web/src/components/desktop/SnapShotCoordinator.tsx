@@ -41,6 +41,7 @@ import {
   openQuestionAttachmentDraft,
 } from "../../questionAttachments";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { readComposerImageBytes } from "../chat/composerAttachmentFiles";
 
 type CaptureTarget = DraftId | ScopedThreadRef;
 type CaptureFailure = "missing-project" | "delivery";
@@ -173,6 +174,7 @@ export async function deliverSnapShot(
     throw new Error("The captured window is too large to attach.");
   }
   const file = compressed.file;
+  await readComposerImageBytes(file);
   const source = resizeSnapShotSource(capture.source, compressed.imageSize);
   const dataUrl = compressed.recompressed ? await readFileAsDataUrl(file) : capture.dataUrl;
   const target = resolveTarget();
