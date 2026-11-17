@@ -18,6 +18,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
@@ -677,6 +678,81 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
 
       yield* openFakeCli(cli).pipe(Effect.provide(realQueryRunner));
       yield* Effect.promise(() => leftoverStopped);
+    }),
+  );
+
+  it.effect("reads the CLI's process tree once when its turn ends and not while it is idle", () =>
+    Effect.gen(function* () {
+      const cli = fakeClaudeCli(
+        [
+          'dir=$(dirname "$0")',
+          `while read -r line; do case "$line" in *'"type":"user"'*) break;; esac; done`,
+          `perl -e 'setpgrp(0, 0); exec @ARGV' sleep 600 > "$dir/alive" &`,
+          'echo $! > "$dir/leftover.pid"',
+          `echo '{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"native-session-fake-cli"}'`,
+          'read -r _ < "$dir/exit"',
+        ].join("\n"),
+      );
+      const dir = NodePath.dirname(cli);
+      NodeChildProcess.execFileSync("mkfifo", [NodePath.join(dir, "alive")]);
+      NodeChildProcess.execFileSync("mkfifo", [NodePath.join(dir, "exit")]);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          try {
+            process.kill(Number(NodeFS.readFileSync(NodePath.join(dir, "leftover.pid"), "utf8")));
+          } catch {}
+          NodeFS.rmSync(dir, { recursive: true, force: true });
+        }),
+      );
+      const alive = NodeFS.createReadStream(NodePath.join(dir, "alive"));
+      const leftoverStopped = new Promise<void>((resolve) => alive.once("close", () => resolve()));
+      alive.resume();
+      let listings = 0;
+      const countingSpawner = Layer.effect(
+        ChildProcessSpawner.ChildProcessSpawner,
+        Effect.gen(function* () {
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          return ChildProcessSpawner.make((command) => {
+            if (command._tag === "StandardCommand" && command.command === "ps") listings += 1;
+            return spawner.spawn(command);
+          });
+        }),
+      ).pipe(Layer.provide(NodeServices.layer));
+
+      const session = yield* openFakeCli(cli).pipe(
+        Effect.provide(
+          layerQueryRunner.pipe(
+            Layer.provide(countingSpawner),
+            Layer.provide(PortScanner.layerTest),
+            Layer.provide(
+              Layer.succeed(ProviderEventLoggers, { native: undefined, canonical: undefined }),
+            ),
+            Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
+        ),
+      );
+      const turnEnded = yield* Deferred.make<void>();
+      yield* session.messages.pipe(
+        Stream.tap((message) =>
+          message.type === "result" ? Deferred.succeed(turnEnded, undefined) : Effect.void,
+        ),
+        Stream.runDrain,
+        Effect.ignore,
+        Effect.forkScoped,
+      );
+      yield* session.offer({
+        type: "user",
+        message: { role: "user", content: "Start a job." },
+        parent_tool_use_id: null,
+        session_id: "native-session-fake-cli",
+      });
+      yield* Deferred.await(turnEnded);
+      const listingsAtTurnEnd = listings;
+      yield* TestClock.adjust("1 minute");
+      // The CLI exits on its own, so only the turn-end read can have recorded the job.
+      yield* Effect.promise(() => NodeFS.promises.writeFile(NodePath.join(dir, "exit"), "\n"));
+      yield* Effect.promise(() => leftoverStopped);
+      assert.equal(listings, listingsAtTurnEnd + 1);
     }),
   );
 
