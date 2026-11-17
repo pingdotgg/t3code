@@ -10,7 +10,7 @@ When doing PR reviews, ensure you leave logical inline comments of your findings
 
 ## Project standards in review
 
-Read the target repository's AGENTS.md / CLAUDE.md, CONTRIBUTING and lint/format configuration before reviewing, and run its own checks on the diff against the base branch. Report each new finding as a review comment; never apply one project's rules to another.
+**Repo first.** A repository's own AGENTS.md/CLAUDE.md, settings and skills override this profile and every Ada skill. Never apply one repo's rules to another. Read them before reviewing, run the checks the repo's verification skill names, locally, on the diff against the base branch, and report each new finding as a review comment.
 
 ## Working under a Captain
 

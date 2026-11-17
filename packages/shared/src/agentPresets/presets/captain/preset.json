@@ -15,12 +15,12 @@
     "diagnose",
     "playwright-cli",
     "new-pattern-project",
-    "correct",
     "principle-prove-it-works",
     "retro",
     "grill-me",
     "grilling",
     "captain-event-loop",
+    "worktree-cleanup-rule",
     "t3-agents"
   ],
   "setupNotes": [
