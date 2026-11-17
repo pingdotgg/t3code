@@ -114,6 +114,7 @@ export function EnvironmentRoutesList({
                 position={index + 1}
                 inUse={connectionRouteId(route.target) === activeRouteId}
                 mcpUrl={connectionRouteMcpUrl(route, relayHttpBaseUrl)}
+                refused={environment.refusedRouteIds.includes(connectionRouteId(route.target))}
                 removable={routes.length > 1 && !isLearned(route)}
                 onCopyMcpUrl={onCopyMcpUrl}
                 onRemove={() => void confirmRemove(route)}
@@ -137,6 +138,7 @@ function SortableRouteRow({
   position,
   inUse,
   mcpUrl,
+  refused,
   removable,
   onCopyMcpUrl,
   onRemove,
@@ -145,6 +147,7 @@ function SortableRouteRow({
   readonly position: number;
   readonly inUse: boolean;
   readonly mcpUrl: string | null;
+  readonly refused: boolean;
   readonly removable: boolean;
   readonly onCopyMcpUrl: (url: string) => void;
   readonly onRemove: () => void;
@@ -179,11 +182,21 @@ function SortableRouteRow({
               In use
             </span>
           ) : null}
+          {refused ? (
+            <span className="rounded-sm bg-destructive/8 px-1 text-2xs font-normal text-destructive-foreground">
+              Sign-in refused
+            </span>
+          ) : null}
         </p>
         {address !== null ? (
           <p className="truncate text-2xs text-muted-foreground">
             {address}
             {isLearned(route) ? " · found automatically" : ""}
+          </p>
+        ) : null}
+        {refused && address !== null ? (
+          <p className="text-2xs text-muted-foreground">
+            The host refused this device's sign-in. Pair this address again with Add route.
           </p>
         ) : null}
       </div>
