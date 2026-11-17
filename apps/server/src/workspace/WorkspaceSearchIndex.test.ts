@@ -170,7 +170,7 @@ it.effect("fetches past a first page of Git-ignored results", () =>
           ok: true as const,
           value: { isScanning: false },
         }),
-        watch: () => ({ ok: true as const, value: () => undefined }),
+        watchAsync: async () => ({ ok: true as const, value: () => undefined }),
         fileSearchAsync: fileSearch,
       } as unknown as FileFinder;
       vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
@@ -197,7 +197,7 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
             ok: true as const,
             value: { isScanning: false },
           }),
-          watch: () => ({ ok: true as const, value: () => undefined }),
+          watchAsync: async () => ({ ok: true as const, value: () => undefined }),
           fileSearchAsync: vi.fn(async () => ({
             ok: true as const,
             value: { items, scores: [], totalMatched: 1, totalFiles: 1 },
@@ -264,7 +264,7 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
           ok: true as const,
           value: { isScanning: false },
         }),
-        watch: () => ({ ok: true as const, value: () => undefined }),
+        watchAsync: async () => ({ ok: true as const, value: () => undefined }),
         grepAsync: grep,
       } as unknown as FileFinder;
       vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
@@ -333,7 +333,7 @@ it.live("answers content searches with git grep while a slow content index build
         ok: true as const,
         value: { isScanning: false, isWarmupComplete },
       }),
-      watch: () => ({ ok: true as const, value: () => undefined }),
+      watchAsync: async () => ({ ok: true as const, value: () => undefined }),
       grepAsync: grep,
     } as unknown as FileFinder;
     const noPcreFinder = {
@@ -512,10 +512,14 @@ function fakeSymlinkFinder(
       ok: true as const,
       value: { isScanning: false },
     }),
-    watch: (callback: (events: ReadonlyArray<WatchEvent>) => void) => {
+    // fff's watch waits on the picker lock on the JS thread.
+    watch: () => {
+      throw new Error("watch must not run on the JS thread");
+    },
+    watchAsync: async (callback: (events: ReadonlyArray<WatchEvent>) => void) => {
       if (watchFailures > 0) {
         watchFailures -= 1;
-        throw new Error("File system watcher is not ready");
+        return { ok: false as const, error: "File system watcher is not ready" };
       }
       watchers.push(callback);
       return { ok: true as const, value: () => undefined };
