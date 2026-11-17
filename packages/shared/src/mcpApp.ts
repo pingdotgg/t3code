@@ -8,7 +8,7 @@ export const MCP_APP_OUTPUT_KEY = "t3McpApp";
 /** Frame URL query parameter carrying the host's color scheme before `ui/initialize`. */
 export const MCP_APP_COLOR_SCHEME_PARAM = "t3-color-scheme";
 
-const MCP_APP_MIN_HEIGHT = 80;
+const MCP_APP_MIN_HEIGHT = 1;
 export const MCP_APP_DEFAULT_HEIGHT = 320;
 export const MCP_APP_MAX_HEIGHT = 2000;
 export const MCP_APP_MAX_HTML_BYTES = 5 * 1024 * 1024;

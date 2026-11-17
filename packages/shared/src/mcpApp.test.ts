@@ -2,6 +2,9 @@ import * as NodeVM from "node:vm";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  clampMcpAppHeight,
+  MCP_APP_DEFAULT_HEIGHT,
+  MCP_APP_MAX_HEIGHT,
   injectMcpAppCsp,
   injectMcpAppThemeBootstrap,
   injectMcpAppCookieBootstrap,
@@ -299,5 +302,17 @@ describe("MCP App cookie bootstrap", () => {
     });
     expect(() => execute(injectMcpAppCookieBootstrap(vendor), document)).toThrow(failure);
     expect(() => Reflect.get(document, "cookie")).toThrow(failure);
+  });
+});
+
+describe("clampMcpAppHeight", () => {
+  it.each([
+    [48, 48],
+    [48.6, 49],
+    [0, 1],
+    [2001, MCP_APP_MAX_HEIGHT],
+    [Number.NaN, MCP_APP_DEFAULT_HEIGHT],
+  ])("sizes a reported height of %s to %s pixels", (height, expected) => {
+    expect(clampMcpAppHeight(height)).toBe(expected);
   });
 });
