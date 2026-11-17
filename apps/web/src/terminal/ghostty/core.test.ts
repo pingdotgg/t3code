@@ -578,7 +578,7 @@ describe("GhosttyTerminalCore mouse encoding", () => {
       },
       () => {},
     );
-    const mouse = (
+    const report = (
       x: number,
       y: number,
       paddingTop: number,
@@ -601,6 +601,7 @@ describe("GhosttyTerminalCore mouse encoding", () => {
         paddingBottom: 279 - paddingTop - 15 * cellHeight,
         anyButtonPressed: true,
       });
+    const mouse = (...args: Parameters<typeof report>) => report(...args).data;
     try {
       core.write("\x1b[?1002h\x1b[?1006h");
       expect(mouse(218.5, 140, 4)).toBe("\x1b[<0;28;8M");
@@ -610,6 +611,12 @@ describe("GhosttyTerminalCore mouse encoding", () => {
       expect(mouse(500, 140, 4, 305, "release")).toBe("\x1b[<0;37;8m");
       core.write("\x1b[?1016h");
       expect(mouse(218.5, 22, 4.5)).toBe("\x1b[<0;215;17M");
+      core.resize(160, 15, cellWidth, cellHeight);
+      core.write("\x1b[?1002;1006;1016l\x1b[?1000h");
+      expect(report(4 + 99.5 * cellWidth, 140, 4, 1261)).toEqual({
+        data: "\x1b[M \x84(",
+        binary: true,
+      });
     } finally {
       core.dispose();
     }

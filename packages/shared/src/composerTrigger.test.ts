@@ -34,22 +34,21 @@ describe("detectComposerTrigger", () => {
     expect(detectComposerTrigger(text, cursor)).toBeNull();
   });
 
-  it("keeps a slash in the line-leading model picker query", () => {
-    expect(detectComposerTrigger("/model openai/gpt", 17)).toMatchObject({
-      kind: "slash-model",
-      query: "openai/gpt",
+  it.each([
+    ["/model", 0],
+    ["Question\n/MODEL", 9],
+  ])("offers typed %j as a slash command", (text, rangeStart) => {
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "slash-command",
+      query: text.slice(rangeStart + 1),
+      rangeStart,
+      rangeEnd: text.length,
     });
   });
 
-  it.each(["/Model opus", "/MODEL opus"])(
-    "opens the model picker for capitalized %j the same as /model",
-    (text) => {
-      expect(detectComposerTrigger(text, text.length)).toMatchObject({
-        kind: "slash-model",
-        query: "opus",
-      });
-    },
-  );
+  it("does not reopen a menu after /model arguments", () => {
+    expect(detectComposerTrigger("/Model opus", "/Model opus".length)).toBeNull();
+  });
 
   it.each(["Use /", "Use /review"])("detects the inline slash token in %j", (text) => {
     expect(detectComposerTrigger(text, text.length)).toEqual({
@@ -64,6 +63,50 @@ describe("detectComposerTrigger", () => {
     "does not trigger for %j",
     (text) => expect(detectComposerTrigger(text, text.length)).toBeNull(),
   );
+
+  it.each([
+    ["", "", ""],
+    ["Compare ", "8737", ""],
+    ["Compare (", "", ")"],
+    ["Compare(", "fix-name", ")"],
+    ["((", "fix_name", "))"],
+    ["[", "8737", "]"],
+    ["{", "8737", "}"],
+    ["【", "修正", "】"],
+  ])("keeps brackets outside the PR range after %j", (prefix, query, suffix) => {
+    const text = `${prefix}#${query}`;
+    expect(detectComposerTrigger(`${text}${suffix}`, text.length)).toEqual({
+      kind: "pull-request",
+      query,
+      rangeStart: prefix.length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it.each([
+    "# Heading",
+    "issue#123",
+    "https://example.com/#123",
+    "(#123)",
+    "[issue#123",
+    "[#_fix",
+    "]#123",
+  ])("does not detect a pull request in %j", (text) => {
+    expect(detectComposerTrigger(text, text.length)).toBeNull();
+  });
+
+  it.each([
+    ["@src/(#1", "path", "src/(#1"],
+    ["$review(#1", "skill", "review(#1"],
+  ])("keeps explicit completion for %j", (token, kind, query) => {
+    const text = `Use ${token}`;
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind,
+      query,
+      rangeStart: 4,
+      rangeEnd: text.length,
+    });
+  });
 
   it.each(["$", "€", "𑿝"])("detects %s skill prefixes and their source range", (prefix) => {
     const text = `Use ${prefix}review`;
