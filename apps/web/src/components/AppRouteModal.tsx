@@ -3,6 +3,7 @@ import { useRef, useState, type CSSProperties, type ReactNode } from "react";
 
 import { useNativeTitlebarHeight } from "../lib/windowControlsOverlay";
 import { useCloseAppModal } from "./sidebar/mainAppLocation";
+import { GlobalVoiceInputIndicator } from "./chat/GlobalVoiceInputIndicator";
 import { useThemeEditorStore } from "./settings/themeEditorStore";
 import { Button } from "./ui/button";
 import { Dialog, DialogClose, DialogPopup } from "./ui/dialog";
@@ -88,6 +89,7 @@ export function AppRouteModal({
           className="absolute inset-x-0 top-0 hidden h-(--app-modal-titlebar-height) [-webkit-app-region:drag] max-sm:block"
         />
         {children}
+        <GlobalVoiceInputIndicator />
       </DialogPopup>
     </Dialog>
   );
