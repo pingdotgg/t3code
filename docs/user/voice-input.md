@@ -73,7 +73,10 @@ language; speed is the time to transcribe 30 seconds on a reference GPU. Choose
 **Auto**, a recording that fails on the GPU is retried once on that same
 environment's CPU; a GPU you picked yourself reports the error instead. Nothing
 is ever retried on another environment. Models marked **Live preview** show
-text while you speak. Other models can process long recordings in chunks at pauses
+text while you speak. On web and desktop, turn off **Advanced → Streaming transcription**
+to transcribe with the same model after stopping instead. This may help when live
+transcription falls behind. The preference is saved on this device and only applies
+to models that support native streaming. Other models can process long recordings in chunks at pauses
 while you record; models with built-in long-form support transcribe when you stop.
 
 ## Dictate
@@ -83,6 +86,8 @@ macOS and Ctrl elsewhere). Press again, or the check mark, to finish; `Esc`
 discards the recording and leaves your draft unchanged. Recordings last up to
 five minutes. Text is inserted at the cursor or replaces the selection you had
 when recording started, and the editor is read-only while dictation runs.
+Changes that reach the draft meanwhile, such as a cited message, are kept;
+the text then goes after your selection instead of replacing it.
 
 Pressing Send while dictating finishes the recording and sends the draft once
 the transcript has been inserted. Cancelling also cancels that queued send. In

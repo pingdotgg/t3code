@@ -99,7 +99,13 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
       updateArgs: ["update"],
       updateLockKey: "grok",
       platform: context.platform,
-      env: { ...context.env, npm_config_allow_scripts: GROK_NPM_PACKAGE },
+      env: {
+        ...context.env,
+        npm_config_allow_scripts: GROK_NPM_PACKAGE,
+        // An npx-launched server's npm_config_user_agent outranks Grok's `[cli] installer`, steering
+        // a script install to npm. The runner extends process.env; only undefined removes a key.
+        npm_config_user_agent: undefined,
+      },
     });
   }),
 };
