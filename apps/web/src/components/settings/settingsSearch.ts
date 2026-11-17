@@ -734,7 +734,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Additional hidden file patterns",
     to: "/settings/diffs",
     searchTerms: [
-      "diff hide test files regex regular expressions storybook stories performance benchmarks",
+      "diff hide test files regex regular expressions generated performance benchmarks",
     ],
   },
   {

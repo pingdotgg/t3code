@@ -125,12 +125,8 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
 });
 
 import { render } from "../../../test/render";
-import {
-  getLocalStorageItem,
-  removeLocalStorageItem,
-  setLocalStorageItem,
-} from "~/hooks/useLocalStorage";
-import { __setClientSettingsForTests, getClientSettings } from "~/hooks/useSettings";
+import { setLocalStorageItem } from "~/hooks/useLocalStorage";
+import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import PullRequestCodeTab from "./PullRequestCodeTab";
 
 const detail: PullRequestDetailView = {
@@ -233,25 +229,15 @@ it("keeps the diff after a refresh that brings back the same page", async () => 
 });
 
 function hideFiles(patterns: string, hidden = true) {
-  const key = "t3code.diffHideTestFiles";
-  const previousSettings = getClientSettings();
-  const previousHidden = getLocalStorageItem(key, Schema.Boolean);
-  __setClientSettingsForTests({ ...previousSettings, diffHideFilePatterns: patterns });
-  setLocalStorageItem(key, hidden, Schema.Boolean);
-  return {
-    [Symbol.dispose]() {
-      __setClientSettingsForTests(previousSettings);
-      if (previousHidden === null) removeLocalStorageItem(key);
-      else setLocalStorageItem(key, previousHidden, Schema.Boolean);
-    },
-  };
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffHideFilePatterns: patterns });
+  setLocalStorageItem("t3code.diffHideTestFiles", hidden, Schema.Boolean);
 }
 
 it.each([false, true])(
   "keeps conversations when all files are hidden (raw fallback: %s)",
   async (raw) => {
     setup({ paged: false, raw });
-    using _settings = hideFiles("^a\\.ts$");
+    hideFiles("^a\\.ts$");
     const container = document.createElement("div");
     container.className = "h-[700px] w-[900px]";
     const details: PullRequestDetailView = {
@@ -298,7 +284,7 @@ it.each([false, true])(
 
 it("keeps an unsaved comment draft visible until it is cancelled", async () => {
   setup({ paged: false });
-  using _settings = hideFiles("^a\\.ts$", false);
+  hideFiles("^a\\.ts$", false);
   const container = document.createElement("div");
   container.className = "flex h-[700px] w-[900px]";
   const details: PullRequestDetailView = {

@@ -19,7 +19,7 @@ function PatternsInput({ value, onCommit }: { value: string; onCommit: (value: s
         value={draft}
         rows={3}
         spellCheck={false}
-        placeholder={"\\.stories\\.tsx$\n\\.(perf|bench)\\.[^/]+$\n(^|/)benchmarks/"}
+        placeholder={"(^|/)generated/\n\\.(perf|bench)\\.[^/]+$\n(^|/)benchmarks/"}
         onChange={(event) => setDraft(event.target.value)}
         onBlur={() => {
           if (errors.length === 0 && draft !== value) onCommit(draft);
