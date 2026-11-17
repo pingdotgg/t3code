@@ -3,15 +3,12 @@ import * as Schema from "effect/Schema";
 
 import {
   ProjectKnowledgeDelivery,
-  ProjectKnowledgeSearchResult,
-  selectProjectMemoryRecallMatches,
   ProjectKnowledgeListInput,
   ProjectKnowledgeListResult,
   ProjectKnowledgeMutation,
   ProjectKnowledgeStatus,
 } from "./projectKnowledge.ts";
 
-const decodeSearchResult = Schema.decodeUnknownSync(ProjectKnowledgeSearchResult);
 const decodeDelivery = Schema.decodeUnknownSync(ProjectKnowledgeDelivery);
 
 const decodeList = Schema.decodeUnknownSync(ProjectKnowledgeListResult);
@@ -140,46 +137,3 @@ it.each(["over_budget", "source_unavailable", "stale_revision", "not_permitted",
     expect(decodeDelivery({ ...oldDelivery, omissions }).omissions).toEqual(omissions);
   },
 );
-
-describe("project memory recall matches", () => {
-  it("keeps only strong cited matches and bounds optional context", () => {
-    const score = {
-      holographic: 1,
-      lexical: 1,
-      tokenOverlap: 0.4,
-      temporalDecay: 1,
-      reinforcement: 1,
-      trust: 0.8,
-      combined: 1,
-    };
-    const result = decodeSearchResult({
-      messages: { matches: [] },
-      facts: {
-        state: "available",
-        coverage: "complete",
-        nextCursor: null,
-        matches: [
-          { fact: { ...fact({ kind: "user" }), id: "uncited" }, score },
-          {
-            fact: { ...fact({ kind: "user" }), id: "weak", sources: [{ kind: "user" }] },
-            score: { ...score, lexical: 0, tokenOverlap: 0.01 },
-          },
-          ...["first", "second", "third"].map((id) => ({
-            fact: { ...fact({ kind: "user" }), id, sources: [{ kind: "user" }] },
-            score,
-          })),
-        ],
-      },
-    });
-    expect(selectProjectMemoryRecallMatches(result).map((item) => item.fact.id)).toEqual([
-      "first",
-      "second",
-    ]);
-    expect(
-      selectProjectMemoryRecallMatches({
-        ...result,
-        facts: { state: "unavailable", reason: "kernel_unavailable" },
-      }),
-    ).toEqual([]);
-  });
-});

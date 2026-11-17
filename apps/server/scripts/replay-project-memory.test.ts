@@ -57,6 +57,20 @@ const messages = [
     text: "/compact the tenant cache",
     created_by: "user",
   },
+  {
+    message_id: "command-notice",
+    project_id: "replay-project",
+    thread_id: "asking-thread",
+    payload_json: JSON.stringify({
+      text: "Change cache keys to include tenant IDs.",
+      createdBy: "agent",
+      notification: {
+        source: { kind: "background_command" },
+        outcome: "completed",
+        summary: "npm test completed",
+      },
+    }),
+  },
 ];
 
 it.effect("replays invented facts through recall and names the gate", () =>
@@ -82,31 +96,34 @@ it.effect("replays invented facts through recall and names the gate", () =>
     assert.equal(match?.characters, "Change cache keys to include tenant IDs.".length);
     assert.isAbove(match?.candidatesMs ?? -1, -1);
     assert.equal(typeof match?.candidatesMs, "number");
-    assert.equal(byId.get("greeting")?.gate, "not_substantive");
-    assert.equal(byId.get("greeting")?.candidatesMs, null);
+    assert.equal(byId.get("greeting")?.gate, "no_match");
+    assert.equal(typeof byId.get("greeting")?.candidatesMs, "number");
     assert.deepEqual(byId.get("greeting")?.deliveredFactIds, []);
     assert.equal(byId.get("unrelated")?.gate, "no_match");
     assert.deepEqual(byId.get("unrelated")?.deliveredFactIds, []);
     assert.equal(byId.get("slash")?.gate, "slash");
+    assert.equal(byId.get("command-notice")?.gate, "progress_notice");
+    assert.equal(byId.get("command-notice")?.candidatesMs, null);
+    assert.deepEqual(byId.get("command-notice")?.deliveredFactIds, []);
     assert.equal(summary.byGate.delivered, 1);
-    assert.equal(summary.byGate.not_substantive, 1);
-    assert.equal(summary.byGate.no_match, 1);
+    assert.equal(summary.byGate.no_match, 2);
     assert.equal(summary.byGate.slash, 1);
+    assert.equal(summary.byGate.progress_notice, 1);
     assert.equal(summary.byCreatedBy.user?.messages, 3);
-    assert.equal(summary.byCreatedBy.agent?.messages, 1);
-    assert.equal(summary.lookupLatencyMs.n, 2);
+    assert.equal(summary.byCreatedBy.agent?.messages, 2);
+    assert.equal(summary.lookupLatencyMs.n, 3);
     assert.equal(summary.factsLoaded, 1);
     const written = (
       JSON.parse(yield* fs.readFileString(path.join(out, "summary.json"))) as {
         messages: number;
       }
     ).messages;
-    assert.equal(written, 4);
+    assert.equal(written, 5);
     const lines = (yield* fs.readFileString(path.join(out, "results.ndjson")))
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as ReplayRow);
-    assert.equal(lines.length, 4);
+    assert.equal(lines.length, 5);
     yield* fs.writeFileString(factsPath, "[]");
     const failure = yield* replayProjectMemory({
       facts: factsPath,
