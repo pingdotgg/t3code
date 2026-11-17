@@ -73,14 +73,19 @@ vi.mock("../ChatView", () => ({
 import { AppSidebarLayout } from "../AppSidebarLayout";
 import { AgentsThreadView } from "../../routes/agents.$environmentId.$threadId";
 
+// The open state persists across cases and files, so a toggle here would carry over.
+function persistedSidebarStateReset() {
+  localStorage.removeItem("chat_thread_sidebar_open");
+  return { [Symbol.dispose]: () => localStorage.removeItem("chat_thread_sidebar_open") };
+}
+
 describe("Agents route shell", () => {
   it.each(["/agents", "/agents/machine/thread"])(
     "hides navigation on %s and keeps chat's sidebar context usable",
     async (pathname) => {
       // Below the mobile breakpoint the sidebar is a sheet, not the layout under test.
       await page.viewport(1280, 900);
-      // The open state persists, so an earlier case's toggle would carry over.
-      localStorage.removeItem("chat_thread_sidebar_open");
+      using _sidebarState = persistedSidebarStateReset();
       route.pathname = pathname;
       await using screen = await render(
         <AppSidebarLayout>
