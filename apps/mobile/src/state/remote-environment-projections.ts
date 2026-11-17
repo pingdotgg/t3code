@@ -102,6 +102,7 @@ export function createRemoteEnvironmentProjectionAtoms(input: {
         connection.phase === previousConnection?.phase &&
         connection.error === previousConnection?.error &&
         connection.traceId === previousConnection?.traceId &&
+        connection.awaitingApproval === previousConnection?.awaitingApproval &&
         serverConfig === previousServerConfig
       ) {
         return previous;
@@ -113,6 +114,7 @@ export function createRemoteEnvironmentProjectionAtoms(input: {
         connectionState: connection.phase,
         connectionError: connection.error,
         connectionErrorTraceId: connection.traceId,
+        ...(connection.awaitingApproval ? { connectionAwaitingApproval: true as const } : {}),
         serverConfig,
       };
       return previous;

@@ -293,7 +293,9 @@ const registerSshConnection = Effect.fn(
     return yield* differentMachineError(registration.target.label);
   }
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-  yield* registry.register(registration);
+  yield* registry.register(registration, {
+    knownAddressOnly: input.expectedEnvironmentId === undefined,
+  });
   return registration.target.environmentId;
 });
 

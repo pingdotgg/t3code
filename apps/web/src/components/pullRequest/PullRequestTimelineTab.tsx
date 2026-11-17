@@ -56,6 +56,8 @@ import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
+import { canReactPullRequestComment } from "@t3tools/client-runtime/pull-request-reactions";
+import { PullRequestResolveThreadButton } from "./PullRequestResolveThreadButton";
 import {
   PullRequestActorAvatar,
   PullRequestDiffStat,
@@ -74,7 +76,7 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 
 interface ReactionSurface {
   revealAnchor?: string | null;
-  readonly canReact: boolean;
+  readonly canReact: (event: PullRequestTimelineEvent) => boolean;
   /** Absent where there is no composer beside the panel to add a remark to. */
   readonly onAddToChat?: ((comment: PullRequestComment) => void) | undefined;
   readonly environmentId: EnvironmentId;
@@ -234,6 +236,7 @@ function ConversationCard({
   reactions,
   showPath = true,
   reply = false,
+  resolveButton = null,
 }: {
   event: PullRequestTimelineEvent;
   editable: PullRequestComment | null;
@@ -243,7 +246,9 @@ function ConversationCard({
   showPath?: boolean;
   /** A reply goes with its conversation, from the card that heads it. */
   reply?: boolean;
+  resolveButton?: ReactNode;
 }) {
+  const canReact = reactions.canReact(event);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const updateComment = useAtomCommand(pullRequestEnvironment.updateComment, {
@@ -273,7 +278,8 @@ function ConversationCard({
         ? {
             "data-pr-link-target": true,
             tabIndex: -1,
-            className: "group rounded-lg py-2 ring-1 ring-primary/40 outline-none",
+            // Inset: the collapsible panel clips an outer ring's left and right edges.
+            className: "group rounded-lg py-2 ring-1 ring-inset ring-primary/40 outline-none",
           }
         : { className: "group py-2" })}
     >
@@ -300,14 +306,15 @@ function ConversationCard({
           {editable !== null && !editing ? (
             <PullRequestEditButton aria-label="Edit comment" onClick={() => setEditing(true)} />
           ) : null}
+          {resolveButton}
           {event.body && event.comment && !reply ? (
             <AddToChatButton comment={event.comment} reactions={reactions} />
           ) : null}
-          {reactions.canReact || event.reactions.length > 0 ? (
+          {canReact || event.reactions.length > 0 ? (
             <PullRequestReactionBar
               className="ml-auto justify-end"
               reactions={event.reactions}
-              canReact={reactions.canReact}
+              canReact={canReact}
               subjectId={event.id}
               environmentId={reactions.environmentId}
               reference={reactions.reference}
@@ -443,10 +450,12 @@ function ReviewThreadEvent({
   cwd,
   onOpen,
   reactions,
+  detail,
 }: {
   revealAnchor?: string | null;
   event: PullRequestTimelineEvent;
   thread: PullRequestTimelineThread;
+  detail: PullRequestDetailView;
   editable: ReadonlyMap<string, PullRequestComment>;
   cwd: string;
   onOpen: (url: string) => void;
@@ -477,10 +486,16 @@ function ReviewThreadEvent({
         aria-expanded={expanded}
         onClick={() => setExpanded((current) => !current)}
       >
-        <FileCode2Icon aria-hidden className="size-3 shrink-0" />
-        <span className="min-w-0 truncate font-mono">
-          {thread.line === null ? thread.path : `${thread.path}:${thread.line}`}
-        </span>
+        {thread.path === null ? (
+          <span className="min-w-0 truncate">Overview</span>
+        ) : (
+          <>
+            <FileCode2Icon aria-hidden className="size-3 shrink-0" />
+            <span className="min-w-0 truncate font-mono">
+              {thread.line === null ? thread.path : `${thread.path}:${thread.line}`}
+            </span>
+          </>
+        )}
         {thread.isResolved ? (
           <span className="inline-flex shrink-0 items-center gap-1 font-medium text-success-foreground">
             <CircleCheckIcon aria-hidden className="size-3" />
@@ -514,6 +529,15 @@ function ReviewThreadEvent({
             onOpen={onOpen}
             reactions={reactions}
             showPath={false}
+            resolveButton={
+              <PullRequestResolveThreadButton
+                environmentId={reactions.environmentId}
+                reference={reactions.reference}
+                detail={detail}
+                thread={thread}
+                onRefresh={reactions.onRefresh}
+              />
+            }
           />
           {thread.replies.length > 0 ? (
             <div className="ml-2 space-y-1 border-l border-border/60 pl-3">
@@ -633,6 +657,7 @@ function ReviewVerdictEvent({
   onOpen: (url: string) => void;
   reactions: ReactionSurface;
 }) {
+  const canReact = reactions.canReact(event);
   return (
     <div className="group relative mb-5 pl-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
       <ActorTimelineMarker
@@ -680,11 +705,11 @@ function ReviewVerdictEvent({
         {event.body && event.comment ? (
           <AddToChatButton comment={event.comment} reactions={reactions} />
         ) : null}
-        {reactions.canReact || event.reactions.length > 0 ? (
+        {canReact || event.reactions.length > 0 ? (
           <PullRequestReactionBar
             className="ml-auto justify-end"
             reactions={event.reactions}
-            canReact={reactions.canReact}
+            canReact={canReact}
             subjectId={event.id}
             environmentId={reactions.environmentId}
             reference={reactions.reference}
@@ -756,7 +781,8 @@ export function PullRequestTimelineTab({
   const newestCommitAt = newestPullRequestCommitAt(detail.commits);
   const reactions: ReactionSurface = {
     revealAnchor: anchor,
-    canReact: detail.capabilities.reactions === true,
+    canReact: (event) =>
+      event.comment !== undefined && canReactPullRequestComment(detail, event.comment),
     onAddToChat: onAddToChat && ((comment) => onAddToChat({ kind: "comment", comment })),
     environmentId,
     threadRef,
@@ -828,6 +854,7 @@ export function PullRequestTimelineTab({
         <ReviewThreadEvent
           event={event}
           thread={event.thread}
+          detail={detail}
           revealAnchor={anchor}
           editable={editable}
           cwd={detail.workspaceRoot}

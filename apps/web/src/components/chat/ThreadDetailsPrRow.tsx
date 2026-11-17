@@ -20,6 +20,7 @@ import {
 import { AsyncResult } from "effect/reactivity";
 import { useState, type MouseEvent as ReactMouseEvent } from "react";
 
+import type { ComposerThreadTarget } from "~/composerDraftStore";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { usePullRequestChecksRefresh } from "~/hooks/usePullRequestChecksRefresh";
 import { cn } from "~/lib/utils";
@@ -53,6 +54,8 @@ import {
   usePullRequestActionRunner,
   usePullRequestDefaultMergeMethodResolver,
   usePullRequestHandoffs,
+  writeHandoffToComposer,
+  type PullRequestThreadTask,
 } from "../pullRequest/usePullRequestActions";
 import {
   ChangeRequestStatusIcon,
@@ -69,6 +72,8 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
+import { Spinner } from "../ui/spinner";
+import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   THREAD_DETAILS_PANEL_ICON_CLASS,
@@ -89,10 +94,10 @@ export function ThreadDetailsPrRow({
   status,
   project,
   label,
-  openAriaLabel,
   onOpen,
   onActed,
   onStopWatching,
+  composerTarget,
 }: {
   environmentId: EnvironmentId;
   pr: ThreadPr;
@@ -101,10 +106,11 @@ export function ThreadDetailsPrRow({
   status: PrStatusIndicator | null;
   project: EnvironmentProject | null;
   label: string;
-  openAriaLabel: string;
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
   onActed?: () => void;
   onStopWatching?: (() => void) | undefined;
+  /** Fix and Resolve write here instead of checking the pull request out in a new thread. */
+  composerTarget?: ComposerThreadTarget | undefined;
 }) {
   const serverConfigs = useServerConfigs();
   const supportsPullRequests = serverConfigs.get(environmentId) !== undefined;
@@ -189,21 +195,35 @@ export function ThreadDetailsPrRow({
     lastSelectedMergeMethod,
   );
 
+  const handOff = (kind: "conflicts" | "findings", task: PullRequestThreadTask) => {
+    if (composerTarget === undefined) {
+      void startHandoff(kind, task);
+      return;
+    }
+    writeHandoffToComposer(composerTarget, task);
+    toastManager.add({
+      type: "success",
+      title: "Added to the composer",
+      description: "The task is in the composer. Read it over, then send.",
+    });
+  };
+
   const startResolveConflicts = () => {
     if (detail === null) return;
-    void startHandoff("conflicts", {
+    handOff("conflicts", {
       prompt: buildResolveConflictsPrompt({
         number: detail.number,
         url: detail.url,
         headBranch: detail.headBranch,
         baseBranch: detail.baseBranch,
+        inThisThread: composerTarget !== undefined,
       }),
     });
   };
 
   const startFixChecks = () => {
     if (detail === null) return;
-    void startHandoff(
+    handOff(
       "findings",
       buildFixFindingsHandoff({
         number: detail.number,
@@ -217,6 +237,7 @@ export function ThreadDetailsPrRow({
         comments: [],
         checks: detail.checks,
         commentsTruncated: false,
+        inThisThread: composerTarget !== undefined,
       }),
     );
   };
@@ -241,6 +262,15 @@ export function ThreadDetailsPrRow({
   ) : (
     <PullRequestGlyph.pullRequest className={THREAD_DETAILS_PANEL_ICON_CLASS} />
   );
+
+  const stateLabel = (
+    statePresentation ??
+    (pr ? resolvePullRequestState({ state: pr.state, isDraft: pr.isDraft === true }) : null)
+  )?.label.toLowerCase();
+  const title = (detail?.title ?? pr?.title)?.trim();
+  const openAriaLabel = `${capitalizeTerm(terminology.singular)} #${number}${
+    stateLabel ? `, ${stateLabel}` : ""
+  }${title ? `: ${title}` : ""}`;
 
   const rowTooltip =
     detail === null || statePresentation === null ? (
@@ -318,6 +348,10 @@ export function ThreadDetailsPrRow({
       </TooltipPopup>
     );
 
+  const newThreadSuffix =
+    composerTarget === undefined ? (
+      <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />
+    ) : null;
   const trailingAction =
     rowAction === "resolve"
       ? {
@@ -325,8 +359,11 @@ export function ThreadDetailsPrRow({
           pendingLabel: "Preparing...",
           pending: handoff === "conflicts",
           destructive: true,
-          suffix: <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />,
-          tooltip: "Check the branch out and resolve the conflicts in a new thread",
+          suffix: newThreadSuffix,
+          tooltip:
+            composerTarget === undefined
+              ? "Check the branch out and resolve the conflicts in a new thread"
+              : "Resolve the conflicts in this thread",
           onClick: startResolveConflicts,
         }
       : rowAction === "ready"
@@ -342,11 +379,19 @@ export function ThreadDetailsPrRow({
         : rowAction === "fix"
           ? {
               label: "Fix",
-              pendingLabel: "Preparing...",
+              pendingLabel: "Fix",
               pending: handoff === "findings",
               destructive: true,
-              suffix: <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />,
-              tooltip: "Fix the failing checks in a new thread",
+              suffix:
+                handoff === "findings" ? (
+                  <Spinner size="xs" aria-label="Preparing fix" />
+                ) : (
+                  newThreadSuffix
+                ),
+              tooltip:
+                composerTarget === undefined
+                  ? "Fix the failing checks in a new thread"
+                  : "Fix the failing checks in this thread",
               onClick: startFixChecks,
             }
           : rowAction === "merge"
@@ -407,9 +452,7 @@ export function ThreadDetailsPrRow({
             type="button"
             variant="ghost"
             size="sm"
-            part={part}
-            multiline={wrap}
-            className={wrap ? "items-start [&>svg]:mt-px" : undefined}
+            part={wrap ? "title" : part}
             aria-label={openAriaLabel}
             onClick={onOpen}
             onAuxClick={onOpen}
@@ -439,14 +482,14 @@ export function ThreadDetailsPrRow({
       {detail !== null && (showChecks || trailingAction !== null || watching) ? (
         <div className="pb-1.5">
           {openRow(detail.title, "row", true)}
-          <div className="mt-1.5 flex h-5 min-w-0 items-center gap-0.5 ps-9 pe-2.5 text-xs text-muted-foreground">
+          <div className="flex h-5 min-w-0 items-center gap-0.5 ps-9 pe-2.5 text-xs text-muted-foreground">
             <span className="me-1 shrink-0 tabular-nums">#{number}</span>
             {showChecks && checksRollup !== null ? (
               <PullRequestChecksPopover
                 checksState={checksRollup}
                 checks={detail.checks}
                 variant="count"
-                render={<ThreadDetailsControl part="meta" />}
+                render={<ThreadDetailsControl part="meta" className="min-w-0 shrink" />}
               />
             ) : null}
             {watchControl("icon")}
