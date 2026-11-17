@@ -6,7 +6,6 @@
 export function resolveComposerControlsOwnership(input: {
   /** Permissions hide while the mode is the default, or while the new-thread strip names it. */
   readonly matchesDefault: boolean;
-  readonly planModeUiEnabled: boolean;
   readonly collapsed: boolean;
   /** How many trailing blocks the width measurement moved into the overflow menu. */
   readonly measuredHiddenBlockCount: number;
@@ -16,13 +15,10 @@ export function resolveComposerControlsOwnership(input: {
     : input.collapsed
       ? ("icon" as const)
       : ("label" as const);
-  const showModeBlock = accessDisplay !== "hidden" || input.planModeUiEnabled;
+  const showModeBlock = accessDisplay !== "hidden";
   const modeHidden = showModeBlock && input.measuredHiddenBlockCount > 0;
   const hiddenBlockIds = modeHidden ? (["mode"] as const) : ([] as const);
-  // An overflowed chip needs a home for Permissions only when the Plan toggle is not there to fill
-  // the overflow menu; otherwise Permissions stay in the model picker.
-  const overflowShowsPermissions =
-    modeHidden && accessDisplay !== "hidden" && !input.planModeUiEnabled;
+  const overflowShowsPermissions = modeHidden;
   return {
     accessDisplay,
     showModeBlock,
