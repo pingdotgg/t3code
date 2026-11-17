@@ -1,5 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
-import { isProviderAvailable, type UsageProviderKind } from "@t3tools/contracts";
+import {
+  isProviderAvailable,
+  PROVIDER_DISPLAY_NAMES,
+  type UsageProviderKind,
+} from "@t3tools/contracts";
 import {
   collectLimitAccounts,
   collectLimitPools,
@@ -105,16 +109,26 @@ const NARROW_CARD = 760;
 const CARD_PADDING = 32;
 /** Refills smaller than this many points still step the chart but get no tag or headline. */
 const MIN_REFILL = 5;
-/** Points closer than this to the first one in a group share its tag. */
-const TAG_MERGE_PX = 44;
+/** Events of one kind this close to the first in a group, in time or on screen, share its tag. */
+const TAG_MERGE_MS = 2 * HOUR_MS;
+const TAG_MERGE_PX = 16;
 const TAG_HEIGHT = 14;
+/** A tag that would collide with another steps up by this much. */
+const TAG_ROW = TAG_HEIGHT + 2;
 const TAG_GAP = 4;
+/** The rows a tag may step down into when there is no room above it. */
+const TAG_ROWS_DOWN = 4;
+/** Room kept between a pill's edge and another event's tick. */
+const TAG_TICK_CLEAR = 3;
 /** Clear space kept between neighbouring tags, and right of the NOW label. */
 const TAG_SPACING = 4;
 const NOW_LABEL_PX = 24;
+const NOW_LABEL_HEIGHT = 12;
 const POOL_DRY_LABEL_MIN_PX = 72;
 const PIPS_PER_ROW = 8;
-const PIP_GAP = 3;
+const PIP_GAP = 4;
+/** Height of the rose bar an empty account's pip sits on. */
+const PIP_EMPTY_BAR = 2;
 /** The rail's gap plus one text-xs line, for the "No limits" line. */
 const NO_LIMITS_PX = 28;
 /** Room a weekday label needs under the chart. */
@@ -130,13 +144,21 @@ const FORECAST_DENSITY = { start: 0.65, end: 0.3 } as const;
 
 const WEEKDAY_HOUR = new Intl.DateTimeFormat("en-US", { weekday: "short", hour: "numeric" });
 
+/**
+ * An account named only after its provider (the driver's default instance) is the provider's
+ * default sign-in, so it never repeats the provider's label under it.
+ */
 function accountName(account: LimitAccount): string {
-  if (account.displayName) return account.displayName;
+  const providerNames = [PROVIDER_DISPLAY_NAMES[account.driver], poolLabel(String(account.driver))];
+  const name = account.displayName;
+  if (name && !providerNames.some((other) => other?.toLowerCase() === name.toLowerCase())) {
+    return name;
+  }
   if (account.email) {
     const [local = "", domain = ""] = account.email.split("@");
     return `${local[0] ?? ""}${domain[0] ?? ""}`.toUpperCase();
   }
-  return poolLabel(String(account.driver));
+  return "Default";
 }
 
 function formatPercent(value: number): string {
@@ -290,7 +312,8 @@ export function PoolWidget({
     burns,
     projection,
     capacity: providers.reduce((sum, provider) => sum + provider.capacity, 0),
-    left: providers.reduce((sum, provider) => sum + provider.left, 0),
+    // The sum of the rounded per-provider values the rail shows, so the headline adds up.
+    left: providers.reduce((sum, provider) => sum + Math.round(provider.left), 0),
     start,
     end,
     now,
@@ -630,11 +653,24 @@ function drawPip(
 ) {
   const columns = Math.floor((width + 1) / CELL);
   const rows = Math.floor((height + 1) / CELL);
-  const lit = (Math.max(0, Math.min(100, left)) / 100) * rows;
+  const spent = color(PIP_EMPTY);
+  if (left < 0.5) {
+    // An empty account: spent cells over a solid rose bar, so it never reads as a dim partial.
+    context.fillStyle = spent;
+    for (let row = 0; row < rows - 1; row += 1) {
+      for (let column = 0; column < columns; column += 1) {
+        context.fillRect(column * CELL, row * CELL, CELL - 1, CELL - 1);
+      }
+    }
+    context.fillStyle = color(ROSE);
+    context.fillRect(0, rows * CELL - 1 - PIP_EMPTY_BAR, columns * CELL - 1, PIP_EMPTY_BAR);
+    return;
+  }
+  // Anything left lights at least the bottom row, so a few percent never looks empty.
+  const lit = Math.max(1, (Math.min(100, left) / 100) * rows);
   const full = Math.floor(lit);
   const fill = color(poolColor(driver));
   const crest = color(`color-mix(in oklab, ${poolColor(driver)} 70%, white)`);
-  const spent = color(PIP_EMPTY);
   for (let row = 0; row < rows; row += 1) {
     const fromBottom = rows - 1 - row;
     for (let column = 0; column < columns; column += 1) {
@@ -767,6 +803,7 @@ function runoutLength(model: PoolModel, span: ProviderDrySpan | DrySpan): string
 
 interface LanePoint {
   readonly id: string;
+  readonly t: number;
   readonly x: number;
   readonly stackY: number;
   readonly tickTo: number;
@@ -780,8 +817,12 @@ interface LaneTag {
   readonly left: number;
   readonly width: number;
   readonly top: number;
-  readonly drivers: ReadonlyArray<string>;
-  readonly amount: number;
+  /** Refills in time order; back-to-back refills of one provider share a chip. */
+  readonly refills: ReadonlyArray<{
+    readonly id: string;
+    readonly driver: string;
+    readonly amount: number;
+  }>;
   readonly runout: string | null;
   readonly ticks: ReadonlyArray<{
     readonly id: string;
@@ -789,6 +830,13 @@ interface LaneTag {
     readonly to: number;
     readonly color: string;
   }>;
+}
+
+interface TagBox {
+  readonly left: number;
+  readonly right: number;
+  readonly top: number;
+  readonly bottom: number;
 }
 
 let measureContext: CanvasRenderingContext2D | null | undefined;
@@ -811,52 +859,114 @@ function runoutText(points: ReadonlyArray<LanePoint>): string | null {
   return `${[...new Set(runouts.map((runout) => poolLabel(runout.driver)))].join(", ")} out`;
 }
 
-/** One pill: border and padding, refill chips and amount, a divider, then the runouts. */
-function layoutTag(points: ReadonlyArray<LanePoint>, minLeft: number, width: number): LaneTag {
-  const refills = points.flatMap((point) => (point.refill ? [point.refill] : []));
+function tagRefills(points: ReadonlyArray<LanePoint>): LaneTag["refills"] {
+  const refills: Array<{ id: string; driver: string; amount: number }> = [];
+  for (const point of points) {
+    if (!point.refill) continue;
+    const last = refills.at(-1);
+    if (last?.driver === point.refill.driver) last.amount += point.refill.amount;
+    else refills.push({ id: point.id, driver: point.refill.driver, amount: point.refill.amount });
+  }
+  return refills;
+}
+
+const overlaps = (a: TagBox, b: TagBox) =>
+  a.left < b.right + TAG_SPACING &&
+  b.left < a.right + TAG_SPACING &&
+  a.top < b.bottom &&
+  b.top < a.bottom;
+
+/**
+ * Places one group's pill over its own events: centred on them where it can be, sliding no
+ * further than keeps every event inside its middle half, and stepping up a row (down only when
+ * the top is reached) until it clears every pill placed before it and the NOW label.
+ */
+function placeTag(
+  points: ReadonlyArray<LanePoint>,
+  width: number,
+  taken: ReadonlyArray<TagBox>,
+  otherTicks: ReadonlyArray<number>,
+): LaneTag {
+  const refills = tagRefills(points);
   const runout = runoutText(points);
-  const drivers = [...new Set(refills.map((refill) => refill.driver))];
-  const amount = refills.reduce((total, refill) => total + refill.amount, 0);
   const items = [
-    ...drivers.map(() => 6),
-    ...(refills.length > 0 ? [tagTextWidth(`+${formatPercent(amount)}`)] : []),
-    ...(runout === null ? [] : [tagTextWidth(runout) + (refills.length > 0 ? 5 : 0)]),
+    ...refills.map((refill) => 6 + 4 + tagTextWidth(`+${formatPercent(refill.amount)}`)),
+    ...(runout === null ? [] : [tagTextWidth(runout)]),
   ];
-  const tagWidth = 10 + sumValues(items) + 4 * (items.length - 1);
-  const center = sumValues(points.map((point) => point.x)) / points.length;
-  const left = Math.max(minLeft, Math.min(width - tagWidth, center - tagWidth / 2));
-  const top = Math.max(0, Math.min(...points.map((point) => point.stackY)) - TAG_GAP - TAG_HEIGHT);
+  const tagWidth = 10 + sumValues(items) + 6 * (items.length - 1);
+  const xs = points.map((point) => point.x);
+  const first = Math.min(...xs);
+  const last = Math.max(...xs);
+  const inset = Math.max(4, tagWidth / 4);
+  let low = Math.max(0, last + inset - tagWidth);
+  let high = Math.min(width - tagWidth, first - inset);
+  if (low > high) {
+    low = Math.max(0, last + 2 - tagWidth);
+    high = Math.min(width - tagWidth, first - 2);
+  }
+  if (low > high)
+    low = high = Math.max(0, Math.min(width - tagWidth, (first + last - tagWidth) / 2));
+  const ideal = Math.max(low, Math.min(high, (first + last - tagWidth) / 2));
+  const baseTop = Math.max(
+    0,
+    Math.min(...points.map((point) => point.stackY)) - TAG_GAP - TAG_HEIGHT,
+  );
+  const tops: number[] = [];
+  for (let top = baseTop; top >= 0; top -= TAG_ROW) tops.push(top);
+  for (let row = 1; row <= TAG_ROWS_DOWN; row += 1) tops.push(baseTop + row * TAG_ROW);
+
+  const lefts = [
+    ideal,
+    ...taken.flatMap((other) => [other.right + TAG_SPACING, other.left - TAG_SPACING - tagWidth]),
+    ...otherTicks.flatMap((x) => [x + TAG_TICK_CLEAR, x - TAG_TICK_CLEAR - tagWidth]),
+  ]
+    .filter((candidate) => candidate >= low && candidate <= high)
+    .toSorted((a, b) => Math.abs(a - ideal) - Math.abs(b - ideal));
+  const fits = (left: number, top: number) => {
+    const box = { left, right: left + tagWidth, top, bottom: top + TAG_HEIGHT };
+    return taken.every((other) => !overlaps(box, other));
+  };
+  // Another event's tick may have to rise past this pill, so the pill keeps clear of it where it can.
+  const clearOfTicks = (left: number) =>
+    otherTicks.every((x) => x <= left - TAG_TICK_CLEAR || x >= left + tagWidth + TAG_TICK_CLEAR);
+  let left = ideal;
+  let top = baseTop;
+  for (const candidateTop of tops) {
+    const fitting = lefts.filter((candidate) => fits(candidate, candidateTop));
+    const chosen = fitting.find(clearOfTicks) ?? fitting[0];
+    if (chosen !== undefined) {
+      left = chosen;
+      top = candidateTop;
+      break;
+    }
+  }
   return {
     key: points.map((point) => point.id).join("|"),
     left,
     width: tagWidth,
     top,
-    drivers,
-    amount,
+    refills,
     runout,
-    // A tick only hangs from the pill itself, never from empty space beside it.
-    ticks: points
-      .filter((point) => point.x >= left + 1 && point.x <= left + tagWidth - 1)
-      .map((point) => ({
-        id: point.id,
-        x: Math.round(point.x),
-        to: point.tickTo,
-        color: point.color,
-      })),
+    ticks: points.map((point) => ({
+      id: point.id,
+      x: Math.round(point.x),
+      to: point.tickTo,
+      color: point.color,
+    })),
   };
 }
 
 /**
- * One lane of tags above the pool's silhouette: each refill where it lands, with a tick down to
- * the step in its provider's band, and each runout where a band reaches zero. Points within
- * TAG_MERGE_PX of a group's first point share a tag, and a tag that would still overlap the one
- * before it merges into it.
+ * Tags above the pool's silhouette: each refill where it lands, with a tick down to the step in
+ * its provider's band, and each runout where a band reaches zero. Refills and runouts never share
+ * a tag; events of one kind share one only when they fall within TAG_MERGE_MS or TAG_MERGE_PX of
+ * the first in the group, listed in time order. Any other collision stacks the later tag a row up.
  */
 function laneTags(
   model: PoolModel,
   geometry: ChartGeometry,
   width: number,
-  minLeft: number,
+  nowLabel: { readonly left: number; readonly right: number },
 ): LaneTag[] {
   const refills = model.projection.refills
     .filter(
@@ -866,6 +976,7 @@ function laneTags(
       const { stackY, bandY } = stackAfter(model, geometry, refill.driver, refill.at);
       return {
         id: `refill:${refill.account}:${refill.at}`,
+        t: refill.at,
         x: geometry.xOf(refill.at),
         stackY,
         tickTo: bandY,
@@ -879,6 +990,7 @@ function laneTags(
       const { stackY, bandY } = stackAfter(model, geometry, span.driver, span.from);
       return {
         id: `runout:${span.driver}:${span.from}`,
+        t: span.from,
         x: geometry.xOf(span.from),
         stackY,
         tickTo: bandY,
@@ -886,27 +998,35 @@ function laneTags(
         runout: { driver: span.driver, length: runoutLength(model, span) },
       };
     });
-  const points = [...refills, ...runouts].toSorted((left, right) => left.x - right.x);
   const groups: LanePoint[][] = [];
-  for (const point of points) {
-    const group = groups.at(-1);
-    if (group && point.x - group[0]!.x < TAG_MERGE_PX) group.push(point);
-    else groups.push([point]);
-  }
-  const placed: Array<{ points: LanePoint[]; tag: LaneTag }> = [];
-  for (const group of groups) {
-    let merged = group;
-    let tag = layoutTag(merged, minLeft, width);
-    let previous = placed.at(-1);
-    while (previous && tag.left < previous.tag.left + previous.tag.width + TAG_SPACING) {
-      placed.pop();
-      merged = previous.points.concat(merged);
-      tag = layoutTag(merged, minLeft, width);
-      previous = placed.at(-1);
+  for (const points of [refills, runouts]) {
+    let group: LanePoint[] | null = null;
+    for (const point of points.toSorted((left, right) => left.t - right.t)) {
+      const head = group?.[0];
+      if (group && head && (point.t - head.t <= TAG_MERGE_MS || point.x - head.x < TAG_MERGE_PX)) {
+        group.push(point);
+      } else {
+        group = [point];
+        groups.push(group);
+      }
     }
-    placed.push({ points: merged, tag });
   }
-  return placed.map((entry) => entry.tag);
+  const taken: TagBox[] = [{ ...nowLabel, top: 0, bottom: NOW_LABEL_HEIGHT }];
+  const tags: LaneTag[] = [];
+  for (const group of groups.toSorted((left, right) => left[0]!.t - right[0]!.t)) {
+    const otherTicks = [...refills, ...runouts]
+      .filter((point) => !group.includes(point))
+      .map((point) => point.x);
+    const tag = placeTag(group, width, taken, otherTicks);
+    tags.push(tag);
+    taken.push({
+      left: tag.left,
+      right: tag.left + tag.width,
+      top: tag.top,
+      bottom: tag.top + TAG_HEIGHT,
+    });
+  }
+  return tags;
 }
 
 function PoolChart({ model }: { readonly model: PoolModel }) {
@@ -954,7 +1074,10 @@ function PoolChart({ model }: { readonly model: PoolModel }) {
             model={model}
             geometry={geometry}
             width={width}
-            minTagLeft={(nowX >= 14 ? nowX + NOW_LABEL_PX / 2 : NOW_LABEL_PX) + TAG_SPACING}
+            nowLabel={{
+              left: nowX >= 14 ? nowX - NOW_LABEL_PX / 2 : 0,
+              right: nowX >= 14 ? nowX + NOW_LABEL_PX / 2 : NOW_LABEL_PX,
+            }}
           />
         ) : null}
       </div>
@@ -978,15 +1101,15 @@ function ChartHover({
   model,
   geometry,
   width,
-  minTagLeft,
+  nowLabel,
 }: {
   readonly model: PoolModel;
   readonly geometry: ChartGeometry;
   readonly width: number;
-  readonly minTagLeft: number;
+  readonly nowLabel: { readonly left: number; readonly right: number };
 }) {
   const [hover, setHover] = useState<number | null>(null);
-  const tags = laneTags(model, geometry, width, minTagLeft);
+  const tags = laneTags(model, geometry, width, nowLabel);
   const span = model.end - model.start;
   const hoverX = hover === null ? 0 : geometry.xOf(hover);
 
@@ -1007,46 +1130,44 @@ function ChartHover({
           hover !== null && "opacity-30",
         )}
       >
+        {/* Every tick first, so a pill stepped above another never has a tick drawn over it. */}
+        {tags.flatMap((tag) =>
+          tag.ticks.map((tick) =>
+            tick.to > tag.top + TAG_HEIGHT ? (
+              <span
+                key={tick.id}
+                aria-hidden
+                className="absolute w-px"
+                style={{
+                  left: tick.x,
+                  top: tag.top + TAG_HEIGHT,
+                  height: tick.to - tag.top - TAG_HEIGHT,
+                  background: tick.color,
+                }}
+              />
+            ) : null,
+          ),
+        )}
         {tags.map((tag) => (
-          <div key={tag.key}>
-            {tag.ticks.map((tick) =>
-              tick.to > tag.top + TAG_HEIGHT ? (
-                <span
-                  key={tick.id}
-                  aria-hidden
-                  className="absolute w-px"
-                  style={{
-                    left: tick.x,
-                    top: tag.top + TAG_HEIGHT,
-                    height: tick.to - tag.top - TAG_HEIGHT,
-                    background: tick.color,
-                  }}
-                />
-              ) : null,
-            )}
-            <span
-              className="absolute inline-flex items-center justify-center gap-1 rounded-sm border bg-popover/90 px-1 text-3xs font-medium whitespace-nowrap tabular-nums"
-              style={{
-                left: tag.left,
-                top: tag.top,
-                width: tag.width,
-                height: TAG_HEIGHT,
-                borderColor:
-                  tag.drivers.length === 0
-                    ? `color-mix(in oklab, ${ROSE} 45%, transparent)`
-                    : undefined,
-              }}
-            >
-              {tag.drivers.map((driver) => (
-                <Chip key={driver} driver={driver} className="size-1.5" />
-              ))}
-              {tag.drivers.length > 0 ? `+${formatPercent(tag.amount)}` : null}
-              {tag.runout !== null && tag.drivers.length > 0 ? (
-                <span aria-hidden className="h-2 w-px bg-border" />
-              ) : null}
-              {tag.runout === null ? null : <span style={{ color: ROSE }}>{tag.runout}</span>}
-            </span>
-          </div>
+          <span
+            key={tag.key}
+            className="absolute inline-flex items-center justify-center gap-1.5 rounded-sm border bg-popover/90 px-1 text-3xs font-medium whitespace-nowrap tabular-nums"
+            style={{
+              left: tag.left,
+              top: tag.top,
+              width: tag.width,
+              height: TAG_HEIGHT,
+              borderColor:
+                tag.runout === null ? undefined : `color-mix(in oklab, ${ROSE} 45%, transparent)`,
+            }}
+          >
+            {tag.refills.map((refill) => (
+              <span key={refill.id} className="inline-flex items-center gap-1">
+                <Chip driver={refill.driver} className="size-1.5" />+{formatPercent(refill.amount)}
+              </span>
+            ))}
+            {tag.runout === null ? null : <span style={{ color: ROSE }}>{tag.runout}</span>}
+          </span>
         ))}
       </div>
       {hover !== null ? (
@@ -1089,6 +1210,24 @@ function HoverReadout({
     (sum, provider) => sum + provider.accounts.length,
     0,
   );
+  const accountRows = totalAccounts <= HOVER_ACCOUNT_ROWS_MAX;
+  // Every figure is rounded once and each total is the sum of the figures shown above it.
+  const rows = model.providers.map((provider, index) => {
+    const accounts = accountValuesAt(model, provider, t).map((left) =>
+      left === null ? null : Math.round(left),
+    );
+    const listed = accountRows && provider.accounts.length > 1;
+    const known = accounts.filter((left): left is number => left !== null);
+    return {
+      provider,
+      accounts,
+      listed,
+      value:
+        listed && known.length === accounts.length
+          ? sumValues(known)
+          : Math.round(values[index] ?? 0),
+    };
+  });
   return (
     <div
       className="pointer-events-none absolute top-0 z-10 min-w-40 rounded-md border bg-popover/95 px-2.5 py-1.5 text-2xs leading-4 text-popover-foreground shadow-lg backdrop-blur-sm"
@@ -1102,49 +1241,45 @@ function HoverReadout({
           {recorded ? "recorded" : "forecast"}
         </span>
       </div>
-      {model.providers
-        .map((provider, index) => ({ provider, value: values[index] ?? 0 }))
-        .toReversed()
-        .map(({ provider, value }) => {
-          const accounts = accountValuesAt(model, provider, t);
-          const dry = accounts.filter((left) => left !== null && left < 0.5).length;
-          return (
-            <div key={provider.driver} className="tabular-nums">
-              <div className="flex items-baseline justify-between gap-4">
-                <span className="inline-flex items-baseline gap-1.5">
-                  <Chip driver={provider.driver} className="self-center" />
-                  {poolLabel(provider.driver)}
-                </span>
-                <DryValue left={value} suffix=" left" />
-              </div>
-              {totalAccounts <= HOVER_ACCOUNT_ROWS_MAX ? (
-                provider.accounts.length > 1 ? (
-                  provider.accounts.map((account, index) => {
-                    const left = accounts[index];
-                    if (left === null || left === undefined) return null;
-                    return (
-                      <div
-                        key={account.key}
-                        className="flex items-baseline justify-between gap-4 ps-3.5 text-muted-foreground"
-                      >
-                        <span className="truncate">{account.name}</span>
-                        <DryValue left={left} />
-                      </div>
-                    );
-                  })
-                ) : null
-              ) : dry > 0 ? (
-                <div className="ps-3.5 text-muted-foreground">
-                  {dry} of {accounts.length} dry
-                </div>
-              ) : null}
+      {rows.toReversed().map(({ provider, accounts, listed, value }) => {
+        const dry = accounts.filter((left) => left !== null && left < 0.5).length;
+        return (
+          <div key={provider.driver} className="tabular-nums">
+            <div className="flex items-baseline justify-between gap-4">
+              <span className="inline-flex items-baseline gap-1.5">
+                <Chip driver={provider.driver} className="self-center" />
+                {poolLabel(provider.driver)}
+              </span>
+              <DryValue left={value} suffix=" left" />
             </div>
-          );
-        })}
+            {accountRows ? (
+              listed ? (
+                provider.accounts.map((account, index) => {
+                  const left = accounts[index];
+                  if (left === null || left === undefined) return null;
+                  return (
+                    <div
+                      key={account.key}
+                      className="flex items-baseline justify-between gap-4 ps-3.5 text-muted-foreground"
+                    >
+                      <span className="truncate">{account.name}</span>
+                      <DryValue left={left} />
+                    </div>
+                  );
+                })
+              ) : null
+            ) : dry > 0 ? (
+              <div className="ps-3.5 text-muted-foreground">
+                {dry} of {accounts.length} dry
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
       <div className="mt-1 flex items-baseline justify-between gap-4 border-t pt-1 tabular-nums">
         <span className="text-muted-foreground">Pool</span>
         <span>
-          {formatPercent(sumValues(values))}
+          {formatPercent(sumValues(rows.map((row) => row.value)))}
           <span className="text-muted-foreground"> of {formatPercent(model.capacity)}</span>
         </span>
       </div>
