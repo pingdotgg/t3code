@@ -8,6 +8,8 @@ import {
   buildFileDiffRenderKey,
   getDiffLineStat,
   getRenderablePatch,
+  retainLoadedReviewFiles,
+  retainedReviewFile,
   resolveFileDiffPath,
   resolveFileDiffPreviousPath,
 } from "./diffRendering";
@@ -311,6 +313,80 @@ describe("diff file reconciliation", () => {
     expect(after[2]?.fileVersion).toBe(before[2]?.fileVersion);
   });
 
+  const reviewFile = (line: string) => {
+    const patch = getRenderablePatch(
+      [
+        "diff --git a/app.ts b/app.ts",
+        "--- a/app.ts",
+        "+++ b/app.ts",
+        "@@ -1 +1 @@",
+        "-before",
+        `+${line}`,
+      ].join("\n"),
+      "review",
+    );
+    if (patch?.kind !== "files" || !patch.files[0]) throw new Error("Expected a file patch");
+    return patch.files[0];
+  };
+  const loaded = reviewFile("after");
+  const placeholder = {
+    ...loaded,
+    cacheKey: "refresh:app.ts:pending",
+    hunks: [],
+    additionLines: [],
+    deletionLines: [],
+    splitLineCount: 0,
+    unifiedLineCount: 0,
+  };
+
+  it("keeps loaded hunks during a same-review refresh until fresh content arrives", () => {
+    const previous = retainLoadedReviewFiles(new Map(), [loaded]);
+    const pending = retainedReviewFile({
+      loaded: null,
+      previous: previous.get(buildFileDiffIdentityKey(loaded)),
+      placeholder,
+      sameFamily: true,
+      pending: true,
+    });
+    expect(pending).toBe(loaded);
+    expect(getDiffLineStat([pending])).toEqual({ additions: 1, deletions: 1 });
+
+    const refreshed = retainedReviewFile({
+      loaded: reviewFile("newer"),
+      previous: pending,
+      placeholder,
+      sameFamily: true,
+      pending: false,
+    });
+    expect(refreshed.additionLines.join("")).toBe("newer");
+    expect(buildFileDiffContentVersion(refreshed)).not.toBe(buildFileDiffContentVersion(pending));
+  });
+
+  it("drops old hunks after a failed refresh or a switch to another review", () => {
+    const failed = retainedReviewFile({
+      loaded: null,
+      previous: loaded,
+      placeholder,
+      sameFamily: true,
+      pending: false,
+    });
+    expect(failed.hunks).toEqual([]);
+    const retained = retainLoadedReviewFiles(
+      new Map([[buildFileDiffIdentityKey(loaded), loaded]]),
+      [failed],
+    );
+    expect(retained.has(buildFileDiffIdentityKey(loaded))).toBe(false);
+
+    const switched = retainedReviewFile({
+      loaded: null,
+      previous: loaded,
+      placeholder,
+      sameFamily: false,
+      pending: true,
+    });
+    expect(switched.hunks).toEqual([]);
+  });
+
   it("keeps Pierre's render key stable when a partial diff hydrates", () => {
     const patch = [
       "diff --git a/example.ts b/example.ts",
@@ -358,6 +434,8 @@ describe("diff file reconciliation", () => {
 
     expect(buildFileDiffIdentityKey(deleted)).not.toBe(buildFileDiffIdentityKey(added));
     expect(new Set(parsed.files.map(buildFileDiffIdentityKey)).size).toBe(parsed.files.length);
+    const retained = retainLoadedReviewFiles(new Map(), parsed.files);
+    expect([...retained.values()]).toEqual([deleted, added]);
   });
 
   it("keeps identities stable and versions local to the changed file", () => {
