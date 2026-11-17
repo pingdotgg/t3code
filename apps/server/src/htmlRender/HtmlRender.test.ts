@@ -242,6 +242,11 @@ describe("HtmlRender", () => {
       const reused = yield* htmlRender.publish({ threadId, ...page });
       yield* mcpSessions.set({ ...session, browserToolsAvailable: true });
       expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toEqual(reused);
+      const first = yield* htmlRender.publish({ threadId, ...page });
+      const second = yield* htmlRender.publish({ threadId, ...page });
+      expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toEqual(first);
+      expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toEqual(second);
+      expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toBe(undefined);
 
       yield* htmlRender.publish({ threadId, ...page });
       yield* mcpSessions.set({
@@ -453,6 +458,7 @@ process.on("SIGTERM", () => {});
 const quit = () => { fs.writeFileSync(${JSON.stringify(exitRecord)}, "asked to close"); process.exit(0); };
 const reply = (message) => fs.writeSync(4, JSON.stringify(message) + "\\0");
 const results = {
+  "Target.createBrowserContext": { browserContextId: "context" },
   "Target.createTarget": { targetId: "page" },
   "Target.attachToTarget": { sessionId: "session" },
   "Runtime.evaluate": { result: { value: 100 } },
@@ -621,6 +627,6 @@ fs.createReadStream(null, { fd: 3 }).on("end", quit).on("data", (chunk) => {
       }).pipe(Effect.provide(layerHtmlRender(executable)));
       expect(requests).toEqual([]);
       expect(datagrams).toEqual([]);
-    }).pipe(Effect.scoped),
+    }),
   );
 });
