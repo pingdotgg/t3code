@@ -4827,7 +4827,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             // Settled threads refuse recovery, so an armed resume would stay hidden until un-settled.
             limitRecovery: thread.limitRecovery
               ? { ...thread.limitRecovery, autoResume: false, snooze: false }
-              : thread.limitRecovery,
+              : null,
             unsettledAt: null,
             pinnedAt: null,
             pinOrderKey: null,

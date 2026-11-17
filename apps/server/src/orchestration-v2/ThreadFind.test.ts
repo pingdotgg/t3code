@@ -548,17 +548,15 @@ describe("V2 thread find", () => {
         item(`message:${i}`, i + 1, i === 8 || i === 510 ? "sentinel" : "other message"),
       );
       yield* putItems(items);
-      const loads = tracePayloadLoads();
-      const first = yield* projection
-        .searchThread({ threadId, query: "sentinel" })
-        .pipe(Effect.withTracer(loads.tracer));
-      assert.equal(loads.batches(), 5);
-      const changed = yield* projection
-        .searchThread({ threadId, query: "other message" })
-        .pipe(Effect.withTracer(loads.tracer));
+      const parses = () => vi.mocked(searchableMessageSegments).mock.calls.length;
+      const before = parses();
+      const first = yield* projection.searchThread({ threadId, query: "sentinel" });
+      assert.equal(parses() - before, 520);
+      // A new query reuses the text the first search parsed.
+      const changed = yield* projection.searchThread({ threadId, query: "other message" });
       assert.equal(changed.totalMatches, 518);
       assert.equal(changed.match?.entryId, "message:0");
-      assert.equal(loads.batches(), 5);
+      assert.equal(parses() - before, 520);
       const last = yield* projection.searchThread({ threadId, query: "sentinel", index: 1 });
       assert.equal(first.totalMatches, 2);
       assert.equal(first.match?.entryId, "message:8");

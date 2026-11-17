@@ -2187,6 +2187,7 @@ it.effect.each(["failed", "interrupted"] as const)(
 it.effect("retries a failed checkout with its original branch instead of the root", () => {
   let checkoutFailures = 1;
   const harness = makeHarness({
+    hasCommit: ({ refName }) => Effect.succeed(refName === "main"),
     createWorktree: (input, options) =>
       checkoutFailures-- > 0
         ? (options?.progress?.onWorktreeClaimed?.("/repo-worktrees/feature") ?? Effect.void).pipe(
