@@ -25,7 +25,6 @@ const OpenCodeServerEntry = Schema.Struct({
   port: Schema.Int,
   stateDir: Schema.String,
   owner: ProcessIdentity,
-  boot: Schema.optionalKey(Schema.Int),
   marker: Schema.optionalKey(Schema.String),
 });
 type OpenCodeServerEntry = typeof OpenCodeServerEntry.Type;
@@ -50,7 +49,6 @@ const ENTRY_DIRECTORY = "opencode-servers";
 const ENTRY_FILE = /^\d+\.json$/;
 const STOP_POLL_INTERVAL = "50 millis";
 const STOP_POLL_ATTEMPTS = 40;
-const BOOT_TOLERANCE_SECONDS = 60;
 
 interface ObservedProcess {
   readonly pid: number;
@@ -218,7 +216,6 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
       ),
     );
 
-  const boot = yield* HostProcess.BootTime;
   const ownerPid = input.ownerPid ?? process.pid;
   const ownerProcess = yield* observe(ownerPid);
   const owner =
@@ -256,7 +253,6 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
         port: server.port,
         stateDir: input.stateDir,
         owner,
-        boot,
         ...(marker !== undefined ? { marker } : {}),
       };
       yield* writeFileStringAtomically({
@@ -294,17 +290,11 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
       ),
     );
 
-  // The unique inherited marker proves ownership, including when a pgid is reused.
-  // The boot check is only an additional conservative guard.
+  // A per-spawn marker inherited by the server's children proves ownership after
+  // the recorded server exits, even when its pgid has been reused.
   const leaderlessGroupRemains = Effect.fn("OpenCodeServerLedger.leaderlessGroupRemains")(
     function* (entry: OpenCodeServerEntry) {
-      if (
-        !entry.marker ||
-        entry.boot === undefined ||
-        Math.abs(entry.boot - boot) > BOOT_TOLERANCE_SECONDS
-      ) {
-        return false;
-      }
+      if (!entry.marker) return false;
       const leader = yield* observe(entry.pgid);
       if (leader !== undefined && !leader.zombie && leader.pgid === entry.pgid) return false;
       for (const member of yield* observeGroup(entry.pgid)) {

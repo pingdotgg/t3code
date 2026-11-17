@@ -53,7 +53,7 @@ const spawnGroupLeader = (args: ReadonlyArray<string>, script: string) =>
       Effect.provide(SecureRandom.layerWebCrypto),
     );
     const child = NodeChildProcess.spawn("/bin/sh", ["-c", groupLeaderGuard + script, ...args], {
-      env: { ...process.env, T3CODE_OPENCODE_SERVER_MARKER: yield* random.uuidV4() },
+      env: { ...process.env, [OpenCodeServerLedger.SERVER_MARKER_ENV]: yield* random.uuidV4() },
       detached: true,
       stdio: ["ignore", "pipe", "ignore"],
     });
@@ -181,8 +181,8 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
         NodeChildProcess.execFileSync("mkfifo", [gate, ready]);
         const environment =
           marker === "missing"
-            ? "-u T3CODE_OPENCODE_SERVER_MARKER"
-            : "T3CODE_OPENCODE_SERVER_MARKER=unrelated-marker";
+            ? `-u ${OpenCodeServerLedger.SERVER_MARKER_ENV}`
+            : `${OpenCodeServerLedger.SERVER_MARKER_ENV}=unrelated-marker`;
         const unrelated = yield* spawnGroup(
           SERVE_ARGS,
           `env ${environment} /bin/sh -c 'echo > "${ready}"; exec sleep 600' & read _ < '${gate}'; exit 0`,
@@ -198,28 +198,6 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
         expect(groupExists(unrelated.pid)).toBe(true);
         expect(yield* fs.readDirectory(path.join(stateDir, "opencode-servers"))).toEqual([]);
       }).pipe(provideHost),
-  );
-
-  it.live("leaves a leaderless group alone when it was recorded in an earlier boot", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-ledger-" });
-      const gate = path.join(stateDir, "gate");
-      NodeChildProcess.execFileSync("mkfifo", [gate]);
-      const unrelated = yield* spawnGroup(SERVE_ARGS, `sleep 600 & read _ < '${gate}'; exit 0`);
-      yield* recordFromDeadServer(stateDir, unrelated);
-      yield* fs.writeFileString(gate, "\n");
-      yield* unrelated.exited;
-
-      const restarted = yield* OpenCodeServerLedger.make({ stateDir }).pipe(
-        Effect.provideService(HostProcess.BootTime, (yield* HostProcess.BootTime) + 3600),
-      );
-      yield* restarted.reapOrphans;
-
-      expect(groupExists(unrelated.pid)).toBe(true);
-      expect(yield* fs.readDirectory(path.join(stateDir, "opencode-servers"))).toEqual([]);
-    }).pipe(provideHost),
   );
 
   it.live("records a group whose spawned wrapper already exited", () =>
