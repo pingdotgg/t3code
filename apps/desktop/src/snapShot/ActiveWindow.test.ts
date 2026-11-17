@@ -129,11 +129,26 @@ it.each([
     ],
   },
   {
-    name: "the screen-sharing indicator",
-    helpers: [
-      { id: 90, title: "Window", bounds: { x: 723, y: 33, width: 66, height: 20 } },
-      { id: 91, title: "", bounds: { x: 0, y: 0, width: 1_512, height: 32 }, alpha: 0 },
-    ],
+    name: "a 66x20 screen-sharing indicator flush with the window's top",
+    helpers: [{ id: 90, title: "Window", bounds: { x: 723, y: 33, width: 66, height: 20 } }],
+    content: {
+      id: 92,
+      title: "T3 Code (Nightly)",
+      bounds: { x: 0, y: 33, width: 1_512, height: 949 },
+    },
+  },
+  {
+    name: "a 66x20 screen-sharing indicator inset into the title bar",
+    helpers: [{ id: 90, title: "Window", bounds: { x: 723, y: 39, width: 66, height: 20 } }],
+    content: {
+      id: 92,
+      title: "T3 Code (Nightly)",
+      bounds: { x: 0, y: 33, width: 1_512, height: 949 },
+    },
+  },
+  {
+    name: "a 31x20 screen-sharing indicator inset into the title bar",
+    helpers: [{ id: 90, title: "Window", bounds: { x: 740, y: 39, width: 31, height: 20 } }],
     content: {
       id: 92,
       title: "T3 Code (Nightly)",
