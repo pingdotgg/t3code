@@ -661,11 +661,15 @@ const makeReaderPool = Effect.fnUntraced(function* (
       }),
     );
 
-  const ready = (acquire: (typeof slots)[number]): Effect.Effect<Connection | undefined> =>
+  const ready = (
+    acquire: (typeof slots)[number],
+    restore: typeof Effect.interruptible,
+  ): Effect.Effect<Connection | undefined> =>
     Effect.suspend(() =>
       unavailable
         ? Effect.undefined
-        : acquire.pipe(
+        : // The startup wait follows the caller's mask, not readOnly's, which may sit outside it.
+          Effect.provideService(acquire, ReadOnly, restore).pipe(
             Effect.map((connection) => (unavailable ? undefined : connection)),
             Effect.catch((error) => {
               if (unavailable) return Effect.undefined;
@@ -712,7 +716,7 @@ const makeReaderPool = Effect.fnUntraced(function* (
           idle.push(slot);
           return permits.release(1);
         }).pipe(Effect.andThen(leaveLane));
-        return ready(slot).pipe(
+        return ready(slot, restore).pipe(
           Effect.onExit((exit) =>
             Exit.isSuccess(exit) && exit.value !== undefined ? Effect.void : release,
           ),

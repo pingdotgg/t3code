@@ -792,7 +792,7 @@ const withWorkers = <A, E, R>(
       }),
   );
 
-const unavailableWarning = "SQLite reader worker unavailable; reads use the writer";
+const unavailableWarning = "SQLite reader workers unavailable; reads use the writer";
 
 const notWal = "database uses journal_mode delete, not wal";
 
@@ -835,7 +835,7 @@ it.effect.each([
           assert.equal(startedWorkers.length, startedBefore + 1);
           assert.deepEqual(yield* Queue.take(lines), [
             "Info",
-            "SQLite reader worker available again; reads use the reader workers",
+            "SQLite reader workers available again; reads use the reader workers",
           ]);
           assert.deepEqual(yield* readConnection(sql), { count: 1, connection: ["reader"] });
           assert.equal(Queue.sizeUnsafe(lines), 0);

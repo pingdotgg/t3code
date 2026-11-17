@@ -458,10 +458,13 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
     ...steps.filter(([ledger]) => ledger === "upstream").map(([, through]) => through),
   );
 
-  yield* splitLegacyForkLedger({
-    upstream: migrationManifest,
-    fork: forkMigrationManifest,
-  });
+  // A legacy ledger lacks the fork table, so it always counts as pending.
+  if (hasPending) {
+    yield* splitLegacyForkLedger({
+      upstream: migrationManifest,
+      fork: forkMigrationManifest,
+    });
+  }
   const includesV2 = upstreamThroughId >= FIRST_V2_MIGRATION_ID;
   // The reconcile takes the write lock; CLI startup must not contend with the server for a no-op.
   const previewMigrations = includesV2 && hasPending ? yield* reconcileV2PreviewMigration() : [];
