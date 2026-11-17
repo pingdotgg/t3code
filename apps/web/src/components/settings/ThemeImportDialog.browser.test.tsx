@@ -229,12 +229,9 @@ it.each(["Cancel", "navigation"])(
     using _themes = isolateThemes();
     searchOpenVsxThemes.mockReset();
     searchOpenVsxThemes.mockResolvedValue([extension]);
-    let finishDownload!: (themes: ReturnType<typeof parseThemeFile>[]) => void;
-    const download = new Promise<ReturnType<typeof parseThemeFile>[]>((resolve) => {
-      finishDownload = resolve;
-    });
+    const download = Promise.withResolvers<ReturnType<typeof parseThemeFile>[]>();
     vi.mocked(importOpenVsxThemeExtension).mockReset();
-    vi.mocked(importOpenVsxThemeExtension).mockReturnValue(download);
+    vi.mocked(importOpenVsxThemeExtension).mockReturnValue(download.promise);
     await using screen = await render(
       <ThemeImportDialog
         open
@@ -248,13 +245,13 @@ it.each(["Cancel", "navigation"])(
     if (exit === "Cancel") await page.getByRole("button", { name: "Cancel", exact: true }).click();
     await screen.unmount();
     await act(async () => {
-      finishDownload([
+      download.resolve([
         {
           ...parseThemeFile(theme("Nightfall")),
           collection: { id: extension.collectionId, label: extension.name },
         },
       ]);
-      await download;
+      await download.promise;
     });
     expect(
       getCustomThemes(),
