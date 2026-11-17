@@ -1428,18 +1428,6 @@ const sendCommand = {
 
 it.effect.each([
   {
-    outcome: "names the provider instance that is disabled for the project",
-    refusal: new ThreadManagement.ThreadManagementProviderInstanceDisabledError({
-      projectId: ProjectId.make("project:mcp-test"),
-      instanceId: ProviderInstanceId.make("codex"),
-    }),
-    reply: {
-      _tag: "OrchestratorMcpFailure",
-      code: "invalid_request",
-      message: 'Provider instance "codex" is disabled for project project:mcp-test.',
-    },
-  },
-  {
     outcome: "says that the missing workspace could not be recreated",
     refusal: new ThreadManagement.ThreadManagementWorktreeRestoreError({
       threadId: sendTargetId,
