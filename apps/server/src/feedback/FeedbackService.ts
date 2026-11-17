@@ -1,6 +1,7 @@
 import * as NodeOS from "node:os";
 
 import {
+  type AgentFeedbackMode,
   type AgentFeedbackPreview,
   CommandId,
   OrchestrationV2RunStatus,
@@ -152,21 +153,25 @@ const make = Effect.fn("FeedbackService.make")(function* (
   const approvals = yield* Approvals.FeedbackApprovals;
   // Serializes the limit check with its insert.
   const lock = yield* Semaphore.make(1);
-  const requireOn = settings.getSettings.pipe(
-    Effect.mapError(storageError),
-    Effect.flatMap(({ agentFeedback: { mode } }) =>
-      mode === "off" ? Effect.fail(new FeedbackOffError({})) : Effect.succeed(mode),
-    ),
-  );
+  /** The mode rule: nothing while Off, and only approved reports while When I ask. */
+  const allowedBy = (
+    mode: AgentFeedbackMode,
+    userRequested: boolean,
+    source: FeedbackCaller["source"],
+  ): Effect.Effect<void, FeedbackOffError | FeedbackNotRequestedError> =>
+    mode === "off"
+      ? Effect.fail(new FeedbackOffError({}))
+      : mode === "on-request" && !userRequested
+        ? Effect.fail(new FeedbackNotRequestedError({ source }))
+        : Effect.void;
 
   const submit = Effect.fn("FeedbackService.submit")(function* (
     input: FeedbackInput,
     caller: FeedbackCaller,
   ) {
-    const mode = yield* requireOn;
-    if (mode === "on-request" && !input.userRequested) {
-      return yield* new FeedbackNotRequestedError({ source: caller.source });
-    }
+    const { agentFeedback } = yield* settings.getSettings.pipe(Effect.mapError(storageError));
+    // Early, so a refused report shows no card; storing applies the rule again under the lock.
+    yield* allowedBy(agentFeedback.mode, input.userRequested, caller.source);
     if (input.includeTurns > 0 && !input.userRequested) {
       return yield* new FeedbackTurnsError({});
     }
@@ -392,7 +397,7 @@ const make = Effect.fn("FeedbackService.make")(function* (
                 }
               }
               // Last before the insert: the setting can turn Off while a requested report waits.
-              if (current.agentFeedback.mode === "off") return yield* new FeedbackOffError({});
+              yield* allowedBy(current.agentFeedback.mode, userRequested, context.caller.source);
               yield* sql`INSERT INTO agent_feedback ${sql.insert({
                 id: report.id,
                 thread_id: report.threadId,
@@ -416,6 +421,7 @@ const make = Effect.fn("FeedbackService.make")(function* (
         Effect.mapError((error) =>
           error._tag === "FeedbackLimitError" ||
           error._tag === "FeedbackOffError" ||
+          error._tag === "FeedbackNotRequestedError" ||
           error._tag === "FeedbackTurnEndedError"
             ? error
             : storageError(error),
