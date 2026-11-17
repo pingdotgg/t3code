@@ -126,6 +126,16 @@ const decodeMembers = Schema.decodeUnknownResult(
 );
 const decodeUnknown = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Unknown));
 
+/** The identity (`vssps`) host of an organization URL `parseScope` returned. */
+function profileOrganization(organization: string): string {
+  const url = new URL(organization);
+  url.hostname =
+    url.hostname === "dev.azure.com"
+      ? "vssps.dev.azure.com"
+      : url.hostname.replace(/\.visualstudio\.com$/, ".vssps.visualstudio.com");
+  return url.href.replace(/\/$/, "");
+}
+
 /** The parts of an `organization/project` scope, as the organization URL and the project name. */
 function parseScope(
   host: string,
@@ -583,25 +593,32 @@ export const make: Effect.Effect<
     // The profile the token belongs to, which is what WIQL's `@Me` resolves to. Its email is the
     // `uniqueName` every identity on a work item carries, so the two compare.
     getViewer: (input) =>
-      read({
-        cwd: input.cwd,
-        operation: "getViewer",
-        args: [
-          "devops",
-          "invoke",
-          "--detect",
-          "true",
-          "--area",
-          "profile",
-          "--resource",
-          "profiles",
-          "--api-version",
-          REST_API_VERSION,
-          "--route-parameters",
-          "id=me",
-        ],
-        decode: decodeProfileJson,
-      }).pipe(
+      scoped("getViewer", input).pipe(
+        Effect.flatMap(({ organization }) =>
+          read({
+            cwd: input.cwd,
+            operation: "getViewer",
+            args: [
+              "devops",
+              "invoke",
+              "--detect",
+              "false",
+              // `az` resolves `--area` from the organization's own areas, which have no `profile`
+              // on dev.azure.com; the organization's identity host has it.
+              "--organization",
+              profileOrganization(organization),
+              "--area",
+              "profile",
+              "--resource",
+              "profiles",
+              "--api-version",
+              REST_API_VERSION,
+              "--route-parameters",
+              "id=me",
+            ],
+            decode: decodeProfileJson,
+          }),
+        ),
         Effect.filterOrFail(
           (login) => login !== null,
           () => refused("getViewer", "Azure DevOps could not name the signed-in account."),

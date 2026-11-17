@@ -305,6 +305,24 @@ describe("AzureDevOpsIssueTracker", () => {
     }),
   );
 
+  it.effect("reads the signed-in profile from the organization's identity host", () =>
+    Effect.gen(function* () {
+      const organizations: string[] = [];
+      const api = yield* tracker((args) => {
+        organizations.push(args[args.indexOf("--organization") + 1]!);
+        return encode({ emailAddress: "julius@acme.test" });
+      });
+      // dev.azure.com organizations list no `profile` area of their own.
+      const viewer = yield* api.getViewer({ cwd: "/w", host: "dev.azure.com", scope: "acme/Web" });
+      yield* api.getViewer({ cwd: "/w", host: "acme.visualstudio.com", scope: "Web" });
+      expect(viewer).toBe("julius@acme.test");
+      expect(organizations).toEqual([
+        "https://vssps.dev.azure.com/acme",
+        "https://acme.vssps.visualstudio.com",
+      ]);
+    }),
+  );
+
   it.effect("reads a legacy organization's work item and every page of its updates", () =>
     Effect.gen(function* () {
       const seen: string[][] = [];
