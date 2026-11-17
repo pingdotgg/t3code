@@ -859,9 +859,7 @@ function useChatMarkdownState({
   const resolvePanelPath = (
     fileLinkMeta: MarkdownFileLinkMeta,
     panelPath: string,
-  ): string | Promise<string | null> => {
-    // Every open supersedes pending lookups, including synchronous opens.
-    const isLatestLookup = claimWorkspaceBasenameLookup();
+  ): string | Promise<string> => {
     if (
       fileLinkMeta.workspaceLookupPath === null ||
       !cwd ||
@@ -869,14 +867,15 @@ function useChatMarkdownState({
     ) {
       return panelPath;
     }
-    return findWorkspaceFileMatch(fileLinkMeta).then((match) =>
-      isLatestLookup() ? (match ?? panelPath) : null,
-    );
+    return findWorkspaceFileMatch(fileLinkMeta).then((match) => match ?? panelPath);
   };
   const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
     if (!threadRef) return;
-    const openAt = (path: string | null) => {
-      if (path !== null) useRightPanelStore.getState().openFile(threadRef, path, fileLinkMeta.line);
+    // Every open supersedes pending lookups, including synchronous opens.
+    const isLatestLookup = claimWorkspaceBasenameLookup();
+    const openAt = (path: string) => {
+      if (isLatestLookup())
+        useRightPanelStore.getState().openFile(threadRef, path, fileLinkMeta.line);
     };
     const path = resolvePanelPath(fileLinkMeta, panelPath);
     if (typeof path === "string") openAt(path);
