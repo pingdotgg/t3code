@@ -260,7 +260,10 @@ const NO_ISSUE_CANDIDATES: MergedIssueCandidates = {
   truncated: false,
 };
 
-/** Fans out like the merged listing: a scope that fails leaves the others' answers in place. */
+/**
+ * Fans out like the merged listing: a scope that fails leaves the others' answers in place, and a
+ * retry asks only the scopes that failed, so one unreachable repository does not reload the rest.
+ */
 export function createMergedIssueCandidatesAtoms<E>(
   candidates: (
     target: IssueCandidatesTarget,
@@ -296,6 +299,14 @@ export function createMergedIssueCandidatesAtoms<E>(
       };
     }).pipe(Atom.withLabel(`issues:candidates:${key}`)),
   );
-  return (targets: ReadonlyArray<IssueCandidatesTarget>) =>
-    targets.length === 0 ? empty : family(JSON.stringify(targets));
+  return {
+    atom: (targets: ReadonlyArray<IssueCandidatesTarget>) =>
+      targets.length === 0 ? empty : family(JSON.stringify(targets)),
+    retry: (registry: AtomRegistry.AtomRegistry, targets: ReadonlyArray<IssueCandidatesTarget>) => {
+      for (const target of targets) {
+        const atom = candidates(target);
+        if (registry.get(atom)._tag === "Failure") registry.refresh(atom);
+      }
+    },
+  };
 }
