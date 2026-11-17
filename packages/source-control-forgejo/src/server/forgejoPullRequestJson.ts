@@ -32,6 +32,7 @@ export const ForgejoRepository = Schema.Struct({
   allow_merge_commits: Schema.optional(Schema.Boolean),
   allow_squash_merge: Schema.optional(Schema.Boolean),
   allow_rebase: Schema.optional(Schema.Boolean),
+  allow_fast_forward_only_merge: Schema.optional(Schema.Boolean),
   allow_rebase_update: Schema.optional(Schema.Boolean),
   default_delete_branch_after_merge: Schema.optional(Schema.Boolean),
 });

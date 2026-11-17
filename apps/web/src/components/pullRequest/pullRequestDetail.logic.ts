@@ -54,6 +54,7 @@ export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, st
   merge: "Merge",
   squash: "Squash and merge",
   rebase: "Rebase and merge",
+  "fast-forward": "Fast-forward merge",
 };
 
 export function allowsSinglePullRequestMerge(input: {
@@ -200,13 +201,13 @@ export function pullRequestPanelContext(
   const links = visibleThreadPullRequests(thread.pullRequests ?? []);
   if (links.length > 0) {
     const repository = surface.repository.toLowerCase();
+    const target =
+      surface.host === undefined
+        ? null
+        : { host: surface.host, repository: surface.repository, number: surface.number };
     return links.some((link) =>
-      surface.host !== undefined
-        ? threadPullRequestKeysEqual(link, {
-            host: surface.host,
-            repository: surface.repository,
-            number: surface.number,
-          })
+      target !== null
+        ? threadPullRequestKeysEqual(link, target)
         : link.number === surface.number && link.repository.toLowerCase() === repository,
     )
       ? "thread"
@@ -1341,7 +1342,15 @@ export function buildAddSelectionToAgentHandoff(input: {
 }): FixFindingsHandoff {
   return {
     prompt: bounded(input.request),
-    reviewComments: [pullRequestContextComment(input, []), { ...input.comment, text: "" }],
+    reviewComments: [
+      pullRequestContextComment(input, []),
+      {
+        ...input.comment,
+        id: `pull-request-selection:${input.url}:${input.comment.id}`,
+        sectionTitle: `${input.comment.sectionTitle} (${boundedField(input.url)})`,
+        text: "",
+      },
+    ],
   };
 }
 

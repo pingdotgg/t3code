@@ -192,6 +192,8 @@ export interface EnvironmentThreadShell {
   readonly pullRequests: ReadonlyArray<import("@t3tools/contracts").ThreadPullRequestLink>;
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
   readonly branchPullRequest?: ThreadLinkedPullRequest | null;
+  /** Absent from rows built before issue linking; the server sends an empty list. */
+  readonly issues?: ReadonlyArray<import("@t3tools/contracts").ThreadIssueLink>;
   /**
    * Server-tracked visited watermark. `undefined` means the environment's
    * server predates visited tracking and clients should fall back to any
@@ -231,7 +233,7 @@ function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary 
   const parkAtIdle =
     backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) &&
     thread.status !== "failed";
-  if (thread.latestRunId === null && thread.activeProviderThreadId === null && !parkAtIdle) {
+  if (thread.latestRunId === null && !parkAtIdle) {
     return null;
   }
   const status = parkAtIdle ? "idle" : (thread.activityRunStatus ?? thread.status);
@@ -301,6 +303,7 @@ export function presentThreadShell(
     pullRequests: threadPullRequestsOf(thread),
     linkedPullRequest: thread.linkedPullRequest ?? null,
     branchPullRequest: thread.branchPullRequest ?? null,
+    issues: thread.issues ?? [],
     lineage: thread.lineage,
     forkedFrom: thread.forkedFrom,
     linkOrigin: thread.linkOrigin ?? null,
