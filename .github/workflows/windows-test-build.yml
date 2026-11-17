@@ -33,16 +33,23 @@ jobs:
 
       - name: Build Windows x64 installer
         run: vp run dist:desktop:win:x64
+        env:
+          T3CODE_DESKTOP_KEEP_STAGE: 'true'
 
       - name: Diagnose staged Windows payload
         if: always()
         shell: pwsh
         run: |
-          $dirs = Get-ChildItem -Path . -Directory -Recurse -Filter '*-unpacked' -ErrorAction SilentlyContinue
-          foreach ($dir in $dirs) {
-            $files = @(Get-ChildItem -LiteralPath $dir.FullName -File -Recurse -ErrorAction SilentlyContinue)
-            Write-Host "PAYLOAD_DIAGNOSTIC directory=$($dir.FullName) file_count=$($files.Count)"
-            $files | ForEach-Object { Write-Host "PAYLOAD_FILE $($_.FullName.Substring($dir.FullName.Length + 1)) [$($_.Length) bytes]" }
+          $stages = Get-ChildItem -LiteralPath $env:RUNNER_TEMP -Directory -Recurse -Filter 't3code-desktop-win-stage-*' -ErrorAction SilentlyContinue
+          foreach ($stage in $stages) {
+            $dist = Join-Path $stage.FullName 'app/dist'
+            if (-not (Test-Path -LiteralPath $dist)) { continue }
+            $dirs = Get-ChildItem -LiteralPath $dist -Directory -Filter '*-unpacked' -ErrorAction SilentlyContinue
+            foreach ($dir in $dirs) {
+              $files = @(Get-ChildItem -LiteralPath $dir.FullName -File -Recurse -ErrorAction SilentlyContinue)
+              Write-Host "PAYLOAD_DIAGNOSTIC directory=$($dir.FullName) file_count=$($files.Count)"
+              $files | ForEach-Object { Write-Host "PAYLOAD_FILE $($_.FullName.Substring($dir.FullName.Length + 1)) [$($_.Length) bytes]" }
+            }
           }
 
       - name: Upload installer
