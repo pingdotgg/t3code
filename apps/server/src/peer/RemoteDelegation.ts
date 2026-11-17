@@ -610,14 +610,19 @@ const make = Effect.gen(function* () {
    * from the activity view over an earlier reply, without taking another run's.
    * Led by a note when its provider reported running another model than it asked for.
    */
+  // With `earlierReport`, a run that ended without a reply keeps the task's latest earlier one.
   const lastReply = Effect.fn("RemoteDelegation.lastReply")(function* (
     scope: ThreadScope,
     remote: OrchestrationV2RemoteTaskChild,
     runId: RunId | null,
     failed = false,
+    earlierReport = false,
   ) {
     let reply: OrchestratorMcpThreadTimelineItem | undefined;
     let error: OrchestratorMcpThreadTimelineItem | undefined;
+    let earlier: OrchestratorMcpThreadTimelineItem | undefined;
+    let ownStarted = remote.runId === undefined;
+    let resultStarted = false;
     let afterPosition: number | undefined;
     let run: OrchestratorMcpThreadRun | undefined;
     while (true) {
@@ -630,6 +635,19 @@ const make = Effect.gen(function* () {
         ...(afterPosition === undefined ? {} : { afterPosition }),
       });
       run ??= read.recentRuns.find((candidate) => candidate.runId === runId);
+      if (earlierReport) {
+        for (const item of read.items) {
+          ownStarted ||= item.runId === remote.runId;
+          resultStarted ||= item.runId === runId;
+          if (
+            ownStarted &&
+            !resultStarted &&
+            item.type === "assistant_message" &&
+            (item.text ?? "").trim().length > 0
+          )
+            earlier = item;
+        }
+      }
       reply =
         read.items.findLast(
           (item) => item.type === "assistant_message" && (runId === null || item.runId === runId),
@@ -643,7 +661,7 @@ const make = Effect.gen(function* () {
       if (!read.hasMore || read.nextPosition === null) break;
       afterPosition = read.nextPosition;
     }
-    reply = error ?? reply;
+    reply = error ?? reply ?? earlier;
     const executedModel = run?.executedModel ?? undefined;
     if (reply === undefined) return { text: undefined, executedModel };
     let text = reply.text ?? "";
@@ -861,7 +879,13 @@ const make = Effect.gen(function* () {
       waited.resultRun !== undefined && !sharedThread
         ? waited.resultRun
         : { runId: waited.runId, status: waited.status };
-    const result = yield* lastReply(scope, remote, resultRun.runId, resultRun.status === "failed");
+    const result = yield* lastReply(
+      scope,
+      remote,
+      resultRun.runId,
+      resultRun.status === "failed",
+      resultRun.status === "completed" && !sharedThread,
+    );
     yield* complete(
       parentThreadId,
       taskId,

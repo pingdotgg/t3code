@@ -1496,6 +1496,34 @@ it.effect("a task whose thread there waits on its own task ends with the answer 
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("a task keeps its reply when a later queued run there ends without one", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      const delegated = yield* delegateToBox(a);
+
+      // The task replies, then a queued notice there runs and ends without text.
+      yield* Ref.set(thread.nested, true);
+      yield* Ref.set(thread.reply, "REPORT-OK");
+      yield* Ref.set(thread.status, "completed");
+      yield* Deferred.succeed(thread.finished, undefined);
+      yield* Deferred.succeed(thread.nestedSettled, undefined);
+      expect(yield* taskResult(a, delegated.taskId)).toMatchObject({
+        status: "completed",
+        result: "REPORT-OK",
+      });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("the same key from another provider session is another task", () =>
   Effect.scoped(
     Effect.gen(function* () {
