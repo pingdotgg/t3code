@@ -1554,7 +1554,7 @@ const make = Effect.gen(function* () {
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
-    readonly skipProjectEnablementFilter?: boolean;
+    readonly isAcceptedRetry?: boolean;
   }): Effect.fn.Return<ResolvedTarget, OrchestratorMcpFailure> {
     const requestedInstanceId = input.target?.providerInstanceId;
     const requestedDriver = input.target?.driverKind;
@@ -1585,7 +1585,7 @@ const make = Effect.gen(function* () {
       ];
       for (const candidate of orderedCandidates) {
         const enabledForProject =
-          input.skipProjectEnablementFilter === true ||
+          input.isAcceptedRetry === true ||
           (yield* threadManagement.isProviderInstanceEnabledForProject({
             projectId: input.parent.thread.projectId,
             instanceId: candidate.instanceId,
@@ -1663,7 +1663,7 @@ const make = Effect.gen(function* () {
         (advertisedModel(provider, selection.model)?.slug ?? selection.model);
     const baseSelection = isTargetModel(inheritedSelection)
       ? inheritedSelection
-      : requestedOptions?.length === 0
+      : input.isAcceptedRetry === true || requestedOptions?.length === 0
         ? null
         : yield* defaultModelSelection(input.parent.thread.projectId);
     let options =
@@ -2707,7 +2707,7 @@ const make = Effect.gen(function* () {
         parent,
         target: input.target,
         providers,
-        skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
+        isAcceptedRetry: isRetryOfAcceptedDelegation,
       });
       const runtimeMode = yield* resolveRuntimeMode(
         parent.thread.runtimeMode,
@@ -3080,7 +3080,7 @@ const make = Effect.gen(function* () {
                         providerInstanceId: committedThread.modelSelection.instanceId,
                       },
                 providers,
-                skipProjectEnablementFilter: isRetryOfAcceptedCreation,
+                isAcceptedRetry: isRetryOfAcceptedCreation,
               });
               const runtimeMode = yield* resolveRuntimeMode(
                 parent.thread.runtimeMode,

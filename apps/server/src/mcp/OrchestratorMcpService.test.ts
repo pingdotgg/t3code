@@ -4441,9 +4441,15 @@ describe("OrchestratorMcpService provider resolution", () => {
     { source: "global", defaultModel: "gpt-6.1-sol", expectedEffort: "high" },
     { source: "project", defaultModel: "gpt-6.1-sol", expectedEffort: "high" },
     { source: "global", defaultModel: "gpt-6-luna", expectedEffort: undefined },
+    {
+      source: "global",
+      defaultModel: "gpt-6.1-sol",
+      expectedEffort: undefined,
+      acceptedRetry: true,
+    },
   ] as const)(
     "a delegate gets the $source default's options only on its model ($defaultModel)",
-    ({ source, defaultModel, expectedEffort }) =>
+    ({ source, defaultModel, expectedEffort, ...row }) =>
       Effect.gen(function* () {
         const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
         const model = "gpt-6.1-sol";
@@ -4471,7 +4477,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           NodeServices.layer,
           NodeCrypto.layer,
           Layer.mock(ThreadManagementService.ThreadManagementService)({
-            hasReceipt: () => Effect.succeed(false),
+            hasReceipt: () => Effect.succeed("acceptedRetry" in row),
             assertProviderInstanceEnabled: () => Effect.void,
             isProviderInstanceEnabledForProject: () => Effect.succeed(true),
             getThreadRecords: (threadId) =>
@@ -4535,7 +4541,9 @@ describe("OrchestratorMcpService provider resolution", () => {
           adapterRegistryLayer([claudeInstanceId, codexInstanceId]),
           Layer.mock(ProjectService.ProjectService)({
             getById: () =>
-              Effect.succeedSome({ id: projectId, defaultModelSelection: null } as never),
+              "acceptedRetry" in row
+                ? Effect.die("an accepted retry must replay without reading the project")
+                : Effect.succeedSome({ id: projectId, defaultModelSelection: null } as never),
           }),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
