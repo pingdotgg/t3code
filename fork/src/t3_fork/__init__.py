@@ -1,34 +1,32 @@
-"""Keep this T3 Code fork on the installed nightly and swap its web UI into the stock AUR app."""
+"""Keep this T3 Code fork on the upstream redesign and install it as its own pacman package."""
 
 import argparse
-import getpass
-import hashlib
 import json
 import os
 import shutil
-import struct
 import subprocess
 import sys
-import tempfile
+from datetime import date
 from pathlib import Path
 
 NAME = "t3-fork"
 TOOL = Path(__file__).resolve().parents[2]
 REPO = TOOL.parent
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / NAME
-PATCHED_ASAR = CACHE / "app.asar"
 BRANCH = "main"
-TAG_GLOB = "v*-nightly.*"
-WEB_ONLY = ("apps/web/", "fork/", "themes/", ".gitmodules")
+# Maria's redesign stack (PRs #28839 to #28845); its top branch carries all six parts and is
+# rebased onto upstream main as it moves. Point this at "main" once the stack has landed.
+UPSTREAM_BRANCH = "maria/redesign/6-workspace-panes"
+UPSTREAM = f"upstream/{UPSTREAM_BRANCH}"
+# Marks the upstream commit `main` sits on, since the redesign branch is force-pushed.
+BASE = "fork-base"
 THEMES = REPO / "themes"
 USER_THEMES = Path.home() / ".t3" / "userdata" / "themes"
 
-PACKAGE = "t3code-nightly-bin"
-APP_ASAR = Path("/opt") / PACKAGE / "resources" / "app.asar"
-CLIENT_PATH = ("apps", "server", "dist", "client")
-MARKER = f".{NAME}.json"
-HOOK_PATH = Path(f"/etc/pacman.d/hooks/{NAME}.hook")
-INTEGRITY_BLOCK = 4 * 1024 * 1024
+PACKAGE = "t3code-fork"
+STOCK_PACKAGE = "t3code-nightly-bin"
+PKGBUILD_DIR = TOOL / "pkg"
+LEGACY_HOOK = Path(f"/etc/pacman.d/hooks/{NAME}.hook")
 
 
 def run(*args: str | Path, cwd: Path = REPO, capture: bool = False, env=None) -> str:
@@ -54,36 +52,28 @@ def git(*args: str | Path) -> str:
     return run("git", *args, capture=True)
 
 
-def installed_version() -> str | None:
-    """The stock nightly's version as upstream spells it, e.g. 0.1.11-nightly.20261117.4838."""
-    result = subprocess.run(["yay", "-Q", PACKAGE], text=True, capture_output=True, check=False)
-    if result.returncode != 0:
-        return None
-    return result.stdout.split()[1].rsplit("-", 1)[0].replace("_nightly.", "-nightly.")
+def installed(package: str) -> str | None:
+    result = subprocess.run(["pacman", "-Q", package], text=True, capture_output=True, check=False)
+    return result.stdout.split()[1] if result.returncode == 0 else None
 
 
 def fetch_upstream() -> None:
-    run("git", "fetch", "upstream", "--tags", "--quiet")
+    run("git", "fetch", "upstream", UPSTREAM_BRANCH, "--quiet")
 
 
-def latest_tag() -> str:
-    return git("tag", "--list", TAG_GLOB, "--sort=-creatordate").splitlines()[0]
-
-
-def installed_tag() -> str:
-    version = installed_version()
-    if version is None:
-        raise SystemExit(f"{NAME}: {PACKAGE} is not installed")
-    tag = f"v{version}"
-    if not git("tag", "--list", tag):
-        fetch_upstream()
-    if not git("tag", "--list", tag):
-        raise SystemExit(f"{NAME}: upstream has no tag {tag} yet")
-    return tag
-
-
-def base_tag() -> str:
-    return git("describe", "--tags", "--abbrev=0", "--match", TAG_GLOB, BRANCH)
+def base_commit() -> str:
+    result = subprocess.run(
+        ["git", "-C", str(REPO), "rev-parse", "--verify", "--quiet", BASE],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise SystemExit(
+            f"{NAME}: no `{BASE}` branch marking where {BRANCH} sits on {UPSTREAM}.\n"
+            f"  Fetch it with `git fetch origin {BASE}:{BASE}`, or create it at that upstream commit."
+        )
+    return result.stdout.strip()
 
 
 def update_themes() -> None:
@@ -108,8 +98,8 @@ def install_themes() -> None:
         print(f"installed {', '.join(p.stem for p in built if p.suffix == '.json')} to {USER_THEMES}")
 
 
-def sync(tag: str) -> None:
-    """Pull in the latest themes, rebase the fork's commits onto `tag`, and push."""
+def sync() -> None:
+    """Pull in the latest themes, rebase the fork's commits onto the redesign's head, and push."""
     if Path(git("rev-parse", "--git-path", "rebase-merge")).exists() or Path(
         git("rev-parse", "--git-path", "rebase-apply")
     ).exists():
@@ -117,204 +107,94 @@ def sync(tag: str) -> None:
     if git("branch", "--show-current") != BRANCH:
         raise SystemExit(f"{NAME}: {REPO} is not on {BRANCH}; switch back to sync")
     if git("status", "--porcelain", "--untracked-files=no"):
-        raise SystemExit(f"{NAME}: {REPO} has uncommitted changes; commit or stash them first")
+        raise SystemExit(f"{NAME}: {REPO} has uncommitted changes; commit them first")
+    fetch_upstream()
     update_themes()
-    base = base_tag()
-    if base != tag:
+    base = base_commit()
+    target = git("rev-parse", UPSTREAM)
+    if base != target:
         count = len(git("rev-list", f"{base}..{BRANCH}").splitlines())
-        print(f"rebasing {count} fork commit(s) from {base} onto {tag}")
-        result = subprocess.run(["git", "-C", str(REPO), "rebase", "--onto", tag, base], check=False)
+        print(f"rebasing {count} fork commit(s) from {base[:10]} onto {UPSTREAM} {target[:10]}")
+        result = subprocess.run(["git", "-C", str(REPO), "rebase", "--onto", target, base], check=False)
         if result.returncode != 0:
             subprocess.run(["git", "-C", str(REPO), "rebase", "--abort"], check=False)
             raise SystemExit(
-                f"{NAME}: the fork's commits conflict with {tag}; nothing changed, stock UI kept.\n"
-                f"  Resolve by hand: cd {REPO} && git rebase --onto {tag} {base}\n"
-                f"  then `{NAME} apply`."
+                f"{NAME}: the fork's commits conflict with {UPSTREAM}; nothing changed.\n"
+                f"  Resolve by hand: cd {REPO} && git rebase --onto {target} {base}\n"
+                f"  then `git branch -f {BASE} {target}` and `{NAME} apply`."
             )
-    run("git", "push", "--quiet", "--force-with-lease", "origin", BRANCH)
+        run("git", "branch", "--force", BASE, target)
+    run("git", "push", "--quiet", "--force-with-lease", "origin", BRANCH, BASE)
 
 
-def check_web_only(tag: str) -> list[str]:
-    changed = git("diff", "--name-only", f"{tag}..{BRANCH}").splitlines()
-    outside = [path for path in changed if not path.startswith(WEB_ONLY)]
-    if outside:
-        raise SystemExit(
-            f"{NAME}: the fork changes files outside apps/web, which the web-only swap can't ship:\n  "
-            + "\n  ".join(outside)
-        )
-    return changed
+def fork_version() -> str:
+    """A nightly-shaped version, so the build brands and stores its data like the stock nightly."""
+    desktop = json.loads((REPO / "apps" / "desktop" / "package.json").read_text())["version"]
+    count = git("rev-list", "--count", BRANCH)
+    return f"{desktop}-nightly.{date.today():%Y%m%d}.{count}"
 
 
-def build_web(version: str, changed: list[str]) -> Path:
-    """Build only the web client, the way the desktop release build does."""
-    web = REPO / "apps" / "web"
-    run("pnpm", "install", "--frozen-lockfile")
-    tests = [p.removeprefix("apps/web/") for p in changed if p.startswith("apps/web/") and ".test." in p]
+def run_fork_tests() -> None:
+    changed = git("diff", "--name-only", f"{base_commit()}..{BRANCH}").splitlines()
+    tests = [p for p in changed if ".test." in p and (REPO / p).exists()]
     if tests:
-        run("pnpm", "exec", "vp", "test", "run", "--project", "unit", *tests, cwd=web)
-    shutil.rmtree(web / "dist", ignore_errors=True)
+        run("vp", "test", "run", *tests)
+
+
+def build() -> Path:
+    """Sync, test the fork's own changes, build the AppImage, and wrap it in a pacman package."""
+    sync()
+    run("vp", "i")
+    run_fork_tests()
+    version = fork_version()
+    release = CACHE / "release"
+    shutil.rmtree(release, ignore_errors=True)
     run(
-        "pnpm", "--filter", "@t3tools/web", "build",
-        env={"APP_VERSION": version, "T3CODE_WEB_SOURCEMAP": "false"},
+        "node", "scripts/build-desktop-artifact.ts",
+        "--platform", "linux", "--target", "AppImage", "--arch", "x64",
+        "--build-version", version, "--output-dir", release,
+        # The package only runs here, so this machine's glibc is the ceiling, not upstream's.
+        env={"T3CODE_GLIBC_BUILD_CEILING": os.confstr("CS_GNU_LIBC_VERSION").split()[1]},
     )
-    run("node", "scripts/apply-web-brand-assets.ts", "nightly", "apps/web/dist")
-    return web / "dist"
+    appimage = next(release.glob("*.AppImage"), None)
+    if appimage is None:
+        raise SystemExit(f"{NAME}: the desktop build left no AppImage in {release}")
 
-
-def read_asar(path: Path) -> tuple[dict, int]:
-    """Return the asar header and the byte offset where file data starts."""
-    with path.open("rb") as file:
-        _, header_size, _, json_size = struct.unpack("<4I", file.read(16))
-        return json.loads(file.read(json_size)), 8 + header_size
-
-
-def integrity(data: bytes) -> dict:
-    blocks = [
-        hashlib.sha256(data[i : i + INTEGRITY_BLOCK]).hexdigest()
-        for i in range(0, max(len(data), 1), INTEGRITY_BLOCK)
-    ]
-    return {
-        "algorithm": "SHA256",
-        "hash": hashlib.sha256(data).hexdigest(),
-        "blockSize": INTEGRITY_BLOCK,
-        "blocks": blocks,
-    }
-
-
-def write_asar(source: Path, client_dir: Path, marker: dict, out: Path) -> None:
-    """Copy the asar with its bundled web client replaced by client_dir (source maps left out)."""
-    header, data_start = read_asar(source)
-    chunks: list[tuple[int, int] | bytes] = []
-    size = 0
-
-    def add(entry: dict, chunk: tuple[int, int] | bytes, length: int) -> None:
-        nonlocal size
-        entry["offset"] = str(size)
-        chunks.append(chunk)
-        size += length
-
-    def relocate(node: dict) -> None:
-        for entry in node["files"].values():
-            if "files" in entry:
-                relocate(entry)
-            elif "offset" in entry:
-                add(entry, (data_start + int(entry["offset"]), entry["size"]), entry["size"])
-
-    parent = header
-    for part in CLIENT_PATH[:-1]:
-        parent = parent["files"][part]
-    parent["files"][CLIENT_PATH[-1]] = {"files": {}}
-    relocate(header)
-
-    client = parent["files"][CLIENT_PATH[-1]]
-    files = sorted(p for p in client_dir.rglob("*") if p.is_file() and p.suffix != ".map")
-    new_files = [(p.relative_to(client_dir).parts, p.read_bytes()) for p in files]
-    new_files.append(((MARKER,), json.dumps(marker).encode()))
-    for parts, data in new_files:
-        node = client
-        for part in parts[:-1]:
-            node = node["files"].setdefault(part, {"files": {}})
-        entry = {"size": len(data), "integrity": integrity(data)}
-        node["files"][parts[-1]] = entry
-        add(entry, data, len(data))
-
-    encoded = json.dumps(header, separators=(",", ":")).encode()
-    padded = encoded + b"\0" * (-len(encoded) % 4)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out.with_suffix(".tmp")
-    with source.open("rb") as src, tmp.open("wb") as dst:
-        dst.write(struct.pack("<4I", 4, len(padded) + 8, len(padded) + 4, len(encoded)))
-        dst.write(padded)
-        for chunk in chunks:
-            if isinstance(chunk, bytes):
-                dst.write(chunk)
-            else:
-                src.seek(chunk[0])
-                dst.write(src.read(chunk[1]))
-    tmp.replace(out)
-
-
-def read_marker(path: Path) -> dict | None:
-    try:
-        header, data_start = read_asar(path)
-        node = header
-        for part in (*CLIENT_PATH, MARKER):
-            node = node["files"][part]
-        with path.open("rb") as file:
-            file.seek(data_start + int(node["offset"]))
-            return json.loads(file.read(node["size"]))
-    except (OSError, KeyError, ValueError):
-        return None
-
-
-def build() -> None:
-    """Sync the fork onto the installed nightly, build its web client, write the patched asar."""
-    tag = installed_tag()
-    version = tag.removeprefix("v")
-    sync(tag)
-    changed = check_web_only(tag)
-    client = build_web(version, changed)
-    commit = git("rev-parse", "--short", BRANCH)
-    write_asar(APP_ASAR, client, {"version": version, "commit": commit}, PATCHED_ASAR)
-    print(f"wrote {PATCHED_ASAR} ({version}, fork {commit})")
+    pkg = CACHE / "pkg"
+    shutil.rmtree(pkg, ignore_errors=True)
+    pkg.mkdir(parents=True)
+    shutil.copy(PKGBUILD_DIR / "PKGBUILD", pkg / "PKGBUILD")
+    shutil.copy(REPO / "LICENSE", pkg / "LICENSE")
+    shutil.move(appimage, pkg / "t3code.AppImage")
+    env = {"T3_FORK_PKGVER": version.replace("-", "_"), "PKGDEST": str(pkg)}
+    run("makepkg", "--force", "--cleanbuild", cwd=pkg, env=env)
+    package = Path(run("makepkg", "--packagelist", cwd=pkg, capture=True, env=env).splitlines()[0])
+    print(f"built {package} (fork {git('rev-parse', '--short', BRANCH)})")
     install_themes()
+    return package
 
 
-def install_patched() -> None:
-    run("sudo", "install", "-m644", PATCHED_ASAR, APP_ASAR)
-    print("fork UI applied. Restart T3 Code to load it.")
-
-
-def hook_text() -> str:
-    user = getpass.getuser()
-    home = Path.home()
-    uv = shutil.which("uv") or "/usr/bin/uv"
-    path = f"{home}/.local/share/mise/shims:{home}/.local/bin:/usr/local/bin:/usr/bin:/bin"
-    build_cmd = (
-        f"/usr/bin/runuser -u {user} -- /usr/bin/env HOME={home} PATH={path} "
-        f"{uv} run --project {TOOL} {NAME} build"
-    )
-    script = (
-        f"{build_cmd} && /usr/bin/install -m644 {PATCHED_ASAR} {APP_ASAR} "
-        f"&& echo '{NAME}: applied; restart T3 Code' "
-        f"|| echo '{NAME}: not applied, stock UI kept; see above, then run {NAME} apply'"
-    )
-    return (
-        f"# Written by `{NAME} setup`. Re-applies the fork in {REPO} after each T3 Code nightly upgrade.\n"
-        "[Trigger]\n"
-        "Operation = Install\n"
-        "Operation = Upgrade\n"
-        "Type = Package\n"
-        f"Target = {PACKAGE}\n\n"
-        "[Action]\n"
-        f"Description = Applying {NAME} to T3 Code...\n"
-        "When = PostTransaction\n"
-        f'Exec = /bin/sh -c "{script}"\n'
-    )
-
-
-def setup() -> None:
-    with tempfile.NamedTemporaryFile("w", suffix=".hook", delete=False) as file:
-        file.write(hook_text())
-    run("sudo", "install", "-Dm644", file.name, HOOK_PATH)
-    os.unlink(file.name)
-    print(f"installed {HOOK_PATH}")
-    if installed_version() is None:
-        run("yay", "-S", PACKAGE)
-    else:
-        build()
-        install_patched()
+def install(package: Path) -> None:
+    """Swap the stock nightly (and the old web-swap hook) for the fork's package."""
+    if LEGACY_HOOK.exists():
+        run("sudo", "rm", LEGACY_HOOK)
+    if installed(STOCK_PACKAGE):
+        run("sudo", "pacman", "-R", "--noconfirm", STOCK_PACKAGE)
+    run("sudo", "pacman", "-U", "--noconfirm", package)
+    print("fork installed. Restart T3 Code to load it.")
 
 
 def status() -> None:
     fetch_upstream()
-    marker = read_marker(APP_ASAR)
-    base = base_tag()
-    print(f"latest nightly : {latest_tag().removeprefix('v')}")
-    print(f"installed      : {installed_version() or f'{PACKAGE} not installed'}")
-    print(f"fork {BRANCH:<10}: {len(git('rev-list', f'{base}..{BRANCH}').splitlines())} commit(s) on {base}")
-    print(f"applied        : {f'fork {marker['commit']} on {marker['version']}' if marker else 'no'}")
-    print(f"pacman hook    : {'installed' if HOOK_PATH.exists() else f'missing, run {NAME} setup'}")
+    base = base_commit()
+    target = git("rev-parse", UPSTREAM)
+    commits = len(git("rev-list", f"{base}..{BRANCH}").splitlines())
+    state = "up to date" if base == target else "upstream moved, run sync"
+    print(f"upstream       : {UPSTREAM} at {target[:10]}")
+    print(f"fork {BRANCH:<10}: {commits} commit(s) on {base[:10]} ({state})")
+    print(f"installed      : {installed(PACKAGE) or 'no'}")
+    if stock := installed(STOCK_PACKAGE):
+        print(f"stock nightly  : {stock} (replaced by `{NAME} apply`)")
     for line in git("submodule", "status", "themes").splitlines() if (REPO / ".gitmodules").exists() else []:
         sha, path = line.split()[:2]
         print(f"theme          : {path.removeprefix('themes/')} at {sha.lstrip('+-')[:7]}")
@@ -323,23 +203,17 @@ def status() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(prog=NAME, description=__doc__)
     commands = parser.add_subparsers(dest="command")
-    commands.add_parser("status", help="show the installed nightly, the fork, and what is applied")
-    sync_parser = commands.add_parser("sync", help="rebase the fork onto the installed nightly and push")
-    sync_parser.add_argument("--latest", action="store_true", help="use the newest nightly tag instead")
-    commands.add_parser("build", help="sync, then build the patched app.asar for the installed nightly")
-    commands.add_parser("apply", help="build and install the patched app.asar (asks for sudo)")
-    commands.add_parser("setup", help="install the pacman hook and apply the fork")
+    commands.add_parser("status", help="show the upstream redesign, the fork, and what is installed")
+    commands.add_parser("sync", help="rebase the fork onto the redesign's latest head and push")
+    commands.add_parser("build", help="sync, then build the fork's pacman package")
+    commands.add_parser("apply", help="build and install the fork's package (asks for sudo)")
     args = parser.parse_args()
     match args.command:
         case "sync":
-            fetch_upstream()
-            sync(latest_tag() if args.latest else installed_tag())
+            sync()
         case "build":
             build()
         case "apply":
-            build()
-            install_patched()
-        case "setup":
-            setup()
+            install(build())
         case _:
             status()

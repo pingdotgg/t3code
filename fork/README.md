@@ -1,8 +1,12 @@
 # This fork
 
-A private copy of [pingdotgg/t3code](https://github.com/pingdotgg/t3code). `main` is an upstream
-nightly tag with our commits on top, rebased onto each new nightly. Remotes: `upstream` is
-pingdotgg, `origin` is this repo.
+A private copy of [pingdotgg/t3code](https://github.com/pingdotgg/t3code) running Maria's
+redesign. `main` is the top of the redesign stack (upstream PRs #28839 to #28845, branch
+`maria/redesign/6-workspace-panes`) with our commits on top. That branch is force-pushed as it
+is rebased onto upstream `main`, so the local and pushed branch `fork-base` marks the upstream
+commit `main` sits on. Remotes: `upstream` is pingdotgg, `origin` is this repo.
+
+Once the stack lands upstream, set `UPSTREAM_BRANCH` in `fork/src/t3_fork/__init__.py` to `main`.
 
 Our commits so far:
 
@@ -25,40 +29,39 @@ After a fresh clone: `git submodule update --init`.
 
 ## Installing it
 
-The app itself still comes from the stock AUR `t3code-nightly-bin` through `yay`. While the fork
-only changes `apps/web`, there is no need to build the whole desktop app: the web UI ships as
-one folder (`apps/server/dist/client`) inside `resources/app.asar`, and `t3-fork` swaps it.
+The redesign changes the server, contracts and desktop shell, not just `apps/web`, so the whole
+desktop app is built from this tree. `t3-fork apply`:
 
-After each `yay` install or upgrade of `t3code-nightly-bin`, the pacman hook
-(`/etc/pacman.d/hooks/t3-fork.hook`) runs, as your user, `t3-fork build`:
+1. moves `themes/*` to their repos' latest `main` (committing the bump), rebases `main` onto the
+   redesign branch's latest head, moves `fork-base`, and pushes both,
+2. runs `vp i` and the test files our commits touch,
+3. builds the Linux AppImage with `scripts/build-desktop-artifact.ts` at a nightly-shaped
+   version (`<desktop version>-nightly.<today>.<commit count>`), so it brands and stores its data
+   exactly like the stock nightly (`~/.t3/userdata` is shared),
+4. wraps it with `fork/pkg/PKGBUILD` into a `t3code-fork` pacman package in `~/.cache/t3-fork/pkg`,
+   laid out like the AUR `t3code-nightly-bin` (`/opt/t3code-fork`, `/usr/bin/t3code-nightly`,
+   the same desktop entry),
+5. installs the themes into `~/.t3/userdata/themes`,
 
-1. move `themes/*` to their repos' latest `main` (committing the bump), rebase `main` onto the
-   tag of the installed nightly, and push it,
-2. refuse if the fork changes anything outside `apps/web`, `fork/` and `themes/`,
-3. run the fork's changed web tests, build `apps/web` at that version with nightly branding,
-4. write `~/.cache/t3-fork/app.asar`: the installed asar with only the client folder replaced,
-5. install the themes into `~/.t3/userdata/themes`,
+then removes `t3code-nightly-bin` if present (it conflicts) and installs the package. If a step
+fails (dirty checkout, rebase conflict, a test, the build), nothing installed changes.
 
-then, as root, installs that file over `/opt/t3code-nightly-bin/resources/app.asar`. If any step
-fails (dirty checkout, rebase conflict, a test), nothing changes and the stock UI stays.
+Nothing runs automatically: `yay` no longer upgrades T3 Code, since `t3code-fork` replaces the AUR
+package. Run `t3-fork status` to see whether the redesign moved, then `t3-fork apply`.
 
 ## Commands
 
 `t3-fork <command>`, a zsh alias for `uv run --project ~/repos/t3-fork/fork t3-fork`:
 
-- `status`: installed nightly, latest nightly, fork base and commit count, what is applied, themes.
-- `sync [--latest]`: update themes, rebase onto the installed (or newest) nightly, and push.
-- `apply`: build and install by hand, e.g. after committing a change. Asks for sudo.
-- `build`: what the hook runs; writes the patched asar only.
-- `setup`: install the pacman hook, then apply.
+- `status`: the redesign branch's head, the fork's base and commit count, what is installed, themes.
+- `sync`: update themes, rebase onto the redesign's latest head, and push.
+- `build`: sync, test, and build the package without installing it.
+- `apply`: build and install. Asks for sudo.
 
 Work on `main` and commit normally (the repo's pre-commit hook runs fmt, lint and knip), then
-`t3-fork apply`. A conflict during a rebase is resolved by hand with plain git, then `t3-fork apply`.
-
-When the fork grows past `apps/web` (server or desktop changes), the web swap is no longer
-enough: that needs the full `scripts/build-desktop-artifact.ts` AppImage build packaged in
-place of `t3code-nightly-bin`.
+`t3-fork apply`. A rebase conflict is resolved by hand with plain git (the error prints the
+commands), then `t3-fork apply`.
 
 ## Undo
 
-`sudo rm /etc/pacman.d/hooks/t3-fork.hook && yay -S t3code-nightly-bin`
+`sudo pacman -R t3code-fork && yay -S t3code-nightly-bin`

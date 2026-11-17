@@ -1,7 +1,7 @@
 [project]
 name = "t3-fork"
 version = "0.1.0"
-description = "Keep this T3 Code fork on the nightly it runs against, and install its web UI over the stock AUR app"
+description = "Keep this T3 Code fork on the upstream redesign and install it as its own pacman package"
 readme = "README.md"
 requires-python = ">=3.15"
 dependencies = []
