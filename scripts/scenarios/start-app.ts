@@ -56,9 +56,9 @@ const encodeSettings = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown)
 export const prepareHome = Effect.fn("startApp.prepareHome")(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  // The previous run's server is in its own process group, which e2e does not wait for, and can
-  // still hold files open or create WAL/log files during removal, leaving directories nonempty.
-  yield* Effect.suspend(() => fs.remove(home, { recursive: true, force: true })).pipe(
+  // The previous run's server can still hold the database open or write WAL and log files while
+  // it shuts down, so removal fails with EBUSY, ENOTEMPTY or EPERM until it exits.
+  yield* fs.remove(home, { recursive: true, force: true }).pipe(
     Effect.retry({
       schedule: Schedule.spaced("500 millis"),
       times: 60,
