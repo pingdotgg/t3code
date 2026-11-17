@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Migrator from "effect/sql/Migrator";
 
@@ -14,6 +15,12 @@ import { withDulliOnPi } from "./dulliSettings.ts";
 
 const decodeSettings = Schema.decodeEffect(fromLenientJson(Schema.Unknown));
 const encodeSettings = Schema.encodeEffect(fromJsonStringPretty(Schema.Unknown));
+
+// SQLITE_CORRUPT and SQLITE_NOTADB, as Sqlite.ts reports them when it opens the database.
+const isDamagedSqlite = (cause: unknown) =>
+  Predicate.isObject(cause) &&
+  typeof cause.errcode === "number" &&
+  [11, 26].includes(cause.errcode & 0xff);
 
 export const backupBeforeDulliUpgrade = Effect.fn("DulliUpgrade.backupBeforeUpgrade")(function* (
   dbPath: string,
@@ -59,7 +66,13 @@ export const backupBeforeDulliUpgrade = Effect.fn("DulliUpgrade.backupBeforeUpgr
           "Could not back up the database before moving Dulli threads to Pi; startup will retry.",
         cause,
       }),
-  });
+  }).pipe(
+    // Nothing to back up; opening the database reports the damage and where the file is.
+    Effect.catchIf(
+      (error) => isDamagedSqlite(error.cause),
+      () => Effect.succeed(false),
+    ),
+  );
   if (!backedUp) return;
   yield* fs.chmod(snapshotPath, 0o600);
   yield* fs.link(snapshotPath, backupPath).pipe(
