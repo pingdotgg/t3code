@@ -34,14 +34,19 @@ const REPLY_ADDRESS_NOT_SUPPORTED = 8;
 
 const socksReply = (code: number) => Uint8Array.of(5, code, 0, 1, 0, 0, 0, 0, 0, 0);
 
-// Chromium names the host as typed, so IP literals also arrive as domain names.
-const isLoopbackName = (name: string) =>
-  name === "localhost" ||
-  name.endsWith(".localhost") ||
-  Result.match(NetAddress.ipFromString(name), {
-    onSuccess: NetAddress.isLoopback,
-    onFailure: () => false,
-  });
+// Chromium names the host as typed, so IP literals also arrive as domain names, and a fully
+// qualified `localhost.` keeps its trailing dot.
+const isLoopbackName = (typed: string) => {
+  const name = typed.replace(/\.$/, "");
+  return (
+    name === "localhost" ||
+    name.endsWith(".localhost") ||
+    Result.match(NetAddress.ipFromString(name), {
+      onSuccess: NetAddress.isLoopback,
+      onFailure: () => false,
+    })
+  );
+};
 
 // `*://` matches only http and https, so WebSocket schemes are listed separately.
 const UNSPECIFIED_ADDRESS_URLS = ["http", "https", "ws", "wss"].flatMap((scheme) => [
