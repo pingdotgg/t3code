@@ -46,13 +46,9 @@ import {
   PATCH_RENDER_PREFIX_ARGS,
   splitNullSeparatedGitStdoutPaths,
 } from "./GitVcsDriverCore.ts";
-<<<<<<< origin/main
+import * as CheckpointUntrackedBlobs from "./checkpointUntrackedBlobs.ts";
 import * as ReflinkCloner from "../fork/reflinkWorktrees/reflinkCloner.ts";
 import type { CheckoutCacheRetention } from "../fork/reflinkWorktrees/fastCheckoutSetting.ts";
-=======
-import * as CheckoutCloner from "./CheckoutCloner.ts";
-import * as CheckpointUntrackedBlobs from "./checkpointUntrackedBlobs.ts";
->>>>>>> upstream/main
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 

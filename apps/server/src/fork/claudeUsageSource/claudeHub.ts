@@ -30,7 +30,7 @@ export type ClaudeLogin = {
 };
 
 const ClaudeWindow = Schema.Struct({
-  utilization: Schema.Number,
+  utilization: Schema.NullOr(Schema.Number),
   resets_at: Schema.NullOr(Schema.String),
 });
 const ClaudeUsage = Schema.Struct({

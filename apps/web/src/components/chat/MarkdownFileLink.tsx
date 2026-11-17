@@ -10,15 +10,12 @@ import type { ContextMenuSource, EnvironmentId, ScopedThreadRef } from "@t3tools
 import { memo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { FolderIcon } from "lucide-react";
 
-<<<<<<< origin/main
+import { contextMenuSourceOf } from "../../contextMenuSource";
 import {
   hostFileLinkMenuItems,
   leavesFileChipClickToBrowser,
   runHostFileLinkMenuItem,
 } from "../../fork/hostFileLinks";
-=======
-import { contextMenuSourceOf } from "../../contextMenuSource";
->>>>>>> upstream/main
 import { readLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
 import { shouldOpenMarkdownFileLinkInEditor } from "../../markdown-links";

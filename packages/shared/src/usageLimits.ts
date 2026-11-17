@@ -20,11 +20,8 @@ import {
 
 import * as DateTime from "effect/DateTime";
 
-<<<<<<< origin/main
-import { bindAntigravityEmails } from "./fork/antigravityEmailBindings.ts";
-=======
 import { isLocalLoopbackHost, isWildcardHost } from "./hostClassification.ts";
->>>>>>> upstream/main
+import { bindAntigravityEmails } from "./fork/antigravityEmailBindings.ts";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -411,10 +408,12 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         : source.label;
       for (const account of source.accounts) {
         if (limitsNotice(account.usageLimits) !== null) continue;
-<<<<<<< origin/main
-        const key = `${source.id}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
+        const resolved = resolveKey(account);
+        // A resolved account already has an identity; its public key must stay distinct from others'.
+        const hub = resolved ? `${environmentId}:${source.id}` : hubIdentity(environmentId, source);
+        const key = `${hub}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
         merge(
-          resolveKey(account) ?? key,
+          resolved ?? key,
           {
             key,
             driver: account.driver,
@@ -438,33 +437,6 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
           },
           account.label !== undefined,
         );
-=======
-        const resolved = resolveKey(account);
-        // A resolved account already has an identity; its public key must stay distinct from others'.
-        const hub = resolved ? `${environmentId}:${source.id}` : hubIdentity(environmentId, source);
-        const key = `${hub}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
-        merge(resolved ?? key, {
-          key,
-          driver: account.driver,
-          displayName: account.email ? null : hubAccountName(account),
-          email: account.email,
-          plan: account.plan,
-          accentColor: undefined,
-          environments: [],
-          sourceLabel,
-          redeem: account.usageLimits.resetCredits?.nextCreditId
-            ? {
-                environmentId,
-                input: {
-                  sourceId: source.id,
-                  accountId: account.id,
-                  creditId: account.usageLimits.resetCredits.nextCreditId,
-                },
-              }
-            : null,
-          limits: account.usageLimits,
-        });
->>>>>>> upstream/main
       }
     }
   }

@@ -345,6 +345,8 @@ export function useFileReadingPosition(input: {
       binding.tracker.restore(saved);
       return false;
     },
+    /** A saved source position restores the code view, so the panel's own offset stays out. */
+    restoresSavedScroll: () => file !== null && readings.readPosition(file, "source") !== null,
     onRevealApplied: (fileContainer: HTMLElement, line: number) => {
       if (surface !== undefined) ledger.markShown(threadKey, surface);
       const binding = sourceBindings.get(fileContainer);

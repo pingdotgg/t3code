@@ -23,19 +23,14 @@ export interface TurnItemPositionStoreV2Shape {
     readonly runId: RunId | null;
     readonly runOrdinal?: number;
     // `run_start` takes the run's unused first slot, ahead of its items, and appends once it is taken.
-<<<<<<< origin/main
     // `latest_run` appends a runless item to the latest run that left the queue, where it was sent.
     readonly placement?: "append" | "run_start" | "latest_run";
-=======
-    readonly placement?: "append" | "run_start";
     // Keep an existing position even when it lies outside the run's range.
     readonly keepExisting?: boolean;
->>>>>>> upstream/main
   }) => Effect.Effect<number, TurnItemPositionStoreError>;
   readonly normalize: (
     item: OrchestrationV2TurnItem,
     runOrdinal?: number,
-    placement?: "latest_run",
   ) => Effect.Effect<OrchestrationV2TurnItem, TurnItemPositionStoreError>;
 }
 
@@ -157,15 +152,17 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
     return TurnItemPositionStoreV2.of({
       allocate,
       // Per-event normalization shares the enclosing orchestration span.
-      normalize: Effect.fnUntraced(function* (item, runOrdinal, placement) {
+      normalize: Effect.fnUntraced(function* (item, runOrdinal) {
+        // Fork: an FYI shows where it was sent, and a turn that carries it keeps it there.
+        const fyi = item.type === "user_message" && item.fyi === true;
         return yield* allocate({
           threadId: item.threadId,
           turnItemId: item.id,
           runId: item.runId,
           // Queued steers keep their submission order until their run starts (see Orchestrator).
-          keepExisting: item.status === "pending",
+          keepExisting: item.status === "pending" || fyi,
           ...(runOrdinal === undefined ? {} : { runOrdinal }),
-          ...(placement === undefined ? {} : { placement }),
+          ...(fyi && item.runId === null ? { placement: "latest_run" as const } : {}),
         }).pipe(Effect.map((ordinal) => (item.ordinal === ordinal ? item : { ...item, ordinal })));
       }),
     });

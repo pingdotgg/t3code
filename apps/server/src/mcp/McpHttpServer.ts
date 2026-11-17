@@ -87,13 +87,10 @@ import {
 } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
-<<<<<<< origin/main
 import * as SendToUser from "../fork/userMessageTools/SendToUser.ts";
 import * as DashboardTools from "../fork/threadDashboard/DashboardTools.ts";
 import * as UserViewTools from "../fork/userView/UserViewTools.ts";
-=======
 import { MCP_HTTP_PATH } from "../httpCors.ts";
->>>>>>> upstream/main
 import { requestUrl } from "../requestUrl.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>

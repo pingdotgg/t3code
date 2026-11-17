@@ -90,6 +90,50 @@ const runWithProvider = <A, E, R>(
           // A released session's events end, as a real provider's do, so only its successor reads.
           const released = yield* Deferred.make<void>();
           yield* Effect.addFinalizer(() => Deferred.succeed(released, undefined));
+          const startTurn = (turn: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+            Effect.gen(function* () {
+              if (behaviour.failStart) {
+                return yield* new ProviderAdapter.ProviderAdapterTurnStartError({
+                  driver,
+                  threadId: turn.threadId,
+                  providerThreadId: turn.providerThread.id,
+                  runId: turn.runId,
+                });
+              }
+              started.push(turn);
+              if (behaviour.toolBatchAtStart) {
+                toolBatches.push(
+                  yield* fyiDelivery.forToolBatch({
+                    threadId: turn.threadId,
+                    carrier: {
+                      runId: turn.runId,
+                      nodeId: turn.rootNodeId,
+                      providerThreadId: turn.providerThread.id,
+                    },
+                    stop: () => false,
+                  }),
+                );
+              }
+              yield* Queue.offer(events, {
+                type: "provider_turn.updated",
+                driver,
+                providerTurn: {
+                  id: ProviderTurnId.make(`provider-turn:${turn.attemptId}`),
+                  providerThreadId: turn.providerThread.id,
+                  nodeId: turn.rootNodeId,
+                  runAttemptId: turn.attemptId,
+                  nativeTurnRef: {
+                    driver,
+                    nativeId: `native:${turn.attemptId}`,
+                    strength: "strong",
+                  },
+                  ordinal: turn.providerTurnOrdinal,
+                  status: "running",
+                  startedAt: yield* DateTime.now,
+                  completedAt: null,
+                },
+              });
+            });
           return {
             instanceId,
             driver,
@@ -126,50 +170,8 @@ const runWithProvider = <A, E, R>(
                 updatedAt: now,
               }),
             resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
-            startTurn: (turn) =>
-              Effect.gen(function* () {
-                if (behaviour.failStart) {
-                  return yield* new ProviderAdapter.ProviderAdapterTurnStartError({
-                    driver,
-                    threadId: turn.threadId,
-                    providerThreadId: turn.providerThread.id,
-                    runId: turn.runId,
-                  });
-                }
-                started.push(turn);
-                if (behaviour.toolBatchAtStart) {
-                  toolBatches.push(
-                    yield* fyiDelivery.forToolBatch({
-                      threadId: turn.threadId,
-                      carrier: {
-                        runId: turn.runId,
-                        nodeId: turn.rootNodeId,
-                        providerThreadId: turn.providerThread.id,
-                      },
-                      stop: () => false,
-                    }),
-                  );
-                }
-                yield* Queue.offer(events, {
-                  type: "provider_turn.updated",
-                  driver,
-                  providerTurn: {
-                    id: ProviderTurnId.make(`provider-turn:${turn.attemptId}`),
-                    providerThreadId: turn.providerThread.id,
-                    nodeId: turn.rootNodeId,
-                    runAttemptId: turn.attemptId,
-                    nativeTurnRef: {
-                      driver,
-                      nativeId: `native:${turn.attemptId}`,
-                      strength: "strong",
-                    },
-                    ordinal: turn.providerTurnOrdinal,
-                    status: "running",
-                    startedAt: yield* DateTime.now,
-                    completedAt: null,
-                  },
-                });
-              }),
+            startTurn,
+            resumeTurn: (input) => startTurn(ProviderAdapter.resumeTurnInput(input)),
             steerTurn: (turn) =>
               Effect.sync(() => {
                 steered.push(turn);
@@ -787,6 +789,48 @@ it.effect("a restart continuation that resumes natively leaves FYI messages wait
       yield* Fiber.join(running);
       assert.strictEqual(started[1]!.restartContinuationOfRunId, cut!.id);
       assert.strictEqual(started[1]!.message.text, "Continue where you left off.");
+      const after = yield* fyiItemOf(threadId, "note");
+      assert.isNull(after.item.runId);
+      assert.strictEqual(after.item.status, "pending");
+    }),
+  ),
+);
+
+it.effect("a native resume of a stopped turn leaves FYI messages waiting", () =>
+  runWithProvider("manual-resume", ({ started, events, cwd }) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("thread:fyi-manual-resume");
+      yield* startThread(threadId, cwd);
+      yield* finishTurn(threadId, events);
+      const [stopped] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("event:fyi-manual-resume:stop"),
+            type: "run.updated",
+            threadId,
+            runId: stopped!.id,
+            occurredAt: yield* DateTime.now,
+            payload: { ...stopped!, status: "interrupted" },
+          },
+        ],
+      });
+      yield* orchestrator.dispatch(fyi(threadId, "note", "main moved"));
+
+      const running = yield* waitFor(
+        (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+      );
+      yield* orchestrator.dispatch({
+        ...send(threadId, "resume", "Continue where you left off."),
+        manualContinuationOfRunId: stopped!.id,
+      });
+      yield* worker.drain();
+      yield* Fiber.join(running);
+      assert.isTrue(started[1]!.resume);
+      assert.notInclude(started[1]!.message.text, "main moved");
       const after = yield* fyiItemOf(threadId, "note");
       assert.isNull(after.item.runId);
       assert.strictEqual(after.item.status, "pending");

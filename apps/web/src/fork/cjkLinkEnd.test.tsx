@@ -21,7 +21,7 @@ const render = createMarkdownRenderer({
 });
 
 function anchors(source: string) {
-  const markup = renderToStaticMarkup(render(source, true));
+  const markup = renderToStaticMarkup(render(source));
   return Array.from(markup.matchAll(/<a href="([^"]*)">([^<]*)<\/a>/g), ([, href, text]) => ({
     href,
     text,

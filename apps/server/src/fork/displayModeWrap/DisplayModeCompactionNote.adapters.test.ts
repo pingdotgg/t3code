@@ -108,7 +108,7 @@ const settingsFor = (threadId: ThreadId) =>
 /** The production layer that gives the adapters their services, so a test fails if it drops the note. */
 const infrastructureFor = (threadId: ThreadId, prefix: string) =>
   ProviderOrchestrationAdapterInfrastructure.layer.pipe(
-    Layer.provide(Layer.merge(PortScanner.layerTest, SqlitePersistence.layerMemory)),
+    Layer.provideMerge(Layer.merge(PortScanner.layerTest, SqlitePersistence.layerMemory)),
     Layer.provideMerge(settingsFor(threadId)),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
     Layer.provideMerge(McpProviderSessions.layer),
@@ -160,6 +160,7 @@ const startClaudeTurn = Effect.fn("startClaudeTurn")(function* (
             setModel: () => Effect.void,
             applyFlagSettings: () => Effect.void,
             setPermissionMode: () => Effect.void,
+            renameSession: () => Effect.void,
             backgroundTasks: () => Effect.succeed(false),
             mcpServerStatus: Effect.succeed([]),
             readMcpResource: () => Effect.die("unexpected MCP resource read"),

@@ -1,13 +1,9 @@
-<<<<<<< origin/main
 import {
   choiceDraftTarget,
   composerDraftView,
   forEachSubThreadDraft,
   threadOfSubThreadDraft,
 } from "./fork/subThreads/subThreadDraft";
-import { stripInlineContextReferences } from "./lib/composerContextReferences";
-=======
->>>>>>> upstream/main
 import {
   composerFileAttachmentMimeType,
   composerImageDedupKey,

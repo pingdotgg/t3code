@@ -174,7 +174,7 @@ const claudeNoisePaths = [
 
 // The prompt-cache TTL leaves the env here; the test checks it on its own.
 const claudeWithoutNoise = ({ options, message }: ClaudeFirstRequest) => {
-  const { env, canUseTool, onUserDialog, onElicitation, ...rest } = options;
+  const { env, canUseTool, onUserDialog, onElicitation, hooks, ...rest } = options;
   const { CLAUDE_CODE_PROMPT_CACHE_TTL: _ttl, ...environment } = env ?? {};
   return maskPaths(
     {
@@ -182,6 +182,8 @@ const claudeWithoutNoise = ({ options, message }: ClaudeFirstRequest) => {
         ...rest,
         ...(env === undefined ? {} : { env: environment }),
         callbacks: [canUseTool, onUserDialog, onElicitation].map((callback) => typeof callback),
+        // Each turn has its own hook callbacks, so only the events they cover compare.
+        hookEvents: Object.keys(hooks ?? {}),
       },
       message,
     },
@@ -230,6 +232,7 @@ const claude: ProviderFixture = {
                   setModel: () => Effect.void,
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
+                  renameSession: () => Effect.void,
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
@@ -295,10 +298,20 @@ const codexNoisePaths: Readonly<Record<string, ReadonlyArray<ReadonlyArray<strin
   "turn/start": [["threadId"]],
 };
 
+// Upstream starts every delegated Codex child, the general role too, as a Codex subagent.
+const withoutThreadSource = (params: unknown) => {
+  if (!Predicate.isObject(params)) return params;
+  const { threadSource: _source, ...rest } = params;
+  return rest;
+};
+
 const codexWithoutNoise = (frames: ReadonlyArray<typeof CodexFrame.Type>) =>
   frames.map(({ method, params }) => ({
     method,
-    params: maskPaths(params, codexNoisePaths[method] ?? []),
+    params: maskPaths(
+      method === "thread/start" ? withoutThreadSource(params) : params,
+      codexNoisePaths[method] ?? [],
+    ),
   }));
 
 const codexModel = "gpt-6-luna";

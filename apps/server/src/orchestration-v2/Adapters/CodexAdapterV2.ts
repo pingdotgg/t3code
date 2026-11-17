@@ -258,7 +258,6 @@ const decodeCodexBackgroundTerminalTerminateResponse = Schema.decodeUnknownEffec
 const decodeCodexBackgroundTerminalsListResponse = Schema.decodeUnknownEffect(
   CodexBackgroundTerminalsListResponse,
 );
-<<<<<<< origin/main
 const decodeCodexAuthJson = Schema.decodeUnknownOption(Schema.fromJsonString(CodexAuthJsonSchema));
 
 // A Team shares `account_id`; the id_token's user id tells its seats apart.
@@ -278,10 +277,8 @@ const readCodexAccount = Effect.fn("CodexAdapterV2.readAccount")(function* (
     return `${tokens.account_id}\n${userId}`;
   });
 });
-=======
 // Initialize normally answers in under a second; leave room for a slow first launch.
 const CODEX_INITIALIZE_TIMEOUT = "30 seconds";
->>>>>>> upstream/main
 const CodexThreadSampleResponse = Schema.Struct({ text: Schema.NullOr(Schema.String) });
 const decodeCodexThreadSampleResponse = Schema.decodeUnknownEffect(CodexThreadSampleResponse);
 export const CODEX_PROMPT_SUGGESTION_PROMPT =
@@ -1915,11 +1912,8 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
     idAllocator,
     serverConfig,
     continuationRequests,
-<<<<<<< origin/main
     displayModeCompactionNote,
-=======
     watchCommandStops: portDiscovery.watchAgentCommandStops,
->>>>>>> upstream/main
     ...hooks,
   });
 });
@@ -1946,13 +1940,10 @@ export interface CodexAdapterV2Options {
       request: ProviderContinuationRequests.ProviderContinuationRequest,
     ) => Effect.Effect<void>;
   };
-<<<<<<< origin/main
   /** Omitting this sends no display mode note after a compaction. */
   readonly displayModeCompactionNote?: DisplayModeCompactionNoteShape | undefined;
-=======
   /** Omitting this reports a command the user stopped as one that finished by itself. */
   readonly watchCommandStops?: PortScanner.PortDiscovery["Service"]["watchAgentCommandStops"];
->>>>>>> upstream/main
 }
 
 export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
@@ -8150,14 +8141,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }
               yield* startNativeTurn(
                 turnInput,
-<<<<<<< origin/main
-                turnInput.restartContinuationOfRunId === undefined
-                  ? yield* toCodexInput(turnInput)
-                  : [],
-                turnInput.commandNote,
-=======
                 !continuation ? yield* toCodexInput(turnInput) : [],
->>>>>>> upstream/main
+                turnInput.commandNote,
               );
             }).pipe(
               Effect.mapError(

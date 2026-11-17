@@ -582,6 +582,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
             })).pipe(Effect.as(threadInput.providerThread)),
           startTurn: () => options.startTurn ?? Effect.void,
           compactThread: () => Effect.void,
+          resumeTurn: () => Effect.void,
           steerTurn: () => Effect.void,
           interruptTurn: () =>
             Ref.update(state, (current) => ({
@@ -3855,6 +3856,7 @@ it.effect.each([
   { name: "idle", running: "none", pendingWork: false, restarted: true },
   { name: "a turn is running", running: "turn", pendingWork: false, restarted: false },
   { name: "a compaction is running", running: "compaction", pendingWork: false, restarted: false },
+  { name: "a resumed turn is running", running: "resume", pendingWork: false, restarted: false },
   { name: "background work is pending", running: "none", pendingWork: true, restarted: false },
 ] as const)(
   "ProviderSessionManagerV2 restarts a session whose account changed only when $name",
@@ -3885,7 +3887,14 @@ it.effect.each([
         yield* first.events.pipe(Stream.runDrain, Effect.forkScoped);
         if (running !== "none") {
           const runId = idAllocator.derive.run({ threadId: threadA, ordinal: 1 });
-          yield* (running === "turn" ? first.startTurn : first.compactThread!)({
+          const start =
+            running === "resume"
+              ? (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+                  first.resumeTurn!({ ...input, messageId: input.message.messageId })
+              : running === "turn"
+                ? first.startTurn
+                : first.compactThread!;
+          yield* start({
             appThread: (yield* projectionStore.getThreadProjection(threadA)).thread,
             threadId: threadA,
             runId,

@@ -133,12 +133,8 @@ import {
   runtimeModeRank,
   taskPrompt,
 } from "./delegatedTaskModes.ts";
-<<<<<<< origin/main
-import { isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
-import { fyiRunsByThread, fyiTimelineFields, sendFyi } from "../fork/fyi/FyiMcp.ts";
-=======
 import { assertTargetWithinLimits, isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
->>>>>>> upstream/main
+import { fyiRunsByThread, fyiTimelineFields, sendFyi } from "../fork/fyi/FyiMcp.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";

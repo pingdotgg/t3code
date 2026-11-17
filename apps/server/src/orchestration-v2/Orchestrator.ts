@@ -843,9 +843,6 @@ function metadataUpdateContinuation(
       };
 }
 
-<<<<<<< origin/main
-// Provider wakes and delegated completions can start follow-ups. Monitor updates only report progress.
-=======
 // A later command for the first message would leave the new thread committed with no run,
 // and every client would show it idle until that command landed.
 function threadCreateInitialMessage(
@@ -868,8 +865,7 @@ function threadCreateInitialMessage(
   };
 }
 
-// Provider wakes can start follow-up work; monitor updates only report progress.
->>>>>>> upstream/main
+// Provider wakes and delegated completions can start follow-ups. Monitor updates only report progress.
 // Dispatch takes the parent's lock for follow-ups because intake writes the parent.
 function mayStartSubagentFollowup(
   command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,

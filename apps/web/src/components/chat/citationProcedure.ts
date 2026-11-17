@@ -133,20 +133,14 @@ export function citedThreadSnapshot(input: {
   }
   // Older pages merge into the visible turn items, not the message list.
   const item = input.thread.projection.visibleTurnItems.find(
-<<<<<<< origin/main
-    (row) =>
-      ((row.item.type === "assistant_message" || row.item.type === "user_message") &&
-        row.item.messageId === input.messageId) ||
-      isSentReply(row.item, input.messageId),
-=======
     ({ item }) =>
       ((item.type === "assistant_message" || item.type === "user_message") &&
         item.messageId === input.messageId) ||
       (item.type === "dynamic_tool" &&
         item.id === input.messageId &&
         item.status === "completed" &&
-        sentMessageFromToolItem(item) !== undefined),
->>>>>>> upstream/main
+        sentMessageFromToolItem(item) !== undefined) ||
+      isSentReply(item, input.messageId),
   )?.item;
   return {
     message: item === undefined ? null : item.type === "user_message" ? "other" : "assistant",

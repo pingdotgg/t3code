@@ -1824,11 +1824,8 @@ function renderFeedEntry(
     | "onEditPendingMessage"
     | "threadId"
     | "workspaceRoot"
-<<<<<<< origin/main
     | "fyiRuns"
-=======
     | "worktreeSetup"
->>>>>>> upstream/main
   > & {
     /** The fold row of the turn the worktree setup handed off to. */
     readonly setupFoldRowId: string | null;

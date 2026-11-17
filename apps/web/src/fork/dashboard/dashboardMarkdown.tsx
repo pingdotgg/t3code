@@ -176,9 +176,11 @@ export function DashboardMarkdown(props: { readonly text: string; readonly paire
     scope?.cwd,
     hostFileOrigins,
   );
+  const element = renderMarkdown(props.text);
+  renderMarkdown.remember(props.text, element);
   return (
     <SlotCopyContext value={{ text: props.text, filePaths, hostFileOrigins }}>
-      {renderMarkdown(props.text, true)}
+      {element}
     </SlotCopyContext>
   );
 }

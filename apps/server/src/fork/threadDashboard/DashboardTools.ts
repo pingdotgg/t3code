@@ -8,7 +8,7 @@ import { TEXT_MATCH_MIN_RATIO } from "@t3tools/shared/textMatch";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../../mcp/McpToolAccess.ts";
@@ -58,7 +58,8 @@ const DashboardSetTool = Tool.make(DASHBOARD_SET_TOOL_NAME, {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const DashboardGetTool = Tool.make(DASHBOARD_GET_TOOL_NAME, {
   description: `${ONLY_WITH_DASHBOARD} Read this thread's Dashboard: each slot in page order with its text and when it was last written.`,
@@ -84,7 +85,8 @@ const DashboardGetTool = Tool.make(DASHBOARD_GET_TOOL_NAME, {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 export const DashboardToolkit = Toolkit.make(DashboardSetTool, DashboardGetTool);
 

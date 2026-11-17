@@ -289,16 +289,12 @@ const ComposerMentionExtension = Node.create({
 
 function ComposerMentionNodeView({ node }: NodeViewProps) {
   const actions = use(ComposerContextActionsContext);
-<<<<<<< origin/main
   const mentionPath = (node.attrs.path as string) ?? "";
   const boardMatch = /^\[([^\]]+)\]\((board:\/\/[^)]+)\)$/.exec(mentionPath);
   const path = boardMatch?.[2] ?? mentionPath;
-=======
-  const path = (node.attrs.path as string) ?? "";
   const nativeDrag = useNativeFileDrag(actions.environmentId, () =>
     resolvePathLinkTarget(path, actions.cwd ?? ""),
   );
->>>>>>> upstream/main
   const chip = (
     <ContextChip
       {...nativeDrag}

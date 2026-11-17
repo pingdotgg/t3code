@@ -897,23 +897,16 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-<<<<<<< origin/main
       const wrapInput = {
         threadId: run.threadId,
-        message,
+        message: providerMessage,
         text: projectComposerContextForProvider({
-          text: message.text,
-          records: message.context?.records ?? [],
+          text: providerMessage.text,
+          records: providerMessage.context?.records ?? [],
         }),
       };
       let wrapped = yield* displayModeWrap.wrapUserText(wrapInput);
       let userText = wrapped.text;
-=======
-      const userText = projectComposerContextForProvider({
-        text: providerMessage.text,
-        records: providerMessage.context?.records ?? [],
-      });
->>>>>>> upstream/main
       // Native goal commands go verbatim; handoff history waits a turn.
       const goalDriver =
         session.driver === "codex" ||
@@ -929,9 +922,11 @@ export const layer: Layer.Layer<
       );
       const turnFyi = yield* fyiDelivery.forTurn({
         threadId: run.threadId,
-        message,
+        message: providerMessage,
         goalCommand,
-        resumesNatively: run.restartContinuationOfRunId !== undefined && !noteContinuation,
+        resumesNatively:
+          (run.restartContinuationOfRunId !== undefined && !noteContinuation) ||
+          (manualResume && unsentResumeMessage === undefined),
       });
       const restartCancelledWork = pendingRestartCancelledBackgroundWork({
         runs: projection.runs,
@@ -1097,15 +1092,10 @@ export const layer: Layer.Layer<
             return handoffBudget({
               tokenCap,
               modelContextWindow,
-<<<<<<< origin/main
               userText: [restartNote, turnFyi.text, userText]
                 .filter((part) => part !== "")
                 .join("\n\n"),
-              attachments: message.attachments,
-=======
-              userText: restartNote === "" ? userText : `${restartNote}\n\n${userText}`,
               attachments: providerMessage.attachments,
->>>>>>> upstream/main
               providerThread: budgetProviderThread,
               nativeContextEstimate:
                 budgetProviderThread.contextUsage?.usedTokens === undefined
@@ -1639,17 +1629,6 @@ export const layer: Layer.Layer<
         legacyInputRunIds,
         budget,
       } = handoffContext;
-<<<<<<< origin/main
-      const noteContext = DisplayModeWrap.noteContextAtTurnStart({
-        sameNativeThread,
-        handoffCount: effectiveHandoffs.length,
-        nativeFork: nativeForkTransfer,
-        portableForkFallback,
-      });
-      if (noteContext !== undefined) {
-        wrapped = yield* displayModeWrap.wrapUserText({ ...wrapInput, context: noteContext });
-        userText = wrapped.text;
-=======
       if (manualResume && unsentResumeMessage === undefined && session.resumeTurn === undefined) {
         yield* settleStartFailure({
           signal: "resume-unsupported",
@@ -1660,7 +1639,16 @@ export const layer: Layer.Layer<
           }),
         });
         return;
->>>>>>> upstream/main
+      }
+      const noteContext = DisplayModeWrap.noteContextAtTurnStart({
+        sameNativeThread,
+        handoffCount: effectiveHandoffs.length,
+        nativeFork: nativeForkTransfer,
+        portableForkFallback,
+      });
+      if (noteContext !== undefined) {
+        wrapped = yield* displayModeWrap.wrapUserText({ ...wrapInput, context: noteContext });
+        userText = wrapped.text;
       }
       const retryHandoff = resumedRetryHandoff ?? (yield* prepareRetryHandoff(handoffContext));
       const runningProviderThread: OrchestrationV2ProviderThread = {

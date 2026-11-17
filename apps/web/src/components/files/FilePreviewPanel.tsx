@@ -518,6 +518,7 @@ function useFileLineReveal(
   revealRequestId: number,
   onRevealApplied?: (fileContainer: HTMLElement, line: number) => void,
   keepReveal?: (fileContainer: HTMLElement) => boolean,
+  restoresSavedScroll?: () => boolean,
 ): FilePostRender {
   const [revealStatesByPath] = useState(() => new Map<string, FileRevealState>());
 
@@ -572,16 +573,14 @@ function useFileLineReveal(
       state.handledRequestId = null;
     }
 
-<<<<<<< origin/main
-    if (scrollLine === null) {
-=======
     if (scrollContainer && state.scrollContainer !== scrollContainer) {
       state.scrollContainer = scrollContainer;
       const savedScrollTop = state.scrollTop;
       // A pending line reveal owns the scroll position.
       if (
         savedScrollTop > 0 &&
-        (revealLine === null || state.handledRequestId === revealRequestId)
+        restoresSavedScroll?.() !== true &&
+        (scrollLine === null || state.handledRequestId === revealRequestId)
       ) {
         const restoreScroll = (attempt: number) => {
           state.restoreFrameId = requestAnimationFrame(() => {
@@ -601,8 +600,7 @@ function useFileLineReveal(
       }
     }
 
-    if (revealLine === null) {
->>>>>>> upstream/main
+    if (scrollLine === null) {
       fileContainer.style.minHeight = "";
       return;
     }
@@ -1418,6 +1416,7 @@ export default function FilePreviewPanel({
       reading.revealKey,
       reading.onRevealApplied,
       reading.keepReveal,
+      reading.restoresSavedScroll,
     ),
   );
   // Mounting the file read under the workspace mutation id refetches it after each mutation.

@@ -32,17 +32,14 @@ import { readThreadTurnItems } from "../../state/entities";
 import { useV2ItemSupport } from "../../state/v2ItemSupport";
 import { TimelineRowCtx, TimelineRowActivityCtx, type TimelineRow } from "./timelineRowContext";
 import { MESSAGE_HEADING_LEVEL, MessageAuthorHeading } from "./TimelineRowParts";
-<<<<<<< origin/main
-import { SubThreadReplyLine } from "../../fork/subThreads/SubThreadReplyLine";
-import { AgentMessageDivider } from "../../fork/displayMode/AgentMessageDivider";
-import { EditedMark } from "../../fork/displayMode/EditedMark";
-=======
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { vcsEnvironment } from "../../state/vcs";
+import { SubThreadReplyLine } from "../../fork/subThreads/SubThreadReplyLine";
+import { AgentMessageDivider } from "../../fork/displayMode/AgentMessageDivider";
+import { EditedMark } from "../../fork/displayMode/EditedMark";
 
 const NO_VCS_STATUS = Atom.make(AsyncResult.initial());
->>>>>>> upstream/main
 
 export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
@@ -129,37 +126,29 @@ export function SentMessageTimelineRow({
   return (
     <div className="min-w-0 px-1 py-0.5">
       <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
-<<<<<<< origin/main
       <div data-thread-find-text="true">
-        <ChatMarkdown
-          text={row.text}
-          assistantReply
-=======
-      {/* Sent messages have no message id; citations name their turn item instead. */}
-      <AssistantCitationSource
-        messageId={MessageId.make(row.id)}
-        {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
-        itemKey={row.id}
-        request={ctx.citationRequest}
-        listRef={ctx.listRef}
-      >
-        <ChatMarkdown
-          text={row.text}
->>>>>>> upstream/main
-          cwd={ctx.markdownCwd}
-          threadRef={ctx.threadRef ?? undefined}
-          lineBreaks={shouldPreserveAssistantLineBreaks(row.text)}
-          skills={ctx.skills}
-          headingLevelOffset={MESSAGE_HEADING_LEVEL}
-          onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-          onRunShellCommand={ctx.onRunShellCommand}
-          onImageExpand={ctx.onImageExpand}
-        />
-<<<<<<< origin/main
+        {/* Sent messages have no message id; citations name their turn item instead. */}
+        <AssistantCitationSource
+          messageId={MessageId.make(row.id)}
+          {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
+          itemKey={row.id}
+          request={ctx.citationRequest}
+          listRef={ctx.listRef}
+        >
+          <ChatMarkdown
+            text={row.text}
+            assistantReply
+            cwd={ctx.markdownCwd}
+            threadRef={ctx.threadRef ?? undefined}
+            lineBreaks={shouldPreserveAssistantLineBreaks(row.text)}
+            skills={ctx.skills}
+            headingLevelOffset={MESSAGE_HEADING_LEVEL}
+            onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+            onRunShellCommand={ctx.onRunShellCommand}
+            onImageExpand={ctx.onImageExpand}
+          />
+        </AssistantCitationSource>
       </div>
-=======
-      </AssistantCitationSource>
->>>>>>> upstream/main
     </div>
   );
 }

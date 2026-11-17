@@ -208,12 +208,8 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
       Schema.Struct({
         threadId: ThreadId,
         cwd: Schema.optional(Schema.String),
-<<<<<<< origin/main
-        query: Schema.String,
-        displayMode: Schema.optional(Schema.String),
-=======
         query: Schema.optional(Schema.String),
->>>>>>> upstream/main
+        displayMode: Schema.optional(Schema.String),
         skills: OrchestrationV2SearchThreadInput.fields.skills,
       }),
     ),
@@ -342,6 +338,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
       const documentKey = yield* encodeCacheKey({
         threadId,
         cwd,
+        displayMode: input.displayMode,
         skills: input.skills ?? [],
       });
       const rendered = renderedSnapshot.current;
@@ -445,7 +442,6 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
           )
             embeddedResultRunIds.add(item.runId);
         }
-<<<<<<< origin/main
         // A rewrite can sit in a later load chunk than its send, so the fold covers every row.
         const sentTexts = foldSentTexts(
           yield* Effect.forEach(
@@ -453,14 +449,6 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
             (row) => Effect.map(decode(row), ({ item }) => item),
           ),
         );
-        const rows = payloads.filter(
-          (row) =>
-            row.type !== "user_input_request" &&
-            !(row.type === "user_message" && foldedAnswerRunIds.get(row.entryId) === row.runId),
-        );
-        const documents = new Map<number, FindDocument>();
-        const count = Effect.fnUntraced(function* (row: FindPayload) {
-=======
         const rows =
           data.rendered ??
           payloads.filter(
@@ -470,7 +458,6 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
           );
         const documents = new Map<number, FindDocument & RenderedDocument>();
         const count = Effect.fnUntraced(function* (row: FindPayload | RenderedDocument) {
->>>>>>> upstream/main
           const cached = documents.get(row.position);
           if (cached) return cached;
           let rendered: RenderedDocument;
@@ -478,11 +465,13 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
             rendered = row;
           } else {
             const decoded = yield* decode(row);
-            const key = textKey(decoded.item, cwd, input.skills ?? []);
+            const key = textKey(decoded.item, cwd, input.skills ?? [], sentTexts);
             const segments =
-              decoded.item.type === "assistant_message" &&
-              decoded.item.text === "" &&
-              embeddedResultRunIds.has(decoded.item.runId)
+              (input.displayMode !== undefined &&
+                !displayModeShowsText(input.displayMode, decoded.item)) ||
+              (decoded.item.type === "assistant_message" &&
+                decoded.item.text === "" &&
+                embeddedResultRunIds.has(decoded.item.runId))
                 ? []
                 : yield* Cache.get(
                     key.text.length <= 32_768 ? textCache.text : textCache.largeText,
@@ -490,24 +479,10 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
                   );
             rendered = { ...documentFor(decoded, 0), segments, sourceLength: key.text.length };
           }
-<<<<<<< origin/main
-          const key = textKey(decoded.item, cwd, input.skills ?? [], sentTexts);
-          const segments = yield* Cache.get(
-            key.text.length <= 32_768 ? textCache.text : textCache.largeText,
-            key,
-          );
-          const document = documentFor(
-            decoded,
-            input.displayMode === undefined || displayModeShowsText(input.displayMode, decoded.item)
-              ? countSegments(segments, input.query)
-              : 0,
-          );
-=======
           const document = {
             ...rendered,
             count: countSegments(rendered.segments, input.query),
           };
->>>>>>> upstream/main
           documents.set(row.position, document);
           yield* Effect.yieldNow;
           return document;

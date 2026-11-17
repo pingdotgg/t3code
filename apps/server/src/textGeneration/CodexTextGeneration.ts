@@ -35,7 +35,6 @@ import {
 } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { CODEX_HELPER_NO_HOOKS_ARGS } from "../fork/codexHelperHooks.ts";
 
 const CODEX_TIMEOUT_MS = 180_000;
 const CODEX_MCP_LIST_TIMEOUT_MS = 10_000;
@@ -321,7 +320,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           ...codexMcpServerOffFlags(enabledMcpServers),
           "--ephemeral",
           "--skip-git-repo-check",
-          ...CODEX_HELPER_NO_HOOKS_ARGS,
           "-s",
           "read-only",
           "--model",

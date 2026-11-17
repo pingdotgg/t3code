@@ -154,6 +154,7 @@ const SendToUserTool = Tool.make(SEND_TO_USER_TOOL_NAME, {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients)
   // Claude is told to use it from its first turn; Claude Code otherwise defers it behind ToolSearch.
   .annotate(Tool.Meta, { "anthropic/alwaysLoad": true });
 
@@ -182,7 +183,8 @@ const ReplaceSendToUserTool = Tool.make(REPLACE_SEND_TO_USER_TOOL_NAME, {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 export const SendToUserToolkit = Toolkit.make(SendToUserTool, ReplaceSendToUserTool);
 

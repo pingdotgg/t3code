@@ -576,14 +576,10 @@ export function installFakeEnvironment(
   },
 ): Disposable {
   threads = fixtures;
-<<<<<<< origin/main
-  baseServerConfig = makeServerConfig(options?.providers ?? [CODEX_PROVIDER], options?.settings);
-=======
   baseServerConfig = {
-    ...makeServerConfig(options?.providers ?? [CODEX_PROVIDER]),
+    ...makeServerConfig(options?.providers ?? [CODEX_PROVIDER], options?.settings),
     keybindings: options?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS,
   };
->>>>>>> upstream/main
   dispatched = [];
   acceptCommands = options?.acceptCommands === true;
   projects = [

@@ -187,16 +187,17 @@ it("annotates send_to_user as upstream's send_to_user", () => {
       Context.get(tool.annotations, key),
     ),
     Context.getOption(tool.annotations, Tool.Meta),
+    Context.getOption(tool.annotations, McpSchema.EnabledWhen),
   ];
   expect(annotations(SendToUser.SendToUserToolkit.tools.send_to_user)).toEqual(
     annotations(MessageToolkit.tools.send_to_user),
   );
 });
 
-it.effect("refuses a caller outside a thread", () =>
+it.effect("hides itself from a caller outside a thread", () =>
   Effect.gen(function* () {
-    const result = yield* send("Hello", { ...threadScope, thread: undefined });
-    expect(result.isError).toBe(true);
+    const error = yield* Effect.flip(send("Hello", { ...threadScope, thread: undefined }));
+    expect(error.message).toContain("Tool 'send_to_user' not found");
   }).pipe(Effect.provide(layer)),
 );
 

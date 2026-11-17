@@ -153,9 +153,6 @@ export const threadTitleEvaluationCases = [
     ],
     rubric: "Name the default config on init. Leave out Hyperdrive, the project name.",
   },
-<<<<<<< origin/main
-  ...subThreadSummaryCases,
-=======
   {
     id: "custom-title-scheme",
     source: "https://github.com/pingdotgg/t3code/pull/37565",
@@ -171,7 +168,7 @@ export const threadTitleEvaluationCases = [
     rubric:
       'Use the user\'s "Owner: what it does (model effort)" shape with all three parts, even past the default 8-word, 40-character limit. A bare short title fails.',
   },
->>>>>>> upstream/main
+  ...subThreadSummaryCases,
 ] satisfies ReadonlyArray<{
   id: string;
   source: string;

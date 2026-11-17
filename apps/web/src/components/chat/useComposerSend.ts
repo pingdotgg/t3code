@@ -44,7 +44,6 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { createModelSelection } from "@t3tools/shared/model";
-<<<<<<< origin/main
 import { type SetStateAction, use, useLayoutEffect, useRef } from "react";
 import {
   addsContext,
@@ -52,10 +51,6 @@ import {
   withSubThreadRecord,
 } from "../../fork/subThreads/subThreadReply";
 import { SubThreadViewContext } from "../../fork/subThreads/subThreadsState";
-import { flushSync } from "react-dom";
-=======
-import { type SetStateAction, useLayoutEffect, useRef } from "react";
->>>>>>> upstream/main
 import { useNavigate } from "@tanstack/react-router";
 import {
   isAtomCommandInterrupted,

@@ -57,8 +57,9 @@ export function userViewCommand(cli: {
     Command.withHandler((flags) =>
       Effect.gen(function* () {
         const threadId = yield* decodeThreadId(flags.thread);
+        // Plain text out, so log warnings keep the configured level.
         yield* withThreadTools(
-          flags,
+          { ...flags, json: false },
           Effect.fn("cli.thread.userView")(function* (tools) {
             const { text } = yield* tools.call(
               THREAD_USER_VIEW_TOOL_NAME,

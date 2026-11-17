@@ -3,6 +3,7 @@ import {
   type ClientSettingsPatch,
   compactIdleChoice,
   type EnvironmentId,
+  globalIdleCompaction,
   idleCompactionPatch,
   isNullableProjectSettingsOverride,
   readsIdleCompactionModes,

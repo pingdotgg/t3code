@@ -681,15 +681,11 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   );
   const initialize = yield* client.request("initialize", buildCodexInitializeParams());
   yield* client.notify("initialized", undefined);
-<<<<<<< origin/main
   const skillRoot = resolveCodexSkillRoot(input.environment);
   if (skillRoot) {
     yield* client.request("skills/extraRoots/set", { extraRoots: [skillRoot] });
   }
-  return { client, initialize };
-=======
   return { client, initialize, pid: child.pid };
->>>>>>> upstream/main
 });
 
 // Codex runs git (ssh for ssh URLs) for plugin marketplaces at launch and exits without waiting

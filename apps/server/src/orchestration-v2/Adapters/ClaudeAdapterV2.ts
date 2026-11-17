@@ -1506,26 +1506,21 @@ export const layerQueryRunner: Layer.Layer<
           }
           const queryOptions = {
             ...sdkOptions,
-<<<<<<< origin/main
             disallowedTools: [
               ...DELEGATE_ONLY_PROVIDERS.claudeAgent.hide.disallowedTools,
               ...(sdkOptions.disallowedTools ?? []),
             ],
+            ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
             env: {
               ...(sdkOptions.env ?? hostEnvironment),
               ...claudeTerminalToolEnvironment,
               ...DELEGATE_ONLY_PROVIDERS.claudeAgent.hide.environment,
-=======
-            ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
-            env: {
-              ...(sdkOptions.env ?? hostEnvironment),
               ...(input.resume
                 ? {
                     CLAUDE_CODE_RESUME_INTERRUPTED_TURN: "1",
                     CLAUDE_CODE_RESUME_REASON: "user_resume",
                   }
                 : {}),
->>>>>>> upstream/main
               [PortScanner.AGENT_THREAD_ENV]: input.threadId,
             },
           };
@@ -2309,6 +2304,7 @@ export function makeClaudeQueryOptions(input: {
   const hooks = {
     ...input.hooks,
     ...(deviceInstructions ? { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] } : {}),
+    ...(input.onStop === undefined ? {} : { Stop: [{ hooks: [input.onStop] }] }),
   };
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
@@ -2376,20 +2372,7 @@ export function makeClaudeQueryOptions(input: {
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
-<<<<<<< origin/main
     ...(Object.keys(hooks).length === 0 ? {} : { hooks }),
-=======
-    ...(deviceInstructions || input.onStop !== undefined
-      ? {
-          hooks: {
-            ...(deviceInstructions
-              ? { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] }
-              : {}),
-            ...(input.onStop === undefined ? {} : { Stop: [{ hooks: [input.onStop] }] }),
-          },
-        }
-      : {}),
->>>>>>> upstream/main
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
   const additionalDirectories = [

@@ -1,16 +1,5 @@
-<<<<<<< origin/main
-import {
-  formatFilePathPosition,
-  parseFileUrlHref,
-  resolvePathLinkTarget,
-  splitFilePathPosition,
-} from "@t3tools/shared/fileLinks";
-import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
-import { stripSlashPrefixedWindowsDrive } from "@t3tools/shared/path";
-import { blankCjkPunctuation } from "./fork/cjkLinkEnd";
-=======
 import { parseFileUrlHref, resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
->>>>>>> upstream/main
+import { blankCjkPunctuation } from "./fork/cjkLinkEnd";
 import { isMacPlatform } from "./lib/utils";
 
 export type TerminalLinkKind = "url" | "path";

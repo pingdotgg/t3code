@@ -2108,7 +2108,6 @@ describe("orphan worktree reports", () => {
     ),
   );
 
-<<<<<<< origin/main
   it.live("keeps checkout caches in current and nested previous locations out of the report", () =>
     runCleanupTest(
       Effect.gen(function* () {
@@ -2141,10 +2140,7 @@ describe("orphan worktree reports", () => {
     ),
   );
 
-  it.live.each(["nested", "direct"] as const)(
-=======
   it.live.each(["nested", "direct", "annexed"] as const)(
->>>>>>> upstream/main
     "reports a linked orphan's size without removing its files (%s)",
     (location) =>
       runCleanupTest(

@@ -20,12 +20,9 @@ import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
   CHAT_MARKDOWN_REHYPE_PLUGINS,
-<<<<<<< origin/main
+  decodeMarkdownLinkEscapes,
   ASSISTANT_MARKDOWN_REMARK_PLUGINS,
   ASSISTANT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
-=======
-  decodeMarkdownLinkEscapes,
->>>>>>> upstream/main
   remarkAssistantInsights,
 } from "@t3tools/shared/markdownPipeline";
 import { useAtomValue } from "@effect/atom-react";
@@ -494,12 +491,8 @@ function fileLinkSourcesKey(
 ): string {
   const hrefs = extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(text))
     .filter((href) => !parseComposerContextHref(href))
-<<<<<<< origin/main
-    .map((href) => hostFileLinkHref(normalizeMarkdownLinkHrefKey(href), hostFileOrigins))
-=======
     .map(decodeMarkdownLinkEscapes)
-    .map(normalizeMarkdownLinkHrefKey)
->>>>>>> upstream/main
+    .map((href) => hostFileLinkHref(normalizeMarkdownLinkHrefKey(href), hostFileOrigins))
     .filter((href) => resolveMarkdownFileLinkMeta(href, cwd, imageBaseDir ?? cwd));
   const spans = extractInlineCodeSpans(text).filter((span) =>
     resolveInlineCodeFileLinkMeta(span, cwd, imageBaseDir ?? cwd),
