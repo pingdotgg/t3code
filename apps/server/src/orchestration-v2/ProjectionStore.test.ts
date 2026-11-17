@@ -10227,6 +10227,31 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.deepEqual(earlierPage.items, targetAfterRollback.visibleTurnItems.slice(0, -2));
       assert.isTrue(earlierPage.hasMore);
       assert.isFalse(earlierPage.hasEarlier);
+      // The source reads its own rows; the fork reads the full index.
+      const authorPage = (
+        threadId: ThreadId,
+        author: "user" | "agent",
+        options: Partial<ProjectionStore.ProjectionTimelinePageOptions> = {},
+      ) =>
+        projectionStore
+          .getTimelinePage(threadId, { author, limit: 10, ...options })
+          .pipe(Effect.map((page) => page.items.map((row) => [row.position, row.item.type])));
+      assert.deepEqual(yield* authorPage(targetThreadId, "user"), [
+        [0, "user_message"],
+        [2, "user_message"],
+      ]);
+      assert.deepEqual(yield* authorPage(targetThreadId, "agent", { view: "activity" }), [
+        [1, "assistant_message"],
+        [3, "assistant_message"],
+      ]);
+      assert.deepEqual(yield* authorPage(sourceThreadId, "user"), [[0, "user_message"]]);
+      assert.deepEqual(yield* authorPage(sourceThreadId, "agent", { afterPosition: 0 }), [
+        [1, "assistant_message"],
+      ]);
+      assert.deepEqual(
+        yield* authorPage(sourceThreadId, "user", { beforePosition: Number.POSITIVE_INFINITY }),
+        [[0, "user_message"]],
+      );
       const tracedTimelinePage = (limit: number) =>
         Effect.gen(function* () {
           const { statements, tracer } = traceSqlStatements();

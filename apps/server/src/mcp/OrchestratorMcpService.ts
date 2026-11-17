@@ -3369,6 +3369,7 @@ const make = Effect.gen(function* () {
             : {}),
           limit,
           view,
+          ...(input.author === undefined ? {} : { author: input.author }),
           ...(input.itemId === undefined ? {} : { itemId: input.itemId }),
         })
         .pipe(Effect.mapError(threadManagementFailure));
@@ -3389,6 +3390,10 @@ const make = Effect.gen(function* () {
         { concurrency: 1 },
       );
       const messagesByThreadId = new Map(sourceMessages);
+      const firstPage =
+        input.afterPosition === undefined &&
+        input.beforePosition === undefined &&
+        input.itemId === undefined;
       const thread = threadDetail(
         scope,
         target,
@@ -3396,13 +3401,12 @@ const make = Effect.gen(function* () {
         timeline.totalItems,
         shell,
         yield* Clock.currentTimeMillis,
-        input.afterPosition === undefined &&
-          input.beforePosition === undefined &&
-          input.itemId === undefined,
+        firstPage,
       );
+      // Later pages repeat the first page's runs unless the caller asks for them.
       const recentRuns = target.runs
         .toSorted((left, right) => right.ordinal - left.ordinal)
-        .slice(0, runLimit)
+        .slice(0, firstPage || input.runLimit !== undefined ? runLimit : 0)
         .map((run) => threadRun(target, run));
       const { items, start } = timelineItemsWithinBudget(
         { thread, recentRuns, nextPosition: null, hasMore: false, earlierPosition: null },
