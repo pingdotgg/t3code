@@ -32,7 +32,7 @@ const messages = [
     project_id: "replay-project",
     thread_id: "asking-thread",
     payload_json: JSON.stringify({
-      text: "Change cache keys to include tenant IDs.",
+      text: "Do the cache keys carry tenant IDs?",
       createdBy: "user",
     }),
   },
@@ -62,7 +62,7 @@ const messages = [
     project_id: "replay-project",
     thread_id: "asking-thread",
     payload_json: JSON.stringify({
-      text: "Change cache keys to include tenant IDs.",
+      text: "Do the cache keys carry tenant IDs?",
       createdBy: "agent",
       notification: {
         source: { kind: "background_command" },
@@ -93,7 +93,7 @@ it.effect("replays invented facts through recall and names the gate", () =>
     assert.equal(match?.gate, "delivered");
     assert.deepEqual(match?.deliveredFactIds, ["fact-one"]);
     assert.equal(match?.createdBy, "user");
-    assert.equal(match?.characters, "Change cache keys to include tenant IDs.".length);
+    assert.equal(match?.characters, "Do the cache keys carry tenant IDs?".length);
     assert.isAbove(match?.candidatesMs ?? -1, -1);
     assert.equal(typeof match?.candidatesMs, "number");
     assert.equal(byId.get("greeting")?.gate, "no_match");

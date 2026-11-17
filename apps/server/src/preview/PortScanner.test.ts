@@ -51,6 +51,10 @@ const layerForeground = Layer.mock(BackgroundPolicy.BackgroundPolicy)({
 
 const layerScanner = PortScanner.layer.pipe(Layer.provide(layerForeground));
 
+// Fake process tables must not depend on which pid the test worker got.
+const SERVER_PID = 100;
+const layerServerPid = Layer.succeed(HostProcess.ProcessId, SERVER_PID);
+
 const layerProbeFailure = (
   run: ProcessRunner.ProcessRunner["Service"]["run"],
   fetch: typeof globalThis.fetch = globalThis.fetch,
@@ -62,6 +66,7 @@ const layerProbeFailure = (
         fileSystem,
         Layer.succeed(ProcessRunner.ProcessRunner, { run }),
         Layer.succeed(HostProcess.Platform, "linux"),
+        layerServerPid,
         FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch))),
       ),
     ),
@@ -881,9 +886,9 @@ effectIt.effect.each(["linux", "darwin"] as const)(
                     )
                   : Effect.succeed(processOutput(lsofStdout));
               }
-              // A direct child of this process, so stop refuses it without signaling anything.
+              // A direct child of the server, so stop refuses it without signaling anything.
               if (input.args[0] === "-A") {
-                return Effect.succeed(processOutput(`4242 ${process.pid} 4242\n`));
+                return Effect.succeed(processOutput(`4242 ${SERVER_PID} 4242\n`));
               }
               if (environmentFails) {
                 return Effect.fail(
@@ -904,6 +909,7 @@ effectIt.effect.each(["linux", "darwin"] as const)(
             },
           }),
           Layer.succeed(HostProcess.Platform, platform),
+          layerServerPid,
           FetchHttpClient.layer.pipe(
             Layer.provide(
               Layer.succeed(FetchHttpClient.Fetch, (input) => {

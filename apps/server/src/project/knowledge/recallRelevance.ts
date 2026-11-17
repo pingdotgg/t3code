@@ -8,6 +8,9 @@ const RECALL_MIN_MATCHED_TERMS = 3;
 const RECALL_MONITOR_MIN_MATCHED_TERMS = 8;
 const RECALL_MIN_COVERAGE = 0.3;
 const RECALL_MIN_MESSAGE_COVERAGE = 0.028;
+// Four terms in a row are a statement, not a shared name. No fact judged useful shared one with its message.
+const RECALL_RESTATED_RUN = 4;
+const RECALL_RESTATED_SHARE = 0.1;
 // 40 hid a current fact behind near-duplicates. 100 and 200 delivered the same facts here, and 200 slowed the tail.
 export const RECALL_CANDIDATE_LIMIT = 100;
 
@@ -69,11 +72,23 @@ const tokenizeRecallText = (text: string): ReadonlyArray<string> => {
 export const recallTokens = (text: string): ReadonlySet<string> =>
   new Set(tokenizeRecallText(text));
 
+const recallTermSequence = (
+  text: string,
+  tokenize: (text: string) => Iterable<string>,
+): ReadonlyArray<string> =>
+  [...tokenize(text)].filter((token) => token.length >= 3 && !RECALL_STOPWORDS.has(token));
+
 export const recallTerms = (
   text: string,
   tokenize: (text: string) => Iterable<string> = tokenizeRecallText,
-): ReadonlySet<string> =>
-  new Set([...tokenize(text)].filter((token) => token.length >= 3 && !RECALL_STOPWORDS.has(token)));
+): ReadonlySet<string> => new Set(recallTermSequence(text, tokenize));
+
+const termRuns = (terms: ReadonlyArray<string>): ReadonlySet<string> =>
+  new Set(
+    terms
+      .slice(RECALL_RESTATED_RUN - 1)
+      .map((_, index) => terms.slice(index, index + RECALL_RESTATED_RUN).join(" ")),
+  );
 
 /** Work already under way. A pull-request watch stays eligible and the gate decides. */
 const isProgressNotice = (kind: OrchestrationV2NotificationSource["kind"]): boolean => {
@@ -102,6 +117,12 @@ export const recallTrigger = (message: RecallMessage): RecallTrigger => {
   return { recall: true };
 };
 
+/** The message already carries the fact, so attaching it only takes a slot another fact could use. */
+const restates = (messageRuns: ReadonlySet<string>, factRuns: ReadonlySet<string>): boolean =>
+  factRuns.size > 0 &&
+  [...factRuns].filter((run) => messageRuns.has(run)).length / factRuns.size >=
+    RECALL_RESTATED_SHARE;
+
 const idf = (docs: number, corpusSize: number) => Math.log(1 + corpusSize / (1 + docs));
 
 export const rankRecallCandidates = <Fact extends RecallFactText>(
@@ -116,13 +137,16 @@ export const rankRecallCandidates = <Fact extends RecallFactText>(
       : RECALL_MIN_MATCHED_TERMS;
   const text = message.slice(0, RECALL_MESSAGE_CHARS);
   const tokenize = stats.tokenize ?? tokenizeRecallText;
-  const queryTerms = recallTerms(text, tokenize);
+  const querySequence = recallTermSequence(text, tokenize);
+  const queryTerms = new Set(querySequence);
+  const queryRuns = termRuns(querySequence);
   const queryMass = [...queryTerms].reduce(
     (sum, term) => sum + idf(stats.docs(term), stats.corpusSize),
     0,
   );
   const ranked = facts.flatMap((fact) => {
-    const terms = recallTerms([fact.content, ...fact.entities].join(" "), tokenize);
+    const sequence = recallTermSequence([fact.content, ...fact.entities].join(" "), tokenize);
+    const terms = new Set(sequence);
     const matched = [...queryTerms].filter((term) => terms.has(term));
     const hit = matched.reduce((sum, term) => sum + idf(stats.docs(term), stats.corpusSize), 0);
     const factMass = [...terms].reduce(
@@ -141,7 +165,8 @@ export const rankRecallCandidates = <Fact extends RecallFactText>(
               term.length >= 6,
           ))) &&
       relevance >= RECALL_MIN_COVERAGE &&
-      queryCoverage >= RECALL_MIN_MESSAGE_COVERAGE;
+      queryCoverage >= RECALL_MIN_MESSAGE_COVERAGE &&
+      !restates(queryRuns, termRuns(sequence));
     return [{ fact, relevance, passes }];
   });
   // Equal coverage preserves project-local trust and recency order.
