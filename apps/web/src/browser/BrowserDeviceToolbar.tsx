@@ -218,7 +218,7 @@ export function BrowserDeviceToolbar({
           <SelectItem value={RESPONSIVE_VALUE}>{m(SELECT_ITEMS[0]!.label)}</SelectItem>
           <SelectGroup>
             <SelectGroupLabel>
-              <T $context="group of standard device sizes">Standard</T>
+              <T context="group of standard device sizes">Standard</T>
             </SelectGroupLabel>
             {PREVIEW_VIEWPORT_PRESETS.map((preset) => (
               <SelectItem key={preset.id} value={preset.id}>

@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useGT } from "gt-react";
+import { msg } from "gt-react";
 import {
   type CheckpointDiffTarget,
   type ComposerPathSearchTarget,
@@ -36,6 +36,7 @@ import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useState } from "react";
 
+import { m, type MessageResolver } from "../i18n/messages";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useFilesystemReadAccess } from "./filesystem";
 import { orchestrationEnvironment } from "./orchestration";
@@ -196,8 +197,7 @@ const vcsRefPagesAtom = Atom.family((pagesKey: string) => {
   );
 });
 
-export function usePaginatedBranches(target: VcsRefTarget) {
-  const gt = useGT();
+export function usePaginatedBranches(target: VcsRefTarget, resolve: MessageResolver = m) {
   // Leave unkeyed; mismatches already reset cursors, and a seeded key would break caching across the hook.
   const [pagination, setPagination] = useState<{
     readonly targetKey: string | null;
@@ -245,7 +245,7 @@ export function usePaginatedBranches(target: VcsRefTarget) {
           const cause = Cause.squash(failed.cause);
           return cause instanceof Error && cause.message.trim().length > 0
             ? cause.message
-            : gt("Failed to load refs.");
+            : resolve(msg("Failed to load refs."));
         })()
       : null;
   const refresh = () => {
@@ -301,8 +301,8 @@ export function useProjectPathSearch(
   target: ProjectPathSearchTarget,
   limit: number,
   options?: { readonly allowEmptyQuery?: boolean },
+  resolve: MessageResolver = m,
 ) {
-  const gt = useGT();
   const allowEmptyQuery = options?.allowEmptyQuery === true;
   const normalizedTarget = {
     environmentId: target.environmentId,
@@ -342,7 +342,7 @@ export function useProjectPathSearch(
         ? null
         : canReadFiles
           ? result.error
-          : (fileAccess.error ?? gt("This connection cannot search host files.")),
+          : (fileAccess.error ?? resolve(msg("This connection cannot search host files."))),
     isPending:
       !areProjectPathSearchTargetsEqual(normalizedTarget, debouncedTarget) ||
       (hasTarget && (fileAccess.isPending || result.isPending)),
@@ -353,8 +353,16 @@ export function useProjectPathSearch(
   };
 }
 
-export function useComposerPathSearch(target: ComposerPathSearchTarget) {
-  return useProjectPathSearch(target, COMPOSER_PATH_SEARCH_LIMIT, { allowEmptyQuery: true });
+export function useComposerPathSearch(
+  target: ComposerPathSearchTarget,
+  resolve: MessageResolver = m,
+) {
+  return useProjectPathSearch(
+    target,
+    COMPOSER_PATH_SEARCH_LIMIT,
+    { allowEmptyQuery: true },
+    resolve,
+  );
 }
 
 interface ProjectContentSearchTarget {
@@ -366,8 +374,10 @@ interface ProjectContentSearchTarget {
   readonly useRegex: boolean;
 }
 
-export function useProjectContentSearch(target: ProjectContentSearchTarget) {
-  const gt = useGT();
+export function useProjectContentSearch(
+  target: ProjectContentSearchTarget,
+  resolve: MessageResolver = m,
+) {
   const hasTarget = target.environmentId !== null && target.cwd !== null;
   const fileAccess = useFilesystemReadAccess(target.environmentId);
   const canReadFiles = hasTarget && fileAccess.canReadFiles;
@@ -423,11 +433,13 @@ export function useProjectContentSearch(target: ProjectContentSearchTarget) {
       !hasTarget || isCheckingAccess
         ? null
         : !canReadFiles
-          ? (fileAccess.error ?? gt("This connection cannot search host files."))
+          ? (fileAccess.error ?? resolve(msg("This connection cannot search host files.")))
           : queryTooLong
-            ? gt("Search is limited to {count} characters.", {
-                count: PROJECT_SEARCH_CONTENTS_QUERY_MAX_LENGTH,
-              })
+            ? resolve(
+                msg("Search is limited to {count} characters.", {
+                  count: PROJECT_SEARCH_CONTENTS_QUERY_MAX_LENGTH,
+                }),
+              )
             : result.error,
     isPending:
       isCheckingAccess ||

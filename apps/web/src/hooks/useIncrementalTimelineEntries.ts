@@ -1,3 +1,4 @@
+import { useMessages } from "gt-react";
 import { useState } from "react";
 import {
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
@@ -13,14 +14,17 @@ function sameInput(left: TimelineEntriesInput, right: TimelineEntriesInput): boo
     left.attachmentUrlById === right.attachmentUrlById &&
     left.attempts === right.attempts &&
     left.nodes === right.nodes &&
-    left.plans === right.plans
+    left.plans === right.plans &&
+    left.resolve === right.resolve
   );
 }
 
 export function useIncrementalTimelineEntries(
   threadKey: string | null,
-  input: TimelineEntriesInput,
+  timelineInput: TimelineEntriesInput,
 ): TimelineEntriesProjection["entries"] {
+  const resolve = useMessages();
+  const input = { ...timelineInput, resolve: timelineInput.resolve ?? resolve };
   const [state, setState] = useState(() => ({
     threadKey,
     projection: deriveTimelineEntriesFromVisibleTurnItemsWithState(input),

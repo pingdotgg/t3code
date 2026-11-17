@@ -602,6 +602,16 @@ function useSharedSettingsSyncTargetIds(includePending = false): ReadonlyArray<E
   });
 }
 
+function deniedSettingsDescription(environmentLabel: string | null | undefined): string {
+  return environmentLabel == null
+    ? m(msg("This connection lacks permission to change settings on the selected environment."))
+    : m(
+        msg("This connection lacks permission to change settings on {environments}.", {
+          environments: environmentLabel,
+        }),
+      );
+}
+
 function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
   useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const persist = useAtomCommand(serverEnvironment.updateSettings, {
@@ -653,12 +663,8 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
       toastManager.add({
         type: "warning",
         title: m(msg("Setting not saved")),
-        description: m(
-          msg("This connection lacks permission to change settings on {environments}.", {
-            environments:
-              environments.find((target) => target.environmentId === environmentId)?.label ??
-              m(msg("the selected environment")),
-          }),
+        description: deniedSettingsDescription(
+          environments.find((target) => target.environmentId === environmentId)?.label,
         ),
       });
     }

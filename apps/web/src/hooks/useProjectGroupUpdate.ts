@@ -55,11 +55,13 @@ export function useProjectGroupUpdate() {
     if (unavailable) {
       return failWith(
         failureTitle,
-        m(
-          msg("Connect {environment} and try again.", {
-            environment: unavailable.environmentLabel ?? m(msg("the selected environment")),
-          }),
-        ),
+        unavailable.environmentLabel == null
+          ? m(msg("Connect the selected environment and try again."))
+          : m(
+              msg("Connect {environment} and try again.", {
+                environment: unavailable.environmentLabel,
+              }),
+            ),
       );
     }
     for (const member of members) {
@@ -79,12 +81,14 @@ export function useProjectGroupUpdate() {
       if (result._tag === "Failure") {
         reportProjectFailure(
           members.length > 1
-            ? m(
-                msg("{title} on {environment}", {
-                  title: failureTitle,
-                  environment: member.environmentLabel ?? m(msg("the current environment")),
-                }),
-              )
+            ? member.environmentLabel == null
+              ? m(msg("{title} on the current environment", { title: failureTitle }))
+              : m(
+                  msg("{title} on {environment}", {
+                    title: failureTitle,
+                    environment: member.environmentLabel,
+                  }),
+                )
             : failureTitle,
           result,
         );
@@ -147,11 +151,13 @@ export function checkProjectAccess(
   return denied
     ? failWith(
         failureTitle,
-        m(
-          msg("This connection cannot change projects in {environment}.", {
-            environment: denied.environmentLabel ?? m(msg("this environment")),
-          }),
-        ),
+        denied.environmentLabel == null
+          ? m(msg("This connection cannot change projects in this environment."))
+          : m(
+              msg("This connection cannot change projects in {environment}.", {
+                environment: denied.environmentLabel,
+              }),
+            ),
       )
     : null;
 }

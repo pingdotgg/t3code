@@ -1,7 +1,8 @@
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { msg } from "gt-react";
 
-import { m, type MessageResolver } from "./i18n/messages";
+import { DEFAULT_LOCALE } from "./i18n/locales";
+import { getActiveLocale, m, type MessageResolver } from "./i18n/messages";
 
 function getTimestampFormatOptions(
   timestampFormat: TimestampFormat,
@@ -113,9 +114,7 @@ export function parseTimestampDate(isoDate: string): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-// Deliberately not the host locale: the tooltip's ordinal suffix and
-// day-before-month order below are English, so a localized month alone would
-// read "4th Juni 2026".
+// English keeps its ordinal day-before-month form; other UI languages use their own long date.
 const monthNameFormatter = new Intl.DateTimeFormat("en-US", { month: "long", timeZone: "UTC" });
 
 function ordinalSuffix(day: number): string {
@@ -136,10 +135,23 @@ function ordinalSuffix(day: number): string {
 export function formatChatTimestampTooltip(
   isoDate: string,
   timestampFormat: TimestampFormat,
+  resolve: MessageResolver = m,
 ): string {
   const date = parseTimestampDate(isoDate);
   if (!date) return "";
   const time = formatTime(date, timestampFormat);
+  const locale = getActiveLocale();
+  if (locale !== DEFAULT_LOCALE) {
+    const longDate = new Intl.DateTimeFormat(locale, {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+      timeZone: "UTC",
+    }).format(wallClockAsUtc(date));
+    return resolve(
+      msg("{time}, {date}", { time, date: longDate, $context: "message time, then its date" }),
+    );
+  }
   const day = date.getDate();
   const month = monthNameFormatter.format(wallClockAsUtc(date));
   const year = date.getFullYear();
@@ -252,11 +264,12 @@ export function formatUpcomingTimestamp(
   return `${formatNumericDate(date, targetDay.year === today.year, timeZone)} ${time}`;
 }
 
-type RelativeTimeParts = { value: string; suffix: string | null };
+/** `label` is the whole phrase ("5m ago"); `value` and `suffix` split it for styled layouts. */
+type RelativeTimeParts = { value: string; suffix: string | null; label: string };
 export type RelativeTimeState =
   | { status: "missing" }
   | { status: "invalid" }
-  | { status: "relative"; value: string; suffix: string | null };
+  | ({ status: "relative" } & RelativeTimeParts);
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 3_600_000;
@@ -299,19 +312,30 @@ const hoursLabel = (count: number, resolve: MessageResolver) =>
 const daysLabel = (count: number, resolve: MessageResolver) =>
   resolve(msg("{count}d", { count, $context: "days, abbreviated" }));
 
+function relativeElapsedLabel(elapsedMs: number, resolve: MessageResolver): string {
+  const seconds = Math.floor(elapsedMs / 1000);
+  if (seconds < 60) return resolve(msg("just now"));
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return resolve(msg("{count}m ago", { count: minutes }));
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return resolve(msg("{count}h ago", { count: hours }));
+  return resolve(msg("{count}d ago", { count: Math.floor(hours / 24) }));
+}
+
 export function formatRelativeElapsed(
   elapsedMs: number,
   resolve: MessageResolver = m,
 ): RelativeTimeParts {
+  const label = relativeElapsedLabel(elapsedMs, resolve);
   const seconds = Math.floor(elapsedMs / 1000);
-  if (seconds < 60) return { value: resolve(msg("just now")), suffix: null };
+  if (seconds < 60) return { value: label, suffix: null, label };
   const ago = resolve(msg("ago", { $context: "follows an elapsed time such as 5m" }));
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return { value: minutesLabel(minutes, resolve), suffix: ago };
+  if (minutes < 60) return { value: minutesLabel(minutes, resolve), suffix: ago, label };
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return { value: hoursLabel(hours, resolve), suffix: ago };
+  if (hours < 24) return { value: hoursLabel(hours, resolve), suffix: ago, label };
   const days = Math.floor(hours / 24);
-  return { value: daysLabel(days, resolve), suffix: ago };
+  return { value: daysLabel(days, resolve), suffix: ago, label };
 }
 
 export function formatRelativeTime(
@@ -329,14 +353,7 @@ export function formatRelativeTimeLabel(
   resolve: MessageResolver = m,
 ) {
   const elapsedMs = relativeTimeElapsedMs(isoDate, nowMs);
-  if (elapsedMs === null) return "";
-  const seconds = Math.floor(elapsedMs / 1000);
-  if (seconds < 60) return resolve(msg("just now"));
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return resolve(msg("{count}m ago", { count: minutes }));
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return resolve(msg("{count}h ago", { count: hours }));
-  return resolve(msg("{count}d ago", { count: Math.floor(hours / 24) }));
+  return elapsedMs === null ? "" : relativeElapsedLabel(elapsedMs, resolve);
 }
 
 export function formatElapsedDurationLabel(

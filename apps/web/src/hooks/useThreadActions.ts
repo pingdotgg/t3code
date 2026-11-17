@@ -191,7 +191,7 @@ export class ThreadActiveReorderUnsupportedError extends Schema.TaggedError<Thre
 
 async function requestThreadUnpinConfirmation(input: {
   enabled: boolean;
-  title: string;
+  title: string | null;
   confirm: ((message: string) => Promise<boolean>) | null;
 }) {
   const { confirm } = input;
@@ -202,7 +202,9 @@ async function requestThreadUnpinConfirmation(input: {
   return settlePromise(() =>
     confirm(
       [
-        m(msg('Unpin thread "{title}"?', { title: input.title })),
+        input.title === null
+          ? m(msg('Unpin thread "this thread"?'))
+          : m(msg('Unpin thread "{title}"?', { title: input.title })),
         m(msg("This will move the thread out of your pinned section.")),
       ].join("\n"),
     ),
@@ -883,7 +885,7 @@ export function useThreadActions() {
     const resolved = resolveThreadTarget(target);
     const confirmationResult = await requestThreadUnpinConfirmation({
       enabled: confirmThreadUnpin,
-      title: resolved?.thread.title ?? m(msg("this thread")),
+      title: resolved?.thread.title ?? null,
       confirm: localApi ? (message) => localApi.dialogs.confirm(message) : null,
     });
     if (confirmationResult._tag === "Failure") {
@@ -1019,11 +1021,13 @@ export function useThreadActions() {
     const resolved = resolveThreadTarget(target);
 
     if (confirmThreadDelete && localApi) {
-      const title = resolved?.thread.title ?? knownTitle ?? m(msg("this thread"));
+      const title = resolved?.thread.title ?? knownTitle ?? null;
       const confirmationResult = await settlePromise(() =>
         localApi.dialogs.confirm(
           [
-            m(msg('Delete thread "{title}"?', { title })),
+            title === null
+              ? m(msg('Delete thread "this thread"?'))
+              : m(msg('Delete thread "{title}"?', { title })),
             m(msg("This permanently clears conversation history for this thread.")),
           ].join("\n"),
           { variant: "destructive" },

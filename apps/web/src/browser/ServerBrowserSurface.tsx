@@ -32,7 +32,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { msg, T, useGT } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 
 import { AgentCursorMark } from "~/components/preview/AgentBrowserCursor";
 import { CommandBlock } from "~/components/CommandBlock";
@@ -173,6 +173,7 @@ export function ServerBrowserSurface(props: {
     ref,
   } = props;
   const gt = useGT();
+  const resolve = useMessages();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const keySentRef = useRef(false);
@@ -758,7 +759,7 @@ export function ServerBrowserSurface(props: {
         )}
       >
         <span role="status" className="text-xs text-muted-foreground">
-          {previewStreamControlLabel(control)}
+          {previewStreamControlLabel(control, resolve)}
         </span>
         {control?.canOperate ? (
           <Button
@@ -911,7 +912,7 @@ export function ServerBrowserSurface(props: {
       {visible && hostSetup ? (
         <div className="visible absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-background p-4 text-center">
           <p role="alert" className="max-w-sm text-sm text-muted-foreground">
-            {previewStreamHostSetupMessage(hostSetup)}
+            {previewStreamHostSetupMessage(hostSetup, resolve)}
           </p>
           <CommandBlock command={hostSetup.command} className="w-full max-w-md text-left" />
           <Button variant="outline" size="sm" onClick={() => setHostSetup(null)}>

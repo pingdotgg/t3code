@@ -26,6 +26,7 @@ import type {
   ThreadContextRecord,
   ThreadId,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import {
@@ -47,6 +48,7 @@ import {
   type TerminalContextDraft,
 } from "./terminalContext";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
+import type { MessageResolver } from "~/i18n/messages";
 
 const PREVIEW_LABEL_MAX_CHARS = 48;
 const RESPONSE_LABEL_MAX_CHARS = 64;
@@ -117,7 +119,11 @@ export function pullRequestContextKindLabel(comment: ReviewCommentPresentation):
   return `${capitalizeTerm(state)} ${term}`;
 }
 
-export function previewAnnotationContextLabel(annotation: PreviewAnnotationPayload): string {
+/** Without `resolve` the fallback stays English, for records sent to the agent. */
+export function previewAnnotationContextLabel(
+  annotation: PreviewAnnotationPayload,
+  resolve?: MessageResolver,
+): string {
   const comment = annotation.comment.trim().replace(/\s+/g, " ");
   if (comment) {
     if (comment.length <= PREVIEW_LABEL_MAX_CHARS) return comment;
@@ -127,7 +133,8 @@ export function previewAnnotationContextLabel(annotation: PreviewAnnotationPaylo
     if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) end -= 1;
     return `${comment.slice(0, end)}…`;
   }
-  return annotation.pageTitle?.trim() || "Preview annotation";
+  const fallback = msg("Preview annotation");
+  return annotation.pageTitle?.trim() || (resolve ? resolve(fallback) : fallback);
 }
 
 export function terminalContextReference(context: TerminalContextDraft): ComposerContextReference {

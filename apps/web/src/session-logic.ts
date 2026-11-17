@@ -379,7 +379,7 @@ function projectedWorkEntry(
     case "compaction":
       return {
         ...common,
-        label: contextCompactionLabel(item),
+        label: contextCompactionLabel(item, resolve),
         sourceActivityKind: "context-compaction",
         ...(item.summary ? { detail: item.summary } : {}),
       };
