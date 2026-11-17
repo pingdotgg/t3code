@@ -1546,6 +1546,12 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.subscribeResourceTelemetry,
       idleTtlMs: 0,
     }),
+    agentAlerts: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:agent-alerts",
+      tag: WS_METHODS.subscribeAgentAlerts,
+      // Stream atoms publish only the last value per chunk; every alert must arrive.
+      transform: (stream) => stream.pipe(Stream.rechunk(1)),
+    }),
     resourceTelemetryHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:resource-telemetry-history",
       tag: WS_METHODS.serverGetResourceTelemetryHistory,
