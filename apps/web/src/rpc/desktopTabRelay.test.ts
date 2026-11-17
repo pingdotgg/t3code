@@ -124,7 +124,6 @@ it("reads status during an action and re-registers the same tab without forwardi
     { environmentId: EnvironmentId.make("environment"), threadId: ThreadId.make("thread") },
     "tab",
     "same-guest",
-    () => {},
   );
   const event = (
     connectionId: string,
@@ -196,7 +195,6 @@ it("retries a registration that overlaps a disconnect without another user actio
     { environmentId: EnvironmentId.make("environment"), threadId: ThreadId.make("thread") },
     "tab",
     "same-guest",
-    () => {},
   );
   try {
     await vi.advanceTimersByTimeAsync(0);
@@ -260,7 +258,6 @@ it("publishes viewport and appearance choices and rehosts the same guest when th
     { environmentId: EnvironmentId.make("environment"), threadId: ThreadId.make("thread") },
     "tab",
     "same-guest",
-    () => {},
   );
   try {
     await attached.promise;
@@ -325,7 +322,6 @@ it("re-registers after a timeout eviction completes the host stream while the en
     { environmentId: EnvironmentId.make("environment"), threadId: ThreadId.make("thread") },
     "tab",
     "same-guest",
-    () => {},
   );
   try {
     await vi.advanceTimersByTimeAsync(0);

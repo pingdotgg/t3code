@@ -22,12 +22,7 @@ const decodeResizeResult = Schema.decodeUnknownSync(PreviewAutomationResizeResul
 const decodeAppearanceResult = Schema.decodeUnknownSync(PreviewAutomationSetColorSchemeResult);
 
 /** The guest owns its lifetime; each transport connection gets a fresh host. */
-export function hostDesktopTab(
-  threadRef: ScopedThreadRef,
-  tabId: string,
-  runtimeTabId: string,
-  focus: () => void,
-) {
+export function hostDesktopTab(threadRef: ScopedThreadRef, tabId: string, runtimeTabId: string) {
   const bridge = previewBridge;
   if (!bridge?.connectTabHost || !bridge.executeTabRequest) return () => {};
   // Public CDP clients can capture at any time. An offscreen Electron guest
@@ -88,14 +83,6 @@ export function hostDesktopTab(
           if (!live(version)) return;
           let response: PreviewAutomationResponse;
           try {
-            // Electron routes keyboard input through the embedder's focused webview.
-            // Focusing only its native webContents leaves input in the composer.
-            if (
-              !["status", "snapshot", "credentialLock", "dialog", "waitFor"].includes(
-                request.operation,
-              )
-            )
-              focus();
             response = await bridge.executeTabRequest!(runtimeTabId, connectionId, request);
             if (!live(version)) return;
             // Publish rendering choices through the same state as the panel controls.
