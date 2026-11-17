@@ -6,9 +6,13 @@ import {
   normalizeProjectPathForDispatch,
   resolvePastedPath,
   resolveWorkspaceFilePath,
+  isHostPath,
 } from "./path.ts";
 
 describe("path helpers", () => {
+  it("recognizes the server's backslash home prefix", () => {
+    expect(isHostPath("~\\.claude/CLAUDE.md")).toBe(true);
+  });
   // regression: #17923 literal colons in names are kept, not parsed as positions
   it.each([
     ["report:123", "/workspace", "/workspace/report:123"],
@@ -59,6 +63,7 @@ describe("resolvePastedPath", () => {
     ["over a selection", "/Users/me/old", "'/Users/me/My Code'", "/Users/me/My Code"],
     ["after a prefilled folder", "~/", "~/'/Users/me/My Code'", "/Users/me/My Code"],
     ["plain, after a prefilled folder", "~/", "~//Users/me/code", "/Users/me/code"],
+    ["backslash home, after a folder", "~/", "~/~\\folder\\ child", "~\\folder\\ child"],
     ["after a Windows folder", "C:\\Users\\", 'C:\\Users\\"D:\\My Code"', "D:\\My Code"],
     ["a shell's quoted apostrophe", "", "'/Users/me/Bob'\\''s Work'", "/Users/me/Bob's Work"],
     ["after a clone destination", "~/code/repo", "~/code/repo'/a b'", "/a b"],

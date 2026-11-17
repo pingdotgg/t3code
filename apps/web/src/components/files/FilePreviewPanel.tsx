@@ -1225,7 +1225,7 @@ export default function FilePreviewPanel({
     attachment !== undefined ? null : (relativePath ?? (folderTrail === undefined ? null : ""));
   // Reset crumbs when a host trail reaches the workspace root and no longer passes through the current path.
   const breadcrumbTrail =
-    breadcrumbPath === null ? null : retainedBreadcrumbTrail(folderTrail, breadcrumbPath);
+    breadcrumbPath === null ? null : retainedBreadcrumbTrail(folderTrail, breadcrumbPath, cwd);
   // A trail implies a folder before reads settle, preventing file-preview flashes while navigating up.
   const isFolder =
     attachment === undefined &&
@@ -1373,10 +1373,14 @@ export default function FilePreviewPanel({
   // Navigating up preserves the file tab; retain the trail's path spelling to find its folder tab.
   const navigateToFolder = (crumbPath: string) => {
     const path =
-      breadcrumbTrail !== null && breadcrumbPathOf(breadcrumbTrail) === crumbPath
+      breadcrumbTrail !== null && breadcrumbPathOf(breadcrumbTrail, cwd) === crumbPath
         ? breadcrumbTrail
         : crumbPath;
-    onNavigateFolder(path, retainedBreadcrumbTrail(breadcrumbTrail ?? undefined, path), !isFolder);
+    onNavigateFolder(
+      path,
+      retainedBreadcrumbTrail(breadcrumbTrail ?? undefined, path, cwd),
+      !isFolder,
+    );
   };
   const absolutePath =
     breadcrumbPath === ""
@@ -1777,7 +1781,7 @@ export default function FilePreviewPanel({
                 selectedPath={
                   hostFolderPath === null
                     ? relativePath
-                    : trailChildOf(hostFolderPath, breadcrumbTrail ?? hostFolderPath)
+                    : trailChildOf(hostFolderPath, breadcrumbTrail ?? hostFolderPath, cwd)
                 }
                 selectedPathRevealId={revealRequestId}
                 onOpenFile={onOpenFile}

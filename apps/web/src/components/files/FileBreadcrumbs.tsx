@@ -294,8 +294,8 @@ function FolderBreadcrumb(props: {
 /** Host paths outside the workspace omit contents menus; the browser already lists their destination. */
 export function FileBreadcrumbs(props: FileBreadcrumbsProps) {
   const hostPath = isHostPath(props.relativePath);
-  const breadcrumbs = fileBreadcrumbs(props.projectName, props.trail);
-  const currentPath = breadcrumbPathOf(props.relativePath);
+  const breadcrumbs = fileBreadcrumbs(props.projectName, props.trail, props.cwd);
+  const currentPath = breadcrumbPathOf(props.relativePath, props.cwd);
   const currentIndex = breadcrumbs.findIndex((crumb) => crumb.path === currentPath);
 
   return (

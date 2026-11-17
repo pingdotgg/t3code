@@ -134,9 +134,9 @@ export function isAbsolutePath(value: string): boolean {
   return value.startsWith("/") || isWindowsAbsolutePath(value);
 }
 
-/** Home-relative host paths are expanded by the destination server. */
+/** Both ~/ and ~\ home prefixes are expanded by the destination server. */
 export function isHostPath(value: string): boolean {
-  return isAbsolutePath(value) || value.startsWith("~/");
+  return isAbsolutePath(value) || value.startsWith("~/") || value.startsWith("~\\");
 }
 
 // Finder and Explorer copy a path ready for a shell: `'/a b'`, `/a\'s\ b`, or `"C:\a b"`.
@@ -164,8 +164,10 @@ export function resolvePastedPath(previous: string, next: string): string {
   const afterFolder = /[/\\]$/.test(previous) && next.startsWith(previous);
   const path = afterFolder ? next.slice(previous.length) : next;
   if (!isHostPath(path)) return next;
-  // `\` separates folders in Windows paths, so it only escapes in `/` and `~/` paths.
-  return isWindowsAbsolutePath(path) ? path : path.replace(SHELL_ESCAPE, "$1");
+  // Keep backslashes in Windows and `~\` paths; only `/` and `~/` paths use shell escapes.
+  return isWindowsAbsolutePath(path) || path.startsWith("~\\")
+    ? path
+    : path.replace(SHELL_ESCAPE, "$1");
 }
 
 export function resolveWorkspaceFilePath(path: string, workspaceRoot: string): string {
