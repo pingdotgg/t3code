@@ -344,6 +344,7 @@ describe("WorktreeReclamation", () => {
         const sessionManager = ProviderSessionManager.ProviderSessionManagerV2.of({
           shutdown: Effect.void,
           interruptForShutdown: () => Effect.void,
+          resumeEventIngestion: Effect.void,
           open: () => Effect.die("unused open"),
           get: () => Effect.die("liveness checks must not count as session activity"),
           isLive: (providerSessionId) => Effect.sync(() => resident.has(providerSessionId)),

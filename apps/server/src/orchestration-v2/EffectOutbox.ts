@@ -38,6 +38,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     sourceRunId: RunId,
     processLossCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
     reason: Schema.optional(Schema.Literal("update")),
+    pausedOnVersion: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-session.detach"),

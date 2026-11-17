@@ -132,6 +132,7 @@ it.layer(NodeServices.layer)("t3 update under a managed policy", (it) => {
   ) =>
     runUpdate({
       pauseLiveServerRuns: Effect.die("unexpected pause"),
+      resumeLiveServerRuns: Effect.die("unexpected resume"),
       baseDir: "/unused",
       logsDir: "/unused",
       databasePath: "/unused",
@@ -630,6 +631,7 @@ it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
 
       const output = yield* runUpdate({
         pauseLiveServerRuns: Effect.die("unexpected pause"),
+        resumeLiveServerRuns: Effect.die("unexpected resume"),
         baseDir,
         logsDir: baseDir,
         databasePath: path.join(baseDir, "statev2.sqlite"),
@@ -676,11 +678,18 @@ it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
 
 it.layer(NodeServices.layer)("t3 update pauses running turns", (it) => {
   it.effect.each([
-    { name: "before restarting the service", environment: {}, pauses: 1 },
+    { name: "before restarting the service", environment: {}, pauses: 1, installFails: false },
+    {
+      name: "and resumes them when the restart fails",
+      environment: {},
+      pauses: 1,
+      installFails: true,
+    },
     {
       name: "except from inside the service it restarts",
       environment: { [SERVICE_UNIT_ENV]: "t3code.service" },
       pauses: 0,
+      installFails: false,
     },
   ])("$name", (row) =>
     Effect.gen(function* () {
@@ -709,8 +718,13 @@ it.layer(NodeServices.layer)("t3 update pauses running turns", (it) => {
         install: (options) =>
           Effect.sync(() => {
             events.push(`install start=${options?.start}`);
-            return { program: [runtime.entryPath], baseDir, unitPath, logPath };
-          }),
+          }).pipe(
+            Effect.andThen(
+              row.installFails
+                ? Effect.fail(new BootService.BootServiceInstallError({ cause: "boom" }))
+                : Effect.succeed({ program: [runtime.entryPath], baseDir, unitPath, logPath }),
+            ),
+          ),
       });
       vi.spyOn(BootService, "layer").mockReturnValue(service);
       const runner = ProcessRunner.ProcessRunner.of({
@@ -736,6 +750,9 @@ it.layer(NodeServices.layer)("t3 update pauses running turns", (it) => {
           events.push("pause");
           return 2;
         }),
+        resumeLiveServerRuns: Effect.sync(() => {
+          events.push("resume");
+        }),
         baseDir,
         logsDir: baseDir,
         databasePath: path.join(baseDir, "statev2.sqlite"),
@@ -746,6 +763,7 @@ it.layer(NodeServices.layer)("t3 update pauses running turns", (it) => {
         assumeYes: true,
       }).pipe(
         Effect.provideService(HostProcess.Environment, { PATH: "", ...row.environment }),
+        Effect.ignore,
         Effect.andThen(TestConsole.logLines),
         Effect.map((lines) => lines.join("\n")),
         Effect.provide(
@@ -762,10 +780,11 @@ it.layer(NodeServices.layer)("t3 update pauses running turns", (it) => {
         ),
       );
 
-      assert.deepEqual(
-        events,
-        row.pauses === 1 ? ["pause", "install start=true"] : ["install start=true"],
-      );
+      assert.deepEqual(events, [
+        ...(row.pauses === 1 ? ["pause"] : []),
+        "install start=true",
+        ...(row.installFails ? ["resume"] : []),
+      ]);
       assert.equal(
         output.includes("Paused 2 running turns; they resume after the restart."),
         row.pauses === 1,
@@ -916,6 +935,7 @@ it.layer(NodeServices.layer)("t3 update checks the database before switching", (
 
       const exit = yield* runUpdate({
         pauseLiveServerRuns: Effect.die("unexpected pause"),
+        resumeLiveServerRuns: Effect.die("unexpected resume"),
         baseDir,
         logsDir: baseDir,
         databasePath,

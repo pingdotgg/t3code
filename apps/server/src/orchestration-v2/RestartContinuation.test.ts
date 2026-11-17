@@ -22,6 +22,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { APP_NAME } from "@t3tools/shared/branding";
+import packageJson from "../../package.json" with { type: "json" };
 import * as ServerSettings from "../serverSettings.ts";
 import { restartContinuationRun, continueRestartedRun } from "./RestartContinuation.ts";
 import { continuationStartRetryDelayMs } from "./RestartBackgroundNote.ts";
@@ -978,11 +979,12 @@ it.effect("pauses a running turn for an update and resumes it exactly once", () 
           sourceRunId: runId,
           processLossCount: 0,
           reason: "update",
+          pausedOnVersion: packageJson.version,
         },
       ],
     );
 
-    yield* recovery.reconcile("shutdown", { forUpdate: true });
+    yield* recovery.reconcile("shutdown", { update: "paused" });
     const events = commits.flatMap((commit) => commit.events);
     const cut = events.find((event) => event.type === "run.updated");
     assert.equal(cut?.type === "run.updated" ? cut.payload.status : undefined, "cancelled");
@@ -1011,15 +1013,28 @@ it.effect("pauses a running turn for an update and resumes it exactly once", () 
       ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
     );
     for (let restart = 0; restart < 2; restart += 1)
-      yield* continueRestartedRun({ threadId, sourceRunId: runId, reason: "update" }).pipe(
-        Effect.provide(layerThreads),
-      );
+      yield* continueRestartedRun({
+        threadId,
+        sourceRunId: runId,
+        reason: "update",
+        pausedOnVersion: "0.0.0-before-update",
+      }).pipe(Effect.provide(layerThreads));
     assert.lengthOf(dispatches, 1);
     assert.match(
       dispatches[0]!.text,
       new RegExp(`^${APP_NAME} paused this turn to install an update`),
     );
     assert.equal(dispatches[0]!.notification?.summary, `${APP_NAME} updated and resumed this turn`);
+
+    projection = { ...projection, messages: [] };
+    yield* continueRestartedRun({
+      threadId,
+      sourceRunId: runId,
+      reason: "update",
+      pausedOnVersion: packageJson.version,
+    }).pipe(Effect.provide(layerThreads));
+    assert.match(dispatches[1]!.text, /an update that didn't install/);
+    assert.equal(dispatches[1]!.notification?.summary, "Update didn't install; resumed");
   }),
 );
 

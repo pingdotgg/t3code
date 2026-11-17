@@ -156,6 +156,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
     Effect.provideService(ServiceLauncherClient.ServiceLauncherClient, launcher),
     Effect.provideService(UpdatePause, {
       pauseRunsForUpdate: Effect.succeed({ pausedRuns: 0 }),
+      resumeRunsAfterUpdate: Effect.void,
     }),
     Effect.provideService(
       DesktopAppUpdate.DesktopAppUpdate,

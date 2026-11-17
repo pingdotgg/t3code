@@ -837,10 +837,15 @@ export const make = Effect.gen(function* () {
       const instances = (yield* pool.list).filter((instance) =>
         runningInstances.includes(instance),
       );
-      const restartExit = yield* Effect.forEach(instances, (instance) => instance.start, {
-        concurrency: "unbounded",
-        discard: true,
-      }).pipe(Effect.exit);
+      // A backend can be paused without having stopped; a fresh process resumes its turns.
+      const restartExit = yield* Effect.forEach(
+        instances,
+        (instance) =>
+          instance
+            .stop({ timeout: DesktopBackendManager.BACKEND_QUIT_STOP_TIMEOUT })
+            .pipe(Effect.andThen(instance.start)),
+        { concurrency: "unbounded", discard: true },
+      ).pipe(Effect.exit);
       yield* updateState((current) => reduceDesktopUpdateStateOnInstallFailure(current, message));
       if (Exit.isFailure(restartExit)) {
         yield* logUpdaterError("Desktop update install recovery could not restart every backend.");

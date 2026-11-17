@@ -54,6 +54,7 @@ it.live.each([
             pauses += 1;
             return { pausedRuns: 2 };
           }),
+          resumeRunsAfterUpdate: Effect.die("unexpected resume"),
         }),
       ),
     );

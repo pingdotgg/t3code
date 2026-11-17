@@ -375,10 +375,18 @@ export const updateCommand = Command.make("update", {
     Effect.gen(function* () {
       const logLevel = yield* GlobalFlag.LogLevel;
       const config = yield* resolveCliAuthConfig(flags, logLevel);
-      const pause = pauseLiveServerRuns(config);
-      const pauseContext = yield* Effect.context<Effect.Services<typeof pause>>();
+      const pause = askLiveServer(config, ({ server, headers }) =>
+        server.pauseForUpdate({ headers }).pipe(Effect.map((result) => result.pausedRuns)),
+      );
+      const resume = askLiveServer(config, ({ server, headers }) =>
+        server.resumeAfterUpdate({ headers }),
+      ).pipe(Effect.asVoid);
+      const liveServerContext = yield* Effect.context<
+        Effect.Services<typeof pause> | Effect.Services<typeof resume>
+      >();
       return yield* runUpdate({
-        pauseLiveServerRuns: Effect.provideContext(pause, pauseContext),
+        pauseLiveServerRuns: Effect.provideContext(pause, liveServerContext),
+        resumeLiveServerRuns: Effect.provideContext(resume, liveServerContext),
         baseDir: config.baseDir,
         logsDir: config.logsDir,
         databasePath: config.dbPath,
@@ -403,47 +411,51 @@ export const updateCommand = Command.make("update", {
 
 const UPDATE_PAUSE_TIMEOUT = Duration.seconds(40);
 
-/** Paused turn count from the live server, or undefined when it is down, too old, or slow. */
-const pauseLiveServerRuns = Effect.fn("cli.update.pause_live_server_runs")(
-  function* (config: ServerConfig.ServerConfig["Service"]) {
-    const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
-    if (Option.isNone(runtimeState)) return undefined;
-    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    const issued = yield* Effect.acquireRelease(
-      environmentAuth.issueSession({
-        scopes: [AuthEnvironmentMaintainScope],
-        label: `${CLI_COMMAND} update`,
-        ttl: Duration.minutes(1),
-      }),
-      (session) =>
-        environmentAuth.revokeSession(session.sessionId).pipe(Effect.ignore({ log: true })),
-    );
-    const client = yield* HttpApiClient.make(EnvironmentHttpApi, {
-      baseUrl: runtimeState.value.origin,
-    });
-    const result = yield* client.server.pauseForUpdate({
-      headers: { authorization: `Bearer ${issued.token}` },
-    });
-    return result.pausedRuns;
-  },
-  (effect, config) =>
-    effect.pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.merge(
-          EnvironmentAuth.layerRuntime.pipe(Layer.provide(ServerConfig.layer(config))),
-          FetchHttpClient.layer,
-        ),
-      ),
-      Effect.timeoutOption(UPDATE_PAUSE_TIMEOUT),
-      Effect.map(Option.getOrUndefined),
-      Effect.catchCause((cause) =>
-        Effect.logDebug("Could not pause running turns before the update", cause).pipe(
-          Effect.as(undefined),
-        ),
+const liveServerClient = Effect.fn("cli.update.live_server_client")(function* (
+  config: ServerConfig.ServerConfig["Service"],
+) {
+  const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
+  if (Option.isNone(runtimeState)) return undefined;
+  const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  const issued = yield* Effect.acquireRelease(
+    environmentAuth.issueSession({
+      scopes: [AuthEnvironmentMaintainScope],
+      label: `${CLI_COMMAND} update`,
+      ttl: Duration.minutes(1),
+    }),
+    (session) =>
+      environmentAuth.revokeSession(session.sessionId).pipe(Effect.ignore({ log: true })),
+  );
+  const client = yield* HttpApiClient.make(EnvironmentHttpApi, {
+    baseUrl: runtimeState.value.origin,
+  });
+  return { server: client.server, headers: { authorization: `Bearer ${issued.token}` } };
+});
+
+type LiveServer = NonNullable<Effect.Success<ReturnType<typeof liveServerClient>>>;
+
+/** The live server's answer, or undefined when it is down, too old, or slow. */
+const askLiveServer = <A, E>(
+  config: ServerConfig.ServerConfig["Service"],
+  call: (live: LiveServer) => Effect.Effect<A, E>,
+) =>
+  liveServerClient(config).pipe(
+    Effect.flatMap((live) => (live === undefined ? Effect.undefined : call(live))),
+    Effect.scoped,
+    Effect.provide(
+      Layer.merge(
+        EnvironmentAuth.layerRuntime.pipe(Layer.provide(ServerConfig.layer(config))),
+        FetchHttpClient.layer,
       ),
     ),
-);
+    Effect.timeoutOption(UPDATE_PAUSE_TIMEOUT),
+    Effect.map(Option.getOrUndefined),
+    Effect.catchCause((cause) =>
+      Effect.logDebug("Could not reach the running server about the update", cause).pipe(
+        Effect.as(undefined),
+      ),
+    ),
+  );
 
 const findForegroundServer = Effect.fn("cli.update.find_foreground_server")(function* (input: {
   readonly serverRuntimeStatePath: string;
@@ -490,6 +502,7 @@ const belongsToBootService = Effect.fn("cli.update.belongs_to_boot_service")(fun
 
 export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   readonly pauseLiveServerRuns: Effect.Effect<number | undefined>;
+  readonly resumeLiveServerRuns: Effect.Effect<void>;
   readonly baseDir: string;
   readonly logsDir: string;
   readonly databasePath: string;
@@ -708,8 +721,9 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   let servicePlan: BootService.BootServicePlan | undefined;
   if (serviceInstalled && !serviceCurrent) {
     // From inside the service, pausing would interrupt the turn running this update.
+    let pausedRuns: number | undefined;
     if (restartService && foreground === undefined && !environment[SERVICE_UNIT_ENV]) {
-      const pausedRuns = yield* input.pauseLiveServerRuns;
+      pausedRuns = yield* input.pauseLiveServerRuns;
       if (pausedRuns !== undefined && pausedRuns > 0) {
         yield* Console.log(
           pausedRuns === 1
@@ -727,6 +741,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
       Effect.flatMap((target) =>
         target.install({ allowDowngrade: input.allowDowngrade, start: restartService }),
       ),
+      Effect.tapCause(() => (pausedRuns === undefined ? Effect.void : input.resumeLiveServerRuns)),
       Effect.provide(
         BootService.layer({
           baseDir: input.baseDir,

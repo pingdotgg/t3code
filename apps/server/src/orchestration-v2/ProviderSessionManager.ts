@@ -233,6 +233,7 @@ export interface ProviderSessionManagerV2Shape {
       readonly providerTurnId: ProviderTurnId;
     }>,
   ) => Effect.Effect<void>;
+  readonly resumeEventIngestion: Effect.Effect<void>;
   readonly open: (input: {
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
@@ -3025,6 +3026,9 @@ export const layerWithOptions = (
 
       return ProviderSessionManagerV2.of({
         shutdown,
+        resumeEventIngestion: Effect.sync(() => {
+          shutdownSignal.received = false;
+        }),
         interruptForShutdown: Effect.fn("ProviderSessionManager.interruptForShutdown")(
           function* (turns) {
             shutdownSignal.received = true;

@@ -10,13 +10,22 @@ export const layer = HttpApiBuilder.group(
   "server",
   Effect.fnUntraced(function* (handlers) {
     const updatePause = yield* UpdatePause;
-    return handlers.handle(
-      "pauseForUpdate",
-      Effect.fn("environment.server.pauseForUpdate")(function* (args) {
-        yield* annotateEnvironmentRequest(args.endpoint.name);
-        yield* requireEnvironmentScope(AuthEnvironmentMaintainScope);
-        return yield* updatePause.pauseRunsForUpdate;
-      }),
-    );
+    return handlers
+      .handle(
+        "pauseForUpdate",
+        Effect.fn("environment.server.pauseForUpdate")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthEnvironmentMaintainScope);
+          return yield* updatePause.pauseRunsForUpdate;
+        }),
+      )
+      .handle(
+        "resumeAfterUpdate",
+        Effect.fn("environment.server.resumeAfterUpdate")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthEnvironmentMaintainScope);
+          yield* updatePause.resumeRunsAfterUpdate;
+        }),
+      );
   }),
 );

@@ -839,7 +839,9 @@ describe("DesktopUpdates", () => {
   );
 
   it.effect("keeps windows and restarts backends when quitAndInstall fails", () => {
+    let stops = 0;
     const harness = makeHarness({
+      stopBackend: Effect.sync(() => void (stops += 1)),
       quitAndInstall: Effect.fail(
         new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
           channel: "latest",
@@ -866,6 +868,7 @@ describe("DesktopUpdates", () => {
           "quitAndInstall",
           "startBackend",
         ]);
+        assert.equal(stops, 2);
         assert.isUndefined(harness.updateInProgressMarker());
         assert.equal(harness.installRecords.size, 0);
       }),
