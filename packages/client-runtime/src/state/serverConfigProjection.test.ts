@@ -152,11 +152,11 @@ describe("applyServerConfigProjection memoryPressureUpdated", () => {
         config: { environment: { capabilities: { memoryPressure } } },
       }) as ServerConfigStreamEvent;
     const snapshot = snapshotFrom(true);
-    const calm = applyServerConfigProjection(
-      applyServerConfigProjection(Option.none(), snapshot),
-      pressure("none"),
+    // Kept, not dropped: a session that drops it cannot replay the calm to a client still holding severe.
+    const fresh = applyServerConfigProjection(Option.none(), snapshot);
+    expect(Option.getOrThrow(applyServerConfigProjection(fresh, pressure("none")))).toBe(
+      Option.getOrThrow(fresh),
     );
-    expect(Option.isNone(calm)).toBe(true);
     const severe = applyServerConfigProjection(
       applyServerConfigProjection(Option.none(), snapshot),
       pressure("severe"),

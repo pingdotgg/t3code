@@ -190,10 +190,11 @@ export function applyServerConfigProjection(
       }));
     case "memoryPressureUpdated":
       return Option.flatMap(current, (projection) => {
-        const { memoryPressure: _previous, ...config } = projection.config;
-        // Keeps config identity, so screens reading it do not re-render.
+        // The same projection, so screens do not re-render, but still Some so the
+        // session records this `none` and replays it to subscribers holding a warning.
         if (event.payload.level === "none" && projection.config.memoryPressure === undefined)
-          return Option.none();
+          return current;
+        const { memoryPressure: _previous, ...config } = projection.config;
         return Option.some({
           config:
             event.payload.level === "none"
