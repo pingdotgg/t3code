@@ -23,7 +23,6 @@ import {
   extendReplacementRangeForTrailingSpace,
   formatAssistantCitationForComposer,
   isPathSuggestionCurrent,
-  parseSideChatCommand,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "./composer-logic";

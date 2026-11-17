@@ -55,11 +55,11 @@ import {
 import {
   type ComposerSubmissionIntent,
   collapseExpandedComposerCursor,
+  parseStandaloneComposerSlashCommand,
 } from "../../composer-logic";
-import { resolvePlanFollowUpSubmission } from "../../proposedPlan";
 import { resolveVoiceAvailability } from "../../voice/voiceAvailability";
 import { toggleThreadVoice, voiceMode } from "../../voice/voiceMode";
-import { type ChatMessage } from "../../types";
+import { type ChatMessage, DEFAULT_INTERACTION_MODE } from "../../types";
 import { recordPromptSent } from "../GitHubStarPrompt";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
@@ -739,7 +739,7 @@ export function useComposerSend(input: ComposerSendInput) {
 
       return;
     }
-    const parsedSlashCommand =
+    const composerHoldsOnlyText =
       composerImages.length === 0 &&
       composerFiles.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
@@ -747,7 +747,16 @@ export function useComposerSend(input: ComposerSendInput) {
       composerReviewComments.length === 0 &&
       composerThreadContexts.length === 0 &&
       composerEnvironmentContexts.length === 0 &&
-      multipleModelSelections === null
+      replyTo === null;
+    if (freshSessionAvailable && composerHoldsOnlyText && isClearComposerCommand(trimmed)) {
+      armFreshSession(routeThreadKey);
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+      return;
+    }
+    const parsedSlashCommand =
+      composerHoldsOnlyText && multipleModelSelections === null
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (parsedSlashCommand === "voice") {
@@ -768,97 +777,6 @@ export function useComposerSend(input: ComposerSendInput) {
         composerRef.current?.resetCursorState();
         return;
       }
-    }
-    if (
-      !directAnnotation &&
-      sendInteractionModeEnabled &&
-      showPlanFollowUpPrompt &&
-      activeProposedPlan &&
-      composerImages.length === 0 &&
-      composerFiles.length === 0
-    ) {
-      const followUp = resolvePlanFollowUpSubmission({
-        draftText: promptForSend,
-        planMarkdown: activeProposedPlan.planMarkdown,
-      });
-      const outgoingFollowUpText = formatOutgoingPrompt({
-        provider: ctxSelectedProvider,
-        model: ctxSelectedModel,
-        models: ctxSelectedProviderModels,
-        effort: ctxSelectedPromptEffort,
-        text: followUp.text.trim(),
-      });
-      if (composerRef.current?.validateProviderInput(outgoingFollowUpText) === false) {
-        return;
-      }
-      const followUpPromptSnapshot = promptRef.current;
-      const followUpTerminalContexts = [...sendableComposerTerminalContexts];
-      const followUpReviewComments = [...composerReviewComments];
-      const followUpPreviewAnnotations = [...composerPreviewAnnotations];
-      const followUpThreadContexts = [...composerThreadContexts];
-      const followUpEnvironmentContexts = [...composerEnvironmentContexts];
-      promptRef.current = "";
-      clearComposerDraftContent(composerDraftTarget);
-      composerRef.current?.resetCursorState();
-      const followUpSent = await submitPlanFollowUp({
-        text: followUp.text,
-        context: buildMessageContext({
-          terminalContexts: sendableComposerTerminalContexts,
-          reviewComments: composerReviewComments,
-          previewAnnotations: composerPreviewAnnotations,
-          threadContexts: composerThreadContexts,
-          environmentContexts: composerEnvironmentContexts,
-        }),
-        interactionMode: followUp.interactionMode,
-      });
-      if (!followUpSent) {
-        restorePlanFollowUpComposer({
-          snapshot: {
-            prompt: followUpPromptSnapshot,
-            terminalContexts: followUpTerminalContexts,
-            reviewComments: followUpReviewComments,
-            previewAnnotations: followUpPreviewAnnotations,
-            threadContexts: followUpThreadContexts,
-            environmentContexts: followUpEnvironmentContexts,
-          },
-          draftHasUserContent: composerDraftHasUserContent(
-            useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
-          ),
-          routeIsCurrent: currentRouteThreadKeyRef.current === routeThreadKey,
-          writeComposerRefs: (snapshot) => {
-            promptRef.current = snapshot.prompt;
-            composerTerminalContextsRef.current = [...snapshot.terminalContexts];
-          },
-          writePrompt: (prompt) => setComposerDraftPrompt(composerDraftTarget, prompt),
-          writeTerminalContexts: (contexts) =>
-            setComposerDraftTerminalContexts(composerDraftTarget, [...contexts]),
-          writeReviewComments: (comments) =>
-            setComposerDraftReviewComments(composerDraftTarget, [...comments]),
-          writePreviewAnnotations: (annotations) =>
-            setComposerDraftPreviewAnnotations(composerDraftTarget, [...annotations]),
-          writeThreadContexts: (records) =>
-            setComposerDraftThreadContexts(composerDraftTarget, [...records]),
-          writeEnvironmentContexts: (records) =>
-            setComposerDraftEnvironmentContexts(composerDraftTarget, [...records]),
-          resetCursor: (options) => composerRef.current?.resetCursorState(options),
-        });
-      } else if (
-        submissionIntent === "background" &&
-        currentRouteThreadKeyRef.current === routeThreadKey
-      ) {
-        handleNewThreadInActiveProject();
-      }
-      return;
-    }
-    // Providers without voice receive their native commands unchanged.
-    const standaloneSlashCommand =
-      sendInteractionModeEnabled && parsedSlashCommand !== "voice" ? parsedSlashCommand : null;
-    if (standaloneSlashCommand && multipleModelSelections === null) {
-      handleInteractionModeChange(standaloneSlashCommand);
-      promptRef.current = "";
-      clearComposerDraftContent(composerDraftTarget);
-      composerRef.current?.resetCursorState();
-      return;
     }
     // Read once: an arm made while this send is in flight belongs to the next message.
     const freshArm = freshSessionAvailable ? readFreshSessionArm(routeThreadKey) : undefined;

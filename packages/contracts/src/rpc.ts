@@ -1664,6 +1664,19 @@ const WsProviderVoiceSessionRpc = Rpc.make(WS_METHODS.providerVoiceSession, {
   stream: true,
 });
 
+const WsSubscribeVcsBranchRpc = Rpc.make(WS_METHODS.subscribeVcsBranch, {
+  payload: VcsStatusInput,
+  success: VcsBranchStatus,
+  error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsVcsRefreshBranchRpc = Rpc.make(WS_METHODS.vcsRefreshBranch, {
+  payload: VcsStatusInput,
+  success: Schema.Void,
+  error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
+});
+
 const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
   payload: VcsStatusSubscriptionInput,
   success: VcsStatusStreamEvent,

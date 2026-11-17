@@ -467,11 +467,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   );
   const isVoiceInputPresented = voicePresentation.statusKind === "active";
   const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
-  const { layout, setComposerEditing } = useAdaptiveWorkspaceLayout();
-  const floatingSidebarComposer = useAndroidFloatingTabs() && layout.usesSplitView;
-  const usesLargeControls =
-    useSidebarWorkspaceTabs() === "picker" || (Platform.OS === "ios" && Platform.isPad);
-  const surfacePaddingVertical = usesLargeControls ? 9 : floatingSidebarComposer ? 6 : 2;
+  const { usesLargeControls, paddingVertical: surfacePaddingVertical } = useComposerChrome();
   const voiceModeButton = offersVoiceConversation ? (
     <ComposerVoiceModeButton
       size={usesLargeControls ? "large" : "regular"}
@@ -1012,7 +1008,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   compactEditor.isExpanded ? { flex: 1, justifyContent: "flex-end" } : undefined
                 }
               >
-                {modelControl}
+                <Animated.View
+                  key={compactEditor.isExpanded ? "expanded" : "compact"}
+                  className="min-w-0 shrink flex-row items-center"
+                  entering={compactEditor.toolbarControlsEntering}
+                >
+                  {compactControl}
+                  {modelControl}
+                </Animated.View>
                 {voiceModeButton}
                 <ComposerDictationStartAction
                   size={usesLargeControls ? "large" : "regular"}

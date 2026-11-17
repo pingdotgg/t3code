@@ -529,7 +529,11 @@ const make = Effect.gen(function* () {
       for (const { alongside, rule } of pendingLateDefaults) {
         if (
           customConfig.some((entry) => isSameKeybindingRule(entry, alongside)) &&
-          !customConfig.some((entry) => shadowsShortcut(entry, rule))
+          !customConfig.some(
+            (entry) =>
+              shadowsShortcut(entry, rule) ||
+              isSameKeybindingRule(entry, { ...rule, when: "false" }),
+          )
         ) {
           missingDefaults.push(rule);
         }

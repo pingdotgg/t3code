@@ -128,6 +128,15 @@ in the thread on web, desktop, or mobile. Some tools offer access for one reques
 the current session, or permanently. See [Permission modes](./permission-modes.md)
 for command and file approvals.
 
+## Use Daybreak
+
+Models with cyber access programs show a Cyber Access option in the model
+options. It starts on Standard, or on Daybreak when `config.toml` in your Codex
+home sets `daybreak = true` or the model only runs under Daybreak. Your choice carries
+over to new threads. Custom models do not offer it. If Codex rejects a turn
+because your login lacks the program, switch Cyber Access back to Standard or
+sign in to Codex with an account that has it.
+
 ## Voice conversations
 
 A Codex thread can hold a spoken conversation. You talk with

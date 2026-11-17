@@ -1,4 +1,3 @@
-import * as Stream from "effect/Stream";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointId,

@@ -7392,6 +7392,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("turn/completed", (payload) =>
           Effect.gen(function* () {
+            const compacted = yield* Ref.modify(threadsAwaitingContextRestore, (current) => {
+              if (!current.has(payload.threadId)) return [false, current] as const;
+              const next = new Set(current);
+              next.delete(payload.threadId);
+              return [true, next] as const;
+            });
+            if (compacted)
+              // Fork requests off the notification reader so it can read their responses.
+              yield* restoreAdditionalContext(payload.threadId).pipe(
+                Effect.forkIn(scope, { startImmediately: true }),
+              );
             const voiceResubmit = (yield* Ref.get(voiceResubmits)).get(payload.turn.id);
             if (voiceResubmit !== undefined) {
               yield* Ref.update(voiceResubmits, (current) => {

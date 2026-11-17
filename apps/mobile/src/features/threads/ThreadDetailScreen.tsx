@@ -209,6 +209,7 @@ import { useOpenLinkedThread } from "./useOpenLinkedThread";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
 import { ComposerVoiceStrip } from "../voice-mode/ComposerVoiceMode";
 import { useVoiceModePhase } from "../voice-mode/useVoiceMode";
+import type { OrchestrationV2ProviderSession } from "@t3tools/contracts";
 
 export interface ThreadDetailScreenProps {
   readonly header?: React.ReactNode;

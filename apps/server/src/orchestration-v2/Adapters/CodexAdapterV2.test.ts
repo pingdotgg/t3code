@@ -3787,13 +3787,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               )
             : Effect.void,
         undefined,
-        undefined,
-        undefined,
-        undefined,
-        (method) =>
+        (entry) =>
           Effect.sync(() => {
+            const frame = entry.frame;
+            const method =
+              typeof frame === "object" && frame !== null && "method" in frame
+                ? frame.method
+                : undefined;
             if (method === "item/completed" || method === "turn/completed") wireOrder.push(method);
           }),
+        undefined,
+        undefined,
+        undefined,
         Effect.succeed<ReadonlyArray<ServerProviderModel>>([
           {
             slug: modelSelection.model,

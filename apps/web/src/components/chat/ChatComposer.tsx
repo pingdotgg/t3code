@@ -146,7 +146,11 @@ import { useDictationSubmissionShortcut } from "../../speech/useDictationSubmiss
 import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
 import { ComposerSpeechButton, ComposerSpeechRecordingPill } from "./ComposerSpeechButton";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
-import { resolveShortcutCommand, shortcutLabelForCommand } from "../../keybindings";
+import {
+  resolveShortcutCommand,
+  shortcutLabelForCommand,
+  type ShortcutMatchContext,
+} from "../../keybindings";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { isEditableFocused } from "../../lib/editableFocus";
 import { getTerminalFocusOwner } from "../../lib/terminalFocus";
@@ -381,6 +385,7 @@ export interface ChatComposerProps {
   activeThreadId: ThreadId | null;
   activeThread: Thread | undefined;
   activeThreadShell: ThreadShell | null;
+  activeThreadRuns: ReadonlyArray<OrchestrationV2Run>;
   promptHistoryEntries: ReadonlyArray<TimelineEntry>;
   forceExpandedOnMobile: boolean;
   projectSelectionRequired: boolean;
@@ -954,7 +959,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         (multipleModelSelections === null ? providerSendBlockReason : null)));
   const isSendDisabled = sendDisabledReason !== null;
   const selectedProviderStatus = selectedProviderEntry?.snapshot ?? null;
-  const compactCommandAvailable = providerSupportsManualCompaction(selectedProviderEntry);
   // Voice follows the provider that owns the thread; a draft without a thread
   // shell follows the composer's selection and waits for its first message.
   const voiceThread = activeThread ?? props.activeThreadShell ?? null;
@@ -2066,15 +2070,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           setComposerHighlightedItemId(null);
           toggleVoice();
         }
-        return;
-      }
-      if (!planModeUiEnabled) return;
-      void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
-      const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
-        expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
-      });
-      if (applied) {
-        setComposerHighlightedItemId(null);
       }
       return;
     }

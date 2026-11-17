@@ -268,6 +268,17 @@ export function useComposerMenuItems({
               },
             ] as const)
           : []),
+        ...(freshSessionAvailable
+          ? ([
+              {
+                id: "slash:clear",
+                type: "slash-command",
+                command: "clear",
+                label: "/clear",
+                description: "Start a fresh session; earlier messages stay visible",
+              },
+            ] as const)
+          : []),
         ...(voiceSlashCommand !== null
           ? ([
               {

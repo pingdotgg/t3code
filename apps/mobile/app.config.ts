@@ -319,6 +319,14 @@ const config: ExpoConfig = {
       "android.permission.ACTIVITY_RECOGNITION",
       "android.permission.SYSTEM_ALERT_WINDOW",
     ],
+    intentFilters: [
+      {
+        action: "VIEW",
+        autoVerify: true,
+        data: [{ scheme: "https", host: HOSTED_APP_HOST, pathPrefix: "/threads/" }],
+        category: ["BROWSABLE", "DEFAULT"],
+      },
+    ],
   },
   web: {
     favicon: variant.assets.appIcon,
