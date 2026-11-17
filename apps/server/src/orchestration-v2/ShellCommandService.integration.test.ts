@@ -72,6 +72,7 @@ const makeHarness = Effect.fn("ShellCommandTest.makeHarness")(function* (
     }),
   );
   const providerEvents = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+  const interruptCalls = yield* Queue.unbounded<void>();
   const calls: Array<ProviderAdapter.ProviderAdapterV2TurnInput> = [];
   const driver = ProviderDriverKind.make("codex");
   const instanceId = ProviderInstanceId.make("codex");
@@ -125,7 +126,7 @@ const makeHarness = Effect.fn("ShellCommandTest.makeHarness")(function* (
               calls.push(turn);
             }),
           steerTurn: () => Effect.die("Shell text must not be steered"),
-          interruptTurn: () => Effect.void,
+          interruptTurn: () => Queue.offer(interruptCalls, undefined).pipe(Effect.asVoid),
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () => Effect.die("unused"),
           rollbackThread: () => Effect.die("unused"),
@@ -190,6 +191,7 @@ const makeHarness = Effect.fn("ShellCommandTest.makeHarness")(function* (
     send,
     projection,
     providerEvents,
+    interruptCalls,
     calls,
     started,
     completed,
@@ -523,7 +525,13 @@ it.effect.each([false, true])(
           runId,
           holdQueue,
         });
-        yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+        // This provider never confirms Stop, so Stop gives up waiting at its bound.
+        const drained = yield* Effect.forkChild(
+          (yield* EffectWorker.OrchestrationEffectWorkerV2).drain(),
+        );
+        yield* Queue.take(h.interruptCalls);
+        yield* TestClock.adjust("2 seconds");
+        yield* Fiber.join(drained);
         const interrupted = yield* h.projection;
         expect(interrupted.runs.at(-1)?.status).toBe("interrupted");
         expect(h.stopped()).toBe(holdQueue);
