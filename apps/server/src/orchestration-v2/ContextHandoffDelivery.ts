@@ -49,7 +49,7 @@ export const withInlineContext = (context: string, userText: string): string =>
 const NOTIFICATION_DETAIL_LIMIT = 20_000;
 
 /** Caps text shown in a turn item, which travels over the websocket, and says how much was cut. */
-const capNotificationDetail = (text: string): string =>
+export const capNotificationDetail = (text: string): string =>
   text.length <= NOTIFICATION_DETAIL_LIMIT
     ? text
     : `${text.slice(0, NOTIFICATION_DETAIL_LIMIT)}\n[${(text.length - NOTIFICATION_DETAIL_LIMIT).toLocaleString("en-US")} more characters not shown]`;

@@ -11,6 +11,7 @@ import {
   formatReadToolLabel,
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivity";
+import { capNotificationDetail } from "../ContextHandoffDelivery.ts";
 import { field, text } from "../unknownField.ts";
 import { mergeWorkflowAgentMetadata, type WorkflowAgentMetadata } from "../workflowAgentAnswers.ts";
 import {
@@ -104,6 +105,7 @@ import {
   type ModelSelection,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2Notification,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderFailure,
   OrchestrationV2ProviderGoal,
@@ -5587,6 +5589,24 @@ export interface ClaudeAdapterV2Options {
   readonly installationGate?: ProviderInstallationGate.ProviderInstallationGate["Service"];
 }
 
+/** The notification for SessionStart hook output, which the CLI adds to the model's context; undefined when the hook printed none. */
+function claudeHookContextNotification(
+  message: Extract<SDKMessage, { readonly subtype: "hook_response" }>,
+): OrchestrationV2Notification | undefined {
+  if (message.hook_event !== "SessionStart" || message.stdout.trim() === "") return undefined;
+  return {
+    source: { kind: "system" },
+    outcome:
+      message.outcome === "success"
+        ? "completed"
+        : message.outcome === "error"
+          ? "failed"
+          : "cancelled",
+    summary: `Claude Code hook added context: ${message.hook_name.startsWith(message.hook_event) ? message.hook_name : `${message.hook_event}:${message.hook_name}`} (${message.stdout.length.toLocaleString("en-US")} characters)`,
+    detail: capNotificationDetail(message.stdout),
+  };
+}
+
 export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   adapterOptions: ClaudeAdapterV2Options,
 ) {
@@ -6003,6 +6023,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const subagentToolCalls = new Map<string, ActiveClaudeToolCall>();
         const pendingSubagentLaunchesByToolUseId = new Map<string, PendingClaudeSubagentLaunch>();
         const settledTurnByNativeThread = new Map<string, ActiveClaudeTurnContext>();
+        // SessionStart hooks report when the query opens, which can be before a turn exists to show them in.
+        const pendingHookNotices: Array<{
+          readonly nativeItemId: string;
+          readonly notification: OrchestrationV2Notification;
+        }> = [];
         const subagentStopOutcomes = new Map<
           string,
           Deferred.Deferred<ProviderAdapter.ProviderAdapterV2SubagentOutcome>
@@ -10496,6 +10521,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             return;
           }
+          if (
+            message.type === "system" &&
+            message.subtype === "hook_response" &&
+            input.replayed !== true
+          ) {
+            const notification = claudeHookContextNotification(message);
+            if (notification !== undefined) {
+              pendingHookNotices.push({ nativeItemId: message.uuid, notification });
+            }
+          }
           // Track before routing: idle-wake Monitors report tasks before replaying their tool calls.
           yield* trackClaudeMonitorCalls(message);
           yield* trackClaudeScheduledWakeup(liveQuery.nativeThreadId, message);
@@ -10661,6 +10696,38 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
           if (context === (yield* Ref.get(activeTurn))) {
+            for (const notice of pendingHookNotices.splice(0)) {
+              const now = yield* DateTime.now;
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: {
+                  id: idAllocator.derive.turnItemFromProviderItem({
+                    driver: CLAUDE_PROVIDER,
+                    nativeItemId: notice.nativeItemId,
+                  }),
+                  threadId: context.input.threadId,
+                  runId: context.input.runId,
+                  nodeId: context.input.rootNodeId,
+                  providerThreadId: context.input.providerThread.id,
+                  providerTurnId: context.providerTurnId,
+                  nativeItemRef: {
+                    driver: CLAUDE_PROVIDER,
+                    nativeId: notice.nativeItemId,
+                    strength: "strong",
+                  },
+                  parentItemId: null,
+                  ordinal: yield* resolveItemOrdinal(context, notice.nativeItemId),
+                  type: "notification",
+                  status: "completed",
+                  title: null,
+                  startedAt: now,
+                  completedAt: now,
+                  updatedAt: now,
+                  ...notice.notification,
+                },
+              });
+            }
             const lifecycle = claudePromptLifecycle(message);
             if (
               (message.type === "system" &&
