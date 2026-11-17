@@ -523,6 +523,10 @@ describe("IssueService with a standalone tracker", () => {
         host: "linear.app",
         scope: "ENG",
       });
+      // Narrowed to one project, both of its trackers are still read.
+      listed.length = 0;
+      yield* bound.list({ state: "open", projectId: "web" as ProjectId });
+      expect(listed.sort()).toEqual(["github github.com acme/web", "linear linear.app ENG"]);
       // A reference picks the project's tracker by kind; both are the project's own, so writable.
       const linearRef = {
         projectId: "web" as ProjectId,
