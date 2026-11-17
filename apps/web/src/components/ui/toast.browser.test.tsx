@@ -30,5 +30,11 @@ describe("toastManager", () => {
 
     const anchoredViewport = document.querySelector("[data-slot=toast-viewport-anchored]");
     expect(anchoredViewport).toHaveAttribute("aria-live", "polite");
+    expect(anchoredViewport).not.toHaveAttribute("tabindex");
+    expect(anchoredViewport).toHaveProperty("onclick", null);
+    expect(document.querySelector("[data-slot=toast-portal-anchored]")).toHaveAttribute(
+      "role",
+      "none",
+    );
   });
 });
