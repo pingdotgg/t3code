@@ -483,6 +483,7 @@ function ProjectScriptEditorForm({
               <Label htmlFor="script-command">Command</Label>
               <Textarea
                 id="script-command"
+                data-script-command-input
                 placeholder="bun test"
                 value={command}
                 onChange={(event) => setCommand(event.target.value)}
