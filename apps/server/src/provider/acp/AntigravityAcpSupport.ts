@@ -50,6 +50,7 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   /** Conversational sessions only; helpers and probes leave the system prompt untouched. */
   readonly sessionSystemPromptAppend?: string;
   readonly authMethod?: AntigravityAuthMethod;
+  readonly processEnvironment?: NodeJS.ProcessEnv | undefined;
 }
 
 function parseAntigravityVersion(version: string | null | undefined) {

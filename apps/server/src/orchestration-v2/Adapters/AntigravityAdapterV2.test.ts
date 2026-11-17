@@ -154,6 +154,11 @@ describe("AntigravityAdapterV2 flavor", () => {
       outcome: { outcome: "selected", optionId: "opt-dev" },
     });
   });
+
+  it("defers T3 MCP tools over HTTP so Antigravity ACP stays under its eager schema cap", () => {
+    assert.strictEqual(flavor.mcpOverHttp, true);
+    assert.strictEqual(flavor.deferMcpTools, true);
+  });
 });
 
 const layerSession = Layer.mergeAll(

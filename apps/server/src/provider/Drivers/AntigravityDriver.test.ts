@@ -149,6 +149,12 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     credentialKeys: ReadonlyArray<string>;
     geminiApiKey: string | undefined;
     tempDirectory: string | undefined;
+    mcpEnv: {
+      readonly threadId: string | undefined;
+      readonly endpoint: string | undefined;
+      readonly authorization: string | undefined;
+      readonly node: string | undefined;
+    };
     handle: ChildProcessSpawner.ChildProcessHandle;
   }> = [];
 
@@ -208,6 +214,12 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         geminiApiKey: env("GEMINI_API_KEY"),
         tempDirectory:
           environment.ANTIGRAVITY_HARNESS_PATH === undefined ? undefined : env("TMPDIR"),
+        mcpEnv: {
+          threadId: env("T3CODE_THREAD_ID"),
+          endpoint: env("T3_ACP_MCP_ENDPOINT"),
+          authorization: env("T3_ACP_MCP_AUTHORIZATION"),
+          node: env("T3_ACP_MCP_NODE"),
+        },
         handle,
       });
       return handle;
@@ -662,6 +674,44 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         );
         expect(yield* fs.exists(directories.runtimeTemp)).toBe(false);
         expect(yield* fs.exists(legacyRoot)).toBe(false);
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "forwards session MCP processEnvironment variables to the spawned ACP process",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const threadId = ThreadId.make("thread-antigravity-mcp-env");
+        yield* mcpSessions.set({
+          environmentId: EnvironmentId.make("env-1"),
+          threadId,
+          providerSessionId: "provider-session-mcp-env",
+          providerInstanceId: h.instance.instanceId,
+          endpoint: "http://127.0.0.1:3773/mcp",
+          authorizationHeader: "Bearer test-mcp-token",
+          browserToolsAvailable: true,
+        });
+        yield* h.instance.orchestrationAdapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-mcp-env"),
+          modelSelection: {
+            instanceId: h.instance.instanceId,
+            model: "gemini-test-low",
+          },
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+          }),
+        });
+        const sessionLaunch = h.launches.at(-1);
+        expect(sessionLaunch?.mcpEnv.threadId).toBe(threadId);
+        expect(sessionLaunch?.mcpEnv.endpoint).toBe("http://127.0.0.1:3773/mcp");
+        expect(sessionLaunch?.mcpEnv.authorization).toBe("Bearer test-mcp-token");
+        expect(sessionLaunch?.mcpEnv.node).toBeTruthy();
+        expect(sessionLaunch?.credentialKeys).toEqual([]);
       }),
   );
 });
