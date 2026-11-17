@@ -449,3 +449,11 @@ including filenames or folders containing `#` or `?`.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens a compatible installed file viewer.
+
+## Continue long tasks in a fresh thread
+
+Enable **Settings → Threads → Auto-settle → Continue context-heavy threads** on the environment running your agents. It is off by default. Agents that support T3 tools can decide when a long task would benefit from a fresh conversation and provide a concise handoff.
+
+The continuation uses the same workspace, provider, model and permissions. The original conversation remains available through the thread relationship. Rollover waits for the current turn and delegated work to finish successfully; a new user message cancels it. Threads need two completed turns before another rollover, and active pull request watches prevent it. You can also tell the agent to stay in the current thread.
+
+Turning the setting off cancels requests that have not committed. Restarting the server before a requested rollover commits leaves the original thread active; the agent can request it again. A committed continuation and its first prompt survive a restart.

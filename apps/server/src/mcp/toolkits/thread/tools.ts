@@ -30,6 +30,28 @@ import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskServ
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
+const ThreadContinueTool = Tool.make("t3_thread_continue", {
+  description:
+    "Check whether automatic continuation is enabled. With handoff, request a fresh continuation of THIS top-level thread after this turn succeeds and all delegated work settles. Finish writing, call this last, then end your turn. A changed source or queued user message cancels rollover. Requires two completed turns. Never use from a child thread.",
+  parameters: Schema.Struct({
+    handoff: Schema.optional(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(24000))),
+  }),
+  success: Schema.Struct({
+    enabled: Schema.Boolean,
+    targetThreadId: Schema.optional(ThreadId),
+    link: Schema.optional(Schema.String),
+    continuesWhenTurnEnds: Schema.optional(Schema.Literal(true)),
+  }),
+  failure: OrchestratorMcpFailure,
+  failureMode: "return" as const,
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+  ],
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
+
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
     "Pin, snooze, settle, archive, or mark a thread unread. Omit `threadId` for this thread. `snooze` needs `snoozedUntil`. Settling this thread applies at turn end. A failed turn or queued message leaves it active.",
@@ -260,6 +282,7 @@ export const ThreadToolkit = Toolkit.make(
   ThreadConfigureTool,
   ThreadTransferTool,
   ThreadOrganizeTool,
+  ThreadContinueTool,
   PendingRequestTool,
   QueueTool,
   SubmitOutputTool,
