@@ -197,45 +197,6 @@ describe("GitLabIssueTracker", () => {
     }),
   );
 
-  it.effect("preserves a numeric username when another assignee is removed", () =>
-    Effect.gen(function* () {
-      const users = [
-        { id: 2, username: "12345", name: null },
-        { id: 7, username: "teammate", name: null },
-        { id: 12345, username: "unrelated", name: null },
-      ];
-      let assignees = users.slice(0, 2);
-      const api = yield* tracker((args, input) => {
-        const path = args[1]!;
-        if (path.startsWith("users?username=")) {
-          const username = new URLSearchParams(path.split("?")[1]).get("username");
-          return encode(users.filter((user) => user.username === username));
-        }
-        if (path === "projects/acme%2Fweb/issues/42") {
-          if (args.includes("PUT")) {
-            const body: { assignee_ids: number[] } = JSON.parse(input.stdin!);
-            assignees = users.filter((user) => body.assignee_ids.includes(user.id));
-          }
-          return encode({ ...ISSUE, assignees });
-        }
-        return answer(path);
-      });
-      const target = { cwd: "/w", host: "gitlab.com", scope: "acme/web", key: "42" };
-      const before = yield* api.getIssue(target);
-      yield* api.update!({
-        ...target,
-        assignees: before.assignees
-          .filter((actor) => actor.login !== "teammate")
-          .map((actor) => actor.login),
-      });
-      const after = yield* api.getIssue(target);
-      expect(
-        after.assignees.map((actor) => actor.login),
-        "removing a teammate must preserve the retained assignee",
-      ).toEqual(["12345"]);
-    }),
-  );
-
   it.effect("pages a listing by GitLab's page number and stops on a short page", () =>
     Effect.gen(function* () {
       const paths: string[] = [];
@@ -320,7 +281,7 @@ describe("GitLabIssueTracker", () => {
           return encode([{ id: 7, username: "teammate" }]);
         }
         if (path === "projects/acme%2Fweb/labels?per_page=100&page=1") return "[]";
-        if (path === "users?username=theo") return encode([{ id: 2, username: "theo" }]);
+        if (path === "users?username=12345") return encode([{ id: 2, username: "12345" }]);
         if (path.startsWith("users?username=")) return "[]";
         return "{}";
       });
@@ -328,9 +289,9 @@ describe("GitLabIssueTracker", () => {
       const candidates = yield* api.listCandidates!(target);
       expect(candidates.assignees).toHaveLength(1);
       calls.length = 0;
-      // The issue's own assignee comes back by login; a newly picked one by id.
-      yield* api.update!({ ...target, assignees: ["theo", candidates.assignees[0]!.id] });
-      expect(calls).toEqual(["users?username=theo", "projects/acme%2Fweb/issues/42"]);
+      // The issue's own assignee comes back by login, even an all-digit one; a newly picked one by id.
+      yield* api.update!({ ...target, assignees: ["12345", candidates.assignees[0]!.id] });
+      expect(calls).toEqual(["users?username=12345", "projects/acme%2Fweb/issues/42"]);
       expect(JSON.parse(bodies.at(-1)!)).toEqual({ assignee_ids: [2, 7] });
       const error = yield* Effect.flip(api.update!({ ...target, assignees: ["nobody"] }));
       expect(error.reason).toBe("failed");
