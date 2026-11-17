@@ -2655,6 +2655,7 @@ export const layerWsRpc = (
         [WS_METHODS.serverGetStorageCleanupReport]: () => storageCleanup.reports,
         [WS_METHODS.serverGetDatabaseStorage]: () => databaseStorage.status,
         [WS_METHODS.serverReclaimDatabaseSpace]: () => databaseStorage.requestReclaim,
+        [WS_METHODS.serverGetThreadHistoryTrim]: () => threadHistoryTrim.status,
         [WS_METHODS.serverPreviewThreadHistoryTrim]: () =>
           threadHistoryTrim.preview.pipe(Effect.orDie),
         [WS_METHODS.serverTrimThreadHistory]: () => threadHistoryTrim.trimNow.pipe(Effect.orDie),

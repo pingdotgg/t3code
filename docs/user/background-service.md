@@ -176,11 +176,15 @@ checkpoints stay, so you can still read, search and continue the thread.
 Running, pinned and snoozed threads and threads with an open pull request are
 never trimmed.
 
+A trim pass runs every 30 days. If Ada wasn't running when one came due, it runs
+a few minutes after the next start. Settings > Maintenance shows when the last
+pass ran and when the next is due.
+
 Change the days or turn trimming off with **Trim old threads** in Settings >
 Maintenance (web and desktop) or Settings > Threads (mobile). It applies to the
 whole environment. On web and desktop, **Trim now** shows how many threads
-qualify and about how much space they use, and trims them once you confirm.
-Trimming can't be undone.
+qualify and about how much space they use, and trims them once you confirm. The
+next automatic pass is then 30 days after that. Trimming can't be undone.
 
 On databases created before automatic shrinking, the database file keeps its
 size until you [reclaim database space](#reclaim-database-space).

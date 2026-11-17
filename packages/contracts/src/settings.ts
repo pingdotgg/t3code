@@ -153,6 +153,13 @@ export const ThreadHistoryTrimReport = Schema.Struct({
 });
 export type ThreadHistoryTrimReport = typeof ThreadHistoryTrimReport.Type;
 
+/** ISO times. A pass runs every 30 days; both are null until the first one finishes. */
+export const ThreadHistoryTrimStatus = Schema.Struct({
+  lastTrimmedAt: Schema.NullOr(Schema.String),
+  nextTrimAt: Schema.NullOr(Schema.String),
+});
+export type ThreadHistoryTrimStatus = typeof ThreadHistoryTrimStatus.Type;
+
 export const MAX_SNOOZE_PRESET_MINUTES = 30 * 24 * 60;
 export const MAX_SNOOZE_PRESETS = 8;
 export const SnoozePresetDay = Schema.Literals([

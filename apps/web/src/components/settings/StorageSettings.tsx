@@ -535,6 +535,14 @@ const threadHistoryTrimPermissionsAtom = environmentAtomList(
   serverEnvironment.trimThreadHistory.permissionAtom,
 );
 
+const threadHistoryTrimStatusAtom = environmentAtomList(
+  "web-thread-history-trim-status",
+  (environmentId) => serverEnvironment.threadHistoryTrim({ environmentId, input: {} }),
+);
+
+const formatTrimDate = (iso: string) =>
+  new Date(iso).toLocaleDateString(undefined, { dateStyle: "medium" });
+
 interface TrimTarget {
   readonly environmentId: EnvironmentId;
   readonly label: string;
@@ -572,6 +580,31 @@ function ThreadHistoryTrimSection() {
     readonly report: ThreadHistoryTrimReport;
   }> | null>(null);
   const on = settings.threadHistoryTrimAfterDays > 0;
+  const nowMs = Date.parse(`${useNowMinute()}Z`);
+  const statuses = useAtomValue(
+    threadHistoryTrimStatusAtom(
+      environmentIdsKey(connectedEnvironments.map(({ environmentId }) => environmentId)),
+    ),
+  );
+  const schedule = connectedEnvironments.flatMap((environment, index) => {
+    const query = statuses[index];
+    if (query?._tag !== "Success") return [];
+    if ((environment.serverConfig?.settings.threadHistoryTrimAfterDays ?? 0) <= 0) return [];
+    const { lastTrimmedAt, nextTrimAt } = query.value;
+    const text =
+      lastTrimmedAt === null || nextTrimAt === null
+        ? "Not trimmed yet · first pass runs a few minutes after start"
+        : `Last trimmed ${formatTrimDate(lastTrimmedAt)} · next ${
+            Date.parse(nextTrimAt) <= nowMs ? "today" : formatTrimDate(nextTrimAt)
+          }`;
+    const label = settingsScopeEnvironmentLabel(environment, connectedEnvironments);
+    return [
+      {
+        environmentId: environment.environmentId,
+        text: connectedEnvironments.length > 1 ? `${label}: ${text}` : text,
+      },
+    ];
+  });
   const runnable = connectedEnvironments.filter(
     (environment, index) =>
       permissions[index] === true &&
@@ -717,7 +750,17 @@ function ThreadHistoryTrimSection() {
           serverScoped
           settingKeys={["threadHistoryTrimAfterDays"]}
           title={searchableSetting("days-before-thread-trim").title}
-          description="Running, pinned and snoozed threads and threads with an open pull request are skipped."
+          description={
+            <>
+              A pass runs every 30 days. Running, pinned and snoozed threads and threads with an
+              open pull request are skipped.
+              {schedule.map(({ environmentId, text }) => (
+                <span key={environmentId} className="block">
+                  {text}
+                </span>
+              ))}
+            </>
+          }
           control={
             <SettingIntegerInput
               value={settings.threadHistoryTrimAfterDays}

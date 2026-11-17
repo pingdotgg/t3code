@@ -1,4 +1,9 @@
-import { type RunId, type ThreadHistoryTrimReport, type ThreadId } from "@t3tools/contracts";
+import {
+  type RunId,
+  type ThreadHistoryTrimReport,
+  type ThreadHistoryTrimStatus,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -10,11 +15,14 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerSettingsModule from "../serverSettings.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as EventSink from "./EventSink.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 
 export class ThreadHistoryTrimError extends Schema.TaggedError<ThreadHistoryTrimError>()(
   "ThreadHistoryTrimError",
@@ -31,11 +39,15 @@ export class ThreadHistoryTrim extends Context.Service<
     readonly preview: Effect.Effect<ThreadHistoryTrimReport, ThreadHistoryTrimError>;
     /** Queues a pass and returns what it is about to remove. */
     readonly trimNow: Effect.Effect<ThreadHistoryTrimReport, ThreadHistoryTrimError>;
+    /** When the last pass finished and when the next one is due. */
+    readonly status: Stream.Stream<ThreadHistoryTrimStatus>;
     readonly drain: Effect.Effect<void>;
   }
 >()("t3/orchestration-v2/ThreadHistoryTrim") {}
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
+const PASS_INTERVAL_MS = 30 * DAY_MS;
+const LAST_PASS = "thread-history-trim-last-pass";
 const DELETE_PAGE_SIZE = 200;
 const NOTICE_SIGNAL = "history-trim";
 // Work the reader skips: `file_change` stays because it is small and names what a run touched.
@@ -387,9 +399,45 @@ const make = Effect.gen(function* () {
     } satisfies Removed;
   });
 
+  const readLastPass = sql<{ readonly updated_at: string }>`
+    SELECT updated_at FROM orchestration_v2_projection_metadata WHERE projection_name = ${LAST_PASS}
+  `.pipe(Effect.map((rows) => rows[0]?.updated_at ?? null));
+  const statusOf = (lastTrimmedAt: string | null): ThreadHistoryTrimStatus => ({
+    lastTrimmedAt,
+    nextTrimAt:
+      lastTrimmedAt === null
+        ? null
+        : DateTime.formatIso(DateTime.makeUnsafe(Date.parse(lastTrimmedAt) + PASS_INTERVAL_MS)),
+  });
+  const statusRef = yield* SubscriptionRef.make(
+    statusOf(yield* readLastPass.pipe(Effect.orElseSucceed(() => null))),
+  );
+  const recordPass = Effect.gen(function* () {
+    const finishedAt = DateTime.formatIso(yield* DateTime.now);
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_metadata (
+        projection_name, schema_version, last_sequence, updated_at
+      )
+      VALUES (
+        ${LAST_PASS}, ${ProjectionStore.ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION}, 0, ${finishedAt}
+      )
+      ON CONFLICT(projection_name) DO UPDATE SET updated_at = excluded.updated_at
+    `;
+    yield* SubscriptionRef.set(statusRef, statusOf(finishedAt));
+  });
+
   const pass = Effect.fn("ThreadHistoryTrim.pass")(function* (mode: Mode) {
     const { afterDays, now, idleBefore } = yield* window;
     if (afterDays <= 0) return;
+    if (mode === "background") {
+      // Checked here, behind the queue, so a requested trim that just finished counts.
+      const last = yield* readLastPass;
+      if (last !== null && Date.parse(now) - Date.parse(last) < PASS_INTERVAL_MS) return;
+      const report = yield* estimate(true).pipe(NodeSqliteClient.readOnlyBackground);
+      if (report.threadCount > 0) {
+        yield* Effect.logInfo("Idle thread history due for trimming", report);
+      }
+    }
     let sliceStarted = yield* Clock.currentTimeMillis;
     // The sweep keeps to a 10% duty so a backlog never competes with a turn; a requested trim does not wait.
     const rest =
@@ -436,6 +484,7 @@ const make = Effect.gen(function* () {
         estimatedBytes,
       });
     }
+    yield* recordPass;
   });
 
   const worker = yield* makeDrainableWorker((mode: Mode) => pass(mode));
@@ -445,20 +494,11 @@ const make = Effect.gen(function* () {
     <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(Effect.mapError((cause) => new ThreadHistoryTrimError({ operation, cause })));
 
-  // Dry run first: the first pass after a start reports what it would remove, and removes it an
-  // hour later, so an upgrade never deletes history before the setting can be seen.
+  // A pass is due 30 days after the last one finished, or at once when none has. Checking every
+  // six hours catches a due date that passes while running; one long timer overflows and drifts
+  // across machine sleep.
   yield* forkParked(
-    estimate(true).pipe(
-      NodeSqliteClient.readOnlyBackground,
-      Effect.tap((report) =>
-        report.threadCount > 0
-          ? Effect.logInfo("Idle thread history due for trimming", report)
-          : Effect.void,
-      ),
-      Effect.catchCause((cause) =>
-        Effect.logWarning("Thread history trim preview failed", { cause: Cause.pretty(cause) }),
-      ),
-      Effect.andThen(Effect.sleep("1 hour")),
+    Effect.sleep("5 minutes").pipe(
       Effect.andThen(
         worker
           .enqueue("background")
@@ -474,6 +514,7 @@ const make = Effect.gen(function* () {
       Effect.tap(() => worker.enqueue("manual")),
       mapError("trim"),
     ),
+    status: SubscriptionRef.changes(statusRef),
     drain: worker.drain,
   });
 });

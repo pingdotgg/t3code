@@ -400,6 +400,7 @@ import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from ".
 import {
   StorageCleanupReport,
   ThreadHistoryTrimReport,
+  ThreadHistoryTrimStatus,
   DatabaseReclaimError,
   DatabaseStorageStatus,
   ServerSettings,
@@ -599,6 +600,7 @@ export const WS_METHODS = {
   serverGetStorageCleanupReport: "server.getStorageCleanupReport",
   serverGetDatabaseStorage: "server.getDatabaseStorage",
   serverReclaimDatabaseSpace: "server.reclaimDatabaseSpace",
+  serverGetThreadHistoryTrim: "server.getThreadHistoryTrim",
   serverPreviewThreadHistoryTrim: "server.previewThreadHistoryTrim",
   serverTrimThreadHistory: "server.trimThreadHistory",
   serverGetAgentGateway: "server.getAgentGateway",
@@ -964,6 +966,13 @@ const WsServerGetDatabaseStorageRpc = Rpc.make(WS_METHODS.serverGetDatabaseStora
 const WsServerReclaimDatabaseSpaceRpc = Rpc.make(WS_METHODS.serverReclaimDatabaseSpace, {
   payload: Schema.Struct({}),
   error: Schema.Union([DatabaseReclaimError, EnvironmentAuthorizationError]),
+});
+
+const WsServerGetThreadHistoryTrimRpc = Rpc.make(WS_METHODS.serverGetThreadHistoryTrim, {
+  payload: Schema.Struct({}),
+  success: ThreadHistoryTrimStatus,
+  stream: true,
+  error: EnvironmentAuthorizationError,
 });
 
 const WsServerPreviewThreadHistoryTrimRpc = Rpc.make(WS_METHODS.serverPreviewThreadHistoryTrim, {
@@ -2535,6 +2544,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetDatabaseStorageRpc,
   WsServerGetSettingsRpc,
   WsServerReclaimDatabaseSpaceRpc,
+  WsServerGetThreadHistoryTrimRpc,
   WsServerPreviewThreadHistoryTrimRpc,
   WsServerTrimThreadHistoryRpc,
   WsServerGetAgentGatewayRpc,

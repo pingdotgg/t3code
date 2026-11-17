@@ -17,6 +17,8 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -34,18 +36,16 @@ const stores = Layer.mergeAll(
   EventStore.layer.pipe(Layer.provideMerge(database)),
   ProjectionStore.layer.pipe(Layer.provideMerge(database)),
 );
-const layerTest = (afterDays: number) =>
-  ThreadHistoryTrim.layer.pipe(
-    Layer.provideMerge(
-      Layer.mergeAll(
-        stores,
-        OrchestrationEventStore.layer.pipe(Layer.provide(database)),
-        EventSink.layer.pipe(Layer.provide(stores)),
-        IdAllocator.layer,
-        ServerSettings.ServerSettingsService.layerTest({ threadHistoryTrimAfterDays: afterDays }),
-      ),
-    ),
+const dependencies = (afterDays: number) =>
+  Layer.mergeAll(
+    stores,
+    OrchestrationEventStore.layer.pipe(Layer.provide(database)),
+    EventSink.layer.pipe(Layer.provide(stores)),
+    IdAllocator.layer,
+    ServerSettings.ServerSettingsService.layerTest({ threadHistoryTrimAfterDays: afterDays }),
   );
+const layerTest = (afterDays: number) =>
+  ThreadHistoryTrim.layer.pipe(Layer.provideMerge(dependencies(afterDays)));
 
 const now = DateTime.makeUnsafe("2026-11-17T00:00:00.000Z");
 const old = DateTime.subtract(now, { days: 40 });
@@ -397,6 +397,63 @@ it.layer(layerTest(0))("ThreadHistoryTrim turned off", (it) => {
       const { threadId } = yield* seedThread("off");
       assert.equal((yield* trim).threadCount, 0);
       assert.deepEqual(yield* itemTitles(threadId), everyItem);
+    }),
+  );
+});
+
+const lastTrimmedAt = Effect.gen(function* () {
+  const service = yield* ThreadHistoryTrim.ThreadHistoryTrim;
+  return Option.getOrThrow(yield* Stream.runHead(service.status)).lastTrimmedAt;
+});
+const afterWaiting = Effect.fn(function* (duration: Parameters<typeof TestClock.adjust>[0]) {
+  yield* TestClock.adjust(duration);
+  yield* (yield* ThreadHistoryTrim.ThreadHistoryTrim).drain;
+});
+// Each provide is one server run: the layer's scope closes with it, and the database outlives it.
+const whileRunning = Effect.provide(ThreadHistoryTrim.layer);
+
+it.layer(dependencies(30))("ThreadHistoryTrim schedule", (it) => {
+  it.effect("runs a pass every 30 days, and at the next start when one was missed", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(DateTime.toEpochMillis(now));
+      const first = yield* seedThread("first");
+
+      yield* Effect.gen(function* () {
+        assert.isNull(yield* lastTrimmedAt);
+        yield* afterWaiting("5 minutes");
+        assert.deepEqual(yield* itemTitles(first.threadId), trimmedItems);
+        const ranAt = yield* lastTrimmedAt;
+        assert.equal(ranAt, DateTime.formatIso(DateTime.add(now, { minutes: 5 })));
+
+        const second = yield* seedThread("second");
+        yield* afterWaiting("29 days");
+        assert.deepEqual(yield* itemTitles(second.threadId), everyItem);
+        assert.equal(yield* lastTrimmedAt, ranAt);
+
+        yield* afterWaiting("1 day");
+        assert.deepEqual(yield* itemTitles(second.threadId), trimmedItems);
+      }).pipe(whileRunning);
+
+      const missed = yield* seedThread("missed");
+      yield* TestClock.adjust("45 days");
+      assert.deepEqual(yield* itemTitles(missed.threadId), everyItem);
+
+      yield* Effect.gen(function* () {
+        yield* afterWaiting("5 minutes");
+        assert.deepEqual(yield* itemTitles(missed.threadId), trimmedItems);
+
+        yield* TestClock.adjust("10 days");
+        const requested = yield* seedThread("requested");
+        yield* trim;
+        assert.deepEqual(yield* itemTitles(requested.threadId), trimmedItems);
+
+        // The requested trim reset the clock: 35 days after the last scheduled pass is too soon.
+        const later = yield* seedThread("later");
+        yield* afterWaiting("25 days");
+        assert.deepEqual(yield* itemTitles(later.threadId), everyItem);
+        yield* afterWaiting("5 days");
+        assert.deepEqual(yield* itemTitles(later.threadId), trimmedItems);
+      }).pipe(whileRunning);
     }),
   );
 });
