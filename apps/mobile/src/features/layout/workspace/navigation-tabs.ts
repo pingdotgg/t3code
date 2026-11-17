@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { msg } from "gt-react-native";
 import { AsyncResult } from "effect/reactivity";
 import { Platform } from "react-native";
 import {
@@ -15,7 +16,12 @@ import { resolveWorkspaceTabOrder } from "./workspace-tabs-state";
 
 export const WORKSPACE_TAB_LABELS = {
   ...NAVIGATION_TAB_LABELS,
-  ...(Platform.OS === "ios" ? { threads: "Chats", pullRequests: "PRs" } : {}),
+  ...(Platform.OS === "ios"
+    ? {
+        threads: msg("Chats", { $context: "navigation tab, list of chat threads" }),
+        pullRequests: msg("PRs", { $context: "navigation tab, pull requests" }),
+      }
+    : {}),
 };
 
 export const NAVIGATION_TAB_ICONS = {

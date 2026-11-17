@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import type { EnvironmentId, SourceControlSignInPrompt } from "@t3tools/contracts";
 import {
   readHostCredentialSettings,
@@ -99,6 +100,7 @@ function AppSignInRow(props: {
   readonly appSignIn: SourceControlAppSignIn;
   readonly disabled: boolean;
 }) {
+  const gt = useGT();
   const { environment, definition, appSignIn } = props;
   const environmentId = environment.environmentId;
   const host = appSignIn.hosts[0] ?? "";
@@ -122,10 +124,13 @@ function AppSignInRow(props: {
     void Clipboard.setStringAsync(prompt.userCode).catch(() => undefined);
     Dialog.alert(
       prompt.userCode,
-      `Enter this code on GitHub, then approve ${appSignIn.appName}. It is copied. The server finishes signing in even if you leave the app.`,
+      gt(
+        "Enter this code on {host}, then approve {app}. It is copied. The server finishes signing in even if you leave the app.",
+        { host: "GitHub", app: appSignIn.appName },
+      ),
       [
         {
-          text: "Cancel",
+          text: gt("Cancel"),
           style: "cancel",
           onPress: () => {
             attempt.current = null;
@@ -133,7 +138,10 @@ function AppSignInRow(props: {
             void cancel({ environmentId, input });
           },
         },
-        { text: "Open GitHub", onPress: () => openUrl(prompt.verificationUri) },
+        {
+          text: gt("Open {host}", { host: "GitHub" }),
+          onPress: () => openUrl(prompt.verificationUri),
+        },
       ],
     );
   };
@@ -143,7 +151,7 @@ function AppSignInRow(props: {
     const started = await start({ environmentId, input });
     if (started._tag !== "Success") {
       setPending(null);
-      Dialog.alert("Could not start the sign-in", failureMessage(started.cause));
+      Dialog.alert(gt("Could not start the sign-in"), failureMessage(started.cause));
       return;
     }
     const prompt = started.value;
@@ -155,7 +163,7 @@ function AppSignInRow(props: {
     attempt.current = null;
     setPending(null);
     if (finished._tag !== "Success") {
-      Dialog.alert("Sign-in did not finish", failureMessage(finished.cause));
+      Dialog.alert(gt("Sign-in did not finish"), failureMessage(finished.cause));
     }
   };
 
@@ -174,11 +182,14 @@ function AppSignInRow(props: {
     if (signedIn) {
       Dialog.alert(
         appSignIn.appName,
-        "Signed in. GitHub requests use the app's higher rate limit, in repositories where the app is installed.",
+        gt(
+          "Signed in. {host} requests use the app's higher rate limit, in repositories where the app is installed.",
+          { host: "GitHub" },
+        ),
         [
-          { text: "Install on an organization", onPress: () => openUrl(appSignIn.installUrl) },
-          { text: "Sign out", style: "destructive", onPress: signOut },
-          { text: "Cancel", style: "cancel" },
+          { text: gt("Install on an organization"), onPress: () => openUrl(appSignIn.installUrl) },
+          { text: gt("Sign out"), style: "destructive", onPress: signOut },
+          { text: gt("Cancel"), style: "cancel" },
         ],
       );
     } else if (pending !== null && pending !== "starting") {
@@ -194,12 +205,12 @@ function AppSignInRow(props: {
       label={props.label}
       value={
         signedIn
-          ? "Signed in"
+          ? gt("Signed in")
           : pending === "starting"
-            ? "Starting…"
+            ? gt("Starting…")
             : pending !== null
-              ? `Enter ${pending.userCode}`
-              : "Sign in"
+              ? gt("Enter {code}", { code: pending.userCode })
+              : gt("Sign in")
       }
       disabled={props.disabled}
       onPress={onPress}

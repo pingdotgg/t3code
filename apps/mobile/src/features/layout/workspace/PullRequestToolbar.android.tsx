@@ -1,4 +1,5 @@
 import { useNavigation } from "@react-navigation/native";
+import { useGT } from "gt-react-native";
 import { useEffect } from "react";
 import { BackHandler, Keyboard } from "react-native";
 import { AppBar } from "../../../components/ui/AppBar";
@@ -14,6 +15,7 @@ export function PullRequestToolbar(props: {
   readonly filters: PullRequestFilterMenu | null;
   readonly onRequestVisibility?: () => void;
 }) {
+  const gt = useGT();
   const navigation = useNavigation();
   const { filters } = props;
   const workspace = useWorkspaceTabs()!;
@@ -57,14 +59,14 @@ export function PullRequestToolbar(props: {
       title="T3 Code"
       titleContent={
         <WorkspaceBrandTitle
-          accessibilityLabel="T3 Code, Pull requests"
+          accessibilityLabel={gt("{product}, Pull requests", { product: "T3 Code" })}
           onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
         />
       }
       search={{
         value: tab.query,
         onChangeText: (query) => dispatch({ type: "query", tab: "pullRequests", query }),
-        placeholder: "Search pull requests",
+        placeholder: gt("Search pull requests"),
         active: searching,
         onOpen: openSearch,
         onClose: closeSearch,
@@ -73,7 +75,7 @@ export function PullRequestToolbar(props: {
         filters
           ? [
               {
-                title: "Filter pull requests",
+                title: gt("Filter pull requests"),
                 icon: filters.customized
                   ? "line.3.horizontal.decrease.circle.fill"
                   : "line.3.horizontal.decrease.circle",
