@@ -53,15 +53,27 @@ export const assertCheckoutIdle = Effect.fn("sharedCheckoutGuard.assertCheckoutI
     Effect.map((snapshot) => snapshot.projects),
     Effect.orElseSucceed(() => []),
   );
-  // A project rooted inside the checkout shares it, as in a monorepo package.
+  // A project rooted inside the checkout shares it, as in a monorepo package, unless it is its
+  // own repository nested there.
+  const nested = yield* Effect.forEach(
+    projects.filter(
+      ({ workspaceRoot }) =>
+        root !== null &&
+        !checkoutPaths.includes(workspaceRoot) &&
+        workspaceRoot.startsWith(`${root}/`),
+    ),
+    (project) =>
+      gitWorkflow.repositoryRoot(project.workspaceRoot).pipe(
+        Effect.map((projectRoot) => (projectRoot === root ? [project] : [])),
+        Effect.orElseSucceed(() => []),
+      ),
+    { concurrency: "unbounded" },
+  );
   const projectIds = new Set(
-    projects
-      .filter(
-        ({ workspaceRoot }) =>
-          checkoutPaths.includes(workspaceRoot) ||
-          (root !== null && workspaceRoot.startsWith(`${root}/`)),
-      )
-      .map(({ id }) => id),
+    [
+      ...projects.filter(({ workspaceRoot }) => checkoutPaths.includes(workspaceRoot)),
+      ...nested.flat(),
+    ].map(({ id }) => id),
   );
   // Archiving does not stop a run, so archived threads can still be working. Each lookup fails
   // open on its own, so one failure keeps what the others found.

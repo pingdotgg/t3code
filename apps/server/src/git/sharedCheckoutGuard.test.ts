@@ -11,6 +11,7 @@ import { assertCheckoutIdle, busyThreadsInCheckout } from "./sharedCheckoutGuard
 const projectId = ProjectId.make("project-a");
 const otherProjectId = ProjectId.make("project-b");
 const nestedProjectId = ProjectId.make("project-nested");
+const childRepositoryProjectId = ProjectId.make("project-child-repository");
 
 const thread = (
   title: string,
@@ -69,13 +70,15 @@ describe("assertCheckoutIdle", () => {
   }) =>
     Layer.mergeAll(
       Layer.mock(GitWorkflowService.GitWorkflowService)({
-        repositoryRoot: () => Effect.succeed(input.repositoryRoot),
+        repositoryRoot: (cwd) =>
+          Effect.succeed(cwd.startsWith("/repo/child") ? "/repo/child" : input.repositoryRoot),
       }),
       Layer.mock(ProjectService.ProjectService)({
         snapshot: Effect.succeed({
           projects: [
             { id: projectId, workspaceRoot: "/repo" },
             { id: nestedProjectId, workspaceRoot: "/repo/packages/app" },
+            { id: childRepositoryProjectId, workspaceRoot: "/repo/child" },
             { id: otherProjectId, workspaceRoot: "/other" },
           ],
         } as never),
@@ -139,13 +142,15 @@ describe("assertCheckoutIdle", () => {
               thread("nested running", { projectId: nestedProjectId }),
               thread("archived running", { archived: true }),
               thread("other running", { projectId: otherProjectId }),
+              thread("child repository running", { projectId: childRepositoryProjectId }),
             ],
           }),
         ),
       );
-      expect(error.detail).toContain("'nested running'");
-      expect(error.detail).toContain("'archived running'");
-      expect(error.detail).not.toContain("other running");
+      // Exactly these two: a third busy thread would read "and 1 more".
+      expect(error.detail).toMatch(
+        /^'(nested|archived) running' and '(nested|archived) running' are still working/,
+      );
     }),
   );
 
