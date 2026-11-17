@@ -199,7 +199,12 @@ it.layer(layerTest)("GrokDriver", (it) => {
         ],
         config: { ...GrokDriver.defaultConfig(), binaryPath },
       });
-      const env = (yield* instance.snapshot.resolveMaintenance()).update?.env ?? {};
+      const updateEnv = (yield* instance.snapshot.resolveMaintenance()).update?.env ?? {};
+      // The maintenance runner spawns with extendEnv, layering this over the server's process.env.
+      const env: NodeJS.ProcessEnv = {
+        npm_config_user_agent: "npm/11.6.2 node/v24.11.0",
+        ...updateEnv,
+      };
       expect(env.GROK_INSTALLER === "internal" || env.npm_config_user_agent === undefined).toBe(
         true,
       );

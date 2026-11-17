@@ -92,9 +92,6 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
         })
       );
     }
-    // An npm/npx-launched server passes on npm_config_user_agent, which Grok ranks above its own
-    // `[cli] installer`, so a script install would update through npm.
-    const { npm_config_user_agent: _launcherAgent, ...env } = context.env;
     return makeProviderMaintenanceCapabilities({
       provider: DRIVER_KIND,
       packageName: GROK_NPM_PACKAGE,
@@ -102,7 +99,13 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
       updateArgs: ["update"],
       updateLockKey: "grok",
       platform: context.platform,
-      env: { ...env, npm_config_allow_scripts: GROK_NPM_PACKAGE },
+      env: {
+        ...context.env,
+        npm_config_allow_scripts: GROK_NPM_PACKAGE,
+        // An npx-launched server's npm_config_user_agent outranks Grok's `[cli] installer`, steering
+        // a script install to npm. The runner extends process.env; only undefined removes a key.
+        npm_config_user_agent: undefined,
+      },
     });
   }),
 };
