@@ -38,6 +38,7 @@ it("reloads WSL distributions when stale state is mounted again", async () => {
     now.mockReturnValue(1_060_000);
     const unmountAgain = registry.mount(desktopWslStateAtom);
     try {
+      for (const task of tasks.splice(0)) task();
       await vi.waitFor(() => {
         expect(
           AsyncResult.getOrElse(registry.get(desktopWslStateAtom), () => null)?.distros,
