@@ -149,15 +149,20 @@ export function modalRoute(options: ModalRouteOptions = {}): AppScreenOptions {
 export function immersiveRoute(
   options: {
     readonly hideSystemBars?: boolean;
-    /** The screen spans the Duo's rail and insets its own content. */
-    readonly spansRail?: boolean;
+    /**
+     * Like Safari, the Duo puts its status in a top bar instead of a vertical rail, so the page
+     * spans the full width. Where the rail stays, the screen spans it and insets its content.
+     */
+    readonly fullWidth?: boolean;
   } = {},
 ) {
   return {
     presentation: "fullScreenModal",
     headerShown: false,
     gestureEnabled: false,
-    ...(options.spansRail ? { nativeContentInsetHorizontally: false } : undefined),
+    ...(options.fullWidth
+      ? { sheetPrefersHorizontalBars: true, nativeContentInsetHorizontally: false }
+      : undefined),
     ...(options.hideSystemBars
       ? { autoHideHomeIndicator: true, navigationBarHidden: true }
       : undefined),

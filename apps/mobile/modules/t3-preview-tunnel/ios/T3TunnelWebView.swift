@@ -9,6 +9,7 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
   let onAccessRequest = EventDispatcher()
   let onNavigationChange = EventDispatcher()
   let onLoadError = EventDispatcher()
+  let onPageScroll = EventDispatcher()
 
   private var webView: WKWebView?
   private var listener: T3SocksListener?
@@ -17,6 +18,7 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
   private var pendingUrl: String?
   private var requestedUrl: URL?
   private var observations: [NSKeyValueObservation] = []
+  private var reportedScrollY: CGFloat = 0
 
   required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
@@ -74,6 +76,9 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
       webView.observe(\.isLoading) { [weak self] _, _ in self?.reportNavigation() },
       webView.observe(\.canGoBack) { [weak self] _, _ in self?.reportNavigation() },
       webView.observe(\.canGoForward) { [weak self] _, _ in self?.reportNavigation() },
+      webView.scrollView.observe(\.contentOffset) { [weak self] scrollView, _ in
+        self?.reportScroll(scrollView)
+      },
     ]
     if let pendingUrl { load(pendingUrl) }
   }
@@ -122,6 +127,14 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
     } else {
       webView.reload()
     }
+  }
+
+  /// Reports the page's scroll position in steps, enough for the bar to follow its direction.
+  private func reportScroll(_ scrollView: UIScrollView) {
+    let y = max(0, scrollView.contentOffset.y + scrollView.adjustedContentInset.top)
+    guard abs(y - reportedScrollY) >= 24 || (y == 0 && reportedScrollY != 0) else { return }
+    reportedScrollY = y
+    onPageScroll(["y": y])
   }
 
   private func reportNavigation() {

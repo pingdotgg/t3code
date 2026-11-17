@@ -10,7 +10,7 @@ public final class T3PreviewTunnelModule: Module {
     }
 
     View(T3TunnelWebView.self) {
-      Events("onAccessRequest", "onNavigationChange", "onLoadError")
+      Events("onAccessRequest", "onNavigationChange", "onLoadError", "onPageScroll")
 
       Prop("environmentId") { (view: T3TunnelWebView, environmentId: String) in
         view.setEnvironment(environmentId)
