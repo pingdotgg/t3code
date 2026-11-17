@@ -1,4 +1,5 @@
 import type { EnvironmentSpeechModel, SpeechBenchmarkTier } from "@t3tools/contracts";
+import { T, Var } from "gt-react";
 
 import { languageLabel } from "./SpeechLanguageSelect";
 
@@ -70,28 +71,35 @@ export function ModelBenchmarks({
         const score = data?.accuracy[code];
         return (
           <span key={code}>
-            {languageLabel(code)}:{" "}
             {score ? (
-              <>
-                <strong className="font-medium text-foreground">{score.grade}</strong> (
-                {score.errorPercent}% error)
-              </>
+              <T>
+                <Var>{languageLabel(code)}</Var>:{" "}
+                <strong className="font-medium text-foreground">
+                  <Var>{score.grade}</Var>
+                </strong>{" "}
+                (<Var>{score.errorPercent}</Var>% error)
+              </T>
             ) : (
-              "not benchmarked"
+              <T>
+                <Var>{languageLabel(code)}</Var>: not benchmarked
+              </T>
             )}
           </span>
         );
       })}
       <span>
-        Speed:{" "}
         {tier === "cpu" && data && data.secondsPer30s.cpu === undefined ? (
-          "update server"
+          <T>Speed: update server</T>
         ) : seconds == null ? (
-          "not benchmarked"
+          <T>Speed: not benchmarked</T>
         ) : (
-          <>
-            <strong className="font-medium text-foreground">{seconds} s</strong> / 30 s
-          </>
+          <T>
+            Speed:{" "}
+            <strong className="font-medium text-foreground">
+              <Var>{seconds}</Var> s
+            </strong>{" "}
+            / 30 s
+          </T>
         )}
       </span>
       {facts.map((fact) => (

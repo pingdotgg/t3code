@@ -1,4 +1,7 @@
 import type { ResourceTelemetryProcess, ResourceTelemetrySourceStatus } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export function processIdentityKey(process: Pick<ResourceTelemetryProcess, "identity">): string {
   return `${process.identity.pid}:${process.identity.startTimeMs}`;
@@ -71,12 +74,20 @@ export function formatCpuTime(seconds: number): string {
   return `${(seconds / 3_600).toFixed(2).replace(/\.0+$/, "")}h`;
 }
 
-export function formatSamplingStatus(intervalMs: number): string {
+export function formatSamplingStatus(intervalMs: number, resolve: MessageResolver = m): string {
   // The server reports 0 while the native monitor is idle and samples only on request.
-  if (intervalMs <= 0) return "Sampling on demand";
-  if (intervalMs < 1_000) return `Sampling every ${Math.round(intervalMs)} ms`;
+  if (intervalMs <= 0) return resolve(msg("Sampling on demand"));
+  if (intervalMs < 1_000) {
+    return resolve(msg("Sampling every {ms} ms", { ms: Math.round(intervalMs) }));
+  }
   const seconds = intervalMs / 1_000;
-  return `Sampling every ${seconds.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${
-    seconds === 1 ? "second" : "seconds"
-  }`;
+  return resolve(
+    msg(
+      "{count, plural, one {Sampling every {seconds} second} other {Sampling every {seconds} seconds}}",
+      {
+        count: seconds,
+        seconds: seconds.toLocaleString(undefined, { maximumFractionDigits: 1 }),
+      },
+    ),
+  );
 }
