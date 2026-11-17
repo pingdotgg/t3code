@@ -1183,10 +1183,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     clearSelection();
     setPersistedProjectScopeKeys([]);
   }, [clearSelection, revealWidensScope, setPersistedProjectScopeKeys]);
-  const revealActiveRow = useActiveRowReveal(routeReveal, routeRowThreadKey, routeKeyInPlace, (row) => {
-    const viewport = row.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
-    if (viewport) revealSidebarRow(viewport, row);
-  });
+  const revealActiveRow = useActiveRowReveal(
+    routeReveal,
+    routeRowThreadKey,
+    routeKeyInPlace,
+    (row) => {
+      const viewport = row.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+      if (viewport) revealSidebarRow(viewport, row);
+    },
+  );
   const showProjectEnvironments = projectGroupsSpanEnvironments(projectGroups);
   const scratchMachineLabelFor = (
     thread: Pick<SidebarThreadSummary, "environmentId" | "projectId">,
