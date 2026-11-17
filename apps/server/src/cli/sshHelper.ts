@@ -12,6 +12,8 @@ import { Argument, Command } from "effect/cli";
 
 import packageJson from "../../package.json" with { type: "json" };
 import { compareExactServiceVersions, isExactServiceVersion } from "../cloud/serviceProtocol.ts";
+import * as DesktopUpdateMarker from "../desktopUpdate/DesktopUpdateMarker.ts";
+import { serviceLauncherIsServing, stateDirOwned } from "../serviceLauncher.ts";
 
 const canBind = (port: number) =>
   new Promise<boolean>((resolve) => {
@@ -158,7 +160,42 @@ const keepServer = Command.make("keep-server", {
   ),
 );
 
+const updateRemaining = Command.make("update-remaining", {
+  markerFile: Argument.String("marker-file"),
+}).pipe(
+  Command.withHandler(({ markerFile }) =>
+    DesktopUpdateMarker.DesktopUpdateMarker.use((marker) => marker.remainingWait(markerFile)).pipe(
+      Effect.flatMap((remaining) =>
+        Effect.sync(() => {
+          process.stdout.write(Option.match(remaining, { onNone: () => "", onSome: String }));
+        }),
+      ),
+    ),
+  ),
+  Command.provide(DesktopUpdateMarker.layer),
+);
+
+/** Exits 0 while a server holds this home or a boot service is about to start one. */
+const homeOwned = Command.make("home-owned", {
+  baseDir: Argument.String("base-dir"),
+}).pipe(
+  Command.withHandler(({ baseDir }) =>
+    Effect.promise(async () => {
+      if (!((await serviceLauncherIsServing(baseDir)) || (await stateDirOwned(baseDir)))) {
+        process.exitCode = 1;
+      }
+    }),
+  ),
+);
+
 export const sshHelperCommand = Command.make("__ssh-helper").pipe(
   Command.unlisted,
-  Command.withSubcommands([pickPort, waitReady, runtimePort, keepServer]),
+  Command.withSubcommands([
+    pickPort,
+    waitReady,
+    runtimePort,
+    updateRemaining,
+    homeOwned,
+    keepServer,
+  ]),
 );

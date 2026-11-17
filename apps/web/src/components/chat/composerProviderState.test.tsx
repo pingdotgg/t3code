@@ -6,11 +6,7 @@ import {
   type ProviderOptionSelection,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import {
-  getComposerProviderState,
-  getComposerReasoningStep,
-  withImplicitFastModeDefault,
-} from "./composerProviderState";
+import { getComposerProviderState, getComposerReasoningStep } from "./composerProviderState";
 import { readPromptUltrathink } from "./TraitsPicker";
 
 const PROVIDER: ProviderDriverKind = ProviderDriverKind.make("codex");
@@ -151,25 +147,38 @@ describe("getComposerProviderState", () => {
     expect(state.modelOptionsForDispatch).toEqual(selections(["agent", "build"]));
   });
 
-  it("preserves explicit options when the selected model is absent from the catalog", () => {
-    const state = getComposerProviderState({
-      provider: ProviderDriverKind.make("opencode"),
+  it.each([
+    {
+      driver: "opencode",
       model: "opencode/kimi-k3",
-      models: [
-        {
-          slug: "opencode/big-pickle",
-          name: "Big Pickle",
-          isCustom: false,
-          capabilities: {},
-        },
-      ],
-      modelOptions: selections(["variant", "max"], ["agent", "build"]),
-    });
+      catalogModel: "opencode/big-pickle",
+      options: selections(["variant", "max"], ["agent", "build"]),
+    },
+    {
+      driver: "pi",
+      model: "anthropic/claude-sonnet-4",
+      catalogModel: "default",
+      options: selections(["thinking", "high"]),
+    },
+    {
+      driver: "acpRegistry",
+      model: "gateway/chosen-model",
+      catalogModel: "default",
+      options: selections(["reasoning", "high"]),
+    },
+  ])(
+    "preserves explicit $driver options when the selected model is absent from the catalog",
+    ({ driver, model, catalogModel, options }) => {
+      const state = getComposerProviderState({
+        provider: ProviderDriverKind.make(driver),
+        model,
+        models: [{ slug: catalogModel, name: catalogModel, isCustom: false, capabilities: {} }],
+        modelOptions: options,
+      });
 
-    expect(state.modelOptionsForDispatch).toEqual(
-      selections(["variant", "max"], ["agent", "build"]),
-    );
-  });
+      expect(state.modelOptionsForDispatch).toEqual(options);
+    },
+  );
 
   it("validates options for a known model selected through a legacy alias", () => {
     const state = getComposerProviderState({
@@ -206,29 +215,6 @@ describe("getComposerProviderState", () => {
     });
 
     expect(state.modelOptionsForDispatch).toEqual(selections(["fastMode", false]));
-  });
-});
-
-describe("withImplicitFastModeDefault", () => {
-  // regression: #2981 a remembered Fast mode choice must survive the implicit default on new chats
-  it("injects fastMode false only when the model exposes fastMode and no selection exists", () => {
-    expect(
-      withImplicitFastModeDefault(
-        {
-          optionDescriptors: [booleanDescriptor("fastMode", true)],
-        },
-        undefined,
-      ),
-    ).toEqual(selections(["fastMode", false]));
-
-    expect(
-      withImplicitFastModeDefault(
-        {
-          optionDescriptors: [booleanDescriptor("fastMode", true)],
-        },
-        selections(["fastMode", true]),
-      ),
-    ).toEqual(selections(["fastMode", true]));
   });
 });
 

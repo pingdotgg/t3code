@@ -1,4 +1,19 @@
-import type { PullRequestReaction, PullRequestReactionContent } from "@t3tools/contracts";
+import type {
+  PullRequestComment,
+  PullRequestDetail,
+  PullRequestReaction,
+  PullRequestReactionContent,
+} from "@t3tools/contracts";
+
+export function canReactPullRequestComment(
+  detail: Pick<PullRequestDetail, "provider" | "capabilities">,
+  comment: Pick<PullRequestComment, "kind">,
+): boolean {
+  return (
+    detail.capabilities.reactions === true &&
+    !(detail.provider === "gitcafe" && comment.kind === "review")
+  );
+}
 
 export const PULL_REQUEST_REACTION_ORDER: ReadonlyArray<PullRequestReactionContent> = [
   "thumbs-up",
@@ -74,13 +89,18 @@ export function pullRequestReactionsSignature(
     .join(" ");
 }
 
+/** One toggle awaiting the host. Its identity tells it apart from a later toggle of the same reaction. */
+export interface PendingPullRequestReaction {
+  readonly reacted: boolean;
+}
+
 export function applyPendingPullRequestReactions(
   reactions: ReadonlyArray<PullRequestReaction>,
-  pending: ReadonlyMap<PullRequestReactionContent, boolean>,
+  pending: ReadonlyMap<PullRequestReactionContent, PendingPullRequestReaction>,
 ): ReadonlyArray<PullRequestReaction> {
   if (pending.size === 0) return reactions;
   const byContent = new Map(reactions.map((reaction) => [reaction.content, reaction] as const));
-  for (const [content, reacted] of pending) {
+  for (const [content, { reacted }] of pending) {
     const current = byContent.get(content);
     if (current === undefined) {
       if (reacted) {
