@@ -490,9 +490,8 @@ it("shows an agent's alert once as a desktop notification that opens its thread"
 
   expect(TestNotification.sent.map(({ title, options }) => [title, options.body])).toEqual([
     ["Test thread", "fleet.lock stuck"],
-    ["T3 Code", "fleet.lock stuck"],
   ]);
-  expect(state.badge).toHaveBeenLastCalledWith(2);
+  expect(state.badge).toHaveBeenLastCalledWith(1);
   TestNotification.sent[0]!.dispatchEvent(new Event("click"));
   expect(state.navigate).toHaveBeenCalledWith({
     to: "/$environmentId/$threadId",

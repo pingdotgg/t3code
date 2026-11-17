@@ -1549,6 +1549,9 @@ export function createServerEnvironmentAtoms<R, E>(
     agentAlerts: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:agent-alerts",
       tag: WS_METHODS.subscribeAgentAlerts,
+      // The server tells the agent an alert was shown while this stream is open, so it must
+      // close as soon as nothing follows it.
+      idleTtlMs: 0,
       // Stream atoms publish only the last value per chunk; every alert must arrive.
       transform: (stream) => stream.pipe(Stream.rechunk(1)),
     }),

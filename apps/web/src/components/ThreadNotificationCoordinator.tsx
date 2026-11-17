@@ -402,8 +402,9 @@ export function startThreadNotifications(
           shownAlertId = alert?.id ?? null;
           if (seen === undefined || alert === null || alert.id === seen) return;
           const thread = threads?.find((candidate) => candidate.id === alert.threadId);
-          if (thread?.archivedAt != null) return;
-          presentAgentAlert(environmentId, alert, thread?.title || "T3 Code");
+          // An archived thread never notifies, and archiving takes it off the live list.
+          if (thread === undefined || thread.archivedAt !== null) return;
+          presentAgentAlert(environmentId, alert, thread.title || "T3 Code");
         },
         { immediate: true },
       );
