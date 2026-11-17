@@ -2436,7 +2436,7 @@ export default function ChatView(props: ChatViewProps) {
     closeRightPanelSurface,
   });
   useSidebarSwipe({
-    enabled: shouldUsePlanSidebarSheet && activeThreadRef !== null,
+    enabled: shouldUsePlanSidebarSheet && !embedded && activeThreadRef !== null,
     side: "right",
     open: rightPanelOpen,
     openFrom: workspaceLayoutElement,
