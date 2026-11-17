@@ -50,3 +50,45 @@ it.effect("recreates a home whose database the previous server has not let go of
     expect(yield* fs.exists(path.join(home, "userdata/settings.json"))).toBe(true);
   }).pipe(Effect.scoped, Effect.provide(removeBusyOnce)),
 );
+
+it.effect.each([
+  { code: "ENOTEMPTY", tag: "Unknown" },
+  { code: "EPERM", tag: "PermissionDenied" },
+] as const)("recreates a home after a transient $code removal failure", ({ code, tag }) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = path.join(yield* fs.makeTempDirectoryScoped(), "home");
+    yield* fs.makeDirectory(path.join(home, "userdata"), { recursive: true });
+    yield* fs.writeFileString(path.join(home, "userdata/statev2.sqlite"), "previous run");
+
+    let blocked = true;
+    const preparing = yield* prepareHome(home).pipe(
+      Effect.provideService(
+        FileSystem.FileSystem,
+        FileSystem.FileSystem.of({
+          ...fs,
+          remove: (target, options) => {
+            if (!blocked) return fs.remove(target, options);
+            blocked = false;
+            return Effect.fail(
+              PlatformError.systemError({
+                _tag: tag,
+                module: "FileSystem",
+                method: "remove",
+                pathOrDescriptor: target,
+                cause: Object.assign(new Error(code), { code }),
+              }),
+            );
+          },
+        }),
+      ),
+      Effect.forkChild,
+    );
+    yield* TestClock.adjust("1 second");
+    yield* Fiber.join(preparing);
+
+    expect(yield* fs.exists(path.join(home, "userdata/statev2.sqlite"))).toBe(false);
+    expect(yield* fs.exists(path.join(home, "userdata/settings.json"))).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

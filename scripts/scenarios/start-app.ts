@@ -10,6 +10,7 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -56,12 +57,19 @@ export const prepareHome = Effect.fn("startApp.prepareHome")(function* (home: st
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   // The previous run's server is in its own process group, which e2e does not wait for, and can
-  // still hold the database open. Some filesystems refuse the unlink until it lets go.
+  // still hold files open or create WAL/log files during removal, leaving directories nonempty.
   yield* Effect.suspend(() => fs.remove(home, { recursive: true, force: true })).pipe(
     Effect.retry({
       schedule: Schedule.spaced("500 millis"),
       times: 60,
-      while: (error) => error.reason._tag === "Busy",
+      while: (error) => {
+        const cause = error.reason.cause;
+        return (
+          error.reason._tag === "Busy" ||
+          (Predicate.hasProperty(cause, "code") &&
+            (cause.code === "ENOTEMPTY" || cause.code === "EPERM"))
+        );
+      },
     }),
   );
   yield* fs.makeDirectory(path.join(home, "userdata"), { recursive: true });
