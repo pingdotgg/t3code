@@ -2631,12 +2631,14 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
-  it.effect("claims a turn start ahead of other threads' checkpoint captures", () => {
-    const commandId = CommandId.make("command:foundation-capture-rank");
-    const parentThreadId = ThreadId.make("thread:foundation-capture-rank:parent");
+  it.effect("claims one checkpoint capture per cwd so turn work keeps a worker", () => {
+    const commandId = CommandId.make("command:foundation-capture-cwd");
+    const parentThreadId = ThreadId.make("thread:foundation-capture-cwd:parent");
     const childThreadIds = [1, 2].map((index) =>
-      ThreadId.make(`thread:foundation-capture-rank:child-${index}`),
+      ThreadId.make(`thread:foundation-capture-cwd:child-${index}`),
     );
+    const otherThreadId = ThreadId.make("thread:foundation-capture-cwd:other");
+    const threadIds = [parentThreadId, ...childThreadIds, otherThreadId];
     const capture = (id: string, threadId: ThreadId) => ({
       id,
       commandId,
@@ -2647,16 +2649,37 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         scopeId: CheckpointScopeId.make(`scope:${id}`),
       },
     });
+    const parentCaptureId = "effect:foundation-capture-cwd:a-parent-capture";
+    const childCaptureIds = [1, 2].map((index) => `effect:foundation-capture-cwd:b-child-${index}`);
+    const otherCaptureId = "effect:foundation-capture-cwd:c-other-cwd";
+    const turnStartId = "effect:foundation-capture-cwd:z-turn-start";
+    const scopes = [
+      { id: parentCaptureId, threadId: parentThreadId, cwd: "/repo-a" },
+      ...childCaptureIds.map((id, index) => ({
+        id,
+        threadId: childThreadIds[index]!,
+        cwd: "/repo-a",
+      })),
+      { id: otherCaptureId, threadId: otherThreadId, cwd: "/repo-b" },
+    ];
     return Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
-      const parentCaptureId = "effect:foundation-capture-rank:a-parent-capture";
-      const turnStartId = "effect:foundation-capture-rank:z-turn-start";
-      yield* outbox.enqueue([
-        capture(parentCaptureId, parentThreadId),
-        ...childThreadIds.map((threadId, index) =>
-          capture(`effect:foundation-capture-rank:b-child-capture-${index + 1}`, threadId),
-        ),
-      ]);
+      const sql = yield* SqlClient.SqlClient;
+      yield* Effect.forEach(
+        scopes,
+        ({ id, threadId, cwd }) => sql`
+          INSERT INTO orchestration_v2_projection_checkpoint_scopes (
+            scope_id, thread_id, node_id, kind, ordinal_within_parent,
+            advances_app_run_count, created_at, payload_json
+          )
+          VALUES (
+            ${`scope:${id}`}, ${threadId}, 'node', 'root', 0, 1, '2026-01-01T00:00:00.000Z',
+            ${JSON.stringify({ cwd })}
+          )
+        `,
+        { discard: true },
+      );
+      yield* outbox.enqueue(scopes.map(({ id, threadId }) => capture(id, threadId)));
       yield* TestClock.adjust("1 second");
       yield* outbox.enqueue([
         {
@@ -2665,32 +2688,36 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           threadId: parentThreadId,
           request: {
             type: "provider-turn.start",
-            runId: RunId.make("run:foundation-capture-rank:replacement"),
+            runId: RunId.make("run:foundation-capture-cwd:replacement"),
           },
         },
       ]);
+      const claim = () =>
+        outbox
+          .claimNext({ workerId: "cwd-worker" })
+          .pipe(Effect.map((effect) => Option.getOrUndefined(effect)?.id));
 
-      const parentCapture = yield* outbox.claimNext({ workerId: "rank-worker" });
-      assert.equal(Option.getOrUndefined(parentCapture)?.id, parentCaptureId);
-      const whileParentBusy = yield* outbox.claimNext({ workerId: "rank-worker" });
-      assert.notEqual(
-        Option.getOrUndefined(whileParentBusy)?.id,
-        turnStartId,
-        "turn start must wait for its own thread's earlier capture",
+      assert.equal(yield* claim(), parentCaptureId);
+      assert.equal(yield* claim(), otherCaptureId, "a capture in another cwd must still run");
+      assert.isUndefined(
+        yield* claim(),
+        "same-cwd captures wait for the running one; the turn start waits for its thread",
       );
 
-      yield* outbox.succeed({ effectId: parentCaptureId, workerId: "rank-worker" });
-      const next = yield* outbox.claimNext({ workerId: "rank-worker" });
+      yield* outbox.succeed({ effectId: parentCaptureId, workerId: "cwd-worker" });
+      assert.equal(yield* claim(), childCaptureIds[0]);
       assert.equal(
-        Option.getOrUndefined(next)?.id,
+        yield* claim(),
         turnStartId,
-        "claimable provider-turn.start queued behind other threads' checkpoint captures",
+        "queued same-cwd checkpoint captures took the worker a claimable turn start needed",
       );
     }).pipe(
       Effect.ensuring(
-        Effect.flatMap(EffectOutbox.EffectOutboxV2, (outbox) =>
-          Effect.forEach(
-            [parentThreadId, ...childThreadIds],
+        Effect.gen(function* () {
+          const outbox = yield* EffectOutbox.EffectOutboxV2;
+          const sql = yield* SqlClient.SqlClient;
+          yield* Effect.forEach(
+            threadIds,
             (threadId) =>
               outbox.cancelUnsettled({
                 threadId,
@@ -2698,8 +2725,12 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
                 reason: "Test cleanup.",
               }),
             { discard: true },
-          ),
-        ).pipe(Effect.orDie),
+          );
+          yield* sql`
+            DELETE FROM orchestration_v2_projection_checkpoint_scopes
+            WHERE scope_id IN ${sql.in(scopes.map(({ id }) => `scope:${id}`))}
+          `;
+        }).pipe(Effect.orDie),
       ),
     );
   });

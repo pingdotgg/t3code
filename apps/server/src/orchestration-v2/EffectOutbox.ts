@@ -373,6 +373,23 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               )
             )
         )
+        -- Captures serialize on a per-cwd lock; a second one for the same cwd would hold a
+        -- worker only to wait, so a burst could take every worker from turn work.
+        AND (
+          candidate.effect_type != 'checkpoint.capture'
+          OR NOT EXISTS (
+            SELECT 1
+            FROM orchestration_v2_effect_outbox AS running_capture
+            JOIN orchestration_v2_projection_checkpoint_scopes AS running_scope
+              ON running_scope.scope_id = json_extract(running_capture.payload_json, '$.scopeId')
+            JOIN orchestration_v2_projection_checkpoint_scopes AS candidate_scope
+              ON candidate_scope.scope_id = json_extract(candidate.payload_json, '$.scopeId')
+            WHERE running_capture.status = 'running'
+              AND running_capture.effect_type = 'checkpoint.capture'
+              AND json_extract(running_scope.payload_json, '$.cwd')
+                = json_extract(candidate_scope.payload_json, '$.cwd')
+          )
+        )
         AND ${
           maxRunningTitleGenerations === undefined
             ? sql`1 = 1`
@@ -576,13 +593,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
                 maxRunningTitleGenerations,
               )}
                 AND ${excludeRestartContinuations ? sql`candidate.effect_type != 'provider-runtime.continue'` : sql`1 = 1`}
-              -- Captures queue on a per-cwd lock while holding a worker; ranking them last keeps a
-              -- burst from taking the worker a claimable turn start or interrupt needs.
-              ORDER BY
-                candidate.effect_type = 'checkpoint.capture' ASC,
-                candidate.available_at ASC,
-                candidate.created_at ASC,
-                candidate.effect_id ASC
+              ORDER BY candidate.available_at ASC, candidate.created_at ASC, candidate.effect_id ASC
               LIMIT 1
             )
             RETURNING *
