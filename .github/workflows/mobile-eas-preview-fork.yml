@@ -355,6 +355,7 @@ jobs:
     needs: [preview, android-build, ios-build]
     if: always() && !cancelled() && needs.preview.result == 'success'
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
     concurrency:
       group: mobile-preview-comment-${{ github.event.pull_request.number }}
       cancel-in-progress: false
