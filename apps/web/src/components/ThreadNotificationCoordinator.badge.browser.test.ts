@@ -3,6 +3,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";
+import { WORKING_EXIT_GRACE_MS } from "@t3tools/client-runtime/state/thread-inbox";
 import { expect, it, vi } from "vite-plus/test";
 
 import { fakeTimers, stubGlobal } from "../../test/render";
@@ -279,8 +280,9 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
   },
 );
 
-it("presents completion notifications and sound as soon as the shell completes", async () => {
+it("presents completion notifications and sound once the Working shelf's exit grace passes", async () => {
   await using app = setup();
+  using _timers = fakeTimers();
   state.mode = "notifications-and-sound";
   app.start();
   state.shells.set(
@@ -289,6 +291,8 @@ it("presents completion notifications and sound as soon as the shell completes",
       latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:00:01.000Z" },
     }),
   );
+  expect(TestNotification.sent).toEqual([]);
+  vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS);
   expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Thread completed"]);
   expect(state.sound).toHaveBeenCalledWith("completion", expect.any(Function));
 });
@@ -327,6 +331,7 @@ it.each([false, true])(
       "one",
       watching("turn", "completed", "2026-09-13T07:00:01.000Z", false, monitor),
     );
+    vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS);
     expect(titles()).toEqual(["Thread completed"]);
 
     state.shells.set("one", watching("wake", "running", null, true, monitor));
@@ -351,6 +356,7 @@ it.each([false, true])(
     state.shells.set("one", watching("final", "running", null, false, []));
     vi.advanceTimersByTime(RELEASED_COMPLETION_GRACE_MS);
     state.shells.set("one", watching("final", "completed", "2026-09-13T07:00:11.000Z", false, []));
+    vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS);
     expect(titles()).toEqual(["Thread completed", "Thread completed"]);
     expect(state.sound).toHaveBeenCalledTimes(2);
   },
@@ -360,6 +366,7 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
   "notifies for offline completion and %s once across reconnects",
   async (flag) => {
     await using app = setup();
+    using _timers = fakeTimers();
     const asking = { id: "asking", hasPendingApprovals: true };
     const offline = { id: "offline", [flag]: true };
     const done = {
@@ -387,18 +394,20 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
       status: "synchronizing",
     });
     state.shells.set("one", shell(completed, asking, offline, done));
+    vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS);
 
     expect(TestNotification.sent.map(({ title }) => title)).toEqual([
       "Approval needed",
-      "Thread completed",
       flag === "hasPendingApprovals" ? "Approval needed" : "Input needed",
+      "Thread completed",
     ]);
     state.shells.set("one", { ...shell(completed, asking, offline, done), status: "cached" });
     state.shells.set("one", shell(completed, asking, offline, done));
+    vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS);
     expect(TestNotification.sent.map(({ title }) => title)).toEqual([
       "Approval needed",
-      "Thread completed",
       flag === "hasPendingApprovals" ? "Approval needed" : "Input needed",
+      "Thread completed",
     ]);
   },
 );
@@ -407,20 +416,24 @@ it.each([false, true])(
   "does not replay a notified completion after reconnect (continued: %s)",
   async (continued) => {
     await using app = setup();
+    using _timers = fakeTimers();
     app.start();
     const completed = shell({
       latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:05:00.000Z" },
     });
     state.shells.set("one", completed);
+    vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS);
     state.shells.set("one", { ...completed, status: "cached" });
     expect(TestNotification.sent.map(({ title }) => title)).toEqual(["Thread completed"]);
     state.shells.set("one", continued ? shell() : completed);
+    vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS);
     expect(TestNotification.sent.map(({ title }) => title)).toEqual(["Thread completed"]);
   },
 );
 
 it("opening a thread or removing its environment closes only its in-app toasts, and disabling notifications closes the rest", async () => {
   await using app = setup();
+  using _timers = fakeTimers();
   state.inApp = true;
   focused = true;
   state.toast
@@ -434,12 +447,15 @@ it("opening a thread or removing its environment closes only its in-app toasts, 
     latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:01:00Z" },
   };
   state.shells.set("one", shell(completed, { id: "other" }));
+  vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS);
   state.shells.set("one", shell({ ...completed, hasPendingApprovals: true }, { id: "other" }));
   state.shells.set(
     "one",
     shell({ ...completed, hasPendingApprovals: true }, { ...completed, id: "other" }),
   );
+  vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS);
   state.shells.set("two", shell(completed));
+  vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS);
   expect(state.toast).toHaveBeenCalledTimes(4);
 
   app.openThread("one", "thread");
