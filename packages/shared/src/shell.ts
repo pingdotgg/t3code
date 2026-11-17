@@ -106,7 +106,7 @@ function resolveSpawnExecutableWithNode(
   }
 
   for (const pathEntry of (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform))) {
-    const normalizedPathEntry = stripWrappingQuotes(trimPathEntry(pathEntry, platform), platform);
+    const normalizedPathEntry = normalizePathEntry(pathEntry, platform);
     if (normalizedPathEntry.length === 0) continue;
     for (const candidate of candidates) {
       const candidatePath = path.join(normalizedPathEntry, candidate);
@@ -453,12 +453,13 @@ export const readEnvironmentFromWindowsShell = Effect.fn("shell.readEnvironmentF
   },
 );
 
-function stripWrappingQuotes(value: string, platform: NodeJS.Platform): string {
-  return platform === "win32" ? value.replace(/^"+|"+$/g, "") : value;
-}
-
 function trimPathEntry(entry: string, platform: NodeJS.Platform): string {
   return platform === "win32" ? entry.trim() : entry;
+}
+
+// POSIX PATH entries are literal: whitespace and quotes are part of the directory name.
+function normalizePathEntry(entry: string, platform: NodeJS.Platform): string {
+  return platform === "win32" ? entry.trim().replace(/^"+|"+$/g, "") : entry;
 }
 
 function pathDelimiterForPlatform(platform: NodeJS.Platform): string {
@@ -466,7 +467,7 @@ function pathDelimiterForPlatform(platform: NodeJS.Platform): string {
 }
 
 function normalizePathEntryForComparison(entry: string, platform: NodeJS.Platform): string {
-  const normalized = stripWrappingQuotes(trimPathEntry(entry, platform), platform);
+  const normalized = normalizePathEntry(entry, platform);
   return platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
@@ -675,7 +676,7 @@ const findOnPath = Effect.fnUntraced(function* (
   const pathEntries: string[] = [];
   const seenPathEntries = new Set<string>();
   for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
-    const pathEntry = stripWrappingQuotes(trimPathEntry(entry, platform), platform);
+    const pathEntry = normalizePathEntry(entry, platform);
     if (pathEntry.length === 0 || seenPathEntries.has(pathEntry)) continue;
 
     seenPathEntries.add(pathEntry);

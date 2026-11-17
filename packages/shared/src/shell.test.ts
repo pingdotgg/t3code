@@ -535,12 +535,12 @@ describe("mergePathValues", () => {
 });
 
 effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
-  it.effect("finds executables in a POSIX PATH directory ending in whitespace", () =>
+  it.effect("finds executables in a POSIX PATH directory ending in whitespace and quotes", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const cwd = yield* fs.makeTempDirectoryScoped({ directory: ".", prefix: "t3-path-" });
-      const directory = `${cwd}/bin \u00a0`;
+      const directory = `${cwd}/bin \u00a0"`;
       yield* fs.makeDirectory(directory);
       const executable = `${directory}/audit-command`;
       yield* fs.writeFileString(executable, "#!/bin/sh\n");

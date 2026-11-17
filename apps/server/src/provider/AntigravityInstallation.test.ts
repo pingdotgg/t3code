@@ -1066,7 +1066,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         const baseDir = yield* fs
           .makeTempDirectoryScoped({ prefix: "t3-agy-cli-test-" })
           .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
-        const cliDirectory = path.join(baseDir, 'cli"');
+        const cliDirectory = path.join(baseDir, 'cli "');
         yield* fs.makeDirectory(cliDirectory);
         const cli = path.join(cliDirectory, "antigravity");
         const alias = path.join(cliDirectory, "agy");

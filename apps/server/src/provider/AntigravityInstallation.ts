@@ -368,9 +368,8 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         : processEnvironment.PATH;
     const candidates: string[] = [];
     for (const directory of (pathValue ?? "").split(platform === "win32" ? ";" : ":")) {
-      const entry = directory.trim();
-      if (entry.length === 0) continue;
-      const resolved = yield* commandPath(command, { ...processEnvironment, PATH: entry });
+      if (directory.length === 0) continue;
+      const resolved = yield* commandPath(command, { ...processEnvironment, PATH: directory });
       if (resolved !== null) candidates.push(resolved);
     }
     return candidates;
