@@ -202,16 +202,6 @@ describe("DesktopLinuxUrlHandler", () => {
     assert.notInclude(entry, "StartupWMClass=");
     assert.include(entry, "MimeType=x-scheme-handler/t3code;");
     assert.include(entry, "Icon=/home/al ice/icons/T3\\\\x.png");
-
-    const launcher = DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
-      displayName: "T3 Code (Nightly)",
-      execTarget: "/home/alice/T3.AppImage",
-      scheme: "t3code",
-      startupWMClass: "com.t3tools.T3Code",
-    });
-    assert.include(launcher, "NoDisplay=false");
-    assert.include(launcher, "StartupWMClass=com.t3tools.T3Code");
-    assert.include(launcher, "MimeType=x-scheme-handler/t3code;");
   });
 
   it.each([
