@@ -14,6 +14,7 @@ import ja from "./translations/ja.json";
 import ko from "./translations/ko.json";
 import ptBR from "./translations/pt-BR.json";
 import ru from "./translations/ru.json";
+import sv from "./translations/sv.json";
 import zh from "./translations/zh.json";
 
 // Committed catalogs, so forks and offline installs never reach GT's CDN. English is the source.
@@ -26,6 +27,7 @@ const TRANSLATIONS: Readonly<Record<string, Record<string, string>>> = {
   ja,
   ko,
   ru,
+  sv,
 };
 
 initializeGT({
