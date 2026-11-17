@@ -80,7 +80,7 @@ function parseXml(source: string): XmlNode {
           // fast-xml-parser accepts raw '<' in element attributes, which can mask declarations
           // above. Processing instructions end at their first '?>', so their data may hold '<'.
           if (!name.startsWith("?") && value.includes("<"))
-            throw new Error("This document contains invalid or unsupported XML.");
+            throw new PreviewError({ code: "xml-invalid" });
           return [key, decodeEntities(value)];
         }),
       );
