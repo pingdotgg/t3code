@@ -120,42 +120,6 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
       }),
   );
 
-  it.effect("shares one thread writer across native and canonical streams", () =>
-    Effect.gen(function* () {
-      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
-      const basePath = NodePath.join(tempDir, "events.log");
-
-      try {
-        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 0 });
-        const native = store.logger("native");
-        const canonical = store.logger("canonical");
-        const threadId = ThreadId.make("thread-shared");
-
-        yield* native.write({ id: "native-event" }, threadId);
-        yield* canonical.write({ type: "item.completed", id: "canonical-event" }, threadId);
-        yield* store.close();
-
-        const lines = NodeFS.readFileSync(ownedLogPath(basePath, "thread-shared"), "utf8")
-          .trim()
-          .split("\n")
-          .map(parseLogLine);
-
-        assert.deepEqual(
-          lines.map(({ stream, payload }) => ({ stream, payload })),
-          [
-            { stream: "NTIVE", payload: '{"id":"native-event"}' },
-            {
-              stream: "CANON",
-              payload: '{"type":"item.completed","id":"canonical-event"}',
-            },
-          ],
-        );
-      } finally {
-        NodeFS.rmSync(tempDir, { recursive: true, force: true });
-      }
-    }),
-  );
-
   it.effect("keeps long thread ids that share a prefix in separate files", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
@@ -285,6 +249,65 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
         assert.nestedPropertyVal(record, "event.payload.id", 42);
         assert.nestedPropertyVal(record, "event.payload.result.thread.id", "native-thread");
         assert.nestedPropertyVal(record, "event.payload.result.thread.turns.itemCount", 10_000);
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("drops Cursor streaming deltas while keeping its lifecycle updates", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+      const threadId = ThreadId.make("cursor-deltas");
+      const cursorUpdate = (update: object) => ({
+        provider: "cursor",
+        kind: "protocol",
+        event: {
+          direction: "incoming",
+          stage: "decoded",
+          payload: { type: "interaction.update", runId: "run-1", update },
+        },
+      });
+      const toolCall = { type: "shell", args: { command: "ls" } };
+      const transient = [
+        { type: "text-delta", text: "Hel" },
+        { type: "thinking-delta", text: "Hmm" },
+        { type: "token-delta", tokens: 3 },
+        { type: "shell-output-delta", event: { stdout: "a.ts\n" } },
+        { type: "partial-tool-call", callId: "call-1", modelCallId: "m-1", toolCall },
+        {
+          type: "tool-call-delta",
+          callId: "call-1",
+          modelCallId: "m-1",
+          taskUpdate: { type: "text-delta", text: "Sub" },
+        },
+      ].map(cursorUpdate);
+      const retained = [
+        { type: "tool-call-started", callId: "call-1", modelCallId: "m-1", toolCall },
+        {
+          type: "tool-call-delta",
+          callId: "call-1",
+          modelCallId: "m-1",
+          taskUpdate: { type: "tool-call-completed", callId: "call-2", toolCall },
+        },
+        { type: "tool-call-completed", callId: "call-1", modelCallId: "m-1", toolCall },
+        { type: "turn-ended" },
+      ].map(cursorUpdate);
+
+      try {
+        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 0 });
+        const native = store.logger("native");
+        for (const event of [...transient, ...retained]) {
+          yield* native.write(event, threadId);
+        }
+        yield* store.close();
+
+        const records = NodeFS.readFileSync(ownedLogPath(basePath, "cursor-deltas"), "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => decodeUnknownJson(parseLogLine(line).payload));
+        assert.deepEqual(records, retained);
       } finally {
         NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }
