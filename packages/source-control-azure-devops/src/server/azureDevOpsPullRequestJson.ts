@@ -24,6 +24,7 @@ const RawIdentitySchema = Schema.Struct({
   displayName: Schema.optional(Schema.NullOr(Schema.String)),
   uniqueName: Schema.optional(Schema.NullOr(Schema.String)),
   imageUrl: Schema.optional(Schema.NullOr(Schema.String)),
+  isContainer: Schema.optional(Schema.NullOr(Schema.Boolean)),
 });
 
 const RawPullRequestSchema = Schema.Struct({
@@ -166,9 +167,17 @@ export interface AzureDevOpsPullRequest {
 /** Logins must match the email from `az account show`. */
 function toActor(raw: Schema.Schema.Type<typeof RawIdentitySchema> | null | undefined) {
   const login = trimmed(raw?.uniqueName) ?? trimmed(raw?.displayName);
+  const name = trimmed(raw?.displayName);
+  const isGroup = raw?.isContainer === true;
   return login === null
     ? null
-    : { login, name: trimmed(raw?.displayName), avatarUrl: trimmed(raw?.imageUrl) };
+    : {
+        login,
+        // Azure's UI hides the leading [scope]\ qualifier in group display names.
+        name: isGroup && name !== null ? trimmed(name.replace(/^\[[^\]]+\]\\/u, "")) : name,
+        avatarUrl: trimmed(raw?.imageUrl),
+        ...(isGroup ? { isGroup: true } : {}),
+      };
 }
 
 function toState(raw: Schema.Schema.Type<typeof RawPullRequestSchema>): PullRequestState {

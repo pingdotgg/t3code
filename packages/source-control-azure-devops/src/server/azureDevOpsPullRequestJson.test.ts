@@ -1,3 +1,4 @@
+import { pullRequestActorLabel } from "@t3tools/contracts";
 import * as Result from "effect/Result";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -107,6 +108,39 @@ describe("decodePullRequestListJson", () => {
 });
 
 describe("decodePullRequestJson", () => {
+  it.each([
+    ["[TEAM FOUNDATION]\\Code Reviewers", true, "Code Reviewers"],
+    ["[Project]\\Build\\Reviewers", true, "Build\\Reviewers"],
+    ["Code Reviewers", true, "Code Reviewers"],
+    ["[Project]\\Person", false, "[Project]\\Person"],
+  ])("labels %s without changing its identity", (displayName, isContainer, expectedName) => {
+    const login = isContainer
+      ? "vstfs:///Framework/IdentityDomain/00000000-0000-0000-0000-000000000001\\Code Reviewers"
+      : "reviewer@acme.dev";
+    const detail = expectSuccess(
+      decodePullRequestJson(
+        asJson(
+          pullRequest({
+            reviewers: [{ displayName, uniqueName: login, isContainer }],
+          }),
+        ),
+      ),
+    );
+
+    expect(detail?.reviewers).toEqual([
+      {
+        login,
+        name: expectedName,
+        avatarUrl: null,
+        ...(isContainer ? { isGroup: true } : {}),
+      },
+    ]);
+    expect(detail?.reviewRequestLogins).toEqual([login]);
+    expect(detail?.reviewers.map(pullRequestActorLabel)).toEqual([
+      isContainer ? expectedName : login,
+    ]);
+  });
+
   it("keeps the strategy stored with auto-complete", () => {
     const armed = expectSuccess(
       decodePullRequestJson(
