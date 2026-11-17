@@ -89,6 +89,12 @@ export interface ThreadRunSummary {
    * generating while the server settles it.
    */
   readonly turnEnded?: boolean;
+  /**
+   * Set while the run is open but its provider has not started a turn, so the
+   * provider is still launching and nothing is generating. Clients show it
+   * instead of "Thinking".
+   */
+  readonly providerStartingLabel?: string;
   readonly sourcePlanRef?: {
     readonly threadId: ThreadId;
     readonly planId: PlanId;
@@ -225,7 +231,7 @@ function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary 
   const parkAtIdle =
     backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) &&
     thread.status !== "failed";
-  if (thread.latestRunId === null && thread.activeProviderThreadId === null && !parkAtIdle) {
+  if (thread.latestRunId === null && !parkAtIdle) {
     return null;
   }
   const status = parkAtIdle ? "idle" : (thread.activityRunStatus ?? thread.status);

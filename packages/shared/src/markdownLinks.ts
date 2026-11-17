@@ -30,13 +30,37 @@ const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+|-\d+)?$/;
 
 const POSITION_ONLY_PATTERN = /^\d+(?::\d+|-\d+)?$/;
 
-const INLINE_CODE_DISQUALIFIER_PATTERN = /[\s`]/;
+const INLINE_CODE_WHITESPACE_PATTERN = /\s/;
+
+// Inline code with spaces is a file only when it is absolute and every word is a plain name:
+// `/Users/me/Mobile Documents/a - b.md` is, `/usr/bin/python3 -m venv .venv` (a flag) is not.
+// A space only in the last segment reads as a command (`/usr/local/bin/node server.js`), so it
+// must sit under a user root, and nothing after a bin folder counts.
+const SPACED_ABSOLUTE_PATH_ROOT_PATTERN = /^(?:\/|~\/|[A-Za-z]:[\\/])/;
+const SPACED_PATH_BODY_PATTERN =
+  /^(?:[\p{L}\p{M}\p{N}._$+@()[\]-]+(?: (?!-+\p{L})[\p{L}\p{M}\p{N}._$+@()[\]-]+)*(?:[\\/]|$))+$/u;
+
+function isSpacedAbsoluteFilePath(text: string): boolean {
+  const root = SPACED_ABSOLUTE_PATH_ROOT_PATTERN.exec(text)?.[0];
+  if (root === undefined) return false;
+  const body = text.slice(root.length).replace(POSITION_SUFFIX_PATTERN, "");
+  if (!SPACED_PATH_BODY_PATTERN.test(body)) return false;
+  const firstSpace = body.indexOf(" ");
+  const foldersBeforeSpace = body.slice(0, firstSpace).split(PATH_SEPARATOR_PATTERN).slice(0, -1);
+  if (foldersBeforeSpace.some((folder) => folder === "bin" || folder === "sbin")) return false;
+  const spaceInFolder = PATH_SEPARATOR_PATTERN.test(body.slice(firstSpace));
+  if (!spaceInFolder && root === "/" && !/^(?:Users|home)[\\/]/.test(body)) return false;
+  if (PATH_SEPARATOR_PATTERN.test(body.at(-1) ?? "")) return true;
+  const basename = body.split(PATH_SEPARATOR_PATTERN).at(-1) ?? "";
+  return FILE_EXTENSION_PATTERN.test(basename) || EXTENSIONLESS_FILE_NAMES.has(basename);
+}
 
 const PATH_SEPARATOR_PATTERN = /[\\/]/;
 // Agents shorten long paths with a `...` or `…` segment, which no file chip can open.
 const ELIDED_PATH_SEGMENT_PATTERN = /(?:^|[\\/])(?:\.{3,}|…)(?:[\\/]|$)/;
 
 const FILE_EXTENSION_PATTERN = /\.[A-Za-z0-9_-]+$/;
+const ANY_FILE_EXTENSION_PATTERN = /\.[^./\\]+$/;
 const VERSION_SUFFIX_PATTERN = /\d\.\d[^.]*$/;
 const NUMERIC_DOTTED_PATTERN = /^\d+(?:\.\d+)+$/;
 
@@ -67,7 +91,7 @@ const POSIX_FILE_ROOT_PREFIXES = [
   "/workspaces/",
 ] as const;
 
-const EXTENSIONLESS_FILE_NAMES = new Set([
+export const EXTENSIONLESS_FILE_NAMES: ReadonlySet<string> = new Set([
   "Makefile",
   "makefile",
   "GNUmakefile",
@@ -176,7 +200,10 @@ function looksLikeHostname(segment: string, hasPosition: boolean): boolean {
 
 export function inlineCodeFilePathCandidate(codeText: string): string | null {
   const trimmed = codeText.trim();
-  if (trimmed.length === 0 || INLINE_CODE_DISQUALIFIER_PATTERN.test(trimmed)) return null;
+  if (trimmed.length === 0 || trimmed.includes("`")) return null;
+  if (INLINE_CODE_WHITESPACE_PATTERN.test(trimmed) && !isSpacedAbsoluteFilePath(trimmed)) {
+    return null;
+  }
 
   const candidate = isWindowsAbsolutePath(trimmed) ? trimmed : trimmed.replaceAll("\\", "/");
   const hasPosition = POSITION_SUFFIX_PATTERN.test(candidate);
@@ -200,7 +227,17 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
         .split(/[\\/]/)
         .at(-1) ?? "";
     if (VERSION_SUFFIX_PATTERN.test(basename)) return null;
-    if (!hasPosition && !FILE_EXTENSION_PATTERN.test(basename)) return null;
+    if (!FILE_EXTENSION_PATTERN.test(basename)) {
+      if (!hasPosition) return EXTENSIONLESS_FILE_NAMES.has(basename) ? candidate : null;
+      // A `:line` suffix alone does not make `I/W217:220` a file reference.
+      if (
+        withoutPosition.includes("/") &&
+        !ANY_FILE_EXTENSION_PATTERN.test(basename) &&
+        !EXTENSIONLESS_FILE_NAMES.has(basename)
+      ) {
+        return null;
+      }
+    }
   }
   return candidate;
 }
@@ -324,7 +361,9 @@ export function parseMarkdownFileLink(href: string): FilePathPosition | null {
 
 function parseFilePathLink(path: string, hash: string): FilePathPosition | null {
   const position = splitFilePathPosition(path, hash);
-  return looksLikeFilePath(position.path, path) ? position : null;
+  return !ELIDED_PATH_SEGMENT_PATTERN.test(position.path) && looksLikeFilePath(position.path, path)
+    ? position
+    : null;
 }
 
 const FENCED_CODE_SEGMENT_PATTERN = /(```[\s\S]*?(?:```|$))/;
@@ -370,10 +409,33 @@ function markdownLinkTailScanner(markdown: string) {
   };
 }
 
+// micromark's own nesting limit. It also keeps link scanning linear: a scan only runs past another
+// link's opening parenthesis while that parenthesis counts toward this depth.
+const MAX_BARE_DESTINATION_PAREN_DEPTH = 32;
+
+function bareMarkdownLinkDestinationEnd(markdown: string, start: number): number | null {
+  const delimiter = /[\s()\\]/g;
+  delimiter.lastIndex = start;
+  let depth = 0;
+  while (true) {
+    const index = delimiter.exec(markdown)?.index ?? markdown.length;
+    const char = markdown[index];
+    if (char === "\\") {
+      if (/[()\\]/.test(markdown[index + 1] ?? "")) delimiter.lastIndex = index + 2;
+    } else if (char === "(") {
+      if (depth === MAX_BARE_DESTINATION_PAREN_DEPTH) return null;
+      depth += 1;
+    } else if (char === ")" && depth > 0) {
+      depth -= 1;
+    } else {
+      return depth === 0 ? index : null;
+    }
+  }
+}
+
 function markdownLinkDestinationScanner(markdown: string) {
   const whitespaceEnd = markdownRunEndFinder(markdown, /\S/g);
   const angleEnd = markdownRunEndFinder(markdown, /[>\n]/g);
-  const bareEnd = markdownRunEndFinder(markdown, /[\s)]/g);
   // Separate caches keep scans moving forward when angle destinations fall back to bare ones.
   const angleTail = markdownLinkTailScanner(markdown);
   const bareTail = markdownLinkTailScanner(markdown);
@@ -387,11 +449,23 @@ function markdownLinkDestinationScanner(markdown: string) {
         if (end !== null) return { hrefStart: hrefStart + 1, hrefEnd, end };
       }
     }
-    const hrefEnd = bareEnd(hrefStart);
-    if (hrefEnd === hrefStart) return null;
+    const hrefEnd = bareMarkdownLinkDestinationEnd(markdown, hrefStart);
+    if (hrefEnd === null || hrefEnd === hrefStart) return null;
     const end = bareTail(hrefEnd);
     return end === null ? null : { hrefStart, hrefEnd, end };
   };
+}
+
+// The composer escapes brackets in labels (`[\[id\].tsx](...)`), and `\]` does not close one.
+function unescapedLabelEnd(markdown: string, start: number): number {
+  let end = markdown.indexOf("]", start);
+  while (end !== -1) {
+    let backslashes = 0;
+    while (end - backslashes > start && markdown[end - backslashes - 1] === "\\") backslashes += 1;
+    if (backslashes % 2 === 0) return end;
+    end = markdown.indexOf("]", end + 1);
+  }
+  return -1;
 }
 
 export function extractMarkdownLinkHrefs(markdown: string): string[] {
@@ -401,7 +475,7 @@ export function extractMarkdownLinkHrefs(markdown: string): string[] {
   while (cursor < markdown.length) {
     const labelStart = markdown.indexOf("[", cursor);
     if (labelStart === -1) break;
-    const labelEnd = markdown.indexOf("]", labelStart + 1);
+    const labelEnd = unescapedLabelEnd(markdown, labelStart + 1);
     if (labelEnd === -1) break;
 
     // Skip a failed label once; nested openings share its closing bracket.
@@ -438,4 +512,48 @@ export function resolveMarkdownFileLinkTarget(
 
 export function isWindowsDrivePathHref(href: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(safeDecodeURIComponent(href));
+}
+
+// Bare prose paths need a filesystem root or a position, so `/api/users.json` stays a route,
+// and a file-shaped last segment.
+export function absoluteFilePathMatches(text: string): Array<{ index: number; path: string }> {
+  const paths: Array<{ index: number; path: string }> = [];
+  for (const match of text.matchAll(/(^|[\s(["'])(\/[^\s<>"'`]+)/g)) {
+    const source = match[2]!;
+    let parentheses = 0;
+    let brackets = 0;
+    for (const character of source) {
+      if (character === "(") parentheses += 1;
+      if (character === ")") parentheses -= 1;
+      if (character === "[") brackets += 1;
+      if (character === "]") brackets -= 1;
+    }
+    let end = source.length;
+    while (end > 0) {
+      const character = source[end - 1]!;
+      if (character === ")" && parentheses < 0) parentheses += 1;
+      else if (character === "]" && brackets < 0) brackets += 1;
+      else if (!".,;!?:".includes(character)) break;
+      end -= 1;
+    }
+    const path = source.slice(0, end);
+    // Trimming `/tmp/a/....` to `/tmp/a/` would hide its elided segment.
+    if (path.endsWith("/") && source.startsWith("...", end)) continue;
+    if (
+      !POSIX_FILE_ROOT_PREFIXES.some((prefix) => path.startsWith(prefix)) &&
+      !POSITION_SUFFIX_PATTERN.test(path)
+    )
+      continue;
+    // Prose ends a path at whitespace, so `/Users/me/Library/Application Support/...` must not link.
+    const basename = path.slice(path.lastIndexOf("/") + 1);
+    if (
+      !POSITION_SUFFIX_PATTERN.test(path) &&
+      !FILE_EXTENSION_PATTERN.test(basename) &&
+      !EXTENSIONLESS_FILE_NAMES.has(basename)
+    )
+      continue;
+    if (!parseMarkdownFileLink(path)) continue;
+    paths.push({ index: match.index + match[1]!.length, path });
+  }
+  return paths;
 }
