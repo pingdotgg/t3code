@@ -239,6 +239,23 @@ describe("IssueService", () => {
       });
       expect(writes).toEqual(["acme/web#1"]);
 
+      for (const repository of ["acme/api", "acme/web"]) {
+        const mixed = yield* makeService({
+          projects: [
+            project({ id: "https", repository }),
+            project({
+              id: "ssh",
+              repository: "acme/web",
+              remoteUrl: "git@github.com:acme/web.git",
+            }),
+          ],
+          trackers: [fakeTracker()],
+        });
+        expect(
+          yield* mixed.resolveUrl("https://github.com/acme/web/issues/7", "ssh" as ProjectId),
+        ).toMatchObject({ projectId: "ssh", scope: "acme/web", key: "7", writable: true });
+      }
+
       // A link's port picks the server: the project bound with it, not a default-port namesake.
       const ported = yield* makeService({
         projects: [
@@ -269,7 +286,7 @@ describe("IssueService", () => {
         yield* ported.resolveUrl("https://gitea.test:8443/acme/web/issues/3", "ssh" as ProjectId),
       ).toMatchObject({ projectId: "ported", host: "gitea.test:8443", writable: true });
       expect(yield* ported.resolveUrl("https://gitea.test/acme/web/issues/3")).toMatchObject({
-        projectId: "plain",
+        projectId: "ssh",
         host: "gitea.test",
       });
 

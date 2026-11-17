@@ -508,7 +508,7 @@ function issueWebUrl(identity: ChangeRequestHostIdentity): URL | null {
   return httpUrl(identity?.webUrl ?? "") ?? httpUrl(identity?.locator?.remoteUrl ?? "");
 }
 
-/** A configured web authority wins over an SSH-only host, before repository or project preference. */
+/** For links with a port, a configured web authority wins over an SSH-only host. */
 export function projectsOnIssueHost<
   Project extends {
     readonly host: string;
@@ -525,7 +525,7 @@ export function projectsOnIssueHost<
     if (project.host === link.authority) return [{ project, authority: true }];
     return project.host === link.host ? [{ project, authority: false }] : [];
   });
-  const configured = matches.filter((match) => match.authority);
+  const configured = link.authority === undefined ? [] : matches.filter((match) => match.authority);
   return (configured.length > 0 ? configured : matches).map((match) => match.project);
 }
 
