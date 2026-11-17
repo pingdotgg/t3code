@@ -36,6 +36,7 @@ import {
   resolveAssistantMessageCopyState,
   type MessagesTimelineRow,
   workEntryDisplayLabel,
+  workEntryReadOutput,
 } from "./MessagesTimeline.logic";
 import { workEntryIconName } from "./TimelineWorkEntryRow.logic";
 
@@ -303,6 +304,38 @@ describe("deriveMessagesTimelineRows", () => {
     expect(entry?.kind === "work" && entry.entry).toMatchObject({
       toolSurface: "computer",
       toolSource: { key: "computer-use", kind: "computer" },
+    });
+  });
+
+  it("expands a failed Read of an image to its error, not its path", () => {
+    const fixture = makeStreamingTimelineFixture();
+    const source = fixture.visibleTurnItems.find((row) => row.item.type === "dynamic_tool")!;
+    const tool = source.item;
+    if (tool.type !== "dynamic_tool") throw new Error("Expected tool fixture");
+    const read = (status: "completed" | "failed") => {
+      const item = {
+        ...tool,
+        status,
+        title: "Read",
+        toolName: "Read",
+        input: { file_path: "/tmp/does-not-exist.png" },
+        viewedImagePath: "/tmp/does-not-exist.png",
+        output: "Error: File does not exist.",
+      };
+      const entries = deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: [{ ...source, item }],
+        optimisticMessages: [],
+      });
+      const entry = entries.find((row) => row.kind === "work");
+      if (entry?.kind !== "work") throw new Error("Expected work entry");
+      return entry.entry;
+    };
+
+    expect(workEntryReadOutput(read("completed"), undefined)).toBe("/tmp/does-not-exist.png");
+    // undefined hands the row to the item inspector, which renders the tool output.
+    expect(workEntryReadOutput(read("failed"), undefined)).toBeUndefined();
+    expect(read("failed").projectedItem?.item).toMatchObject({
+      output: "Error: File does not exist.",
     });
   });
 
