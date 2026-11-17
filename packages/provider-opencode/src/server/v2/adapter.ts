@@ -2139,8 +2139,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* emit({ type: "app_thread.created", driver, appThread });
       yield* emitProviderThread(child);
       yield* emitSubagent(call);
-      // Reused children may keep old mode rules, and new ones copy their parent's; rewrite both.
-      if (info === undefined || info.permissions !== undefined) {
+      // Reused children may keep old mode rules, and new ones copy their parent's, which outrank
+      // their agent's own denies; rewrite both.
+      if (
+        info === undefined ||
+        (info.permissions !== undefined && (yield* hasAgentLimits(child)))
+      ) {
         yield* writeRules(child, rootOf(call.state).policy).pipe(
           Effect.timeout(REQUEST_REPLY_TIMEOUT),
           Effect.ignore({ log: true }),
@@ -4021,6 +4025,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }
       }
       return [...paths.values()];
+    });
+
+    const hasAgentLimits = Effect.fnUntraced(function* (thread: ThreadState) {
+      const own = (yield* agentsIn(thread.directory)).get(thread.agent) ?? [];
+      return own.some((entry) => entry.effect === "deny");
     });
 
     const rulesFor = Effect.fnUntraced(function* (
