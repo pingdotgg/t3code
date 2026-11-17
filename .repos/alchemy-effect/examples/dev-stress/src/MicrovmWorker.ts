@@ -1,12 +1,12 @@
-import * as AWS from "alchemy/AWS";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as AWS from "@alchemy.run/aws";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Schedule from "effect/Schedule";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import { PORTS } from "./ports.ts";
 import { ShellMicrovm } from "./ShellImage.ts";
 // <<VM_IMPORTS>>
@@ -64,9 +64,7 @@ export default class MicrovmWorker extends Cloudflare.Worker<MicrovmWorker>()(
         return yield* Effect.gen(function* () {
           yield* getMicrovm({ microvmIdentifier: vm.microvmId }).pipe(
             Effect.flatMap((m) =>
-              m.state === "RUNNING"
-                ? Effect.void
-                : Effect.fail(new Error(`microvm ${m.state}`)),
+              m.state === "RUNNING" ? Effect.void : Effect.fail(new Error(`microvm ${m.state}`)),
             ),
             Effect.retry({ schedule: Schedule.spaced("2 seconds"), times: 45 }),
             Effect.orDie,
@@ -94,10 +92,7 @@ export default class MicrovmWorker extends Cloudflare.Worker<MicrovmWorker>()(
           const client = yield* HttpClient.HttpClient;
           const headers = AWS.Lambda.microvmAuthHeaders(authToken);
           const response = yield* client
-            .get(
-              `https://${vm.endpoint}/echo?message=${encodeURIComponent(message)}`,
-              { headers },
-            )
+            .get(`https://${vm.endpoint}/echo?message=${encodeURIComponent(message)}`, { headers })
             .pipe(
               Effect.retry({
                 schedule: Schedule.exponential("500 millis"),
@@ -118,9 +113,7 @@ export default class MicrovmWorker extends Cloudflare.Worker<MicrovmWorker>()(
           });
         }).pipe(
           Effect.ensuring(
-            terminateMicrovm({ microvmIdentifier: vm.microvmId }).pipe(
-              Effect.ignore,
-            ),
+            terminateMicrovm({ microvmIdentifier: vm.microvmId }).pipe(Effect.ignore),
           ),
           Effect.provide(FetchHttpClient.layer),
         );
