@@ -142,7 +142,7 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
     worktreePath,
     (yield* gitOutput(worktreePath, ["rev-parse", "--absolute-git-dir"]).pipe(
       Effect.mapError(() => notAWorktree),
-    )).trim(),
+    )).replace(/\n$/, ""),
   );
   const commonDir = path.resolve(
     input.cwd,

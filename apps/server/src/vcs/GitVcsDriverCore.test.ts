@@ -7516,7 +7516,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const fileSystem = yield* FileSystem.FileSystem;
         const outside = yield* makeTmpDir("git-worktree-link-target-");
         yield* writeTextFile(outside, "keep.txt", "keep\n");
-        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "linked");
+        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "linked\u00a0");
         const driver = yield* GitVcsDriver.GitVcsDriver;
         yield* driver.createWorktree({
           cwd,
