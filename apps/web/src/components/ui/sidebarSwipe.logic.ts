@@ -123,3 +123,83 @@ export function endSidebarSwipe(
   if (directed >= flickMin && directed / elapsed >= flickSpeed) return "commit";
   return "ignore";
 }
+
+export type SidebarSwipeModality = SidebarSwipeGesture["pointerType"];
+
+export interface SidebarSwipeContact {
+  modality: SidebarSwipeModality;
+  id: number;
+  x: number;
+  y: number;
+  time: number;
+}
+
+export interface SidebarSwipeRelease {
+  /** The intent to apply, or null when the drag did not commit. */
+  commit: SidebarSwipeIntent | null;
+  /** A claimed drag still ends with a click that must not reach the page. */
+  claimed: boolean;
+}
+
+/**
+ * Follow one drag at a time across touch and pen streams. Touch identifiers
+ * and pen pointer IDs are unrelated, so every event matches on both. A right
+ * drawer mirrors x so its open drag still moves toward the sheet.
+ */
+export function createSidebarSwipeTracker(side: "left" | "right" = "left") {
+  let gesture: SidebarSwipeGesture | null = null;
+  let claimed = false;
+  const project = (x: number) => (side === "right" ? -x : x);
+  const owns = (modality: SidebarSwipeModality, id: number) =>
+    gesture?.pointerType === modality && gesture.pointerId === id;
+
+  return {
+    get idle() {
+      return gesture === null;
+    },
+    /** A new press ends a stale drag of the same modality whose release never arrived. */
+    drop(modality: SidebarSwipeModality) {
+      if (gesture?.pointerType === modality) gesture = null;
+    },
+    begin(contact: SidebarSwipeContact, intent: SidebarSwipeIntent) {
+      if (gesture !== null) return;
+      gesture = beginSidebarSwipe({
+        pointerType: contact.modality,
+        pointerId: contact.id,
+        x: project(contact.x),
+        y: contact.y,
+        time: contact.time,
+        intent,
+      });
+      claimed = false;
+    },
+    /** Returns true when the drag is claimed and the browser must not scroll. */
+    move(contact: SidebarSwipeContact): boolean {
+      if (gesture === null || !owns(contact.modality, contact.id)) return false;
+      gesture = moveSidebarSwipe(gesture, {
+        x: project(contact.x),
+        y: contact.y,
+        time: contact.time,
+      });
+      if (!shouldClaimSidebarSwipe(gesture)) return false;
+      claimed = true;
+      return true;
+    },
+    release(contact: SidebarSwipeContact): SidebarSwipeRelease | null {
+      if (gesture === null || !owns(contact.modality, contact.id)) return null;
+      const finished = moveSidebarSwipe(gesture, {
+        x: project(contact.x),
+        y: contact.y,
+        time: contact.time,
+      });
+      gesture = null;
+      return {
+        commit: endSidebarSwipe(finished) === "commit" ? finished.intent : null,
+        claimed: claimed || shouldClaimSidebarSwipe(finished),
+      };
+    },
+    cancel(modality: SidebarSwipeModality, id: number) {
+      if (owns(modality, id)) gesture = null;
+    },
+  };
+}

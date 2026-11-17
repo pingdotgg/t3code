@@ -5,11 +5,9 @@
 import { useEffect, useEffectEvent, type RefObject } from "react";
 
 import {
-  beginSidebarSwipe,
-  endSidebarSwipe,
-  moveSidebarSwipe,
-  shouldClaimSidebarSwipe,
-  type SidebarSwipeGesture,
+  createSidebarSwipeTracker,
+  type SidebarSwipeContact,
+  type SidebarSwipeRelease,
 } from "./sidebarSwipe.logic";
 
 function isTextEntry(target: EventTarget | null): boolean {
@@ -101,131 +99,78 @@ export function useSidebarSwipe(input: {
   useEffect(() => {
     if (!enabled) return;
 
-    let gesture: SidebarSwipeGesture | null = null;
-    let claimed = false;
+    const tracker = createSidebarSwipeTracker(side);
     let clearSuppression: (() => void) | undefined;
-    const projectX = (x: number) => (side === "right" ? -x : x);
 
-    const reset = () => {
-      gesture = null;
-      claimed = false;
-    };
-
-    const resetFor = (pointerType: SidebarSwipeGesture["pointerType"]) => {
-      if (gesture?.pointerType === pointerType) reset();
-    };
-
-    const start = (event: Event, pointerType: string, pointerId: number, x: number, y: number) => {
-      if (gesture !== null) return;
+    const start = (event: Event, contact: SidebarSwipeContact) => {
+      if (!tracker.idle) return;
       const intent = readOpen() ? "close" : "open";
       if (intent === "open" && !canStartOpening(event.target)) return;
       if (intent === "close" && !isOpenSheetTarget(event.target, sheetRef.current)) return;
       if (isTextEntry(event.target)) return;
       if (startedOnHorizontalScroller(event.target)) return;
-
-      const next = beginSidebarSwipe({
-        pointerType,
-        pointerId,
-        x: projectX(x),
-        y,
-        time: event.timeStamp,
-        intent,
-      });
-      if (next === null) return;
-      gesture = next;
-      claimed = false;
+      tracker.begin(contact, intent);
     };
 
-    const trackMove = (
-      pointerType: SidebarSwipeGesture["pointerType"],
-      pointerId: number,
-      x: number,
-      y: number,
-      time: number,
-      event: Event,
-    ) => {
-      if (
-        gesture === null ||
-        gesture.pointerType !== pointerType ||
-        pointerId !== gesture.pointerId
-      )
-        return;
-      gesture = moveSidebarSwipe(gesture, { x: projectX(x), y, time });
-      if (!shouldClaimSidebarSwipe(gesture)) return;
-      claimed = true;
-      if (event.cancelable) event.preventDefault();
-    };
-
-    const finish = (
-      pointerType: SidebarSwipeGesture["pointerType"],
-      pointerId: number,
-      x: number,
-      y: number,
-      time: number,
-    ) => {
-      if (
-        gesture === null ||
-        gesture.pointerType !== pointerType ||
-        pointerId !== gesture.pointerId
-      )
-        return;
-      const finished = moveSidebarSwipe(gesture, { x: projectX(x), y, time });
-      const didClaim = claimed || shouldClaimSidebarSwipe(finished);
-      if (endSidebarSwipe(finished) === "commit") {
-        commitOpen(finished.intent === "open");
-      }
-      if (didClaim) {
+    const settle = (release: SidebarSwipeRelease | null) => {
+      if (release === null) return;
+      if (release.commit !== null) commitOpen(release.commit === "open");
+      if (release.claimed) {
         clearSuppression?.();
         clearSuppression = suppressClickFromGesture();
       }
-      reset();
     };
+
+    const touchContact = (touch: Touch, event: TouchEvent): SidebarSwipeContact => ({
+      modality: "touch",
+      id: touch.identifier,
+      x: touch.clientX,
+      y: touch.clientY,
+      time: event.timeStamp,
+    });
+    const penContact = (event: PointerEvent): SidebarSwipeContact => ({
+      modality: "pen",
+      id: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      time: event.timeStamp,
+    });
 
     // Touch identifiers and pointer IDs are unrelated. Keep the full touch
     // lifecycle together, including touchend after a browser pointercancel.
     const onTouchStart = (event: TouchEvent) => {
       // Detached targets can hide the preceding release from window listeners.
-      resetFor("touch");
+      tracker.drop("touch");
       if (event.touches.length !== 1) return;
       const touch = event.changedTouches[0];
-      if (touch) start(event, "touch", touch.identifier, touch.clientX, touch.clientY);
+      if (touch) start(event, touchContact(touch, event));
     };
-    const findTouch = (event: TouchEvent) =>
-      gesture?.pointerType === "touch"
-        ? Array.from(event.changedTouches).find((touch) => touch.identifier === gesture?.pointerId)
-        : undefined;
     const onTouchMove = (event: TouchEvent) => {
-      const touch = findTouch(event);
-      if (touch)
-        trackMove("touch", touch.identifier, touch.clientX, touch.clientY, event.timeStamp, event);
+      for (const touch of event.changedTouches) {
+        if (tracker.move(touchContact(touch, event)) && event.cancelable) event.preventDefault();
+      }
     };
     const onTouchEnd = (event: TouchEvent) => {
-      const touch = findTouch(event);
-      if (touch) finish("touch", touch.identifier, touch.clientX, touch.clientY, event.timeStamp);
+      for (const touch of event.changedTouches) settle(tracker.release(touchContact(touch, event)));
+    };
+    const onTouchCancel = (event: TouchEvent) => {
+      for (const touch of event.changedTouches) tracker.cancel("touch", touch.identifier);
     };
     const onPointerDown = (event: PointerEvent) => {
       if (event.pointerType !== "pen" || !event.isPrimary) return;
-      resetFor("pen");
-      start(event, event.pointerType, event.pointerId, event.clientX, event.clientY);
+      tracker.drop("pen");
+      start(event, penContact(event));
     };
     const onPointerMove = (event: PointerEvent) => {
       if (event.pointerType !== "pen") return;
-      trackMove("pen", event.pointerId, event.clientX, event.clientY, event.timeStamp, event);
+      if (tracker.move(penContact(event)) && event.cancelable) event.preventDefault();
     };
     const onPointerUp = (event: PointerEvent) => {
       if (event.pointerType !== "pen") return;
-      finish("pen", event.pointerId, event.clientX, event.clientY, event.timeStamp);
+      settle(tracker.release(penContact(event)));
     };
     const onPointerCancel = (event: PointerEvent) => {
-      if (
-        event.pointerType === "pen" &&
-        gesture?.pointerType === "pen" &&
-        event.pointerId === gesture.pointerId
-      )
-        reset();
-    };
-    const onTouchCancel = (event: TouchEvent) => {
-      if (findTouch(event)) reset();
+      if (event.pointerType === "pen") tracker.cancel("pen", event.pointerId);
     };
 
     // Capture before scroll areas or the dialog stop propagation. Only a

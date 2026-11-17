@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   beginSidebarSwipe,
+  createSidebarSwipeTracker,
   endSidebarSwipe,
   moveSidebarSwipe,
   shouldClaimSidebarSwipe,
@@ -10,6 +11,8 @@ import {
   SIDEBAR_SWIPE_FLICK_MIN_PX,
   SIDEBAR_SWIPE_FLICK_PX_PER_MS,
   type SidebarSwipeGesture,
+  type SidebarSwipeIntent,
+  type SidebarSwipeModality,
 } from "./sidebarSwipe.logic";
 
 function openGesture(overrides?: Partial<SidebarSwipeGesture>): SidebarSwipeGesture {
@@ -40,48 +43,6 @@ describe("beginSidebarSwipe", () => {
         intent: "open",
       }),
     ).toBeNull();
-  });
-
-  it.each([8, 200, 350])("starts an open touch drag at page x=%s", (x) => {
-    expect(
-      beginSidebarSwipe({
-        pointerType: "touch",
-        pointerId: 1,
-        x,
-        y: 20,
-        time: 0,
-        intent: "open",
-      }),
-    ).toMatchObject({ phase: "pending", intent: "open", startX: x });
-  });
-
-  it("starts an open drag from a pen press on the left edge", () => {
-    const gesture = beginSidebarSwipe({
-      pointerType: "pen",
-      pointerId: 7,
-      x: 12,
-      y: 40,
-      time: 5,
-      intent: "open",
-    });
-    expect(gesture).toMatchObject({
-      phase: "pending",
-      intent: "open",
-      pointerId: 7,
-      startX: 12,
-    });
-  });
-
-  it("starts a close drag from anywhere on the sheet", () => {
-    const gesture = beginSidebarSwipe({
-      pointerType: "touch",
-      pointerId: 2,
-      x: 280,
-      y: 400,
-      time: 0,
-      intent: "close",
-    });
-    expect(gesture?.intent).toBe("close");
   });
 });
 
@@ -182,5 +143,155 @@ describe("endSidebarSwipe", () => {
     });
     expect(gesture.phase).toBe("cancelled");
     expect(endSidebarSwipe(gesture)).toBe("ignore");
+  });
+});
+
+/** [event, modality, id, x, y]; drop is a multi-touch start, which only ends a stale drag. */
+type Step = readonly [
+  "down" | "move" | "up" | "drop" | "cancel",
+  SidebarSwipeModality,
+  number,
+  number?,
+  number?,
+];
+
+/**
+ * Replay one window event stream, as the hook forwards it, and record what
+ * each move claimed and what each release did.
+ */
+function replay(steps: ReadonlyArray<Step>, side: "left" | "right" = "left") {
+  const tracker = createSidebarSwipeTracker(side);
+  const claims: boolean[] = [];
+  const releases: Array<SidebarSwipeIntent | "ignore" | "none"> = [];
+  for (const [kind, modality, id, x = 0, y = 200] of steps) {
+    const contact = { modality, id, x, y, time: 0 };
+    if (kind === "down") {
+      tracker.drop(modality);
+      tracker.begin(contact, "open");
+    } else if (kind === "move") claims.push(tracker.move(contact));
+    else if (kind === "up") {
+      const release = tracker.release(contact);
+      releases.push(release === null ? "none" : (release.commit ?? "ignore"));
+    } else if (kind === "drop") tracker.drop(modality);
+    else tracker.cancel(modality, id);
+  }
+  return { claims, releases };
+}
+
+describe("createSidebarSwipeTracker", () => {
+  it.each<{
+    name: string;
+    steps: ReadonlyArray<Step>;
+    side?: "right";
+    claims: boolean[];
+    releases: string[];
+  }>([
+    {
+      name: "a pen cancel does not end a touch drag",
+      steps: [
+        ["down", "touch", 0, 8],
+        ["move", "touch", 0, 28],
+        ["cancel", "pen", 7],
+        ["up", "touch", 0, 90],
+      ],
+      claims: [true],
+      releases: ["open"],
+    },
+    {
+      name: "a new touch replaces one whose release never arrived",
+      steps: [
+        ["down", "touch", 0, 100],
+        ["down", "touch", 1, 200],
+        ["move", "touch", 1, 280],
+        ["up", "touch", 1, 280],
+      ],
+      claims: [true],
+      releases: ["open"],
+    },
+    {
+      name: "a new pen press replaces one whose release never arrived",
+      steps: [
+        ["down", "pen", 7, 100],
+        ["down", "pen", 8, 200],
+        ["move", "pen", 8, 280],
+        ["up", "pen", 8, 280],
+      ],
+      claims: [true],
+      releases: ["open"],
+    },
+    {
+      name: "a touch drag ignores pen events with the same ID",
+      steps: [
+        ["down", "touch", 0, 100],
+        ["down", "pen", 0, 100],
+        ["move", "pen", 0, 180],
+        ["up", "pen", 0, 180],
+        ["cancel", "pen", 0],
+        ["move", "touch", 0, 180],
+        ["up", "touch", 0, 180],
+      ],
+      claims: [false, true],
+      releases: ["none", "open"],
+    },
+    {
+      name: "a pen drag ignores single- and multi-touch events with the same ID",
+      steps: [
+        ["down", "pen", 0, 100],
+        ["down", "touch", 0, 100],
+        ["move", "touch", 0, 180],
+        ["up", "touch", 0, 180],
+        ["drop", "touch", 0],
+        ["cancel", "touch", 0],
+        ["move", "pen", 0, 180],
+        ["up", "pen", 0, 180],
+      ],
+      claims: [false, true],
+      releases: ["none", "open"],
+    },
+    {
+      name: "only the matching touch cancels a drag",
+      steps: [
+        ["down", "touch", 0, 100],
+        ["cancel", "touch", 1],
+        ["move", "touch", 0, 180],
+        ["up", "touch", 0, 180],
+      ],
+      claims: [true],
+      releases: ["open"],
+    },
+    {
+      name: "a cancelled touch does not commit on a later release",
+      steps: [
+        ["down", "touch", 0, 100],
+        ["cancel", "touch", 0],
+        ["up", "touch", 0, 180],
+      ],
+      claims: [],
+      releases: ["none"],
+    },
+    {
+      name: "tap drift followed by a vertical scroll is never claimed",
+      steps: [
+        ["down", "touch", 0, 150],
+        ["move", "touch", 0, 152],
+        ["move", "touch", 0, 153, 240],
+        ["up", "touch", 0, 153, 240],
+      ],
+      claims: [false, false],
+      releases: ["ignore"],
+    },
+    {
+      name: "a right drawer opens from a leftward drag",
+      steps: [
+        ["down", "touch", 0, 250],
+        ["move", "touch", 0, 150],
+        ["up", "touch", 0, 150],
+      ],
+      side: "right",
+      claims: [true],
+      releases: ["open"],
+    },
+  ])("$name", ({ steps, side, claims, releases }) => {
+    expect(replay(steps, side)).toEqual({ claims, releases });
   });
 });
