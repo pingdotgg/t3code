@@ -12,7 +12,9 @@ const INSIGHT_CLOSE_PATTERN = /^( {0,3})(`?)─{3,}\2[ \t]*$/u;
 // An ATX heading, also inside a list item or blockquote; group 1 is its text.
 const ATX_HEADING_PATTERN =
   /^(?:[ \t]*(?:>|[-*+](?=[ \t])|\d{1,9}[.)](?=[ \t])))*[ \t]*#{1,6}(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/;
-const SETEXT_UNDERLINE_PATTERN = /^ {0,3}(?:=+|-+)[ \t]*$/;
+// Setext headings may span a paragraph and containers, so leave their parsing to the renderer.
+const SETEXT_UNDERLINE_PATTERN =
+  /^(?:[ \t]*(?:>|[-*+](?=[ \t])|\d{1,9}[.)](?=[ \t])))*[ \t]*(?:=+|-+)[ \t]*$/;
 
 /**
  * Cuts Markdown at blank lines that close every open block, so each piece renders exactly as it
@@ -28,7 +30,6 @@ export function splitMarkdownBlocks(text: string): string[] | null {
   let fenceIndent = 0;
   let afterBlankLine = false;
   let insightIndent: string | null = null;
-  let previousLine = "";
   const headingKeys = new Set<string>();
   const needsWholeHeading = (headingText: string | undefined) => {
     if (headingText === undefined) return false;
@@ -40,14 +41,8 @@ export function splitMarkdownBlocks(text: string): string[] | null {
     headingKeys.add(key);
     return false;
   };
-  const headingNeedsWholeDocument = (line: string, previous: string, afterBlank: boolean) => {
-    const headingText = SETEXT_UNDERLINE_PATTERN.test(line)
-      ? afterBlank
-        ? undefined
-        : previous
-      : ATX_HEADING_PATTERN.exec(line)?.[1];
-    return needsWholeHeading(headingText);
-  };
+  const headingNeedsWholeDocument = (line: string) =>
+    SETEXT_UNDERLINE_PATTERN.test(line) || needsWholeHeading(ATX_HEADING_PATTERN.exec(line)?.[1]);
   for (const line of text.split("\n")) {
     const opener = FENCE_PATTERN.exec(line)?.[1];
     if (fence !== null) {
@@ -55,9 +50,7 @@ export function splitMarkdownBlocks(text: string): string[] | null {
       if (/\S/.test(line.slice(0, fenceIndent))) {
         const rest = text.slice(lineStart).split("\n");
         for (const restLine of rest) {
-          if (headingNeedsWholeDocument(restLine, previousLine, afterBlankLine)) return null;
-          previousLine = restLine;
-          afterBlankLine = restLine.trim() === "";
+          if (headingNeedsWholeDocument(restLine)) return null;
         }
         break;
       }
@@ -75,7 +68,7 @@ export function splitMarkdownBlocks(text: string): string[] | null {
     } else if (line.trim() === "") {
       afterBlankLine = true;
     } else {
-      if (headingNeedsWholeDocument(line, previousLine, afterBlankLine)) return null;
+      if (headingNeedsWholeDocument(line)) return null;
       if (
         afterBlankLine &&
         insightIndent === null &&
@@ -90,7 +83,6 @@ export function splitMarkdownBlocks(text: string): string[] | null {
       fence = opener ?? null;
       if (opener) fenceIndent = line.indexOf(opener);
     }
-    previousLine = line;
     lineStart += line.length + 1;
   }
   blocks.push(text.slice(blockStart));
