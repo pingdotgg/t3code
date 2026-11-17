@@ -82,7 +82,7 @@ const parseConnect = (data: Buffer): SocksRequest | undefined => {
 };
 
 /** Answers the greeting and reads the CONNECT; undefined when the client offers no usable auth. */
-const readSocksRequest = Effect.fnUntraced(function* (
+const readSocksRequest = Effect.fn("LoopbackTunnel.readSocksRequest")(function* (
   pull: Effect.Effect<NonEmptyReadonlyArray<Uint8Array>, Socket.SocketError>,
   writer: Socket.Writer,
 ) {
@@ -122,7 +122,10 @@ const isTunnelEndpoint = (tunnelUrl: string, port: number) => {
 };
 
 /** Opens a connection to the destination; `ws` pauses its socket, so a slow page slows the tunnel. */
-const dialDestination = Effect.fnUntraced(function* (tunnelUrl: string, port: number) {
+const dialDestination = Effect.fn("LoopbackTunnel.dialDestination")(function* (
+  tunnelUrl: string,
+  port: number,
+) {
   if (isTunnelEndpoint(tunnelUrl, port)) {
     const endpoint = yield* NodeSocket.makeNet({
       ...tunnelEndpoint(tunnelUrl),
@@ -257,25 +260,29 @@ const make = Effect.gen(function* () {
     return connectionOwner(tables, remotePort, localPort) === userId;
   });
 
-  const serve = (environmentId: string) => (socket: Socket.Socket) =>
-    Effect.gen(function* () {
-      const pull = yield* Socket.readerBytes(socket);
-      const writer = yield* socket.writer;
-      // "No acceptable methods": the only refusal a client gets before its request.
-      if (!(yield* isOwnConnection())) return yield* writer.write(Uint8Array.of(5, 0xff));
-      const request = yield* readSocksRequest(pull, writer);
-      if (request === undefined) return;
-      if ("refusal" in request) return yield* writer.write(socksReply(request.refusal));
-      const tunnelUrl = yield* requestAccess(environmentId);
-      if (tunnelUrl === null) return yield* writer.write(socksReply(REPLY_FAILURE));
-      const destination = yield* dialDestination(tunnelUrl, request.port).pipe(Effect.option);
-      if (Option.isNone(destination)) return yield* writer.write(socksReply(REPLY_FAILURE));
-      yield* writer.write(socksReply(REPLY_SUCCEEDED));
-      return yield* Effect.raceFirst(
-        pump(pull, destination.value.writer.writeAll),
-        pump(destination.value.pull, writer.writeAll),
-      );
-    }).pipe(Effect.scoped, Effect.ignoreCause);
+  const serve = (environmentId: string) =>
+    Effect.fn("LoopbackTunnel.serve")(
+      function* (socket: Socket.Socket) {
+        const pull = yield* Socket.readerBytes(socket);
+        const writer = yield* socket.writer;
+        // "No acceptable methods": the only refusal a client gets before its request.
+        if (!(yield* isOwnConnection())) return yield* writer.write(Uint8Array.of(5, 0xff));
+        const request = yield* readSocksRequest(pull, writer);
+        if (request === undefined) return;
+        if ("refusal" in request) return yield* writer.write(socksReply(request.refusal));
+        const tunnelUrl = yield* requestAccess(environmentId);
+        if (tunnelUrl === null) return yield* writer.write(socksReply(REPLY_FAILURE));
+        const destination = yield* dialDestination(tunnelUrl, request.port).pipe(Effect.option);
+        if (Option.isNone(destination)) return yield* writer.write(socksReply(REPLY_FAILURE));
+        yield* writer.write(socksReply(REPLY_SUCCEEDED));
+        return yield* Effect.raceFirst(
+          pump(pull, destination.value.writer.writeAll),
+          pump(destination.value.pull, writer.writeAll),
+        );
+      },
+      Effect.scoped,
+      (effect) => Effect.ignoreCause(effect),
+    );
 
   const listen = Effect.fn("LoopbackTunnel.listen")(function* (environmentId: string) {
     const existing = listenerPorts.get(environmentId);
