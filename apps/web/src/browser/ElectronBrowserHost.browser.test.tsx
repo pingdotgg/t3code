@@ -187,6 +187,7 @@ describe("ElectronBrowserHost", () => {
       webview.closest("[data-preview-viewport]")!.dispatchEvent(new Event("scroll"));
     const overlay: DesktopPreviewOverlay = {
       hasWebContents: true,
+      navStatus: { _tag: "Idle" },
       canGoBack: false,
       canGoForward: false,
       loading: false,
