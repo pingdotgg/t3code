@@ -133,7 +133,9 @@ const androidSdk = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const windows = platform === "win32";
   const home = environment.HOME ?? environment.USERPROFILE ?? "";
-  const explicit = environment.ANDROID_HOME?.trim() || environment.ANDROID_SDK_ROOT?.trim();
+  const explicit = [environment.ANDROID_HOME?.trim(), environment.ANDROID_SDK_ROOT?.trim()].filter(
+    (root): root is string => !!root,
+  );
   const exists = (file: string) => fs.exists(file).pipe(Effect.orElseSucceed(() => false));
   const adbBinary = windows ? "adb.exe" : "adb";
   const avdmanagerBinary = windows ? "avdmanager.bat" : "avdmanager";
@@ -142,7 +144,6 @@ const androidSdk = Effect.gen(function* () {
     const emulator = yield* exists(
       path.join(root, "emulator", windows ? "emulator.exe" : "emulator"),
     );
-    if (!explicit && !adb && !emulator) return null;
     const avdmanager = yield* exists(
       path.join(root, "cmdline-tools", "latest", "bin", avdmanagerBinary),
     );
@@ -150,33 +151,28 @@ const androidSdk = Effect.gen(function* () {
       !avdmanager && (yield* exists(path.join(root, "tools", "bin", avdmanagerBinary)));
     return { root, adb, emulator, avdmanager, legacyAvdmanager };
   });
-  const candidates = explicit
-    ? [explicit]
-    : [
-        path.join(home, "Library", "Android", "sdk"),
-        path.join(home, "Android", "Sdk"),
-        path.join(
-          environment.LOCALAPPDATA ?? path.join(home, "AppData", "Local"),
-          "Android",
-          "Sdk",
-        ),
-      ];
+  const candidates = [
+    ...explicit,
+    path.join(home, "Library", "Android", "sdk"),
+    path.join(home, "Android", "Sdk"),
+    path.join(environment.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "Android", "Sdk"),
+  ];
   for (const root of candidates) {
     const sdk = yield* inspect(root);
-    if (sdk) return sdk;
+    if (sdk.adb || sdk.emulator) return sdk;
   }
   // PATH entries can be slow to stat (network shares), so only consult them after the standard locations miss.
-  if (!explicit) {
-    const searchPath = environment.PATH ?? environment.Path ?? "";
-    for (const directory of searchPath.split(windows ? ";" : ":")) {
-      if (!directory) continue;
-      const adb = path.join(directory, adbBinary);
-      if (!(yield* exists(adb))) continue;
-      const resolved = yield* fs.realPath(adb).pipe(Effect.orElseSucceed(() => adb));
-      const sdk = yield* inspect(path.dirname(path.dirname(resolved)));
-      if (sdk) return sdk;
-    }
+  const searchPath = environment.PATH ?? environment.Path ?? "";
+  for (const directory of searchPath.split(windows ? ";" : ":")) {
+    if (!directory) continue;
+    const adb = path.join(directory, adbBinary);
+    if (!(yield* exists(adb))) continue;
+    const resolved = yield* fs.realPath(adb).pipe(Effect.orElseSucceed(() => adb));
+    const sdk = yield* inspect(path.dirname(path.dirname(resolved)));
+    if (sdk.adb || sdk.emulator) return sdk;
   }
+  // No real SDK anywhere: report what the configured root is missing.
+  if (explicit[0]) return yield* inspect(explicit[0]);
   return { root: null, adb: false, emulator: false, avdmanager: false, legacyAvdmanager: false };
 });
 
