@@ -8973,6 +8973,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         targetThreadId: ThreadId.make("thread-claude-fork-after-compact-rollback"),
       });
       assert.equal(forkCalls[0]?.options.upToMessageId, earlierCursor);
+      // A running later turn writes past the head, so the head cannot bound a fork.
+      const busyForkError = yield* harness.runtime
+        .forkThread({
+          sourceProviderThread: pastSilentTurn.providerThread,
+          sourceProviderTurns: [
+            ...turnsAcrossSilent.slice(0, 2),
+            { ...turnsAcrossSilent[2]!, status: "running", completedAt: null },
+          ],
+          providerTurnId: providerTurn.id,
+          targetThreadId: ThreadId.make("thread-claude-fork-while-source-runs"),
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(busyForkError, ProviderAdapter.ProviderAdapterForkThreadError);
+      assert.equal(forkCalls.length, 1);
       const interruptedBeforeCompact = yield* rollbackTo(
         [
           {
@@ -10159,6 +10173,93 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("reports an empty context when /clear resets the conversation", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-before-clear"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        usageSnapshotFrame("msg_before_clear", "00000000-0000-4000-8000-000000000800", {
+          ...zeroUsage,
+          input_tokens: 166_000,
+          output_tokens: 100,
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000801", result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-clear"),
+          text: "/clear",
+          attachments: [],
+        }),
+      );
+      // Claude CLI 2.1.304 answers /clear with these frames and makes no API request.
+      const frames = [
+        claudeSdkFrame({
+          type: "conversation_reset",
+          trigger: "clear",
+          new_conversation_id: "00000000-0000-4000-8000-000000000802",
+          uuid: "00000000-0000-4000-8000-000000000803",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          uuid: "00000000-0000-4000-8000-000000000804",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000805",
+          result: "",
+          numTurns: 0,
+          usage: zeroUsage,
+        }),
+      ];
+      for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "completed");
+
+      const contextReports = harness.events.flatMap((event) =>
+        event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
+          ? [{ runAttemptId: event.providerTurn.runAttemptId, ...event.providerTurn.tokenUsage }]
+          : [],
+      );
+      const latest = contextReports.at(-1);
+      assert.deepEqual(
+        { runAttemptId: latest?.runAttemptId, usedTokens: latest?.usedTokens },
+        { runAttemptId: RunAttemptId.make("attempt-clear"), usedTokens: 0 },
+        "the newest context report after /clear must be the cleared turn's empty context",
+      );
+      assert.equal(latest?.maxTokens, contextReports[0]?.maxTokens);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
   );
 
   it.effect("reports the settings directory of a reused Claude query", () =>
@@ -13229,6 +13330,132 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // An API error fails the turn, but the CLI process and its background tasks keep running.
+  const liveProcessFailedResult = makeResultFrame({
+    uuid: "00000000-0000-4000-8000-000000000311",
+    result: "API Error: 502 Bad Gateway",
+    isError: true,
+    apiErrorStatus: 502,
+    terminalReason: "api_error",
+  });
+
+  it.effect("keeps background tasks waitable after a turn fails on a live process", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const awaitBackgroundTasks = harness.runtime.awaitBackgroundTasks;
+      if (awaitBackgroundTasks === undefined) {
+        throw new Error("Claude adapter runtime must expose awaitBackgroundTasks.");
+      }
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-failed-live-roster"),
+          text: "Run the build in the background.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+      yield* Queue.offer(harness.sdkMessages, liveProcessFailedResult);
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "failed");
+
+      assert.deepStrictEqual(
+        providerThreadRosterEvents(harness.events)
+          .at(-1)
+          ?.providerThread.pendingBackgroundTasks?.map((task) => task.taskId),
+        [WAKE_TASK_ID],
+      );
+      assert.isTrue(yield* harness.hasPendingBackgroundWork);
+      const marked = yield* awaitBackgroundTasks({
+        providerThread: harness.providerThread,
+        taskIds: [WAKE_TASK_ID],
+        awaited: true,
+      });
+      assert.deepStrictEqual(marked.matched, [WAKE_TASK_ID]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("clears background tasks when the Claude process exits mid-turn", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-probe-exit"),
+          text: "Run the build in the background.",
+          attachments: [],
+        }),
+      );
+      yield* harness.offerAndWait(wakeTaskStarted);
+      assert.isTrue(yield* harness.hasPendingBackgroundWork);
+      yield* Queue.shutdown(harness.sdkMessages);
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "failed");
+      assert.deepStrictEqual(
+        providerThreadRosterEvents(harness.events)
+          .at(-1)
+          ?.providerThread.pendingBackgroundTasks?.map((task) => task.taskId) ?? [],
+        [],
+      );
+      assert.isFalse(yield* harness.hasPendingBackgroundWork);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("wakes the idle thread when a task outlives a turn that failed on a live process", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-failed-live-wake"),
+          text: "Run the build in the background.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+      yield* Queue.offer(harness.sdkMessages, liveProcessFailedResult);
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "failed");
+
+      yield* harness.offerAndWait(wakeNotification);
+      yield* harness.offerAndWait(wakeAssistant);
+      assert.deepStrictEqual(
+        harness.continuationRequests.map((request) => request.detail),
+        [WAKE_SUMMARY],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("ScheduleWakeup stop:true releases the pending wakeup's hold", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
@@ -14435,10 +14662,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const rosterBAfterFail = providerThreadRosterEvents(events).findLast(
           (event) => event.providerThread.id === providerThreadB.id,
         )?.providerThread.pendingBackgroundTasks;
-        assert.deepEqual(rosterBAfterFail ?? [], []);
+        assert.deepEqual(rosterBAfterFail ?? [], [
+          {
+            taskId: taskB,
+            description: "work on B",
+            kind: "command",
+            nativeItemId: "toolu-roster-b",
+          },
+        ]);
         assert.isFalse(yield* hasPendingBackgroundWorkForThread(providerThreadA));
-        assert.isFalse(yield* hasPendingBackgroundWorkForThread(providerThreadB));
-        assert.isFalse(yield* hasPendingBackgroundWork);
+        assert.isTrue(yield* hasPendingBackgroundWorkForThread(providerThreadB));
+        assert.isTrue(yield* hasPendingBackgroundWork);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -15222,6 +15456,126 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       ),
     ),
+  );
+
+  // regression: #37708 a gateway that holds the request open leaves Claude silent after "requesting"
+  it.effect.each([
+    { case: "after the prompt starts", requesting: false, backgroundProgress: false },
+    { case: "after a request goes out", requesting: true, backgroundProgress: false },
+    { case: "while a skill it forked runs", requesting: false, forkedTask: true },
+    {
+      case: "while an earlier background agent starts a nested task",
+      requesting: false,
+      nestedTaskStarted: true,
+    },
+    {
+      case: "while an earlier background task reports progress",
+      requesting: false,
+      backgroundProgress: true,
+    },
+  ])(
+    "does not keep a turn silently running when Claude goes quiet $case",
+    ({ requesting, backgroundProgress = false, forkedTask = false, nestedTaskStarted = false }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-silent-after-started"),
+            text: "start again",
+            attachments: [],
+          }),
+        );
+        // Captured from Claude Code 2.1.325 against a gateway that never answers /v1/messages.
+        for (const [index, state] of (["queued", "started"] as const).entries()) {
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "command_lifecycle",
+              command_uuid: harness.promptUuid(0),
+              state,
+              uuid: `00000000-0000-4000-8000-00000000079${index}`,
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
+        if (requesting) {
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "status",
+              status: "requesting",
+              uuid: "00000000-0000-4000-8000-000000000792",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
+        if (backgroundProgress) {
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_progress",
+              task_id: "earlier-background-task",
+              description: "Earlier background task",
+              usage: { total_tokens: 1, tool_uses: 0, duration_ms: 1 },
+              uuid: "00000000-0000-4000-8000-000000000793",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
+        if (nestedTaskStarted) {
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: "earlier-nested-task",
+              description: "Nested task of an earlier background agent",
+              spawn_depth: 2,
+              uuid: "00000000-0000-4000-8000-000000000795",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
+        if (forkedTask) {
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: "forked-skill-task",
+              description: "Forked skill",
+              uuid: "00000000-0000-4000-8000-000000000794",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
+        assert.lengthOf(harness.terminalEvents(), 0);
+
+        yield* TestClock.adjust("1 hour");
+        yield* yieldTicks(50);
+        const surfaced =
+          harness.terminalEvents().length > 0 ||
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              (event.turnItem.type === "system_notice" || event.turnItem.type === "error"),
+          );
+        if (forkedTask) {
+          assert.lengthOf(harness.terminalEvents(), 0, "a long forked skill was failed as silence");
+        } else {
+          assert.isTrue(surfaced, "an hour of silence after the prompt started surfaced nothing");
+        }
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
   );
 
   // regression: #17531 a mod that holds a tool behind a focused pane must fail the turn, not hang it

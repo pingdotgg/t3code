@@ -39,6 +39,7 @@ const PULL_REQUEST = {
   body: "",
   reviewRequestLogins: [],
   reviewers: [],
+  labels: [],
   location: { project: "acme", repository: "web" },
   autoMergeEnabled: false,
 };
@@ -138,6 +139,7 @@ describe("getChangeRequest", () => {
           Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
             getPullRequest: () => Effect.succeed(PULL_REQUEST),
             listPolicyChecks: () => Effect.succeed([]),
+            listLabels: () => Effect.succeed([]),
             listIterations: () =>
               Effect.succeed([ITERATION, { ...ITERATION, id: 4, headCommit: "new-head" }]),
             listIterationChanges: () =>
@@ -173,6 +175,7 @@ describe("getChangeRequest", () => {
             Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
               getPullRequest: () => Effect.succeed(PULL_REQUEST),
               listPolicyChecks: () => Effect.succeed([]),
+              listLabels: () => Effect.succeed([]),
               listIterations: () =>
                 state === "missing"
                   ? Effect.succeed([])
@@ -218,6 +221,7 @@ describe("getChangeRequest", () => {
                 Effect.succeed({ contents: side("new", 2, 4), isBinary: false }),
               ...NO_BLOBS,
               listPolicyChecks: () => Effect.succeed([]),
+              listLabels: () => Effect.succeed([]),
               listThreads: () => Effect.succeed([]),
             }),
           ),
@@ -273,6 +277,7 @@ describe("policy checks", () => {
           listIterations: () => Effect.succeed([ITERATION]),
           listIterationChanges: () => Effect.succeed({ changes: [], truncated: false }),
           listPolicyChecks,
+          listLabels: () => Effect.succeed([]),
         }),
       ),
     );
