@@ -167,9 +167,11 @@ undo by accident:
 
 - **Fixed proxy, not PAC.** Chromium never consults a PAC script for loopback hosts, even with
   `<-loopback>`. The partition uses a fixed SOCKS5 proxy with the bypass list `*,<-loopback>`, in
-  that order: everything is direct except loopback. A fixed proxy also has no direct retry, so a
-  failed tunnel is a connection error and never the reviewer's own localhost. The rule matches
-  hostnames, not resolved addresses, so a custom name that resolves to loopback still goes direct.
+  that order: everything is direct except loopback. `<-loopback>` also takes link-local addresses,
+  which the listener refuses, so those fail instead of going direct. A fixed proxy also has no
+  direct retry, so a failed tunnel is a connection error and never the reviewer's own localhost.
+  The rule matches hostnames, not resolved addresses, so a custom name that resolves to loopback
+  still goes direct.
 - **Media tickets.** Desktop main opens the tunnel but holds no environment credentials. Media
   tickets are not DPoP-bound, so the renderer can hand one over. Main asks it for a tunnel URL per
   connection, which also makes the tunnel follow a route switch.
