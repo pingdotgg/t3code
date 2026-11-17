@@ -2981,9 +2981,8 @@ it.effect("paints a saved stack answer at once while the host read is out", () =
   ),
 );
 
-it.effect("loads each diff page under a new head without reusing the previous head's cache", () =>
+it.effect("loads the diff again for a new guide head without sending the head", () =>
   Effect.gen(function* () {
-    let head = "old-head";
     const inputs: unknown[] = [];
     const { atoms, registry, supervisor } = yield* makeTestRuntime(
       {} as WsRpcProtocolClient,
@@ -2995,11 +2994,7 @@ it.effect("loads each diff page under a new head without reusing the previous he
         load: (_prepared, input) =>
           Effect.sync(() => {
             inputs.push(input);
-            return {
-              patch: input.cursor === undefined ? "UNCHANGED" : head,
-              truncated: false,
-              nextCursor: input.cursor === undefined ? "cursor-1" : null,
-            };
+            return { patch: "", truncated: false, nextCursor: null };
           }),
       },
     );
@@ -3016,22 +3011,13 @@ it.effect("loads each diff page under a new head without reusing the previous he
     );
     const reference = { projectId: ProjectId.make("project-1"), repository: "acme/web", number: 1 };
     for (const cacheHeadSha of ["old-head", "new-head"]) {
-      head = cacheHeadSha;
-      for (const cursor of [undefined, "cursor-1"]) {
-        const query = atoms.diff({
-          environmentId: TARGET.environmentId,
-          input: { ...reference, cursor, cacheHeadSha },
-        });
-        registry.mount(query);
-        const result = yield* AtomRegistry.getResult(registry, query, { suspendOnWaiting: true });
-        expect(result.patch).toBe(cursor === undefined ? "UNCHANGED" : head);
-      }
+      const query = atoms.diff({
+        environmentId: TARGET.environmentId,
+        input: { ...reference, cacheHeadSha },
+      });
+      registry.mount(query);
+      yield* AtomRegistry.getResult(registry, query, { suspendOnWaiting: true });
     }
-    expect(inputs).toEqual([
-      { ...reference, cursor: undefined },
-      { ...reference, cursor: "cursor-1" },
-      { ...reference, cursor: undefined },
-      { ...reference, cursor: "cursor-1" },
-    ]);
+    expect(inputs).toEqual([reference, reference]);
   }),
 );

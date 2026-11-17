@@ -1,6 +1,5 @@
 import { RegistryContext } from "@effect/atom-react";
 import { EnvironmentId, ProjectId, type PullRequestDiffResult } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
@@ -22,11 +21,11 @@ vi.mock("~/state/pullRequests", () => ({
 
 import { useGuideDiffFiles } from "./useGuideDiffFiles";
 
-function Probe({ wantedPaths, headSha = "new-head" }: { wantedPaths: string[]; headSha?: string }) {
+function Probe({ wantedPaths }: { wantedPaths: string[] }) {
   const diff = useGuideDiffFiles({
     environmentId: EnvironmentId.make("test"),
     reference: { projectId: ProjectId.make("project"), repository: "owner/repo", number: 1 },
-    headSha,
+    headSha: "new-head",
     wantedPaths,
   });
   return (
@@ -151,65 +150,21 @@ it("waits for a later cached page that is still refreshing", async () => {
   });
 });
 
-it("replaces cached excerpts when a new guide head receives a refreshed diff", async () => {
+it("reads the guide head's pages instead of the previous push's cached ones", async () => {
   setup();
   await using stack = new AsyncDisposableStack();
   const registry = stack.adopt(AtomRegistry.make(), (value) => value.dispose());
-  const first = Atom.make<AsyncResult.AsyncResult<PullRequestDiffResult>>(
-    AsyncResult.success(page("wanted.ts", "OLD_HEAD", null)),
+  state.pages.set(null, Atom.make(AsyncResult.success(page("wanted.ts", "OLD_HEAD", null))));
+  state.heads.set(
+    "new-head",
+    new Map([[null, Atom.make(AsyncResult.success(page("wanted.ts", "NEW_HEAD", null)))]]),
   );
-  state.pages.set(null, first);
   await using screen = await render(
     <RegistryContext.Provider value={registry}>
-      <Probe wantedPaths={["wanted.ts"]} headSha="old-head" />
+      <Probe wantedPaths={["wanted.ts"]} />
     </RegistryContext.Provider>,
   );
-  const result = () => JSON.parse(screen.container.querySelector("output")!.textContent!);
-  expect(result().files).toEqual([["wanted.ts", "OLD_HEAD\n"]]);
-
-  await screen.rerender(
-    <RegistryContext.Provider value={registry}>
-      <Probe wantedPaths={["wanted.ts"]} headSha="new-head" />
-    </RegistryContext.Provider>,
-  );
-  await act(() => registry.set(first, AsyncResult.success(page("wanted.ts", "NEW_HEAD", null))));
-  expect(result().files).toEqual([["wanted.ts", "NEW_HEAD\n"]]);
-});
-
-it("fetches later pages again after a head change even when the first page is unchanged", async () => {
-  setup();
-  await using stack = new AsyncDisposableStack();
-  const registry = stack.adopt(AtomRegistry.make(), (value) => value.dispose());
-  const first = page("first.ts", "UNCHANGED", "cursor-1");
-  const fetchPage = vi.fn(async (head: string, cursor: string | null) =>
-    cursor === null ? first : page("wanted.ts", head, null),
-  );
-  for (const head of ["old-head", "new-head"]) {
-    state.heads.set(
-      head,
-      new Map(
-        [null, "cursor-1"].map((cursor) => [
-          cursor,
-          Atom.make(Effect.promise(() => fetchPage(head, cursor))),
-        ]),
-      ),
-    );
-  }
-  // The previous push's pages are already cached under the unversioned identity.
-  state.pages.set(null, Atom.make(AsyncResult.success(first)));
-  state.pages.set("cursor-1", Atom.make(AsyncResult.success(page("wanted.ts", "old-head", null))));
-  await using screen = await render(
-    <RegistryContext.Provider value={registry}>
-      <Probe wantedPaths={["wanted.ts"]} headSha="old-head" />
-    </RegistryContext.Provider>,
-  );
-  await vi.waitFor(() => expect(screen.container.textContent).toContain("old-head"));
-  await screen.rerender(
-    <RegistryContext.Provider value={registry}>
-      <Probe wantedPaths={["wanted.ts"]} headSha="new-head" />
-    </RegistryContext.Provider>,
-  );
-  await vi.waitFor(() => expect(screen.container.textContent).toContain("new-head"));
-  expect(fetchPage).toHaveBeenCalledWith("new-head", null);
-  expect(fetchPage).toHaveBeenCalledWith("new-head", "cursor-1");
+  expect(JSON.parse(screen.container.querySelector("output")!.textContent!).files).toEqual([
+    ["wanted.ts", "NEW_HEAD\n"],
+  ]);
 });

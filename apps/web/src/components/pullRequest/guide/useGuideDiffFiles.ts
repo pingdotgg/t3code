@@ -16,7 +16,6 @@ interface LoadedDiff {
   readonly done: boolean;
   readonly files: ReadonlyMap<string, FileDiffMetadata>;
   readonly folded: unknown;
-  readonly first: unknown;
 }
 
 const NO_FILES: ReadonlyMap<string, FileDiffMetadata> = new Map();
@@ -33,15 +32,15 @@ export function useGuideDiffFiles({
   wantedPaths: ReadonlyArray<string>;
 }) {
   const key = `${environmentId}:${pullRequestReviewKey(reference)}:${headSha}`;
-  const empty: LoadedDiff = {
+  const [loaded, setLoaded] = useState<LoadedDiff>({
     key,
     cursor: null,
     done: false,
     files: NO_FILES,
     folded: null,
-    first: null,
-  };
-  const [loaded, setLoaded] = useState(empty);
+  });
+  const current: LoadedDiff =
+    loaded.key === key ? loaded : { key, cursor: null, done: false, files: NO_FILES, folded: null };
   const registry = useContext(RegistryContext);
   const isMissing = (diff: LoadedDiff) => wantedPaths.some((path) => !diff.files.has(path));
   const pageAtom = (cursor: string | null) =>
@@ -49,14 +48,6 @@ export function useGuideDiffFiles({
       environmentId,
       input: { ...reference, cacheHeadSha: headSha, ...(cursor === null ? {} : { cursor }) },
     });
-  // A settled first page other than the one folded means the diff was refreshed: start over.
-  const firstPage = useEnvironmentQuery(pageAtom(null));
-  const firstData = firstPage.isPending ? null : firstPage.data;
-  const current =
-    loaded.key === key &&
-    (loaded.first === null || firstData === null || loaded.first === firstData)
-      ? loaded
-      : empty;
   const loading = isMissing(current) && !current.done;
   const query = useEnvironmentQuery(loading ? pageAtom(current.cursor) : null);
 
@@ -72,14 +63,7 @@ export function useGuideDiffFiles({
     if (parsed?.kind === "files") {
       for (const file of parsed.files) files.set(resolveFileDiffPath(file), file);
     }
-    next = {
-      key,
-      cursor: data.nextCursor,
-      done: data.nextCursor === null,
-      files,
-      folded: data,
-      first: next.cursor === null ? data : next.first,
-    };
+    next = { key, cursor: data.nextCursor, done: data.nextCursor === null, files, folded: data };
     const result = next.done || !isMissing(next) ? null : registry.get(pageAtom(next.cursor));
     data = result === null || result.waiting ? null : AsyncResult.getOrElse(result, () => null);
   }
