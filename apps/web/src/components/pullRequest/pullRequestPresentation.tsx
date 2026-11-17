@@ -43,7 +43,8 @@ import {
  * user-visible composites); those are not catalog keys and pass through.
  */
 export function presentationLabel(label: string): string {
-  const key = `pullRequest:${label}`;
+  // Callers hand over both bare catalog keys and already-namespaced ones; only prefix once.
+  const key = label.startsWith("pullRequest:") ? label : `pullRequest:${label}`;
   return i18n.exists(key) ? translateDynamic(key) : label;
 }
 

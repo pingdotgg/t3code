@@ -168,9 +168,9 @@ export function PullRequestChecksPopover({
         aria-label={
           variant === "count"
             ? td("checks.openWithSummary", {
-                summary: summary ?? td(`pullRequest:${presentation.label}`),
+                summary: summary ?? td(presentation.label),
               })
-            : td("checks.withSummary", { summary: td(`pullRequest:${presentation.label}`) })
+            : td("checks.withSummary", { summary: td(presentation.label) })
         }
         render={
           variant === "count" ? (
