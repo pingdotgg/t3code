@@ -48,21 +48,20 @@ function withRowScopes(
 ): ReadonlyArray<IssueScopeRef> {
   const next = [...scopes];
   for (const entry of entries) {
-    if (
-      next.some(
-        (s) =>
-          s.tracker === entry.tracker &&
-          s.host?.toLowerCase() === entry.host.toLowerCase() &&
-          s.scope.toLowerCase() === entry.scope.toLowerCase(),
-      )
-    )
-      continue;
-    next.push({
+    const index = next.findIndex(
+      (s) =>
+        s.tracker === entry.tracker &&
+        s.host?.toLowerCase() === entry.host.toLowerCase() &&
+        s.scope.toLowerCase() === entry.scope.toLowerCase(),
+    );
+    const scope = {
       projectId: entry.projectId,
       tracker: entry.tracker,
       host: entry.host,
       scope: entry.scope,
-    });
+    };
+    if (index === -1) next.push(scope);
+    else next[index] = scope;
   }
   return next;
 }

@@ -186,6 +186,47 @@ describe("issueFilterScopes", () => {
     ]);
   });
 
+  it("refreshes a remembered team's project while retaining other teams", () => {
+    const remaining = "remaining-project" as ProjectId;
+    const first = holdIssuePages(
+      [
+        [
+          environmentId,
+          answer({
+            trackers: [tracker({})],
+            entries: [
+              { ...linearRow, projectId: "deleted-project" as ProjectId },
+              { ...linearRow, key: "OPS-1", scope: "OPS" },
+            ],
+          }),
+        ],
+      ],
+      new Map(),
+    );
+    const refreshed = holdIssuePages(
+      [
+        [
+          environmentId,
+          answer({
+            trackers: [tracker({})],
+            entries: [{ ...linearRow, projectId: remaining }],
+          }),
+        ],
+      ],
+      first,
+    );
+    expect(issueFilterScopes(refreshed, [])).toEqual([
+      {
+        environmentId,
+        input: { projectId: remaining, tracker: "linear", host: "linear.app", scope: "ENG" },
+      },
+      {
+        environmentId,
+        input: { projectId: api, tracker: "linear", host: "linear.app", scope: "OPS" },
+      },
+    ]);
+  });
+
   it("skips a tracker that cannot be read", () => {
     const held = new Map([
       [
