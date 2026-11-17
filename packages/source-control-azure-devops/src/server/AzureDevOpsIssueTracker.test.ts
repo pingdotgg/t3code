@@ -305,20 +305,29 @@ describe("AzureDevOpsIssueTracker", () => {
     }),
   );
 
-  it.effect("reads the signed-in profile from the organization's identity host", () =>
+  it.effect("reads the signed-in profile from the identity host, then the organization URL", () =>
     Effect.gen(function* () {
       const organizations: string[] = [];
       const api = yield* tracker((args) => {
-        organizations.push(args[args.indexOf("--organization") + 1]!);
-        return encode({ emailAddress: "julius@acme.test" });
+        const organization = args[args.indexOf("--organization") + 1]!;
+        organizations.push(organization);
+        // As when the only PAT is one `az devops login` saved for the organization URL.
+        return organization === "https://acme.vssps.visualstudio.com"
+          ? "not json"
+          : encode({ emailAddress: "julius@acme.test" });
       });
       // dev.azure.com organizations list no `profile` area of their own.
       const viewer = yield* api.getViewer({ cwd: "/w", host: "dev.azure.com", scope: "acme/Web" });
-      yield* api.getViewer({ cwd: "/w", host: "acme.visualstudio.com", scope: "Web" });
-      expect(viewer).toBe("julius@acme.test");
+      const legacy = yield* api.getViewer({
+        cwd: "/w",
+        host: "acme.visualstudio.com",
+        scope: "Web",
+      });
+      expect([viewer, legacy]).toEqual(["julius@acme.test", "julius@acme.test"]);
       expect(organizations).toEqual([
         "https://vssps.dev.azure.com/acme",
         "https://acme.vssps.visualstudio.com",
+        "https://acme.visualstudio.com",
       ]);
     }),
   );

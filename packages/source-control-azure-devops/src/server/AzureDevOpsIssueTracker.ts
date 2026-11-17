@@ -592,38 +592,44 @@ export const make: Effect.Effect<
 
     // The profile the token belongs to, which is what WIQL's `@Me` resolves to. Its email is the
     // `uniqueName` every identity on a work item carries, so the two compare.
-    getViewer: (input) =>
-      scoped("getViewer", input).pipe(
+    getViewer: (input) => {
+      const profile = (organization: string) =>
+        read({
+          cwd: input.cwd,
+          operation: "getViewer",
+          args: [
+            "devops",
+            "invoke",
+            "--detect",
+            "false",
+            "--organization",
+            organization,
+            "--area",
+            "profile",
+            "--resource",
+            "profiles",
+            "--api-version",
+            REST_API_VERSION,
+            "--route-parameters",
+            "id=me",
+          ],
+          decode: decodeProfileJson,
+        });
+      return scoped("getViewer", input).pipe(
         Effect.flatMap(({ organization }) =>
-          read({
-            cwd: input.cwd,
-            operation: "getViewer",
-            args: [
-              "devops",
-              "invoke",
-              "--detect",
-              "false",
-              // `az` resolves `--area` from the organization's own areas, which have no `profile`
-              // on dev.azure.com; the organization's identity host has it.
-              "--organization",
-              profileOrganization(organization),
-              "--area",
-              "profile",
-              "--resource",
-              "profiles",
-              "--api-version",
-              REST_API_VERSION,
-              "--route-parameters",
-              "id=me",
-            ],
-            decode: decodeProfileJson,
-          }),
+          // `az` resolves `--area` from the organization's own areas, which have no `profile` on
+          // dev.azure.com; the identity host has it. A PAT `az devops login` saved for the
+          // organization URL is keyed by that URL, so it is still tried there.
+          profile(profileOrganization(organization)).pipe(
+            Effect.catch(() => profile(organization)),
+          ),
         ),
         Effect.filterOrFail(
           (login) => login !== null,
           () => refused("getViewer", "Azure DevOps could not name the signed-in account."),
         ),
-      ),
+      );
+    },
 
     listIssues: Effect.fn("AzureDevOpsIssueTracker.listIssues")(function* (input) {
       const cursor = input.cursor === undefined ? undefined : parseCursor(input.cursor);
