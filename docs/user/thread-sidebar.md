@@ -196,7 +196,7 @@ but an old closed or merged pull request does not settle work you
 resumed after it closed. Only your own messages count as resuming. A turn that
 finished background work or a pull request watch starts on its own does not.
 Snoozed threads stay snoozed until they wake. To let a merge settle them anyway, turn on
-**Settle snoozed threads on merge** in **Settings → Threads**.
+**Auto-settle snoozed threads on merge** in **Settings → Threads**.
 
 To keep one thread out of the settled shelf no matter how long it sits idle, open its menu,
 choose **Auto-settle behavior**, and pick **Never**. The current option is checked. Pick

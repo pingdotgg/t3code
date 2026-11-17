@@ -508,7 +508,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       : []),
     ...(settings.sidebarAutoSettleSnoozedOnMerge !==
     DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleSnoozedOnMerge
-      ? ["Settle snoozed threads on merge"]
+      ? ["Auto-settle snoozed threads on merge"]
       : []),
     ...(settings.autoResumeLimitedThreads !== DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads
       ? ["Resume after usage limits"]
@@ -1936,7 +1936,7 @@ export function ThreadsSettingsPanel() {
                   onCheckedChange={(checked) =>
                     updateSettings({ sidebarAutoSettleSnoozedOnMerge: Boolean(checked) })
                   }
-                  aria-label="Settle snoozed threads on merge"
+                  aria-label="Auto-settle snoozed threads on merge"
                 />
               }
             />

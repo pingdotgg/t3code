@@ -670,7 +670,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "settle-snoozed-threads-on-merge",
-    title: "Settle snoozed threads on merge",
+    title: "Auto-settle snoozed threads on merge",
     to: "/settings/threads",
     targetId: "auto-settle-merged-threads",
     searchTerms: ["snooze pull request merge auto-settle sidebar wake"],
