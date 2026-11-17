@@ -6,4 +6,10 @@ const { NodeCLI } = await import("gt/cli/node");
 
 const program = new Command("gt");
 new NodeCLI(program, "gt-node", []).init();
-await program.parseAsync(["node", "gt", "generate", "--skip-version-check"]);
+await program.parseAsync([
+  "node",
+  "gt",
+  "generate",
+  "--skip-version-check",
+  ...process.argv.slice(2),
+]);
