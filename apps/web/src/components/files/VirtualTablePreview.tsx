@@ -3,6 +3,7 @@ import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "re
 import { observeResize } from "~/lib/observeResize";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { PREVIEW_PAGE_ROWS } from "./largeTextProtocol";
+import { estimateRowLines, tableRowMinHeight } from "./tableRowLines";
 
 export default function VirtualTablePreview(props: {
   readonly name: string;
@@ -191,6 +192,11 @@ function RowPage(
   }, [rows, page, loadPage, props.count]);
   const start = props.page * PREVIEW_PAGE_ROWS;
   const count = Math.min(PREVIEW_PAGE_ROWS, props.count - start, props.limit ?? PREVIEW_PAGE_ROWS);
+  // Only visible columns mount, so hold each row at the height its tallest cell needs.
+  const { sizes, source } = props;
+  const rowMinHeights =
+    source || !rows ? null : rows.map((row) => tableRowMinHeight(estimateRowLines(row, sizes)));
+
   return (
     <div role="rowgroup">
       {Array.from({ length: count }, (_, local) => {
@@ -201,6 +207,7 @@ function RowPage(
           <div
             key={local}
             data-preview-row={index}
+            style={rowMinHeights?.[local] ? { minHeight: rowMinHeights[local] } : undefined}
             role={props.source ? undefined : "row"}
             aria-rowindex={props.source ? undefined : index + 1}
             className={
