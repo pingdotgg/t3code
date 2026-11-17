@@ -1,5 +1,5 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { changeRequestTerm } from "../../../lib/changeRequestTerm";
+import { changeRequestTermKind } from "../../../lib/changeRequestTerm";
 import { SymbolView } from "../../../components/ui/AppSymbol";
 import { msg } from "gt-react-native";
 import type { ComponentProps } from "react";
@@ -81,13 +81,13 @@ export function statusSummary(
     );
   }
   if (gitStatus.pr?.state === "open") {
-    const term = changeRequestTerm(
+    const term = changeRequestTermKind(
       sourceControlClients.get(gitStatus.sourceControlProvider?.kind).changeRequest,
     );
     parts.push(
       resolve(
         msg(
-          "{term, select, mergeRequest {MR #{number} open} changeRequest {change request #{number} open} other {PR #{number} open}}",
+          "{term, select, mr {MR #{number} open} cr {change request #{number} open} other {PR #{number} open}}",
           { term, number: gitStatus.pr.number },
         ),
       ),

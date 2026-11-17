@@ -1,7 +1,7 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { useNavigation } from "@react-navigation/native";
 import { useGT } from "gt-react-native";
-import { changeRequestTerm } from "../../lib/changeRequestTerm";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { useNavigateToPullRequest } from "../../native/useOpenPullRequest";
@@ -30,13 +30,13 @@ export function useOpenThreadPullRequests() {
       if (!opened)
         Dialog.alert(
           gt(
-            "{term, select, mergeRequest {Unable to open MR} changeRequest {Unable to open change request} other {Unable to open PR}}",
-            { term: changeRequestTerm(pr.changeRequest) },
+            "{term, select, mr {Unable to open MR} cr {Unable to open change request} other {Unable to open PR}}",
+            { term: changeRequestTermKind(pr.changeRequest) },
           ),
           gt(
-            "{term, select, mergeRequest {The merge request could not be opened.} changeRequest {The change request could not be opened.} other {The pull request could not be opened.}}",
+            "{term, select, mr {The merge request could not be opened.} cr {The change request could not be opened.} other {The pull request could not be opened.}}",
             {
-              term: changeRequestTerm(pr.changeRequest),
+              term: changeRequestTermKind(pr.changeRequest),
             },
           ),
         );

@@ -1,6 +1,6 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { changeRequestTerm } from "../../lib/changeRequestTerm";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import {
   pullRequestListLines,
   resolveThreadPullRequestChains,
@@ -84,7 +84,7 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
   const watching = open && link.watch !== undefined;
   const additions = snapshot?.additions ?? 0;
   const deletions = snapshot?.deletions ?? 0;
-  const term = changeRequestTerm(
+  const term = changeRequestTermKind(
     (sourceControlClients.findByChangeRequestUrl(link.url) ?? sourceControlClients.get(undefined))
       .changeRequest,
   );
@@ -94,7 +94,7 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
       accessibilityRole="button"
       accessibilityLabel={[
         gt(
-          "{term, select, mergeRequest {Merge request {number}, {title}} changeRequest {Change request {number}, {title}} other {Pull request {number}, {title}}}",
+          "{term, select, mr {Merge request {number}, {title}} cr {Change request {number}, {title}} other {Pull request {number}, {title}}}",
           {
             term,
             number: link.number,
@@ -131,11 +131,11 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
           if (!opened)
             Dialog.alert(
               gt(
-                "{term, select, mergeRequest {Unable to open MR} changeRequest {Unable to open change request} other {Unable to open PR}}",
+                "{term, select, mr {Unable to open MR} cr {Unable to open change request} other {Unable to open PR}}",
                 { term },
               ),
               gt(
-                "{term, select, mergeRequest {The merge request could not be opened.} changeRequest {The change request could not be opened.} other {The pull request could not be opened.}}",
+                "{term, select, mr {The merge request could not be opened.} cr {The change request could not be opened.} other {The pull request could not be opened.}}",
                 { term },
               ),
             );

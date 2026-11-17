@@ -3,7 +3,7 @@ import { AsyncResult } from "effect/reactivity";
 import { useAtomRefresh } from "@effect/atom-react";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { changeRequestTermKind } from "./changeRequestTerm";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PullRequestReviewVerdict } from "@t3tools/contracts";
 import { msg, T, useGT, useMessages } from "gt-react-native";

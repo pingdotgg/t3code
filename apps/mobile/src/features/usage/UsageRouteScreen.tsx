@@ -18,15 +18,13 @@ import {
   enumerateDays,
   enumerateHourStarts,
   formatCount,
-  formatDayShort,
-  formatHourShort,
   formatPercent,
   formatTokens,
   formatUsd,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { formatUsageContractMismatch, usageSourceMessages } from "@t3tools/shared/usageFormatCopy";
-import { msg, T, useGT, useMessages, Var } from "gt-react-native";
+import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react-native";
 import { use, useRef, useState, type ReactNode } from "react";
 import { View } from "react-native";
 import { RefreshControl } from "../../components/ui/RefreshControl";
@@ -43,6 +41,7 @@ import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { NativeWorkspaceTabActivityContext } from "../../native/v5-workspace-context";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { SettingsSection } from "../settings/components/SettingsSection";
+import { usageAxisDayLabel, usageAxisHourLabel } from "./usageAxisLabels";
 import { UsageDailyChart } from "./UsageDailyChart";
 import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
 import { useRefreshLimits } from "./UsageLimitsSection";
@@ -467,6 +466,7 @@ function ChartCard(props: {
 }) {
   const { merged, metric } = props;
   const colors = useProviderColors();
+  const locale = useLocale();
   const hasActivity = props.daily.some((period) => period.totalTokens > 0);
   const [fillHeight, setFillHeight] = useState(0);
   const height = props.fill ? Math.max(fillHeight, props.height) : props.height;
@@ -507,13 +507,13 @@ function ChartCard(props: {
         <View className="flex-row items-center justify-between">
           <Text className="text-xs text-foreground-tertiary">
             {props.isPast24Hours
-              ? formatHourShort(props.days[0] ?? "", props.timeZone)
-              : formatDayShort(props.sinceDay)}
+              ? usageAxisHourLabel(props.days[0] ?? "", locale, props.timeZone)
+              : usageAxisDayLabel(props.sinceDay, locale)}
           </Text>
           <Text className="text-xs text-foreground-tertiary">
             {props.isPast24Hours
-              ? formatHourShort(props.days[props.days.length - 1] ?? "", props.timeZone)
-              : formatDayShort(props.untilDay)}
+              ? usageAxisHourLabel(props.days[props.days.length - 1] ?? "", locale, props.timeZone)
+              : usageAxisDayLabel(props.untilDay, locale)}
           </Text>
         </View>
         <View className="flex-row flex-wrap items-center gap-x-4 gap-y-1">

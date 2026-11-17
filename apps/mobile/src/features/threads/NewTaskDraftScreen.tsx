@@ -11,6 +11,7 @@ import { draftThreadShell } from "./draft-thread-shell";
 import { useRememberThreadProject } from "./useRememberThreadProject";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { connectionTone } from "../connection/connectionTone";
+import { runtimeConnectionErrorText } from "../connection/environmentStatusText";
 import { AppBar } from "../../components/ui/AppBar";
 import { ThreadId } from "@t3tools/contracts";
 
@@ -1034,7 +1035,9 @@ export function NewTaskDraftScreen(props: {
           environmentRuntime?.connectionAwaitingApproval === true,
           m,
         )}
-        connectionError={environmentRuntime?.connectionError ?? null}
+        connectionError={
+          environmentRuntime ? runtimeConnectionErrorText(environmentRuntime, m) : null
+        }
         environmentLabel={selectedEnvironmentLabel}
         feedbackSubmissions={[]}
         onDismissFeedback={() => {}}

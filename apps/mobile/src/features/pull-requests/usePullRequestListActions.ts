@@ -20,7 +20,7 @@ import {
   pullRequestActionLabel,
 } from "./pullRequestActions";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { changeRequestTermKind } from "./changeRequestTerm";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import { scopedPullRequestListKey, type EnvironmentPullRequestListEntry } from "./pullRequestList";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestTarget } from "./usePullRequestDiff";

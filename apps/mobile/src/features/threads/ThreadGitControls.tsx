@@ -18,7 +18,7 @@ import {
 } from "@t3tools/client-runtime/state/vcs";
 import { useNavigation } from "@react-navigation/native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { changeRequestTerm } from "../../lib/changeRequestTerm";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 
 import { m, type MessageResolver } from "../../i18n/messages";
 import { useEnvironmentScope } from "../../state/session";
@@ -178,18 +178,17 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   })();
 
   const openExistingPr = async () => {
-    const term = changeRequestTerm(
+    const term = changeRequestTermKind(
       sourceControlClients.get(gitStatus?.sourceControlProvider?.kind).changeRequest,
     );
     const prUrl = gitStatus?.pr?.state === "open" ? gitStatus.pr.url : null;
     if (!prUrl) {
       Dialog.alert(
+        gt("{term, select, mr {No open MR} cr {No open change request} other {No open PR}}", {
+          term,
+        }),
         gt(
-          "{term, select, mergeRequest {No open MR} changeRequest {No open change request} other {No open PR}}",
-          { term },
-        ),
-        gt(
-          "{term, select, mergeRequest {This branch does not have an open merge request.} changeRequest {This branch does not have an open change request.} other {This branch does not have an open pull request.}}",
+          "{term, select, mr {This branch does not have an open merge request.} cr {This branch does not have an open change request.} other {This branch does not have an open pull request.}}",
           { term },
         ),
       );
@@ -198,11 +197,11 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     if (!(await openPullRequest(prUrl))) {
       Dialog.alert(
         gt(
-          "{term, select, mergeRequest {Unable to open MR} changeRequest {Unable to open change request} other {Unable to open PR}}",
+          "{term, select, mr {Unable to open MR} cr {Unable to open change request} other {Unable to open PR}}",
           { term },
         ),
         gt(
-          "{term, select, mergeRequest {The merge request could not be opened.} changeRequest {The change request could not be opened.} other {The pull request could not be opened.}}",
+          "{term, select, mr {The merge request could not be opened.} cr {The change request could not be opened.} other {The pull request could not be opened.}}",
           { term },
         ),
       );

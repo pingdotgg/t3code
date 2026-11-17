@@ -1,6 +1,7 @@
 import { msg } from "gt-react-native";
 
 import { m, type MessageResolver } from "../../i18n/messages";
+import { runtimeConnectionErrorText } from "../connection/environmentStatusText";
 import type { WorkspaceState } from "../../state/workspaceModel";
 
 export interface WorkspaceConnectionStatusPresentation {
@@ -41,7 +42,8 @@ function workspaceConnectionStatusLabel(state: WorkspaceState, resolve: MessageR
       ),
     );
   }
-  if (state.connectionError !== null) return state.connectionError;
+  const connectionError = runtimeConnectionErrorText(state, resolve);
+  if (connectionError !== null) return connectionError;
   if (state.hasPendingShellSnapshot) {
     return state.hasLoadedShellSnapshot
       ? resolve(msg("Syncing threads..."))

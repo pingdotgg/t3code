@@ -9,7 +9,7 @@ import { useResolveClassNames } from "uniwind";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
-import { changeRequestTermKind } from "./changeRequestTerm";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import { EmptyState } from "../../components/ui/EmptyState";
 
 export function PullRequestReadStatus(props: {

@@ -14,7 +14,7 @@ import type {
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { changeRequestTermKind } from "../features/pull-requests/changeRequestTerm";
+import { changeRequestTermKind } from "../lib/changeRequestTerm";
 import { videoMimeType } from "@t3tools/shared/video";
 import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";

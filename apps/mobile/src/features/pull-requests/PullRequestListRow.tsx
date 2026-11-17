@@ -1,5 +1,5 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { changeRequestTermKind } from "./changeRequestTerm";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import { useGT, useMessages } from "gt-react-native";
 import { memo } from "react";
 import { Pressable, View } from "react-native";

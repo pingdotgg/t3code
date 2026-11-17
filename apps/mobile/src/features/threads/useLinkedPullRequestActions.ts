@@ -17,7 +17,7 @@ import {
   planThreadPullRequestMutation,
 } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { changeRequestTerm } from "../../lib/changeRequestTerm";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import { AuthOrchestrationOperateScope, type ThreadPullRequestLink } from "@t3tools/contracts";
 import * as Clipboard from "expo-clipboard";
 import { useGT } from "gt-react-native";
@@ -79,12 +79,12 @@ export function useLinkedPullRequestActions(input: {
     void run(
       linked
         ? gt(
-            "{term, select, mergeRequest {Couldn't link this merge request} changeRequest {Couldn't link this change request} other {Couldn't link this pull request}}",
-            { term: changeRequestTerm(terminology) },
+            "{term, select, mr {Couldn't link this merge request} cr {Couldn't link this change request} other {Couldn't link this pull request}}",
+            { term: changeRequestTermKind(terminology) },
           )
         : gt(
-            "{term, select, mergeRequest {Couldn't unlink this merge request} changeRequest {Couldn't unlink this change request} other {Couldn't unlink this pull request}}",
-            { term: changeRequestTerm(terminology) },
+            "{term, select, mr {Couldn't unlink this merge request} cr {Couldn't unlink this change request} other {Couldn't unlink this pull request}}",
+            { term: changeRequestTermKind(terminology) },
           ),
       mutation.type === "thread.pull-request.link"
         ? link({ environmentId, input: mutation.input })
@@ -93,18 +93,18 @@ export function useLinkedPullRequestActions(input: {
   };
 
   const promptLink = () => {
-    const term = changeRequestTerm(terminology);
+    const term = changeRequestTermKind(terminology);
     Dialog.prompt({
       title: gt(
-        "{term, select, mergeRequest {Link merge request} changeRequest {Link change request} other {Link pull request}}",
+        "{term, select, mr {Link merge request} cr {Link change request} other {Link pull request}}",
         { term },
       ),
       message: gt(
-        "{term, select, mergeRequest {Paste a merge request URL, or enter 123 / #123 for this thread's repository.} changeRequest {Paste a change request URL, or enter 123 / #123 for this thread's repository.} other {Paste a pull request URL, or enter 123 / #123 for this thread's repository.}}",
+        "{term, select, mr {Paste a merge request URL, or enter 123 / #123 for this thread's repository.} cr {Paste a change request URL, or enter 123 / #123 for this thread's repository.} other {Paste a pull request URL, or enter 123 / #123 for this thread's repository.}}",
         { term },
       ),
       placeholder: gt(
-        "{term, select, mergeRequest {Merge request URL or #42} changeRequest {Change request URL or #42} other {Pull request URL or #42}}",
+        "{term, select, mr {Merge request URL or #42} cr {Change request URL or #42} other {Pull request URL or #42}}",
         { term },
       ),
       initialValue: "",
@@ -121,11 +121,11 @@ export function useLinkedPullRequestActions(input: {
         if (resolved === null) {
           Dialog.alert(
             gt(
-              "{term, select, mergeRequest {Couldn't link this merge request} changeRequest {Couldn't link this change request} other {Couldn't link this pull request}}",
+              "{term, select, mr {Couldn't link this merge request} cr {Couldn't link this change request} other {Couldn't link this pull request}}",
               { term },
             ),
             gt(
-              "{term, select, mergeRequest {Use a merge request URL, 123, or #123.} changeRequest {Use a change request URL, 123, or #123.} other {Use a pull request URL, 123, or #123.}}",
+              "{term, select, mr {Use a merge request URL, 123, or #123.} cr {Use a change request URL, 123, or #123.} other {Use a pull request URL, 123, or #123.}}",
               { term },
             ),
           );
@@ -134,7 +134,7 @@ export function useLinkedPullRequestActions(input: {
         if ("error" in resolved) {
           Dialog.alert(
             gt(
-              "{term, select, mergeRequest {Couldn't link this merge request} changeRequest {Couldn't link this change request} other {Couldn't link this pull request}}",
+              "{term, select, mr {Couldn't link this merge request} cr {Couldn't link this change request} other {Couldn't link this pull request}}",
               { term },
             ),
             resolved.error,
@@ -179,7 +179,7 @@ export function useLinkedPullRequestActions(input: {
     else if (action === "browser")
       void tryOpenExternalUrl(link.url, "pull-request").then((opened) => {
         if (!opened) {
-          const term = changeRequestTerm(
+          const term = changeRequestTermKind(
             (
               sourceControlClients.findByChangeRequestUrl(link.url) ??
               sourceControlClients.get(undefined)
@@ -187,11 +187,11 @@ export function useLinkedPullRequestActions(input: {
           );
           Dialog.alert(
             gt(
-              "{term, select, mergeRequest {Unable to open MR} changeRequest {Unable to open change request} other {Unable to open PR}}",
+              "{term, select, mr {Unable to open MR} cr {Unable to open change request} other {Unable to open PR}}",
               { term },
             ),
             gt(
-              "{term, select, mergeRequest {The merge request could not be opened.} changeRequest {The change request could not be opened.} other {The pull request could not be opened.}}",
+              "{term, select, mr {The merge request could not be opened.} cr {The change request could not be opened.} other {The pull request could not be opened.}}",
               { term },
             ),
           );

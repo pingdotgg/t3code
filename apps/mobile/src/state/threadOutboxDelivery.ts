@@ -1,5 +1,5 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { changeRequestTerm } from "../lib/changeRequestTerm";
+import { changeRequestTermKind } from "../lib/changeRequestTerm";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Dialog from "../components/ui/Dialog";
 import {
@@ -1138,7 +1138,7 @@ export function createThreadOutboxDelivery(): {
         return yield* restoreQueuedMessage(persistedMessage, failure.message);
       if (!AsyncResult.isSuccess(checkout)) return yield* retryDelivery;
       if (!checkout.value.worktreePath || !checkout.value.isOnPullRequestHead) {
-        const term = changeRequestTerm(
+        const term = changeRequestTermKind(
           (
             sourceControlClients.findByChangeRequestUrl(creation.pullRequestReference) ??
             sourceControlClients.get(undefined)
@@ -1148,7 +1148,7 @@ export function createThreadOutboxDelivery(): {
           persistedMessage,
           m(
             msg(
-              "{term, select, mergeRequest {The MR worktree has local changes and could not update to the MR head. Resolve them before trying again.} changeRequest {The change request worktree has local changes and could not update to the change request head. Resolve them before trying again.} other {The PR worktree has local changes and could not update to the PR head. Resolve them before trying again.}}",
+              "{term, select, mr {The MR worktree has local changes and could not update to the MR head. Resolve them before trying again.} cr {The change request worktree has local changes and could not update to the change request head. Resolve them before trying again.} other {The PR worktree has local changes and could not update to the PR head. Resolve them before trying again.}}",
               { term },
             ),
           ),

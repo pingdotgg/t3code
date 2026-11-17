@@ -59,6 +59,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useThreadShell } from "../../state/entities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { connectionTone } from "../connection/connectionTone";
+import { runtimeConnectionErrorText } from "../connection/environmentStatusText";
 import {
   useRemoteConnections,
   useRemoteConnectionStatus,
@@ -529,7 +530,9 @@ function ThreadRouteContent(
   const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
-  const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
+  const routeConnectionError = routeEnvironmentRuntime
+    ? runtimeConnectionErrorText(routeEnvironmentRuntime, m)
+    : null;
   const selectedThreadWithDraftSettings = selectedThread
     ? {
         ...selectedThread,
@@ -571,10 +574,13 @@ function ThreadRouteContent(
     environmentId: selectedThread?.environmentId ?? null,
     threadId: selectedThread?.id ?? null,
   });
-  const terminalMenuSessions = buildTerminalMenuSessions({
-    knownSessions: knownTerminalSessions ?? [],
-    workspaceRoot: selectedThreadProject?.workspaceRoot ?? null,
-  });
+  const terminalMenuSessions = buildTerminalMenuSessions(
+    {
+      knownSessions: knownTerminalSessions ?? [],
+      workspaceRoot: selectedThreadProject?.workspaceRoot ?? null,
+    },
+    m,
+  );
   const selectedThreadDetailWorktreePath = selectedThreadDetail?.thread.worktreePath ?? null;
   const handleReconnectEnvironment = () => {
     if (!environmentId) {

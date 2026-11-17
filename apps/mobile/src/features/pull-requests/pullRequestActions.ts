@@ -12,7 +12,7 @@ import { msg } from "gt-react-native";
 
 import type { AppSymbolName } from "../../components/ui/AppSymbol";
 import { m, type MessageResolver } from "../../i18n/messages";
-import { changeRequestTermKind } from "./changeRequestTerm";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import { PullRequestGlyph } from "./pullRequestGlyphs";
 
 type ActionDetail = Pick<

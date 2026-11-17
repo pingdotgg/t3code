@@ -9,7 +9,7 @@ import {
   sourceControlClients,
   type ChangeRequestTerminology,
 } from "@t3tools/client-runtime/source-control-clients";
-import { changeRequestTerm } from "../lib/changeRequestTerm";
+import { changeRequestTermKind } from "../lib/changeRequestTerm";
 
 import {
   legacyThreadPullRequestKey,
@@ -67,10 +67,10 @@ export function presentThreadPr(
     label: String(pr.number),
     accessibilityLabel: resolve(
       msg(
-        "{term, select, mergeRequest {#{number} merge request {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} changeRequest {#{number} change request {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {#{number} pull request {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}",
+        "{term, select, mr {#{number} merge request {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} cr {#{number} change request {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {#{number} pull request {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}",
         {
           number: String(pr.number),
-          term: changeRequestTerm(changeRequest),
+          term: changeRequestTermKind(changeRequest),
           state: prStateKey(isDraft ? "draft" : pr.state),
         },
       ),
@@ -119,10 +119,10 @@ export function presentThreadLinkedPullRequests(
       badge.kind === "stack"
         ? resolve(
             msg(
-              "{term, select, mergeRequest {{count, plural, one {{count} merge requests in stack, {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {{count} merge requests in stack, {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}} changeRequest {{count, plural, one {{count} change requests in stack, {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {{count} change requests in stack, {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}} other {{count, plural, one {{count} pull requests in stack, {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {{count} pull requests in stack, {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}}}",
+              "{term, select, mr {{count, plural, one {{count} merge requests in stack, {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {{count} merge requests in stack, {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}} cr {{count, plural, one {{count} change requests in stack, {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {{count} change requests in stack, {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}} other {{count, plural, one {{count} pull requests in stack, {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {{count} pull requests in stack, {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}}}",
               {
                 count: badge.layers,
-                term: changeRequestTerm(changeRequest),
+                term: changeRequestTermKind(changeRequest),
                 state: prStateKey(isDraft ? "draft" : state),
               },
             ),
@@ -130,20 +130,20 @@ export function presentThreadLinkedPullRequests(
         : linkedCount !== null
           ? resolve(
               msg(
-                "{term, select, mergeRequest {{count, plural, one {{count} linked merge requests, overall {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {{count} linked merge requests, overall {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}} changeRequest {{count, plural, one {{count} linked change requests, overall {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {{count} linked change requests, overall {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}} other {{count, plural, one {{count} linked pull requests, overall {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {{count} linked pull requests, overall {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}}}",
+                "{term, select, mr {{count, plural, one {{count} linked merge requests, overall {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {{count} linked merge requests, overall {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}} cr {{count, plural, one {{count} linked change requests, overall {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {{count} linked change requests, overall {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}} other {{count, plural, one {{count} linked pull requests, overall {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {{count} linked pull requests, overall {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}}}",
                 {
                   count: linkedCount,
-                  term: changeRequestTerm(changeRequest),
+                  term: changeRequestTermKind(changeRequest),
                   state: prStateKey(badge.state),
                 },
               ),
             )
           : resolve(
               msg(
-                "{term, select, mergeRequest {#{number} merge request {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} changeRequest {#{number} change request {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {#{number} pull request {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}",
+                "{term, select, mr {#{number} merge request {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} cr {#{number} change request {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}} other {#{number} pull request {state, select, pending {status pending} draft {draft} open {open} merged {merged} other {closed}}}}",
                 {
                   number: String(link.number),
-                  term: changeRequestTerm(changeRequest),
+                  term: changeRequestTermKind(changeRequest),
                   state: prStateKey(state === null ? null : isDraft ? "draft" : state),
                 },
               ),

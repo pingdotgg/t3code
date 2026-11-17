@@ -40,6 +40,9 @@ function connectionStatusLabel(
     {
       phase: environment.connectionState,
       error: environment.connectionError,
+      ...(environment.i18nConnectionError === undefined
+        ? {}
+        : { i18nError: environment.i18nConnectionError }),
       traceId: environment.connectionErrorTraceId,
     },
     resolve,

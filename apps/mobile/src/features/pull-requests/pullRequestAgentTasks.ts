@@ -7,7 +7,7 @@ import type { PullRequestDetail, PullRequestLinkedThreadsResult } from "@t3tools
 import { msg } from "gt-react-native";
 
 import { m, type MessageResolver } from "../../i18n/messages";
-import { changeRequestTermKind } from "./changeRequestTerm";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 
 export type PullRequestAgentTask = "ask" | "explain" | "feedback" | "conflicts" | "watch";
 

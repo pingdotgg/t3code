@@ -132,7 +132,7 @@ import { usePullRequestStack, type PullRequestStackState } from "./usePullReques
 import { usePullRequestEnvironmentFallback } from "./usePullRequestEnvironmentFallback";
 import { pullRequestFileJumpScope, subscribePullRequestFileJump } from "./pullRequestFileJump";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { changeRequestTermKind } from "./changeRequestTerm";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 
 function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityFilter) {
   const navigation = useNavigation();

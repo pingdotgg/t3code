@@ -14,7 +14,6 @@ import type {
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
 import {
-  disallowedProviderMessage,
   isManagedDriverAllowed,
   isProviderDriverKind,
   resolveProjectProviderInstanceEnabled,
@@ -26,6 +25,17 @@ import {
 import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
 import { resolveProvidersForCwd } from "@t3tools/client-runtime/providerSkills";
 
+/** The contracts `disallowedProviderMessage` English, as translatable sentences. */
+function disallowedProviderText(organization: string | undefined, label: string): string {
+  return organization === undefined
+    ? m(msg("Your organization policy does not allow the {label} provider.", { label }))
+    : m(
+        msg("{organization}''s policy does not allow the {label} provider.", {
+          organization,
+          label,
+        }),
+      );
+}
 export type ModelOption = {
   readonly key: string;
   readonly label: string;
@@ -223,7 +233,7 @@ export function describeUnavailableModelSelection(
       title: m(msg("Provider not allowed")),
       detail: m(
         msg("{message} Choose another model.", {
-          message: disallowedProviderMessage(config?.managedPolicy?.organization, label),
+          message: disallowedProviderText(config?.managedPolicy?.organization, label),
         }),
       ),
     };

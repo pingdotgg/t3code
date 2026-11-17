@@ -51,12 +51,12 @@ const isEnvironmentCloudApiError = Schema.is(
 const MANAGED_ENDPOINT_PROVIDER_KIND =
   "cloudflare_tunnel" satisfies RelayManagedEndpointProviderKind;
 
-function cloudEnvironmentLinkError(message: string) {
+function cloudEnvironmentLinkError(message: string, withDetail: (detail: string) => string) {
   return (cause: unknown) => {
     const environmentError = findEnvironmentCloudApiError(cause);
     const traceId = findErrorTraceId(cause);
     const detail = environmentError
-      ? `${message.replace(/[.:]$/, "")}: ${environmentError.message}`
+      ? withDetail(environmentError.message)
       : withDevCause(message, cause);
     return new CloudEnvironmentLinkError({
       message: detail,
@@ -92,13 +92,15 @@ function withDevCause(message: string, cause: unknown): string {
   return detail ? `${message} (${detail})` : message;
 }
 
-function decodedRelayClientError(message: string) {
+function decodedRelayClientError(url: string) {
   return (cause: ManagedRelay.ManagedRelayClientError) => {
     const failed = cause._tag === "ManagedRelayRequestFailedError" ? cause : undefined;
     const traceId = failed?.traceId;
     const detail = failed ? relayRequestFailureDetail(failed, m) : null;
     return new CloudEnvironmentLinkError({
-      message: detail ? `${message}: ${detail}` : message,
+      message: detail
+        ? m(msg("{url} failed: {detail}", { url, detail }))
+        : m(msg("{url} failed", { url })),
       cause,
       ...(traceId ? { traceId } : {}),
     });
@@ -175,7 +177,11 @@ export const linkEnvironmentToCloudWithPreference = Effect.fn(
   const relayClient = yield* ManagedRelay.ManagedRelayClient;
   const storage = yield* MobileStorage.MobileStorage;
   const deviceId = yield* storage.loadOrCreateAgentAwarenessDeviceId.pipe(
-    Effect.mapError(cloudEnvironmentLinkError(m(msg("Could not load the mobile device id.")))),
+    Effect.mapError(
+      cloudEnvironmentLinkError(m(msg("Could not load the mobile device id.")), (detail) =>
+        m(msg("Could not load the mobile device id: {detail}", { detail })),
+      ),
+    ),
   );
   const liveActivitiesEnabled = input.liveActivitiesEnabled;
   const challenge = yield* relayClient
@@ -209,7 +215,9 @@ export const linkEnvironmentToCloudWithPreference = Effect.fn(
     })
     .pipe(
       Effect.mapError(
-        cloudEnvironmentLinkError(m(msg("Could not obtain environment link proof."))),
+        cloudEnvironmentLinkError(m(msg("Could not obtain environment link proof.")), (detail) =>
+          m(msg("Could not obtain environment link proof: {detail}", { detail })),
+        ),
       ),
     );
   const link = yield* relayClient
@@ -246,7 +254,10 @@ export const linkEnvironmentToCloudWithPreference = Effect.fn(
     })
     .pipe(
       Effect.mapError(
-        cloudEnvironmentLinkError(m(msg("Could not configure environment relay access."))),
+        cloudEnvironmentLinkError(
+          m(msg("Could not configure environment relay access.")),
+          (detail) => m(msg("Could not configure environment relay access: {detail}", { detail })),
+        ),
       ),
     );
 });

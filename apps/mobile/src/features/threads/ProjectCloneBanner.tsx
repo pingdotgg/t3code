@@ -1,19 +1,12 @@
 import { Button } from "../../components/ui/Button";
 import { projectCloneDisplayName, type ProjectCloneSnapshot } from "@t3tools/contracts";
-import { msg, T, useGT, useMessages, Var } from "gt-react-native";
+import { projectCloneProgressSummary } from "@t3tools/client-runtime/contract-labels";
+import { T, useGT, useMessages, Var } from "gt-react-native";
 import { View } from "react-native";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { cn } from "../../lib/cn";
 import { AppText as Text } from "../../components/ui/AppText";
-
-const STAGE_LABELS = {
-  connecting: msg("Connecting", { $context: "git clone stage" }),
-  counting: msg("Counting objects"),
-  receiving: msg("Receiving objects"),
-  resolving: msg("Resolving deltas"),
-  checkout: msg("Checking out files"),
-} as const satisfies Record<ProjectCloneSnapshot["stage"], string>;
 
 export function ProjectCloneBanner(props: {
   readonly clone: ProjectCloneSnapshot;
@@ -36,15 +29,7 @@ export function ProjectCloneBanner(props: {
             </T>
           </Text>
           <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-            {[
-              m(STAGE_LABELS[clone.stage]),
-              clone.percent === null ? null : `${clone.percent}%`,
-              clone.stalled
-                ? gt("Stalled", { $context: "git clone made no progress" })
-                : clone.detail || null,
-            ]
-              .filter((part) => part !== null)
-              .join(" · ")}
+            {projectCloneProgressSummary(clone, m)}
           </Text>
         </View>
         <BannerAction label={gt("Cancel")} onPress={props.onCancel} />

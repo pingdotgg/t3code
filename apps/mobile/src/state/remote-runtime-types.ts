@@ -20,6 +20,7 @@ export interface ConnectedEnvironmentSummary {
   readonly isEnabled: boolean;
   readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
+  readonly i18nConnectionError?: MarkedText;
   readonly connectionErrorTraceId: string | null;
 }
 

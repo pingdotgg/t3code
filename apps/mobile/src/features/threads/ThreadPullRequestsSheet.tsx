@@ -1,7 +1,7 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { LegendList } from "@legendapp/list/react-native";
 import { useGT } from "gt-react-native";
-import { changeRequestTerm } from "../../lib/changeRequestTerm";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import { useMemo } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -43,9 +43,9 @@ export function ThreadPullRequestsSheet(
     runtime: selectedEnvironmentRuntime,
   });
   const rowInputs = { lines, actions };
-  const term = changeRequestTerm(actions.terminology);
+  const term = changeRequestTermKind(actions.terminology);
   const title = gt(
-    "{term, select, mergeRequest {Linked merge requests} changeRequest {Linked change requests} other {Linked pull requests}}",
+    "{term, select, mr {Linked merge requests} cr {Linked change requests} other {Linked pull requests}}",
     { term },
   );
 
@@ -85,7 +85,7 @@ export function ThreadPullRequestsSheet(
         ListEmptyComponent={
           <Text className="pt-6 text-center text-sm text-foreground-muted">
             {gt(
-              "{term, select, mergeRequest {No linked merge requests.} changeRequest {No linked change requests.} other {No linked pull requests.}}",
+              "{term, select, mr {No linked merge requests.} cr {No linked change requests.} other {No linked pull requests.}}",
               { term },
             )}
           </Text>
@@ -104,7 +104,7 @@ export function ThreadPullRequestsSheet(
             ? [
                 {
                   accessibilityLabel: gt(
-                    "{term, select, mergeRequest {Link merge request} changeRequest {Link change request} other {Link pull request}}",
+                    "{term, select, mr {Link merge request} cr {Link change request} other {Link pull request}}",
                     { term },
                   ),
                   icon: "plus",

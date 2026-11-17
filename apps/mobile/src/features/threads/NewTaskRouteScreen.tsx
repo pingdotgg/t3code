@@ -1,5 +1,4 @@
 import { isDraftThreadRoute } from "./thread-route-state";
-import { connectionErrorText } from "@t3tools/client-runtime/connection";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
@@ -24,6 +23,7 @@ import { useEffect, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { cn } from "../../lib/cn";
+import { runtimeConnectionErrorText } from "../connection/environmentStatusText";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { Button } from "../../components/ui/Button";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
@@ -95,15 +95,7 @@ function deriveProjectEmptyState(
           ? resolve(msg("Client not supported"))
           : resolve(msg("Environment unavailable")),
       detail:
-        connectionErrorText(
-          {
-            error: catalogState.connectionError,
-            ...(catalogState.i18nConnectionError === undefined
-              ? {}
-              : { i18nError: catalogState.i18nConnectionError }),
-          },
-          resolve,
-        ) ??
+        runtimeConnectionErrorText(catalogState, resolve) ??
         resolve(
           msg(
             "The saved environment is offline. Check the URL or start the environment, then retry.",

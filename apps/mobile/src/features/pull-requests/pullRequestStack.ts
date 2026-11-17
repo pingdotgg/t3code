@@ -3,7 +3,7 @@ import type { PullRequestRef, PullRequestStack, ThreadPullRequestLink } from "@t
 import { msg } from "gt-react-native";
 
 import { m, type MessageResolver } from "../../i18n/messages";
-import { changeRequestTermKind } from "./changeRequestTerm";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 
 export function pullRequestStackMerge(
   stack: PullRequestStack,

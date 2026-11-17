@@ -2,7 +2,6 @@ import { installPermissionUpdateNotice } from "./features/connection/permissionU
 import { installComposerAttachmentUploads } from "./state/composer-attachment-uploads";
 import { installThreadOutboxDelivery } from "./state/threadOutboxDelivery";
 import * as Linking from "expo-linking";
-import * as QuickActions from "expo-quick-actions";
 import * as SplashScreen from "expo-splash-screen";
 import { requireNativeModule } from "expo";
 import { useLocale } from "gt-react-native";
@@ -41,6 +40,7 @@ import {
 } from "./features/agent-awareness/notificationNavigation";
 import {
   installAppShortcuts,
+  republishAppShortcuts,
   recordAppShortcutNavigationState,
 } from "./features/shortcuts/appShortcutsRuntime";
 import {
@@ -51,8 +51,6 @@ import {
 import { RootStack, rootPathnameFromState, workspaceLocationFromState } from "./Stack";
 import { I18nProvider } from "./i18n/I18nProvider";
 import { DEFAULT_LOCALE } from "./i18n/locales";
-import { buildShortcutActions } from "./features/shortcuts/appShortcuts";
-import { loadRecentThreadShortcuts } from "./persistence/imperative";
 import { appAtomRegistry } from "./state/atom-registry";
 import { subscribeComposerDraftModelReconciliation } from "./state/use-composer-drafts";
 import { environmentThreadShells, threadEnvironment } from "./state/threads";
@@ -268,11 +266,7 @@ function QuickActionsLanguage() {
   useEffect(() => {
     if (Platform.OS !== "android" || publishedLocale.current === locale) return;
     publishedLocale.current = locale;
-    void loadRecentThreadShortcuts()
-      .then((recents) => QuickActions.setItems(buildShortcutActions(recents)))
-      .catch((error: unknown) => {
-        console.warn("[app-shortcuts] failed to update launcher shortcuts", error);
-      });
+    republishAppShortcuts();
   }, [locale]);
   return null;
 }

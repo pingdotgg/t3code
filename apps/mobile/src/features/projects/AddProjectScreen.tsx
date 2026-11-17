@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { errorDisplayMessage, type MarkedText } from "@t3tools/client-runtime/errors";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import * as Dialog from "../../components/ui/Dialog";
@@ -120,6 +120,7 @@ interface EnvironmentOption {
   readonly newProjectsRoot: string | null;
   readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
+  readonly i18nConnectionError?: MarkedText;
   readonly connectionErrorTraceId: string | null;
   readonly ghqCloneLayout: boolean;
   readonly offeredSourceControlProviders: OfferedSourceControlProviders | undefined;
@@ -204,7 +205,6 @@ function ListSection(props: { readonly children: ReactNode }) {
   );
 }
 
-/** Reads the presentation for the connection error's marked text, which runtime state drops. */
 function EnvironmentOptionRow(
   props: Omit<Parameters<typeof ListRow>[0], "subtitle"> & {
     readonly environment: EnvironmentOption;
@@ -212,9 +212,6 @@ function EnvironmentOptionRow(
 ) {
   const { environment, ...row } = props;
   const messages = useMessages();
-  const presented = useEnvironmentPresentation(environment.environmentId).presentation?.connection;
-  const i18nError =
-    presented?.error === environment.connectionError ? presented?.i18nError : undefined;
   return (
     <ListRow
       {...row}
@@ -225,7 +222,9 @@ function EnvironmentOptionRow(
               {
                 phase: environment.connectionState,
                 error: environment.connectionError,
-                ...(i18nError ? { i18nError } : {}),
+                ...(environment.i18nConnectionError === undefined
+                  ? {}
+                  : { i18nError: environment.i18nConnectionError }),
                 traceId: environment.connectionErrorTraceId,
               },
               messages,
@@ -466,6 +465,9 @@ function useEnvironmentOptions(
         newProjectsRoot: config?.newProjectsRoot ?? null,
         connectionState: runtime?.connectionState ?? "available",
         connectionError: runtime?.connectionError ?? null,
+        ...(runtime?.i18nConnectionError === undefined
+          ? {}
+          : { i18nConnectionError: runtime.i18nConnectionError }),
         connectionErrorTraceId: runtime?.connectionErrorTraceId ?? null,
         ghqCloneLayout: config?.settings.ghqCloneLayout === true,
         offeredSourceControlProviders: config?.settings.offeredSourceControlProviders,
