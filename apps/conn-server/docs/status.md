@@ -98,6 +98,20 @@ builder with a test that fails without the fix.
   remote environment) and the iOS dev client in a simulator (paired straight to the Conn
   Server) each ran a Haiku turn against the Conn Server on macOS.
 
+## Followed to Conn `ea8a2d2e79` (the 2026-11-17 sync)
+
+`tools/follow-conn.sh --capture`, then each red check followed as T3 does it:
+
+- Contract and generated tables regenerated (T3 server version 0.1.10).
+- Assets: `environment-theme-background` (#36680) is answered "not found": this server
+  publishes no environment themes, so no theme has a background.
+- Payload limits: T3's theme id pattern starts with a negative lookahead, which Rust's regex
+  lacks; a leading `^(?!X)` now compiles to a deny regex beside the allow regex.
+- Thread titles: title instructions replace the 3-8 word length rule and go under "Title
+  instructions from the user:" (#37565).
+- On macOS (mini) `cargo clippy` flags `use super::*` in `conn-preview/src/html.rs` tests,
+  whose only test is Linux-only; Linux CI is unaffected.
+
 ## Followed to Conn `a7755b30bd` (the 2026-11-16 sync)
 
 `tools/follow-conn.sh --capture`, then each red check followed as T3 does it:
