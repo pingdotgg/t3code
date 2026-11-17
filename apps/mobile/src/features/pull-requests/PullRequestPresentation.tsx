@@ -3,6 +3,7 @@ import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-co
 import type { PullRequestActor } from "@t3tools/contracts";
 import IconAlertTriangle from "@tabler/icons-react-native/IconAlertTriangle";
 import { Image } from "expo-image";
+import { useGT } from "gt-react-native";
 import { View } from "react-native";
 import { useResolveClassNames } from "uniwind";
 
@@ -15,11 +16,12 @@ export function PullRequestReadStatus(props: {
   readonly error: string | null;
   readonly terminology: ChangeRequestTerminology;
 }) {
+  const gt = useGT();
   return props.pending ? (
     <AppActivityIndicator className="my-12" colorClassName="accent-icon" />
   ) : props.error ? (
     <EmptyState
-      title={`Couldn't load this ${props.terminology.singular}`}
+      title={gt("Couldn't load this {term}", { term: props.terminology.singular })}
       detail={props.error}
       variant="plain"
     />

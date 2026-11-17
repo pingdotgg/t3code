@@ -1,5 +1,8 @@
 import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 import type { PullRequestDiffResult } from "@t3tools/contracts";
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 import {
   buildReviewParsedDiff,
   type ReviewParsedDiff,
@@ -27,6 +30,7 @@ export function getCachedPullRequestDiffPages(
   pages: readonly PullRequestDiffPage[],
   scope: string,
   terminology: ChangeRequestTerminology,
+  resolve: MessageResolver = m,
 ): ReviewParsedDiff {
   const first = pages[0];
   if (!first) return { kind: "empty" };
@@ -46,7 +50,7 @@ export function getCachedPullRequestDiffPages(
   )
     return previous.parsed;
   const cache = previous?.cache ?? new WeakMap<PullRequestDiffResult, ReviewParsedDiff>();
-  const parsed = combinePullRequestDiffPages(pages, cache, scope, terminology);
+  const parsed = combinePullRequestDiffPages(pages, cache, scope, terminology, resolve);
   snapshots.set(key, { pages, cache, parsed });
   return parsed;
 }
@@ -78,6 +82,7 @@ export function combinePullRequestDiffPages(
   cache: WeakMap<PullRequestDiffResult, ReviewParsedDiff>,
   scope: string,
   terminology: ChangeRequestTerminology,
+  resolve: MessageResolver = m,
 ): ReviewParsedDiff {
   const parsed = pages.map((page) => {
     const cached = cache.get(page.result);
@@ -118,7 +123,12 @@ export function combinePullRequestDiffPages(
     notice:
       pages.some((page) => page.result.truncated) ||
       parsed.some((page) => page.kind === "raw" || (page.kind === "files" && page.notice !== null))
-        ? `Some file contents are unavailable. Open the ${terminology.singular} on its provider to see the full changes.`
+        ? resolve(
+            msg(
+              "Some file contents are unavailable. Open the {term} on its provider to see the full changes.",
+              { term: terminology.singular },
+            ),
+          )
         : null,
   };
 }
@@ -138,15 +148,19 @@ function parseWithheldFile(result: PullRequestDiffResult, scope: string) {
   return file;
 }
 
-function withheldFileNotice(load: WithheldFileLoad | undefined, canLoad: boolean): string {
+function withheldFileNotice(
+  load: WithheldFileLoad | undefined,
+  canLoad: boolean,
+  resolve: MessageResolver,
+): string {
   if (load === undefined) {
     return canLoad
-      ? "Diff too large to display. Tap to load it."
-      : "Diff too large to display here.";
+      ? resolve(msg("Diff too large to display. Tap to load it."))
+      : resolve(msg("Diff too large to display here."));
   }
-  if (load.status === "loading") return "Loading diff…";
-  if (load.status === "error") return "Couldn't load this diff. Tap to try again.";
-  return "No text diff for this file.";
+  if (load.status === "loading") return resolve(msg("Loading diff…"));
+  if (load.status === "error") return resolve(msg("Couldn't load this diff. Tap to try again."));
+  return resolve(msg("No text diff for this file."));
 }
 
 /**
@@ -158,6 +172,7 @@ export function withWithheldFiles(
   loads: ReadonlyMap<string, WithheldFileLoad>,
   canLoad: boolean,
   scope: string,
+  resolve: MessageResolver = m,
 ): ReviewParsedDiff {
   if (parsed.kind !== "files" || !parsed.files.some((file) => file.withheld)) return parsed;
   const files = parsed.files.map((file): ReviewRenderableFile => {
@@ -170,7 +185,7 @@ export function withWithheldFiles(
     if (loaded !== null) return { ...loaded, id: file.id };
     return {
       ...file,
-      notice: withheldFileNotice(load, canLoad),
+      notice: withheldFileNotice(load, canLoad, resolve),
       noticeTone: "warning",
       noticeActionable: canLoad && (load === undefined || load.status === "error"),
     };

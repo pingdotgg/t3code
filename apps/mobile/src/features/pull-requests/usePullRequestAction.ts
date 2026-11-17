@@ -8,6 +8,7 @@ import type {
   PullRequestDetail,
   PullRequestUpdateMethod,
 } from "@t3tools/contracts";
+import { useGT, useMessages } from "gt-react-native";
 import { useRef, useState } from "react";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -17,6 +18,8 @@ import { usePullRequestPermissions } from "./usePullRequestPermissions";
 
 export function usePullRequestAction(params: PullRequestParams, pr: PullRequestDetail | null) {
   const target = pullRequestTarget(params);
+  const gt = useGT();
+  const m = useMessages();
   const permissions = usePullRequestPermissions(params, pr);
   const run = useAtomCommand(composerPullRequests.runAction, { reportFailure: false });
   const refreshActivity = useAtomRefresh(composerPullRequests.activity(target));
@@ -37,8 +40,10 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
     if (AsyncResult.isFailure(response)) {
       const cause = squashAtomCommandFailure(response);
       Dialog.alert(
-        `Couldn't update this ${sourceControlClients.get(pr?.provider).changeRequest.singular}`,
-        cause instanceof Error ? cause.message : "Try again.",
+        gt("Couldn't update this {term}", {
+          term: sourceControlClients.get(pr?.provider).changeRequest.singular,
+        }),
+        cause instanceof Error ? cause.message : gt("Try again."),
       );
       return;
     }
@@ -46,7 +51,7 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
   };
   const confirm = (action: PullRequestAction, title: string, message: string) =>
     Dialog.alert(title, message, [
-      { text: "Cancel", style: "cancel" },
+      { text: gt("Cancel"), style: "cancel" },
       {
         text: title,
         style: action === "close" || action === "delete-branch" ? "destructive" : "default",
@@ -57,8 +62,8 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
     const terminology = sourceControlClients.get(pr?.provider).changeRequest;
     confirm(
       "close",
-      pullRequestActionLabel("close", terminology),
-      `Close this ${terminology.singular} without merging its changes?`,
+      pullRequestActionLabel("close", terminology, m),
+      gt("Close this {term} without merging its changes?", { term: terminology.singular }),
     );
   };
   return { available, perform, confirm, confirmClose, busy };

@@ -6,6 +6,8 @@ import {
 } from "@t3tools/shared/composerContextReferences";
 
 import type { ReviewRenderableLineRow } from "./reviewModel";
+import { msg } from "gt-react-native";
+import { m } from "../../i18n/messages";
 
 export interface ReviewCommentTarget {
   readonly sectionId: string;
@@ -323,7 +325,8 @@ function parseReviewInlineComment(
   return {
     id: `review-comment:${index}:${sectionId}:${filePath}:${startIndex}:${endIndex}`,
     sectionId,
-    sectionTitle: attributes.sectionTitle?.trim() || "Review",
+    sectionTitle:
+      attributes.sectionTitle?.trim() || m(msg("Review", { $context: "review comment section" })),
     filePath,
     startIndex: Math.min(startIndex, endIndex),
     endIndex: Math.max(startIndex, endIndex),

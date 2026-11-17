@@ -10,8 +10,10 @@ import {
 } from "react";
 import { View, type NativeSyntheticEvent, type ViewProps } from "react-native";
 import { requireNativeView } from "expo";
+import { msg } from "gt-react-native";
 
 import { EmptyState } from "../../components/ui/EmptyState";
+import { m } from "../../i18n/messages";
 import { NativeViewResolutionError } from "../../native/nativeViewResolutionError";
 
 const NATIVE_REVIEW_DIFF_MODULE_NAME = "T3ReviewDiffSurface";
@@ -306,10 +308,10 @@ function NativeReviewDiffView(props: NativeReviewDiffViewProps) {
         ],
       },
       createElement(EmptyState, {
-        title: "Could not display diff",
-        detail: "Try loading the diff view again.",
+        title: m(msg("Could not display diff")),
+        detail: m(msg("Try loading the diff view again.")),
         variant: "plain",
-        actionLabel: "Retry diff",
+        actionLabel: m(msg("Retry diff")),
         onAction: () => {
           props.onDebug?.({
             nativeEvent: { message: "surface-retry" },

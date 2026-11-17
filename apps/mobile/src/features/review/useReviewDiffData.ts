@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react-native";
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 
@@ -22,6 +23,7 @@ import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Atom from "effect/reactivity/Atom";
 import { reviewEnvironment } from "../../state/review";
+import type { MessageResolver } from "../../i18n/messages";
 
 const EMPTY_INLINE_REVIEW_COMMENTS = Object.freeze([]);
 type ParsedFilePatch = AsyncResult.AsyncResult<
@@ -37,6 +39,7 @@ function getCachedReviewFile(
   stat: ReviewDiffFileStat,
   diffHash: string,
   patch: ParsedFilePatch | null | undefined,
+  resolve: MessageResolver,
 ): ReviewRenderableFile {
   const cached = patch && normalizedFiles.get(patch);
   if (cached && cached.stat === stat && cached.diffHash === diffHash) return cached.file;
@@ -69,15 +72,19 @@ function getCachedReviewFile(
     deletions: stat.deletions,
     ...(patch?._tag === "Success"
       ? patch.value.source.truncated
-        ? { notice: "File preview exceeds the size limit. Counts include all changes." }
+        ? {
+            notice: resolve(
+              msg("File preview exceeds the size limit. Counts include all changes."),
+            ),
+          }
         : loaded
           ? {}
-          : { notice: "Could not display file preview." }
+          : { notice: resolve(msg("Could not display file preview.")) }
       : {
           notice:
             patch?._tag === "Failure"
-              ? "Could not load diff. Select the file to retry."
-              : "Loading diff…",
+              ? resolve(msg("Could not load diff. Select the file to retry."))
+              : resolve(msg("Loading diff…")),
         }),
   };
   if (patch) normalizedFiles.set(patch, { stat, diffHash, file });
@@ -130,6 +137,7 @@ export function useReviewDiffData(input: {
   readonly draftContext: OrchestrationMessageContext | undefined;
 }) {
   const { draftMessage, draftContext, selectedSection, threadKey } = input;
+  const messages = useMessages();
   const selectedSectionId = selectedSection?.id ?? null;
   const source = selectedSection?.source;
   const lazySource = source?.truncated && source.files ? source : null;
@@ -209,9 +217,9 @@ export function useReviewDiffData(input: {
     [lazySource, scope, patches, queries, registry],
   );
   const parsedDiff = useMemo<ReviewParsedDiff>(() => {
-    if (!lazySource?.files) return applyReviewDiffMetadata(previewDiff, selectedSection);
+    if (!lazySource?.files) return applyReviewDiffMetadata(previewDiff, selectedSection, messages);
     const files = lazySource.files.map((stat, index) =>
-      getCachedReviewFile(stat, lazySource.diffHash, patches[index]),
+      getCachedReviewFile(stat, lazySource.diffHash, patches[index], messages),
     );
     return {
       kind: "files",
@@ -221,7 +229,7 @@ export function useReviewDiffData(input: {
       deletions: files.reduce((total, file) => total + file.deletions, 0),
       notice: null,
     };
-  }, [lazySource, previewDiff, selectedSection, patches]);
+  }, [lazySource, previewDiff, selectedSection, patches, messages]);
   const headerDiffSummary = useMemo(
     () => formatHeaderDiffSummary(parsedDiff, selectedSection?.files),
     [parsedDiff, selectedSection?.files],

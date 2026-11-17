@@ -9,6 +9,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import type { PullRequestDetail } from "@t3tools/contracts";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 import { AsyncResult } from "effect/reactivity";
+import { useGT } from "gt-react-native";
 import { useRef, useState } from "react";
 import * as Dialog from "../../components/ui/Dialog";
 import { composerPullRequests } from "../../state/pull-requests";
@@ -22,6 +23,7 @@ export function usePullRequestDescription(
   canEdit: boolean,
 ) {
   const target = pullRequestTarget(params);
+  const gt = useGT();
   const update = useAtomCommand(composerPullRequests.update, { reportFailure: false });
   const refreshDetail = useAtomRefresh(composerPullRequests.detail(target));
   const reading = useAtomValue(composerPullRequests.detailReadVersion(target));
@@ -42,8 +44,8 @@ export function usePullRequestDescription(
     if (AsyncResult.isFailure(response)) {
       const cause = squashAtomCommandFailure(response);
       Dialog.alert(
-        "Could not save the description",
-        cause instanceof Error ? cause.message : "Try again.",
+        gt("Could not save the description"),
+        cause instanceof Error ? cause.message : gt("Try again."),
       );
     }
     if (savesRunning.current === 0) refreshDetail();
