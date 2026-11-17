@@ -23,7 +23,7 @@ import {
   deriveProviderInstanceEntries,
   type ProviderInstanceEntry,
 } from "../providerInstances";
-import { useVisibleThreadShells } from "../state/entities";
+import { useDelegatedUnderParent, useVisibleThreadShells } from "../state/entities";
 import {
   useEnvironmentProviders,
   useEnvironments,
@@ -102,6 +102,7 @@ export function useCommandPaletteThreadItems(input: {
   const { activeThread, threadSearchQuery, projectIconByKey } = input;
   const navigate = useNavigate();
   const threads = useVisibleThreadShells();
+  const delegatedUnderParent = useDelegatedUnderParent();
   const { projectEnvironmentLocationById } = useEnvironmentLookups();
   const providerEntryByEnvironmentAndInstanceId = useProviderEntryByEnvironmentAndInstanceId();
   const messageSearch = useConnectedThreadSearch(threadSearchQuery);
@@ -113,6 +114,7 @@ export function useCommandPaletteThreadItems(input: {
   const { environments } = useEnvironments();
   const threadItems = buildThreadActionItems({
     threads,
+    delegatedUnderParent,
     ...(environments.length > 1
       ? {
           environmentLabelOf: (thread: (typeof threads)[number]) =>
