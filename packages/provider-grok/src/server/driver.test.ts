@@ -172,6 +172,43 @@ it.layer(layerTest)("GrokDriver", (it) => {
     });
   }
 
+  // `grok update` installs into `$GROK_HOME/bin`, so an instance GROK_HOME that does not own
+  // binaryPath would update a different copy and leave the verified binary outdated.
+  it.effect.skipIf(windowsHost)(
+    "runs grok update with the GROK_HOME that owns a script-installed binaryPath",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-home-" }),
+        );
+        const scriptHome = path.join(home, ".grok");
+        const binaryPath = path.join(scriptHome, "bin", "grok");
+        yield* fs.makeDirectory(path.dirname(binaryPath), { recursive: true });
+        yield* fs.writeFileString(`${binaryPath}-1.0.77`, "#!/bin/sh\n");
+        yield* fs.chmod(`${binaryPath}-1.0.77`, 0o755);
+        yield* fs.symlink("grok-1.0.77", binaryPath);
+
+        const instance = yield* GrokDriver.create({
+          instanceId: ProviderInstanceId.make("grok-separate-home"),
+          displayName: "Grok test",
+          enabled: false,
+          environment: [{ name: "GROK_HOME", value: path.join(home, ".grok-hub") }],
+          config: { ...GrokDriver.defaultConfig(), binaryPath },
+        });
+        const { update } = yield* instance.snapshot.resolveMaintenance();
+
+        expect(update).toEqual(
+          expect.objectContaining({
+            executable: binaryPath,
+            args: ["update"],
+            env: expect.objectContaining({ GROK_HOME: scriptHome }),
+          }),
+        );
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner)),
+  );
+
   it.effect("stays manual-only when the configured executable does not exist", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
