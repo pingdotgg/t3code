@@ -39,7 +39,7 @@ export function ComposerCommandMenuLayer(props: {
 
     const updatePosition = () => {
       const tray =
-        anchor.closest<HTMLElement>('[data-slot="composer-shell"]') ??
+        anchor.closest<HTMLElement>('[data-slot="composer-host"]') ??
         anchor.closest<HTMLElement>('[data-chat-composer-form="true"]') ??
         anchor;
       const rect = tray.getBoundingClientRect();
