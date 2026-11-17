@@ -18,7 +18,6 @@ import {
 } from "@t3tools/client-runtime/state/thread-search";
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
 import {
-  isListedThreadLineage,
   type ContextMenuItem,
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
@@ -583,41 +582,6 @@ export async function deleteSelectedThreadEntries<
   return { deletedThreadKeys, firstFailure };
 }
 
-export function isSidebarHiddenThread(thread: Pick<SidebarThreadSummary, "lineage">): boolean {
-  return !isListedThreadLineage(thread.lineage);
-}
-
-// Hidden local and remote tasks use their nearest visible ancestor's row.
-// A missing parent or cycle leaves the original route unchanged.
-export function resolveSidebarRowThreadRef(
-  ref: ScopedThreadRef,
-  threads: readonly Pick<
-    SidebarThreadSummary,
-    "id" | "environmentId" | "lineage" | "delegatedFrom"
-  >[],
-  delegatedUnderParent: ReadonlySet<string>,
-): ScopedThreadRef {
-  const visited = new Set<string>();
-  let current = ref;
-  while (true) {
-    const key = threadKey(current);
-    if (visited.has(key)) return ref;
-    visited.add(key);
-    const thread = threads.find(
-      (thread) => thread.id === current.threadId && thread.environmentId === current.environmentId,
-    );
-    if (thread === undefined) return ref;
-    if (!isShownUnderParent(current, thread.lineage, delegatedUnderParent)) return current;
-    const parent = isSidebarHiddenThread(thread)
-      ? thread.lineage.parentThreadId === null
-        ? null
-        : scopeThreadRef(current.environmentId, thread.lineage.parentThreadId)
-      : thread.delegatedFrom;
-    if (parent === null || parent === undefined) return ref;
-    current = scopeThreadRef(parent.environmentId, parent.threadId);
-  }
-}
-
 /** Offline environments the sidebar hides, and the open thread's row it lists anyway. */
 export interface SidebarHiddenEnvironments {
   readonly environmentIds: ReadonlySet<EnvironmentId>;
@@ -889,6 +853,9 @@ export function resolveThreadLastVisitedAt(
 
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   if (!thread.latestRun?.completedAt) return false;
+  if (thread.latestRun.status === "interrupted" || thread.latestRun.status === "cancelled") {
+    return false;
+  }
   const completedAt = Date.parse(thread.latestRun.completedAt);
   if (Number.isNaN(completedAt)) return false;
   if (!thread.lastVisitedAt) return false;

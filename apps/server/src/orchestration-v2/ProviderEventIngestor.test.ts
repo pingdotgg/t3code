@@ -1253,6 +1253,7 @@ layer("ProviderEventIngestorV2", (it) => {
           { key: "answered", responseCapability: { type: "live", providerSessionId } },
           { key: "other-turn", responseCapability: { type: "live", providerSessionId } },
           { key: "approval", responseCapability: { type: "live", providerSessionId } },
+          { key: "retained", responseCapability: { type: "live", providerSessionId } },
         ] as const;
         const fixtures = specs.map((spec, ordinal) => {
           const nodeId = NodeId.make(`${threadId}:${spec.key}`);
@@ -1327,6 +1328,7 @@ layer("ProviderEventIngestorV2", (it) => {
           }
         }
         yield* eventSink.write({ events: seedEvents });
+        const retainedRuntimeRequestIds = [RuntimeRequestId.make(`${threadId}:retained`)];
         const input = {
           providerSessionId,
           providerInstanceId: modelSelection.instanceId,
@@ -1342,10 +1344,12 @@ layer("ProviderEventIngestorV2", (it) => {
                   status: "completed" as const,
                   failure: null,
                   threadDisposition: "reusable" as const,
+                  retainedRuntimeRequestIds,
                 }
               : {
                   type: "provider_turn.updated" as const,
                   driver: CODEX_DRIVER,
+                  retainedRuntimeRequestIds,
                   providerTurn: {
                     id: providerTurnId,
                     providerThreadId,
@@ -1385,9 +1389,12 @@ layer("ProviderEventIngestorV2", (it) => {
           stored.filter((entry) => entry.event.type === "runtime-request.updated").length,
           2,
         );
-        assert.isEmpty(
-          (yield* projectionStore.getPendingNativeUserInputs(threadId, providerTurnId))
-            .runtimeRequests,
+        assert.deepEqual(
+          (yield* projectionStore.getPendingNativeUserInputs(
+            threadId,
+            providerTurnId,
+          )).runtimeRequests.map((request) => request.id),
+          retainedRuntimeRequestIds,
         );
         const replayed = yield* eventStore.read({ threadId }).pipe(Stream.runCollect);
         assert.equal(

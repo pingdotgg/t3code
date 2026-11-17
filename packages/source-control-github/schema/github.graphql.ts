@@ -96,6 +96,17 @@ export const IssueState = Schema.Literals(["CLOSED", "OPEN"])
 export type IssueState = typeof IssueState.Type
 
 /**
+ * The possible state reasons of an issue.
+ *
+ * - `COMPLETED`: An issue that has been closed as completed
+ * - `DUPLICATE`: An issue that has been closed as a duplicate.
+ * - `NOT_PLANNED`: An issue that has been closed as not planned
+ * - `REOPENED`: An issue that has been reopened
+ */
+export const IssueStateReason = Schema.Literals(["COMPLETED", "DUPLICATE", "NOT_PLANNED", "REOPENED"])
+export type IssueStateReason = typeof IssueStateReason.Type
+
+/**
  * Detailed status information about a pull request merge.
  *
  * - `BEHIND`: The head ref is out of date.
@@ -298,10 +309,26 @@ export interface UpdateRefsInput extends Schema.Struct.Type<typeof UpdateRefsInp
 export declare namespace Typename {
   /** Every possible `__typename` of interface `Actor`. */
   export type Actor = "Bot" | "EnterpriseUserAccount" | "Mannequin" | "Organization" | "User"
+  /** Every possible `__typename` of union `Assignee`. */
+  export type Assignee = "Bot" | "Mannequin" | "Organization" | "User"
   /** Every possible `__typename` of interface `GitObject`. */
   export type GitObject = "Blob" | "Commit" | "Tag" | "Tree"
   /** Every possible `__typename` of union `IssueOrPullRequest`. */
   export type IssueOrPullRequest = "Issue" | "PullRequest"
+  /** Every possible `__typename` of union `IssueTimelineItems`. */
+  export type IssueTimelineItems =
+    | "AddedToProjectEvent" | "AddedToProjectV2Event" | "AssignedEvent" | "BlockedByAddedEvent"
+    | "BlockedByRemovedEvent" | "BlockingAddedEvent" | "BlockingRemovedEvent" | "ClosedEvent" | "CommentDeletedEvent"
+    | "ConnectedEvent" | "ConvertedFromDraftEvent" | "ConvertedNoteToIssueEvent" | "ConvertedToDiscussionEvent"
+    | "CrossReferencedEvent" | "DemilestonedEvent" | "DisconnectedEvent" | "IssueComment" | "IssueCommentPinnedEvent"
+    | "IssueCommentUnpinnedEvent" | "IssueFieldAddedEvent" | "IssueFieldChangedEvent" | "IssueFieldRemovedEvent"
+    | "IssueTypeAddedEvent" | "IssueTypeChangedEvent" | "IssueTypeRemovedEvent" | "LabeledEvent" | "LockedEvent"
+    | "MarkedAsDuplicateEvent" | "MentionedEvent" | "MilestonedEvent" | "MovedColumnsInProjectEvent"
+    | "ParentIssueAddedEvent" | "ParentIssueRemovedEvent" | "PinnedEvent" | "ProjectV2ItemStatusChangedEvent"
+    | "ReferencedEvent" | "RemovedFromProjectEvent" | "RemovedFromProjectV2Event" | "RenamedTitleEvent"
+    | "ReopenedEvent" | "SubIssueAddedEvent" | "SubIssueRemovedEvent" | "SubscribedEvent" | "TransferredEvent"
+    | "UnassignedEvent" | "UnlabeledEvent" | "UnlockedEvent" | "UnmarkedAsDuplicateEvent" | "UnpinnedEvent"
+    | "UnsubscribedEvent" | "UserBlockedEvent"
   /** Every possible `__typename` of interface `Node`. */
   export type Node =
     | "AddedToMergeQueueEvent" | "AddedToProjectEvent" | "AddedToProjectV2Event" | "AddedToStackEvent" | "App"
@@ -403,6 +430,8 @@ export declare namespace Typename {
     | "PullRequestReview" | "PullRequestReviewComment" | "Release"
   /** Every possible `__typename` of union `Reactor`. */
   export type Reactor = "Bot" | "Mannequin" | "Organization" | "User"
+  /** Every possible `__typename` of union `ReferencedSubject`. */
+  export type ReferencedSubject = "Issue" | "PullRequest"
   /** Every possible `__typename` of interface `RepositoryOwner`. */
   export type RepositoryOwner = "Organization" | "User"
   /** Every possible `__typename` of union `RequestedReviewer`. */

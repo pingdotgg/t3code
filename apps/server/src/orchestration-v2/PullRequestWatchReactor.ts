@@ -137,8 +137,9 @@ interface WatchLife {
   readonly reads: number;
 }
 
-const lifeKey = ({ thread, link, watch }: WatchTarget) =>
-  `${thread.id} ${threadPullRequestKeyOf(link)} ${watch.startedAt}`;
+const lifeKeyOf = (threadId: string, link: ThreadPullRequestLink, watch: ThreadPullRequestWatch) =>
+  `${threadId} ${threadPullRequestKeyOf(link)} ${watch.startedAt}`;
+const lifeKey = ({ thread, link, watch }: WatchTarget) => lifeKeyOf(thread.id, link, watch);
 
 const minutes = (ms: number) => Math.max(0, Math.round(ms / 60_000));
 
@@ -866,6 +867,20 @@ export const make = Effect.gen(function* () {
         );
       }
     });
+    // A watch's first read is its baseline, so it reads now: CI that finishes before the next
+    // sweep would otherwise be taken as old news and never wake the thread.
+    yield* forkParked(
+      Stream.runForEach(engine.streamDomainEvents, (event) => {
+        if (event.type !== "thread.pull-request-synced") return Effect.void;
+        const unread = visibleThreadPullRequests(event.payload.pullRequests ?? []).flatMap(
+          (link) =>
+            link.watch === undefined || lives.has(lifeKeyOf(event.threadId, link, link.watch))
+              ? []
+              : [threadPullRequestKeyOf(link)],
+        );
+        return Effect.forEach(new Set(unread), readOnChange, { discard: true });
+      }).pipe(Effect.catchCause(logFailure("pull request watch event stream failed", {}))),
+    );
     yield* forkParked(
       sweep.pipe(
         Effect.andThen(follow),

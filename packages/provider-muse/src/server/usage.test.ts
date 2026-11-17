@@ -224,7 +224,12 @@ describe("Muse history discovery", () => {
         expect(create).toHaveBeenCalledWith({
           binaryPath: path.join("/test-home", "bin/custom-muse"),
           environment: providerProcessEnvironment(
-            { PATH: "/host/bin", XDG_DATA_HOME: xdg ?? "/host/data", MUSE_NO_AUTO_UPDATE: "1" },
+            {
+              PATH: "/host/bin",
+              XDG_DATA_HOME: xdg ?? "/host/data",
+              MUSE_NO_AUTO_UPDATE: "1",
+              MISE_OFFLINE: "1",
+            },
             yield* HostProcess.Platform,
           ),
           readOnly: true,

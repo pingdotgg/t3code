@@ -59,7 +59,7 @@ export class GitHubNotSignedInError extends Schema.TaggedError<GitHubNotSignedIn
   override get message(): string {
     return this.account === undefined
       ? `No GitHub credential for ${this.host}: run \`gh auth login --hostname ${this.host}\`.`
-      : `No GitHub credential for ${this.account} on ${this.host}: run \`gh auth login --hostname ${this.host}\` for that account or pick another in Settings → Source Control.`;
+      : `No GitHub credential for ${this.account} on ${this.host}: run \`gh auth login --hostname ${this.host}\` for that account or pick another in Settings → Source control & issues.`;
   }
 }
 
@@ -68,7 +68,7 @@ export class GitHubHostDisabledError extends Schema.TaggedError<GitHubHostDisabl
   { host: Schema.String },
 ) {
   override get message(): string {
-    return `GitHub host ${this.host} is turned off in Settings → Source Control.`;
+    return `GitHub host ${this.host} is turned off in Settings → Source control & issues.`;
   }
 }
 

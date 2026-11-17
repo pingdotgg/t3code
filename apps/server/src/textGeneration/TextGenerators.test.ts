@@ -197,10 +197,13 @@ it.effect("checks unsaved settings, keeping the saved key behind a redaction mar
     expect((yield* list("draft", { apiKey: "typed-key" })).models).toEqual([
       { id: "model-a", name: "model-a" },
     ]);
+    yield* list(ID, { apiKey: SECRET_REDACTED, baseUrl: "https://api.test/v1" });
+    // The saved key goes only to the endpoint it was saved for.
     yield* list(ID, { apiKey: SECRET_REDACTED });
     expect(seen).toEqual([
       { url: "https://new.test/v1/models", auth: "Bearer typed-key" },
-      { url: "https://new.test/v1/models", auth: "Bearer saved-key" },
+      { url: "https://api.test/v1/models", auth: "Bearer saved-key" },
+      { url: "https://new.test/v1/models", auth: null },
     ]);
 
     // Listing alone proves nothing about the key on some APIs; a test asks the model itself.

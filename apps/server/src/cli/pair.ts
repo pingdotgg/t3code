@@ -144,6 +144,15 @@ export class TailscaleServeFailedError extends Schema.TaggedError<TailscaleServe
   }
 }
 
+export class TailscaleOperatorRequiredError extends Schema.TaggedError<TailscaleOperatorRequiredError>()(
+  "TailscaleOperatorRequiredError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Tailscale refused the Serve config because this user is not its operator. Run `sudo tailscale set --operator=$USER` once, then run this command again.";
+  }
+}
+
 export class TailscaleServeTargetRefusedError extends Schema.TaggedError<TailscaleServeTargetRefusedError>()(
   "TailscaleServeTargetRefusedError",
   { localHost: Schema.String },
@@ -426,6 +435,7 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
     }
     // The probe above fails whenever this host cannot reach its own MagicDNS name, so the Serve
     // config, not the probe, decides whether the port is free.
+    const platform = yield* HostProcess.Platform;
     const holder = yield* readTailscaleServeRootHolder(input.servePort, {
       host: (localTarget.localHost ?? "127.0.0.1").replace(/^\[|\]$/gu, ""),
       port: localTarget.localPort,
@@ -438,13 +448,18 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
       servePort: input.servePort,
       ...(localTarget.localHost !== undefined ? { localHost: localTarget.localHost } : {}),
     }).pipe(
-      Effect.mapError((cause) =>
-        cause._tag === "TailscaleCommandExitError" &&
-        cause.stderrDiagnostic === "unsupported-target" &&
-        localTarget.localHost !== undefined
-          ? new TailscaleServeTargetRefusedError({ localHost: localTarget.localHost })
-          : new TailscaleServeFailedError({ servePort: input.servePort, cause }),
-      ),
+      Effect.mapError((cause) => {
+        const diagnostic =
+          cause._tag === "TailscaleCommandExitError" ? cause.stderrDiagnostic : undefined;
+        if (diagnostic === "unsupported-target" && localTarget.localHost !== undefined) {
+          return new TailscaleServeTargetRefusedError({ localHost: localTarget.localHost });
+        }
+        // Only Linux tailscaled has an operator; elsewhere a denial needs another fix.
+        if (diagnostic === "permission-denied" && platform === "linux") {
+          return new TailscaleOperatorRequiredError({ cause });
+        }
+        return new TailscaleServeFailedError({ servePort: input.servePort, cause });
+      }),
     );
     notes.push(
       `Tailscale Serve now maps ${baseUrl} to this server and persists across restarts. Remove it with \`tailscale serve --https=${String(input.servePort)} --set-path=/ off\`.`,

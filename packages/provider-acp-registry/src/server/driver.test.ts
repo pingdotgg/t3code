@@ -9,6 +9,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import { toCustomModelSetting } from "@t3tools/shared/model";
 import { AcpRegistrySettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -102,6 +103,28 @@ function providerWithModels(
 }
 
 describe("acpRegistrySnapshotReadiness", () => {
+  it("keeps the custom model display name and options saved by the Settings editor", () => {
+    const fastMode = { id: "fast", label: "Fast mode", type: "boolean" } as const;
+    const snapshot = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      settings: decodeSettings({
+        agentId: "test-agent",
+        customModels: [
+          toCustomModelSetting({
+            slug: "gateway/my-model",
+            name: "My model",
+            capabilities: { optionDescriptors: [fastMode] },
+          }),
+        ],
+      }),
+      checkedAt: "2026-08-13T10:00:00.000Z",
+      inspection: { status: "ready", agentId: "test-agent", version: "1.0.0", distribution: "npx" },
+    });
+    const model = snapshot.models.find((entry) => entry.slug === "gateway/my-model");
+    expect(model?.name).toBe("My model");
+    expect(model?.capabilities?.optionDescriptors).toEqual([fastMode]);
+  });
+
   it("shows the version reported by a local ACP agent", () => {
     const probe = acpRegistryProbeResult(identity.instanceId, {
       sessionId: "test-session",
@@ -860,6 +883,27 @@ const driverLayer = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
 );
 
 it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) => {
+  it.effect("creates without inspecting the agent, which may fetch the registry", () =>
+    Effect.gen(function* () {
+      const instance = yield* AcpRegistryDriver.create({
+        instanceId: identity.instanceId,
+        displayName: identity.displayName,
+        enabled: true,
+        environment: [],
+        config: decodeSettings({ agentId: "test-agent" }),
+      }).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+          ...catalogWithInspection({ status: "unconfigured" }),
+          inspect: () => Effect.die("inspected during creation"),
+        }),
+      );
+      expect(yield* instance.snapshot.getSnapshot).toMatchObject({
+        installed: false,
+        message: "Checking ACP Registry agent readiness...",
+      });
+    }),
+  );
+
   it.effect("drops cached and session-reported models when its caches are invalidated", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

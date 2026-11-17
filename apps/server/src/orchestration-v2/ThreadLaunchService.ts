@@ -19,6 +19,7 @@ import {
   type RunId,
   type RuntimeMode,
   type ScheduledTaskId,
+  TextGenerationError,
   ThreadId,
 } from "@t3tools/contracts";
 import { delegationProviderConstraints } from "../provider/orchestrationTargets.ts";
@@ -60,6 +61,9 @@ import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as WorktreeBranches from "./WorktreeBranches.ts";
+
+// The agent waits for its branch name; a rate-limited provider would hold it for minutes.
+const BRANCH_NAME_TIMEOUT = "20 seconds";
 
 export type ThreadLaunchWorkspaceStrategy =
   | { readonly type: "root"; readonly branch?: string | undefined }
@@ -174,6 +178,19 @@ export class ThreadLaunchBaseRefError extends Schema.TaggedError<ThreadLaunchBas
   }
 }
 
+export class ThreadLaunchBranchExistsError extends Schema.TaggedError<ThreadLaunchBranchExistsError>()(
+  "ThreadLaunchBranchExistsError",
+  {
+    projectId: ProjectId,
+    projectTitle: Schema.String,
+    branch: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Branch "${this.branch}" already exists in project "${this.projectTitle}".`;
+  }
+}
+
 export class ThreadLaunchBranchConflictError extends Schema.TaggedError<ThreadLaunchBranchConflictError>()(
   "ThreadLaunchBranchConflictError",
   {
@@ -218,7 +235,10 @@ export class ThreadLaunchService extends Context.Service<
       },
     ) => Effect.Effect<
       void,
-      ThreadLaunchBaseRefError | ThreadLaunchBranchConflictError | ThreadLaunchNotRepositoryError
+      | ThreadLaunchBaseRefError
+      | ThreadLaunchBranchExistsError
+      | ThreadLaunchBranchConflictError
+      | ThreadLaunchNotRepositoryError
     >;
     /** True only when the project's folder is known not to be a Git repository. */
     readonly isNonGitProject: (projectId: ProjectId) => Effect.Effect<boolean>;
@@ -393,8 +413,7 @@ const make = Effect.gen(function* () {
     if (project === undefined) return;
     const cwd = project.workspaceRoot;
     const { baseRef, branch } = strategy;
-    const checksBranch = branch !== undefined && !isTemporaryWorktreeBranch(branch);
-    // Errors keep their order below: missing repository, then base ref, then branch conflict.
+    // Errors keep their order below: missing repository, then base ref, then branch exists or conflicts.
     const [repositoryRoot, hasBaseCommit, localBranches] = yield* Effect.all(
       [
         git.repositoryRoot(cwd).pipe(Effect.orElseSucceed(() => undefined)),
@@ -405,7 +424,7 @@ const make = Effect.gen(function* () {
             git
               .hasCommit({ cwd, refName: baseRef === "-" ? "@{-1}" : baseRef })
               .pipe(Effect.orElseSucceed(() => true)),
-        checksBranch
+        branch !== undefined
           ? git
               .listLocalBranchNames(cwd)
               .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))
@@ -442,8 +461,15 @@ const make = Effect.gen(function* () {
         workspaceRoot: project.workspaceRoot,
         baseRef,
       });
+    if (branch === undefined) return;
+    if (localBranches.includes(branch))
+      return yield* new ThreadLaunchBranchExistsError({
+        projectId: project.id,
+        projectTitle: project.title,
+        branch,
+      });
     // Provisioning flattens temporary names that collide, so only explicit names are refused.
-    if (!checksBranch) return;
+    if (isTemporaryWorktreeBranch(branch)) return;
     const conflictingBranch = localBranches.find(
       (existing) => existing.startsWith(`${branch}/`) || branch.startsWith(`${existing}/`),
     );
@@ -592,6 +618,16 @@ const make = Effect.gen(function* () {
               projectId: input.projectId,
             })
             .pipe(
+              Effect.timeoutOrElse({
+                duration: BRANCH_NAME_TIMEOUT,
+                orElse: () =>
+                  Effect.fail(
+                    new TextGenerationError({
+                      operation: "generateBranchName",
+                      detail: `Timed out after ${BRANCH_NAME_TIMEOUT}.`,
+                    }),
+                  ),
+              }),
               Effect.map((result) => ({
                 branch: result.branch,
                 exactName: settings.branchNamingMode === "custom",
@@ -924,10 +960,12 @@ const make = Effect.gen(function* () {
         if (setup.completion) {
           const awaitCompletion = Effect.gen(function* () {
             const completion = yield* setup.completion!;
-            yield* setupTracker.stage(threadId, "setup-script", {
-              status: completion.exitCode === 0 ? "done" : "failed",
-              detail: `exited with ${completion.exitCode ?? "no exit code"}`,
-            });
+            yield* setupTracker.stageStatus(
+              threadId,
+              "setup-script",
+              completion.exitCode === 0 ? "done" : "failed",
+              `exited with ${completion.exitCode ?? "no exit code"}`,
+            );
             if (completion.exitCode !== 0 && !setup.async)
               return yield* mapError(
                 input,
@@ -936,14 +974,19 @@ const make = Effect.gen(function* () {
               )(`Setup script exited with ${completion.exitCode ?? "no exit code"}.`);
           });
           if (setup.async) {
-            awaitAsyncSetup = awaitCompletion.pipe(
+            // Record the result when the script ends, not after the agent starts.
+            const asyncSetup = yield* awaitCompletion.pipe(
               Effect.catchCause((cause) =>
-                setupTracker.stage(threadId, "setup-script", {
-                  status: "failed",
-                  detail: failureDetail(Cause.squash(cause)),
-                }),
+                setupTracker.stageStatus(
+                  threadId,
+                  "setup-script",
+                  "failed",
+                  failureDetail(Cause.squash(cause)),
+                ),
               ),
+              Effect.forkChild,
             );
+            awaitAsyncSetup = Fiber.join(asyncSetup);
           } else {
             yield* awaitCompletion;
           }
@@ -1296,7 +1339,10 @@ const make = Effect.gen(function* () {
         const threadId =
           claimed.storedEvents.find((stored) => stored.event.type.startsWith("thread."))?.event
             .threadId ?? candidateThreadId;
-        if (project.id !== input.projectId) {
+        const committedThread = yield* threads
+          .getThreadShell(threadId)
+          .pipe(Effect.mapError(mapError(input, "resolve-project", threadId)));
+        if (committedThread?.projectId !== input.projectId) {
           return yield* mapError(input, "resolve-project", threadId)("Project identity changed.");
         }
         let runId: RunId | null = null;
@@ -1379,7 +1425,8 @@ const make = Effect.gen(function* () {
             // retry's own strategy, whose defaults may resolve differently.
             const accepted = current?.runs.find((run) => run.id === runId)?.workspacePreparation;
             const preparationStrategy: ThreadLaunchWorkspaceStrategy =
-              Option.isSome(launchReceipt) && accepted?.type === "worktree"
+              Option.isSome(launchReceipt) &&
+              (accepted?.type === "worktree" || accepted?.type === "existing_worktree")
                 ? accepted
                 : Option.isSome(launchReceipt) &&
                     workspaceStrategy.type === "root" &&

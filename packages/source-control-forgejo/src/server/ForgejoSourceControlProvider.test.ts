@@ -1129,6 +1129,101 @@ it.effect("reads only the changed front of a Gitea pull request list it has read
   );
 });
 
+it.effect(
+  "finds a branch's pull request on Gitea when a page of the full list exceeds 1 MB",
+  () => {
+    const repo = { full_name: "maria/project", owner: { login: "maria" } };
+    const pull = (number: number, head: string, body: string) => ({
+      number,
+      title: `PR ${number}`,
+      body,
+      html_url: `http://forgejo.local:3000/maria/project/pulls/${number}`,
+      state: "closed",
+      merged: true,
+      updated_at: `2026-10-12T00:00:0${number}Z`,
+      base: { ref: "main", label: "main", sha: "base", repo },
+      head: { ref: head, label: head, sha: "h", repo },
+    });
+    const pulls = [pull(2, "renovate", "x".repeat(999_993)), pull(1, "feature", "small")];
+    return Effect.gen(function* () {
+      const provider = yield* ForgejoSourceControlProvider.make;
+      const found = yield* provider.listChangeRequests({
+        cwd: "/repo",
+        context: {
+          provider: {
+            kind: SourceControlProviderKind.make("forgejo"),
+            name: "Forgejo",
+            baseUrl: "http://forgejo.local:3000",
+          },
+          remoteName: "origin",
+          remoteUrl: "http://forgejo.local:3000/maria/project.git",
+        },
+        headSelector: "feature",
+        state: "all",
+      });
+      assert.deepStrictEqual(
+        found.map((item) => item.number),
+        [1],
+      );
+    }).pipe(
+      Effect.provide(
+        ForgejoCli.layer.pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(
+              Layer.succeed(
+                FileSystem.FileSystem,
+                FileSystem.makeNoop({ exists: () => Effect.succeed(false) }),
+              ),
+              Layer.succeed(
+                HttpClient.HttpClient,
+                HttpClient.make(() => {
+                  throw new Error("tea must handle its own HTTP request");
+                }),
+              ),
+              TestSourceControlHost.layer({
+                process: {
+                  run: (input) => {
+                    if (input.args[0] === "login")
+                      return Effect.succeed(
+                        processOutput(
+                          encodeJson([
+                            {
+                              name: "work",
+                              url: "http://forgejo.local:3000",
+                              ssh_host: "forgejo.local",
+                              user: "maria",
+                              default: "true",
+                            },
+                          ]),
+                        ),
+                      );
+                    const url = new URL(input.args.at(-1) ?? "");
+                    const number = /\/pulls\/(\d+)$/.exec(url.pathname)?.[1];
+                    // Gitea ignores `head=`, so every list page holds every pull request.
+                    const stdout = encodeJson(
+                      number
+                        ? pulls.find((item) => item.number === Number(number))
+                        : url.searchParams.get("page") === "1"
+                          ? pulls
+                          : [],
+                    );
+                    // VcsProcess truncates at 1,000,000 bytes unless a caller raises the cap.
+                    const maxBytes = input.maxOutputBytes ?? 1_000_000;
+                    return Effect.succeed({
+                      ...processOutput(stdout.slice(0, maxBytes), { stderr: "HTTP/1.1 200 OK\n" }),
+                      stdoutTruncated: stdout.length > maxBytes,
+                    });
+                  },
+                },
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+  },
+);
+
 it.effect("finds a merged Forgejo pull request whose head branch was deleted", () =>
   Effect.gen(function* () {
     const provider = yield* ForgejoSourceControlProvider.make;

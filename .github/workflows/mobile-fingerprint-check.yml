@@ -19,12 +19,15 @@ on:
     types: [opened, synchronize, reopened, edited]
 
 concurrency:
-  group: mobile-fingerprint-check-${{ github.event.pull_request.number }}
+  # A title or body edit gets its own group, so it cannot cancel the PR's real
+  # run and leave a cancelled check on the head commit.
+  group: mobile-fingerprint-check-${{ github.event.action == 'edited' && !github.event.changes.base && format('edit-{0}', github.run_id) || github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
   fingerprint:
     name: Native fingerprint diff
+    if: github.event.action != 'edited' || github.event.changes.base
     runs-on: ubuntu-24.04
     permissions:
       contents: read
