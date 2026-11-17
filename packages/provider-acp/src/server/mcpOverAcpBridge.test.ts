@@ -168,57 +168,6 @@ describe("AcpMcpOverAcpBridge", () => {
     }),
   );
 
-  it.effect("finishes runtime cleanup when the MCP endpoint never answers DELETE", () =>
-    Effect.gen(function* () {
-      const deleteStarted = Promise.withResolvers<void>();
-      const deleteResponse = Promise.withResolvers<Response>();
-      const bridge = yield* makeAcpMcpOverAcpBridge({
-        endpoint: "http://127.0.0.1:1/mcp",
-        authorization: "Bearer bridge-test",
-        allocateConnectionId: Effect.succeed("connection-1"),
-        fetchImplementation: (_url, init) => {
-          if (init?.method === "DELETE") {
-            deleteStarted.resolve();
-            return deleteResponse.promise;
-          }
-          const request = JSON.parse(String(init?.body)) as { readonly id: number };
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                jsonrpc: "2.0",
-                id: request.id,
-                result: { protocolVersion: "2025-06-18" },
-              }),
-              {
-                headers: { "content-type": "application/json", "mcp-session-id": "session-42" },
-              },
-            ),
-          );
-        },
-      });
-      const { connectionId } = yield* bridge.connect({ serverId: "t3-code" });
-      yield* bridge.message({ connectionId, method: "initialize" });
-      const scope = yield* Scope.make();
-      yield* Scope.addFinalizer(scope, bridge.dispose);
-      const closing = yield* Scope.close(scope, Exit.void).pipe(Effect.forkChild);
-      yield* Effect.gen(function* () {
-        yield* Effect.promise(() => deleteStarted.promise);
-        yield* TestClock.adjust("1 minute");
-        expect(
-          closing.pollUnsafe(),
-          "Runtime scope must close despite an unanswered MCP DELETE",
-        ).toBeDefined();
-      }).pipe(
-        Effect.ensuring(
-          Effect.gen(function* () {
-            deleteResponse.resolve(new Response(null, { status: 204 }));
-            yield* Fiber.join(closing);
-          }),
-        ),
-      );
-    }),
-  );
-
   it.effect("closes all MCP sessions within one disconnect timeout during runtime cleanup", () =>
     Effect.gen(function* () {
       const deleteStarted = Promise.withResolvers<void>();
