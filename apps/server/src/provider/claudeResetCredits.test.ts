@@ -249,6 +249,29 @@ effectIt.layer(NodeServices.layer)("consumeClaudeResetCredit", (it) => {
     }),
   );
 
+  it.effect("confirms only an answer for the claim's organization", () =>
+    Effect.gen(function* () {
+      const answerFor = (organization: string) =>
+        HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json(
+                { result: "reset" },
+                { headers: { "anthropic-organization-id": organization } },
+              ),
+            ),
+          ),
+        );
+      expect(yield* consume(answerFor("org-1"))).toMatchObject({ success: "reset" });
+      const other = yield* consume(answerFor("org-2"));
+      expect(other).toMatchObject({ _tag: "Failure", failure: { reason: "unconfirmed" } });
+      if (other._tag === "Failure") {
+        expect(ClaudeResetCredits.isSettledClaudeResetCreditFailure(other.failure)).toBe(false);
+      }
+    }),
+  );
+
   it.effect("refuses malformed ids without sending anything", () =>
     Effect.gen(function* () {
       for (const ids of [
