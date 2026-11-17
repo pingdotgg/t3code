@@ -153,7 +153,10 @@ export function insertRoute(
   const rank = connectionRouteRank(route);
   const index = routes.findIndex((existing) => {
     const existingRank = connectionRouteRank(existing);
-    return existingRank > rank || (aheadOfSameKind && existingRank === rank && connectionRouteKind(existing) === kind);
+    return (
+      existingRank > rank ||
+      (aheadOfSameKind && existingRank === rank && connectionRouteKind(existing) === kind)
+    );
   });
   return index === -1
     ? [...routes, route]
