@@ -316,21 +316,37 @@ export const make = Effect.gen(function* () {
         ),
         Effect.flatMap((response) => {
           const decoded = decodeCreatedIssueJson(response.body);
-          return Result.isSuccess(decoded)
-            ? Effect.succeed({
-                key: String(decoded.success.number),
-                displayKey: `#${decoded.success.number}`,
-                url: decoded.success.url,
-              })
-            : Effect.fail(
-                new IssueTrackerError({
-                  tracker: KIND,
-                  operation: "create",
-                  reason: "failed",
-                  detail: "GitHub returned an unreadable create response.",
-                  cause: decoded.failure,
-                }),
-              );
+          if (Result.isFailure(decoded)) {
+            return Effect.fail(
+              new IssueTrackerError({
+                tracker: KIND,
+                operation: "create",
+                reason: "failed",
+                detail: "GitHub returned an unreadable create response.",
+                cause: decoded.failure,
+              }),
+            );
+          }
+          // Without triage access GitHub creates the issue without its labels and assignees.
+          const applied = decodeIssueMetadataJson(response.body);
+          if (
+            Result.isSuccess(applied) &&
+            ((input.labels !== undefined && !sameNames(input.labels, applied.success.labels)) ||
+              (input.assignees !== undefined &&
+                !sameNames(input.assignees, applied.success.assignees)))
+          ) {
+            return Effect.fail(
+              invalid(
+                "create",
+                `GitHub created ${decoded.success.url} without the labels or assignees. Setting them needs triage access to the repository.`,
+              ),
+            );
+          }
+          return Effect.succeed({
+            key: String(decoded.success.number),
+            displayKey: `#${decoded.success.number}`,
+            url: decoded.success.url,
+          });
         }),
       ),
 
