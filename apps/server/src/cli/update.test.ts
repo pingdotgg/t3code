@@ -642,7 +642,7 @@ it.layer(NodeServices.layer)("t3 update closing hint", (it) => {
       const platform = yield* HostProcess.Platform;
       if (platform !== "win32") yield* fs.symlink(npmGlobal, path.join(prefix, "bin/t3"));
       const realPrefix = yield* fs.realPath(prefix);
-      // Cached runtimes avoid network downloads; the runner below validates their version.
+      // Cached runtimes avoid network downloads; the runner below answers their database preflight.
       const entryFor = (version: string) =>
         path.join(baseDir, "runtime/versions", version, platform === "win32" ? "t3.exe" : "t3");
       for (const version of ["9.9.9", packageJson.version]) {
@@ -673,10 +673,17 @@ it.layer(NodeServices.layer)("t3 update closing hint", (it) => {
         const runner = ProcessRunner.ProcessRunner.of({
           run: (input) => {
             assert.equal(input.command, entryFor(version));
-            assert.deepStrictEqual(input.args, ["--version"]);
-            return unrelatedLsof
-              .run(input)
-              .pipe(Effect.map((result) => ({ ...result, stdout: `t3 v${version}\n` })));
+            assert.equal(input.args?.[0], "__service-preflight");
+            return unrelatedLsof.run(input).pipe(
+              Effect.map((result) => ({
+                ...result,
+                stdout: JSON.stringify({
+                  status: "ready",
+                  version,
+                  launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+                }),
+              })),
+            );
           },
         });
         return runUpdate({
