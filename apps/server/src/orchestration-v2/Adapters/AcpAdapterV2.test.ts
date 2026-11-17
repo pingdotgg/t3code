@@ -4155,6 +4155,15 @@ describe("AcpAdapterV2", () => {
         patterns: ["t3 code"],
         results: [{ url: "https://t3.codes" }, { url: "https://github.com/pingdotgg/t3code" }],
       });
+      assert.deepEqual(webItem("antigravity-web-search", "completed"), {
+        title: "Web search: top story on Hacker News today",
+        patterns: ["top story on Hacker News today"],
+        results: [
+          {
+            url: "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGYNzfz",
+          },
+        ],
+      });
       assert.deepEqual(webItem("grok-web-fetch", "completed")?.results, [
         { url: "https://t3.codes", snippet: "T3 Code page" },
       ]);

@@ -1315,6 +1315,18 @@ const program = Effect.gen(function* () {
             rawOutput: { commandLine: "cat probe.txt", exitCode: 0, combinedOutput: "after\n" },
           },
           {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "antigravity-web-search",
+            title: "Web search",
+            kind: "search",
+            status: "completed",
+            rawInput: { query: "top story on Hacker News today" },
+            rawOutput: {
+              output:
+                "Sources:\n[1] https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGYNzfz",
+            },
+          },
+          {
             sessionUpdate: "compaction_update",
             compactionId: "compact-1",
             status: "in_progress",

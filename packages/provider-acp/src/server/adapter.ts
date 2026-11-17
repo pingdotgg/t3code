@@ -1286,12 +1286,27 @@ function pathFromToolCall(toolCall: AcpToolCallState): string | undefined {
 function acpBackendWebSearch(
   rawInput: Record<string, unknown> | undefined,
   rawOutput: Record<string, unknown> | undefined,
+  title?: string | null,
 ):
   | { readonly query: string | undefined; readonly results: OrchestrationV2WebSearchResult[] }
   | undefined {
   const variant = typeof rawInput?.variant === "string" ? rawInput.variant.toLowerCase() : "";
   const action = unknownRecord(rawOutput?.action);
-  if (variant !== "xsearch" && variant !== "websearch" && action?.type !== "search") {
+  const normalizedTitle = title?.toLowerCase().trim() ?? "";
+  const isWebSearchTitle =
+    normalizedTitle === "web search" ||
+    normalizedTitle === "web_search" ||
+    normalizedTitle === "search_web" ||
+    normalizedTitle === "search the web" ||
+    normalizedTitle.startsWith("web search") ||
+    normalizedTitle.startsWith("search the web");
+  const isWebSearchVariant =
+    variant === "xsearch" ||
+    variant === "websearch" ||
+    variant === "web_search" ||
+    variant === "search_web" ||
+    variant === "web-search";
+  if (!isWebSearchVariant && action?.type !== "search" && !isWebSearchTitle) {
     return undefined;
   }
   let args: Record<string, unknown> | undefined;
@@ -1306,13 +1321,32 @@ function acpBackendWebSearch(
     .filter(([, value]) => typeof value === "string" || typeof value === "number")
     .map(([key, value]) => `${key}: ${value}`)
     .join(", ");
-  const query = [action?.query, args?.query, argsText]
+  const rawInputQuery =
+    typeof rawInput?.query === "string"
+      ? rawInput.query
+      : typeof rawInput?.search_query === "string"
+        ? rawInput.search_query
+        : typeof rawInput?.q === "string"
+          ? rawInput.q
+          : undefined;
+  const query = [action?.query, args?.query, rawInputQuery, argsText]
     .find((value): value is string => typeof value === "string" && value.trim().length > 0)
     ?.trim();
   const urls = new Set<string>();
   for (const source of Array.isArray(action?.sources) ? action.sources : []) {
     const url = unknownRecord(source)?.url;
     if (typeof url === "string" && url.trim().length > 0) urls.add(url.trim());
+  }
+  const outputText =
+    typeof rawOutput === "string"
+      ? rawOutput
+      : typeof rawOutput?.output === "string"
+        ? rawOutput.output
+        : undefined;
+  if (urls.size === 0 && outputText !== undefined) {
+    for (const match of outputText.matchAll(/https?:\/\/[^\s)\]]+/gu)) {
+      urls.add(match[0]);
+    }
   }
   return { query, results: [...urls].map((url) => ({ url })) };
 }
@@ -4320,7 +4354,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 };
                 break;
               case "search": {
-                const backendSearch = acpBackendWebSearch(rawInputRecord, rawOutputRecord);
+                const backendSearch = acpBackendWebSearch(
+                  rawInputRecord,
+                  rawOutputRecord,
+                  toolCall.data.title ?? title ?? toolCall.title,
+                );
                 if (backendSearch !== undefined) {
                   const label = nonEmptyText(toolCall.data.title, title ?? "Web search").replace(
                     /:\s*$/u,
@@ -4342,6 +4380,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   };
                   break;
                 }
+                const isPathFromQueryOrPattern =
+                  path !== undefined &&
+                  (rawInputRecord?.query === path || rawInputRecord?.pattern === path);
                 turnItem = {
                   ...base,
                   title:
@@ -4352,7 +4393,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     }) ?? title,
                   type: "file_search",
                   ...(path === undefined ? {} : { pattern: path }),
-                  ...(path === undefined
+                  ...(path === undefined || isPathFromQueryOrPattern
                     ? {}
                     : {
                         results: [
