@@ -83,6 +83,7 @@ import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart } from "./UsageProviderChart";
 import { SpeedPremium, UsageModelDialog } from "./UsageModelDialog";
 import { UsageShareBar } from "./UsageShareBar";
+import { UsageWeeklyThreads } from "./UsageWeeklyThreads";
 import {
   costTypeSegments,
   modelShare,
@@ -843,6 +844,8 @@ function UsageOverview({
           )}
         </section>
       ) : null}
+
+      <UsageWeeklyThreads environments={selectedEnvironments} hiddenProviders={hiddenProviders} />
 
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-3">

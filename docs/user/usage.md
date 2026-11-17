@@ -57,6 +57,19 @@ saved totals first, then updates them when Cursor's API responds.
 If recent work is missing or a new model shows no cost, refresh to rescan session history and
 update model pricing.
 
+## See which threads used your weekly limit
+
+Under Cost or Tokens, **Top threads this week** lists the threads that used the most of each
+account's current weekly limit. Select a thread to open it. Providers only report a weekly
+percentage for the whole account, so each figure is an estimate: the thread's share of that
+account's cost since the week started, times the week's used percentage. Use outside T3, such as
+the CLI, still counts toward the total, so the threads may add up to less than the weekly
+percentage. When no usage could be priced, the share uses tokens instead.
+
+Claude and Codex accounts are covered when their limits report a weekly reset time. Accounts that
+share one history directory but report different weekly windows are left out, and so are hub
+accounts, which have no local history.
+
 ## Set custom model prices
 
 On web or desktop, open the environment dropdown on **Usage**, then choose **Model prices** to add,

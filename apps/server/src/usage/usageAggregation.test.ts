@@ -1,6 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
+import { ThreadId } from "@t3tools/contracts";
+
+import {
+  attributeWeeklyThreads,
+  resolveModelAliases,
+  UsageAggregator,
+} from "./usageAggregation.ts";
 import type { RateTable } from "./usagePricing.ts";
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 
@@ -311,6 +317,69 @@ describe("resolveModelAliases", () => {
       ["preview", "example-model"],
       ["shared", "example-model"],
       ["validAfterLoops", "example-model"],
+    ]);
+  });
+});
+
+describe("attributeWeeklyThreads", () => {
+  it("splits the weekly percent by cost share inside the window, counting unmapped sessions", () => {
+    const startMs = Date.parse("2026-08-01T00:00:00.000Z");
+    const endMs = Date.parse("2026-08-08T00:00:00.000Z");
+    const at = (iso: string) => Date.parse(iso);
+    const threads = new Map([
+      ["session-a", { threadId: ThreadId.make("thread-a"), title: "A" }],
+      ["session-b", { threadId: ThreadId.make("thread-a"), title: "A" }],
+      ["session-c", { threadId: ThreadId.make("thread-c"), title: "C" }],
+    ]);
+    const rows = attributeWeeklyThreads(
+      [
+        {
+          provider: "claude",
+          sourcePath: "/home/.claude/projects",
+          startMs,
+          endMs,
+          usedPercent: 40,
+          resetsAt: "2026-08-08T00:00:00.000Z",
+          records: [
+            // Start is inclusive; two sessions of one thread add up.
+            record({ sessionId: "session-a", timestampMs: startMs, reportedCostUsd: 1 }),
+            record({
+              sessionId: "session-b",
+              timestampMs: at("2026-08-03T00:00:00Z"),
+              reportedCostUsd: 2,
+            }),
+            record({
+              sessionId: "session-c",
+              timestampMs: at("2026-08-04T00:00:00Z"),
+              reportedCostUsd: 1,
+            }),
+            // CLI use outside T3 stays in the denominator.
+            record({
+              sessionId: "cli",
+              timestampMs: at("2026-08-05T00:00:00Z"),
+              reportedCostUsd: 4,
+            }),
+            // Before the window and at its exclusive end: ignored on both sides.
+            record({ sessionId: "session-c", timestampMs: startMs - 1, reportedCostUsd: 100 }),
+            record({ sessionId: "session-c", timestampMs: endMs, reportedCostUsd: 100 }),
+          ],
+          threadForSession: (sessionId) => threads.get(sessionId),
+        },
+      ],
+      (usage) => usage.reportedCostUsd ?? 0,
+      20,
+    );
+
+    expect(
+      rows.map(({ threadId, limitPercent, costUsd, basis }) => ({
+        threadId,
+        limitPercent,
+        costUsd,
+        basis,
+      })),
+    ).toEqual([
+      { threadId: "thread-a", limitPercent: 15, costUsd: 3, basis: "cost" },
+      { threadId: "thread-c", limitPercent: 5, costUsd: 1, basis: "cost" },
     ]);
   });
 });

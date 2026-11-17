@@ -42,6 +42,8 @@ import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { NativeWorkspaceTabActivityContext } from "../../native/v5-workspace-context";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { SettingsSection } from "../settings/components/SettingsSection";
+import { RowPressable } from "../../components/ui/RowPressable";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { UsageDailyChart } from "./UsageDailyChart";
 import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
 import { useRefreshLimits } from "./UsageLimitsSection";
@@ -357,6 +359,7 @@ function UsageScreen(props: {
                         />
                         <CostSection merged={merged} wide={wide} />
                         <ModelsSection merged={merged} metric={metric} columns={wide ? 2 : 1} />
+                        <WeeklyThreadsSection environments={selectedEnvironments} />
                       </UsageUpdating>
                     </>
                   )}
@@ -805,6 +808,61 @@ function ModelsSection(props: {
           </View>
         ))}
       </View>
+    </SettingsSection>
+  );
+}
+
+/** Threads ranked by their estimated share of each account's current weekly limit. */
+function WeeklyThreadsSection(props: { readonly environments: readonly EnvironmentUsageStatus[] }) {
+  const colors = useProviderColors();
+  const selectDetail = useSelectWorkspaceDetail();
+  // Hermes lacks toSorted.
+  const rows = props.environments
+    .flatMap(({ environmentId, summary }) =>
+      (summary?.weeklyThreads ?? []).map((thread) => ({ environmentId, ...thread })),
+    )
+    .sort((a, b) => b.limitPercent - a.limitPercent);
+  if (rows.length === 0) return null;
+
+  return (
+    <SettingsSection
+      title="Top threads this week"
+      footer="Estimated from each thread's share of the account's usage since its weekly limit last reset."
+    >
+      {rows.map((row, index) => (
+        <RowPressable
+          key={`${row.environmentId}:${row.sourcePath}:${row.threadId}`}
+          accessibilityRole="button"
+          accessibilityLabel={`${row.title}, about ${formatPercent(row.limitPercent / 100)} of ${providerLabel(row.provider)} weekly limit`}
+          onPress={() =>
+            selectDetail({
+              name: "Thread",
+              params: { environmentId: String(row.environmentId), threadId: String(row.threadId) },
+            })
+          }
+          className={cn(index > 0 && "border-t border-border-subtle")}
+        >
+          <View className="flex-row items-center gap-3 p-4">
+            <View
+              className="size-2.5 shrink-0 rounded-full"
+              style={{ backgroundColor: colors[row.provider] }}
+            />
+            <View className="min-w-0 flex-1 gap-0.5">
+              <Text className="text-base text-foreground" numberOfLines={1}>
+                {row.title || "Untitled thread"}
+              </Text>
+              <Text className="text-sm text-foreground-muted">
+                {`${providerLabel(row.provider)} · ${
+                  row.basis === "cost" ? formatUsd(row.costUsd) : "unpriced"
+                } · ${formatTokens(row.tokens)} tokens`}
+              </Text>
+            </View>
+            <Text className="text-base tabular-nums text-foreground">
+              ~{formatPercent(row.limitPercent / 100)}
+            </Text>
+          </View>
+        </RowPressable>
+      ))}
     </SettingsSection>
   );
 }

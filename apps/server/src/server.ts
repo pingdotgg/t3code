@@ -209,6 +209,7 @@ import { MuseUsageHome } from "@t3tools/provider-muse/server";
 import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as UsageWeeklyContext from "./usage/UsageWeeklyContext.ts";
 import * as CbmIndexService from "./optimizer/CbmIndexService.ts";
 import * as OptimizerProbeService from "./optimizer/OptimizerProbeService.ts";
 import * as SessionOptimizerAttachmentsLive from "./optimizer/SessionOptimizerAttachments.ts";
@@ -703,6 +704,8 @@ const layerServerRestart = Layer.effect(
 
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
+  // UsageService sits below the provider registry, so it looks this up per read instead.
+  UsageWeeklyContext.layer,
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
   layerIdleCompactionWorker,
