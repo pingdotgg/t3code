@@ -1,5 +1,6 @@
 import type { ProjectReadFileResult } from "@t3tools/contracts";
 import { EnvironmentId } from "@t3tools/contracts";
+import { fileContentRevision } from "@t3tools/shared/fileContentRevision";
 import { AsyncResult } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -26,7 +27,11 @@ import {
   clearProjectFileQueryData,
   confirmProjectFileQueryData,
   getOptimisticProjectFileQueryData,
+  getProjectFileBaseRevision,
   getUnsavedProjectFileQueryData,
+  isProjectFileConflicted,
+  keepProjectFileDraft,
+  markProjectFileConflict,
   resolveProjectFileQueryData,
   setProjectFileQueryData,
 } from "./projectFilesQueryState";
@@ -165,6 +170,10 @@ describe("project files queries", () => {
     expect(
       confirmProjectFileQueryData(environmentId, "/repo", "convex.json", '{"nodeVersion":"220"}'),
     ).toBe(false);
+    // The newer draft's next write must expect what the older write left on the host.
+    expect(getProjectFileBaseRevision(environmentId, "/repo", "convex.json")).toBe(
+      fileContentRevision('{"nodeVersion":"220"}'),
+    );
 
     expect(resolveProjectFileQueryData(environmentId, "/repo", "convex.json", initial)).toEqual({
       relativePath: "convex.json",
@@ -176,5 +185,26 @@ describe("project files queries", () => {
     expect(
       confirmProjectFileQueryData(environmentId, "/repo", "convex.json", '{"nodeVersion":"22"}'),
     ).toBe(true);
+    setProjectFileQueryData(environmentId, "/repo", "convex.json", '{"nodeVersion":"24"}');
+    expect(getProjectFileBaseRevision(environmentId, "/repo", "convex.json")).toBe(
+      fileContentRevision('{"nodeVersion":"22"}'),
+    );
+  });
+
+  it("holds a conflicted draft until the user keeps it", () => {
+    vi.stubGlobal("window", {});
+    setProjectFileQueryData(environmentId, "/repo", "convex.json", "offline draft");
+    confirmProjectFileQueryData(environmentId, "/repo", "convex.json", "saved before");
+    markProjectFileConflict(environmentId, "/repo", "convex.json");
+    setProjectFileQueryData(environmentId, "/repo", "convex.json", "offline draft, more");
+
+    expect(isProjectFileConflicted(environmentId, "/repo", "convex.json")).toBe(true);
+    expect(getProjectFileBaseRevision(environmentId, "/repo", "convex.json")).toBe(
+      fileContentRevision("saved before"),
+    );
+
+    expect(keepProjectFileDraft(environmentId, "/repo", "convex.json")).toBe("offline draft, more");
+    expect(isProjectFileConflicted(environmentId, "/repo", "convex.json")).toBe(false);
+    expect(getProjectFileBaseRevision(environmentId, "/repo", "convex.json")).toBeUndefined();
   });
 });

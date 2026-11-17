@@ -20,6 +20,7 @@ import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { fileContentRevision } from "@t3tools/shared/fileContentRevision";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { vi } from "vite-plus/test";
 
@@ -725,6 +726,37 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           ),
         ),
       ),
+    );
+
+    it.effect("refuses a write based on contents the file no longer has", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const filePath = path.join(cwd, "notes.md");
+        yield* writeTextFile(cwd, "notes.md", "\uFEFFSaved edit A.\n");
+        const read = yield* workspaceFileSystem.readFile({ cwd, relativePath: "notes.md" });
+        const expectedRevision = fileContentRevision(read.contents);
+        yield* writeTextFile(cwd, "notes.md", "\uFEFFSaved edit A.\nPEER-CORRECTION-LINE.\n");
+
+        const error = yield* workspaceFileSystem
+          .writeFile({ cwd, relativePath: "notes.md", contents: "OFFLINE.\n", expectedRevision })
+          .pipe(Effect.flip);
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileChangedError);
+        expect(yield* fileSystem.readFileString(filePath)).toBe(
+          "Saved edit A.\nPEER-CORRECTION-LINE.\n",
+        );
+
+        const current = yield* workspaceFileSystem.readFile({ cwd, relativePath: "notes.md" });
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "notes.md",
+          contents: "Merged.\n",
+          expectedRevision: fileContentRevision(current.contents),
+        });
+        expect(yield* fileSystem.readFileString(filePath)).toBe("Merged.\n");
+      }),
     );
 
     it.effect("rejects writes outside the workspace root", () =>

@@ -6,6 +6,7 @@ import {
   type ProjectReadFileResult,
   T3_PROJECT_FILE_NAME,
 } from "@t3tools/contracts";
+import { fileContentRevision } from "@t3tools/shared/fileContentRevision";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -52,6 +53,7 @@ interface ProjectFileQueryState extends ProjectQueryState<ProjectReadFileResult>
   readonly readError: ProjectReadFileError | null;
   readonly isNotFile: boolean;
   readonly isFile: boolean;
+  readonly conflict: boolean;
 }
 
 function getProjectEntriesQueryAtom(
@@ -90,8 +92,17 @@ export function setProjectFileQueryData(
   if (!unsavedFileMounts.has(atom)) {
     unsavedFileMounts.set(atom, appAtomRegistry.mount(atom));
   }
+  const current = appAtomRegistry.get(atom);
   appAtomRegistry.set(atom, {
     saved: false,
+    ...(current === null
+      ? baseRevisionOf(readProjectFileData(environmentId, cwd, relativePath))
+      : current.saved
+        ? { baseRevision: fileContentRevision(current.data.contents) }
+        : {
+            ...(current.baseRevision !== undefined ? { baseRevision: current.baseRevision } : {}),
+            ...(current.conflict ? { conflict: true } : {}),
+          }),
     data: {
       relativePath,
       contents,
@@ -99,6 +110,21 @@ export function setProjectFileQueryData(
       truncated: false,
     },
   });
+}
+
+function readProjectFileData(
+  environmentId: EnvironmentId,
+  cwd: string,
+  relativePath: string,
+): ProjectReadFileResult | undefined {
+  const result = appAtomRegistry.get(getProjectFileQueryAtom(environmentId, cwd, relativePath));
+  return Option.getOrUndefined(AsyncResult.value(result));
+}
+
+function baseRevisionOf(data: ProjectReadFileResult | undefined): { baseRevision?: string } {
+  return data && data.exists !== false && !data.truncated
+    ? { baseRevision: fileContentRevision(data.contents) }
+    : {};
 }
 
 export function getOptimisticProjectFileQueryData(
@@ -116,8 +142,7 @@ export function getProjectFileContents(
 ): string | undefined {
   const optimistic = getOptimisticProjectFileQueryData(environmentId, cwd, relativePath);
   if (optimistic) return optimistic.contents;
-  const result = appAtomRegistry.get(getProjectFileQueryAtom(environmentId, cwd, relativePath));
-  const data = Option.getOrUndefined(AsyncResult.value(result));
+  const data = readProjectFileData(environmentId, cwd, relativePath);
   return data?.exists === false ? undefined : data?.contents;
 }
 
@@ -130,6 +155,50 @@ export function getUnsavedProjectFileQueryData(
   return !optimistic?.saved ? (optimistic?.data ?? null) : null;
 }
 
+export function getProjectFileBaseRevision(
+  environmentId: EnvironmentId,
+  cwd: string,
+  relativePath: string,
+): string | undefined {
+  const optimistic = appAtomRegistry.get(optimisticFileAtom(environmentId, cwd, relativePath));
+  return optimistic?.saved === false ? optimistic.baseRevision : undefined;
+}
+
+export function isProjectFileConflicted(
+  environmentId: EnvironmentId,
+  cwd: string,
+  relativePath: string,
+): boolean {
+  const optimistic = appAtomRegistry.get(optimisticFileAtom(environmentId, cwd, relativePath));
+  return optimistic?.saved === false && optimistic.conflict === true;
+}
+
+/** Holds the draft back from autosave until the user keeps or discards it. */
+export function markProjectFileConflict(
+  environmentId: EnvironmentId,
+  cwd: string,
+  relativePath: string,
+): void {
+  const atom = optimisticFileAtom(environmentId, cwd, relativePath);
+  const optimistic = appAtomRegistry.get(atom);
+  if (optimistic?.saved !== false) return;
+  appAtomRegistry.set(atom, { ...optimistic, conflict: true });
+  appAtomRegistry.refresh(getProjectFileQueryAtom(environmentId, cwd, relativePath));
+}
+
+/** The next write replaces whatever the host has. */
+export function keepProjectFileDraft(
+  environmentId: EnvironmentId,
+  cwd: string,
+  relativePath: string,
+): string | null {
+  const atom = optimisticFileAtom(environmentId, cwd, relativePath);
+  const optimistic = appAtomRegistry.get(atom);
+  if (optimistic?.saved !== false) return null;
+  appAtomRegistry.set(atom, { saved: false, data: optimistic.data });
+  return optimistic.data.contents;
+}
+
 export function confirmProjectFileQueryData(
   environmentId: EnvironmentId,
   cwd: string,
@@ -138,7 +207,13 @@ export function confirmProjectFileQueryData(
 ): boolean {
   const atom = optimisticFileAtom(environmentId, cwd, relativePath);
   const optimisticFile = appAtomRegistry.get(atom);
-  if (optimisticFile?.data.contents !== contents) return false;
+  if (optimisticFile?.data.contents !== contents) {
+    // Newer edits are now based on what this write put on the host.
+    if (optimisticFile?.saved === false && !optimisticFile.conflict) {
+      appAtomRegistry.set(atom, { ...optimisticFile, baseRevision: fileContentRevision(contents) });
+    }
+    return false;
+  }
 
   const queryAtom = getProjectFileQueryAtom(environmentId, cwd, relativePath);
   appAtomRegistry.set(atom, {
@@ -169,6 +244,15 @@ export function clearProjectFileQueryData(
   const atom = optimisticFileAtom(environmentId, cwd, relativePath);
   appAtomRegistry.set(atom, null);
   releaseUnsavedFile(atom);
+}
+
+export function discardProjectFileDraft(
+  environmentId: EnvironmentId,
+  cwd: string,
+  relativePath: string,
+): void {
+  clearProjectFileQueryData(environmentId, cwd, relativePath);
+  appAtomRegistry.refresh(getProjectFileQueryAtom(environmentId, cwd, relativePath));
 }
 
 function failureCause<A>(result: AsyncResult.AsyncResult<A, unknown>): unknown {
@@ -280,6 +364,7 @@ export function useProjectFileQuery(
     isNotFile,
     // A folder error overrides cached contents retained across failed refreshes.
     isFile: !isNotFile && (data !== null || readError?.failure === "binary_file"),
+    conflict: canReadFiles && optimisticFile?.saved === false && optimisticFile.conflict === true,
     refresh,
   };
 }

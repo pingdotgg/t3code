@@ -40,7 +40,13 @@ export type {
 export type OptimisticProjectFile = {
   readonly data: ProjectReadFileResult;
 } & (
-  | { readonly saved: false }
+  | {
+      readonly saved: false;
+      /** `fileContentRevision` of the host contents the draft started from; absent writes unchecked. */
+      readonly baseRevision?: string;
+      /** The host refused a write because the file changed since the draft started. */
+      readonly conflict?: boolean;
+    }
   | {
       readonly saved: true;
       /** Only this query's next successful answer can replace the saved contents. */

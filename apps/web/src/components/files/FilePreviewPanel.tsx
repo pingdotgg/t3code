@@ -1,5 +1,6 @@
 import { DownloadIcon, CopyIcon, CheckIcon, Code2Icon, EyeIcon, Table2Icon } from "lucide-react";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { Button } from "~/components/ui/button";
 import { Spinner } from "~/components/ui/spinner";
 import {
   AuthPreviewOperateScope,
@@ -128,12 +129,18 @@ import {
   workspaceAssetResource,
 } from "./filePreviewMode";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
-import { changeFileSaveSession, useFileSaveSession } from "./fileSaveSessions";
+import {
+  changeFileSaveSession,
+  discardFileSaveSession,
+  useFileSaveSession,
+} from "./fileSaveSessions";
 import { revisionedQuery } from "~/state/revisionedQuery";
 import {
+  discardProjectFileDraft,
   getOptimisticProjectFileQueryData,
   getProjectFileContents,
   getProjectFileQueryAtom,
+  keepProjectFileDraft,
   setProjectFileQueryData,
   useProjectFileQuery,
 } from "./projectFilesQueryState";
@@ -1555,6 +1562,36 @@ export default function FilePreviewPanel({
       {relativePath && !attachment && !isHostFile && !canWriteFiles && !fileAccess.isPending ? (
         <div className="shrink-0 border-b px-3 py-1.5 text-2xs text-muted-foreground">
           Read-only connection. Unsaved edits are kept until write access returns.
+        </div>
+      ) : null}
+      {relativePath && file.conflict ? (
+        <div className="flex shrink-0 items-center gap-2 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-2xs text-warning-foreground">
+          <span className="min-w-0 flex-1">
+            This file changed on disk. Your unsaved edits were not saved over it.
+          </span>
+          <Button
+            size="micro"
+            variant="outline"
+            onClick={() => {
+              const target = { environmentId, cwd, relativePath };
+              discardFileSaveSession(target);
+              discardProjectFileDraft(environmentId, cwd, relativePath);
+            }}
+          >
+            Discard mine
+          </Button>
+          <Button
+            size="micro"
+            variant="outline"
+            onClick={() => {
+              const contents = keepProjectFileDraft(environmentId, cwd, relativePath);
+              if (contents !== null) {
+                changeFileSaveSession({ environmentId, cwd, relativePath }, contents);
+              }
+            }}
+          >
+            Keep mine
+          </Button>
         </div>
       ) : null}
       {previewPath &&

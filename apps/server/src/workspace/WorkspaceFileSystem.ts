@@ -13,6 +13,7 @@ import type {
 } from "@t3tools/contracts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { fileContentRevision } from "@t3tools/shared/fileContentRevision";
 import { isNetworkPath } from "@t3tools/shared/path";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -102,11 +103,25 @@ export class WorkspaceBinaryFileError extends Schema.TaggedError<WorkspaceBinary
   }
 }
 
+export class WorkspaceFileChangedError extends Schema.TaggedError<WorkspaceFileChangedError>()(
+  "WorkspaceFileChangedError",
+  {
+    workspaceRoot: Schema.String,
+    relativePath: Schema.String,
+    resolvedPath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Workspace file '${this.relativePath}' in '${this.workspaceRoot}' changed since it was read.`;
+  }
+}
+
 export const WorkspaceFileSystemError = Schema.Union([
   WorkspaceFileSystemOperationError,
   WorkspaceFilePathEscapeError,
   WorkspacePathNotFileError,
   WorkspaceBinaryFileError,
+  WorkspaceFileChangedError,
 ]);
 export type WorkspaceFileSystemError = typeof WorkspaceFileSystemError.Type;
 
@@ -154,6 +169,14 @@ async function startsWithUtf8Bom(filePath: string): Promise<boolean> {
   } finally {
     await handle.close();
   }
+}
+
+/** The revision readFile's contents would have, or null for a missing or unreadable file. */
+async function currentFileRevision(filePath: string): Promise<string | null> {
+  const bytes = await NodeFSP.readFile(filePath, {
+    flag: NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NOFOLLOW ?? 0),
+  }).catch(() => null);
+  return bytes === null ? null : fileContentRevision(new TextDecoder("utf-8").decode(bytes));
 }
 
 /** @public */
@@ -593,6 +616,16 @@ export const make = Effect.gen(function* () {
     const replacesFile = yield* fileSystem
       .exists(realTargetPath)
       .pipe(Effect.orElseSucceed(() => false));
+    if (
+      input.expectedRevision !== undefined &&
+      (yield* Effect.promise(() => currentFileRevision(realTargetPath))) !== input.expectedRevision
+    ) {
+      return yield* new WorkspaceFileChangedError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedPath: realTargetPath,
+      });
+    }
     // readFile decodes the BOM away, so an editor save would otherwise drop it from the file.
     const keepsBom =
       replacesFile &&

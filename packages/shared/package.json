@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./fileContentRevision": {
+      "types": "./src/fileContentRevision.ts",
+      "import": "./src/fileContentRevision.ts"
+    },
     "./png": {
       "types": "./src/png.ts",
       "import": "./src/png.ts"

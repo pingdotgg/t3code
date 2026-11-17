@@ -1,5 +1,14 @@
-import { AuthFilesystemWriteScope, type EnvironmentId } from "@t3tools/contracts";
-import { type AtomCommandResult, runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import {
+  AuthFilesystemWriteScope,
+  type EnvironmentId,
+  ProjectWriteFileError,
+} from "@t3tools/contracts";
+import {
+  type AtomCommandResult,
+  runAtomCommand,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import * as Schema from "effect/Schema";
 import { useEffect } from "react";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -9,7 +18,10 @@ import { environmentSession, readEnvironmentScope, sessionHasScope } from "~/sta
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
 import {
   confirmProjectFileQueryData,
+  getProjectFileBaseRevision,
   getUnsavedProjectFileQueryData,
+  isProjectFileConflicted,
+  markProjectFileConflict,
 } from "./projectFilesQueryState";
 
 export interface FileSaveTarget {
@@ -129,6 +141,9 @@ export function createFileSaveSessions(deps: FileSaveSessionDeps) {
       const session = sessions.get(fileSaveKey(target));
       if (session && session.leases > 0) session.coordinator.change(contents);
     },
+    discard(target: FileSaveTarget): void {
+      sessions.get(fileSaveKey(target))?.coordinator.discard();
+    },
   };
 }
 
@@ -136,9 +151,13 @@ function fileSaveKey({ environmentId, cwd, relativePath }: FileSaveTarget): stri
   return `${environmentId}\u0000${cwd}\u0000${relativePath}`;
 }
 
+const isProjectWriteFileError = Schema.is(ProjectWriteFileError);
+
 const fileSaveSessions = createFileSaveSessions({
   debounceMs: 500,
-  canPersist: ({ environmentId }) => readEnvironmentScope(environmentId, AuthFilesystemWriteScope),
+  canPersist: ({ environmentId, cwd, relativePath }) =>
+    readEnvironmentScope(environmentId, AuthFilesystemWriteScope) &&
+    !isProjectFileConflicted(environmentId, cwd, relativePath),
   subscribeWritable: ({ environmentId }, onWritable) => {
     let writable = readEnvironmentScope(environmentId, AuthFilesystemWriteScope);
     return appAtomRegistry.subscribe(
@@ -150,11 +169,25 @@ const fileSaveSessions = createFileSaveSessions({
       },
     );
   },
-  persist: ({ environmentId, cwd, relativePath }, contents) =>
-    runAtomCommand(appAtomRegistry, projectEnvironment.writeFile, {
+  persist: async ({ environmentId, cwd, relativePath }, contents) => {
+    const expectedRevision = getProjectFileBaseRevision(environmentId, cwd, relativePath);
+    const result = await runAtomCommand(appAtomRegistry, projectEnvironment.writeFile, {
       environmentId,
-      input: { cwd, relativePath, contents },
-    }),
+      input: {
+        cwd,
+        relativePath,
+        contents,
+        ...(expectedRevision !== undefined ? { expectedRevision } : {}),
+      },
+    });
+    if (result._tag === "Failure") {
+      const error = squashAtomCommandFailure(result);
+      if (isProjectWriteFileError(error) && error.failure === "file_changed") {
+        markProjectFileConflict(environmentId, cwd, relativePath);
+      }
+    }
+    return result;
+  },
   confirm: ({ environmentId, cwd, relativePath }, contents) =>
     confirmProjectFileQueryData(environmentId, cwd, relativePath, contents),
   readUnsaved: ({ environmentId, cwd, relativePath }) =>
@@ -175,4 +208,8 @@ export function useFileSaveSession(
 
 export function changeFileSaveSession(target: FileSaveTarget, contents: string): void {
   fileSaveSessions.change(target, contents);
+}
+
+export function discardFileSaveSession(target: FileSaveTarget): void {
+  fileSaveSessions.discard(target);
 }
