@@ -58,41 +58,44 @@ describe("resolveIssueLinkTarget", () => {
     },
   );
 
-  it("uses the exact authority's tracker regardless of project order", () => {
-    const binding = (id: string, host: string, provider: string) => ({
-      id: ProjectId.make(id),
-      environmentId: EnvironmentId.make("env"),
-      repositoryIdentity: {
-        canonicalKey: `${host}/acme/web`,
-        locator: {
-          source: "git-remote" as const,
-          remoteName: "origin",
-          remoteUrl: `https://${host}/acme/web.git`,
+  it.each(["code.acme.test", "github.acme.test"])(
+    "uses the exact authority's tracker on %s regardless of project order",
+    (host) => {
+      const binding = (id: string, host: string, provider: string) => ({
+        id: ProjectId.make(id),
+        environmentId: EnvironmentId.make("env"),
+        repositoryIdentity: {
+          canonicalKey: `${host}/acme/web`,
+          locator: {
+            source: "git-remote" as const,
+            remoteName: "origin",
+            remoteUrl: `https://${host}/acme/web.git`,
+          },
+          provider: SourceControlProviderKind.make(provider),
+          displayName: "acme/web",
         },
-        provider: SourceControlProviderKind.make(provider),
-        displayName: "acme/web",
-      },
-    });
-    const bare = binding("bare", "code.acme.test", "github");
-    const ported = binding("ported", "code.acme.test:8443", "forgejo");
-    for (const projects of [
-      [bare, ported],
-      [ported, bare],
-    ]) {
-      expect(
-        resolveIssueLinkTarget({
-          url: "https://code.acme.test:8443/acme/web/issues/7",
-          projects,
-        })?.ref,
-      ).toEqual({
-        projectId: "ported",
-        tracker: "forgejo",
-        host: "code.acme.test:8443",
-        scope: "acme/web",
-        key: "7",
       });
-    }
-  });
+      const bare = binding("bare", host, "github");
+      const ported = binding("ported", `${host}:8443`, "forgejo");
+      for (const projects of [
+        [bare, ported],
+        [ported, bare],
+      ]) {
+        expect(
+          resolveIssueLinkTarget({
+            url: `https://${host}:8443/acme/web/issues/7`,
+            projects,
+          })?.ref,
+        ).toEqual({
+          projectId: "ported",
+          tracker: "forgejo",
+          host: `${host}:8443`,
+          scope: "acme/web",
+          key: "7",
+        });
+      }
+    },
+  );
 
   it.each([
     "https://github.com.evil.example/acme/web/issues/7",

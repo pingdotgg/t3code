@@ -62,10 +62,9 @@ export function resolveIssueLinkTarget<Project extends LinkProject>(input: {
   const urlBindings = onUrlAuthority.length > 0 ? onUrlAuthority : onUrlHost;
   // A self-hosted server can have any hostname, so a host a project is bound to names its tracker.
   const parsed =
-    sourceControlClients.parseIssueUrl(input.url) ??
     urlBindings
       .map(({ binding }) => sourceControlClients.parseIssueUrl(input.url, binding.tracker))
-      .find((candidate) => candidate !== null);
+      .find((candidate) => candidate !== null) ?? sourceControlClients.parseIssueUrl(input.url);
   if (parsed == null) return null;
   const { definition, link } = parsed;
   const onHost = bindings.filter(

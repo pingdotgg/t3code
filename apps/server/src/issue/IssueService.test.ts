@@ -286,53 +286,55 @@ describe("IssueService", () => {
 
   it.effect("resolves custom-host issue URLs using the binding on the exact authority", () =>
     Effect.gen(function* () {
-      const forgejo = IssueTrackerKind.make("forgejo");
-      const bare = project({ id: "bare", repository: "acme/web", host: "code.acme.test" });
-      const ported = project({
-        id: "ported",
-        repository: "acme/web",
-        host: "code.acme.test:8443",
-        provider: "forgejo",
-      });
-      for (const projects of [
-        [bare, ported],
-        [ported, bare],
-      ]) {
-        const service = yield* makeService({
-          projects,
-          trackers: [fakeTracker(), fakeTracker({ kind: forgejo })],
+      for (const host of ["code.acme.test", "github.acme.test"]) {
+        const forgejo = IssueTrackerKind.make("forgejo");
+        const bare = project({ id: "bare", repository: "acme/web", host });
+        const ported = project({
+          id: "ported",
+          repository: "acme/web",
+          host: `${host}:8443`,
+          provider: "forgejo",
         });
-        expect(yield* service.resolveUrl("https://code.acme.test/acme/web/issues/7")).toEqual({
-          projectId: "bare",
-          tracker: "github",
-          host: "code.acme.test",
-          scope: "acme/web",
-          key: "7",
-          writable: true,
-        });
-        expect(yield* service.resolveUrl("https://code.acme.test:8443/acme/web/issues/7")).toEqual({
-          projectId: "ported",
-          tracker: "forgejo",
-          host: "code.acme.test:8443",
-          scope: "acme/web",
-          key: "7",
-          writable: true,
-        });
-        expect(yield* service.resolveUrl("https://code.acme.test/other/repo/issues/8")).toEqual({
-          projectId: "bare",
-          tracker: "github",
-          host: "code.acme.test",
-          scope: "other/repo",
-          key: "8",
-          writable: false,
-        });
-        const unbound = yield* service
-          .resolveUrl("https://unbound.test/acme/web/issues/7")
-          .pipe(Effect.result);
-        expect(unbound).toMatchObject({
-          _tag: "Failure",
-          failure: { _tag: "IssueOperationError", reason: "not-found" },
-        });
+        for (const projects of [
+          [bare, ported],
+          [ported, bare],
+        ]) {
+          const service = yield* makeService({
+            projects,
+            trackers: [fakeTracker(), fakeTracker({ kind: forgejo })],
+          });
+          expect(yield* service.resolveUrl(`https://${host}/acme/web/issues/7`)).toEqual({
+            projectId: "bare",
+            tracker: "github",
+            host,
+            scope: "acme/web",
+            key: "7",
+            writable: true,
+          });
+          expect(yield* service.resolveUrl(`https://${host}:8443/acme/web/issues/7`)).toEqual({
+            projectId: "ported",
+            tracker: "forgejo",
+            host: `${host}:8443`,
+            scope: "acme/web",
+            key: "7",
+            writable: true,
+          });
+          expect(yield* service.resolveUrl(`https://${host}/other/repo/issues/8`)).toEqual({
+            projectId: "bare",
+            tracker: "github",
+            host,
+            scope: "other/repo",
+            key: "8",
+            writable: false,
+          });
+          const unbound = yield* service
+            .resolveUrl("https://unbound.test/acme/web/issues/7")
+            .pipe(Effect.result);
+          expect(unbound).toMatchObject({
+            _tag: "Failure",
+            failure: { _tag: "IssueOperationError", reason: "not-found" },
+          });
+        }
       }
     }),
   );

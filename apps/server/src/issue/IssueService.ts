@@ -651,7 +651,6 @@ const make = Effect.gen(function* () {
       const onUrlAuthority = supported.filter((project) => project.host === authority);
       const urlBindings = onUrlAuthority.length > 0 ? onUrlAuthority : supported;
       const gitHost =
-        sourceControlDefinitions.parseIssueUrl(url) ??
         urlBindings
           .map((project) => {
             const definition = sourceControlDefinitions.find(project.tracker);
@@ -659,8 +658,7 @@ const make = Effect.gen(function* () {
               ? null
               : sourceControlDefinitions.parseIssueUrl(url, definition.kind);
           })
-          .find((candidate) => candidate !== null) ??
-        null;
+          .find((candidate) => candidate !== null) ?? sourceControlDefinitions.parseIssueUrl(url);
       const standalone = gitHost === null ? findStandaloneIssueUrl(registry.standalone, url) : null;
       const parsed =
         gitHost === null
