@@ -712,6 +712,22 @@ it("/side sends the draft's attachments and context to the new side chat", async
   );
   await expect.element(page.getByText("Side chats take text only")).not.toBeInTheDocument();
   await expect.element(page.getByRole("img", { name: "shot.png" })).not.toBeInTheDocument();
+
+  // A reply alone is enough to send.
+  const mainEditor = page.getByRole("textbox", { name: `Message ${thread.title}`, exact: true });
+  await page.getByRole("button", { name: "Reply to this response" }).first().click();
+  await userEvent.click(mainEditor);
+  await userEvent.keyboard("/side {Enter}");
+  await vi.waitFor(() =>
+    expect(dispatchedCommands()).toContainEqual(
+      expect.objectContaining({
+        type: "message.dispatch",
+        context: expect.objectContaining({
+          records: [expect.objectContaining({ kind: "response" })],
+        }),
+      }),
+    ),
+  );
 });
 
 it("/side puts the draft back when the side chat does not start", async () => {

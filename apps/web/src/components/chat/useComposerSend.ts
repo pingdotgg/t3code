@@ -596,6 +596,7 @@ export function useComposerSend(input: ComposerSendInput) {
         imageCount: sendCtx.images.length + sendCtx.files.length,
         terminalContexts: sendCtx.terminalContexts,
         elementContextCount:
+          (replyTo === null ? 0 : 1) +
           sendCtx.previewAnnotations.length +
           sendCtx.reviewComments.length +
           sendCtx.threadContexts.length +
