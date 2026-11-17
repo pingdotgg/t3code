@@ -11,6 +11,7 @@ import * as NodePath from "node:path";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
+import { fromYaml } from "@t3tools/shared/schemaYaml";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
@@ -61,6 +62,31 @@ export const ForgejoKeysSchema = Schema.Struct({
   aliases: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
 
+/** The slice of `tea`'s config a media fetch needs: each login's server and token. */
+const TeaConfigSchema = Schema.Struct({
+  logins: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        url: Schema.String,
+        token: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
+});
+
+const decodeTeaConfig = Schema.decodeUnknownResult(fromYaml(TeaConfigSchema));
+
+/** The token `tea` holds for `host` in its config file, or null when no login names it. */
+export function parseTeaToken(raw: string, host: string): string | null {
+  const config = decodeTeaConfig(raw);
+  if (Result.isFailure(config)) return null;
+  for (const login of config.success.logins ?? []) {
+    if (parseForgejoRemote(login.url)?.host === host.toLowerCase() && login.token)
+      return login.token;
+  }
+  return null;
+}
+
 const parseForgejoKeys = decodeJsonResult(ForgejoKeysSchema);
 
 function forgejoKeysPaths(input: {
@@ -97,6 +123,43 @@ function forgejoKeysPaths(input: {
       "forgejo-cli",
       "keys.json",
     ),
+  ];
+}
+
+/**
+ * `tea` keeps every login, token included, in one YAML file under the user's config directory,
+ * with a legacy `~/.tea/tea.yml` it still reads.
+ */
+function teaConfigPaths(input: {
+  readonly platform: string;
+  readonly home: string;
+  readonly configHome?: string;
+  readonly localAppData?: string;
+}) {
+  const legacy = NodePath.join(input.home, ".tea", "tea.yml");
+  if (input.platform === "darwin")
+    return [
+      NodePath.join(input.home, "Library", "Application Support", "tea", "config.yml"),
+      legacy,
+    ];
+  if (input.platform === "win32")
+    return [
+      NodePath.win32.join(
+        input.localAppData || NodePath.win32.join(input.home, "AppData", "Local"),
+        "tea",
+        "config.yml",
+      ),
+      legacy,
+    ];
+  return [
+    NodePath.join(
+      input.configHome && NodePath.isAbsolute(input.configHome)
+        ? input.configHome
+        : NodePath.join(input.home, ".config"),
+      "tea",
+      "config.yml",
+    ),
+    legacy,
   ];
 }
 
@@ -147,6 +210,11 @@ export class ForgejoCli extends Context.Service<
     readonly api: (
       input: ForgejoApiInput,
     ) => Effect.Effect<SourceControlHost.SourceControlProcessOutput, ForgejoCliError>;
+    /**
+     * The token this server's `fj` or `tea` login holds for `host`, so a repository file's bytes
+     * can be read off its `raw` route. Null when no login names that host.
+     */
+    readonly mediaToken: (host: string) => Effect.Effect<string | null>;
   }
 >()("@t3tools/source-control-forgejo/server/ForgejoCli") {}
 
@@ -724,7 +792,39 @@ export const make = Effect.gen(function* () {
       });
     return result;
   });
-  return ForgejoCli.of({ execute, listLogins, getAccount, resolveRepository, api });
+  const teaToken = Effect.fn("ForgejoCli.teaToken")(function* (host: string) {
+    const paths = teaConfigPaths({
+      platform: yield* HostProcess.Platform,
+      home: yield* HostProcess.HomeDirectory,
+      ...(globalThis.process.env.XDG_CONFIG_HOME
+        ? { configHome: globalThis.process.env.XDG_CONFIG_HOME }
+        : {}),
+      ...(globalThis.process.env.LOCALAPPDATA
+        ? { localAppData: globalThis.process.env.LOCALAPPDATA }
+        : {}),
+    });
+    for (const path of paths) {
+      const raw = yield* fileSystem.readFileString(path).pipe(Effect.orElseSucceed(() => null));
+      if (raw === null) continue;
+      return parseTeaToken(raw, host);
+    }
+    return null;
+  });
+
+  const mediaToken: ForgejoCli["Service"]["mediaToken"] = Effect.fn("ForgejoCli.mediaToken")(
+    function* (host: string) {
+      const target = host.toLowerCase();
+      const keys = yield* readKeys(yield* HostProcess.HomeDirectory).pipe(
+        Effect.orElseSucceed(() => ({ hosts: {}, aliases: {} })),
+      );
+      for (const [name, entry] of Object.entries(keys.hosts)) {
+        if (name.toLowerCase() === target) return entry.token;
+      }
+      return yield* teaToken(target);
+    },
+  );
+
+  return ForgejoCli.of({ execute, listLogins, getAccount, resolveRepository, api, mediaToken });
 });
 
 export const layer = Layer.effect(ForgejoCli, make);

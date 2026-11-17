@@ -13,6 +13,7 @@ import {
   projectChangeRequestHost,
   remoteWebOrigin,
 } from "@t3tools/source-control-core/shared/definition";
+import { forgejoMediaUrl } from "./forgejoMedia.ts";
 import { icon } from "./icon.ts";
 
 const CHECKOUT_COMMAND = /^tea\s+(?:pr|pulls)\s+checkout\s+(.+)$/i;
@@ -87,6 +88,7 @@ export const definition = defineSourceControl({
   changeRequestUrlFromReferenceAutolink: () => null,
   commitUrl: (input) => buildCommitUrl(input, "commit"),
   parseCommitUrl: (url) => parseCommitPath(url, COMMIT_PATH),
+  mediaUrl: forgejoMediaUrl,
   changeRequestActions: new Set(["merge", "close", "reopen", "update-branch"] as const),
   // Neither `fj` nor `tea` checks out by number.
   checkoutCommand: ({ number, repositoryUrl }) =>
