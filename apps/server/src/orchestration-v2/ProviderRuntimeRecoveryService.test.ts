@@ -17,6 +17,10 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import {
+  backgroundWorkHoldsCompletion,
+  derivePendingBackgroundWork,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -1671,3 +1675,170 @@ it.effect("leaves delegated tasks to their own child threads after process loss"
     assert.deepEqual(noted, [`subagent ${nativeSubagentId}`]);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect(
+  "reconciles orphaned active command_execution with completionWake always on server restart",
+  () => {
+    const threadId = ThreadId.make("thread_recovery_orphaned_command");
+    const runId = RunId.make("run_recovery_orphaned_command");
+    const providerThreadId = ProviderThreadId.make("provider_thread_recovery_orphaned_command");
+    const commandItemId = TurnItemId.make("turn_item_recovery_orphaned_command");
+    const commandNodeId = NodeId.make("node_recovery_orphaned_command");
+    const claudeInstanceId = ProviderInstanceId.make("claude");
+    let committedInput: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | null =
+      null;
+
+    const projection = {
+      thread: {
+        id: threadId,
+        providerInstanceId: claudeInstanceId,
+        activeProviderThreadId: providerThreadId,
+      },
+      runtimeRequests: [],
+      providerSessions: [],
+      providerThreads: [
+        {
+          id: providerThreadId,
+          driver: ProviderDriverKind.make("claude"),
+          providerInstanceId: claudeInstanceId,
+          status: "idle",
+          pendingBackgroundTasks: [
+            {
+              taskId: String(commandItemId),
+              description: "npm test",
+              kind: "command",
+              awaited: true,
+            },
+          ],
+        },
+      ],
+      runs: [
+        {
+          id: runId,
+          status: "completed",
+          providerInstanceId: claudeInstanceId,
+          providerThreadId,
+        },
+      ],
+      attempts: [],
+      nodes: [
+        {
+          id: commandNodeId,
+          runId,
+          status: "running",
+          kind: "tool_call",
+        },
+      ],
+      subagents: [],
+      messages: [],
+      turnItems: [
+        {
+          id: commandItemId,
+          runId,
+          nodeId: commandNodeId,
+          providerThreadId,
+          type: "command_execution",
+          status: "running",
+          input: "npm test",
+          completionWake: "always",
+          output: "Running test suite...",
+        },
+      ],
+    } as unknown as OrchestrationV2ThreadProjection;
+
+    const layer = ProviderRuntimeRecovery.layer.pipe(
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getRecoveryThreadIds: () => Effect.succeed([threadId]),
+            getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({
+            commitCommand: (input) => {
+              committedInput = input;
+              return Effect.succeed({ committed: true, cancelledEffectCount: 0 } as never);
+            },
+          }),
+          IdAllocator.layer,
+          Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
+            runRecoveryOnce: Effect.succeed(false),
+          }),
+          Layer.mock(EffectOutbox.EffectOutboxV2)({
+            listByCommandId: () => Effect.succeed([]),
+            reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+          }),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const summary =
+        yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile("startup");
+      assert.equal(summary.terminalizedRuns, 0);
+
+      const events = committedInput?.events ?? [];
+
+      // 1. command item is cancelled and output includes interruption notice
+      const commandCancelEvent = events.find(
+        (event) => event.type === "turn-item.updated" && event.payload.id === commandItemId,
+      );
+      assert.isDefined(commandCancelEvent);
+      if (commandCancelEvent?.type === "turn-item.updated") {
+        assert.equal(commandCancelEvent.payload.status, "cancelled");
+        assert.equal(
+          (commandCancelEvent.payload as { output?: string }).output,
+          "Running test suite...\n[Command stopped due to server restart]",
+        );
+      }
+
+      // 2. node is cancelled
+      const nodeCancelEvent = events.find(
+        (event) => event.type === "node.updated" && event.payload.id === commandNodeId,
+      );
+      assert.isDefined(nodeCancelEvent);
+      if (nodeCancelEvent?.type === "node.updated") {
+        assert.equal(nodeCancelEvent.payload.status, "cancelled");
+      }
+
+      // 3. provider thread pendingBackgroundTasks is cleared to []
+      const providerThreadEvent = events.find(
+        (event) =>
+          event.type === "provider-thread.updated" && event.payload.id === providerThreadId,
+      );
+      assert.isDefined(providerThreadEvent);
+      if (providerThreadEvent?.type === "provider-thread.updated") {
+        assert.deepEqual(providerThreadEvent.payload.pendingBackgroundTasks, []);
+      }
+
+      // 4. run.background-work-cancelled is emitted with awaited: true
+      const bgCancelledEvent = events.find(
+        (event) => event.type === "run.background-work-cancelled" && event.payload.runId === runId,
+      );
+      assert.isDefined(bgCancelledEvent);
+      if (bgCancelledEvent?.type === "run.background-work-cancelled") {
+        const cancelledWork = bgCancelledEvent.payload.restartCancelledBackgroundWork;
+        assert.isTrue(
+          cancelledWork.some((work) => work.id === commandItemId && work.awaited === true),
+        );
+      }
+
+      // 5. thread has no pending background work and does not hold completion
+      const updatedTurnItems = projection.turnItems.map((item) =>
+        item.id === commandItemId ? { ...item, status: "cancelled" as const } : item,
+      );
+      const updatedProviderThreads = projection.providerThreads.map((pt) =>
+        pt.id === providerThreadId ? { ...pt, pendingBackgroundTasks: [] } : pt,
+      );
+      const derivedTasks = derivePendingBackgroundWork({
+        latestRun: projection.runs[0]!,
+        providerThreads: updatedProviderThreads,
+        turnItems: updatedTurnItems,
+        activeProviderThreadId: providerThreadId,
+        runs: projection.runs,
+      });
+      assert.deepEqual(derivedTasks, []);
+      assert.isFalse(backgroundWorkHoldsCompletion(derivedTasks));
+    }).pipe(Effect.provide(layer));
+  },
+);

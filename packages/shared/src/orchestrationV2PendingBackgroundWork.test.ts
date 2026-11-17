@@ -361,6 +361,40 @@ describe("derivePendingBackgroundWork kinds", () => {
     ]);
   });
 
+  it("marks command execution items with completionWake always as awaited", () => {
+    const tasks = derivePendingBackgroundWork({
+      latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+      providerThreads: [],
+      turnItems: [
+        {
+          id: "item-cmd-wake",
+          type: "command_execution",
+          status: "running",
+          title: "npm test",
+          nativeItemRef: { nativeId: "cmd-wake" },
+          input: "npm test",
+          completionWake: "always",
+        },
+        {
+          id: "item-cmd-nowake",
+          type: "command_execution",
+          status: "running",
+          title: "npm run dev",
+          nativeItemRef: { nativeId: "cmd-nowake" },
+          input: "npm run dev",
+        },
+      ],
+    });
+    expect(tasks).toEqual([
+      { taskId: "cmd-wake", description: "npm test", kind: "command", awaited: true },
+      { taskId: "cmd-nowake", description: "npm run dev", kind: "command" },
+    ]);
+    expect(backgroundWorkHoldsCompletion(tasks)).toBe(true);
+    expect(
+      backgroundWorkHoldsCompletion(tasks.filter((task) => task.taskId === "cmd-nowake")),
+    ).toBe(false);
+  });
+
   describe("pull request watches", () => {
     const watch = {
       startedAt: "2026-10-05T00:00:00.000Z",

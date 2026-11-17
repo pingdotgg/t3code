@@ -28,6 +28,7 @@ export function CommandOutputPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly itemId: TurnItemId;
+  readonly outputFilePath?: string | undefined;
   readonly source?: TurnItemSource["commandOutput"] | undefined;
 }) {
   const input = { threadId: props.threadId, itemId: props.itemId };
@@ -65,7 +66,16 @@ export function CommandOutputPanel(props: {
       }}
       className="max-h-80 overflow-auto text-muted-foreground"
     >
-      {data?.output.truncated ? <div className="italic">Earlier output not shown</div> : null}
+      {data?.output.truncated ? (
+        <div className="flex items-center justify-between gap-2 italic">
+          <span>Earlier output not shown</span>
+          {props.outputFilePath ? (
+            <span className="font-mono text-2xs not-italic select-all text-muted-foreground">
+              Full log: {props.outputFilePath}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       {spans.map((span, index) =>
         span.style === null ? (
           span.text

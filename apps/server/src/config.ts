@@ -47,6 +47,7 @@ export interface ServerDerivedPaths {
   readonly attachmentsDir: string;
   readonly browserArtifactsDir: string;
   readonly logsDir: string;
+  readonly commandLogsDir: string;
   readonly serverTracePath: string;
   readonly providerLogsDir: string;
   readonly providerEventLogPath: string;
@@ -165,6 +166,7 @@ export const deriveServerPaths = Effect.fn(function* (
     attachmentsDir,
     browserArtifactsDir: join(stateDir, "browser-artifacts"),
     logsDir,
+    commandLogsDir: join(logsDir, "commands"),
     serverTracePath: join(logsDir, "server.trace.ndjson"),
     providerLogsDir,
     providerEventLogPath: join(providerLogsDir, "events.log"),
@@ -189,6 +191,7 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
   yield* Effect.all(
     [
       fs.makeDirectory(derivedPaths.logsDir, { recursive: true }),
+      fs.makeDirectory(derivedPaths.commandLogsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.providerLogsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.terminalLogsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.attachmentsDir, { recursive: true }),

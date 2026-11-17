@@ -11,6 +11,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2Notification,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -618,4 +619,219 @@ describe("ProviderContinuationService", () => {
       );
     });
   });
+
+  it.effect(
+    "dispatches wake-up for a completed background task independently while other background tasks remain pending",
+    () =>
+      Effect.gen(function* () {
+        const dispatched = yield* Queue.unbounded<unknown>();
+        const now = yield* DateTime.now;
+        const nowIso = DateTime.formatIso(now);
+        const threadWithMultipleBackgroundTasks = {
+          ...projection,
+          providerThreads: [
+            {
+              id: providerThreadId,
+              pendingBackgroundTasks: [
+                {
+                  taskId: "task-completed",
+                  toolCallId: "tool-completed",
+                  label: "Completed task",
+                  startedAt: nowIso,
+                },
+                {
+                  taskId: "task-running",
+                  toolCallId: "tool-running",
+                  label: "Running task",
+                  startedAt: nowIso,
+                },
+              ],
+            },
+          ],
+        } as unknown as OrchestrationV2ThreadProjection;
+
+        yield* Effect.gen(function* () {
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          yield* requests.offer({
+            threadId,
+            providerThreadId,
+            driver,
+            detail: 'Command "task-completed" finished with exit code 0',
+            notification: {
+              source: { kind: "command" },
+              outcome: "completed",
+              summary: 'Command "task-completed" finished',
+            },
+          });
+          const command = (yield* Queue.take(dispatched)) as {
+            readonly type: string;
+            readonly text: string;
+            readonly notification?: OrchestrationV2Notification;
+          };
+          assert.equal(command.type, "message.dispatch");
+          assert.equal(command.text, 'Command "task-completed" finished with exit code 0');
+          assert.deepEqual(command.notification, {
+            source: { kind: "command" },
+            outcome: "completed",
+            summary: 'Command "task-completed" finished',
+          });
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              dispatched,
+              getThreadRecords: () => Effect.succeed(threadWithMultipleBackgroundTasks),
+            }),
+          ),
+          Effect.scoped,
+        );
+      }),
+  );
+
+  it.effect(
+    "records fallback error turn item and releases latches when continuation dispatch fails generically",
+    () =>
+      Effect.gen(function* () {
+        const dispatched = yield* Queue.unbounded<unknown>();
+        const cleared = yield* Ref.make(false);
+        const endedWithoutStarting = yield* Ref.make(false);
+
+        const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.succeed(projection),
+          dispatch: (command) => {
+            if (command.type === "message.dispatch") {
+              return Effect.fail(
+                new Orchestrator.OrchestratorDispatchError({
+                  commandId: CommandId.make(String(command.commandId)),
+                  commandType: command.type,
+                  cause: new Error("Rate limit exceeded: please slow down"),
+                }),
+              );
+            }
+            return Queue.offer(dispatched, command).pipe(Effect.as({} as never));
+          },
+        });
+        const layerWorker = ProviderContinuationService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          yield* requests.offer({
+            ...request(),
+            detail: "Command output snippet",
+            notification: {
+              source: { kind: "command" },
+              outcome: "failed",
+              summary: 'Command "build" failed',
+            },
+            clearIfCurrent: () => Ref.set(cleared, true),
+            onRunEndedWithoutStarting: () => Ref.set(endedWithoutStarting, true),
+          });
+
+          const command = (yield* Queue.take(dispatched)) as {
+            readonly type: string;
+            readonly threadId: ThreadId;
+            readonly providerThreadId: ProviderThreadId;
+            readonly reason: string;
+            readonly detail: string | null;
+            readonly notification?: OrchestrationV2Notification;
+          };
+
+          assert.equal(command.type, "thread.continuation-fallback.record");
+          assert.equal(command.threadId, threadId);
+          assert.equal(command.providerThreadId, providerThreadId);
+          assert.include(command.reason, "Rate limit exceeded");
+          assert.equal(command.detail, "Command output snippet");
+          assert.deepEqual(command.notification, {
+            source: { kind: "command" },
+            outcome: "failed",
+            summary: 'Command "build" failed',
+          });
+          assert.isTrue(yield* Ref.get(cleared), "clearIfCurrent must be released");
+          assert.isTrue(
+            yield* Ref.get(endedWithoutStarting),
+            "onRunEndedWithoutStarting must be released",
+          );
+        }).pipe(
+          Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
+          Effect.scoped,
+        );
+      }),
+  );
+
+  it.effect(
+    "records fallback error turn item and releases latches when provider instance is disabled",
+    () =>
+      Effect.gen(function* () {
+        const dispatched = yield* Queue.unbounded<unknown>();
+        const cleared = yield* Ref.make(false);
+        const endedWithoutStarting = yield* Ref.make(false);
+
+        const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.succeed(projection),
+          dispatch: (command) => {
+            if (command.type === "message.dispatch") {
+              return Effect.fail(
+                new ThreadManagementService.ThreadManagementProviderInstanceDisabledError({
+                  projectId: ProjectId.make("project-provider-continuation-disabled"),
+                  instanceId: ProviderInstanceId.make("instance-provider-continuation-disabled"),
+                }) as never,
+              );
+            }
+            return Queue.offer(dispatched, command).pipe(Effect.as({} as never));
+          },
+        });
+        const layerWorker = ProviderContinuationService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          yield* requests.offer({
+            ...request(),
+            detail: "Command output snippet",
+            notification: {
+              source: { kind: "command" },
+              outcome: "completed",
+              summary: 'Command "test" finished',
+            },
+            clearIfCurrent: () => Ref.set(cleared, true),
+            onRunEndedWithoutStarting: () => Ref.set(endedWithoutStarting, true),
+          });
+
+          const command = (yield* Queue.take(dispatched)) as {
+            readonly type: string;
+            readonly threadId: ThreadId;
+            readonly providerThreadId: ProviderThreadId;
+            readonly reason: string;
+            readonly notification?: OrchestrationV2Notification;
+          };
+
+          assert.equal(command.type, "thread.continuation-fallback.record");
+          assert.equal(command.threadId, threadId);
+          assert.equal(command.providerThreadId, providerThreadId);
+          assert.include(
+            command.reason,
+            "is disabled for project project-provider-continuation-disabled",
+          );
+          assert.deepEqual(command.notification, {
+            source: { kind: "command" },
+            outcome: "completed",
+            summary: 'Command "test" finished',
+          });
+          assert.isTrue(yield* Ref.get(cleared), "clearIfCurrent must be released");
+          assert.isTrue(
+            yield* Ref.get(endedWithoutStarting),
+            "onRunEndedWithoutStarting must be released",
+          );
+        }).pipe(
+          Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
+          Effect.scoped,
+        );
+      }),
+  );
 });

@@ -159,27 +159,64 @@ function resolveStaleBackgroundItemProviderInstanceId(
   return projection.providerThreads[0]?.providerInstanceId ?? projection.thread.providerInstanceId;
 }
 
+const COMMAND_STOPPED_DUE_TO_SERVER_RESTART = "[Command stopped due to server restart]";
+
+function cancelledCommandOutput(existingOutput: string | undefined): string {
+  if (existingOutput === undefined || existingOutput.trim().length === 0) {
+    return COMMAND_STOPPED_DUE_TO_SERVER_RESTART;
+  }
+  if (existingOutput.includes(COMMAND_STOPPED_DUE_TO_SERVER_RESTART)) {
+    return existingOutput;
+  }
+  return `${existingOutput}\n${COMMAND_STOPPED_DUE_TO_SERVER_RESTART}`;
+}
+
 const cancelledItem = (
   item: OrchestrationV2ThreadProjection["turnItems"][number],
   now: DateTime.Utc,
-): OrchestrationV2ThreadProjection["turnItems"][number] =>
-  item.type === "secret_request" && item.secretStatus === "pending"
-    ? { ...item, status: "cancelled", secretStatus: "cancelled", completedAt: now, updatedAt: now }
-    : {
-        ...item,
-        ...("streaming" in item ? { streaming: false } : {}),
-        status: "cancelled",
-        completedAt: now,
-        updatedAt: now,
-      };
+): OrchestrationV2ThreadProjection["turnItems"][number] => {
+  if (item.type === "secret_request" && item.secretStatus === "pending") {
+    return {
+      ...item,
+      status: "cancelled",
+      secretStatus: "cancelled",
+      completedAt: now,
+      updatedAt: now,
+    };
+  }
+  if (item.type === "command_execution") {
+    return {
+      ...item,
+      ...("streaming" in item ? { streaming: false } : {}),
+      status: "cancelled",
+      output: cancelledCommandOutput(item.output),
+      completedAt: now,
+      updatedAt: now,
+    };
+  }
+  return {
+    ...item,
+    ...("streaming" in item ? { streaming: false } : {}),
+    status: "cancelled",
+    completedAt: now,
+    updatedAt: now,
+  };
+};
 
 function latestStartedRun(
   projection: ProjectionStore.ProjectionRuntimeRecoveryState,
   providerThreadId: ProviderThreadId,
 ) {
+  const matchesThread = (run: OrchestrationV2ThreadProjection["runs"][number]) =>
+    run.providerThreadId === providerThreadId ||
+    (run.providerThreadId == null &&
+      projection.providerThreads.length <= 1 &&
+      (projection.providerThreads[0]?.id === providerThreadId ||
+        projection.providerThreads.length === 0));
+
   return projection.runs.reduce<OrchestrationV2ThreadProjection["runs"][number] | undefined>(
     (latest, run) =>
-      run.providerThreadId === providerThreadId &&
+      matchesThread(run) &&
       run.status !== "queued" &&
       run.status !== "rolled_back" &&
       !neverStarted(run) &&
@@ -376,7 +413,8 @@ export const make = Effect.gen(function* () {
         item: OrchestrationV2ThreadProjection["turnItems"][number],
       ) => {
         if (!isBackgroundCapableTurnItemType(item.type)) return;
-        const awaitingId = awaitingProviderThreadId(item, projection.runs);
+        const awaitingId =
+          awaitingProviderThreadId(item, projection.runs) ?? projection.providerThreads[0]?.id;
         const ownProviderThread =
           item.providerThreadId === awaitingId
             ? undefined
@@ -389,6 +427,7 @@ export const make = Effect.gen(function* () {
         );
         if (work === undefined) return;
         recordCancelledBackgroundWork(awaitingId, work);
+        cancelledBackgroundNativeIds.add(item.id);
         if (item.nativeItemRef?.nativeId != null) {
           cancelledBackgroundNativeIds.add(item.nativeItemRef.nativeId);
         }
@@ -783,7 +822,11 @@ export const make = Effect.gen(function* () {
               candidate.status === "waiting"),
         )) {
           // Cut native subagents do not resume; record them for the continuation to restart.
-          if (run.status === "waiting") recordCancelledBackgroundItem(item);
+          if (
+            run.status === "waiting" ||
+            (item.type === "command_execution" && item.completionWake === "always")
+          )
+            recordCancelledBackgroundItem(item);
           else if (item.type === "subagent" && item.origin === "provider_native")
             recordCancelledBackgroundItem(item);
           events.push({

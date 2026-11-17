@@ -157,6 +157,7 @@ type PendingBackgroundWorkTurnItem = {
   readonly monitor?: boolean | undefined;
   readonly prompt?: string | undefined;
   readonly childThreadId?: ThreadId | null;
+  readonly completionWake?: "always" | undefined;
 };
 
 function isLatestRunSettledForBackgroundWait(
@@ -213,7 +214,11 @@ function pendingTaskFromTurnItem(
         ...(item.childThreadId == null ? {} : { childThreadId: item.childThreadId }),
       };
     case "command_execution":
-      return { ...named, kind: item.monitor === true ? "monitor" : "command" };
+      return {
+        ...named,
+        kind: item.monitor === true ? "monitor" : "command",
+        ...(item.completionWake === "always" ? { awaited: true as const } : {}),
+      };
     default:
       return { ...named, kind: "background_task" };
   }

@@ -675,6 +675,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "checkpoint.rollback.fail":
     case "thread.background-work.settle":
     case "thread.interrupt.unresponsive":
+    case "thread.continuation-fallback.record":
     case "thread.stop":
     case "provider.switch":
       return command.threadId;
@@ -12802,6 +12803,73 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  const dispatchContinuationFallbackRecord = Effect.fn(
+    "Orchestrator.dispatchContinuationFallbackRecord",
+  )(function* (
+    command: Extract<
+      OrchestrationV2InternalCommand,
+      { readonly type: "thread.continuation-fallback.record" }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const thread = yield* projectionStore
+      .getThread(command.threadId)
+      .pipe(mapDispatchError(command));
+    if (thread.deletedAt !== null) return;
+    const now = yield* DateTime.now;
+    const summary =
+      command.notification?.summary ??
+      (command.detail ? "Background task completed" : "Background task completed");
+    const detail = command.detail ?? null;
+    const failureMessage =
+      `${summary} (continuation failed: ${command.reason})${detail ? `\n\n${detail}` : ""}`.slice(
+        0,
+        4000,
+      );
+    const emitEvent = emit(events, command);
+
+    yield* emitEvent({
+      type: "turn-item.updated",
+      threadId: command.threadId,
+      providerInstanceId: thread.providerInstanceId,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make(`turn-item:continuation-fallback:${command.commandId}`),
+        threadId: command.threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: command.providerThreadId,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: yield* nextTurnItemOrdinal({ thread }),
+        status: "failed",
+        title: summary,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "error",
+        failure: {
+          class: "provider_error",
+          message: failureMessage,
+          code: "continuation_failed",
+          retryable: false,
+        },
+      },
+    });
+
+    yield* emitEvent({
+      type: "thread.metadata-updated",
+      threadId: command.threadId,
+      providerInstanceId: thread.providerInstanceId,
+      occurredAt: now,
+      payload: {
+        ...thread,
+        updatedAt: now,
+      },
+    });
+  });
+
   const dispatchBackgroundWorkSettle = Effect.fn("Orchestrator.dispatchBackgroundWorkSettle")(
     function* (
       command: Extract<
@@ -15276,6 +15344,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.interrupt.unresponsive":
         yield* dispatchInterruptUnresponsive(command, events);
         break;
+      case "thread.continuation-fallback.record":
+        yield* dispatchContinuationFallbackRecord(command, events);
+        break;
       case "thread.fork":
         yield* dispatchThreadFork(command, events);
         break;
@@ -15439,6 +15510,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // A read can answer a watch again before a push's reopen lands; nothing is left to clear.
           command.type === "thread.pull-request-watch.checks-reopen" ||
           command.type === "thread.interrupt.unresponsive" ||
+          command.type === "thread.continuation-fallback.record" ||
           command.type === "thread.stop" ||
           command.type === "subagent.stop" ||
           // Closing a share again, or after it ended, is not an error.

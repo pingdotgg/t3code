@@ -1208,6 +1208,106 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live(
+    "projects non-daemon execute tools with completionWake always and excludes daemon commands",
+    () =>
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("acp-test-command-wake");
+        const threadId = ThreadId.make("thread-acp-command-wake");
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let notify: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          continuationRequests: { offer: () => Effect.void },
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+              mockAgentPath: yield* bundledMockAgentPath,
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Effect.sync(() => {
+                    notify = handler;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+                prompt: () =>
+                  Effect.gen(function* () {
+                    const send = (update: EffectAcpSchema.SessionUpdate) =>
+                      notify!({ sessionId: "mock-session-1", update });
+                    yield* send({ sessionUpdate: "state_update", state: "running" });
+                    yield* send({
+                      sessionUpdate: "tool_call",
+                      toolCallId: "cmd-non-daemon",
+                      kind: "execute",
+                      title: "Run build",
+                      status: "in_progress",
+                      rawInput: { command: "npm run build" },
+                    });
+                    yield* send({
+                      sessionUpdate: "tool_call",
+                      toolCallId: "cmd-daemon",
+                      kind: "execute",
+                      title: "Start watcher",
+                      status: "in_progress",
+                      rawInput: { command: "npm run dev", isDaemon: true },
+                    });
+                    yield* send({
+                      sessionUpdate: "state_update",
+                      state: "idle",
+                      stopReason: "end_turn",
+                    });
+                    return { stopReason: "end_turn" as const };
+                  }),
+              }),
+            }),
+          },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const session = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-command-wake"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* session.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+            ordinal: 1,
+          }),
+        );
+        const items = Array.from(
+          yield* session.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          ),
+        ).flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
+            ? [event.turnItem]
+            : [],
+        );
+        const nonDaemon = items.find((item) => item.nativeItemRef?.nativeId === "cmd-non-daemon");
+        const daemon = items.find((item) => item.nativeItemRef?.nativeId === "cmd-daemon");
+        assert.equal(nonDaemon?.completionWake, "always");
+        assert.isUndefined(daemon?.completionWake);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.live("reports per-turn usage unavailable on a continuation turn that never prompts", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("acp-test-usage-continuation");
@@ -10187,6 +10287,174 @@ describe("AcpAdapterV2", () => {
         summary: 'Command "sleep b" finished',
       });
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect(
+    "dispatches independent continuation for an individual task while sibling task remains running",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const mockAgentPath = yield* bundledMockAgentPath;
+        const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
+          [];
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+        let applyMutation: AcpAdapterV2ExtensionContext["applyBackgroundTaskMutation"] | undefined;
+        const promptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+        const instanceId = ProviderInstanceId.make("acp-test");
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            enablePostSettleContinuation: true,
+            deferFinalizeForBackgroundWork: true,
+            registerExtensions: (context) =>
+              Effect.sync(() => {
+                applyMutation = context.applyBackgroundTaskMutation;
+              }),
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              environment: { T3_ACP_HANG_PROMPT_FOREVER: "1" },
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Effect.sync(() => {
+                    sessionUpdateHandler = handler;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+                prompt: () => Deferred.await(promptGate),
+              }),
+            }),
+          },
+          selfInvocation,
+          continuationRequests: {
+            offer: (request) =>
+              Effect.sync(() => {
+                continuationRequests.push(request);
+              }),
+          },
+        });
+        const threadId = ThreadId.make("thread-acp-independent-task-wakeup");
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-independent-task-wakeup"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) => Queue.offer(events, event)),
+          Effect.forkScoped,
+        );
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const awaitTerminal = (ordinal: number) =>
+          Effect.gen(function* () {
+            const providerTurnId = idAllocator.derive.providerTurn({
+              driver: ACP_TEST_DRIVER,
+              nativeTurnId: acpScopedNativeId(instanceId, `mock-session-1:turn:${ordinal}`),
+            });
+            while (true) {
+              const event = yield* Queue.take(events);
+              if (event.type === "turn.terminal" && event.providerTurnId === providerTurnId) {
+                return event.status;
+              }
+            }
+          });
+        yield* runtime
+          .startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now: yield* DateTime.now,
+            }),
+          )
+          .pipe(Effect.forkScoped);
+        yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
+        assert.equal(yield* awaitTerminal(1), "completed");
+        if (applyMutation === undefined || sessionUpdateHandler === undefined) {
+          return yield* Effect.die("extensions and session handler must be wired");
+        }
+
+        // Start two background tasks
+        yield* applyMutation({
+          sessionId: "mock-session-1",
+          taskId: "task-1",
+          status: "running",
+        });
+        yield* applyMutation({
+          sessionId: "mock-session-1",
+          taskId: "task-2",
+          status: "running",
+        });
+        assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+        assert.lengthOf(continuationRequests, 0);
+
+        // Complete task-1 while task-2 is still running
+        yield* applyMutation({
+          sessionId: "mock-session-1",
+          taskId: "task-1",
+          status: "completed",
+          report: { kind: "command", label: "Task 1 command" },
+        });
+
+        // Continuation is dispatched for task-1
+        assert.lengthOf(continuationRequests, 1);
+        assert.deepEqual(continuationRequests[0]?.notification, {
+          source: { kind: "command" },
+          outcome: "completed",
+          summary: 'Command "Task 1 command" finished',
+        });
+        // Sibling task-2 continues running and keeps pending background work active
+        assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+
+        // Start continuation turn for task-1
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+            ordinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+            messageText: "Background task completed.",
+          }),
+        );
+        yield* TestClock.adjust("3 seconds");
+        assert.equal(yield* awaitTerminal(2), "completed");
+
+        // Now complete task-2
+        yield* applyMutation({
+          sessionId: "mock-session-1",
+          taskId: "task-2",
+          status: "completed",
+          report: { kind: "command", label: "Task 2 command" },
+        });
+
+        // Continuation is dispatched for task-2
+        assert.lengthOf(continuationRequests, 2);
+        assert.deepEqual(continuationRequests[1]?.notification, {
+          source: { kind: "command" },
+          outcome: "completed",
+          summary: 'Command "Task 2 command" finished',
+        });
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.each([

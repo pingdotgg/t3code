@@ -112,6 +112,7 @@ export function cancelledRosterTaskWork(task: OrchestrationV2PendingBackgroundTa
       kind: "subagent",
       label: labelWithId(task.description, "background task", ` (subagent ${task.parentTaskId})`),
       id: task.parentTaskId,
+      ...(task.awaited === true ? { awaited: true as const } : {}),
     };
   }
   const kind = restartWorkKind(task);
@@ -172,7 +173,7 @@ export function isAwaitedWork(work: Pick<Work, "kind" | "awaited">): boolean {
 export function runOutcome(
   run: Pick<OrchestrationV2Run, "status" | "restartCancelledBackgroundWork">,
 ): OrchestrationV2Run["status"] {
-  return (run.status === "completed" || run.status === "cancelled") &&
+  return (run.status === "completed" || run.status === "cancelled" || run.status === "waiting") &&
     (run.restartCancelledBackgroundWork ?? []).some(isAwaitedWork)
     ? "interrupted"
     : run.status;

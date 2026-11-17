@@ -1879,6 +1879,100 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
+  it.effect(
+    "spills over a massive command output to disk and stores a bounded copy in both SQLite tables",
+    () =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const threadEvent = yield* threadCreatedEvent(now);
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+        });
+        const largeOutput = "stdout line\n".repeat(15_000) + "ALL_TESTS_PASSED\n";
+        const commandItem = (
+          id: string,
+          ordinal: number,
+          output: string,
+        ): OrchestrationV2TurnItem => ({
+          id: TurnItemId.make(id),
+          threadId: threadEvent.threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "command_execution",
+          input: "npm test",
+          output,
+        });
+        const large = commandItem("turn-item:large-cmd", 1, largeOutput);
+        const small = commandItem("turn-item:small-cmd", 2, "ok\n");
+
+        yield* eventSink.write({ events: [threadEvent] });
+        for (const turnItem of [large, small]) {
+          yield* ingestor.ingestNormalized({
+            providerSessionId,
+            providerInstanceId: modelSelection.instanceId,
+            threadId: threadEvent.threadId,
+            event: { type: "turn_item.updated", driver: CODEX_DRIVER, turnItem },
+          });
+        }
+
+        const sql = yield* SqlClient.SqlClient;
+        const storedBytes = yield* sql<{ readonly events: number; readonly projection: number }>`
+        SELECT
+          (SELECT SUM(LENGTH(payload_json)) FROM orchestration_events
+            WHERE stream_id = ${threadEvent.threadId} AND event_type = 'turn-item.updated') AS events,
+          (SELECT SUM(LENGTH(payload_json)) FROM orchestration_v2_projection_turn_items
+            WHERE thread_id = ${threadEvent.threadId}) AS projection
+      `;
+        const projectedLarge = yield* projectionStore.getTurnItem({
+          threadId: threadEvent.threadId,
+          itemId: large.id,
+        });
+        const projectedSmall = yield* projectionStore.getTurnItem({
+          threadId: threadEvent.threadId,
+          itemId: small.id,
+        });
+
+        assert.isAbove(largeOutput.length, 150_000);
+        assert.isBelow(storedBytes[0]!.events, 80_000);
+        assert.isBelow(storedBytes[0]!.projection, 80_000);
+
+        assert.isTrue(projectedLarge?.type === "command_execution");
+        if (projectedLarge?.type !== "command_execution") return;
+        assert.isDefined(projectedLarge.outputFilePath);
+        const fs = yield* FileSystem.FileSystem;
+        assert.isTrue(yield* fs.exists(projectedLarge.outputFilePath!));
+        const fileContent = yield* fs.readFileString(projectedLarge.outputFilePath!);
+        assert.strictEqual(fileContent, largeOutput);
+        assert.isTrue(
+          projectedLarge.output?.startsWith(
+            `[Earlier output written to log file: ${projectedLarge.outputFilePath}]`,
+          ),
+        );
+        assert.isTrue(projectedLarge.output?.includes("ALL_TESTS_PASSED"));
+        assert.isBelow(projectedLarge.output!.length, largeOutput.length);
+
+        assert.isTrue(projectedSmall?.type === "command_execution");
+        if (projectedSmall?.type !== "command_execution") return;
+        assert.isUndefined(projectedSmall.outputFilePath);
+        assert.strictEqual(projectedSmall.output, "ok\n");
+      }),
+  );
+
   it.effect("routes provider-owned child artifacts to their child app thread", () =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;

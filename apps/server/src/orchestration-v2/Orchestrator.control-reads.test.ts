@@ -2855,3 +2855,52 @@ it.effect("a running provider-turn update reads only the thread's queued and run
     );
   }),
 );
+
+it.effect(
+  "dispatches thread.continuation-fallback.record to emit an error turn item and thread error metadata",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:continuation-fallback-test");
+      const providerThreadId = ProviderThreadId.make("provider-thread:continuation-fallback-test");
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-continuation-fallback-test"),
+        threadId,
+        projectId: ProjectId.make("project:continuation-fallback-test"),
+        title: "Continuation fallback test",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+
+      yield* orchestrator.dispatch({
+        type: "thread.continuation-fallback.record",
+        commandId: CommandId.make("record-continuation-fallback"),
+        threadId,
+        providerThreadId,
+        notification: {
+          source: { kind: "command" },
+          outcome: "failed",
+          summary: 'Command "pnpm test" failed',
+        },
+        detail: "Exit status 1\nTests failed: 2",
+        reason: "Provider rate limit reached",
+      });
+      const threadRecords = yield* projections.getThreadRecords(threadId, ["turnItems"]);
+
+      const errorItem = threadRecords.turnItems.find((item) => item.type === "error");
+      assert.isDefined(errorItem);
+      assert.equal(errorItem?.status, "failed");
+      assert.equal(errorItem?.title, 'Command "pnpm test" failed');
+      assert.equal(errorItem?.failure?.class, "provider_error");
+      assert.equal(errorItem?.failure?.code, "continuation_failed");
+      assert.include(errorItem?.failure?.message ?? "", "Provider rate limit reached");
+    }).pipe(Effect.provide(layerTest)),
+);

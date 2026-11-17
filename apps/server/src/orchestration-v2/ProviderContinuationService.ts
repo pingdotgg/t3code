@@ -3,6 +3,7 @@ import {
   type MessageId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -127,6 +128,56 @@ export const layer = Layer.effectDiscard(
           );
       },
     );
+
+    const recordContinuationErrorFallback = Effect.fn("recordContinuationErrorFallback")(function* (
+      request: ProviderContinuationRequests.ProviderContinuationRequest,
+      errorOrCause: unknown,
+    ) {
+      if (request.clearIfCurrent !== undefined) {
+        yield* request.clearIfCurrent().pipe(Effect.ignore);
+      }
+      if (request.onRunEndedWithoutStarting !== undefined) {
+        yield* request.onRunEndedWithoutStarting().pipe(Effect.ignore);
+      }
+      const fallbackCommandId = yield* ids.allocate.command({
+        fixtureName: "provider-continuation",
+        commandName: "fallback",
+      });
+      const reason =
+        errorOrCause instanceof Error
+          ? errorOrCause.cause instanceof Error
+            ? `${errorOrCause.message}: ${errorOrCause.cause.message}`
+            : typeof errorOrCause.cause === "string"
+              ? `${errorOrCause.message}: ${errorOrCause.cause}`
+              : errorOrCause.message
+          : typeof errorOrCause === "string"
+            ? errorOrCause
+            : errorOrCause !== null &&
+                typeof errorOrCause === "object" &&
+                "_tag" in errorOrCause &&
+                typeof (errorOrCause as { readonly _tag?: unknown })._tag === "string"
+              ? (errorOrCause as { readonly _tag: string })._tag
+              : "Failed to dispatch continuation";
+      yield* threads
+        .dispatch({
+          type: "thread.continuation-fallback.record",
+          commandId: fallbackCommandId,
+          threadId: request.threadId,
+          providerThreadId: request.providerThreadId,
+          notification: request.notification,
+          detail: request.detail,
+          reason,
+        })
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("orchestration-v2.provider-continuation.fallback-dispatch-failed", {
+              threadId: request.threadId,
+              providerThreadId: request.providerThreadId,
+              cause,
+            }),
+          ),
+        );
+    });
 
     const dispatchContinuation = Effect.fn("ProviderContinuationService.dispatchContinuation")(
       function* (request: ProviderContinuationRequests.ProviderContinuationRequest) {
@@ -269,11 +320,7 @@ export const layer = Layer.effectDiscard(
             providerThreadId: request.providerThreadId,
             projectId: error.projectId,
             instanceId: error.instanceId,
-          }).pipe(
-            Effect.andThen(
-              request.clearIfCurrent !== undefined ? request.clearIfCurrent() : Effect.void,
-            ),
-          );
+          }).pipe(Effect.andThen(recordContinuationErrorFallback(request, error)));
         if (request.dispatchIfCurrent === undefined) {
           yield* dispatch.pipe(
             Effect.catchTags({
@@ -331,8 +378,8 @@ export const layer = Layer.effectDiscard(
                   ),
                   Effect.forkScoped,
                 );
-              } else if (request.clearIfCurrent !== undefined) {
-                yield* request.clearIfCurrent();
+              } else {
+                yield* recordContinuationErrorFallback(request, Cause.squash(cause));
               }
             }),
           ),

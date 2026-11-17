@@ -1779,6 +1779,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     type: Schema.Literal("command_execution"),
     input: Schema.String,
     output: Schema.optional(Schema.String),
+    outputFilePath: Schema.optional(Schema.String),
     /** Set on the wire when output was withheld; fetch it with getTurnItem. */
     outputOmitted: Schema.optional(Schema.Boolean),
     outputIndicatesFailure: Schema.optional(Schema.Boolean),
@@ -2664,6 +2665,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     type: Schema.Literal("command_execution"),
     input: Schema.String,
     output: Schema.optional(Schema.String),
+    outputFilePath: Schema.optional(Schema.String),
     /** Set on the wire when output was withheld; fetch it with getTurnItem. */
     outputOmitted: Schema.optional(Schema.Boolean),
     outputIndicatesFailure: Schema.optional(Schema.Boolean),
@@ -3754,6 +3756,16 @@ const OrchestrationV2InternalCommand = Schema.Union([
         }),
       }),
     ),
+  }),
+  /** Records an error fallback turn item when provider continuation fails to wake the model. */
+  Schema.Struct({
+    type: Schema.Literal("thread.continuation-fallback.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    providerThreadId: Schema.NullOr(ProviderThreadId),
+    notification: Schema.optional(OrchestrationV2Notification),
+    detail: Schema.NullOr(Schema.String),
+    reason: Schema.String,
   }),
   /**
    * Internal so no client can mark a request saved without the value being

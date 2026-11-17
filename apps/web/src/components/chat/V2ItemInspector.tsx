@@ -190,6 +190,7 @@ function ToolCallBody(
     readonly args?: unknown;
     readonly toolName?: string | null;
     readonly exitCode?: number | undefined;
+    readonly outputFilePath?: string | undefined;
     /** Replaces fetched output. */
     readonly outputSlot?: ReactNode;
   },
@@ -218,6 +219,14 @@ function ToolCallBody(
         </div>
       ) : null}
       {call.argsText ? <StructuredValue value={call.argsText} highlightJson /> : null}
+      {props.outputFilePath ? (
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span>Full log saved to</span>
+          <code className="rounded bg-muted/50 px-1 py-0.5 text-foreground/85 select-all font-mono">
+            {props.outputFilePath}
+          </code>
+        </div>
+      ) : null}
       {props.outputSlot ?? <ToolOutput {...props} />}
       {props.exitCode !== undefined && props.exitCode !== 0 ? (
         <div className="text-destructive">exit {props.exitCode}</div>
@@ -261,6 +270,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
         <ToolCallBody
           command={item.input}
           exitCode={item.exitCode}
+          outputFilePath={item.outputFilePath}
           {...outputState}
           onImageExpand={props.onImageExpand}
           outputSlot={
@@ -271,6 +281,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
                 threadId={props.projectedItem.sourceThreadId}
                 itemId={props.projectedItem.sourceItemId}
                 source={props.source?.commandOutput}
+                outputFilePath={item.outputFilePath}
               />
             ) : undefined
           }

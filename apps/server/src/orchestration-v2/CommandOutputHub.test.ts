@@ -109,7 +109,7 @@ const writeCommandItem = (
   threadId: ThreadId,
   fields: Pick<
     Extract<OrchestrationV2TurnItem, { type: "command_execution" }>,
-    "status" | "output" | "exitCode"
+    "status" | "output" | "exitCode" | "outputFilePath"
   > & {
     readonly driver?: ProviderDriverKind;
     readonly startedAt?: DateTime.Utc;
@@ -353,5 +353,35 @@ layer("CommandOutputHub", (it) => {
       });
       assert.equal(yield* Queue.take(frames), "ended");
     }),
+  );
+
+  it.effect(
+    "a settled command item with outputFilePath delivers bounded preview output and ends stream",
+    () =>
+      Effect.gen(function* () {
+        const threadId = yield* seedThread;
+        yield* writeCommandItem(threadId, { status: "running" });
+
+        const frames = yield* subscribeFrames(threadId);
+        yield* takeFrame(frames);
+        yield* TestClock.adjust("1 second");
+
+        const logPath = "/userdata/logs/commands/item-1.log";
+        const boundedPreview = `[Earlier output written to log file: ${logPath}]\n\ntest passed\n`;
+        yield* writeCommandItem(threadId, {
+          status: "completed",
+          output: boundedPreview,
+          outputFilePath: logPath,
+        });
+
+        const final = yield* takeFrame(frames);
+        assert.deepEqual(final, {
+          kind: "replace",
+          text: boundedPreview,
+          truncated: false,
+          running: false,
+        });
+        assert.equal(yield* Queue.take(frames), "ended");
+      }),
   );
 });

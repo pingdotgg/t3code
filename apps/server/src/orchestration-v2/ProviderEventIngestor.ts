@@ -20,7 +20,9 @@ import {
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlError from "effect/sql/SqlError";
 
@@ -41,6 +43,7 @@ import { makeProviderFailureTurnItem } from "@t3tools/provider-core/server/failu
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
 import { boundFileChangeForStorage } from "./WireProjection.ts";
+import { spilloverCommandOutputTurnItem } from "./CommandOutputSpillover.ts";
 
 export class ProviderEventNormalizeError extends Schema.TaggedError<ProviderEventNormalizeError>()(
   "ProviderEventNormalizeError",
@@ -245,9 +248,13 @@ export const layer: Layer.Layer<
   | ProjectionStore.ProjectionStoreV2
   | ThreadCommandExecutor.ThreadCommandExecutor
   | ProviderInstanceRegistry.ProviderInstanceRegistry
+  | FileSystem.FileSystem
+  | Path.Path
 > = Layer.effect(
   ProviderEventIngestorV2,
   Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const eventSink = yield* EventSink.EventSinkV2;
     const git = yield* GitVcsDriver.GitVcsDriver;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -571,18 +578,23 @@ export const layer: Layer.Layer<
                   nodeId: input.event.message.nodeId,
                 }),
               ];
-            case "turn_item.updated":
+            case "turn_item.updated": {
+              const stripped = stripUnservedToolOutputImageBytes(input.event.turnItem);
+              const boundedFile = boundFileChangeForStorage(stripped);
+              const payload = yield* spilloverCommandOutputTurnItem(boundedFile).pipe(
+                Effect.provideService(FileSystem.FileSystem, fs),
+                Effect.provideService(Path.Path, path),
+              );
               return [
                 yield* makeDomainEvent(input, {
                   type: "turn-item.updated",
-                  threadId: input.event.turnItem.threadId,
-                  payload: boundFileChangeForStorage(
-                    stripUnservedToolOutputImageBytes(input.event.turnItem),
-                  ),
-                  runId: input.event.turnItem.runId,
-                  nodeId: input.event.turnItem.nodeId,
+                  threadId: payload.threadId,
+                  payload,
+                  runId: payload.runId,
+                  nodeId: payload.nodeId,
                 }),
               ];
+            }
             case "runtime_request.updated":
               return [
                 yield* makeDomainEvent(input, {

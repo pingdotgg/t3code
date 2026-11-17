@@ -1276,6 +1276,11 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
                 )}
               </Text>
             ) : null}
+            {shownItem.type === "command_execution" && shownItem.outputFilePath ? (
+              <Text selectable className="font-mono text-2xs text-foreground-muted pb-1">
+                Full log saved to {shownItem.outputFilePath}
+              </Text>
+            ) : null}
             {fetchedOutput ? (
               <Text
                 selectable

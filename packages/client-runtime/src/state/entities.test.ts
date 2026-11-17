@@ -72,7 +72,7 @@ describe("V2 client presentation", () => {
     }
   });
 
-  it("parks a thread that never ran at idle while a pull request watch holds it", () => {
+  it("parks a thread that never ran at waiting while a pull request watch holds it", () => {
     const watch = {
       taskId: "pull-request-watch:github.com/acme/app#1",
       kind: "monitor" as const,
@@ -86,7 +86,7 @@ describe("V2 client presentation", () => {
       status: "idle",
       pendingBackgroundTasks: [watch],
     });
-    expect(watched.runtime).toMatchObject({ status: "idle", activeRunId: null });
+    expect(watched.runtime).toMatchObject({ status: "waiting", activeRunId: null });
     expect(
       presentThreadShell(environmentId, {
         ...v2ThreadShell,
@@ -113,8 +113,8 @@ describe("V2 client presentation", () => {
 
   it.each([
     { kinds: ["command"], expected: "completed" },
-    { kinds: ["command", "subagent"], expected: "idle" },
-    { kinds: ["background_task"], expected: "idle" },
+    { kinds: ["command", "subagent"], expected: "waiting" },
+    { kinds: ["background_task"], expected: "waiting" },
   ] as const)("presents a completed shell with $kinds as $expected", ({ kinds, expected }) => {
     const pendingBackgroundTasks = kinds.map((kind, index) => ({
       taskId: `bg-${index}`,
@@ -201,10 +201,10 @@ describe("V2 client presentation", () => {
       ],
     });
 
-    expect(shell.runtime).toMatchObject({ status: "idle", activeRunId });
+    expect(shell.runtime).toMatchObject({ status: "waiting", activeRunId });
   });
 
-  it("parks runtime idle over stale shell running when the roster is nonempty", () => {
+  it("parks runtime waiting over stale shell running when the roster is nonempty", () => {
     const runId = RunId.make("run-stale-running");
     const shell = presentThreadShell(environmentId, {
       ...v2ThreadShell,
@@ -218,7 +218,7 @@ describe("V2 client presentation", () => {
 
     expect(shell.latestRun).toMatchObject({ runId, status: "running" });
     expect(shell.runtime).toMatchObject({
-      status: "idle",
+      status: "waiting",
       activeRunId: runId,
     });
     expect(shell.pendingBackgroundTasks).toEqual([
@@ -380,7 +380,7 @@ describe("V2 client presentation", () => {
         turnItems: [backgroundItem],
       }),
     ).toMatchObject({
-      status: "idle",
+      status: "waiting",
       activeRunId: null,
     });
     expect(
@@ -412,8 +412,8 @@ describe("V2 client presentation", () => {
 
     for (const [turnItems, status] of [
       [[commandItem], "completed"],
-      [[backgroundItem], "idle"],
-      [[commandItem, backgroundItem], "idle"],
+      [[backgroundItem], "waiting"],
+      [[commandItem, backgroundItem], "waiting"],
     ] as const) {
       expect(
         deriveThreadRuntime({
@@ -450,7 +450,7 @@ describe("V2 client presentation", () => {
             runs: [{ ...run, status, completedAt: now }],
             providerThreads: [providerThread],
           }),
-        ).toMatchObject({ status: status === "failed" ? "failed" : "idle", activeRunId: null });
+        ).toMatchObject({ status: status === "failed" ? "failed" : "waiting", activeRunId: null });
       }
     }
   });

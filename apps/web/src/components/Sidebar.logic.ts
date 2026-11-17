@@ -660,6 +660,7 @@ export function buildBulkUnpinContextMenuItem(input: {
 export interface ThreadStatusPill {
   label:
     | "Working"
+    | "Running checks"
     | "Connecting"
     | "Completed"
     | "Failed"
@@ -1241,6 +1242,15 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
+  if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) {
+    return {
+      label: "Running checks",
+      colorClass: "text-sky-600 dark:text-sky-300/80",
+      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      pulse: true,
+    };
+  }
+
   if (
     (thread.runtime?.status === "running" && thread.blockedOnThreadWait !== true) ||
     thread.runtime?.status === "waiting"
@@ -1266,10 +1276,7 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (
-    (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) ||
-    backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
-  ) {
+  if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {
     return {
       label: "Waiting",
       colorClass: "text-sidebar-muted-foreground",

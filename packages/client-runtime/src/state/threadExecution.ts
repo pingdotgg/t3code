@@ -373,7 +373,7 @@ export function deriveThreadStructureRuntime(
     status: usageLimitedRun
       ? "failed"
       : backgroundWorkHoldsRun && latestRunProjection?.status !== "failed"
-        ? "idle"
+        ? "waiting"
         : (activityRun?.status ?? "idle"),
     activeRunId,
     activityStartedAt:
@@ -628,9 +628,11 @@ export function presentPendingBackgroundWork(
     const noun = BACKGROUND_WORK_KINDS[only.kind].singular;
     const named = only.label !== noun;
     const title = named
-      ? `${waiting ? "Waiting" : "Running"} · ${only.label}`
+      ? `${waiting ? (only.kind === "command" ? "Running checks" : "Waiting") : "Running"} · ${only.label}`
       : waiting
-        ? `Waiting on a ${noun}`
+        ? only.kind === "command"
+          ? "Running checks"
+          : `Waiting on a ${noun}`
         : `Running a ${noun}`;
     return { title, items, waiting };
   }
@@ -640,7 +642,15 @@ export function presentPendingBackgroundWork(
     const { singular, plural } = BACKGROUND_WORK_KINDS[kind];
     return `${count} ${count === 1 ? singular : plural}`;
   });
-  return { title: `${waiting ? "Waiting on" : "Running"} ${joinWithAnd(groups)}`, items, waiting };
+  const summary = joinWithAnd(groups);
+  const title = waiting
+    ? items.every((i) => i.kind === "command")
+      ? summary.length > 0
+        ? `Running checks · ${summary}`
+        : "Running checks"
+      : `Waiting on ${summary}`
+    : `Running ${summary}`;
+  return { title, items, waiting };
 }
 
 export interface ProviderGoalPresentation {

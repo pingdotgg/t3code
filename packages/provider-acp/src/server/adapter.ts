@@ -4502,6 +4502,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
               case "execute": {
                 const exitCode = acpProjectedCommandExitCode(status, rawOutput);
+                const isDaemon =
+                  rawInputRecord?.isDaemon === true ||
+                  rawInputRecord?.IsDaemon === true ||
+                  rawInputRecord?.is_daemon === true ||
+                  rawInputRecord?.daemon === true ||
+                  toolCall.data.isDaemon === true ||
+                  toolCall.data.IsDaemon === true ||
+                  toolCall.data.is_daemon === true ||
+                  toolCall.data.daemon === true ||
+                  (toolCall as { isDaemon?: unknown }).isDaemon === true;
+                const completionWake =
+                  !isDaemon ||
+                  toolCall.data.completionWake === "always" ||
+                  rawInputRecord?.completionWake === "always" ||
+                  (toolCall as { completionWake?: unknown }).completionWake === "always"
+                    ? ("always" as const)
+                    : undefined;
                 turnItem = {
                   ...base,
                   type: "command_execution",
@@ -4510,6 +4527,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     ? {}
                     : { output: textFromUnknown(rawOutput) }),
                   ...(exitCode === undefined ? {} : { exitCode }),
+                  ...(completionWake === undefined ? {} : { completionWake }),
                 };
                 break;
               }
@@ -4551,6 +4569,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               default:
                 if (projectAsCommandExecution) {
                   const exitCode = acpProjectedCommandExitCode(status, rawOutput);
+                  const isDaemon =
+                    rawInputRecord?.isDaemon === true ||
+                    rawInputRecord?.IsDaemon === true ||
+                    rawInputRecord?.is_daemon === true ||
+                    rawInputRecord?.daemon === true ||
+                    toolCall.data.isDaemon === true ||
+                    toolCall.data.IsDaemon === true ||
+                    toolCall.data.is_daemon === true ||
+                    toolCall.data.daemon === true ||
+                    (toolCall as { isDaemon?: unknown }).isDaemon === true;
+                  const completionWake =
+                    (!isDaemon && inputVariant !== "monitor") ||
+                    toolCall.data.completionWake === "always" ||
+                    rawInputRecord?.completionWake === "always" ||
+                    (toolCall as { completionWake?: unknown }).completionWake === "always"
+                      ? ("always" as const)
+                      : undefined;
                   turnItem = {
                     ...base,
                     type: "command_execution",
@@ -4564,6 +4599,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       : { output: textFromUnknown(rawOutput) }),
                     ...(exitCode === undefined ? {} : { exitCode }),
                     ...(inputVariant === "monitor" ? { monitor: true } : {}),
+                    ...(completionWake === undefined ? {} : { completionWake }),
                   };
                 } else {
                   turnItem = {
@@ -4879,6 +4915,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 Effect.gen(function* () {
                   if ((yield* Ref.get(continuationGeneration)) === generation) {
                     yield* Ref.set(continuationRequested, false);
+                    yield* Ref.update(wakeReports, ({ reports }) => ({
+                      reports,
+                      offered: noWakeReports.offered,
+                    }));
                   }
                 }),
               ),
@@ -4888,6 +4928,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const clearIfOwner = Effect.gen(function* () {
                     if ((yield* Ref.get(continuationGeneration)) === generation) {
                       yield* Ref.set(continuationRequested, false);
+                      yield* Ref.update(wakeReports, ({ reports }) => ({
+                        reports,
+                        offered: noWakeReports.offered,
+                      }));
                     }
                   });
                   if (yield* Ref.get(stoppedRunQuarantine)) {
@@ -4947,10 +4991,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (
             postSettleContinuationEnabled &&
             (yield* Ref.get(activeSessionId)) === sessionId &&
-            (yield* Ref.get(runningBackgroundTaskIds)).size === 0 &&
-            (yield* Ref.get(wakeBuffer)).some((notification) =>
-              acpPostSettleContinuationOfferEvidence(notification, flavor),
-            )
+            ((yield* Ref.get(wakeReports)).reports.size > 0 ||
+              (yield* Ref.get(wakeBuffer)).some((notification) =>
+                acpPostSettleContinuationOfferEvidence(notification, flavor),
+              ))
           ) {
             yield* offerContinuationRun(sessionId);
           }
@@ -5093,7 +5137,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               stopProcessing: true,
             };
           }
-          if (backgroundWorkRunning) {
+          if (
+            backgroundWorkRunning &&
+            (yield* Ref.get(wakeReports)).reports.size === 0 &&
+            update.sessionUpdate !== "tool_call" &&
+            update.sessionUpdate !== "tool_call_update"
+          ) {
             return {
               buffered,
               offerContinuation: false,
@@ -8189,10 +8238,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             postSettleContinuationEnabled &&
             settledStatus === "completed" &&
             !directStopQuarantine &&
-            (yield* Ref.get(runningBackgroundTaskIds)).size === 0 &&
-            (yield* Ref.get(wakeBuffer)).some((notification) =>
-              acpPostSettleContinuationOfferEvidence(notification, flavor),
-            )
+            ((yield* Ref.get(wakeReports)).reports.size > 0 ||
+              (yield* Ref.get(wakeBuffer)).some((notification) =>
+                acpPostSettleContinuationOfferEvidence(notification, flavor),
+              ))
           ) {
             const sessionId = yield* Ref.get(activeSessionId);
             if (sessionId !== null) {

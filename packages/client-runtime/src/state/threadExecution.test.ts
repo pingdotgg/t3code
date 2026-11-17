@@ -756,4 +756,56 @@ describe("presentPendingBackgroundWork", () => {
     ]);
     expect(presentation?.items[0]?.label).toBe("mv a.ts b.ts\ncat > b.ts <<'EOF'\nexport {};\nEOF");
   });
+
+  it("shows Running checks for a single awaited command", () => {
+    const named = presentPendingBackgroundWork([
+      { taskId: "cmd-1", kind: "command", description: "npm test", awaited: true },
+    ]);
+    expect(named?.waiting).toBe(true);
+    expect(named?.title).toBe("Running checks · npm test");
+
+    const unnamed = presentPendingBackgroundWork([
+      { taskId: "cmd-2", kind: "command", awaited: true },
+    ]);
+    expect(unnamed?.waiting).toBe(true);
+    expect(unnamed?.title).toBe("Running checks");
+  });
+
+  it("shows Waiting for a single subagent", () => {
+    const named = presentPendingBackgroundWork([
+      { taskId: "agent-1", kind: "subagent", description: "Review PR" },
+    ]);
+    expect(named?.waiting).toBe(true);
+    expect(named?.title).toBe("Waiting · Review PR");
+
+    const unnamed = presentPendingBackgroundWork([{ taskId: "agent-2", kind: "subagent" }]);
+    expect(unnamed?.waiting).toBe(true);
+    expect(unnamed?.title).toBe("Waiting on a subagent");
+  });
+
+  it("shows Running checks for multiple awaited commands", () => {
+    const presentation = presentPendingBackgroundWork([
+      { taskId: "cmd-1", kind: "command", description: "npm test", awaited: true },
+      { taskId: "cmd-2", kind: "command", description: "cargo test", awaited: true },
+    ]);
+    expect(presentation?.waiting).toBe(true);
+    expect(presentation?.title).toBe("Running checks · 2 commands");
+  });
+
+  it("shows Waiting on when multiple tasks include non-command tasks", () => {
+    const presentation = presentPendingBackgroundWork([
+      { taskId: "cmd-1", kind: "command", description: "npm test", awaited: true },
+      { taskId: "agent-1", kind: "subagent", description: "Review PR" },
+    ]);
+    expect(presentation?.waiting).toBe(true);
+    expect(presentation?.title).toBe("Waiting on 1 subagent and 1 command");
+  });
+
+  it("shows Running when background tasks are not holding completion", () => {
+    const presentation = presentPendingBackgroundWork([
+      { taskId: "cmd-1", kind: "command", description: "npm run dev" },
+    ]);
+    expect(presentation?.waiting).toBe(false);
+    expect(presentation?.title).toBe("Running · npm run dev");
+  });
 });

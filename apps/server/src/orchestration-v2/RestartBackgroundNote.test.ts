@@ -14,7 +14,9 @@ import {
   isAwaitedWork,
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
+  restartCancelledBackgroundWorkNote,
   restartContinuationNote,
+  runOutcome,
   mergeRestartCancelledBackgroundWork,
 } from "./RestartBackgroundNote.ts";
 
@@ -253,4 +255,76 @@ it("counts a prompted mid-turn or chained continuation as delivering the note", 
     }),
     [],
   );
+});
+
+it("cancelledTurnItemWork for command_execution with completionWake 'always' yields awaited true and isAwaitedWork true", () => {
+  const commandItem = {
+    id: "item-cmd-wake",
+    type: "command_execution" as const,
+    input: "npm test",
+    completionWake: "always" as const,
+  };
+  const work = cancelledTurnItemWork(commandItem as never);
+  assert.isDefined(work);
+  assert.equal(work?.awaited, true);
+  assert.deepEqual(work, {
+    kind: "shell",
+    label: "npm test",
+    id: "item-cmd-wake",
+    awaited: true,
+  });
+  assert.isTrue(isAwaitedWork(work!));
+
+  const noWakeItem = {
+    id: "item-cmd-no-wake",
+    type: "command_execution" as const,
+    input: "npm test",
+  };
+  const noWakeWork = cancelledTurnItemWork(noWakeItem as never);
+  assert.isDefined(noWakeWork);
+  assert.isUndefined(noWakeWork?.awaited);
+  assert.isFalse(isAwaitedWork(noWakeWork!));
+
+  assert.equal(
+    runOutcome({ status: "completed", restartCancelledBackgroundWork: [work!] }),
+    "interrupted",
+  );
+  assert.equal(
+    runOutcome({ status: "cancelled", restartCancelledBackgroundWork: [work!] }),
+    "interrupted",
+  );
+  assert.equal(
+    runOutcome({ status: "waiting", restartCancelledBackgroundWork: [work!] }),
+    "interrupted",
+  );
+  assert.equal(
+    runOutcome({ status: "completed", restartCancelledBackgroundWork: [noWakeWork!] }),
+    "completed",
+  );
+
+  const note = restartCancelledBackgroundWorkNote([work!]);
+  assert.isTrue(note.includes("- shell: npm test"));
+});
+
+it("preserves awaited on cancelled roster tasks", () => {
+  const awaitedTask = {
+    kind: "command" as const,
+    taskId: "task-build",
+    description: "pnpm build",
+    awaited: true as const,
+  };
+  const work = cancelledRosterTaskWork(awaitedTask);
+  assert.equal(work.awaited, true);
+  assert.isTrue(isAwaitedWork(work));
+
+  const parentTask = {
+    kind: "command" as const,
+    taskId: "task-child",
+    parentTaskId: "parent-agent",
+    description: "pnpm test",
+    awaited: true as const,
+  };
+  const parentWork = cancelledRosterTaskWork(parentTask);
+  assert.equal(parentWork.awaited, true);
+  assert.isTrue(isAwaitedWork(parentWork));
 });

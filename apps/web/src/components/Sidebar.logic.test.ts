@@ -481,7 +481,7 @@ describe("resolveThreadStatusPill", () => {
     });
   });
 
-  it("shows waiting for an idle thread with pending background tasks", () => {
+  it("shows running checks for an idle thread with pending background tasks holding completion", () => {
     expect(
       resolveThreadStatusPill({
         thread: {
@@ -491,16 +491,16 @@ describe("resolveThreadStatusPill", () => {
           ],
           runtime: {
             ...baseThread.runtime,
-            status: "idle",
+            status: "waiting",
             activeRunId: null,
           },
         },
       }),
     ).toMatchObject({
-      label: "Waiting",
-      colorClass: "text-sidebar-muted-foreground",
-      dotClass: "bg-sidebar-muted-foreground",
-      pulse: false,
+      label: "Running checks",
+      colorClass: "text-sky-600 dark:text-sky-300/80",
+      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      pulse: true,
     });
   });
 
@@ -1002,9 +1002,12 @@ describe("unseen completion with background work", () => {
     {
       roster: "awaited command",
       task: { kind: "command", awaited: true },
-      status: "waiting",
+      status: "working",
       receded: true,
-      pill: "Waiting",
+      pill: "Running checks",
+      pulse: true,
+      colorClass: "text-sky-600 dark:text-sky-300/80",
+      dotClass: "bg-sky-500 dark:bg-sky-300/80",
     },
   ] as const)("presents a completed thread with a $roster roster", (expected) => {
     const thread = presentThreadShell(localEnvironmentId, {
@@ -1030,7 +1033,16 @@ describe("unseen completion with background work", () => {
       }),
     ).toBe(expected.receded);
     expect(isSidebarThreadWorking(thread)).toBe(expected.receded);
-    expect(resolveThreadStatusPill({ thread })).toMatchObject({ label: expected.pill });
+    expect(resolveThreadStatusPill({ thread })).toMatchObject({
+      label: expected.pill,
+      ...("pulse" in expected
+        ? {
+            pulse: expected.pulse,
+            colorClass: expected.colorClass,
+            dotClass: expected.dotClass,
+          }
+        : {}),
+    });
   });
 });
 
