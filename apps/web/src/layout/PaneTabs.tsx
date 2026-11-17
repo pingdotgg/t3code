@@ -16,6 +16,7 @@ import {
   ChartNoAxesColumnIcon,
   GitForkIcon,
   PanelRightIcon,
+  PlusIcon,
   SettingsIcon,
   SquareDashedIcon,
   SquarePenIcon,
@@ -45,7 +46,7 @@ import { previewBridge } from "../components/preview/previewBridge";
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu";
 
 import { ProjectFavicon } from "../components/ProjectFavicon";
-import { ContentButton } from "../components/ui/button";
+import { Button, ContentButton } from "../components/ui/button";
 import { cn } from "../lib/utils";
 import { requestSideChatComposerFocus } from "../lib/workspaceFocus";
 import { PANE_GHOST_TAB_TITLE_CLASS, PANE_INACTIVE_TAB_TITLE_CLASS } from "../components/PaneNotch";
@@ -79,8 +80,14 @@ import {
   THREAD_TERMINAL_SURFACE_ID,
   type LayoutState,
   type LayoutTab,
+  canCloseLayoutTab,
 } from "./layoutModel";
-import { closeLayoutTabByUser, closeOtherLayoutTabsByUser, splitLayoutTab } from "./layoutActions";
+import {
+  closeLayoutTabByUser,
+  closeOtherLayoutTabsByUser,
+  openLayoutNewTab,
+  splitLayoutTab,
+} from "./layoutActions";
 import { beginLayoutTabDrag } from "./layoutDrag";
 import { useLayoutPane } from "./layoutPaneContext";
 import { isScrollingWorkspacesEnabled } from "./layoutBehavior";
@@ -608,7 +615,7 @@ export type LayoutTabMenuId =
   | "layout:close-tab"
   | "layout:close-other-tabs";
 
-/** Layout actions for a tab's context menu (pen lLm7Y 3). Every tab can close. */
+/** Layout actions for a tab's context menu (pen lLm7Y 3). */
 export function buildLayoutTabMenuItems(
   layout: LayoutState,
   tabId: string,
@@ -662,13 +669,15 @@ export function buildLayoutTabMenuItems(
       separatorBefore: true,
     });
   }
-  items.push({
-    id: "layout:close-tab",
-    label: "Close",
-    icon: "x",
-    ...keys("tab.close"),
-    separatorBefore: !items.some((item) => item.id === "layout:copy-link"),
-  });
+  if (canCloseLayoutTab(layout, tabId)) {
+    items.push({
+      id: "layout:close-tab",
+      label: "Close",
+      icon: "x",
+      ...keys("tab.close"),
+      separatorBefore: !items.some((item) => item.id === "layout:copy-link"),
+    });
+  }
   if (hasSiblings) {
     items.push({ id: "layout:close-other-tabs", label: "Close others", icon: "copy-x" });
   }
@@ -911,6 +920,32 @@ export function LayoutTabCloseButton({ tabId, title }: { tabId: string; title: s
         <XIcon aria-hidden className="size-3" />
       </TooltipTrigger>
       <TooltipPopup side="bottom">Close tab{shortcut ? ` (${shortcut})` : ""}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+export function LayoutNewTabButton({ tabId }: { tabId: string | null }) {
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const shortcut = shortcutLabelForCommand(keybindings, "tab.new");
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="bare"
+            size="icon-xs"
+            data-pane-notch-add=""
+            aria-label="New tab"
+            onClick={() => {
+              if (tabId !== null) useLayoutStore.getState().focusTab(tabId);
+              openLayoutNewTab();
+            }}
+          />
+        }
+      >
+        <PlusIcon />
+      </TooltipTrigger>
+      <TooltipPopup side="bottom">New tab{shortcut ? ` (${shortcut})` : ""}</TooltipPopup>
     </Tooltip>
   );
 }

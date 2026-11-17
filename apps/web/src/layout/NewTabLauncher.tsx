@@ -1,8 +1,8 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { ProjectId, ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { ChartNoAxesColumnIcon, PlusIcon, SettingsIcon, SquareDashedIcon } from "lucide-react";
-import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
+import { SquareDashedIcon } from "lucide-react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef } from "react";
 
 import { useBrowserDefaults } from "../browser/browserDefaults";
 import {
@@ -16,9 +16,10 @@ import {
 import { PANE_BODY_UNDER_HEADER_CLASS, PANE_TAB_CLASS, PaneNotch } from "../components/PaneNotch";
 import {
   SURFACE_LAUNCHER_ENTRIES,
-  SurfaceLauncherRows,
+  SurfaceLauncherGrid,
   useLauncherElement,
   useSurfaceLauncherKeys,
+  type LauncherPullRequestRow,
   type SurfaceLauncherAction,
 } from "../components/SurfaceLauncher";
 import { isElectron } from "../env";
@@ -27,11 +28,10 @@ import {
   COLLAPSED_SIDEBAR_INSET_EASE_CLASS,
   COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
 } from "../workspaceTitlebar";
-import { Button } from "../components/ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useScratchProject } from "../hooks/useScratchProject";
+import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands } from "../shortcuts/dispatcher";
@@ -42,21 +42,20 @@ import { primaryServerKeybindingsAtom } from "../state/server";
 import { useThreadShell } from "../state/entities";
 import type { ThreadRouteTarget } from "../threadRoutes";
 import { useThreadSurfaceOpeners } from "../components/ThreadSurfaceTab";
+import { ThreadContextChip } from "../components/ThreadContextChip";
 import type { LauncherSurfaceKind } from "../components/SurfaceLauncher";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import {
   isThreadlessHomeRef,
   isThreadlessSurfacesRef,
   threadlessSurfacesProjectRef,
-  threadlessSurfacesRef,
 } from "../threadlessSurfaces";
-import { toggleThreadTerminalPane } from "./openRules";
+import { followLayoutCompanions, toggleThreadTerminalPane } from "./openRules";
 import { requestLayoutSurfacePlacement } from "./surfaceSync";
-import { openLayoutNewTab } from "./layoutActions";
 import { LayoutLearningTips } from "./LayoutOnboarding";
 import { beginLayoutTabDrag } from "./layoutDrag";
 import { useLayoutPane } from "./layoutPaneContext";
-import type { LayoutPageContent } from "./layoutModel";
+import { canCloseLayoutTab, selectLayoutWayBack, type LayoutPageContent } from "./layoutModel";
 import { useOpenLayoutPage } from "./pageNavigation";
 import { runInNewLayoutTab, useLayoutStore } from "./layoutStore";
 import {
@@ -64,6 +63,7 @@ import {
   LAYOUT_TAB_SLOT_CLASS,
   LayoutPaneTab,
   LayoutPaneTabStrip,
+  LayoutNewTabButton,
   LayoutTabCloseButton,
   showLayoutTabMenu,
   useLayoutPaneSiblingTabs,
@@ -108,8 +108,7 @@ function useContextProjectRef(context: ThreadRouteTarget | null) {
     : scopeProjectRef(environmentId, projectId);
 }
 
-/** A launcher tab replaces itself with its chosen thread or surface. Without a thread, surfaces use
- * the selected project through threadlessSurfaces.ts. */
+/** A launcher tab replaces itself with its chosen thread or surface. */
 interface NewTabLauncherProps {
   /** The launcher's tab, or null for an empty workspace. */
   tabId: string | null;
@@ -120,81 +119,45 @@ interface NewTabLauncherProps {
 
 type SurfaceOpeners = ReturnType<typeof useThreadSurfaceOpeners>;
 
-/** No environment to open surfaces in: every surface row says why. */
-const NO_OPENERS: SurfaceOpeners = {
-  available: {
-    browser: false,
-    terminal: false,
-    files: false,
-    diff: false,
-    "pull-request": false,
-    "pull-requests": false,
-    device: false,
-    "side-chat": false,
-  },
-  browserUnavailableReason: "No environment is connected yet.",
-  open: () => undefined,
-  runShellCommand: () => undefined,
-};
-
 function NewTabLauncher(props: NewTabLauncherProps) {
   const contextThreadRef = useContextThreadRef(props.context);
-  const model = useProjectPickerModel(useContextProjectRef(props.context));
-  // Its context's project leads: Enter starts the next thread there. Without
-  // a thread, the project row the keyboard is on leads and holds its
-  // surfaces (null on "No project": the server's home); before one is, the
-  // context's (none from a home surface), else the first offered.
-  const [focusedProjectKey, setFocusedProjectKey] = useState<string | null>();
+  const contextProjectRef = useContextProjectRef(props.context);
+  const model = useProjectPickerModel(contextProjectRef);
   const fromHome = props.context?.kind === "server" && isThreadlessHomeRef(props.context.threadRef);
   const firstEntry = model.pinnedEntries[0] ?? model.recentEntries[0] ?? null;
-  const selectedProjectKey =
-    contextThreadRef === null && (focusedProjectKey !== undefined || fromHome)
-      ? (focusedProjectKey ?? null)
-      : (contextThreadRef === null
-          ? model.activeProjectKey || firstEntry?.group.projectKey
-          : model.activeProjectKey) || null;
-  const selectedEntry = model.menuEntries.find(
-    (entry) => entry.group.projectKey === selectedProjectKey,
-  );
-  const environmentId =
-    selectedEntry?.targetProject.environmentId ??
-    model.primaryEnvironmentId ??
-    model.environments[0]?.environmentId ??
-    null;
-  const projectId = selectedEntry?.targetProject.id ?? null;
-  const surfacesRef =
-    contextThreadRef ??
-    (environmentId === null ? null : threadlessSurfacesRef(environmentId, projectId));
+  const selectedProjectKey = fromHome
+    ? null
+    : (contextThreadRef === null
+        ? model.activeProjectKey || firstEntry?.group.projectKey
+        : model.activeProjectKey) || null;
   const body = {
     ...props,
     model,
     selectedProjectKey,
-    onFocusProjectKey: contextThreadRef === null ? setFocusedProjectKey : undefined,
-    contextThreadRef,
+    scratchSelected: contextThreadRef === null && selectedProjectKey === null,
+    contextProjectId: contextProjectRef?.projectId ?? null,
   };
-  return surfacesRef === null ? (
-    <NewTabLauncherBody {...body} surfacesRef={null} openers={NO_OPENERS} />
+  return contextThreadRef === null ? (
+    <NewTabLauncherBody {...body} contextThreadRef={null} openers={null} />
   ) : (
-    <NewTabLauncherWithSurfaces {...body} surfacesRef={surfacesRef} />
+    <NewTabLauncherWithSurfaces {...body} contextThreadRef={contextThreadRef} />
   );
 }
 
 interface NewTabLauncherBodyProps extends NewTabLauncherProps {
   model: ProjectPickerModel;
   selectedProjectKey: string | null;
-  /** Set while threadless: the project row the keyboard is on (null for "No project"), which its surfaces follow. */
-  onFocusProjectKey: ((projectKey: string | null) => void) | undefined;
-  /** The thread it was opened from, which answers cmd+J; null when threadless. */
+  scratchSelected: boolean;
+  /** The thread it was opened from, which its surfaces open for and which answers cmd+J. */
   contextThreadRef: ScopedThreadRef | null;
-  /** What its surfaces open for: `contextThreadRef`, or a threadless ref. */
-  surfacesRef: ScopedThreadRef | null;
-  openers: SurfaceOpeners;
+  contextProjectId: ProjectId | null;
+  openers: SurfaceOpeners | null;
 }
 
 function NewTabLauncherWithSurfaces(
-  props: Omit<NewTabLauncherBodyProps, "openers"> & { surfacesRef: ScopedThreadRef },
+  props: Omit<NewTabLauncherBodyProps, "openers"> & { contextThreadRef: ScopedThreadRef },
 ) {
-  const openers = useThreadSurfaceOpeners(props.surfacesRef);
+  const openers = useThreadSurfaceOpeners(props.contextThreadRef);
   return <NewTabLauncherBody {...props} openers={openers} />;
 }
 
@@ -203,9 +166,9 @@ function NewTabLauncherBody({
   active,
   model,
   selectedProjectKey,
-  onFocusProjectKey,
+  scratchSelected,
   contextThreadRef,
-  surfacesRef,
+  contextProjectId,
   openers,
 }: NewTabLauncherBodyProps) {
   const { paneId } = useLayoutPane();
@@ -238,27 +201,19 @@ function NewTabLauncherBody({
   // A surface opens as a tab of this pane in this launcher's place; from an
   // empty workspace, as its first column.
   const openSurface = (kind: LauncherSurfaceKind, browserProfileId?: string) => {
-    if (surfacesRef === null || !openers.available[kind]) return;
+    if (contextThreadRef === null || !openers?.available[kind]) return;
     requestLayoutSurfacePlacement(
-      surfacesRef,
+      contextThreadRef,
       tabId !== null && paneId !== null
         ? { kind: "pane", paneId, replaceTabId: tabId }
         : { kind: "workspace", workspaceId: focusedWorkspaceId },
     );
     openers.open(kind, browserProfileId);
   };
-  // A thread's linked pull requests need the thread.
-  const threadless = contextThreadRef === null;
-  const actions: SurfaceLauncherAction[] = SURFACE_LAUNCHER_ENTRIES.map(({ kind, shortcut }) => ({
-    kind,
-    shortcut,
-    available: openers.available[kind],
-    ...(kind === "browser" && openers.browserUnavailableReason !== null
-      ? { disabledReason: openers.browserUnavailableReason }
-      : {}),
-    ...(threadless && kind === "pull-requests" ? { disabledReason: "Open a thread first." } : {}),
-    onClick: () => openSurface(kind),
-  }));
+  const { actions, pullRequest } =
+    openers === null
+      ? { actions: [], pullRequest: null }
+      : launcherSurfaceActions(openers, openSurface);
 
   const activeRef = useRef(active);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Publish committed focus ownership to the callback ref and native key listeners.
@@ -325,49 +280,98 @@ function NewTabLauncherBody({
           groupLabels={false}
           concise
           selectedProjectKey={selectedProjectKey}
-          scratchSelected={onFocusProjectKey !== undefined && selectedProjectKey === null}
+          scratchSelected={scratchSelected}
           onChooseEntry={chooseEntry}
-          {...(onFocusProjectKey
-            ? {
-                onFocusEntry: (entry: ProjectPickerEntry) =>
-                  onFocusProjectKey(entry.group.projectKey),
-                onFocusNoProject: () => onFocusProjectKey(null),
-              }
-            : {})}
           onNoProject={startWithoutProject}
         />
-        {actions.some((action) => action.available) ? (
+        {contextThreadRef !== null && actions.some((action) => action.available) ? (
           <>
             <div aria-hidden className="h-2 shrink-0" />
-            <SurfaceLauncherRows
-              actions={actions.filter((action) => action.available)}
+            <LauncherThreadLabel threadRef={contextThreadRef} projectId={contextProjectId} />
+            <SurfaceLauncherGrid
+              actions={actions}
+              pullRequest={pullRequest}
               browserProfiles={browserProfiles}
               onAddBrowserInProfile={(profileId) => openSurface("browser", profileId)}
             />
           </>
         ) : null}
-        <div aria-hidden className="h-2 shrink-0" />
-        <DraftProjectGroupLabel>Open a page</DraftProjectGroupLabel>
-        <DraftProjectRow
-          icon={<SettingsIcon className="size-4 shrink-0 text-muted-foreground" />}
-          label="Settings"
-          detail=""
-          onSelect={() => openPage("settings")}
-        />
-        <DraftProjectRow
-          icon={<ChartNoAxesColumnIcon className="size-4 shrink-0 text-muted-foreground" />}
-          label="Usage"
-          detail=""
-          onSelect={() => openPage("usage")}
-        />
+        <div aria-hidden className="mx-2.5 my-1 h-px bg-border" />
         <DraftProjectRow
           icon={<PullRequestGlyph.pullRequest className="size-4 shrink-0 text-muted-foreground" />}
-          label="Pull requests"
+          label="All pull requests"
           detail=""
           onSelect={() => openPage("pull-requests")}
         />
         <LayoutLearningTips />
       </div>
+    </div>
+  );
+}
+
+function launcherSurfaceActions(
+  openers: SurfaceOpeners,
+  openSurface: (kind: LauncherSurfaceKind) => void,
+): { actions: SurfaceLauncherAction[]; pullRequest: LauncherPullRequestRow | null } {
+  const pullRequest: LauncherPullRequestRow | null =
+    openers.available["pull-requests"] && openers.linkedPullRequestCount > 1
+      ? {
+          kind: "several",
+          count: openers.linkedPullRequestCount,
+          onClick: () => openSurface("pull-requests"),
+        }
+      : openers.available["pull-request"] && openers.pullRequestNumber !== null
+        ? {
+            kind: "one",
+            number: openers.pullRequestNumber,
+            onClick: () => openSurface("pull-request"),
+          }
+        : null;
+  const actions = SURFACE_LAUNCHER_ENTRIES.flatMap<SurfaceLauncherAction>(({ kind, shortcut }) =>
+    kind === "pull-requests" || kind === "side-chat"
+      ? []
+      : kind === "pull-request"
+        ? pullRequest
+          ? [{ kind, shortcut, available: true, onClick: pullRequest.onClick }]
+          : []
+        : [
+            {
+              kind,
+              shortcut,
+              available: openers.available[kind],
+              onClick: () => openSurface(kind),
+            },
+          ],
+  );
+  return { actions, pullRequest };
+}
+
+function LauncherThreadLabel({
+  threadRef,
+  projectId,
+}: {
+  threadRef: ScopedThreadRef;
+  projectId: ProjectId | null;
+}) {
+  const thread = useThreadShell(threadRef);
+  return (
+    <div
+      role="listitem"
+      className="flex min-w-0 items-baseline gap-1 px-2.5 pt-2 pb-1 text-caption text-dim-foreground"
+    >
+      <span className="shrink-0">Open for</span>
+      <span className="flex min-w-0">
+        <ThreadContextChip
+          record={{ ...threadRef, title: thread?.title ?? "New thread" }}
+          projectId={projectId}
+          onClick={(event) => {
+            if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            followLayoutCompanions(() =>
+              useLayoutStore.getState().focusChat({ kind: "server", threadRef }),
+            );
+          }}
+        />
+      </span>
     </div>
   );
 }
@@ -380,12 +384,10 @@ function NewTabLauncherBody({
 export function LayoutLauncherPane({
   tabId,
   context,
-  footer,
 }: {
-  /** Null for an empty workspace, which looks the same but has no tab to close or move. */
+  /** Null for a workspace drawn after it closed, which looks the same but has no tab to close or move. */
   tabId: string | null;
   context: ThreadRouteTarget | null;
-  footer?: React.ReactNode;
 }) {
   const { focused, leadingEdge } = useLayoutPane();
   return (
@@ -404,15 +406,41 @@ export function LayoutLauncherPane({
         <LauncherTabNotch tabId={tabId} />
       </header>
       <NewTabLauncher tabId={tabId} context={context} active={focused} />
-      {footer}
+      <WorkspaceWayBackHint />
     </div>
+  );
+}
+
+function WorkspaceWayBackHint() {
+  const { paneId } = useLayoutPane();
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const scrollingWorkspaces = useScrollingWorkspacesEnabled();
+  const way = useLayoutStore((state) =>
+    scrollingWorkspaces && paneId !== null ? selectLayoutWayBack(state.layout, paneId) : null,
+  );
+  if (way === null) return null;
+  const back = shortcutLabelForCommand(
+    keybindings,
+    way === "up" ? "layout.focusWorkspaceUp" : "layout.focusWorkspaceDown",
+  );
+  const overview = shortcutLabelForCommand(keybindings, "layout.overview");
+  if (!back && !overview) return null;
+  return (
+    <p className="pointer-events-none absolute inset-x-0 bottom-4 text-center text-meta text-dim-foreground">
+      {back ? `${back} goes back ${way}.` : null}
+      {back && overview ? " " : null}
+      {overview ? `${overview} shows every workspace.` : null}
+    </p>
   );
 }
 
 function LauncherTabNotch({ tabId }: { tabId: string | null }) {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const shortcut = shortcutLabelForCommand(keybindings, "tab.new");
   const siblingTabs = useLayoutPaneSiblingTabs();
+  const closable = useLayoutStore(
+    (state) => tabId !== null && canCloseLayoutTab(state.layout, tabId),
+  );
+  const icon = <SquareDashedIcon aria-hidden className="size-3.5 shrink-0" />;
   return (
     <PaneNotch>
       <LayoutPaneTabStrip>
@@ -431,36 +459,18 @@ function LauncherTabNotch({ tabId }: { tabId: string | null }) {
               void showLayoutTabMenu(tabId, { x: event.clientX, y: event.clientY }, keybindings);
             }}
           >
-            <span className={LAYOUT_TAB_ICON_CLASS}>
-              <SquareDashedIcon aria-hidden className="size-3.5 shrink-0" />
-            </span>
+            {closable ? <span className={LAYOUT_TAB_ICON_CLASS}>{icon}</span> : icon}
             <span className="truncate">New tab</span>
           </div>
-          {tabId === null ? null : <LayoutTabCloseButton tabId={tabId} title="New tab" />}
+          {closable && tabId !== null ? (
+            <LayoutTabCloseButton tabId={tabId} title="New tab" />
+          ) : null}
         </span>
         {siblingTabs.after.map((tab) => (
           <LayoutPaneTab key={tab.id} tab={tab} />
         ))}
       </LayoutPaneTabStrip>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="bare"
-              size="icon-xs"
-              data-pane-notch-add=""
-              aria-label="New tab"
-              onClick={() => {
-                if (tabId !== null) useLayoutStore.getState().focusTab(tabId);
-                openLayoutNewTab();
-              }}
-            />
-          }
-        >
-          <PlusIcon />
-        </TooltipTrigger>
-        <TooltipPopup side="bottom">New tab{shortcut ? ` (${shortcut})` : ""}</TooltipPopup>
-      </Tooltip>
+      <LayoutNewTabButton tabId={tabId} />
     </PaneNotch>
   );
 }

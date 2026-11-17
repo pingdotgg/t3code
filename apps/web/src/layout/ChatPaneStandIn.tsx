@@ -1,5 +1,4 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { useAtomValue } from "@effect/atom-react";
 
 import { ChatHeader } from "../components/chat/ChatHeader";
 import {
@@ -9,14 +8,10 @@ import {
 } from "../components/chat/ChatPaneHeader";
 import { PanelLayoutControls } from "../components/chat/PanelLayoutControls";
 import { useComposerDraftStore } from "../composerDraftStore";
-import { shortcutLabelForCommand } from "../keybindings";
-import type { LayoutBesideKind } from "./layoutActions";
 import { selectThreadPanelOpen, useRightPanelStore } from "../rightPanelStore";
 import { useProject, useThreadShell } from "../state/entities";
-import { primaryServerKeybindingsAtom } from "../state/server";
 import type { ThreadRouteTarget } from "../threadRoutes";
 
-const NOTHING_BESIDE: ReadonlySet<LayoutBesideKind> = new Set();
 const ignore = () => {};
 
 /** Use the real chat header over an inert body until ChatView mounts, so a new pane paints
@@ -38,7 +33,6 @@ export function ChatPaneStandIn({ target }: { target: ThreadRouteTarget }) {
     return null;
   })();
   const project = useProject(projectRef);
-  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const threadPanelOpen = useRightPanelStore((state) =>
     selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "inline"),
   );
@@ -69,10 +63,6 @@ export function ChatPaneStandIn({ target }: { target: ThreadRouteTarget }) {
               onOpenThread={ignore}
               rightPanelOpen={false}
               trailingInset={controlsInset}
-              onNewThreadInProject={ignore}
-              besideAvailable={NOTHING_BESIDE}
-              onOpenBeside={ignore}
-              newTabShortcutLabel={shortcutLabelForCommand(keybindings, "tab.new")}
             />
           ) : null}
         </ChatPaneHeader>

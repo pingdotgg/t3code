@@ -4,14 +4,10 @@ import { memo, useDeferredValue, useEffect, useLayoutEffect, useRef, useState } 
 
 import { kickBrowserSurfaceTracking } from "../browser/browserSurfaceTracking";
 import { ThreadRouteView } from "../components/ThreadRouteView";
-import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { launcherFocusTarget } from "../components/SurfaceLauncher";
 import { observeResize } from "../lib/observeResize";
 import { holdSurfaceFocusOrigin } from "../lib/workspaceFocus";
 import { SidebarInset } from "../components/ui/sidebar";
-import { useAtomValue } from "@effect/atom-react";
-import { shortcutLabelForCommand } from "../keybindings";
-import { primaryServerKeybindingsAtom } from "../state/server";
 import { StatusDot } from "../components/ui/status-dot";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
@@ -174,7 +170,6 @@ const FULL_SLOT: LayoutPaneSlot = {
   hasAbove: false,
   hasBelow: false,
 };
-const FULL_STYLE: React.CSSProperties = { inset: 0 };
 
 /**
  * A closed tab's pane sliding away where it was (motion/paneMotion.ts): a
@@ -1148,7 +1143,6 @@ export function LayoutSurfaceHost({
     const content = launcherTabsById.get(tabId);
     return content ? [{ placed, tabId, content }] : [];
   });
-  const emptyWorkspace = workspace.columns.length === 0;
   // Mid-switch the panes of the workspace being left are staged.
   const focusedWorkspacePaneIds = new Set(
     workspace.columns.flatMap((column) => column.panes.map((pane) => pane.id)),
@@ -1269,30 +1263,15 @@ export function LayoutSurfaceHost({
       ),
     ]),
   ].toSorted();
-  // An empty workspace opened above the stack points back down, not up.
-  const topEmptyId =
-    shown.workspaces.length > 1 && shown.workspaces[0]!.columns.length === 0
-      ? shown.workspaces[0]!.id
-      : null;
-  const emptyRows = staged
-    ? stage.rows
-        .filter((row) => row.workspace.columns.length === 0)
-        .map((row) => ({
-          id: row.workspace.id,
-          style: overviewSlotStyle(row, FULL_SLOT, stage.gap, HALF_PANE_GAP),
-          active: false,
-        }))
-    : stacked && workspaceStack
+  const goneRows =
+    stacked && workspaceStack
       ? stackRows
           .filter((row) => row.slots.length === 0)
           .map((row) => ({
             id: row.id,
             style: stackSlotStyle(row, FULL_SLOT, workspaceStack.gap),
-            active: false,
           }))
-      : emptyWorkspace
-        ? [{ id: workspace.id, style: FULL_STYLE, active }]
-        : [];
+      : [];
   const pageTabs = shown.workspaces.flatMap((candidate) =>
     candidate.columns.flatMap((column) =>
       column.panes.flatMap((pane) => pane.tabs.filter((tab) => isLayoutPageContent(tab.content))),
@@ -1491,14 +1470,8 @@ export function LayoutSurfaceHost({
               overview={staged}
             />
           ))}
-          {emptyRows.map((row) => (
-            <LayoutEmptyWorkspace
-              key={row.id}
-              workspaceId={row.id}
-              style={row.style}
-              top={row.id === topEmptyId}
-              active={row.active}
-            />
+          {goneRows.map((row) => (
+            <LayoutGoneWorkspace key={row.id} workspaceId={row.id} style={row.style} />
           ))}
           {staged ? (
             <OverviewStageOverlay layout={shown} stage={stage} phase={overviewPhase} />
@@ -2024,80 +1997,34 @@ function PaneCuts() {
   );
 }
 
-/**
- * The focused workspace is an empty one, at the bottom of the stack or
- * (`top`) opened above it. It is one pane showing the launcher, as a lone
- * launcher tab would: a thread started there, or opened from the sidebar,
- * or a drop, lands here.
- */
-function LayoutEmptyWorkspace({
+/** A blank workspace left behind while a switch slides away from it: drawn as it was, inert. */
+function LayoutGoneWorkspace({
   workspaceId,
   style,
-  top,
-  active,
 }: {
   workspaceId: string;
   style: React.CSSProperties;
-  top: boolean;
-  /** The strip's own empty workspace, not one under the overview or mid-switch. */
-  active: boolean;
 }) {
-  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  // Its surfaces open for the thread the URL still shows, if any.
-  const routeTarget = useThreadRouteTarget();
-  // The way back only means something while another workspace holds tabs.
-  const scrollingWorkspaces = useScrollingWorkspacesEnabled();
-  const othersHoldTabs = useLayoutStore(
-    (state) =>
-      scrollingWorkspaces &&
-      state.layout.workspaces.some((workspace) => workspace.columns.length > 0),
-  );
-  const back = othersHoldTabs
-    ? shortcutLabelForCommand(
-        keybindings,
-        top ? "layout.focusWorkspaceDown" : "layout.focusWorkspaceUp",
-      )
-    : null;
-  const overview = othersHoldTabs ? shortcutLabelForCommand(keybindings, "layout.overview") : null;
   const paneState = {
     tabId: null,
     paneId: null,
-    split: !active,
+    split: true,
     narrow: false,
     leadingEdge: true,
     trailingEdge: true,
-    focused: active,
+    focused: false,
     related: false,
     visible: true,
   } satisfies LayoutPaneState;
-  const paneRef = useRef<HTMLDivElement | null>(null);
-  usePaneKeyboard(paneRef, active, launcherKeyboardTarget);
   return (
     <div
-      ref={paneRef}
       data-layout-empty-workspace={workspaceId}
-      className={cn(
-        "absolute flex flex-col",
-        // Under the overview or mid-switch it draws its own pane, as panes do there.
-        !active && "overflow-clip rounded-pane pane-surface",
-      )}
+      className="absolute flex flex-col overflow-clip rounded-pane pane-surface"
       style={style}
-      inert={!active}
+      inert
     >
       <LayoutPaneContext value={paneState}>
-        <LayoutLauncherPane
-          tabId={null}
-          context={routeTarget}
-          footer={
-            back || overview ? (
-              <p className="pointer-events-none absolute inset-x-0 bottom-4 text-center text-meta text-dim-foreground">
-                {back ? `${back} goes back ${top ? "down" : "up"}.` : null}
-                {back && overview ? " " : null}
-                {overview ? `${overview} shows every workspace.` : null}
-              </p>
-            ) : null
-          }
-        />
+        <LayoutLauncherPane tabId={null} context={null} />
       </LayoutPaneContext>
     </div>
   );

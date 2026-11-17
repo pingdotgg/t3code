@@ -5,6 +5,7 @@ import { beginLayoutTabDrag } from "../layout/layoutDrag";
 import { useLayoutStore } from "../layout/layoutStore";
 import {
   finishLayoutTabRename,
+  LayoutNewTabButton,
   LayoutPaneTab,
   LayoutPaneTabStrip,
   showLayoutTabMenu,
@@ -980,7 +981,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   };
 
   const addSurfaceMenu =
-    // A notch keeps it while empty too: an empty notch reads as a broken corner.
+    layoutTabId !== null ? (
+      <LayoutNewTabButton tabId={layoutTabId} />
+    ) : // A notch keeps it while empty too: an empty notch reads as a broken corner.
     props.open !== false || props.surfaces.length > 0 || notched ? (
       <Menu open={addSurfaceMenuOpen} onOpenChange={setAddSurfaceMenuOpen}>
         <MenuTrigger
