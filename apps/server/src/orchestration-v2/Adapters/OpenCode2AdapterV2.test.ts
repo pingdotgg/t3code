@@ -1504,6 +1504,57 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  // OpenCode copies the parent's session rules into a child, and session rules outrank agent rules.
+  it.effect("keeps a subagent's own agent denies under the Full access rules it inherits", () =>
+    Effect.gen(function* () {
+      const editDeny = { action: "edit", resource: "*", effect: "deny" };
+      const launch = backgroundLaunch(CHILD).map((entry) =>
+        entry.type === "emit_inbound" &&
+        entry.frame.type === "sdk.event" &&
+        entry.frame.event.type === "session.created"
+          ? event("session.created", {
+              ...childCreated(CHILD),
+              agent: "review",
+              permissions: t3Rules,
+            })
+          : entry,
+      );
+      const { runtime, thread } = yield* resumed([
+        ...launch,
+        out("agent.list", "<any>"),
+        reply("agent.list", {
+          ...agentList,
+          data: [
+            ...agentList.data,
+            {
+              ...agentList.data[0]!,
+              id: "review",
+              name: "review",
+              mode: "subagent",
+              permissions: [{ action: "*", resource: "*", effect: "allow" }, editDeny],
+            },
+          ],
+        }),
+        out("session.update", {
+          sessionID: CHILD,
+          permissions: [t3Rules[0], editDeny, ...mcpRules],
+        }),
+        reply("session.update", null),
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
+        event("session.execution.interrupted", { sessionID: SESSION }),
+      ]);
+      const watch = yield* watchBackgroundTurn(runtime);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.attached;
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+      });
+      assert.equal((yield* watch.terminal)?.status, "interrupted");
+    }),
+  );
+
   it.effect("stops background subagents on a user Stop", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
