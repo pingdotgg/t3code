@@ -478,6 +478,9 @@ export const layer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
+            if (args.payload.purpose === "peer-link" && args.payload.access === undefined) {
+              return yield* failEnvironmentInvalidRequest("invalid_scope");
+            }
             const delegatedScopes = args.payload.access
               ? mcpClientScopes(args.payload.access)
               : (args.payload.scopes ?? AuthStandardClientScopes);
