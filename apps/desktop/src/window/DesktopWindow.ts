@@ -425,7 +425,6 @@ export const make = Effect.gen(function* () {
     );
 
   const currentMainWindow = electronWindow.currentMainOrFirst.pipe(Effect.flatMap(withoutSplash));
-  const focusedMainWindow = electronWindow.focusedMainOrFirst.pipe(Effect.flatMap(withoutSplash));
 
   const zoomWindow = Effect.fn("desktop.window.zoomWindow")(function* (
     window: Electron.BrowserWindow,
@@ -943,20 +942,33 @@ export const make = Effect.gen(function* () {
           rendererRecoveryTimestamps = rendererRecoveryTimestamps.filter(
             (timestamp) => now - timestamp < RENDERER_RECOVERY_WINDOW_MS,
           );
-          const shouldRecover =
-            recoverable &&
-            !window.isDestroyed() &&
-            rendererRecoveryTimestamps.length < RENDERER_RECOVERY_MAX_ATTEMPTS;
+          const shouldRecover = recoverable && !window.isDestroyed();
+          // Past the budget, wait for the oldest attempt to leave the window instead of
+          // giving up, so a crash loop backs off but never leaves the window blank.
+          const oldestAttempt =
+            rendererRecoveryTimestamps.length >= RENDERER_RECOVERY_MAX_ATTEMPTS
+              ? rendererRecoveryTimestamps[
+                  rendererRecoveryTimestamps.length - RENDERER_RECOVERY_MAX_ATTEMPTS
+                ]
+              : undefined;
+          const reloadInMs =
+            oldestAttempt === undefined
+              ? RENDERER_RECOVERY_RELOAD_DELAY_MS
+              : Math.max(
+                  RENDERER_RECOVERY_RELOAD_DELAY_MS,
+                  oldestAttempt + RENDERER_RECOVERY_WINDOW_MS - now,
+                );
           yield* logWindowWarning("main window render process gone", {
             reason: details.reason,
             exitCode: details.exitCode,
             recovering: shouldRecover,
+            ...(shouldRecover ? { reloadInMs } : {}),
           });
           if (!shouldRecover) {
             return;
           }
-          rendererRecoveryTimestamps.push(now);
-          yield* Effect.sleep(RENDERER_RECOVERY_RELOAD_DELAY_MS);
+          rendererRecoveryTimestamps.push(now + reloadInMs);
+          yield* Effect.sleep(reloadInMs);
           if (!window.isDestroyed()) {
             loadApplication();
           }
@@ -1019,7 +1031,7 @@ export const make = Effect.gen(function* () {
 
   const ensureMain = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return Option.none<Electron.BrowserWindow>();
-    const existingWindow = yield* currentMainWindow;
+    const existingWindow = yield* electronWindow.main;
     if (Option.isSome(existingWindow)) {
       return existingWindow;
     }
@@ -1106,7 +1118,8 @@ export const make = Effect.gen(function* () {
     { reveal = true }: { readonly reveal?: boolean } = {},
   ) {
     if (yield* Ref.get(desktopState.quitting)) return;
-    const existingWindow = yield* reveal ? focusedMainWindow : electronWindow.main;
+    // Only the main renderer loads the app preload that listens on these channels.
+    const existingWindow = yield* electronWindow.main;
     if (Option.isNone(existingWindow) && (!reveal || (yield* waitingForBackend))) return;
     const window = Option.isSome(existingWindow) ? existingWindow : yield* ensureMain;
     if (Option.isNone(window) || window.value.isDestroyed()) return;
