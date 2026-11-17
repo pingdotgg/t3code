@@ -281,6 +281,8 @@ const boxToolkitLayer = (thread: BoxThread) => {
     getThreadShell: shellOf,
     getProjectThreadRecords: (input) => projectionOf(input.threadId),
     getThreadRecords: (threadId) => projectionOf(threadId),
+    getRunCount: (threadId) =>
+      projectionOf(threadId).pipe(Effect.map((projection) => projection.runs.length)),
     waitForThread: (input) =>
       Effect.gen(function* () {
         yield* Ref.update(thread.waitedFor, (seen) => [...seen, input.runId]);

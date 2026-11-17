@@ -20,6 +20,10 @@ final class T3ScrollEdgeBleedView: ExpoView {
   /// React Native's clipping, saved while bleeding. React Native only rewrites it when the
   /// `overflow` style changes, so it stays off while bleeding.
   private var containerClipped: Bool?
+  /// The bar's side is read from the root view controller, whose traits can settle after this
+  /// view's own during a fold; with no size change after that, nothing else would recheck.
+  private weak var observedWindow: UIWindow?
+  private var windowTraitRegistration: (any UITraitChangeRegistration)?
 
   required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
@@ -38,7 +42,31 @@ final class T3ScrollEdgeBleedView: ExpoView {
 
   override func didMoveToWindow() {
     super.didMoveToWindow()
+    observeWindowTraits()
     if window == nil { detach() } else { setNeedsLayout() }
+  }
+
+  override func safeAreaInsetsDidChange() {
+    super.safeAreaInsetsDidChange()
+    setNeedsLayout()
+  }
+
+  private func observeWindowTraits() {
+    guard observedWindow !== window else { return }
+    if let observedWindow, let windowTraitRegistration {
+      observedWindow.unregisterForTraitChanges(windowTraitRegistration)
+    }
+    observedWindow = window
+    windowTraitRegistration = nil
+    #if canImport(UIKit, _version: 9127.0.85)
+    if #available(iOS 27.1, *), let window {
+      windowTraitRegistration = window.registerForTraitChanges(
+        UITraitCollection.systemTraitsAffectingVerticalBarEdge
+      ) { [weak self] (_: UIWindow, _: UITraitCollection) in
+        self?.setNeedsLayout()
+      }
+    }
+    #endif
   }
 
   override func didAddSubview(_ subview: UIView) {
