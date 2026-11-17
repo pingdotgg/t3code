@@ -753,7 +753,7 @@ it.effect(
     }),
 );
 
-it.live("a client that asks only for orchestration:read is granted read only access", () =>
+it.effect("a client that asks only for orchestration:read is granted read only access", () =>
   withRoutes((handler, auth) =>
     Effect.gen(function* () {
       const clientId = yield* registeredClientId(handler);
