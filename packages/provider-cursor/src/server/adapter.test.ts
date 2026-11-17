@@ -2523,6 +2523,16 @@ describe("CursorAdapterV2", () => {
         runtimeMode === "full-access",
       );
     }
+    for (const restriction of [
+      { approvalPolicy: "on-request" as const },
+      { sandboxPolicy: { type: "readOnly" as const } },
+    ]) {
+      const options = makeCursorAgentOptions({
+        ...input,
+        runtimePolicy: { ...policy, runtimeMode: "full-access", ...restriction },
+      });
+      assert.notInclude(options.local?.settingSources ?? [], "project");
+    }
   });
 
   it.effect.skipIf(!symlinksSupported)(
