@@ -286,6 +286,8 @@ export const OrchestrationV2ThreadCapabilities = Schema.Struct({
   canRollbackThread: Schema.Boolean,
   canForkThread: Schema.Boolean,
   canForkFromTurn: Schema.Boolean,
+  // Fork from a completed turn while a later turn in the source is still running.
+  canForkWhileSourceRunning: Schema.optional(Schema.Boolean),
   canForkFromSubagentThread: Schema.Boolean,
   exposesNativeThreadId: Schema.Boolean,
 });

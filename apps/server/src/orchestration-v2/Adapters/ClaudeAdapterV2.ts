@@ -524,6 +524,7 @@ export const ClaudeProviderCapabilitiesV2 = {
     canRollbackThread: true,
     canForkThread: true,
     canForkFromTurn: true,
+    canForkWhileSourceRunning: true,
     canForkFromSubagentThread: false,
     exposesNativeThreadId: true,
   },
@@ -2764,10 +2765,8 @@ const resolveClaudeForkUpToMessageId = Effect.fn("ClaudeAdapterV2.resolveForkUpT
       return boundaryNativeId;
     }
 
-    const terminalTurnsAfterBoundary = sourceTurns
-      .slice(boundaryIndex + 1)
-      .filter(isTerminalProviderTurn);
-    if (terminalTurnsAfterBoundary.length === 0) {
+    // The head only marks this boundary when no later turn, finished or still running, wrote after it.
+    if (sourceTurns.length === boundaryIndex + 1) {
       // Rollback pins the head but leaves the rolled-back turns in Claude's transcript.
       return yield* getNativeConversationHeadId(input.sourceProviderThread);
     }
