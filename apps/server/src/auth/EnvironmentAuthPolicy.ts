@@ -44,7 +44,6 @@ export const make = Effect.gen(function* () {
     bootstrapMethods,
     sessionMethods: ["browser-session-cookie", "bearer-access-token", "dpop-access-token"],
     serverUpdateScope: AuthEnvironmentMaintainScope,
-    accessTokenRenewal: true,
     sessionCookieName: resolveSessionCookieName({
       mode: config.mode,
       port: config.port,

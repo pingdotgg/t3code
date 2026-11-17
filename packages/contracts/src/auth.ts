@@ -180,8 +180,6 @@ export const ServerAuthDescriptor = Schema.Struct({
   sessionCookieName: TrimmedNonEmptyString,
   /** Older servers omit this and authorize self-updates with orchestration:operate. */
   serverUpdateScope: Schema.optionalKey(Schema.Literal(AuthEnvironmentMaintainScope)),
-  /** Older servers omit this; a DPoP session from a pairing link cannot renew there. */
-  accessTokenRenewal: Schema.optionalKey(Schema.Literal(true)),
 });
 export type ServerAuthDescriptor = typeof ServerAuthDescriptor.Type;
 
