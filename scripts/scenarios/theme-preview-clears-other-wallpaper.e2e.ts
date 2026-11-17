@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - the scenario installs theme files into the server home.
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -58,7 +59,7 @@ test(
 
     await screen.getByRole("button", "Duplicate Plain Draft", { exact: true }).tap();
     await expect
-      .poll(() => browser.evaluate(() => document.documentElement.dataset.themeId))
+      .poll(() => browser.evaluate(() => document.documentElement.dataset.themeId ?? null))
       .toBe("__preview");
     await app.screenshot("draft-background");
     await expect
