@@ -161,7 +161,7 @@ dependencies = [
 
 [[package]]
 name = "conn-contract"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -169,7 +169,7 @@ dependencies = [
 
 [[package]]
 name = "conn-engine"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "conn-contract",
  "conn-provider",
@@ -188,7 +188,7 @@ dependencies = [
 
 [[package]]
 name = "conn-features"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "conn-contract",
  "conn-engine",
@@ -205,7 +205,7 @@ dependencies = [
 
 [[package]]
 name = "conn-files"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "conn-contract",
  "conn-support",
@@ -226,7 +226,7 @@ dependencies = [
 
 [[package]]
 name = "conn-mcp"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "conn-contract",
  "conn-engine",
@@ -251,7 +251,7 @@ dependencies = [
 
 [[package]]
 name = "conn-preview"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "command-fds",
  "conn-files",
@@ -275,7 +275,7 @@ dependencies = [
 
 [[package]]
 name = "conn-provider"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "conn-contract",
  "serde",
@@ -286,7 +286,7 @@ dependencies = [
 
 [[package]]
 name = "conn-provider-acp"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "conn-contract",
  "conn-provider",
@@ -302,7 +302,7 @@ dependencies = [
 
 [[package]]
 name = "conn-provider-claude"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "conn-contract",
  "conn-mcp",
@@ -318,7 +318,7 @@ dependencies = [
 
 [[package]]
 name = "conn-provider-codex"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "conn-contract",
  "conn-provider",
@@ -334,7 +334,7 @@ dependencies = [
 
 [[package]]
 name = "conn-provider-support"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "conn-provider",
  "conn-support",
@@ -345,7 +345,7 @@ dependencies = [
 
 [[package]]
 name = "conn-server"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "axum",
  "conn-contract",
@@ -380,7 +380,7 @@ dependencies = [
 
 [[package]]
 name = "conn-source-control"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "conn-contract",
  "conn-support",
@@ -399,7 +399,7 @@ dependencies = [
 
 [[package]]
 name = "conn-support"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "getrandom 0.3.4",
  "rustls",
@@ -410,7 +410,7 @@ dependencies = [
 
 [[package]]
 name = "conn-terminal"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "conn-contract",
  "conn-support",
@@ -422,7 +422,7 @@ dependencies = [
 
 [[package]]
 name = "conn-vcs"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "conn-contract",
  "conn-support",
@@ -436,7 +436,7 @@ dependencies = [
 
 [[package]]
 name = "conn-wire"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",

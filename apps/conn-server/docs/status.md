@@ -96,7 +96,12 @@ builder with a test that fails without the fix.
   T3's desktop-only error. Native GUI interaction and the Orbit image remain unproven.
 - **Clients** (VMPal macOS VM, Conn `c969c3ebd1`): the web client (through a host T3 as a
   remote environment) and the iOS dev client in a simulator (paired straight to the Conn
-  Server) each ran a Haiku turn against the Conn Server on macOS.
+  Server) each ran a Haiku turn against the Conn Server on macOS. Retested on the iOS client
+  at Conn `4e37210f6b` (all slices merged): the Pulls list, a PR's overview, activity and
+  diff, Work on PR (a new worktree on the PR branch, then a turn there), `html_render`
+  inline, `preview_open` and `preview_snapshot` in headless Chrome, and `save_test_login`
+  with `request_credentials`. MCP Apps rest on the parity checks alone.
+- **Release `conn-server-v0.2.0`**: every wave-1 slice; the version bump is its own PR.
 
 ## Followed to Conn `ea8a2d2e79` (the 2026-11-17 sync)
 
