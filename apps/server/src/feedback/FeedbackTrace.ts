@@ -78,20 +78,22 @@ export const buildFeedbackTrace = (input: {
     .slice(-FEEDBACK_TRACE_TURNS);
   const turnOf = new Map(runs.map((run, index) => [run.id, { turn: index + 1, run }] as const));
   const firstTextTurn = runs.length - input.includeTurns + 1;
+  let truncated = false;
   const entries = input.items
     .filter((item) => item.parentItemId === null && item.runId !== null && turnOf.has(item.runId))
     .map((item) => ({ item, ...turnOf.get(item.runId!)! }))
     .toSorted((a, b) => a.turn - b.turn || a.item.ordinal - b.item.ordinal)
     .map(({ item, turn, run }): Entry => {
       if (item.type === "user_message" || item.type === "assistant_message") {
+        const length = Array.from(item.text).length;
         const message: Entry = {
           turn,
           type: item.type === "user_message" ? "user" : "assistant",
-          length: Array.from(item.text).length,
+          length,
         };
-        return turn >= firstTextTurn
-          ? { ...message, text: scrubFeedback(item.text, input.sensitive, MAX_TEXT_CHARS) }
-          : message;
+        if (turn < firstTextTurn) return message;
+        if (length > MAX_TEXT_CHARS) truncated = true;
+        return { ...message, text: scrubFeedback(item.text, input.sensitive, MAX_TEXT_CHARS) };
       }
       const started = item.startedAt;
       const completed = item.completedAt;
@@ -111,7 +113,6 @@ export const buildFeedbackTrace = (input: {
       };
     });
 
-  let truncated = false;
   // Tool calls go first, oldest first, so the messages of every turn stay.
   while (entries.length > MAX_ENTRIES) {
     const tool = entries.findIndex((entry) => entry.type === "tool");

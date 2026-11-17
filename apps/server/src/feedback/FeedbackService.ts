@@ -199,10 +199,21 @@ const make = Effect.fn("FeedbackService.make")(function* (
       input.userRequested && caller.threadId !== undefined
         ? yield* Effect.gen(function* () {
             const threadId = caller.threadId!;
-            const { runs } = yield* threads.getThreadRecords(threadId, ["runs"], {
-              // Queued runs have not started; the extra rows leave room to skip them.
-              latestRunLimit: FEEDBACK_TRACE_TURNS + 3,
-            });
+            // Records cannot filter on started, so widen past the unstarted (queued) runs the
+            // last read found. Each pass reads more runs than the one before, until it holds
+            // enough started runs or the whole thread.
+            let limit = FEEDBACK_TRACE_TURNS;
+            let runs = (yield* threads.getThreadRecords(threadId, ["runs"], {
+              latestRunLimit: limit,
+            })).runs;
+            while (runs.length === limit) {
+              const unstarted = runs.filter((run) => run.startedAt === null).length;
+              if (runs.length - unstarted >= FEEDBACK_TRACE_TURNS) break;
+              limit = FEEDBACK_TRACE_TURNS + unstarted;
+              runs = (yield* threads.getThreadRecords(threadId, ["runs"], {
+                latestRunLimit: limit,
+              })).runs;
+            }
             const { turnItems } = yield* threads.getThreadRecords(threadId, ["turnItems"], {
               turnItemRunIds: runs.map((run) => run.id),
               turnItemTypes: FEEDBACK_TRACE_ITEM_TYPES,

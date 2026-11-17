@@ -81,9 +81,19 @@ export function scrubFeedback(
   maxChars = FEEDBACK_TEXT_MAX_CHARS,
 ): string {
   // Bounds the scrubbing cost; the margin keeps a secret that crosses the cap whole.
-  let scrubbed = Array.from(text)
-    .slice(0, maxChars * 4)
-    .join("");
+  const window = maxChars * 4;
+  let scrubbed = "";
+  let next: string | undefined;
+  let count = 0;
+  for (const char of text) {
+    if (count++ === window) {
+      next = char;
+      break;
+    }
+    scrubbed += char;
+  }
+  // The window cut a token whose rest no pattern saw, so none of it is kept.
+  if (next !== undefined && /\S/u.test(next)) scrubbed = scrubbed.replace(/\S+$/u, REDACTED);
   const known = [...new Set(sensitive.map((value) => value.trim()))]
     .filter((value) => value.length >= 3)
     .map((value) => new RegExp(`(?<![A-Za-z0-9_])${escapeRegExp(value)}(?![A-Za-z0-9_])`, "gu"));

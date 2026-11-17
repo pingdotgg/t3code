@@ -14,26 +14,27 @@ const reportFields = {
   expected: FeedbackText,
   actual: FeedbackText,
   workaround: FeedbackText.annotate({ description: "What you did instead, or empty." }),
-  userRequested: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))).annotate(
-    { description: "The user asked for this report." },
+  // Annotate before the default: an annotation after it never reaches the JSON schema.
+  userRequested: Schema.Boolean.annotate({ description: "The user asked for this report." }).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(false)),
   ),
 };
 
 export const FeedbackInput = Schema.Struct({
   ...reportFields,
   includeTurns: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: FEEDBACK_TRACE_TURNS }))
-    .pipe(Schema.withDecodingDefaultKey(Effect.succeed(0)))
     .annotate({
       description:
-        "Sends the user's messages from this many recent turns. 0 unless the user explicitly asks to include the conversation.",
-    }),
+        "Sends the user's messages and your replies from this many recent turns. 0 unless the user explicitly asks to include the conversation.",
+    })
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed(0))),
 });
 
 /** Built by the server from the thread's stored items; the agent never writes it. */
 export const FeedbackTrace = Schema.Struct({
   turns: Schema.Int,
   textTurns: Schema.Int,
-  /** An entry or a message text was dropped to fit the caps. */
+  /** A cap dropped an entry or cut or dropped a message text. */
   truncated: Schema.Boolean,
   entries: Schema.Array(
     Schema.Struct({

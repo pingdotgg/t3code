@@ -173,6 +173,12 @@ describe("scrubFeedback", () => {
       `${"a ".repeat(140)}[redacted]`,
     );
     expect(Array.from(scrubFeedback("😀".repeat(400), []))).toHaveLength(300);
-    expect(scrubFeedback(`${"a@".repeat(20_000)}`, [])).toBe("a@".repeat(150));
+    expect(scrubFeedback(`${"a@".repeat(20_000)}`, [])).toBe("[redacted]");
+  });
+
+  it("redacts a token the scan window cuts, whatever it holds past the window", () => {
+    const url = `https://alice:${"a".repeat(5_000)}@example.com`;
+    expect(scrubFeedback(`see ${url} now`, [], 1_000)).toBe("see [redacted]");
+    expect(scrubFeedback(`${"b ".repeat(2_000)}tail`, [], 1_000)).toBe("b ".repeat(500));
   });
 });

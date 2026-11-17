@@ -50,7 +50,10 @@ const item = (runOrdinal: number, fields: Record<string, unknown>) =>
     completedAt: null,
     ...fields,
   }) as unknown as OrchestrationV2TurnItem;
-const runs = [1, 2, 3, 4, 5, 6].map((ordinal) => run(ordinal)).concat(run(7, false));
+// Four queued runs after the six started ones: the trace still covers five started turns.
+const runs = [1, 2, 3, 4, 5, 6]
+  .map((ordinal) => run(ordinal))
+  .concat([7, 8, 9, 10].map((ordinal) => run(ordinal, false)));
 const turnItems = [
   item(1, { type: "user_message", text: "Outside the window." }),
   ...[2, 3, 4, 5].map((turn) => item(turn, { type: "user_message", text: `Ask ${turn}.` })),
@@ -85,6 +88,7 @@ const turnItems = [
 
 const harness = Effect.gen(function* () {
   const mode = yield* Ref.make<AgentFeedbackMode>("auto");
+  const items = yield* Ref.make(turnItems);
   const telemetry = yield* Ref.make(true);
   const runId = yield* Ref.make(RunId.make("run:1"));
   const events = yield* Ref.make<ReadonlyArray<readonly [string, unknown]>>([]);
@@ -108,16 +112,18 @@ const harness = Effect.gen(function* () {
         }),
         Layer.mock(Threads.ThreadManagementService)({
           getThreadRecords: (_threadId, fields, filter) =>
-            Effect.succeed(
-              (fields as ReadonlyArray<string>).includes("runs")
-                ? { runs: runs.slice(-(filter?.latestRunLimit ?? runs.length)) }
-                : {
-                    turnItems: turnItems.filter(
-                      (item) =>
-                        filter?.turnItemRunIds?.includes(item.runId) === true &&
-                        filter.turnItemTypes?.includes(item.type) === true,
-                    ),
-                  },
+            Ref.get(items).pipe(
+              Effect.map((stored) =>
+                (fields as ReadonlyArray<string>).includes("runs")
+                  ? { runs: runs.slice(-(filter?.latestRunLimit ?? runs.length)) }
+                  : {
+                      turnItems: stored.filter(
+                        (item) =>
+                          filter?.turnItemRunIds?.includes(item.runId) === true &&
+                          filter.turnItemTypes?.includes(item.type) === true,
+                      ),
+                    },
+              ),
             ) as never,
           getThreadShell: () =>
             Ref.get(runId).pipe(
@@ -158,7 +164,7 @@ const harness = Effect.gen(function* () {
     ),
     Layer.provideMerge(SqlitePersistence.layerMemory),
   );
-  return { mode, telemetry, runId, events, layer };
+  return { mode, items, telemetry, runId, events, layer };
 });
 
 const input = {
@@ -318,7 +324,7 @@ it.effect("allows 3 reports per turn and 10 per thread, not counting refused rep
 
 it.effect("attaches a trace only to requested reports, with text only for includeTurns", () =>
   Effect.gen(function* () {
-    const { events, runId, layer } = yield* harness;
+    const { events, items, runId, layer } = yield* harness;
     yield* Effect.gen(function* () {
       const feedback = yield* Feedback.FeedbackService;
       expect((yield* feedback.submit(input, fromThread)).trace).toBeNull();
@@ -372,6 +378,14 @@ it.effect("attaches a trace only to requested reports, with text only for includ
       const sent = (yield* Ref.get(events)).map(([, properties]) => properties);
       const stored = (yield* feedback.list).map((report) => report.trace).toReversed();
       expect(stored).toEqual(sent.map((properties) => (properties as { trace: unknown }).trace));
+
+      // Under the entry and byte caps, a message cut to 1,000 characters alone marks the trace.
+      yield* Ref.update(items, (all) => all.filter((item) => item.type !== "command_execution"));
+      yield* Ref.set(runId, RunId.make("run:3"));
+      expect((yield* feedback.submit(requested, fromThread)).trace?.truncated).toBe(false);
+      expect(
+        (yield* feedback.submit({ ...requested, includeTurns: 1 }, fromThread)).trace,
+      ).toMatchObject({ textTurns: 1, truncated: true });
     }).pipe(Effect.provide(layer));
   }),
 );
