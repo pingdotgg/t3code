@@ -246,7 +246,11 @@ describe("DesktopLinuxUrlHandler", () => {
       const recorded = emptyRecording();
 
       return Effect.gen(function* () {
-        yield* runRegister(recorded);
+        yield* runRegister(recorded, {
+          otherEntries: {
+            "backup.desktop": "Exec=/home/alice/Applications/T3-Code.AppImage.old %U\n",
+          },
+        });
 
         assert.deepEqual(recorded.directories, ["/home/alice/.local/share/applications"]);
         assert.equal(recorded.files.length, 1);

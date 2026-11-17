@@ -102,7 +102,14 @@ export function renderUrlHandlerDesktopEntry(input: {
 
 // AppImageLauncher, Gear Lever and appimaged install their own visible entry for the AppImage.
 export const launchesAppImage = (entry: string, appImagePath: string): boolean =>
-  entry.split("\n").some((line) => line.startsWith("Exec=") && line.includes(appImagePath));
+  entry
+    .split("\n")
+    .some(
+      (line) =>
+        line === `Exec=${appImagePath}` ||
+        line.startsWith(`Exec=${appImagePath} `) ||
+        line.startsWith(`Exec="${appImagePath}"`),
+    );
 
 function parseUrlHandlerExecTarget(entry: string): string | null {
   const exec = /^Exec=(.*) %U$/mu.exec(entry)?.[1];
@@ -171,8 +178,10 @@ export const make = Effect.gen(function* () {
   const hicolorDir = environment.path.join(iconsDir, "hicolor");
   const themeIconDir = environment.path.join(hicolorDir, LINUX_THEME_ICON_SIZE, "apps");
 
-  const integratedAppImage = (appImagePath: string) =>
-    fileSystem.readDirectory(environment.linuxApplicationsDir).pipe(
+  const integratedAppImage = Effect.fn("DesktopLinuxUrlHandler.integratedAppImage")(function* (
+    appImagePath: string,
+  ) {
+    return yield* fileSystem.readDirectory(environment.linuxApplicationsDir).pipe(
       Effect.orElseSucceed((): ReadonlyArray<string> => []),
       Effect.flatMap((names) =>
         Effect.forEach(
@@ -187,6 +196,7 @@ export const make = Effect.gen(function* () {
       ),
       Effect.map((entries) => entries.some((entry) => launchesAppImage(entry, appImagePath))),
     );
+  });
 
   const writeDesktopEntry = Effect.gen(function* () {
     // Distribution packages that run on a shared Electron set
