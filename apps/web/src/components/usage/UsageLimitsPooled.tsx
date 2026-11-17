@@ -645,6 +645,7 @@ function PoolSection({
   const collapsed = layout.collapsedProviders.includes(pool.driver);
   const keys = windows.map((window) => limitWindowKey(pool.driver, window));
   const hiddenCount = keys.filter((key) => layout.hiddenWindows.includes(key)).length;
+  const showHiddenCount = !hidden && !collapsed && hiddenCount > 0;
   const shownWindows = revealed
     ? windows
     : windows.filter(
@@ -663,7 +664,7 @@ function PoolSection({
       <div className="group/limit-row relative flex min-h-6 items-center gap-2">
         <h2
           className={cn(
-            "flex min-w-0 items-center gap-2 text-sm font-medium",
+            "flex min-w-0 flex-1 items-center gap-2 text-sm font-medium",
             hidden ? "text-muted-foreground opacity-60" : "text-foreground",
           )}
         >
@@ -676,52 +677,62 @@ function PoolSection({
           />
           <span className="truncate">{label}</span>
         </h2>
-        {hidden || collapsed ? null : (
-          <HiddenLimitsToggle
-            scope={pool.driver}
-            count={hiddenCount}
-            revealed={revealed}
-            onToggle={() => onReveal(!revealed)}
-          />
-        )}
-        <div className="pointer-events-none absolute top-1/2 right-0 z-10 -translate-y-1/2">
-          <UsageLimitLayoutControls
-            label={label}
-            attributes={attributes}
-            listeners={listeners}
-            handleRef={setActivatorNodeRef}
-            isDragging={isDragging}
-            hidden={hidden}
-            pinned={collapsed}
-            onToggleVisibility={() => {
-              if (!hidden) onHide();
-              onChange((current) => ({
-                ...current,
-                hiddenProviders: hidden
-                  ? current.hiddenProviders.filter((driver) => driver !== pool.driver)
-                  : [...current.hiddenProviders, pool.driver],
-              }));
-            }}
-          >
-            {hidden ? null : (
-              <button
-                type="button"
-                aria-expanded={!collapsed}
-                aria-label={`${collapsed ? "Expand" : "Collapse"} ${label} limits`}
-                className="flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                onClick={() =>
-                  onChange((current) => ({
-                    ...current,
-                    collapsedProviders: collapsed
-                      ? current.collapsedProviders.filter((driver) => driver !== pool.driver)
-                      : [...current.collapsedProviders, pool.driver],
-                  }))
-                }
-              >
-                <ChevronRightIcon aria-hidden className={cn("size-4", !collapsed && "rotate-90")} />
-              </button>
+        <div className="relative flex shrink-0 items-center">
+          <div
+            className={cn(
+              "pointer-events-none absolute top-1/2 right-full z-10 -translate-y-1/2",
+              showHiddenCount && "mr-1",
             )}
-          </UsageLimitLayoutControls>
+          >
+            <UsageLimitLayoutControls
+              label={label}
+              attributes={attributes}
+              listeners={listeners}
+              handleRef={setActivatorNodeRef}
+              isDragging={isDragging}
+              hidden={hidden}
+              pinned={collapsed}
+              onToggleVisibility={() => {
+                if (!hidden) onHide();
+                onChange((current) => ({
+                  ...current,
+                  hiddenProviders: hidden
+                    ? current.hiddenProviders.filter((driver) => driver !== pool.driver)
+                    : [...current.hiddenProviders, pool.driver],
+                }));
+              }}
+            >
+              {hidden ? null : (
+                <button
+                  type="button"
+                  aria-expanded={!collapsed}
+                  aria-label={`${collapsed ? "Expand" : "Collapse"} ${label} limits`}
+                  className="flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                  onClick={() =>
+                    onChange((current) => ({
+                      ...current,
+                      collapsedProviders: collapsed
+                        ? current.collapsedProviders.filter((driver) => driver !== pool.driver)
+                        : [...current.collapsedProviders, pool.driver],
+                    }))
+                  }
+                >
+                  <ChevronRightIcon
+                    aria-hidden
+                    className={cn("size-4", !collapsed && "rotate-90")}
+                  />
+                </button>
+              )}
+            </UsageLimitLayoutControls>
+          </div>
+          {showHiddenCount ? (
+            <HiddenLimitsToggle
+              scope={pool.driver}
+              count={hiddenCount}
+              revealed={revealed}
+              onToggle={() => onReveal(!revealed)}
+            />
+          ) : null}
         </div>
       </div>
       {hidden || collapsed || shownWindows.length === 0 ? null : (
@@ -852,7 +863,7 @@ export function UsageLimitsPooled({
   return (
     <div ref={limitsRoot} tabIndex={-1} className="flex flex-col gap-8 outline-none">
       {hiddenProviderCount > 0 ? (
-        <div className="-mb-5 flex">
+        <div className="-mb-5 flex justify-end">
           <HiddenLimitsToggle
             scope={PAGE_SCOPE}
             count={hiddenProviderCount}
