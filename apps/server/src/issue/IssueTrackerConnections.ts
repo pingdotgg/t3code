@@ -91,8 +91,8 @@ const make = Effect.gen(function* () {
     });
 
   /**
-   * The tracker's view of a stored credential. A refusal is status, not a failure; anything else
-   * (a rate limit, an outage) fails the listing so Settings offers a retry.
+   * The list contract has no unavailable status, so temporary probe failures use its error channel.
+   * Settings then hides all rows and bindings, including credential replacement and disconnect.
    */
   const status = (api: StandaloneIssueTrackerApi, token: string) =>
     api.probeCredential(token).pipe(
