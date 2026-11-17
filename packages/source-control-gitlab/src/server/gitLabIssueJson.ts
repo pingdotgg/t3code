@@ -357,16 +357,16 @@ export function decodeProjectLabelsJson(
 }
 
 /**
- * The people with access to the project as assignees. GitLab addresses an assignment by numeric
- * id and by nothing else, so a member it named no id for is dropped rather than offered under a
- * handle the write would discard.
- */
-/**
  * A candidate's write id is GitLab's global user id: a username cannot contain `:` or `/`, so an
  * assignee list mixing kept usernames with picked ids stays unambiguous.
  */
 const gitLabUserGid = (id: number) => `gid://gitlab/User/${id}`;
 
+/**
+ * The people with access to the project as assignees. GitLab addresses an assignment by numeric
+ * id and by nothing else, so a member it named no id for is dropped rather than offered under a
+ * handle the write would discard.
+ */
 export function decodeProjectMembersJson(
   raw: string,
 ): Result.Result<ReadonlyArray<IssueAssigneeCandidate>, DecodeFailure> {

@@ -316,13 +316,20 @@ describe("GitLabIssueTracker", () => {
         const path = args[1]!;
         calls.push(path);
         if (input.stdin !== undefined) bodies.push(input.stdin);
+        if (path === "projects/acme%2Fweb/members/all?per_page=100&page=1") {
+          return encode([{ id: 7, username: "teammate" }]);
+        }
+        if (path === "projects/acme%2Fweb/labels?per_page=100&page=1") return "[]";
         if (path === "users?username=theo") return encode([{ id: 2, username: "theo" }]);
         if (path.startsWith("users?username=")) return "[]";
         return "{}";
       });
       const target = { cwd: "/w", host: "gitlab.com", scope: "acme/web", key: "42" };
+      const candidates = yield* api.listCandidates!(target);
+      expect(candidates.assignees).toHaveLength(1);
+      calls.length = 0;
       // The issue's own assignee comes back by login; a newly picked one by id.
-      yield* api.update!({ ...target, assignees: ["theo", "gid://gitlab/User/7"] });
+      yield* api.update!({ ...target, assignees: ["theo", candidates.assignees[0]!.id] });
       expect(calls).toEqual(["users?username=theo", "projects/acme%2Fweb/issues/42"]);
       expect(JSON.parse(bodies.at(-1)!)).toEqual({ assignee_ids: [2, 7] });
       const error = yield* Effect.flip(api.update!({ ...target, assignees: ["nobody"] }));
