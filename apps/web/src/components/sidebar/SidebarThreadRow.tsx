@@ -662,6 +662,8 @@ type SidebarThreadRowProps = {
   timestampFormat: TimestampFormat;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
+  onThreadOpen: (threadRef: ScopedThreadRef) => void;
+  onThreadDoubleClick: (threadRef: ScopedThreadRef, title: string) => void;
   onStartRename: (threadRef: ScopedThreadRef, title: string) => void;
   onRenameTitleChange: (title: string) => void;
   onCommitRename: (threadRef: ScopedThreadRef, title: string) => void;
@@ -743,6 +745,8 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     onStartRename,
     onThreadActivate,
     onThreadClick,
+    onThreadDoubleClick,
+    onThreadOpen,
     onUnsettle,
     onUnsnooze,
     onUnpin,
@@ -928,22 +932,13 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     }
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
-    onThreadActivate(threadRef);
+    onThreadOpen(threadRef);
   };
   const handleDoubleClick = (event: ReactMouseEvent) => {
-    if (
-      !readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope) ||
-      isRenaming ||
-      event.metaKey ||
-      event.ctrlKey ||
-      event.shiftKey ||
-      event.altKey
-    ) {
-      return;
-    }
+    if (isRenaming || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     if ((event.target as HTMLElement).closest("button, a, input")) return;
     event.preventDefault();
-    onStartRename(threadRef, thread.title);
+    onThreadDoubleClick(threadRef, thread.title);
   };
   const [isFileDragOver, setIsFileDragOver] = useState(false);
   const fileDropHandlers = onFileDropThreads

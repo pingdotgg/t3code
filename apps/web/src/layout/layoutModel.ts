@@ -1418,6 +1418,18 @@ export function isLayoutGhostTabShown(state: LayoutState, tabId: string): boolea
   );
 }
 
+export function selectFocusedLayoutGhostId(
+  state: LayoutState,
+  content: LayoutTabContent,
+): string | null {
+  const focused = selectFocusedTab(state);
+  return focused !== null &&
+    layoutTabContentKey(focused.content) === layoutTabContentKey(content) &&
+    isLayoutGhostTab(focused)
+    ? focused.id
+    : null;
+}
+
 function workspaceTabCount(workspace: LayoutWorkspace): number {
   return workspace.columns.reduce(
     (count, column) => count + column.panes.reduce((sum, pane) => sum + pane.tabs.length, 0),

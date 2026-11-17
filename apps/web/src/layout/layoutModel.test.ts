@@ -24,6 +24,7 @@ import {
   replaceLayoutTabContent,
   resizeLayoutColumnEdge,
   selectFocusedTab,
+  selectFocusedLayoutGhostId,
   selectFocusedWorkspace,
   selectLayoutPaneSlots,
   selectLayoutStripSize,
@@ -394,6 +395,19 @@ describe("ghost tabs", () => {
       threadRef: refOf("child"),
     });
     expect(opened && shapeOf(opened)).toEqual([[[["A", "~child!"]]]]);
+  });
+
+  it("are kept by opening them again while focused, even as a lone tab", () => {
+    const ghostOfD = (layout: LayoutState) => selectFocusedLayoutGhostId(layout, chatOf("D"));
+    expect(ghostOfD(layoutOf([[["A", "~D!"]]]))).toBe("D");
+    expect(ghostOfD(layoutOf([[["~D"]], [["A!"]]]))).toBeNull();
+    expect(ghostOfD(layoutOf([[["A", "D!"]]]))).toBeNull();
+    expect(ghostOfD(layoutOf([[["~D!"]]]))).toBe("D");
+    const lineage = openLayoutGhostChat(layoutOf([[["A!"]]]), refOf("A"), {
+      kind: "server",
+      threadRef: refOf("D"),
+    })!;
+    expect(ghostOfD(lineage)).toBe(selectFocusedTab(lineage)!.id);
   });
 
   it("start as the lone chat of a layout saved before ghosts", () => {
