@@ -1,12 +1,8 @@
 import {
   CHATGPT_USAGE_URL,
   collectLimitAccounts,
-  collectExternalUsageLinks,
-  collectLimitNotices,
   collectLimitPools,
-  cursorUsageWindowDetails,
   displayLimitWindows,
-  formatResetsIn,
   type LimitAccount,
   type LimitPool,
   type LimitPoolMember,
@@ -14,9 +10,8 @@ import {
   paceRemainingPercent,
   remainingPercent,
   type ResetCreditChoice,
-  resetCreditChoices,
 } from "@t3tools/shared/usageLimits";
-import { T, useGT } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
@@ -43,6 +38,13 @@ import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { PaceIcon, ResetCreditDialog, barColor, usePaceMark, useResetCredit } from "./UsageLimits";
+import {
+  collectExternalUsageLinks,
+  collectLimitNotices,
+  cursorUsageWindowDetails,
+  formatResetsIn,
+  resetCreditChoices,
+} from "@t3tools/shared/usageLimitsCopy";
 
 function accountInitials(email: string): string {
   const [local = "", domain = ""] = email.split("@");
@@ -147,16 +149,17 @@ function SegmentPopover({
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const gt = useGT();
+  const m = useMessages();
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
-  const resetsIn = formatResetsIn(window, now);
+  const resetsIn = formatResetsIn(window, now, m, "in");
   const where =
     account.environments.length > 0
       ? account.environments.map((environment) => environment.label).join(", ")
       : account.sourceLabel;
   const choices =
     redeem && account.redeem && account.limits.resetCredits?.availableCount
-      ? resetCreditChoices(account.limits.resetCredits, account.redeem.input, now, true)
+      ? resetCreditChoices(account.limits.resetCredits, account.redeem.input, now, true, m)
       : [];
   return (
     <div className="flex w-72 max-w-[calc(100vw-3rem)] flex-col gap-2.5 text-xs">
@@ -197,8 +200,8 @@ function SegmentPopover({
         <Row label={gt("Left", { $context: "remaining usage" })}>{remaining}%</Row>
         {window.resetsAt ? (
           <Row label={gt("Resets", { $context: "when the usage window resets" })}>
-            {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
-            {resetsIn ? ` · ${resetsIn.replace("resets in ", "in ")}` : ""}
+            {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m)}
+            {resetsIn ? ` · ${resetsIn}` : ""}
           </Row>
         ) : null}
         {timeLeft !== null ? (
@@ -366,7 +369,9 @@ function SegmentTriggers({
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
   const [segmentRef, paceMark] = usePaceMark(timeLeft);
-  const resetsIn = formatResetsIn(window, now);
+  const m = useMessages();
+  const resetsIn = formatResetsIn(window, now, m);
+  const refillIn = formatResetsIn(window, now, m, "refill");
   const credits = account.limits.resetCredits?.availableCount ?? 0;
   const gt = useGT();
   const segmentLabel = [
@@ -450,7 +455,7 @@ function SegmentTriggers({
           ) : null}
           {resetsIn || credits ? (
             <span className="ms-auto flex min-w-0 items-center gap-1.5 overflow-hidden rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs whitespace-nowrap text-foreground tabular-nums">
-              {resetsIn?.replace("resets in ", "↻ ") ?? ""}
+              {refillIn ?? ""}
               {credits ? (
                 <>
                   {resetsIn ? (
@@ -487,7 +492,8 @@ function LegendRow({
   const popover = use(SegmentPopoverContext) ?? undefined;
   const { account, window } = payload;
   const remaining = remainingPercent(window);
-  const resetsIn = formatResetsIn(window, now);
+  const m = useMessages();
+  const resetsIn = formatResetsIn(window, now, m, "refill");
   const credits = account.limits.resetCredits?.availableCount ?? 0;
   const gt = useGT();
   return (
@@ -510,7 +516,7 @@ function LegendRow({
       <AccountName account={account} className="min-w-0 truncate font-medium text-foreground" />
       <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
       <span className="ms-auto flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground tabular-nums">
-        {resetsIn?.replace("resets in ", "↻ ") ?? ""}
+        {resetsIn ?? ""}
         {credits ? (
           <>
             {resetsIn ? <span aria-hidden>·</span> : null}
@@ -632,6 +638,7 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
   const color = barColor(pool.driver);
   const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
   const windows = displayLimitWindows(pool);
+  const m = useMessages();
   return (
     <section className="flex flex-col gap-3">
       <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
@@ -646,7 +653,7 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
       </h2>
       {windows.map((window) => {
         const details =
-          pool.driver === "cursor" ? cursorUsageWindowDetails(window.id, pool) : undefined;
+          pool.driver === "cursor" ? cursorUsageWindowDetails(window.id, pool, m) : undefined;
         return (
           <PoolWindowCard
             key={`${window.kind}:${window.id}`}
@@ -670,11 +677,12 @@ export function UsageLimitsPooled({
   readonly now: number;
 }) {
   const gt = useGT();
+  const m = useMessages();
   const [segmentPopover] = useState(() => PopoverCreateHandle<SegmentPayload>());
   const segmentPopoverActions = useRef<PopoverPrimitive.Root.Actions | null>(null);
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
-  const notices = collectLimitNotices(presentations);
-  const externalLinks = collectExternalUsageLinks(presentations);
+  const notices = collectLimitNotices(presentations, m);
+  const externalLinks = collectExternalUsageLinks(presentations, m);
   return (
     <div className="flex flex-col gap-8">
       {pools.length === 0 && notices.length === 0 && externalLinks.length === 0 ? (

@@ -345,7 +345,7 @@ export function CloudEnvironmentConnectRows({
     const descriptor = relayStatus?.descriptor;
     const offlineReason =
       availability === "offline" && relayStatus !== null
-        ? relayOfflineReasonMessage(relayStatus)
+        ? relayOfflineReasonMessage(relayStatus, m)
         : null;
     const machineKind = resolveEnvironmentMachineKind(
       savedEnvironment?.serverConfig ??

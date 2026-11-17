@@ -619,11 +619,15 @@ export function getUpdateEverythingToastView(
   readonly title: string;
   readonly description?: string;
 } | null {
-  const parts = [
-    result.localVersion !== null && result.localVersion === appVersion ? m(msg("this app")) : null,
-    serverCountLabel(result.updatedServers, m),
-    providerCountLabel(result.updatedProviders, m),
-  ].filter((part) => part !== null);
+  const updated = updateTargetsSentence(
+    "updated",
+    {
+      app: result.localVersion !== null && result.localVersion === appVersion,
+      servers: result.updatedServers,
+      providers: result.updatedProviders,
+    },
+    m,
+  );
   const restarting =
     result.restarting.length === 0
       ? []
@@ -636,19 +640,16 @@ export function getUpdateEverythingToastView(
           ),
         ];
   if (result.failures.length === 0) {
-    if (parts.length === 0) return null;
+    if (updated === null) return null;
     return {
       type: "success",
-      title: m(msg("Updated {items}", { items: joinList(parts, m) })),
+      title: updated,
       ...(restarting.length === 0 ? {} : { description: restarting.join("\n") }),
     };
   }
   return {
     type: "error",
-    title:
-      parts.length === 0
-        ? m(msg("Update failed"))
-        : m(msg("Updated {items}", { items: joinList(parts, m) })),
+    title: updated === null ? m(msg("Update failed")) : updated,
     description: [...result.failures, ...restarting].join("\n"),
   };
 }
@@ -679,16 +680,104 @@ export interface UpdateEverythingRow {
   readonly providers: ReadonlyArray<string>;
 }
 
-function serverCountLabel(count: number, resolve: MessageResolver): string | null {
-  return count === 0
-    ? null
-    : resolve(msg("{count, plural, one {{count} server} other {{count} servers}}", { count }));
-}
-
-function providerCountLabel(count: number, resolve: MessageResolver): string | null {
-  return count === 0
-    ? null
-    : resolve(msg("{count, plural, one {{count} provider} other {{count} providers}}", { count }));
+/** "Update this app, 2 servers, and 3 providers" as one sentence per combination; null when nothing. */
+function updateTargetsSentence(
+  verb: "update" | "updated",
+  targets: { readonly app: boolean; readonly servers: number; readonly providers: number },
+  resolve: MessageResolver,
+): string | null {
+  const { app, servers, providers } = targets;
+  const values = { servers, providers };
+  const update = verb === "update";
+  if (app && servers > 0 && providers > 0) {
+    return update
+      ? resolve(
+          msg(
+            "Update this app, {servers, plural, one {{servers} server} other {{servers} servers}}, and {providers, plural, one {{providers} provider} other {{providers} providers}}",
+            values,
+          ),
+        )
+      : resolve(
+          msg(
+            "Updated this app, {servers, plural, one {{servers} server} other {{servers} servers}}, and {providers, plural, one {{providers} provider} other {{providers} providers}}",
+            values,
+          ),
+        );
+  }
+  if (app && servers > 0) {
+    return update
+      ? resolve(
+          msg(
+            "Update this app and {servers, plural, one {{servers} server} other {{servers} servers}}",
+            values,
+          ),
+        )
+      : resolve(
+          msg(
+            "Updated this app and {servers, plural, one {{servers} server} other {{servers} servers}}",
+            values,
+          ),
+        );
+  }
+  if (app && providers > 0) {
+    return update
+      ? resolve(
+          msg(
+            "Update this app and {providers, plural, one {{providers} provider} other {{providers} providers}}",
+            values,
+          ),
+        )
+      : resolve(
+          msg(
+            "Updated this app and {providers, plural, one {{providers} provider} other {{providers} providers}}",
+            values,
+          ),
+        );
+  }
+  if (servers > 0 && providers > 0) {
+    return update
+      ? resolve(
+          msg(
+            "Update {servers, plural, one {{servers} server} other {{servers} servers}} and {providers, plural, one {{providers} provider} other {{providers} providers}}",
+            values,
+          ),
+        )
+      : resolve(
+          msg(
+            "Updated {servers, plural, one {{servers} server} other {{servers} servers}} and {providers, plural, one {{providers} provider} other {{providers} providers}}",
+            values,
+          ),
+        );
+  }
+  if (app) return update ? resolve(msg("Update this app")) : resolve(msg("Updated this app"));
+  if (servers > 0) {
+    return update
+      ? resolve(
+          msg("Update {servers, plural, one {{servers} server} other {{servers} servers}}", values),
+        )
+      : resolve(
+          msg(
+            "Updated {servers, plural, one {{servers} server} other {{servers} servers}}",
+            values,
+          ),
+        );
+  }
+  if (providers > 0) {
+    return update
+      ? resolve(
+          msg(
+            "Update {providers, plural, one {{providers} provider} other {{providers} providers}}",
+            values,
+          ),
+        )
+      : resolve(
+          msg(
+            "Updated {providers, plural, one {{providers} provider} other {{providers} providers}}",
+            values,
+          ),
+        );
+  }
+  return null;
 }
 
 function joinList(parts: ReadonlyArray<string>, resolve: MessageResolver): string {
@@ -715,18 +804,16 @@ export function describeUpdateEverything(
     (count, machine) => count + machine.providers.length,
     0,
   );
-  const summary = resolve(
-    msg("Update {items}", {
-      items: joinList(
-        [
-          plan.localVersion ? resolve(msg("this app")) : null,
-          serverCountLabel(plan.servers.length, resolve),
-          providerCountLabel(providerCount, resolve),
-        ].filter((part) => part !== null),
-        resolve,
-      ),
-    }),
-  );
+  const summary =
+    updateTargetsSentence(
+      "update",
+      {
+        app: Boolean(plan.localVersion),
+        servers: plan.servers.length,
+        providers: providerCount,
+      },
+      resolve,
+    ) ?? resolve(msg("Update {items}", { items: "" }));
 
   const rows = new Map<EnvironmentId | null, UpdateEverythingRow>();
   const update = (

@@ -10,10 +10,7 @@ import {
   pullRequestLinkCommit,
   resolvePullRequestAnchorRange,
 } from "@t3tools/shared/pullRequestAnchor";
-import {
-  capitalizeTerm,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import type {
   CodeViewItem,
   DiffLineAnnotation,
@@ -62,9 +59,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { msg, T, useGT, Var } from "gt-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 
-import { m } from "~/i18n/messages";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 import { observeIntersection } from "~/lib/observeIntersection";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -155,6 +152,8 @@ import {
   type PendingReviewComment,
 } from "./pullRequestReviewStore";
 
+import { changeRequestTermKind } from "./changeRequestTerm";
+
 interface ReviewAnnotationGroup {
   readonly threads: ReadonlyArray<PullRequestReviewThread>;
   readonly pending: ReadonlyArray<PendingReviewComment>;
@@ -210,6 +209,8 @@ const NO_SLICES: ReadonlyArray<DiffSlice> = [];
 // Query results outlive the panel's slices, so their parses survive closing and reopening
 // without retaining anything beyond the query cache's lifetime.
 const sliceParses = new WeakMap<PullRequestDiffResult, Map<string, RenderablePatch | null>>();
+// Cached parses keep a raw patch's reason untranslated; the view resolves it in the UI language.
+const keepMessage = ((message: string) => message) as MessageResolver;
 
 function parseSlice(slice: DiffSlice, cacheKey: string, ignoreWhitespace: boolean) {
   let parses = sliceParses.get(slice.source);
@@ -218,10 +219,12 @@ function parseSlice(slice: DiffSlice, cacheKey: string, ignoreWhitespace: boolea
     sliceParses.set(slice.source, parses);
   }
   if (parses.has(cacheKey)) return parses.get(cacheKey) ?? null;
-  const parsed = getRenderablePatch(slice.patch, cacheKey, {
-    compactPartialHunkOffsets: true,
-    ignoreWhitespace,
-  });
+  const parsed = getRenderablePatch(
+    slice.patch,
+    cacheKey,
+    { compactPartialHunkOffsets: true, ignoreWhitespace },
+    keepMessage,
+  );
   parses.set(cacheKey, parsed);
   return parsed;
 }
@@ -436,6 +439,7 @@ function PullRequestCodeTab({
   revealRequest?: { readonly path: string; readonly nonce: number } | null;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const fixFindingLabel = requestedFixFindingLabel ?? gt("Fix in a thread");
   const resolvedTheme = useRenderedAppearance();
   // Initialize the shared tokenizer and workers while the diff request is still pending.
@@ -924,7 +928,7 @@ function PullRequestCodeTab({
       <div className="space-y-4 px-4 py-5">
         {rawSlices.map((slice) => (
           <div key={`${slice.reason}:${slice.text.slice(0, 64)}`} className="space-y-2">
-            <p className="text-xs text-muted-foreground">{slice.reason}</p>
+            <p className="text-xs text-muted-foreground">{messages(slice.reason)}</p>
             <pre className="whitespace-pre-wrap break-words font-mono text-xs">{slice.text}</pre>
           </div>
         ))}
@@ -935,7 +939,7 @@ function PullRequestCodeTab({
       <div className="space-y-4 border-t border-border/60 px-4 py-5">
         {rawSlices.map((slice) => (
           <div key={`${slice.reason}:${slice.text.slice(0, 64)}`} className="space-y-2">
-            <p className="text-xs text-muted-foreground">{slice.reason}</p>
+            <p className="text-xs text-muted-foreground">{messages(slice.reason)}</p>
             <pre className="whitespace-pre-wrap break-words font-mono text-xs">{slice.text}</pre>
           </div>
         ))}
@@ -1799,9 +1803,16 @@ function PullRequestCodeTab({
     </div>
   );
 
-  const term = sourceControlClients.get(detail.provider).changeRequest.singular;
+  const term = changeRequestTermKind(sourceControlClients.get(detail.provider).changeRequest);
   if (diffQuery.isPending && loadedSlices.length === 0) {
-    return withToolbar(<DiffPanelLoadingState label={gt("Loading {term} diff...", { term })} />);
+    return withToolbar(
+      <DiffPanelLoadingState
+        label={gt(
+          "Loading {term, select, mr {merge request} cr {change request} other {pull request}} diff...",
+          { term },
+        )}
+      />,
+    );
   }
 
   if (diffQuery.error && loadedSlices.length === 0) {
@@ -1823,7 +1834,10 @@ function PullRequestCodeTab({
     return withToolbar(
       <p className="px-4 py-5 text-sm text-muted-foreground">
         {commit === null
-          ? gt("This {term} has no file changes.", { term })
+          ? gt(
+              "This {term, select, mr {merge request} cr {change request} other {pull request}} has no file changes.",
+              { term },
+            )
           : gt("This commit has no file changes.")}
       </p>,
     );
@@ -1953,10 +1967,13 @@ function PullRequestCodeTab({
             resizeLabel={gt("Resize PR Code files")}
           >
             <DiffFileTree
-              ariaLabel={gt("{term} #{number} files", {
-                term: capitalizeTerm(term),
-                number: detail.number,
-              })}
+              ariaLabel={gt(
+                "{term, select, mr {Merge request} cr {Change request} other {Pull request}} #{number} files",
+                {
+                  term,
+                  number: detail.number,
+                },
+              )}
               entries={fileTreeEntries}
               onSelectFile={revealFile}
               footer={

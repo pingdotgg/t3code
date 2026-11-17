@@ -1,5 +1,4 @@
 import { useAtomCommand } from "~/state/use-atom-command";
-import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
 import type { EnvironmentId, PullRequestRef, PullRequestReviewVerdict } from "@t3tools/contracts";
 import { CheckIcon, MessageSquareIcon, XCircleIcon } from "lucide-react";
 import { msg, useGT, useMessages } from "gt-react";
@@ -26,10 +25,12 @@ import {
   type PullRequestCompletionScope,
 } from "./PullRequestMarkdownTextarea";
 
+import type { ChangeRequestTermKind } from "./changeRequestTerm";
+
 const VERDICTS: ReadonlyArray<{
   readonly value: PullRequestReviewVerdict;
   readonly label: string;
-  readonly sent: (term: string) => string;
+  readonly sent: (term: ChangeRequestTermKind) => string;
   readonly icon: ReactNode;
 }> = [
   {
@@ -41,7 +42,13 @@ const VERDICTS: ReadonlyArray<{
   {
     value: "approve",
     label: msg("Approve", { $context: "review verdict" }),
-    sent: (term) => m(msg("{term} approved", { term: capitalizeTerm(term) })),
+    sent: (term) =>
+      m(
+        msg(
+          "{term, select, mr {Merge request} cr {Change request} other {Pull request}} approved",
+          { term },
+        ),
+      ),
     icon: <CheckIcon className="size-3" />,
   },
   {
@@ -70,8 +77,7 @@ export function PullRequestReviewForm({
   active: boolean;
   reference: PullRequestRef;
   completionScope: PullRequestCompletionScope | null;
-  /** The host's word for a change request, as in "pull request". */
-  term: string;
+  term: ChangeRequestTermKind;
   verdicts: ReadonlyArray<PullRequestReviewVerdict>;
   requestChangesSummaryRequired: boolean;
   textareaRef: RefObject<HTMLTextAreaElement | null>;

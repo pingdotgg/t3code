@@ -4,10 +4,7 @@ import {
   resolvePullRequestReviewAnchor,
 } from "@t3tools/shared/pullRequestAnchor";
 import { holdLinkedNodeInView } from "./holdLinkedNodeInView";
-import {
-  capitalizeTerm,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomCommand } from "~/state/use-atom-command";
 import type {
   EnvironmentId,
@@ -76,6 +73,8 @@ import {
   pullRequestCompletionScope,
 } from "./PullRequestMarkdownTextarea";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
+
+import { changeRequestTermKind, type ChangeRequestTermKind } from "./changeRequestTerm";
 
 interface ReactionSurface {
   revealAnchor?: string | null;
@@ -644,23 +643,37 @@ function CommitEvent({
   );
 }
 
-function LifecycleEvent({ event, term }: { event: PullRequestTimelineEvent; term: string }) {
+function LifecycleEvent({
+  event,
+  term,
+}: {
+  event: PullRequestTimelineEvent;
+  term: ChangeRequestTermKind;
+}) {
   const gt = useGT();
-  const title = capitalizeTerm(term);
   const presentation =
     event.kind === "opened"
       ? {
           icon: <PullRequestGlyph.pullRequest className="size-3.5" />,
-          label: gt("{term} opened", { term: title }),
+          label: gt(
+            "{term, select, mr {Merge request} cr {Change request} other {Pull request}} opened",
+            { term },
+          ),
         }
       : event.kind === "merged"
         ? {
             icon: <PullRequestGlyph.merged className="size-3.5" />,
-            label: gt("{term} merged", { term: title }),
+            label: gt(
+              "{term, select, mr {Merge request} cr {Change request} other {Pull request}} merged",
+              { term },
+            ),
           }
         : {
             icon: <PullRequestGlyph.closed className="size-3.5" />,
-            label: gt("{term} closed", { term: title }),
+            label: gt(
+              "{term, select, mr {Merge request} cr {Change request} other {Pull request}} closed",
+              { term },
+            ),
           };
 
   return (
@@ -819,7 +832,7 @@ export function PullRequestTimelineTab({
   const matches = (event: PullRequestTimelineEvent) =>
     anchor !== null && pullRequestTimelineEventMatches(event, anchor);
 
-  const term = sourceControlClients.get(detail.provider).changeRequest.singular;
+  const term = changeRequestTermKind(sourceControlClients.get(detail.provider).changeRequest);
   const newestCommitAt = newestPullRequestCommitAt(detail.commits);
   const reactions: ReactionSurface = {
     revealAnchor: anchor,

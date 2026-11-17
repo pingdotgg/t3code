@@ -190,15 +190,26 @@ export function resetCreditChoices(
   ];
 }
 
-/** @public */
+/**
+ * `full` reads "resets in 2h 5m", `in` reads "in 2h 5m", `refill` reads "↻ 2h 5m".
+ * @public
+ */
 export function formatResetsIn(
   window: ServerProviderUsageWindow,
   now: number,
   resolve: MFunctionType = mFallback,
+  style: "full" | "in" | "refill" = "full",
 ): string | null {
   const countdown = resetCountdown(window, now);
   if (countdown === null) return null;
   if (countdown.kind === "now") return resolve(msg("resets now"));
   if (countdown.kind === "momentarily") return resolve(msg("Resets momentarily"));
-  return resolve(msg("resets in {duration}", { duration: formatDuration(countdown.ms, resolve) }));
+  const duration = formatDuration(countdown.ms, resolve);
+  if (style === "in") {
+    return resolve(
+      msg("in {duration}", { duration, $context: "time until a usage window resets" }),
+    );
+  }
+  if (style === "refill") return resolve(msg("↻ {duration}", { duration }));
+  return resolve(msg("resets in {duration}", { duration }));
 }

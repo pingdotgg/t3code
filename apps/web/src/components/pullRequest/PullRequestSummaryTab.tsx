@@ -2,10 +2,7 @@ import { pullRequestCommentPreview } from "./pullRequestMarkdown.logic";
 import { parsePullRequestAnchor } from "@t3tools/shared/pullRequestAnchor";
 import { holdLinkedNodeInView } from "./holdLinkedNodeInView";
 import { useAtomValue } from "@effect/atom-react";
-import {
-  capitalizeTerm,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomCommand } from "~/state/use-atom-command";
 import {
   type EnvironmentId,
@@ -30,7 +27,7 @@ import * as Schema from "effect/Schema";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
-import { m } from "~/i18n/messages";
+import { m, type MessageResolver } from "~/i18n/messages";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -105,6 +102,8 @@ import { PullRequestResolveThreadButton } from "./PullRequestResolveThreadButton
 import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
 
+import { changeRequestTermKind } from "./changeRequestTerm";
+
 function reviewerKey(login: string): string {
   return login.toLowerCase();
 }
@@ -178,7 +177,14 @@ function CommentLocation({
   );
 }
 
-function reviewStateLabel(state: string): string {
+const REVIEW_STATE_LABELS: Partial<Record<string, string>> = {
+  commented: msg("Commented", { $context: "review state" }),
+  pending: msg("Pending", { $context: "review state" }),
+};
+
+function reviewStateLabel(state: string, resolve: MessageResolver): string {
+  const known = REVIEW_STATE_LABELS[state.trim().toLowerCase()];
+  if (known) return resolve(known);
   const words = state.toLowerCase().replace(/_/g, " ");
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
@@ -775,7 +781,7 @@ export function PullRequestSummaryTab({
             {outcome ? (
               <PullRequestReviewOutcomeBadge outcome={outcome} />
             ) : comment.reviewState ? (
-              <span>{reviewStateLabel(comment.reviewState)}</span>
+              <span>{reviewStateLabel(comment.reviewState, resolve)}</span>
             ) : null}
           </div>
           {onFixFinding && finding ? (
@@ -992,8 +998,14 @@ export function PullRequestSummaryTab({
               environmentId={environmentId}
               completionScope={completionScope}
               threadRef={threadRef}
-              label={gt("{term} description", { term: capitalizeTerm(terminology.singular) })}
-              placeholder={gt("Describe this {term}", { term: terminology.singular })}
+              label={gt(
+                "{term, select, mr {Merge request} cr {Change request} other {Pull request}} description",
+                { term: changeRequestTermKind(terminology) },
+              )}
+              placeholder={gt(
+                "Describe this {term, select, mr {merge request} cr {change request} other {pull request}}",
+                { term: changeRequestTermKind(terminology) },
+              )}
               saving={descriptionSaving}
               onSave={(body) => void saveBody(body)}
               onCancel={() => setBodyScope(null)}
@@ -1150,7 +1162,7 @@ export function PullRequestSummaryTab({
           <PullRequestActivityUnavailableState
             compact
             error={activityError}
-            term={terminology.singular}
+            term={changeRequestTermKind(terminology)}
             onRetry={onRefresh}
           />
         ) : (

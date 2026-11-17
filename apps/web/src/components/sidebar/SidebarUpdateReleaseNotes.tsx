@@ -24,7 +24,7 @@ function keyReleaseNoteItems(items: ReadonlyArray<string>) {
 /** Feed times read "3h ago"; build days from a prerelease version read "today" or "2d ago". */
 function formatReleaseAge(releasedAt: string, resolve: MessageResolver): string {
   const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(releasedAt);
-  if (!day) return formatRelativeTimeLabel(releasedAt);
+  if (!day) return formatRelativeTimeLabel(releasedAt, undefined, resolve);
   const now = new Date();
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const days = Math.round(

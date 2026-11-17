@@ -19,6 +19,8 @@ import {
   usePullRequestDefaultMergeMethodResolver,
 } from "./usePullRequestActions";
 
+import { changeRequestTermKind } from "./changeRequestTerm";
+
 type PullRequestSpeedActionEntry = Pick<
   EnvironmentPullRequestEntry,
   "environmentId" | "projectId" | "host" | "repository" | "number" | "state" | "isDraft"
@@ -88,10 +90,13 @@ export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntr
     <SpeedModeGroup
       busy={busy}
       pending={actionPending || closing}
-      label={gt("Quick actions for {term} #{number}", {
-        term: terminology.singular,
-        number: entry.number,
-      })}
+      label={gt(
+        "Quick actions for {term, select, mr {merge request} cr {change request} other {pull request}} #{number}",
+        {
+          term: changeRequestTermKind(terminology),
+          number: entry.number,
+        },
+      )}
     >
       {actions.map((action) => {
         const label = resolve(ACTIONS[action].label);
@@ -119,7 +124,10 @@ export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntr
             </TooltipTrigger>
             <TooltipPopup>
               {action === "merge" && entry.stack
-                ? gt("Open this {term} to merge its stack", { term: terminology.singular })
+                ? gt(
+                    "Open this {term, select, mr {merge request} cr {change request} other {pull request}} to merge its stack",
+                    { term: changeRequestTermKind(terminology) },
+                  )
                 : action === "close" && onCloseSweepStart
                   ? gt("Close immediately, or drag across rows to close several")
                   : resolve(ACTIONS[action].immediate)}

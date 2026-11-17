@@ -1,16 +1,16 @@
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import type { UsageProviderKind } from "@t3tools/contracts";
-import { T, useGT } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { useLayoutEffect, useRef, useState } from "react";
 
 import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
 import {
   formatDayShort,
   formatHourShort,
-  formatRelativeHourShort,
   formatTokens,
   formatUsd,
 } from "@t3tools/shared/usageFormat";
+import { formatRelativeHourShort } from "@t3tools/shared/usageFormatCopy";
 import { cn } from "~/lib/utils";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
 import { observeResize } from "~/lib/observeResize";
@@ -419,6 +419,7 @@ export function UsageProviderChart({
   hour12,
 }: UsageProviderChartProps) {
   const gt = useGT();
+  const m = useMessages();
   const periods = resolution === "hour" ? hours : days;
   const totals: readonly (DailyTotals | HourlyTotals)[] = resolution === "hour" ? hourly : daily;
   const byPeriod = new Map(
@@ -440,7 +441,7 @@ export function UsageProviderChart({
     resolution === "hour" ? formatHourShort(period, timeZone, hour12) : formatDayShort(period);
   const formatTooltipPeriod = (period: string) =>
     resolution === "hour" && referenceTime !== undefined
-      ? formatRelativeHourShort(period, referenceTime, timeZone, hour12)
+      ? formatRelativeHourShort(period, referenceTime, timeZone, hour12, m)
       : formatPeriod(period);
 
   return (

@@ -50,11 +50,10 @@ import {
   formatHourShort,
   formatPercent,
   formatTokens,
-  formatUsageContractMismatch,
   formatUsd,
   makeWindow,
-  usageSourceMessages,
 } from "@t3tools/shared/usageFormat";
+import { formatUsageContractMismatch, usageSourceMessages } from "@t3tools/shared/usageFormatCopy";
 import { Button, InlineButton } from "../ui/button";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import {
@@ -187,7 +186,9 @@ export function UsagePage() {
     const shortcut = shortcutLabelForCommand(keybindings, option.command, {
       context: { usagePageOpen: true },
     });
-    return shortcut ? `${m(option.label)} (${shortcut})` : m(option.label);
+    return shortcut
+      ? gt("{label} ({shortcut})", { label: m(option.label), shortcut })
+      : m(option.label);
   };
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: preferences.windowDays,
@@ -627,6 +628,7 @@ function UsageOverview({
   readonly onSelectModel: (key: string) => void;
 }) {
   const gt = useGT();
+  const m = useMessages();
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const shownHourly = shownWindow.resolution === "hour";
   const loading = usageLoading(showingKept, selectedEnvironments, refreshingUsage, hiddenProviders);
@@ -652,6 +654,7 @@ function UsageOverview({
           (source) => !hiddenProviders.has(source.fingerprint.provider),
         ) ?? [],
     ),
+    m,
   );
   const breakdownPeriods: readonly (DailyTotals | HourlyTotals)[] = (
     shownHourly ? merged.hourly : merged.daily
@@ -1129,6 +1132,7 @@ function UsageCoverageNotice({
   readonly contractMismatches: MergedUsage["contractMismatches"];
 }) {
   const gt = useGT();
+  const m = useMessages();
   const failed = environments.filter((environment) => environment.error !== null);
   const mismatchByEnvironment = new Map(
     contractMismatches.map((mismatch) => [mismatch.environmentId, mismatch]),
@@ -1153,7 +1157,7 @@ function UsageCoverageNotice({
       ))}
       {incompatible.map(({ environment, mismatch }) => (
         <span key={environment.environmentId}>
-          {formatUsageContractMismatch(environment.label, mismatch)}
+          {formatUsageContractMismatch(environment.label, mismatch, m)}
         </span>
       ))}
       {duplicateSources.length > 0 ? (
@@ -1191,6 +1195,7 @@ function UsageEnvironmentFilter({
   readonly onOpenModelPrices: () => void;
 }) {
   const gt = useGT();
+  const m = useMessages();
   const allSelected = selectedEnvironmentIds === null;
   const label = allSelected
     ? gt("All environments")
@@ -1249,7 +1254,7 @@ function UsageEnvironmentFilter({
                     : progress.phase === "stale"
                       ? gt("Refreshing…")
                       : progress.phase === "partway"
-                        ? updatingProvidersLabel(progress.providers, providerLabel)
+                        ? updatingProvidersLabel(progress.providers, providerLabel, m)
                         : gt("Ready", { $context: "environment usage status" });
           return (
             <MenuCheckboxItem

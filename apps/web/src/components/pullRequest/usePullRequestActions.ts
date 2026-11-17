@@ -17,7 +17,6 @@ import type {
 import { msg } from "gt-react";
 import { useRef, useState } from "react";
 import {
-  capitalizeTerm,
   sourceControlClients,
   type ChangeRequestTerminology,
 } from "@t3tools/client-runtime/source-control-clients";
@@ -49,6 +48,8 @@ import {
 } from "./pullRequestDetail.logic";
 import { pullRequestEntryKey, type EnvironmentPullRequestEntry } from "./pullRequestList.logic";
 
+import { changeRequestTermKind, type ChangeRequestTermKind } from "./changeRequestTerm";
+
 export function usePullRequestDefaultMergeMethodResolver(
   environmentId: EnvironmentId,
   projectId: ProjectId | null,
@@ -79,35 +80,68 @@ export function usePullRequestDefaultMergeMethodResolver(
   };
 }
 
-const actionSuccessLabels = (term: string): Record<PullRequestAction, string> => ({
+const actionSuccessLabels = (term: ChangeRequestTermKind): Record<PullRequestAction, string> => ({
   merge: m(msg("Merge requested")),
   ready: m(msg("Marked ready for review")),
   draft: m(msg("Converted to draft")),
-  close: m(msg("{term} closed", { term: capitalizeTerm(term) })),
-  reopen: m(msg("{term} reopened", { term: capitalizeTerm(term) })),
+  close: m(
+    msg("{term, select, mr {Merge request} cr {Change request} other {Pull request}} closed", {
+      term,
+    }),
+  ),
+  reopen: m(
+    msg("{term, select, mr {Merge request} cr {Change request} other {Pull request}} reopened", {
+      term,
+    }),
+  ),
   "update-branch": m(msg("Branch updated with the base branch")),
   "enable-auto-merge": m(msg("Auto-merge enabled")),
   "disable-auto-merge": m(msg("Auto-merge disabled")),
-  revert: m(msg("Revert {term} opened", { term })),
+  revert: m(
+    msg(
+      "Revert {term, select, mr {merge request} cr {change request} other {pull request}} opened",
+      { term },
+    ),
+  ),
   "delete-branch": m(msg("Branch deleted")),
   "approve-workflows": m(msg("Workflows approved")),
 });
 
-const actionFailureLabels = (term: string): Record<PullRequestAction, string> => ({
-  merge: m(msg("Could not merge this {term}", { term })),
+const actionFailureLabels = (term: ChangeRequestTermKind): Record<PullRequestAction, string> => ({
+  merge: m(
+    msg(
+      "Could not merge this {term, select, mr {merge request} cr {change request} other {pull request}}",
+      { term },
+    ),
+  ),
   ready: m(msg("Could not mark this ready for review")),
   draft: m(msg("Could not convert this to a draft")),
-  close: m(msg("Could not close this {term}", { term })),
-  reopen: m(msg("Could not reopen this {term}", { term })),
+  close: m(
+    msg(
+      "Could not close this {term, select, mr {merge request} cr {change request} other {pull request}}",
+      { term },
+    ),
+  ),
+  reopen: m(
+    msg(
+      "Could not reopen this {term, select, mr {merge request} cr {change request} other {pull request}}",
+      { term },
+    ),
+  ),
   "update-branch": m(msg("Could not update this branch")),
   "enable-auto-merge": m(msg("Could not enable auto-merge")),
   "disable-auto-merge": m(msg("Could not disable auto-merge")),
-  revert: m(msg("Could not open a revert {term}", { term })),
+  revert: m(
+    msg(
+      "Could not open a revert {term, select, mr {merge request} cr {change request} other {pull request}}",
+      { term },
+    ),
+  ),
   "delete-branch": m(msg("Could not delete this branch")),
   "approve-workflows": m(msg("Could not approve workflows")),
 });
 
-const actionFailureHints = (term: string): Record<PullRequestAction, string> => ({
+const actionFailureHints = (term: ChangeRequestTermKind): Record<PullRequestAction, string> => ({
   merge: m(
     msg(
       "The host refused the merge. Check that you have write access, that the checks it requires have passed, and that the branch is not conflicting.",
@@ -134,7 +168,7 @@ const actionFailureHints = (term: string): Record<PullRequestAction, string> => 
   ),
   revert: m(
     msg(
-      "The host refused it. Check that you have write access and that this {term} was merged on the host.",
+      "The host refused it. Check that you have write access and that this {term, select, mr {merge request} cr {change request} other {pull request}} was merged on the host.",
       { term },
     ),
   ),
@@ -197,15 +231,18 @@ export function usePullRequestActionRunner({
     if (result._tag === "Failure") {
       toastManager.add({
         type: "error",
-        title: actionFailureLabels(terminology.singular)[action],
+        title: actionFailureLabels(changeRequestTermKind(terminology))[action],
         description: readableFailure(
           squashAtomCommandFailure(result),
-          actionFailureHints(terminology.singular)[action],
+          actionFailureHints(changeRequestTermKind(terminology))[action],
         ),
       });
       return;
     }
-    toastManager.add({ type: "success", title: actionSuccessLabels(terminology.singular)[action] });
+    toastManager.add({
+      type: "success",
+      title: actionSuccessLabels(changeRequestTermKind(terminology))[action],
+    });
     onSuccess?.(action, result.value);
   };
 
@@ -244,7 +281,7 @@ export function usePullRequestCloseBatch(
         setClosingKeys(new Set(pending.current));
         if (result._tag === "Failure") {
           failures.push(
-            `#${entry.number}: ${readableFailure(squashAtomCommandFailure(result), actionFailureHints(sourceControlClients.get(entry.provider).changeRequest.singular).close)}`,
+            `#${entry.number}: ${readableFailure(squashAtomCommandFailure(result), actionFailureHints(changeRequestTermKind(sourceControlClients.get(entry.provider).changeRequest)).close)}`,
           );
           return;
         }
@@ -353,9 +390,12 @@ export function usePullRequestHandoffs({
         task.prompt.length > 0
           ? m(msg("The question is in the composer. Read it over, then send."))
           : m(
-              msg("The {term} is in the composer. Type your question, then send.", {
-                term: terminology.singular,
-              }),
+              msg(
+                "The {term, select, mr {merge request} cr {change request} other {pull request}} is in the composer. Type your question, then send.",
+                {
+                  term: changeRequestTermKind(terminology),
+                },
+              ),
             ),
     });
   };
@@ -372,7 +412,12 @@ export function usePullRequestHandoffs({
     // Explicit timeouts survive toast updates and would pin the result after loading.
     const toastId = toastManager.add({
       type: "loading",
-      title: m(msg("Preparing the {term} checkout...", { term: terminology.singular })),
+      title: m(
+        msg(
+          "Preparing the {term, select, mr {merge request} cr {change request} other {pull request}} checkout...",
+          { term: changeRequestTermKind(terminology) },
+        ),
+      ),
       data: {
         onClose: () => {
           cancelled = true;
@@ -411,7 +456,12 @@ export function usePullRequestHandoffs({
       setHandoff(null);
       toastManager.update(toastId, {
         type: "error",
-        title: m(msg("Could not prepare the {term} checkout", { term: terminology.singular })),
+        title: m(
+          msg(
+            "Could not prepare the {term, select, mr {merge request} cr {change request} other {pull request}} checkout",
+            { term: changeRequestTermKind(terminology) },
+          ),
+        ),
         description: checkoutFailureDescription(
           isAtomCommandInterrupted(prepared) ? undefined : squashAtomCommandFailure(prepared),
         ),
@@ -462,14 +512,20 @@ export function usePullRequestHandoffs({
               description:
                 mode === "local"
                   ? m(
-                      msg("This repository is on the {term}'s branch, with a thread open on it.", {
-                        term: terminology.singular,
-                      }),
+                      msg(
+                        "This repository is on the {term, select, mr {merge request} cr {change request} other {pull request}}'s branch, with a thread open on it.",
+                        {
+                          term: changeRequestTermKind(terminology),
+                        },
+                      ),
                     )
                   : m(
-                      msg("The {term} is in its own worktree, with a thread open on it.", {
-                        term: terminology.singular,
-                      }),
+                      msg(
+                        "The {term, select, mr {merge request} cr {change request} other {pull request}} is in its own worktree, with a thread open on it.",
+                        {
+                          term: changeRequestTermKind(terminology),
+                        },
+                      ),
                     ),
             }
           : offHeadPullRequestCheckoutToast(terminology),

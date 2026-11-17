@@ -131,6 +131,8 @@ import {
   type PullRequestHostRead,
 } from "./pullRequestProjectAssignment.logic";
 
+import { changeRequestTermKind } from "./changeRequestTerm";
+
 function getShortcutContext() {
   return {
     terminalFocus: isTerminalFocused(),
@@ -1506,13 +1508,17 @@ export function PullRequestsPage() {
     event.stopPropagation();
     if (event.repeat) return;
     const url = openPanelPullRequestUrl;
-    const { shortLabel, singular } = (
+    const terminology = (
       sourceControlClients.findByChangeRequestUrl(url) ?? sourceControlClients.get(undefined)
     ).changeRequest;
-    void writeTextToClipboard(url, `${singular} link`).then(undefined, (error) => {
+    void writeTextToClipboard(url, `${terminology.singular} link`).then(undefined, (error) => {
       toastManager.add({
         type: "error",
-        title: m(msg("Failed to copy {term} link", { term: shortLabel })),
+        title: m(
+          msg("Failed to copy {term, select, mr {MR} cr {change request} other {PR}} link", {
+            term: changeRequestTermKind(terminology),
+          }),
+        ),
         description: error instanceof Error ? error.message : m(msg("An error occurred.")),
       });
     });

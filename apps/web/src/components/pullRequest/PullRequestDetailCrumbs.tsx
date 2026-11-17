@@ -9,6 +9,8 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
 
+import { changeRequestTermKind } from "./changeRequestTerm";
+
 interface CrumbsPullRequest {
   readonly url: string;
   readonly provider: string;
@@ -83,10 +85,15 @@ function NumberLink({
               "inline-flex shrink-0 cursor-pointer items-center gap-0.5 font-medium underline-offset-2 hover:underline",
               toneClassName,
             )}
-            aria-label={gt("Open {term} #{number} on host", {
-              term: sourceControlClients.get(detail.provider).changeRequest.singular,
-              number: detail.number,
-            })}
+            aria-label={gt(
+              "Open {term, select, mr {merge request} cr {change request} other {pull request}} #{number} on host",
+              {
+                term: changeRequestTermKind(
+                  sourceControlClients.get(detail.provider).changeRequest,
+                ),
+                number: detail.number,
+              },
+            )}
           >
             #{detail.number}
             <ExternalLinkIcon aria-hidden className="size-2.5" />

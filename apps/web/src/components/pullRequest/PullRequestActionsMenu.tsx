@@ -26,7 +26,7 @@ import {
   ScrollTextIcon,
   Trash2Icon,
 } from "lucide-react";
-import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { Branch, msg, T, useGT, useMessages } from "gt-react";
 import { useId, useState } from "react";
 
 import { m } from "~/i18n/messages";
@@ -61,6 +61,8 @@ import { PullRequestGlyph } from "./pullRequestIcons";
 import type { PickableEnvironment } from "./pullRequestProjectAssignment.logic";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
+
+import { changeRequestTermKind } from "./changeRequestTerm";
 
 /** Everything else the reader can do with the pull request, behind the header's overflow button. */
 export function PullRequestActionsMenu({
@@ -156,7 +158,7 @@ export function PullRequestActionsMenu({
   pendingAction: PullRequestAction | null;
   perform: PerformPullRequestAction;
   openOnHostText: string;
-  copyReference: (value: string, label: string) => void;
+  copyReference: (value: string, failureTitle: string) => void;
 }) {
   const gt = useGT();
   const resolve = useMessages();
@@ -214,8 +216,14 @@ export function PullRequestActionsMenu({
                 <Button
                   aria-label={
                     refreshing
-                      ? gt("Refreshing {term}", { term: terminology.singular })
-                      : gt("More {term} actions", { term: terminology.singular })
+                      ? gt(
+                          "Refreshing {term, select, mr {merge request} cr {change request} other {pull request}}",
+                          { term: changeRequestTermKind(terminology) },
+                        )
+                      : gt(
+                          "More {term, select, mr {merge request} cr {change request} other {pull request}} actions",
+                          { term: changeRequestTermKind(terminology) },
+                        )
                   }
                   size="icon-xs"
                   variant="ghost-muted"
@@ -232,8 +240,14 @@ export function PullRequestActionsMenu({
         />
         <TooltipPopup>
           {refreshing
-            ? gt("Refreshing {term}", { term: terminology.singular })
-            : gt("More {term} actions", { term: terminology.singular })}
+            ? gt(
+                "Refreshing {term, select, mr {merge request} cr {change request} other {pull request}}",
+                { term: changeRequestTermKind(terminology) },
+              )
+            : gt(
+                "More {term, select, mr {merge request} cr {change request} other {pull request}} actions",
+                { term: changeRequestTermKind(terminology) },
+              )}
         </TooltipPopup>
       </Tooltip>
       <MenuPopup align="end" side="bottom">
@@ -255,10 +269,16 @@ export function PullRequestActionsMenu({
             <span>{handoff === "ask" ? gt("Opening...") : gt("Ask a question")}</span>
             <span className="text-xs text-muted-foreground">
               {attachesToComposer
-                ? gt("Adds the {term} to this thread's composer.", { term: terminology.singular })
-                : gt("Opens a thread that knows which {term} you mean.", {
-                    term: terminology.singular,
-                  })}
+                ? gt(
+                    "Adds the {term, select, mr {merge request} cr {change request} other {pull request}} to this thread's composer.",
+                    { term: changeRequestTermKind(terminology) },
+                  )
+                : gt(
+                    "Opens a thread that knows which {term, select, mr {merge request} cr {change request} other {pull request}} you mean.",
+                    {
+                      term: changeRequestTermKind(terminology),
+                    },
+                  )}
             </span>
           </span>
         </MenuItem>
@@ -268,7 +288,9 @@ export function PullRequestActionsMenu({
             <span>
               {handoff === "explain"
                 ? gt("Opening...")
-                : gt("Explain this {term}", { term: terminology.shortLabel })}
+                : gt("Explain this {term, select, mr {MR} cr {change request} other {PR}}", {
+                    term: changeRequestTermKind(terminology),
+                  })}
             </span>
             <span className="text-xs text-muted-foreground">
               <T>A walk through the diff and what to read closely.</T>
@@ -416,7 +438,18 @@ export function PullRequestActionsMenu({
           <ArrowUpRightIcon className="size-3.5" />
           {openOnHostText}
         </MenuItem>
-        <MenuItem onClick={() => copyReference(detail.url, `${terminology.shortLabel} link`)}>
+        <MenuItem
+          onClick={() =>
+            copyReference(
+              detail.url,
+              resolve(
+                msg("Failed to copy {term, select, mr {MR} cr {change request} other {PR}} link", {
+                  term: changeRequestTermKind(terminology),
+                }),
+              ),
+            )
+          }
+        >
           <LinkIcon className="size-3.5" />
           <T>Copy link</T>
           <MenuShortcut>
@@ -424,11 +457,25 @@ export function PullRequestActionsMenu({
           </MenuShortcut>
         </MenuItem>
         <MenuItem
-          onClick={() => copyReference(`#${reference.number}`, `${terminology.shortLabel} number`)}
+          onClick={() =>
+            copyReference(
+              `#${reference.number}`,
+              resolve(
+                msg(
+                  "Failed to copy {term, select, mr {MR} cr {change request} other {PR}} number",
+                  { term: changeRequestTermKind(terminology) },
+                ),
+              ),
+            )
+          }
         >
           <CopyIcon className="size-3.5" />
           <T>
-            Copy <Var>{terminology.shortLabel}</Var> number
+            Copy{" "}
+            <Branch branch={changeRequestTermKind(terminology)} mr="MR" cr="change request">
+              PR
+            </Branch>{" "}
+            number
           </T>
           <MenuShortcut>
             {shortcutLabelForCommand(keybindings, "pullRequest.copyNumber")}
@@ -442,7 +489,10 @@ export function PullRequestActionsMenu({
               aria-label={
                 inlineConfirm.isArmed("close")
                   ? gt("Confirm close?")
-                  : gt("Close {term}", { term: terminology.singular })
+                  : gt(
+                      "Close {term, select, mr {merge request} cr {change request} other {pull request}}",
+                      { term: changeRequestTermKind(terminology) },
+                    )
               }
               variant="destructive"
               disabled={actionPending}
@@ -451,7 +501,10 @@ export function PullRequestActionsMenu({
               <PullRequestGlyph.closed className="size-3.5" />
               {inlineConfirm.isArmed("close")
                 ? gt("Confirm close?")
-                : gt("Close {term}", { term: terminology.singular })}
+                : gt(
+                    "Close {term, select, mr {merge request} cr {change request} other {pull request}}",
+                    { term: changeRequestTermKind(terminology) },
+                  )}
             </MenuItem>
           </>
         ) : detail.state === "closed" && can("reopen") ? (
@@ -460,7 +513,14 @@ export function PullRequestActionsMenu({
             <MenuItem disabled={actionPending} onClick={() => void perform("reopen")}>
               <PullRequestGlyph.reopen className="size-3.5" />
               <T>
-                Reopen <Var>{terminology.singular}</Var>
+                Reopen{" "}
+                <Branch
+                  branch={changeRequestTermKind(terminology)}
+                  mr="merge request"
+                  cr="change request"
+                >
+                  pull request
+                </Branch>
               </T>
             </MenuItem>
           </>

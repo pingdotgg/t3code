@@ -840,14 +840,6 @@ export function resetCountdown(
   return { kind: "in", ms: resetsAt - now };
 }
 
-export function formatResetsIn(window: ServerProviderUsageWindow, now: number): string | null {
-  const countdown = resetCountdown(window, now);
-  if (countdown === null) return null;
-  if (countdown.kind === "now") return "resets now";
-  if (countdown.kind === "momentarily") return "Resets momentarily";
-  return `resets in ${formatDuration(countdown.ms)}`;
-}
-
 export const USAGE_LIMITS_COMMAND = {
   name: "usage-limits",
   description: "Show this provider's usage limits",

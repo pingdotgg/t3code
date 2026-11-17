@@ -1223,6 +1223,7 @@ function AgentRow({
 }) {
   const name = agentName(provider);
   const gt = useGT();
+  const messages = useMessages();
   // Claude Code and Codex tiles show Install or Set up; other agents that are on say why not.
   const brokenMessage = isBrokenVersion(provider)
     ? (provider.compatibilityAdvisory?.message ?? null)
@@ -1238,8 +1239,8 @@ function AgentRow({
           ? (provider.unavailableReason ??
             brokenMessage ??
             provider.message ??
-            getProviderSummary(provider).headline)
-          : (brokenMessage ?? getProviderSummary(provider).headline);
+            getProviderSummary(provider, messages).headline)
+          : (brokenMessage ?? getProviderSummary(provider, messages).headline);
   return (
     <div className={cn("flex items-center gap-3", compact ? "min-h-9" : "min-h-10 py-1")}>
       <RowIcon>
@@ -1958,8 +1959,10 @@ function ImportRowMeta({
   readonly threadCount: number;
   readonly lastActiveAt: string | null;
 }) {
-  const relative = lastActiveAt === null ? null : formatRelativeTime(lastActiveAt);
   const gt = useGT();
+  const messages = useMessages();
+  const relative =
+    lastActiveAt === null ? null : formatRelativeTime(lastActiveAt, undefined, messages);
   const age =
     relative === null
       ? ""

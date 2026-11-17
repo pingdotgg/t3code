@@ -229,6 +229,8 @@ export function formatRelativeHourShort(
   relativeTo: string,
   timeZone?: string,
   hour12 = true,
+  relativeDay: (hour: string, daysAgo: 0 | 1) => string = (hour, daysAgo) =>
+    daysAgo === 0 ? `${hour} today` : `${hour} yesterday`,
 ): string {
   const instant = new Date(hourStart);
   const reference = new Date(relativeTo);
@@ -247,8 +249,7 @@ export function formatRelativeHourShort(
   const calendarDaysAgo = Math.round((referenceDay - instantDay) / (24 * HOUR_MS));
   const hour = formatHourShort(hourStart, timeZone, hour12);
 
-  if (calendarDaysAgo === 0) return `${hour} today`;
-  if (calendarDaysAgo === 1) return `${hour} yesterday`;
+  if (calendarDaysAgo === 0 || calendarDaysAgo === 1) return relativeDay(hour, calendarDaysAgo);
   return formatDateTimeShort(hourStart, timeZone, hour12);
 }
 

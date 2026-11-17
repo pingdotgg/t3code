@@ -4,7 +4,7 @@ import {
   managedUpdatesDenial,
 } from "@t3tools/contracts";
 import { TriangleAlertIcon } from "lucide-react";
-import { msg, T, useGT } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { type ComponentProps, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -124,8 +124,10 @@ export function SidebarUpdateArchitectureWarning() {
 
 function SidebarUpdateArchitectureWarningContent() {
   const state = useDesktopUpdateState();
+  const messages = useMessages();
   const visible = shouldShowArm64IntelBuildWarning(state);
-  const description = state && visible ? getArm64IntelBuildWarningDescription(state) : null;
+  const description =
+    state && visible ? getArm64IntelBuildWarningDescription(state, messages) : null;
 
   if (!visible || !description) return null;
 
@@ -203,6 +205,7 @@ export function SidebarUpdatePill() {
 function SidebarUpdateControl() {
   const state = useDesktopUpdateState();
   const gt = useGT();
+  const messages = useMessages();
   // The desktop updates this machine, whose policy the primary environment reports.
   const updatesDenial = managedUpdatesDenial(usePrimaryManagedPolicy());
   const [isActionPending, setIsActionPending] = useState(false);
@@ -255,12 +258,14 @@ function SidebarUpdateControl() {
     showCheckIcon,
   });
   const idleTooltip =
-    !showUpdateDetails && !showCheckIcon ? getDesktopUpdateIdleTooltip(state, updatesDenial) : null;
+    !showUpdateDetails && !showCheckIcon
+      ? getDesktopUpdateIdleTooltip(state, updatesDenial, messages)
+      : null;
   const tooltip = runsEverything
     ? everything.summary
     : showUpdateDetails
       ? state
-        ? getDesktopUpdateButtonTooltip(state)
+        ? getDesktopUpdateButtonTooltip(state, messages)
         : gt("Update available")
       : showCheckIcon
         ? gt("Checking for updates…")

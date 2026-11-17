@@ -197,7 +197,7 @@ export function PreviewView({
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
   const open = useAtomCommand(previewEnvironment.open);
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
-  const environmentLabel = useEnvironment(threadRef.environmentId)?.label ?? "the environment";
+  const environmentLabel = useEnvironment(threadRef.environmentId)?.label ?? null;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const serverBrowser = useEnvironmentSupportsServerBrowser(threadRef.environmentId);
   const adjust = useAtomCommand(previewEnvironment.adjust, "preview appearance or zoom");
@@ -464,7 +464,9 @@ export function PreviewView({
   );
   const moveLabel =
     moveTarget === "server"
-      ? gt("Open in {environment}''s browser", { environment: environmentLabel })
+      ? environmentLabel === null
+        ? gt("Open in the environment's browser")
+        : gt("Open in {environment}''s browser", { environment: environmentLabel })
       : gt("Open on this computer");
   const handleMoveTab = async () => {
     if (!moveTarget || !tabId || !snapshot) return;

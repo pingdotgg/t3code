@@ -5,7 +5,7 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useGT } from "gt-react";
+import { useGT, useMessages } from "gt-react";
 import { useEffect, useRef } from "react";
 
 import { resolveSpeechPresentation } from "~/components/chat/ComposerSpeechButton";
@@ -34,6 +34,7 @@ export function PreviewAnnotationSpeech({
   keybindings: Parameters<typeof useDictationShortcut>[0]["keybindings"];
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const navigate = useNavigate();
   const thread = useThreadShell(threadRef);
   const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
@@ -94,7 +95,7 @@ export function PreviewAnnotationSpeech({
     available,
     phase: state.phase,
     errorAction: state.errorAction,
-    status: resolveSpeechPresentation(state, null).status,
+    status: resolveSpeechPresentation(state, null, messages).status,
     preview: preview ? preview.committed + preview.tentative : null,
     level,
     shortcutLabel,

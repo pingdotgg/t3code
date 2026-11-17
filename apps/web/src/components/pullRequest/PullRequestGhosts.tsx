@@ -12,7 +12,6 @@ import {
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import type { ReactNode } from "react";
 import {
-  capitalizeTerm,
   sourceControlClients,
   type ChangeRequestTerminology,
 } from "@t3tools/client-runtime/source-control-clients";
@@ -38,6 +37,8 @@ import {
   resolvePullRequestState,
 } from "./pullRequestPresentation";
 import { resolveFilterOptions } from "./pullRequestListOptions";
+
+import { changeRequestTermKind } from "./changeRequestTerm";
 
 function GhostBar({ className }: { className?: string | undefined }) {
   return <span aria-hidden className={cn("block h-3 rounded bg-muted-foreground/15", className)} />;
@@ -137,7 +138,10 @@ export function PullRequestDetailGhost({
   return (
     <div
       role="status"
-      aria-label={gt("Loading {term}", { term: terminology.singular })}
+      aria-label={gt(
+        "Loading {term, select, mr {merge request} cr {change request} other {pull request}}",
+        { term: changeRequestTermKind(terminology) },
+      )}
       className={cn(
         "flex h-full min-h-0 flex-col overflow-hidden bg-background",
         !seed && "motion-safe:animate-skeleton",
@@ -162,10 +166,13 @@ export function PullRequestDetailGhost({
                 <span className="min-w-0 truncate font-medium">{seed.repository}</span>
                 <InlineButton
                   onClick={() => void readLocalApi()?.shell.openExternal(seed.url)}
-                  aria-label={gt("Open {term} #{number} on host", {
-                    term: terminology.singular,
-                    number: seed.number,
-                  })}
+                  aria-label={gt(
+                    "Open {term, select, mr {merge request} cr {change request} other {pull request}} #{number} on host",
+                    {
+                      term: changeRequestTermKind(terminology),
+                      number: seed.number,
+                    },
+                  )}
                 >
                   <span className={statePresentation?.toneClassName}>#{seed.number}</span>
                   <ExternalLinkIcon aria-hidden className="size-2.5" />
@@ -185,9 +192,12 @@ export function PullRequestDetailGhost({
             size="icon-xs"
             variant="ghost"
             disabled
-            aria-label={gt("{term} actions loading", {
-              term: capitalizeTerm(terminology.singular),
-            })}
+            aria-label={gt(
+              "{term, select, mr {Merge request} cr {Change request} other {Pull request}} actions loading",
+              {
+                term: changeRequestTermKind(terminology),
+              },
+            )}
           >
             <EllipsisIcon aria-hidden className="size-4" />
           </Button>
@@ -195,7 +205,10 @@ export function PullRequestDetailGhost({
             <Button
               size="icon-xs"
               variant="ghost"
-              aria-label={gt("Collapse {term} panel", { term: terminology.singular })}
+              aria-label={gt(
+                "Collapse {term, select, mr {merge request} cr {change request} other {pull request}} panel",
+                { term: changeRequestTermKind(terminology) },
+              )}
               onClick={onClose}
             >
               <PanelRightIcon aria-hidden className="size-3.5" />
@@ -270,7 +283,10 @@ export function PullRequestDetailGhost({
                     key={seed.headBranch}
                     value={seed.headBranch}
                     target="branch name"
-                    copyLabel={gt("Copy {term} branch", { term: terminology.singular })}
+                    copyLabel={gt(
+                      "Copy {term, select, mr {merge request} cr {change request} other {pull request}} branch",
+                      { term: changeRequestTermKind(terminology) },
+                    )}
                     copiedLabel={gt("Branch name copied")}
                     className="min-w-0 font-mono"
                   />
@@ -451,7 +467,10 @@ export function PullRequestConversationGhost({
   return (
     <div
       role="status"
-      aria-label={gt("Loading {term} conversation", { term: terminology.singular })}
+      aria-label={gt(
+        "Loading {term, select, mr {merge request} cr {change request} other {pull request}} conversation",
+        { term: changeRequestTermKind(terminology) },
+      )}
       className="motion-safe:animate-skeleton space-y-4 py-2"
     >
       {Array.from({ length: rows }, (_, index) => (

@@ -62,6 +62,8 @@ import { PullRequestGlyph } from "./pullRequestIcons";
 import { pullRequestQuickActions } from "./pullRequestList.logic";
 import { PullRequestSpeedActions, PullRequestSpeedModeContext } from "./PullRequestSpeedActions";
 
+import { changeRequestTermKind } from "./changeRequestTerm";
+
 const SOURCE_LABELS: Record<ThreadPullRequestLink["source"], string> = {
   manual: msg("Linked by you"),
   created: msg("Created from this thread"),
@@ -271,10 +273,13 @@ function LinkRowImpl({
                           host: sourceControlClients.hostLabelForChangeRequestUrl(link.url),
                           size: stack.size,
                         })
-                      : gt("{size} {terms} chained by base branch.", {
-                          size: stack.size,
-                          terms: linkHost.changeRequest.plural,
-                        })}
+                      : gt(
+                          "{size} {terms, select, mr {merge requests} cr {change requests} other {pull requests}} chained by base branch.",
+                          {
+                            size: stack.size,
+                            terms: changeRequestTermKind(linkHost.changeRequest),
+                          },
+                        )}
                   </TooltipPopup>
                 </Tooltip>
               ) : null}

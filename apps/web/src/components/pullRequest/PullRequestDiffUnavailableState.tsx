@@ -7,6 +7,7 @@ import { getSourceControlPresentationForKind } from "~/sourceControlPresentation
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { RefreshIcon } from "../ui/refresh-icon";
+import { changeRequestTermKind } from "./changeRequestTerm";
 import { describePullRequestDiffError } from "./pullRequestDiffError";
 
 export function PullRequestDiffUnavailableState({
@@ -25,7 +26,7 @@ export function PullRequestDiffUnavailableState({
   const { title, description } = describePullRequestDiffError(
     error,
     providerName,
-    terminology.singular,
+    changeRequestTermKind(terminology),
     m,
   );
 

@@ -11,13 +11,11 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
-  formatResetsIn,
   type LimitPace,
   paceOf,
   paceRemainingPercent,
   remainingPercent,
   type ResetCreditChoice,
-  resetCreditChoices,
 } from "@t3tools/shared/usageLimits";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { msg, T, useGT, useMessages } from "gt-react";
@@ -42,6 +40,7 @@ import {
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
+import { formatResetsIn, resetCreditChoices } from "@t3tools/shared/usageLimitsCopy";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
 const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof GaugeIcon }> = {
@@ -133,12 +132,13 @@ function WindowBar({
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const gt = useGT();
+  const m = useMessages();
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
   const [barRef, paceMark] = usePaceMark(timeLeft);
-  const resetsIn = formatResetsIn(window, now);
+  const resetsIn = formatResetsIn(window, now, m);
   const resetsAt = window.resetsAt
-    ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)
+    ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m)
     : null;
   const label = window.label;
   const summary =
@@ -230,6 +230,7 @@ export function LimitWindows({
 }) {
   const color = normalizeProviderAccentColor(accentColor) ?? barColor(driver);
   const gt = useGT();
+  const m = useMessages();
   return (
     <div
       className={
@@ -240,7 +241,7 @@ export function LimitWindows({
     >
       {windows.map((window) => {
         const pace = paceOf(window, now);
-        const resetsIn = formatResetsIn(window, now);
+        const resetsIn = formatResetsIn(window, now, m);
         return (
           <Fragment key={window.id}>
             <span className="flex min-w-0 items-center gap-2 text-xs">
@@ -356,10 +357,11 @@ export function ResetCredits({
   const { canManageProviders, choice, confirming, setConfirming, confirm, busy, status, redeem } =
     useResetCredit(environmentId);
   const gt = useGT();
+  const m = useMessages();
   if (credits.availableCount === 0 && status === null) return null;
   return (
     <div className="flex flex-col gap-1 text-xs text-muted-foreground">
-      {resetCreditChoices(credits, input, now).map((choice) => (
+      {resetCreditChoices(credits, input, now, false, m).map((choice) => (
         <div key={choice.key} className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <span className="tabular-nums">{choice.summary}</span>
           {choice.availableCount > 0 ? (

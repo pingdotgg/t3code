@@ -77,10 +77,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { PullRequestStackMenu } from "./PullRequestStackMenu";
 import { pullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
 import { PullRequestChangeBreakdownStat } from "./PullRequestChangeBreakdownStat";
-import {
-  capitalizeTerm,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
 import { vcsEnvironment } from "~/state/vcs";
 import { RelativeTime } from "~/components/RelativeTime";
@@ -171,21 +168,43 @@ import { PullRequestGuideTab } from "./PullRequestGuideTab";
 import { guideRunKey, useGuideRunStore } from "./guide/guideRunStore";
 import { useReviewGuideWriter } from "./guide/useReviewGuideWriter";
 
-const actionFailureLabels = (term: string): Record<PullRequestAction, string> => ({
-  merge: m(msg("Could not merge this {term}", { term })),
+import { changeRequestTermKind, type ChangeRequestTermKind } from "./changeRequestTerm";
+
+const actionFailureLabels = (term: ChangeRequestTermKind): Record<PullRequestAction, string> => ({
+  merge: m(
+    msg(
+      "Could not merge this {term, select, mr {merge request} cr {change request} other {pull request}}",
+      { term },
+    ),
+  ),
   ready: m(msg("Could not mark this ready for review")),
   draft: m(msg("Could not convert this to a draft")),
-  close: m(msg("Could not close this {term}", { term })),
-  reopen: m(msg("Could not reopen this {term}", { term })),
+  close: m(
+    msg(
+      "Could not close this {term, select, mr {merge request} cr {change request} other {pull request}}",
+      { term },
+    ),
+  ),
+  reopen: m(
+    msg(
+      "Could not reopen this {term, select, mr {merge request} cr {change request} other {pull request}}",
+      { term },
+    ),
+  ),
   "update-branch": m(msg("Could not update this branch")),
   "enable-auto-merge": m(msg("Could not turn on auto-merge")),
   "disable-auto-merge": m(msg("Could not turn off auto-merge")),
-  revert: m(msg("Could not open a revert {term}", { term })),
+  revert: m(
+    msg(
+      "Could not open a revert {term, select, mr {merge request} cr {change request} other {pull request}}",
+      { term },
+    ),
+  ),
   "delete-branch": m(msg("Could not delete this branch")),
   "approve-workflows": m(msg("Could not approve workflows")),
 });
 
-const actionFailureHints = (term: string): Record<PullRequestAction, string> => ({
+const actionFailureHints = (term: ChangeRequestTermKind): Record<PullRequestAction, string> => ({
   merge: m(
     msg(
       "The host refused the merge. Check that you have write access, that the checks it requires have passed, and that the branch is not conflicting.",
@@ -214,7 +233,7 @@ const actionFailureHints = (term: string): Record<PullRequestAction, string> => 
   ),
   revert: m(
     msg(
-      "The host refused it. Check that you have write access and that this {term} was merged on the host.",
+      "The host refused it. Check that you have write access and that this {term, select, mr {merge request} cr {change request} other {pull request}} was merged on the host.",
       { term },
     ),
   ),
@@ -229,6 +248,13 @@ const actionFailureHints = (term: string): Record<PullRequestAction, string> => 
     ),
   ),
 });
+
+const AUTO_MERGE_LABELS: Record<PullRequestMergeMethod, string> = {
+  merge: msg("Auto-merge (merge)"),
+  squash: msg("Auto-merge (squash and merge)"),
+  rebase: msg("Auto-merge (rebase and merge)"),
+  "fast-forward": msg("Auto-merge (fast-forward merge)"),
+};
 
 const UPDATE_BRANCH_REBASE_FAILURE_HINT = msg(
   "The host refused it. A rebase stops at the first commit that does not apply cleanly; updating with a merge commit may still work.",
@@ -573,10 +599,10 @@ export function PullRequestDetailPanel({
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { copyToClipboard: copyReference } = useCopyToClipboard<string>({
     target: `${terminology.singular} reference`,
-    onError: (error, label) =>
+    onError: (error, failureTitle) =>
       toastManager.add({
         type: "error",
-        title: m(msg("Failed to copy {label}", { label })),
+        title: failureTitle,
         description: error.message,
       }),
   });
@@ -588,7 +614,15 @@ export function PullRequestDetailPanel({
     if (command !== "pullRequest.copyNumber") return;
     event.preventDefault();
     event.stopPropagation();
-    if (!event.repeat) copyReference(`#${reference.number}`, `${terminology.shortLabel} number`);
+    if (!event.repeat)
+      copyReference(
+        `#${reference.number}`,
+        m(
+          msg("Failed to copy {term, select, mr {MR} cr {change request} other {PR}} number", {
+            term: changeRequestTermKind(terminology),
+          }),
+        ),
+      );
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown capture listener for the copy-number shortcut
   useEffect(() => {
@@ -833,10 +867,10 @@ export function PullRequestDetailPanel({
       const hint =
         updateMethod === "rebase"
           ? m(UPDATE_BRANCH_REBASE_FAILURE_HINT)
-          : actionFailureHints(terminology.singular)[action];
+          : actionFailureHints(changeRequestTermKind(terminology))[action];
       toastManager.add({
         type: "error",
-        title: actionFailureLabels(terminology.singular)[action],
+        title: actionFailureLabels(changeRequestTermKind(terminology))[action],
         description: readableFailure(failure, hint),
       });
       onActed?.(action, "failed");
@@ -845,7 +879,12 @@ export function PullRequestDetailPanel({
     if (action === "revert") {
       toastManager.add({
         type: "success",
-        title: m(msg("Revert {term} opened", { term: terminology.singular })),
+        title: m(
+          msg(
+            "Revert {term, select, mr {merge request} cr {change request} other {pull request}} opened",
+            { term: changeRequestTermKind(terminology) },
+          ),
+        ),
       });
     }
     if (action === "delete-branch") {
@@ -941,9 +980,12 @@ export function PullRequestDetailPanel({
           task.prompt.length > 0
             ? m(msg("The question is in the composer. Read it over, then send."))
             : m(
-                msg("The {term} is in the composer. Type your question, then send.", {
-                  term: terminology.singular,
-                }),
+                msg(
+                  "The {term, select, mr {merge request} cr {change request} other {pull request}} is in the composer. Type your question, then send.",
+                  {
+                    term: changeRequestTermKind(terminology),
+                  },
+                ),
               ),
       });
       return;
@@ -983,9 +1025,12 @@ export function PullRequestDetailPanel({
         task.prompt.length > 0
           ? m(msg("The question is in the composer. Read it over, then send."))
           : m(
-              msg("The {term} is in the composer. Type your question, then send.", {
-                term: terminology.singular,
-              }),
+              msg(
+                "The {term, select, mr {merge request} cr {change request} other {pull request}} is in the composer. Type your question, then send.",
+                {
+                  term: changeRequestTermKind(terminology),
+                },
+              ),
             ),
     });
   };
@@ -1021,7 +1066,12 @@ export function PullRequestDetailPanel({
     setHandoff(kind);
     const toastId = toastManager.add({
       type: "loading",
-      title: m(msg("Preparing the {term} checkout...", { term: terminology.singular })),
+      title: m(
+        msg(
+          "Preparing the {term, select, mr {merge request} cr {change request} other {pull request}} checkout...",
+          { term: changeRequestTermKind(terminology) },
+        ),
+      ),
     });
     const projectRef = scopeProjectRef(
       actingEnvironmentId,
@@ -1050,7 +1100,12 @@ export function PullRequestDetailPanel({
       setHandoff(null);
       toastManager.update(toastId, {
         type: "error",
-        title: m(msg("Could not prepare the {term} checkout", { term: terminology.singular })),
+        title: m(
+          msg(
+            "Could not prepare the {term, select, mr {merge request} cr {change request} other {pull request}} checkout",
+            { term: changeRequestTermKind(terminology) },
+          ),
+        ),
         description: checkoutFailureDescription(
           isAtomCommandInterrupted(prepared) ? undefined : squashAtomCommandFailure(prepared),
         ),
@@ -1098,14 +1153,20 @@ export function PullRequestDetailPanel({
               description:
                 mode === "local"
                   ? m(
-                      msg("This repository is on the {term}'s branch, with a thread open on it.", {
-                        term: terminology.singular,
-                      }),
+                      msg(
+                        "This repository is on the {term, select, mr {merge request} cr {change request} other {pull request}}'s branch, with a thread open on it.",
+                        {
+                          term: changeRequestTermKind(terminology),
+                        },
+                      ),
                     )
                   : m(
-                      msg("The {term} is in its own worktree, with a thread open on it.", {
-                        term: terminology.singular,
-                      }),
+                      msg(
+                        "The {term, select, mr {merge request} cr {change request} other {pull request}} is in its own worktree, with a thread open on it.",
+                        {
+                          term: changeRequestTermKind(terminology),
+                        },
+                      ),
                     ),
             }
           : offHeadPullRequestCheckoutToast(terminology),
@@ -1314,16 +1375,12 @@ export function PullRequestDetailPanel({
     lastSelectedMergeMethod,
   );
   const selectedMergeMethodLabel = resolve(PULL_REQUEST_MERGE_METHOD_LABELS[selectedMergeMethod]);
-  const pendingAutoMergeLabel = gt("Auto-merge ({method})", {
-    method: selectedMergeMethodLabel.toLowerCase(),
-  });
+  const pendingAutoMergeLabel = resolve(AUTO_MERGE_LABELS[selectedMergeMethod]);
   const conflicting = isPullRequestConflicting(detail);
   const autoMergeArmed = detail?.state === "open" && detail.autoMergeEnabled === true;
   const armedMergeMethod = detail?.autoMergeMethod;
   const armedAutoMergeLabel = armedMergeMethod
-    ? gt("Auto-merge ({method})", {
-        method: resolve(PULL_REQUEST_MERGE_METHOD_LABELS[armedMergeMethod]).toLowerCase(),
-      })
+    ? resolve(AUTO_MERGE_LABELS[armedMergeMethod])
     : gt("Auto-merge");
   const workflowApprovalsRequired =
     detail?.state === "open" ? (detail.workflowApprovalsRequired ?? 0) : 0;
@@ -1432,7 +1489,7 @@ export function PullRequestDetailPanel({
   const checkoutControl =
     context === "page" ? (
       <PullRequestCheckoutMenu
-        term={terminology.singular}
+        term={changeRequestTermKind(terminology)}
         handoff={handoff}
         checkoutRoot={checkoutRoot}
         canPrepareWorktree={canPrepareWorktree}
@@ -1610,7 +1667,10 @@ export function PullRequestDetailPanel({
             <Button
               size="icon-xs"
               variant="ghost"
-              aria-label={gt("Collapse {term} panel", { term: terminology.singular })}
+              aria-label={gt(
+                "Collapse {term, select, mr {merge request} cr {change request} other {pull request}} panel",
+                { term: changeRequestTermKind(terminology) },
+              )}
               onClick={onClose}
             >
               <PanelRightIcon className="size-3.5" />
@@ -1774,7 +1834,10 @@ export function PullRequestDetailPanel({
                     key={detail.headBranch}
                     value={detail.headBranch}
                     target="branch name"
-                    copyLabel={gt("Copy {term} branch", { term: terminology.singular })}
+                    copyLabel={gt(
+                      "Copy {term, select, mr {merge request} cr {change request} other {pull request}} branch",
+                      { term: changeRequestTermKind(terminology) },
+                    )}
                     copiedLabel={gt("Branch name copied")}
                   />
                 }
@@ -1956,13 +2019,16 @@ export function PullRequestDetailPanel({
           <PullRequestsUnavailableState
             {...(isPullRequestNotFound(detailQuery.failure)
               ? {
-                  title: gt("{term} #{number} not found", {
-                    term: capitalizeTerm(terminology.singular),
-                    number: reference.number,
-                  }),
+                  title: gt(
+                    "{term, select, mr {Merge request} cr {Change request} other {Pull request}} #{number} not found",
+                    {
+                      term: changeRequestTermKind(terminology),
+                      number: reference.number,
+                    },
+                  ),
                   error: gt(
-                    "It may be an issue rather than a {term}, or this account can't see it.",
-                    { term: terminology.singular },
+                    "It may be an issue rather than a {term, select, mr {merge request} cr {change request} other {pull request}}, or this account can't see it.",
+                    { term: changeRequestTermKind(terminology) },
                   ),
                 }
               : { error: detailQuery.error })}
@@ -2045,7 +2111,7 @@ export function PullRequestDetailPanel({
                 ) : activityError ? (
                   <PullRequestActivityUnavailableState
                     error={activityError}
-                    term={terminology.singular}
+                    term={changeRequestTermKind(terminology)}
                     onRetry={activityQuery.refresh}
                   />
                 ) : (
@@ -2070,7 +2136,10 @@ export function PullRequestDetailPanel({
                 <Suspense
                   fallback={
                     <DiffPanelLoadingState
-                      label={gt("Loading {term} diff...", { term: terminology.singular })}
+                      label={gt(
+                        "Loading {term, select, mr {merge request} cr {change request} other {pull request}} diff...",
+                        { term: changeRequestTermKind(terminology) },
+                      )}
                     />
                   }
                 >

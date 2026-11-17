@@ -5,8 +5,6 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useRef, useState } from "react";
 
-import { m } from "../../i18n/messages";
-
 import { cn } from "../../lib/utils";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
@@ -69,13 +67,13 @@ const priceTargetsAtom = Atom.make((get): readonly UsagePriceTarget[] =>
           : null,
       unavailable:
         environment.connection.phase !== "connected"
-          ? m(msg("Offline"))
+          ? msg("Offline")
           : settings === null
-            ? m(msg("Prices not loaded"))
+            ? msg("Prices not loaded")
             : access === "pending"
-              ? m(msg("Checking permissions…"))
+              ? msg("Checking permissions…")
               : access === "denied"
-                ? m(msg("Read-only access"))
+                ? msg("Read-only access")
                 : null,
     };
   }),
@@ -104,9 +102,11 @@ export function UsagePriceOverrides({
   readonly initialModel?: string | undefined;
   readonly onOpenChange: (open: boolean) => void;
 }) {
-  const environments = useAtomValue(priceTargetsAtom);
   const gt = useGT();
   const messages = useMessages();
+  const environments = useAtomValue(priceTargetsAtom).map((target) =>
+    target.unavailable === null ? target : { ...target, unavailable: messages(target.unavailable) },
+  );
   const [selectedIds, setSelectedIds] = useState(initialSelectedEnvironmentIds);
   const selected = environments.filter(
     (environment) => selectedIds === null || selectedIds.has(environment.environmentId),

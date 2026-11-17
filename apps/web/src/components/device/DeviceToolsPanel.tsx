@@ -159,7 +159,7 @@ export function DeviceToolsPanel(props: {
             </div>
           ) : null}
           <SubmitRow
-            placeholder="https://… or myapp://"
+            placeholder={gt("https://… or myapp://")}
             action={gt("Open", { $context: "verb, opens a URL" })}
             disabled={disabled}
             onSubmit={(url) => act({ type: "openUrl", url })}

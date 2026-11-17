@@ -32,6 +32,8 @@ import { PullRequestStackLayerContent } from "./PullRequestStackLayerContent";
 import { PullRequestGlyph } from "./pullRequestIcons";
 import { readableFailure } from "./pullRequestDetail.logic";
 
+import { changeRequestTermKind } from "./changeRequestTerm";
+
 export function PullRequestStackMenu({
   hostLabel,
   terminology,
@@ -261,13 +263,12 @@ export function PullRequestStackMenu({
             {stale
               ? staleReason
               : gt(
-                  "{count, plural, one {Merge stack through #{number} into {base} ({count} {singular})} other {Merge stack through #{number} into {base} ({count} {plural})}}",
+                  "{count, plural, one {Merge stack through '#'{number} into {base} ({count} {term, select, mr {merge request} cr {change request} other {pull request}})} other {Merge stack through '#'{number} into {base} ({count} {term, select, mr {merge requests} cr {change requests} other {pull requests}})}}",
                   {
                     count: mergeLayers.length,
                     number: reference.number,
                     base: stack.base,
-                    singular: terminology.singular,
-                    plural: terminology.plural,
+                    term: changeRequestTermKind(terminology),
                   },
                 )}
           </TooltipPopup>
@@ -284,19 +285,17 @@ export function PullRequestStackMenu({
             <DialogTitle>
               {confirmation === "merge"
                 ? gt(
-                    "{count, plural, one {Merge {count} {singular}?} other {Merge {count} {plural}?}}",
+                    "{count, plural, one {Merge {count} {term, select, mr {merge request} cr {change request} other {pull request}}?} other {Merge {count} {term, select, mr {merge requests} cr {change requests} other {pull requests}}?}}",
                     {
                       count: mergeLayers.length,
-                      singular: terminology.singular,
-                      plural: terminology.plural,
+                      term: changeRequestTermKind(terminology),
                     },
                   )
                 : gt(
-                    "{count, plural, one {Rebase {count} {singular}?} other {Rebase {count} {plural}?}}",
+                    "{count, plural, one {Rebase {count} {term, select, mr {merge request} cr {change request} other {pull request}}?} other {Rebase {count} {term, select, mr {merge requests} cr {change requests} other {pull requests}}?}}",
                     {
                       count: unmerged.length,
-                      singular: terminology.singular,
-                      plural: terminology.plural,
+                      term: changeRequestTermKind(terminology),
                     },
                   )}
             </DialogTitle>

@@ -135,7 +135,10 @@ function Wizard({
   const steps = hostedApproval ? HOSTED_APPROVAL_STEPS : STEPS;
   const shownStep = hostedApproval && step === 2 ? 1 : step;
   const next = () => setStep(step === 0 ? (hostedApproval ? 2 : 1) : 2);
-  const appName = choice === null || choice === "other" ? gt("the app") : choice.name;
+  const levelsHeading =
+    choice === null || choice === "other"
+      ? gt("What can the app do?")
+      : gt("What can {app} do?", { app: choice.name });
   return (
     <>
       <WizardHeader title={title}>
@@ -155,9 +158,9 @@ function Wizard({
           <AppStep choice={choice} onChoose={setChoice} />
         ) : step === 1 ? (
           <section className="space-y-3">
-            <h3 className="text-sm font-medium">{gt("What can {app} do?", { app: appName })}</h3>
+            <h3 className="text-sm font-medium">{levelsHeading}</h3>
             <RadioGroup
-              aria-label={gt("What can {app} do?", { app: appName })}
+              aria-label={levelsHeading}
               value={access}
               onValueChange={(value) => setPicked(value as AuthMcpClientAccess)}
             >
@@ -603,10 +606,14 @@ function ConnectStep({
   const code =
     access === null ? (
       <p className="text-sm text-muted-foreground">
-        {gt(
-          "When {app} opens the sign-in page, choose what it may do and approve with your T3 Connect account.",
-          { app: app?.name ?? gt("the app") },
-        )}
+        {app === null
+          ? gt(
+              "When the app opens the sign-in page, choose what it may do and approve with your T3 Connect account.",
+            )
+          : gt(
+              "When {app} opens the sign-in page, choose what it may do and approve with your T3 Connect account.",
+              { app: app.name },
+            )}
       </p>
     ) : (
       <ApprovalCode

@@ -8,7 +8,6 @@ import { stripInlineContextReferences } from "~/lib/composerContextReferences";
 import type { Nodes as MdastNodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import {
-  capitalizeTerm,
   sourceControlClients,
   type ChangeRequestTerminology,
 } from "@t3tools/client-runtime/source-control-clients";
@@ -52,6 +51,8 @@ import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
+
+import { changeRequestTermKind } from "./changeRequestTerm";
 
 export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
   merge: msg("Merge"),
@@ -810,13 +811,18 @@ export function buildPullRequestTimeline(
     Partial<Pick<PullRequestDetailView, "reviewThreads" | "overviewThreads">>,
   resolve: MessageResolver = m,
 ): ReadonlyArray<PullRequestTimelineEvent> {
-  const term = sourceControlClients.get(detail.provider).changeRequest.singular;
+  const term = changeRequestTermKind(sourceControlClients.get(detail.provider).changeRequest);
   return [
     {
       id: "created",
       at: detail.createdAt,
       kind: "opened" as const,
-      title: resolve(msg("opened this {term}", { term })),
+      title: resolve(
+        msg(
+          "opened this {term, select, mr {merge request} cr {change request} other {pull request}}",
+          { term },
+        ),
+      ),
       body: null,
       markdown: false,
       url: null,
@@ -871,7 +877,12 @@ export function buildPullRequestTimeline(
             id: "merged",
             at: detail.mergedAt,
             kind: "merged" as const,
-            title: resolve(msg("{term} merged", { term: capitalizeTerm(term) })),
+            title: resolve(
+              msg(
+                "{term, select, mr {Merge request} cr {Change request} other {Pull request}} merged",
+                { term },
+              ),
+            ),
             body: null,
             markdown: false,
             url: null,
@@ -891,7 +902,12 @@ export function buildPullRequestTimeline(
             id: "closed",
             at: detail.closedAt,
             kind: "closed" as const,
-            title: resolve(msg("{term} closed", { term: capitalizeTerm(term) })),
+            title: resolve(
+              msg(
+                "{term, select, mr {Merge request} cr {Change request} other {Pull request}} closed",
+                { term },
+              ),
+            ),
             body: null,
             markdown: false,
             url: null,

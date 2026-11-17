@@ -2,11 +2,13 @@ import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
 
+import type { ChangeRequestTermKind } from "./changeRequestTerm";
+
 /** Diff failures currently include transport wrappers, so recognize the reason inside them. */
 export function describePullRequestDiffError(
   error: string,
   providerName: string,
-  term: string,
+  term: ChangeRequestTermKind,
   resolve: MessageResolver = m,
 ) {
   if (/\brate limit\b|\brate[-_]limited\b|\btoo many requests\b/i.test(error)) {
@@ -25,7 +27,7 @@ export function describePullRequestDiffError(
     title: resolve(msg("Couldn't load the changes")),
     description: resolve(
       msg(
-        "The environment couldn't load this {term}'s diff. Try again, or view the changes on {providerName}.",
+        "The environment couldn't load this {term, select, mr {merge request} cr {change request} other {pull request}}'s diff. Try again, or view the changes on {providerName}.",
         { term, providerName },
       ),
     ),

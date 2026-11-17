@@ -20,6 +20,8 @@ import {
 import { pullRequestReviewKey } from "./pullRequestReviewStore";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
 
+import { changeRequestTermKind } from "./changeRequestTerm";
+
 export function PullRequestCommentForm({
   environmentId,
   active,
@@ -124,9 +126,12 @@ export function PullRequestCommentForm({
         value={body}
         rows={3}
         placeholder={gt("Leave a comment")}
-        aria-label={gt("Comment on this {term}", {
-          term: sourceControlClients.get(detail.provider).changeRequest.singular,
-        })}
+        aria-label={gt(
+          "Comment on this {term, select, mr {merge request} cr {change request} other {pull request}}",
+          {
+            term: changeRequestTermKind(sourceControlClients.get(detail.provider).changeRequest),
+          },
+        )}
         onValueChange={setBody}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) return;

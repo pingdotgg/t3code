@@ -80,7 +80,7 @@ import { useNowSecond } from "../../hooks/useNowSecond";
 import { vcsEnvironment, vcsBranchRevalidation } from "../../state/vcs";
 import { useEnvironmentQuery } from "../../state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
-import { formatRelativeTimeLabel, parseTimestampDate } from "../../timestampFormat";
+import { formatRelativeTime, parseTimestampDate } from "../../timestampFormat";
 import type { SidebarThreadSummary } from "../../types";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
@@ -142,9 +142,10 @@ export type SidebarProviderEntry = Pick<
   | "acpRegistryIconUrl"
   | "models"
 >;
-function compactSidebarTimeLabel(label: string, resolve: MessageResolver): string {
-  if (label === "just now") return resolve(msg("now", { $context: "relative time" }));
-  return label.endsWith(" ago") ? label.slice(0, -4) : label;
+function compactSidebarTimeLabel(timestamp: string, nowMs: number, resolve: MessageResolver) {
+  const parts = formatRelativeTime(timestamp, nowMs, resolve);
+  if (parts === null) return "";
+  return parts.suffix === null ? resolve(msg("now", { $context: "relative time" })) : parts.value;
 }
 
 // Subscribes to the minute tick itself, so only the label re-renders each
@@ -154,10 +155,7 @@ function RelativeTimeLabel(props: { timestamp: string | null }) {
   const m = useMessages();
   return props.timestamp === null
     ? null
-    : compactSidebarTimeLabel(
-        formatRelativeTimeLabel(props.timestamp, Date.parse(`${nowMinute}:00.000Z`)),
-        m,
-      );
+    : compactSidebarTimeLabel(props.timestamp, Date.parse(`${nowMinute}:00.000Z`), m);
 }
 
 function JumpHintBadge(props: { label: string }) {
@@ -669,6 +667,7 @@ function ThreadRenameInput(props: {
 
 const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
   const gt = useGT();
+  const messages = useMessages();
   const {
     isRenaming,
     onCancelRename,
@@ -715,7 +714,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     environmentId: thread.environmentId,
     threadId: thread.id,
   });
-  const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
+  const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds, messages);
   const terminalProcessCount = runningTerminalIds.length;
   const hasUnsentDraft = useThreadHasUnsentDraft(threadRef) && !props.isRouteThread;
   const handleDiscardDraftClick = (event: ReactMouseEvent) => {
@@ -1700,6 +1699,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
   onSelect: () => void;
   onFileDropThreads: (threadRef: ScopedThreadRef, files: File[]) => void;
 }) {
+  const messages = useMessages();
   const thread =
     useThreadShell(scopeThreadRef(props.thread.environmentId, props.thread.id)) ?? props.thread;
   const accessibility = resolveSidebarRowAccessibility({
@@ -1760,7 +1760,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
     environmentId: thread.environmentId,
     threadId: thread.id,
   });
-  const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
+  const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds, messages);
   const [isFileDragOver, setIsFileDragOver] = useState(false);
   const onFileDropThreads = props.onFileDropThreads;
   const fileDropHandlers = makeWorkspaceFileDropHandlers({
