@@ -934,44 +934,47 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       return;
     const updateCheck = { checkedAt: now };
     lastUpdateCheck = updateCheck;
-    const musl =
-      platform === "linux" &&
-      (yield* fs.exists(
-        arch === "arm64" ? "/lib/libc.musl-aarch64.so.1" : "/lib/libc.musl-x86_64.so.1",
-      ));
-    const target = antigravityCliTarget(platform, arch, musl);
-    const latest = yield* http.get(`${ANTIGRAVITY_CLI_MANIFEST_BASE}/${target}.json`).pipe(
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap((response) => response.json),
-      Effect.map((json) => parseAntigravityCliRelease(json, platform, arch, musl)),
-      Effect.timeout("10 seconds"),
-      Effect.orElseSucceed(() => null),
+    return yield* Effect.gen(function* () {
+      const musl =
+        platform === "linux" &&
+        (yield* fs.exists(
+          arch === "arm64" ? "/lib/libc.musl-aarch64.so.1" : "/lib/libc.musl-x86_64.so.1",
+        ));
+      const target = antigravityCliTarget(platform, arch, musl);
+      const latest = yield* http.get(`${ANTIGRAVITY_CLI_MANIFEST_BASE}/${target}.json`).pipe(
+        Effect.flatMap(HttpClientResponse.filterStatusOk),
+        Effect.flatMap((response) => response.json),
+        Effect.map((json) => parseAntigravityCliRelease(json, platform, arch, musl)),
+        Effect.timeout("10 seconds"),
+        Effect.orElseSucceed(() => null),
+      );
+      if (latest === null) return;
+      if (yield* isWithdrawn(latest.version)) {
+        releaseAsset = null;
+        return;
+      }
+      releaseAsset = latest;
+      yield* SubscriptionRef.updateEffect(state, (value) =>
+        isRunning(value)
+          ? Effect.succeed(value)
+          : Effect.gen(function* () {
+              const keepInstalled =
+                value.installedVersion !== null &&
+                compareSemverVersions(value.installedVersion, latest.version) > 0 &&
+                !(yield* isWithdrawn(value.installedVersion));
+              return {
+                ...value,
+                version: keepInstalled ? value.installedVersion : latest.version,
+                totalBytes: null,
+              };
+            }),
+      );
+    }).pipe(
       Effect.onInterrupt(() =>
         Effect.sync(() => {
           if (lastUpdateCheck === updateCheck) lastUpdateCheck = undefined;
         }),
       ),
-    );
-    if (latest === null) return;
-    if (yield* isWithdrawn(latest.version)) {
-      releaseAsset = null;
-      return;
-    }
-    releaseAsset = latest;
-    yield* SubscriptionRef.updateEffect(state, (value) =>
-      isRunning(value)
-        ? Effect.succeed(value)
-        : Effect.gen(function* () {
-            const keepInstalled =
-              value.installedVersion !== null &&
-              compareSemverVersions(value.installedVersion, latest.version) > 0 &&
-              !(yield* isWithdrawn(value.installedVersion));
-            return {
-              ...value,
-              version: keepInstalled ? value.installedVersion : latest.version,
-              totalBytes: null,
-            };
-          }),
     );
   });
 

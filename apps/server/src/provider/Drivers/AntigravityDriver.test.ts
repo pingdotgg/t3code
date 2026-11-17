@@ -17,7 +17,6 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
 
@@ -31,6 +30,7 @@ import {
 } from "../antigravityAuthSupport.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import { createProviderVersionAdvisory } from "@t3tools/provider-core/server/maintenanceResolver";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ModelManifest from "../ModelManifest.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -61,7 +61,12 @@ function shellQuote(value: string): string {
 }
 
 const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
-  options: { readonly config?: Partial<AntigravitySettings>; readonly enabled?: boolean } = {},
+  options: {
+    readonly config?:
+      | Partial<AntigravitySettings>
+      | ((executablePath: string) => Partial<AntigravitySettings>);
+    readonly enabled?: boolean;
+  } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -133,13 +138,11 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     failResolution: boolean;
     beforeAcquire: Effect.Effect<void>;
     installedVersion: string | null;
-    latestVersion: string | null;
   } = {
     selected: first,
     failResolution: false,
     beforeAcquire: Effect.void,
     installedVersion: null,
-    latestVersion: null,
   };
   const acquisitions: Array<{ binaryPath: string | undefined; path: string | undefined }> = [];
   const releases: Array<string | null> = [];
@@ -167,7 +170,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
           phase: "idle",
           downloadedBytes: 0,
           totalBytes: null,
-          version: controls.latestVersion,
+          version: null,
           installedVersion: controls.installedVersion,
           canRemove: controls.installedVersion !== null,
           message: null,
@@ -236,7 +239,12 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     instanceId,
     displayName: "Google test account",
     enabled: options.enabled ?? true,
-    config: { ...AntigravityDriver.defaultConfig(), ...options.config },
+    config: {
+      ...AntigravityDriver.defaultConfig(),
+      ...(typeof options.config === "function"
+        ? options.config(first.executablePath)
+        : options.config),
+    },
     environment: [
       { name: "PATH", value: instancePath },
       { name: "T3_ACP_ANTIGRAVITY", value: "1" },
@@ -496,8 +504,8 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
 
   it.effect.skipIf(windowsHost)("loads models from an explicitly selected agy CLI", () =>
     Effect.gen(function* () {
-      const binaryPath = "/opt/google/agy";
-      const h = yield* makeHarness({ config: { binaryPath } });
+      const h = yield* makeHarness({ config: (binaryPath) => ({ binaryPath }) });
+      const binaryPath = h.first.executablePath;
       h.controls.selected = {
         ...h.first,
         executablePath: binaryPath,
@@ -555,22 +563,17 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
   it.effect("flags older and legacy managed runtimes as behind latest", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
-      h.controls.latestVersion = "1.5.9";
       for (const version of ["1.3.0", "agy_acp_server_1.1.1", "agy_acp_server_20260818_01_RC01"]) {
         h.controls.installedVersion = version;
-        h.controls.selected = { ...h.first, version };
-        const nextAdvisory = yield* Stream.toPull(
-          h.instance.snapshot.streamChanges.pipe(
-            Stream.filter(
-              (snapshot) =>
-                snapshot.versionAdvisory?.currentVersion === version &&
-                snapshot.versionAdvisory.latestVersion === "1.5.9",
-            ),
-          ),
-        );
-        yield* h.instance.snapshot.refresh;
-        const snapshots = yield* nextAdvisory;
-        expect(snapshots[0]?.versionAdvisory).toMatchObject({
+        const maintenanceCapabilities = yield* h.instance.snapshot.resolveMaintenance();
+        expect(
+          createProviderVersionAdvisory({
+            driver: ProviderDriverKind.make("antigravity"),
+            currentVersion: version,
+            latestVersion: "1.5.9",
+            maintenanceCapabilities,
+          }),
+        ).toMatchObject({
           status: "behind_latest",
           currentVersion: version,
           latestVersion: "1.5.9",

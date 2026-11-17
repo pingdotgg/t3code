@@ -425,6 +425,16 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         canUpdate: true,
         updateCommand: null,
       });
+      expect((yield* harness.provider.snapshot.getSnapshot).versionAdvisory).toEqual(
+        snapshot?.versionAdvisory,
+      );
+      yield* Ref.set(harness.probe, Effect.succeed(initializeResult));
+      yield* harness.provider.snapshot.refresh;
+      expect((yield* harness.provider.snapshot.getSnapshot).versionAdvisory).toMatchObject({
+        status: "behind_latest",
+        latestVersion: "1.5.9",
+        canUpdate: true,
+      });
     }),
   );
 
