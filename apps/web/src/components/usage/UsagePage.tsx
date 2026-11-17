@@ -45,7 +45,6 @@ import {
   enumerateHourStarts,
   formatCount,
   formatDateTimeShort,
-  formatDayShort,
   formatHourShort,
   formatPercent,
   formatTokens,
@@ -78,7 +77,7 @@ import {
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
-import { UsageProviderChart } from "./UsageProviderChart";
+import { formatChartDay, UsageProviderChart } from "./UsageProviderChart";
 import { makeUsageWindow, trimUsageWindow } from "./usageWindow";
 import { SpeedPremium, UsageModelDialog } from "./UsageModelDialog";
 import { UsageShareBar } from "./UsageShareBar";
@@ -347,10 +346,11 @@ export function UsagePage() {
         (presentation.serverConfig?.providers ?? []).some(usesChatGptSharing),
     );
 
+  const shownWindowDays = [shownWindow.sinceDay, shownWindow.untilDay];
   const windowLabel =
     shownHourly && shownWindow.sinceTime !== undefined && shownWindow.untilTime !== undefined
       ? `${formatDateTimeShort(shownWindow.sinceTime, shownWindow.timeZone, hour12)} to ${formatDateTimeShort(shownWindow.untilTime, shownWindow.timeZone, hour12)}`
-      : `${formatDayShort(shownWindow.sinceDay)} to ${formatDayShort(shownWindow.untilDay)}`;
+      : `${formatChartDay(shownWindow.sinceDay, shownWindowDays)} to ${formatChartDay(shownWindow.untilDay, shownWindowDays)}`;
   const topbarContent = (
     <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-2 @5xl/usage-header:flex">
       <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="min-w-0">
@@ -978,7 +978,10 @@ function UsageOverview({
                       <td className="py-2 pl-2 text-foreground">
                         {"hourStart" in period
                           ? formatHourShort(period.hourStart, shownWindow.timeZone, hour12)
-                          : formatDayShort(period.day)}
+                          : formatChartDay(period.day, [
+                              shownWindow.sinceDay,
+                              shownWindow.untilDay,
+                            ])}
                       </td>
                       {activeProviders.map((provider) => (
                         <td
