@@ -28,6 +28,7 @@ import {
 } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
+import { confirmCheckoutSwitch } from "./confirmCheckoutSwitch";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
@@ -441,6 +442,18 @@ export function BranchToolbarBranchSelector({
     return resolveConfirmedSelectedRef(listedRef, result._tag === "Success" ? result.value : null);
   };
 
+  const confirmSwitchFromCurrentCheckout = (nextBranch: string) =>
+    activeProjectRef === null
+      ? Promise.resolve(true)
+      : confirmCheckoutSwitch({
+          environmentId,
+          projectId: activeProjectRef.projectId,
+          threadId: activeThreadId ?? null,
+          worktreePath: activeWorktreePath,
+          currentBranch: currentGitBranch,
+          nextBranch,
+        });
+
   const selectBranch = async (listedRef: VcsRef) => {
     if (!canUpdateThreadBranch || !branchCwd || !activeProjectCwd || isBranchActionPending) return;
     const selectionId = ++latestSelectionIdRef.current;
@@ -492,6 +505,12 @@ export function BranchToolbarBranchSelector({
       : refName.name;
 
     runBranchAction(async () => {
+      if (
+        selectionTarget.checkoutCwd === branchCwd &&
+        !(await confirmSwitchFromCurrentCheckout(selectedBranchName))
+      ) {
+        return;
+      }
       const previousBranch = resolvedActiveBranch;
       setOptimisticBranch(selectedBranchName);
       const checkoutResult = await switchRef({
@@ -561,6 +580,7 @@ export function BranchToolbarBranchSelector({
     onComposerFocusRequest?.();
 
     runBranchAction(async () => {
+      if (!(await confirmSwitchFromCurrentCheckout(name))) return;
       const previousBranch = resolvedActiveBranch;
       setOptimisticBranch(name);
       const createBranchResult = await createRefMutation({
