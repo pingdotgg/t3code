@@ -143,11 +143,11 @@ fn preserve_message_end(message: &str) -> String {
 }
 
 /// `policyInstruction`.
-fn policy_instruction(instruction: Option<&str>) -> Vec<String> {
+fn policy_instruction(instruction: Option<&str>, heading: &str) -> Vec<String> {
     match instruction.map(js_trim).filter(|i| !i.is_empty()) {
         Some(trimmed) => vec![
             String::new(),
-            "Additional instructions:".to_owned(),
+            heading.to_owned(),
             limit_section(trimmed, 20_000),
         ],
         None => Vec::new(),
@@ -184,7 +184,10 @@ fn attachment_lines(attachments: &[Attachment]) -> Vec<String> {
 /// `threadTitlePromptSuffix`, without linked context.
 fn prompt_suffix(input: &TitlePromptInput) -> String {
     let mut suffix = String::new();
-    let additional = policy_instruction(input.instructions.as_deref());
+    let additional = policy_instruction(
+        input.instructions.as_deref(),
+        "Title instructions from the user:",
+    );
     if !additional.is_empty() {
         suffix.push('\n');
         suffix.push_str(&additional.join("\n"));
@@ -197,8 +200,17 @@ fn prompt_suffix(input: &TitlePromptInput) -> String {
     suffix
 }
 
+/// `lengthRule(false)`, as the generated templates carry it.
+const DEFAULT_LENGTH_RULE: &str = "- 3-8 words, fewer than 40 characters.";
+/// `lengthRule(true)`: the user's title instructions win over the generic limits.
+const INSTRUCTIONS_LENGTH_RULE: &str = "- Follow the user's title instructions at the end of this prompt. Where they conflict with these rules, including on length and format, they win.";
+
 /// `buildThreadTitlePrompt`.
 pub fn thread_title_prompt(input: &TitlePromptInput) -> String {
+    let has_instructions = input
+        .instructions
+        .as_deref()
+        .is_some_and(|i| !js_trim(i).is_empty());
     let project = input
         .project_title
         .as_deref()
@@ -225,6 +237,9 @@ pub fn thread_title_prompt(input: &TitlePromptInput) -> String {
     let mut prompt = String::new();
     for part in parts {
         match part {
+            Part::Text(text) if has_instructions => {
+                prompt.push_str(&text.replace(DEFAULT_LENGTH_RULE, INSTRUCTIONS_LENGTH_RULE));
+            }
             Part::Text(text) => prompt.push_str(text),
             Part::Project => prompt.push_str(&js::json_string(project.unwrap_or_default())),
             Part::Previous => prompt.push_str(&js::json_string(
