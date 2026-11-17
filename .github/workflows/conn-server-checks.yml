@@ -11,6 +11,7 @@ on:
       - apps/web/**
       - packages/**
       - .github/workflows/conn-server-checks.yml
+      - .github/workflows/conn-server-ci.yml
   push:
     branches:
       - main
@@ -35,13 +36,19 @@ env:
   # Same as `channel` in apps/conn-server/rust-toolchain.toml; tools/check.sh fails when they differ.
   RUST_TOOLCHAIN: "1.99.1"
   CARGO_INCREMENTAL: "0"
-  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
   build:
     name: Conn Server prerequisites
     runs-on: ubuntu-24.04
-    timeout-minutes: 18
+    timeout-minutes: 12
+    env:
+      # Comparisons need release semantics, not size optimization of every fixture binary.
+      # conn-server-ci.yml still builds the production musl profile without these overrides.
+      CARGO_PROFILE_RELEASE_OPT_LEVEL: "0"
+      CARGO_PROFILE_RELEASE_LTO: "false"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -61,6 +68,7 @@ jobs:
           run-install: false
 
       - name: Restore pnpm store
+        id: pnpm-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.local/share/pnpm/store
@@ -91,10 +99,8 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             apps/conn-server/target
-          key: conn-server-build-v3-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('apps/conn-server/Cargo.lock') }}
-          restore-keys: |
-            conn-server-build-v3-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
-            conn-server-check-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
+          key: conn-server-build-v4-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('apps/conn-server/Cargo.lock') }}
+          restore-keys: conn-server-build-v4-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
 
       - name: Build comparison binaries
         working-directory: apps/conn-server
@@ -122,7 +128,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
       - name: Save pnpm store on main
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.pnpm-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.local/share/pnpm/store
@@ -181,8 +187,8 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             apps/conn-server/target
-          key: conn-server-test-v1-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('apps/conn-server/Cargo.lock') }}
-          restore-keys: conn-server-test-v1-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
+          key: conn-server-test-v2-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('apps/conn-server/Cargo.lock') }}
+          restore-keys: conn-server-test-v2-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
       - name: Install cargo-deny
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
@@ -201,13 +207,6 @@ jobs:
             ~/.cargo/git/db
             apps/conn-server/target
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
-
-      - name: Save pnpm store on main
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.local/share/pnpm/store
-          key: conn-server-pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
 
   compare:
     name: Conn Server comparisons (${{ matrix.group }})
