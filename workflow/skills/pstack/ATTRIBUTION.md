@@ -47,6 +47,9 @@ came across too, since `no-comments` spawns it.
 
 ## Local modifications
 
+- `bro` absorbed Matt Pocock's `wait-what`: one added sentence asking for a little context and the
+  repo's `GLOSSARY.md` terms.
+
 Everything vendored got the same two ports where it needed them. Third-party model slugs
 (`grok-*`, `gpt-*`) became Claude Code model tiers, and Cursor paths (`.cursor/skills/`,
 `~/.cursor/rules/`, `~/.cursor/projects/<slug>/agent-transcripts/`) became their `.claude/`

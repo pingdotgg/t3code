@@ -14,13 +14,15 @@ Every skill but one in upstream's plugin manifest. From `skills/engineering/`: `
 `codebase-design`, `diagnosing-bugs`, `domain-modeling`, `grill-with-docs`, `implement`,
 `implement-spec`, `improve-codebase-architecture`, `prototype`, `research`, `retro`,
 `setup-matt-pocock-skills`, `tdd`, `to-spec`, `to-tickets`, `triage`, `wayfinder`, and `wizard`. From
-`skills/productivity/`: `grill-me`, `grilling`, `handoff`, `teach`, `to-questionnaire`, `wait-what`,
+`skills/productivity/`: `grill-me`, `grilling`, `handoff`, `teach`, `to-questionnaire`,
 and `writing-for-agents`.
 
 ## What was left behind
 
 - `skills/in-progress/`, including `chief-of-staff` and `software-factory`, and `skills/deprecated/`,
   `skills/misc/`. Upstream's manifest does not ship them.
+- `wait-what`, merged into pstack's `bro` after review: both restate the last message plainly, and
+  `bro` gained its "give a little context, use the glossary terms". Skip it when syncing.
 - `ask-matt`, removed after the migration review: `ak-help` routes over every group, while
   `ask-matt` only knew this one. Skip it when syncing.
 - `pr`, removed when `tstack` came in: its `file-pr` covers filing a pull request, and nothing
