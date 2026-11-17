@@ -38,7 +38,6 @@ import {
   type IssueTrackerApi,
   type StandaloneIssueTrackerApi,
 } from "@t3tools/source-control-core/server/IssueTracker";
-import type { IssueLink } from "@t3tools/source-control-core/shared/definition";
 import { parseUrl } from "@t3tools/shared/url";
 
 import * as IssueTrackerBindings from "../persistence/IssueTrackerBindings.ts";
@@ -94,30 +93,14 @@ function resolveGitHostBinding(project: OrchestrationProjectShell): ProjectTrack
   };
 }
 
-/** A standalone tracker's issue key names its scope, as `ENG-1` is in team `ENG`. */
-const STANDALONE_ISSUE_KEY = /^([A-Z][A-Z0-9_]*)-[1-9][0-9]*$/;
-
-/**
- * The issue a standalone tracker's link names, such as `https://linear.app/acme/issue/ENG-1/slug`:
- * on the tracker's own host, retaining the workspace alongside its issue key.
- */
-function parseStandaloneIssueUrl(
-  trackers: ReadonlyArray<StandaloneIssueTrackerApi>,
-  value: string,
-): {
-  readonly tracker: IssueTrackerKind;
-  readonly workspace: string;
-  readonly link: IssueLink;
-} | null {
+function findStandaloneIssueUrl(trackers: ReadonlyArray<StandaloneIssueTrackerApi>, value: string) {
   const url = parseUrl(value);
-  if (url === null || url.protocol !== "https:") return null;
-  const host = url.host.toLowerCase();
-  const api = trackers.find((tracker) => tracker.standalone.host === host);
-  if (api === undefined) return null;
-  const [, workspace, resource, key] = url.pathname.split("/");
-  if (!workspace || resource !== "issue" || key === undefined) return null;
-  const scope = STANDALONE_ISSUE_KEY.exec(key)?.[1];
-  return scope === undefined ? null : { tracker: api.kind, workspace, link: { host, scope, key } };
+  if (url === null) return null;
+  for (const api of trackers) {
+    const link = api.parseIssueUrl(url);
+    if (link !== null) return { api, tracker: api.kind, link };
+  }
+  return null;
 }
 
 /** Lower case, so a scope keeps its cursor whichever project's spelling of it is read. */
@@ -650,8 +633,7 @@ const make = Effect.gen(function* () {
   const resolveUrl: IssueService["Service"]["resolveUrl"] = Effect.fn("IssueService.resolveUrl")(
     function* (url, preferredProjectId) {
       const gitHost = sourceControlDefinitions.parseIssueUrl(url);
-      const standalone =
-        gitHost === null ? parseStandaloneIssueUrl(registry.standalone, url) : null;
+      const standalone = gitHost === null ? findStandaloneIssueUrl(registry.standalone, url) : null;
       const parsed =
         gitHost === null
           ? standalone
@@ -689,12 +671,12 @@ const make = Effect.gen(function* () {
             key: link.key,
           })
           .pipe(Effect.mapError(toIssueError("resolveUrl")));
-        const canonical = parseStandaloneIssueUrl(registry.standalone, issue.url);
+        const canonicalUrl = parseUrl(issue.url);
+        const canonical = canonicalUrl === null ? null : standalone.api.parseIssueUrl(canonicalUrl);
         if (
           canonical === null ||
-          canonical.tracker !== tracker ||
-          canonical.workspace !== standalone.workspace ||
-          canonical.link.key !== link.key
+          canonical.workspace !== standalone.link.workspace ||
+          canonical.key !== link.key
         ) {
           return yield* new IssueOperationError({
             operation: "resolveUrl",

@@ -53,6 +53,18 @@ function fakeStandaloneTracker(
       scopeNoun: "team",
       credential: { label: "Personal API key", helpUrl: null },
     },
+    parseIssueUrl: (url) => {
+      const links = new Map([
+        ["https://linear.app/acme/issue/ENG-1/old-title", "acme"],
+        ["https://linear.app/acme/issue/ENG-1/issue-title", "acme"],
+        ["https://linear.app/acme/issue/ENG-1/canonical-title", "acme"],
+        ["https://linear.app/other-workspace/issue/ENG-1/old-title", "other-workspace"],
+      ]);
+      const workspace = links.get(url.href);
+      return workspace === undefined
+        ? null
+        : { host: "linear.app", workspace, scope: "ENG", key: "ENG-1" };
+    },
     probeCredential: () => Effect.succeed({ account: "julius", scopes: [] }),
   };
 }
