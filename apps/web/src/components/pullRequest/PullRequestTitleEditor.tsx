@@ -24,14 +24,12 @@ export function PullRequestTitleEditor({
   pullRequestKey,
   detail,
   canWriteSourceControl,
-  onSaved,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   pullRequestKey: string;
   detail: PullRequestDetail;
   canWriteSourceControl: boolean;
-  onSaved: () => void;
 }) {
   const update = useAtomCommand(pullRequestEnvironment.update, { reportFailure: false });
   const [titleScope, setTitleScope] = useState<{
@@ -49,9 +47,12 @@ export function PullRequestTitleEditor({
       return;
     }
     setTitleSaving(true);
+    // The new title shows while the host takes it, so the editor closes at once.
+    setTitleScope(null);
     const result = await update({ environmentId, input: { ...reference, title } });
     setTitleSaving(false);
     if (result._tag === "Failure") {
+      setTitleScope({ pullRequestKey, text: title });
       toastManager.add({
         type: "error",
         title: "The title could not be saved",
@@ -60,10 +61,7 @@ export function PullRequestTitleEditor({
           "The host refused the new title.",
         ),
       });
-      return;
     }
-    setTitleScope(null);
-    onSaved();
   };
 
   if (titleDraft === null) {
