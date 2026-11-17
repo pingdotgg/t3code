@@ -1,5 +1,5 @@
 import { splitFilePathPosition } from "@t3tools/shared/fileLinks";
-import { isMacPlatform } from "./lib/utils";
+import { isMacPlatform, isWindowsPlatform } from "./lib/utils";
 import { useAtomValue } from "@effect/atom-react";
 import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/contracts";
 import type { DragEvent } from "react";
@@ -16,7 +16,7 @@ export function useNativeFileDrag(
   const canOperate = useEnvironmentScope(environmentId ?? null, AuthOrchestrationOperateScope);
   const enabled =
     typeof window.desktopBridge?.startFileDrag === "function" &&
-    isMacPlatform(navigator.platform) &&
+    (isMacPlatform(navigator.platform) || isWindowsPlatform(navigator.platform)) &&
     environmentId != null &&
     environmentId === hostEnvironmentId &&
     canOperate;
@@ -33,7 +33,7 @@ export function useNativeFileDrag(
         const { path } = splitFilePathPosition(await resolvePath());
         if (released) return;
         const started = await window.desktopBridge?.startFileDrag({ environmentId, path });
-        if (!started) throw new Error("The file is unavailable on this Mac.");
+        if (!started) throw new Error("The file is unavailable on this computer.");
       })().catch((error: unknown) => {
         if (released) return;
         toastManager.add({
