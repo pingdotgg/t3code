@@ -400,6 +400,43 @@ it.live("signs in with a pairing code and issues a token only /mcp accepts", () 
   ),
 );
 
+it.live("caps the grant at the scope the client requested", () =>
+  withRoutes((handler, auth) =>
+    Effect.gen(function* () {
+      const clientId = yield* registeredClientId(handler);
+      const pairing = yield* auth.issuePairingCredential();
+      const params = { ...authorizeParams(clientId), scope: "orchestration:read" };
+
+      const approved = yield* decide(handler, params, {
+        _tag: "pairing-code",
+        access: "auto",
+        code: pairing.credential,
+      });
+      const code = new URL(approved.redirectTo!).searchParams.get("code")!;
+      const token = yield* handler(
+        at(
+          "/oauth/mcp/token",
+          form({
+            grant_type: "authorization_code",
+            code,
+            redirect_uri: params.redirect_uri,
+            client_id: clientId,
+            code_verifier: verifier,
+            resource: `${ORIGIN}/mcp`,
+          }),
+        ),
+      ).pipe(Effect.flatMap(json<{ access_token: string; scope: string }>));
+      expect(token.scope).toBe("orchestration:read");
+      const client = yield* auth.authenticateMcpClient(
+        HttpServerRequest.fromWeb(
+          at("/mcp", { headers: { authorization: `Bearer ${token.access_token}` } }),
+        ),
+      );
+      expect(client).toMatchObject({ access: "read-only" });
+    }),
+  ),
+);
+
 it.live("signs in a hosted agent with an https callback that asked for a client secret", () =>
   withRoutes((handler, auth) =>
     Effect.gen(function* () {
