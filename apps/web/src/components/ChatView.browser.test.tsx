@@ -731,5 +731,5 @@ it("pasted text ending in a slash word does not open the command menu", async ()
     }),
   );
   await vi.waitFor(() => expect(editor.element().textContent).toContain("note /mo"));
-  expect(modelItem.query()).toBeNull();
+  await expect.element(modelItem).not.toBeInTheDocument();
 });
