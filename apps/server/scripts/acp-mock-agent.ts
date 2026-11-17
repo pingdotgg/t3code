@@ -23,8 +23,10 @@ const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
 const copilotModeId = (name: string) =>
   `https://agentclientprotocol.com/protocol/session-modes#${name}`;
 const modeOptionCategory = process.env.T3_ACP_MODE_OPTION_CATEGORY ?? "mode";
-// Factory Droid's modes are autonomy levels behind an `autonomy_level` option, starting at auto-high.
+// Factory Droid's modes are autonomy levels behind an `autonomy_level` option. An organization can
+// cap them: Droid then starts no higher than the cap and advertises no level above it.
 const droidModesProfile = process.env.T3_ACP_DROID_MODES === "1";
+const droidMaxAutonomy = process.env.T3_ACP_DROID_MAX_AUTONOMY ?? "auto-high";
 const modeConfigId = droidModesProfile ? "autonomy_level" : "mode";
 // Comma-separated command names the mock advertises, so `/compact` support is testable.
 const advertisedCommandNames = (process.env.T3_ACP_AVAILABLE_COMMANDS ?? "")
@@ -119,7 +121,7 @@ let currentModeId = antigravityProfile
   : copilotModesProfile
     ? copilotModeId("agent")
     : droidModesProfile
-      ? "auto-high"
+      ? droidMaxAutonomy
       : "ask";
 let currentModelId = antigravityProfile ? "gemini-test-low" : "default";
 let parameterizedModelPicker = false;
@@ -369,6 +371,14 @@ const antigravityModels = [
   { modelId: "gemini-test-high", name: "Gemini Test High" },
 ] satisfies ReadonlyArray<AcpCompat.ModelInfo>;
 
+const droidModes: ReadonlyArray<AcpCompat.SessionMode> = [
+  { id: "normal", name: "Auto (Off)" },
+  { id: "spec", name: "Spec" },
+  { id: "auto-low", name: "Auto (Low)" },
+  { id: "auto-medium", name: "Auto (Medium)" },
+  { id: "auto-high", name: "Auto (High)" },
+];
+
 const availableModes: ReadonlyArray<AcpCompat.SessionMode> = antigravityProfile
   ? [
       { id: "default", name: "Default" },
@@ -382,13 +392,7 @@ const availableModes: ReadonlyArray<AcpCompat.SessionMode> = antigravityProfile
         { id: copilotModeId("autopilot"), name: "Autopilot" },
       ]
     : droidModesProfile
-      ? [
-          { id: "normal", name: "Auto (Off)" },
-          { id: "spec", name: "Spec" },
-          { id: "auto-low", name: "Auto (Low)" },
-          { id: "auto-medium", name: "Auto (Medium)" },
-          { id: "auto-high", name: "Auto (High)" },
-        ]
+      ? droidModes.slice(0, droidModes.findIndex((mode) => mode.id === droidMaxAutonomy) + 1)
       : [
           {
             id: "ask",

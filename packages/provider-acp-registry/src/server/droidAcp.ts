@@ -84,22 +84,28 @@ const extractDroidElicitationForm: NonNullable<AcpAdapterV2Flavor["extractElicit
   };
 };
 
+const DROID_LEVELS_HIGHEST_FIRST = ["auto-high", "auto-medium", "auto-low", "normal"];
+
 // Droid's session modes are its autonomy levels, and a new session can start at
 // `auto-high`, which runs every action without asking. `normal` asks before each
 // change, so T3's runtime policy answers; only unrestricted full access skips asking.
+// An organization can cap the levels, and Droid then advertises only the ones it accepts.
 function droidSessionModeForPolicy(
   policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
-): "auto-high" | "normal" {
-  return policy.runtimeMode === "full-access" &&
+  advertisedModeIds: ReadonlyArray<string>,
+): string | undefined {
+  const unrestricted =
+    policy.runtimeMode === "full-access" &&
     policy.approvalPolicy === undefined &&
-    policy.sandboxPolicy === undefined
-    ? "auto-high"
-    : "normal";
+    policy.sandboxPolicy === undefined;
+  return (unrestricted ? DROID_LEVELS_HIGHEST_FIRST : ["normal"]).find((level) =>
+    advertisedModeIds.includes(level),
+  );
 }
 
 export const droidAcpFlavor = {
   extractElicitationForm: extractDroidElicitationForm,
-  // The composer's Autonomy Level choice would outrank the thread's runtime mode.
+  // The policy picks the level, so T3 never sends the composer's Autonomy Level choice.
   ownedModelOptionIds: ["autonomy_level"],
   lockSessionModeToPolicy: true,
   sessionModeForPolicy: droidSessionModeForPolicy,

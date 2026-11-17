@@ -104,6 +104,10 @@ import {
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 const DROID_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "factory-droid" });
+const LOCAL_DROID_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({
+  source: "local",
+  commandPath: "/usr/local/bin/droid",
+});
 const DEVIN_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "devin" });
 const OMP_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({
   source: "local",
@@ -2249,101 +2253,115 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest));
   });
 
-  it.live("keeps Factory Droid's autonomy level on the thread's runtime mode", () =>
-    Effect.gen(function* () {
-      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
-      const instanceId = ProviderInstanceId.make("droid-autonomy-test");
-      const threadId = ThreadId.make("thread-droid-autonomy");
-      const adapter = yield* makeAcpRegistryAdapterV2({
-        instanceId,
-        selfInvocation: yield* resolveSelfInvocation(),
-        settings: DROID_SETTINGS,
-        environment: {},
-        makeRuntime: makeMockRuntime({
-          childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-          mockAgentPath: yield* bundledMockAgentPath,
-          protocolEvents,
-          environment: { T3_ACP_DROID_MODES: "1" },
-        }),
-      }).pipe(
-        Effect.provide(
-          Layer.mock(AcpRegistryCatalog)({ resolve: () => Effect.die("runtime is injected") }),
-        ),
-      );
-      const policy = (
-        runtimeMode: "approval-required" | "full-access",
-        interactionMode: "default" | "plan" = "default",
-      ) =>
-        ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode,
-          interactionMode,
-          cwd: process.cwd(),
-        });
-      const modelSelection: ModelSelection = {
-        instanceId,
-        model: "default",
-        options: [{ id: "autonomy_level", value: "auto-high" }],
-      };
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("provider-session-droid-autonomy"),
-        modelSelection,
-        runtimePolicy: policy("approval-required"),
-      });
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy: policy("approval-required"),
-      });
-      const now = yield* DateTime.now;
-      const autonomyWritesForTurn = Effect.fnUntraced(function* (
-        ordinal: number,
-        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
-      ) {
-        yield* runtime.startTurn(
-          makeTurnInput({
-            threadId,
-            providerThread,
-            instanceId,
-            runtimePolicy,
-            now,
-            ordinal,
-            messageText: `Request ${ordinal}.`,
-            modelSelection,
+  it.live.each([
+    { agent: "the registry agent", settings: DROID_SETTINGS, maxAutonomy: "auto-high" },
+    {
+      agent: "the registry agent under an organization cap",
+      settings: DROID_SETTINGS,
+      maxAutonomy: "auto-medium",
+    },
+    { agent: "a local droid command", settings: LOCAL_DROID_SETTINGS, maxAutonomy: "auto-high" },
+  ])(
+    "keeps Factory Droid's autonomy level on the thread's runtime mode for $agent",
+    ({ settings, maxAutonomy }) =>
+      Effect.gen(function* () {
+        const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+        const instanceId = ProviderInstanceId.make("droid-autonomy-test");
+        const threadId = ThreadId.make("thread-droid-autonomy");
+        const adapter = yield* makeAcpRegistryAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          settings,
+          environment: {},
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* bundledMockAgentPath,
+            protocolEvents,
+            environment: { T3_ACP_DROID_MODES: "1", T3_ACP_DROID_MAX_AUTONOMY: maxAutonomy },
           }),
+        }).pipe(
+          Effect.provide(
+            Layer.mock(AcpRegistryCatalog)({ resolve: () => Effect.die("runtime is injected") }),
+          ),
         );
-        yield* runtime.events.pipe(
-          Stream.takeUntil((event) => event.type === "turn.terminal"),
-          Stream.runDrain,
-        );
-        const writes: Array<unknown> = [];
-        while (true) {
-          const event = yield* Queue.take(protocolEvents);
-          if (event.direction !== "outgoing") continue;
-          const method = rawProtocolMethod(event);
-          if (method === "session/prompt") return writes;
-          if (
-            method === "session/set_config_option" &&
-            rawProtocolRequestParam(event, "configId") === "autonomy_level"
-          ) {
-            writes.push(rawProtocolRequestParam(event, "value"));
+        const policy = (
+          runtimeMode: "approval-required" | "full-access",
+          interactionMode: "default" | "plan" = "default",
+        ) =>
+          ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode,
+            interactionMode,
+            cwd: process.cwd(),
+          });
+        const modelSelection: ModelSelection = {
+          instanceId,
+          model: "default",
+          options: [{ id: "autonomy_level", value: "auto-low" }],
+        };
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-droid-autonomy"),
+          modelSelection,
+          runtimePolicy: policy("approval-required"),
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy: policy("approval-required"),
+        });
+        const now = yield* DateTime.now;
+        const autonomyWritesForTurn = Effect.fnUntraced(function* (
+          ordinal: number,
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+        ) {
+          yield* runtime.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now,
+              ordinal,
+              messageText: `Request ${ordinal}.`,
+              modelSelection,
+            }),
+          );
+          yield* runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runDrain,
+          );
+          const writes: Array<unknown> = [];
+          while (true) {
+            const event = yield* Queue.take(protocolEvents);
+            if (event.direction !== "outgoing") continue;
+            const method = rawProtocolMethod(event);
+            if (method === "session/prompt") return writes;
+            if (
+              method === "session/set_config_option" &&
+              rawProtocolRequestParam(event, "configId") === "autonomy_level"
+            ) {
+              writes.push(rawProtocolRequestParam(event, "value"));
+            }
           }
-        }
-      });
+        });
 
-      assert.deepEqual(
-        yield* autonomyWritesForTurn(0, policy("approval-required")),
-        ["normal"],
-        "Droid starts at auto-high and the Autonomy Level choice must not outrank the policy",
-      );
-      assert.deepEqual(yield* autonomyWritesForTurn(1, policy("full-access")), ["auto-high"]);
-      assert.deepEqual(yield* autonomyWritesForTurn(2, policy("full-access", "plan")), []);
-      assert.deepEqual(
-        yield* autonomyWritesForTurn(3, policy("approval-required")),
-        ["normal"],
-        "Leaving Plan must not restore the autonomy level an earlier policy set",
-      );
-    }).pipe(Effect.provide(layerTest)),
+        assert.deepEqual(
+          yield* autonomyWritesForTurn(0, policy("approval-required")),
+          ["normal"],
+          "The policy's level is the only write: the composer's Autonomy Level choice is never sent",
+        );
+        assert.deepEqual(
+          yield* autonomyWritesForTurn(1, policy("full-access")),
+          [maxAutonomy],
+          "Full access reaches the highest level the organization allows",
+        );
+        assert.deepEqual(yield* autonomyWritesForTurn(2, policy("full-access", "plan")), []);
+        assert.deepEqual(
+          yield* autonomyWritesForTurn(3, policy("approval-required")),
+          ["normal"],
+          "Leaving Plan must not restore the autonomy level an earlier policy set",
+        );
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.live.each(["failed", "recovered", "cancelled"] as const)(
