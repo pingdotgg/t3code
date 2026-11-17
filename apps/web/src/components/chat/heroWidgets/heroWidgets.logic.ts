@@ -1,187 +1,544 @@
 import { UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
-import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
+import type { LimitPool, LimitPoolWindow } from "@t3tools/shared/usageLimits";
 
-const HOUR_MS = 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
+export const HOUR_MS = 60 * MINUTE_MS;
+export const DAY_MS = 24 * HOUR_MS;
 
 function localTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
-function dayFormat(timeZone: string): Intl.DateTimeFormat {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
+const DAY_KEY = new Intl.DateTimeFormat("en-CA", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+/** The local calendar day of `date`, in the YYYY-MM-DD form usage buckets use. */
+export function dayKey(date: Date): string {
+  return DAY_KEY.format(date);
 }
 
-function startOfLocalDay(date: Date): Date {
+export function startOfLocalDay(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
-/**
- * The server serves hourly buckets only for windows of 24h or less, so a week of hours is one
- * window per local day: midnight to midnight, with today ending at `now`. Oldest first.
- */
-export function hourlyDayWindows(now: Date, days: number): ReadonlyArray<UsageSummaryInput> {
-  const timeZone = localTimeZone();
-  const format = dayFormat(timeZone);
-  const untilMs = Math.floor(now.getTime() / 60_000) * 60_000;
-  const today = startOfLocalDay(now);
-  return Array.from({ length: days }, (_, index) => {
-    const since = new Date(
-      today.getFullYear(),
-      today.getMonth(),
-      today.getDate() - (days - 1 - index),
-    );
-    const nextMidnight = new Date(since.getFullYear(), since.getMonth(), since.getDate() + 1);
-    const until = new Date(Math.min(untilMs, nextMidnight.getTime()));
-    return {
-      sinceDay: UsageDay.make(format.format(since)),
-      untilDay: UsageDay.make(format.format(new Date(until.getTime() - 1))),
-      timeZone,
-      resolution: "hour",
-      sinceTime: since.toISOString(),
-      untilTime: until.toISOString(),
-    };
-  });
+export function addLocalDays(date: Date, days: number): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
 }
 
-/** Day-resolution window from the first of `now`'s month through today. */
-export function monthToDateWindow(now: Date): UsageSummaryInput {
-  const timeZone = localTimeZone();
-  const format = dayFormat(timeZone);
+/** One day-resolution window: the last `days` local days through today. One server call. */
+export function dailyWindow(now: Date, days: number): UsageSummaryInput {
   return {
-    sinceDay: UsageDay.make(format.format(new Date(now.getFullYear(), now.getMonth(), 1))),
-    untilDay: UsageDay.make(format.format(now)),
-    timeZone,
+    sinceDay: UsageDay.make(dayKey(addLocalDays(now, -(days - 1)))),
+    untilDay: UsageDay.make(dayKey(now)),
+    timeZone: localTimeZone(),
     resolution: "day",
   };
 }
 
-export interface PunchcardRow {
-  readonly label: string;
-  /** Tokens per local hour, 24 entries. */
-  readonly hours: ReadonlyArray<number>;
+// Layout: Pool spans the top, Machines and Streak share the row below (or stack when narrow).
+
+export type LowerWidgetId = "machines" | "streak";
+
+export interface HeroLayout {
+  readonly columns: 1 | 2;
+  /** Rows under the pool; each row holds one widget per column. */
+  readonly lowerRows: ReadonlyArray<ReadonlyArray<LowerWidgetId>>;
+  readonly poolHeight: number;
+  readonly lowerHeight: number;
+  /** Height the composer centers against; cards may then grow below it. */
+  readonly compactHeight: number;
+  readonly height: number;
 }
 
-export interface Punchcard {
-  readonly rows: ReadonlyArray<PunchcardRow>;
-  readonly max: number;
-  readonly peak: { readonly label: string; readonly hour: number } | null;
-}
+export const HERO_LAYOUT = {
+  gap: 10,
+  minCardWidth: 340,
+  pool: { min: 232, ideal: 268, max: 330 },
+  lower: { min: 214, ideal: 248, max: 316 },
+} as const;
 
-const WEEKDAY = new Intl.DateTimeFormat("en-US", { weekday: "short" });
+/**
+ * Fits Pool, Machines and Streak into `space` without scrolling. Pool always comes first;
+ * the lower widgets sit side by side when two cards fit across, otherwise they stack and the
+ * ones that do not fit are dropped. Returns null when not even the pool fits.
+ */
+export function fitHeroLayout(space: {
+  readonly width: number;
+  readonly height: number;
+}): HeroLayout | null {
+  const { gap, pool, lower } = HERO_LAYOUT;
+  const columns: 1 | 2 = space.width >= HERO_LAYOUT.minCardWidth * 2 + gap ? 2 : 1;
+  const options: ReadonlyArray<ReadonlyArray<ReadonlyArray<LowerWidgetId>>> =
+    columns === 2
+      ? [[["machines", "streak"]], []]
+      : [[["machines"], ["streak"]], [["machines"]], []];
+  const need = (poolHeight: number, lowerHeight: number, rows: number) =>
+    poolHeight + rows * (gap + lowerHeight);
+  const lowerRows = options.find((rows) => need(pool.min, lower.min, rows.length) <= space.height);
+  if (lowerRows === undefined || space.width < 200) return null;
+  const rows = lowerRows.length;
 
-/** Bins hourly buckets into one row per local day, oldest first, ending today. */
-export function buildPunchcard(
-  now: Date,
-  days: number,
-  hourly: ReadonlyArray<HourlyTotals>,
-): Punchcard {
-  const today = startOfLocalDay(now);
-  const rowStarts = Array.from(
-    { length: days },
-    (_, index) =>
-      new Date(today.getFullYear(), today.getMonth(), today.getDate() - (days - 1 - index)),
-  );
-  const rows = rowStarts.map(() => Array.from({ length: 24 }, () => 0));
-  for (const bucket of hourly) {
-    const start = new Date(bucket.hourStart);
-    if (Number.isNaN(start.getTime())) continue;
-    const day = startOfLocalDay(start).getTime();
-    const rowIndex = rowStarts.findIndex((rowStart) => rowStart.getTime() === day);
-    if (rowIndex < 0) continue;
-    rows[rowIndex]![start.getHours()]! += bucket.totalTokens;
+  let poolHeight: number = pool.ideal;
+  let lowerHeight: number = lower.ideal;
+  const ideal = need(pool.ideal, lower.ideal, rows);
+  if (ideal > space.height) {
+    const slack = ideal - need(pool.min, lower.min, rows);
+    const shrink = slack > 0 ? Math.min(1, (ideal - space.height) / slack) : 1;
+    poolHeight = pool.ideal - shrink * (pool.ideal - pool.min);
+    lowerHeight = lower.ideal - shrink * (lower.ideal - lower.min);
   }
-  let max = 0;
-  let peak: Punchcard["peak"] = null;
-  rows.forEach((hours, rowIndex) =>
-    hours.forEach((tokens, hour) => {
-      if (tokens <= max) return;
-      max = tokens;
-      peak = { label: WEEKDAY.format(rowStarts[rowIndex]!), hour };
-    }),
-  );
+  poolHeight = Math.floor(poolHeight);
+  lowerHeight = Math.floor(lowerHeight);
+  const compactHeight = need(poolHeight, lowerHeight, rows);
+  // Grow into half of what is left under the centered block.
+  const extra = Math.max(0, (space.height - compactHeight) / 2);
+  const poolGrowth = Math.min(pool.max - poolHeight, rows > 0 ? extra / 2 : extra);
+  const lowerGrowth = rows > 0 ? Math.min(lower.max - lowerHeight, (extra - poolGrowth) / rows) : 0;
+  poolHeight = Math.floor(poolHeight + Math.max(0, poolGrowth));
+  lowerHeight = Math.floor(lowerHeight + Math.max(0, lowerGrowth));
   return {
-    rows: rows.map((hours, index) => ({ label: WEEKDAY.format(rowStarts[index]!), hours })),
-    max,
-    peak,
+    columns,
+    lowerRows,
+    poolHeight,
+    lowerHeight,
+    compactHeight,
+    height: need(poolHeight, lowerHeight, rows),
   };
 }
 
-export interface SpendSeries {
-  /** Cumulative cost at the end of each elapsed day of the month, starting with day 1. */
-  readonly cumulative: ReadonlyArray<number>;
-  readonly daysInMonth: number;
-  readonly monthToDate: number;
-  /** Linear projection of month-to-date spend to the end of the month. */
-  readonly pace: number;
+// Streak: a day counts when its tokens reach the goal.
+
+export const DEFAULT_TOKEN_GOAL = 1_000_000_000;
+
+export type StreakDayState = "met" | "missed" | "noData" | "today";
+
+export interface StreakDay {
+  readonly key: string;
+  readonly date: Date;
+  readonly tokens: number;
+  readonly state: StreakDayState;
 }
 
-export function buildSpendSeries(now: Date, daily: ReadonlyArray<DailyTotals>): SpendSeries {
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const elapsedDays = now.getDate();
-  const costByDay = new Map(daily.map((entry) => [entry.day, entry.costUsd]));
-  const format = dayFormat(localTimeZone());
-  const cumulative: number[] = [];
-  let running = 0;
-  for (let day = 1; day <= elapsedDays; day += 1) {
-    running += costByDay.get(format.format(new Date(now.getFullYear(), now.getMonth(), day))) ?? 0;
-    cumulative.push(running);
-  }
-  const startOfToday = startOfLocalDay(now).getTime();
-  const elapsedFraction = elapsedDays - 1 + (now.getTime() - startOfToday) / (24 * HOUR_MS);
-  const pace = elapsedFraction > 0 ? (running / elapsedFraction) * daysInMonth : running;
-  return { cumulative, daysInMonth, monthToDate: running, pace };
-}
-
-export function formatHour(hour: number): string {
-  const suffix = hour < 12 ? "AM" : "PM";
-  const twelve = hour % 12 === 0 ? 12 : hour % 12;
-  return `${twelve} ${suffix}`;
-}
-
-const WIDGET_GRID = {
-  maxColumns: 3,
-  maxRows: 2,
-  minCardWidth: 300,
-  minRowHeight: 196,
-  maxRowHeight: 236,
-  gap: 10,
-} as const;
-
-export interface WidgetGrid {
-  readonly columns: number;
-  readonly rows: number;
-  readonly rowHeight: number;
+export interface Streak {
+  /** Oldest first, ending today. */
+  readonly days: ReadonlyArray<StreakDay>;
+  readonly current: number;
+  readonly best: number;
+  /** First and last day of the best run. */
+  readonly bestRun: { readonly from: Date; readonly to: Date } | null;
+  /** Median tokens over tracked days before today. */
+  readonly medianDay: number;
+  readonly todayTokens: number;
+  readonly todayMet: boolean;
+  readonly bestDay: { readonly key: string; readonly date: Date; readonly tokens: number } | null;
+  readonly metDays: number;
+  readonly trackedDays: number;
+  readonly firstTrackedKey: string | null;
 }
 
 /**
- * How many widgets fit without scrolling: up to 3 columns by 2 rows, each card at least
- * `minCardWidth` wide and `minRowHeight` tall. Returns null when not even one card fits.
+ * Days before the first day with any tokens have no data (usage history is limited), so they
+ * neither break nor extend a streak. Today counts once it reaches the goal; until then the
+ * streak runs through yesterday.
  */
-export function fitWidgetGrid(
-  space: { readonly width: number; readonly height: number },
-  widgetCount: number,
-): WidgetGrid | null {
-  const { gap } = WIDGET_GRID;
-  const columns = Math.min(
-    WIDGET_GRID.maxColumns,
-    widgetCount,
-    Math.floor((space.width + gap) / (WIDGET_GRID.minCardWidth + gap)),
+export function buildStreak(
+  now: Date,
+  tokensByDay: ReadonlyMap<string, number>,
+  goal: number,
+  spanDays: number,
+): Streak {
+  const today = startOfLocalDay(now);
+  const keys = Array.from({ length: spanDays }, (_, index) =>
+    addLocalDays(today, index - (spanDays - 1)),
   );
-  const rowsThatFit = Math.floor((space.height + gap) / (WIDGET_GRID.minRowHeight + gap));
-  const rows = Math.min(
-    WIDGET_GRID.maxRows,
-    rowsThatFit,
-    Math.ceil(widgetCount / Math.max(1, columns)),
+  const firstTracked = keys.find((date) => (tokensByDay.get(dayKey(date)) ?? 0) > 0) ?? null;
+  const days = keys.map((date, index): StreakDay => {
+    const key = dayKey(date);
+    const tokens = tokensByDay.get(key) ?? 0;
+    const isToday = index === keys.length - 1;
+    const state: StreakDayState = isToday
+      ? "today"
+      : firstTracked === null || date < firstTracked
+        ? "noData"
+        : tokens >= goal
+          ? "met"
+          : "missed";
+    return { key, date, tokens, state };
+  });
+  const todayDay = days.at(-1)!;
+  const todayMet = todayDay.tokens >= goal;
+  const counts = (day: StreakDay) => day.state === "met" || (day.state === "today" && todayMet);
+  let best = 0;
+  let run = 0;
+  let bestRun: Streak["bestRun"] = null;
+  days.forEach((day, index) => {
+    run = counts(day) ? run + 1 : 0;
+    if (run > 0 && run >= best) {
+      best = run;
+      bestRun = { from: days[index - run + 1]!.date, to: day.date };
+    }
+  });
+  let current = 0;
+  for (let index = days.length - (todayMet ? 1 : 2); index >= 0; index -= 1) {
+    if (!counts(days[index]!)) break;
+    current += 1;
+  }
+  let bestDay: Streak["bestDay"] = null;
+  for (const day of days) {
+    if (day.tokens > (bestDay?.tokens ?? 0)) {
+      bestDay = { key: day.key, date: day.date, tokens: day.tokens };
+    }
+  }
+  const tracked = days.filter((day) => day.state !== "noData");
+  const past = tracked
+    .filter((day) => day.state !== "today")
+    .map((day) => day.tokens)
+    .toSorted((left, right) => left - right);
+  const medianDay =
+    past.length === 0
+      ? 0
+      : past.length % 2 === 1
+        ? past[(past.length - 1) / 2]!
+        : (past[past.length / 2 - 1]! + past[past.length / 2]!) / 2;
+  return {
+    days,
+    current,
+    best,
+    bestRun,
+    medianDay,
+    todayTokens: todayDay.tokens,
+    todayMet,
+    bestDay,
+    metDays: days.filter(counts).length,
+    trackedDays: tracked.length,
+    firstTrackedKey: firstTracked ? dayKey(firstTracked) : null,
+  };
+}
+
+// Pool: every account's binding window, projected forward at a burn rate.
+
+export interface PoolAccount {
+  readonly key: string;
+  readonly name: string;
+  /** Percent left in the binding window, 0..100. */
+  readonly left: number;
+  readonly resetsAt: number | null;
+  readonly periodMs: number;
+}
+
+export interface PoolProvider {
+  readonly driver: string;
+  readonly windowLabel: string;
+  readonly accounts: ReadonlyArray<PoolAccount>;
+  readonly capacity: number;
+  readonly left: number;
+}
+
+const WEEK_MS = 7 * DAY_MS;
+
+function windowRank(window: LimitPoolWindow): number {
+  if (window.kind === "weekly") return window.label.includes("·") ? 1 : 0;
+  if (window.kind === "monthly") return 2;
+  if (window.kind === "other") return 3;
+  return 4;
+}
+
+/** The window that limits the account longest: weekly where present, the general one first. */
+function bindingWindow(pool: LimitPool): LimitPoolWindow | null {
+  return (
+    pool.windows.toSorted(
+      (left, right) => windowRank(left) - windowRank(right) || right.usedPercent - left.usedPercent,
+    )[0] ?? null
   );
-  if (columns < 1 || rows < 1) return null;
-  const rowHeight = Math.min(
-    WIDGET_GRID.maxRowHeight,
-    Math.floor((space.height - gap * (rows - 1)) / rows),
-  );
-  return { columns, rows, rowHeight };
+}
+
+export function poolProviders(
+  pools: ReadonlyArray<LimitPool>,
+  accountName: (account: LimitPool["accounts"][number]) => string,
+): ReadonlyArray<PoolProvider> {
+  return pools.flatMap((pool) => {
+    const window = bindingWindow(pool);
+    if (!window || window.members.length === 0) return [];
+    const accounts = window.members.map((member): PoolAccount => {
+      const resetsAt = member.window.resetsAt ? Date.parse(member.window.resetsAt) : Number.NaN;
+      return {
+        key: member.account.key,
+        name: accountName(member.account),
+        left: 100 - Math.max(0, Math.min(100, member.window.usedPercent)),
+        resetsAt: Number.isFinite(resetsAt) ? resetsAt : null,
+        periodMs: (member.window.windowDurationMins ?? 0) * MINUTE_MS || WEEK_MS,
+      };
+    });
+    return [
+      {
+        driver: String(pool.driver),
+        windowLabel: window.label,
+        accounts,
+        capacity: accounts.length * 100,
+        left: accounts.reduce((sum, account) => sum + account.left, 0),
+      },
+    ];
+  });
+}
+
+/**
+ * Tokens in [from, to) from day totals, spreading each day evenly over its elapsed part (today
+ * only up to `now`).
+ */
+export function tokensBetween(
+  tokensByDay: ReadonlyMap<string, number>,
+  from: number,
+  to: number,
+  now: number,
+): number {
+  if (to <= from) return 0;
+  let total = 0;
+  let day = startOfLocalDay(new Date(from));
+  while (day.getTime() < to) {
+    const next = addLocalDays(day, 1);
+    const start = day.getTime();
+    const end = Math.min(next.getTime(), now);
+    const tokens = tokensByDay.get(dayKey(day)) ?? 0;
+    if (tokens > 0 && end > start) {
+      const overlap = Math.max(0, Math.min(end, to) - Math.max(start, from));
+      total += (tokens * overlap) / (end - start);
+    }
+    day = next;
+  }
+  return total;
+}
+
+export type BurnSource = "tokens" | "window" | "none";
+
+export interface Burn {
+  /** Percent points of the pool used per hour. */
+  readonly perHour: number;
+  readonly source: BurnSource;
+  /** Diagnostics: points used this window and tokens behind them. */
+  readonly pointsUsed: number;
+  readonly tokensSinceStart: number;
+  readonly recentTokensPerHour: number;
+}
+
+const RECENT_BURN_MS = 3 * DAY_MS;
+
+/**
+ * Burn rate for one provider's pool. Preferred: the provider's token rate over the last three
+ * days, priced at the percent each token has cost since the earliest of its windows started
+ * (points used / tokens since then). Falls back to the window average (points used per hour
+ * elapsed) when usage history has no tokens for the provider.
+ */
+export function estimateBurn(
+  provider: PoolProvider,
+  tokensByDay: ReadonlyMap<string, number>,
+  now: number,
+): Burn {
+  const timed = provider.accounts.filter((account) => account.resetsAt !== null);
+  const pointsUsed = timed.reduce((sum, account) => sum + (100 - account.left), 0);
+  const none = {
+    perHour: 0,
+    source: "none" as const,
+    pointsUsed,
+    tokensSinceStart: 0,
+    recentTokensPerHour: 0,
+  };
+  if (timed.length === 0) return none;
+  const since = Math.min(...timed.map((account) => account.resetsAt! - account.periodMs));
+  if (pointsUsed <= 0 || since >= now) return none;
+  const tokensSinceStart = tokensBetween(tokensByDay, since, now, now);
+  const recentFrom = now - RECENT_BURN_MS;
+  const recentTokensPerHour =
+    tokensBetween(tokensByDay, recentFrom, now, now) / (RECENT_BURN_MS / HOUR_MS);
+  if (tokensSinceStart > 0) {
+    return {
+      perHour: (pointsUsed / tokensSinceStart) * recentTokensPerHour,
+      source: "tokens",
+      pointsUsed,
+      tokensSinceStart,
+      recentTokensPerHour,
+    };
+  }
+  return {
+    perHour: pointsUsed / ((now - since) / HOUR_MS),
+    source: "window",
+    pointsUsed,
+    tokensSinceStart,
+    recentTokensPerHour,
+  };
+}
+
+export interface RefillEvent {
+  readonly driver: string;
+  readonly account: string;
+  readonly at: number;
+  readonly amount: number;
+}
+
+export interface EmptyBand {
+  readonly driver: string;
+  readonly from: number;
+  /** null when the pool is still empty at the end of the projection. */
+  readonly to: number | null;
+}
+
+export interface PoolProjection {
+  readonly start: number;
+  readonly step: number;
+  /** Total percent left per provider at start + index * step. */
+  readonly series: ReadonlyMap<string, ReadonlyArray<number>>;
+  readonly refills: ReadonlyArray<RefillEvent>;
+  readonly bands: ReadonlyArray<EmptyBand>;
+}
+
+/**
+ * Drains each provider's pool at its burn rate, always from the account that resets soonest,
+ * and refills an account to 100% at its reset (then every period after).
+ */
+export function projectPool(
+  providers: ReadonlyArray<PoolProvider>,
+  burnByDriver: ReadonlyMap<string, number>,
+  now: number,
+  end: number,
+  step = 10 * MINUTE_MS,
+): PoolProjection {
+  const series = new Map<string, number[]>();
+  const refills: RefillEvent[] = [];
+  const bands: EmptyBand[] = [];
+  const steps = Math.max(1, Math.ceil((end - now) / step));
+  for (const provider of providers) {
+    const burn = (burnByDriver.get(provider.driver) ?? 0) * (step / HOUR_MS);
+    const state = provider.accounts.map((account) => ({ ...account }));
+    const total = () => state.reduce((sum, account) => sum + account.left, 0);
+    let emptySince: number | null = total() <= 1e-6 ? now : null;
+    const values: number[] = [];
+    for (let index = 0; index <= steps; index += 1) {
+      const t = now + index * step;
+      for (const account of state) {
+        while (account.resetsAt !== null && account.resetsAt <= t) {
+          const amount = 100 - account.left;
+          if (amount >= 0.5) {
+            refills.push({
+              driver: provider.driver,
+              account: account.name,
+              at: account.resetsAt,
+              amount,
+            });
+          }
+          if (emptySince !== null) {
+            bands.push({ driver: provider.driver, from: emptySince, to: account.resetsAt });
+            emptySince = null;
+          }
+          account.left = 100;
+          account.resetsAt += account.periodMs;
+        }
+      }
+      values.push(total());
+      if (burn <= 0 || emptySince !== null) continue;
+      let need = burn;
+      const order = state
+        .filter((account) => account.left > 0)
+        .toSorted(
+          (left, right) =>
+            (left.resetsAt ?? Number.POSITIVE_INFINITY) -
+            (right.resetsAt ?? Number.POSITIVE_INFINITY),
+        );
+      for (const account of order) {
+        const take = Math.min(account.left, need);
+        account.left -= take;
+        need -= take;
+        if (need <= 1e-9) break;
+      }
+      if (total() <= 1e-6) {
+        emptySince = t + ((burn - need) / burn) * step;
+      }
+    }
+    if (emptySince !== null) bands.push({ driver: provider.driver, from: emptySince, to: null });
+    series.set(provider.driver, values);
+  }
+  refills.sort((left, right) => left.at - right.at);
+  bands.sort((left, right) => left.from - right.from);
+  return { start: now, step, series, refills, bands };
+}
+
+export function projectedAt(projection: PoolProjection, driver: string, t: number): number | null {
+  const values = projection.series.get(driver);
+  if (!values || t < projection.start) return null;
+  const index = Math.min(values.length - 1, Math.floor((t - projection.start) / projection.step));
+  return values[index] ?? null;
+}
+
+// Client-side history of the pool: the server keeps no past usedPercent.
+
+export interface PoolSample {
+  readonly t: number;
+  /** driver -> [percent left, capacity] */
+  readonly p: Readonly<Record<string, readonly [number, number]>>;
+}
+
+const POOL_SAMPLE_EVERY_MS = 10 * MINUTE_MS;
+const POOL_SAMPLE_KEEP_MS = 8 * DAY_MS;
+
+export function appendPoolSample(
+  samples: ReadonlyArray<PoolSample>,
+  sample: PoolSample,
+): ReadonlyArray<PoolSample> {
+  const filtered = samples.filter((entry) => sample.t - entry.t <= POOL_SAMPLE_KEEP_MS);
+  const kept = filtered.length === samples.length ? samples : filtered;
+  const last = kept.at(-1);
+  if (last) {
+    const same = JSON.stringify(last.p) === JSON.stringify(sample.p);
+    if (sample.t < last.t) return kept;
+    if (same && sample.t - last.t < POOL_SAMPLE_EVERY_MS) return kept;
+  }
+  return [...kept, sample].slice(-4000);
+}
+
+/** The latest sample at or before `t`, unless it is older than `maxGapMs`. */
+export function sampleAt(
+  samples: ReadonlyArray<PoolSample>,
+  t: number,
+  maxGapMs: number,
+): PoolSample | null {
+  let low = 0;
+  let high = samples.length - 1;
+  let found = -1;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    if (samples[mid]!.t <= t) {
+      found = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  if (found < 0) return null;
+  const sample = samples[found]!;
+  return t - sample.t <= maxGapMs ? sample : null;
+}
+
+// Machines: a client-side CPU history from hostResources polling.
+
+export interface HostSample {
+  readonly t: number;
+  readonly cpu: number | null;
+  readonly memoryUsed: number;
+}
+
+export const HOST_HISTORY_MS = 5 * MINUTE_MS;
+
+export function appendHostSample(
+  samples: ReadonlyArray<HostSample>,
+  sample: HostSample,
+): ReadonlyArray<HostSample> {
+  const last = samples.at(-1);
+  if (last && sample.t - last.t < 1000) return samples;
+  return [...samples.filter((entry) => sample.t - entry.t <= HOST_HISTORY_MS), sample];
+}
+
+export function formatGigabytes(bytes: number): string {
+  const value = bytes / 1024 ** 3;
+  return `${value >= 10 ? Math.round(value) : value.toFixed(1)} GB`;
 }
