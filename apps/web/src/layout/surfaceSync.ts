@@ -43,6 +43,7 @@ export type LayoutSurfacePlacement =
   | { kind: "beside" }
   | { kind: "below" }
   | { kind: "pane"; paneId: string; index?: number; replaceTabId?: string }
+  | Extract<LayoutTabDestination, { kind: "split" }>
   | { kind: "column"; workspaceId: string; index: number }
   | { kind: "workspace"; workspaceId: string };
 
@@ -244,6 +245,8 @@ function placeSurfaceTabs(
         ...(pending.index === undefined ? {} : { index: pending.index }),
       };
     }
+  } else if (pending?.kind === "split") {
+    if (findLayoutPane(layout, pending.paneId)) placement = pending;
   } else if (pending?.kind === "column") {
     if (layout.workspaces.some((workspace) => workspace.id === pending.workspaceId)) {
       placement = pending;
@@ -343,9 +346,11 @@ function syncThreadSurfaces(
     return;
   }
   const ids = new Set<string>(after.surfaces.map((surface) => surface.id));
-  closeTabs(
-    tabs.filter((location) => !ids.has(surfaceIdOf(location.tab) ?? "")).map((l) => l.tab.id),
-  );
+  const gone = tabs
+    .filter((location) => !ids.has(surfaceIdOf(location.tab) ?? ""))
+    .map((location) => location.tab.id);
+  const placesFirst = pendingPlacements.has(scopedThreadKey(threadRef));
+  if (!placesFirst) closeTabs(gone);
   const placed = new Set(tabs.map((location) => surfaceIdOf(location.tab)));
   const missing = after.surfaces.filter((surface) => !placed.has(surface.id));
   const focus = opened.byUser && !opened.closing;
@@ -365,8 +370,9 @@ function syncThreadSurfaces(
       focus: focus && active !== undefined,
       terminal: false,
     });
+    if (placesFirst) closeTabs(gone);
     if (active && focus) return;
-  }
+  } else if (placesFirst) closeTabs(gone);
   // A user's open or pick of a surface that already has a tab shows it.
   if (focus && missing.length === 0) dropPanelPlacement(threadRef);
   if (focus && after.activeSurfaceId !== null) {

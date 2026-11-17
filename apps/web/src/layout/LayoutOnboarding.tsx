@@ -165,8 +165,8 @@ export function LayoutOnboarding() {
                     "keys",
                     "Same keys as before",
                     isMacPlatform(navigator.platform)
-                      ? "⌘J for a terminal, ⌥⌘B for the diff."
-                      : "Ctrl+J for a terminal, Ctrl+Alt+B for the diff.",
+                      ? "⌘J for a terminal, ⌘D for the diff."
+                      : "Ctrl+J for a terminal, Ctrl+D for the diff.",
                   ],
                 ] satisfies ReadonlyArray<readonly [LayoutTourLesson, string, string]>
               ).map(([lesson, title, description]) => (

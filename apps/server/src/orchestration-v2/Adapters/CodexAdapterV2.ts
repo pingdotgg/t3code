@@ -6491,7 +6491,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               runOrdinal: input.context.input.runOrdinal,
               status: terminalStatus,
               failure: null,
-              ...(terminalStatus === "interrupted" && input.context.hookStopReason !== undefined
+              ...(input.context.hookStopReason !== undefined
                 ? { reason: input.context.hookStopReason }
                 : {}),
               threadDisposition: "reusable",

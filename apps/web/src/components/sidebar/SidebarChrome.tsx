@@ -1,5 +1,5 @@
 import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
@@ -25,6 +25,7 @@ import {
   useSidebar,
 } from "../ui/sidebar";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
+import { beginLayoutContentDrag } from "../../layout/layoutDrag";
 import { useOpenLayoutPage } from "../../layout/pageNavigation";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarHeaderIconButton } from "./SidebarThreadHeader";
@@ -154,13 +155,20 @@ function SidebarUtilityItem({
   icon,
   label,
   onClick,
+  onPointerDown,
 }: {
   icon: ReactNode;
   label: string;
   onClick: () => void;
+  onPointerDown?: ((event: ReactPointerEvent) => void) | undefined;
 }) {
   return (
-    <SidebarHeaderIconButton label={label} size="footer" onClick={onClick}>
+    <SidebarHeaderIconButton
+      label={label}
+      size="footer"
+      onClick={onClick}
+      onPointerDown={onPointerDown}
+    >
       {icon}
     </SidebarHeaderIconButton>
   );
@@ -223,8 +231,11 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               {pullRequestsSupported ? (
                 <SidebarUtilityItem
                   icon={<PullRequestGlyph.pullRequest className="size-4" />}
-                  label="Pull Requests"
+                  label="Pull requests"
                   onClick={handlePullRequestsClick}
+                  onPointerDown={(event) =>
+                    beginLayoutContentDrag(event, { kind: "pull-requests" })
+                  }
                 />
               ) : null}
               <SidebarUtilityItem

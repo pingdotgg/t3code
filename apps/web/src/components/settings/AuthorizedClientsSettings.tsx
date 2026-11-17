@@ -683,8 +683,12 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
 
   return (
     <div className="flex flex-wrap items-center justify-end gap-2">
-      <Button size="xs" variant="secondary" onClick={() => openUseInAnotherApp(environmentId)}>
-        <PlugIcon className="size-3" />
+      <Button
+        size="standard"
+        variant="secondary"
+        onClick={() => openUseInAnotherApp(environmentId)}
+      >
+        <PlugIcon />
         Use in another app (MCP)
       </Button>
       {pairingDenial !== undefined ? (

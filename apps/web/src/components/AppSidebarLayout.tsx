@@ -86,6 +86,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands, registerMenuAction } from "../shortcuts/dispatcher";
 import { resolveThreadRouteRef } from "../threadRoutes";
+import { CLOSED_SIDEBAR_CONTROLS_SURFACE_CLASS } from "../workspaceTitlebar";
 import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
@@ -140,11 +141,10 @@ function readInitialThreadSidebarWidth(): number {
   try {
     return resolveInitialThreadSidebarWidth(
       getLocalStorageItem(THREAD_SIDEBAR_WIDTH_STORAGE_KEY, Schema.Finite),
-      window.innerWidth,
     );
   } catch (error) {
     console.error("Could not read persisted thread sidebar width.", error);
-    return resolveInitialThreadSidebarWidth(null, window.innerWidth);
+    return resolveInitialThreadSidebarWidth(null);
   }
 }
 
@@ -426,6 +426,7 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
       ref={appShellCommandsRef}
       className={cn(
         "pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center",
+        CLOSED_SIDEBAR_CONTROLS_SURFACE_CLASS,
         mobileSidebarSheetMounted && "hidden",
       )}
       // Sits on the window chrome, so it takes the black chrome tokens too.
@@ -588,7 +589,7 @@ export function AppSidebarLayout({
     } catch (error) {
       console.error("Could not clear persisted thread sidebar width.", error);
     }
-    setSidebarWidth(resolveInitialThreadSidebarWidth(null, viewportWidth));
+    setSidebarWidth(resolveInitialThreadSidebarWidth(null));
   };
   const [sidebarOpenStore] = useState(() =>
     createSidebarOpenStore(true, "chat_thread_sidebar_open"),

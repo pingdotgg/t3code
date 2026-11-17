@@ -7,7 +7,12 @@ import {
   endThreadContextDrag,
   moveThreadContextDrag as moveThreadContextDragGhost,
 } from "./chat/threadContextDrag";
-import { selectFocusedTab, selectLayoutThreadKeys } from "../layout/layoutModel";
+import {
+  isLayoutGhostTabShown,
+  selectFocusedLayoutGhostId,
+  selectFocusedTab,
+  selectLayoutThreadKeys,
+} from "../layout/layoutModel";
 import { followLayoutCompanions } from "../layout/openRules";
 import { isThreadlessSurfacesRef } from "../threadlessSurfaces";
 import { useLayoutStore } from "../layout/layoutStore";
@@ -71,6 +76,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import {
   AuthOrchestrationOperateScope,
+  type ContextMenuSource,
   ProjectId,
   type ScopedThreadRef,
   type ThreadId,
@@ -1124,6 +1130,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       : null;
   const [renamingTitle, setRenamingTitle] = useState("");
   const renamingOriginalTitleRef = useRef("");
+  const drawnGhostKeptByClickRef = useRef<string | null>(null);
   const settlingThreadKeysRef = useRef(new Set<string>());
   const threadListRef = useRef<HTMLUListElement | null>(null);
   const searchResultsListRef = useRef<HTMLUListElement | null>(null);
@@ -1212,8 +1219,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       ? null
       : scopedThreadKey(resolveListedAncestorThreadRef(currentThreadRef, threads));
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
+  // The open draft's first send names its thread in place; a finalized draft reached by
+  // navigation resolves through its redirect instead, and still reveals.
+  const routeKeyInPlace = routeDraftThread?.promotedTo != null;
 
-  if (routeTarget?.kind === "draft") {
+  if (routeTarget?.kind === "draft" && routeKeyInPlace) {
     observeSidebarDraftPromotion(routeReveal, routeRowThreadKey);
   }
   // History, the palette and links can open a thread the scope hides or the list
@@ -1223,6 +1233,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const { widensScope: revealWidensScope } = resolveSidebarRouteReveal({
     reveal: routeReveal,
     routeKey: routeRowThreadKey,
+    routeKeyInPlace,
     isSearching: isSearchingThreads,
     scopedProjectKeys: chosenScopeProjectKeys,
     delegatedUnderParent,
@@ -1246,10 +1257,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     clearSelection();
     setPersistedProjectScopeKeys([]);
   }, [clearSelection, revealWidensScope, setPersistedProjectScopeKeys]);
-  const revealActiveRow = useActiveRowReveal(routeReveal, routeRowThreadKey, (row) => {
-    const viewport = row.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
-    if (viewport) revealSidebarRow(viewport, row);
-  });
+  const revealActiveRow = useActiveRowReveal(
+    routeReveal,
+    routeRowThreadKey,
+    routeKeyInPlace,
+    (row) => {
+      const viewport = row.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+      if (viewport) revealSidebarRow(viewport, row);
+    },
+  );
   const showProjectEnvironments = projectGroupsSpanEnvironments(projectGroups);
   const scratchMachineLabelFor = (
     thread: Pick<SidebarThreadSummary, "environmentId" | "projectId">,
@@ -1370,7 +1386,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     void handleNewThread(scopeProjectRef(group.environmentId, group.id));
   });
   const handleProjectFolderContextMenu = useStableCallback(
-    (group: SidebarProjectSnapshot, position: { x: number; y: number }) => {
+    (
+      group: SidebarProjectSnapshot,
+      position: { x: number; y: number },
+      source: ContextMenuSource,
+    ) => {
       const api = readLocalApi();
       if (!api) return;
       void (async () => {
@@ -1389,6 +1409,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               { id: "project-settings", label: "Project settings", icon: "settings" },
             ],
             position,
+            source,
           ),
         );
         if (clicked._tag === "Failure") return;
@@ -1583,6 +1604,24 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     });
   };
 
+  const keepFocusedGhostChatWasDrawn = (threadRef: ScopedThreadRef) => {
+    const store = useLayoutStore.getState();
+    const ghostId = selectFocusedLayoutGhostId(store.layout, {
+      kind: "chat",
+      target: { kind: "server", threadRef },
+    });
+    if (ghostId === null) return false;
+    const wasShown = isLayoutGhostTabShown(store.layout, ghostId);
+    store.keepTab(ghostId);
+    return wasShown;
+  };
+
+  const openThreadFromRow = (threadRef: ScopedThreadRef) => {
+    const keptDrawnGhost = keepFocusedGhostChatWasDrawn(threadRef);
+    void navigateToThread(threadRef);
+    return keptDrawnGhost;
+  };
+
   const handleThreadFileDrop = async (threadRef: ScopedThreadRef, files: File[]) => {
     const dropId = queuePendingFileDrop({ threadRef, files });
     const landedBefore =
@@ -1691,41 +1730,50 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
 
   const readOpensPullRequestsInRightPanel = useStableCallback(() => routeThreadRef !== null);
-  const handleThreadClick = (event: ReactMouseEvent, threadRef: ScopedThreadRef) => {
-    if (isSidebarNestedLinkClick(event.target)) return;
-    const isMac = isMacPlatform(navigator.platform);
-    const isModClick = isMac ? event.metaKey : event.ctrlKey;
-    const threadKey = scopedThreadKey(threadRef);
-    if (isModClick) {
-      event.preventDefault();
-      toggleThreadSelection(threadKey);
-      return;
-    }
-    if (event.shiftKey) {
-      event.preventDefault();
-      rangeSelectTo(threadKey, orderedThreadKeysRef.current);
-      return;
-    }
-    if (isTrailingDoubleClick(event.detail)) {
-      return;
-    }
-    if (event.button === 1) {
-      // Middle click keeps the thread open as a tab; the URL follows the focused tab.
-      event.preventDefault();
-      followLayoutCompanions(() =>
-        useLayoutStore
-          .getState()
-          .openKeptTab({ kind: "chat", target: { kind: "server", threadRef } }),
-      );
-      return;
-    }
-    if (event.altKey) {
-      event.preventDefault();
-      openThreadToTheSide(threadRef);
-      return;
-    }
-    navigateToThread(threadRef);
-  };
+  const handleThreadClick = useStableCallback(
+    (event: ReactMouseEvent, threadRef: ScopedThreadRef) => {
+      if (isSidebarNestedLinkClick(event.target)) return;
+      const isMac = isMacPlatform(navigator.platform);
+      const isModClick = isMac ? event.metaKey : event.ctrlKey;
+      const threadKey = scopedThreadKey(threadRef);
+      if (isModClick) {
+        event.preventDefault();
+        toggleThreadSelection(threadKey);
+        return;
+      }
+      if (event.shiftKey) {
+        event.preventDefault();
+        rangeSelectTo(threadKey, orderedThreadKeysRef.current);
+        return;
+      }
+      if (isTrailingDoubleClick(event.detail)) {
+        return;
+      }
+      if (event.button === 1) {
+        // Middle click keeps the thread open as a tab; the URL follows the focused tab.
+        event.preventDefault();
+        followLayoutCompanions(() =>
+          useLayoutStore
+            .getState()
+            .openKeptTab({ kind: "chat", target: { kind: "server", threadRef } }),
+        );
+        return;
+      }
+      if (event.altKey) {
+        event.preventDefault();
+        openThreadToTheSide(threadRef);
+        return;
+      }
+      drawnGhostKeptByClickRef.current = openThreadFromRow(threadRef) ? threadKey : null;
+    },
+  );
+
+  const handleThreadDoubleClick = useStableCallback((threadRef: ScopedThreadRef, title: string) => {
+    const keptDrawnGhostByClick = drawnGhostKeptByClickRef.current === scopedThreadKey(threadRef);
+    drawnGhostKeptByClickRef.current = null;
+    if (keepFocusedGhostChatWasDrawn(threadRef) || keptDrawnGhostByClick) return;
+    startThreadRename(threadRef, title);
+  });
 
   // Snapshot navigation before partition mutation; background parks use a null plan.
   const planForwardNavigation = (
@@ -2483,7 +2531,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   );
 
   const handleMultiSelectContextMenu = useStableCallback(
-    async (position: { x: number; y: number }) => {
+    async (position: { x: number; y: number }, source: ContextMenuSource) => {
       const api = readLocalApi();
       if (!api) return;
       const selectedThreadKeys = [...useThreadSelectionStore.getState().selectedThreadKeys];
@@ -2581,6 +2629,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             },
           ],
           position,
+          source,
         ),
       );
       if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -2735,7 +2784,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   );
 
   const handleDraftContextMenu = useStableCallback(
-    (draftId: DraftId, position: { x: number; y: number }) => {
+    (draftId: DraftId, position: { x: number; y: number }, source: ContextMenuSource) => {
       void (async () => {
         const api = readLocalApi();
         const session = useComposerDraftStore.getState().getDraftSession(draftId);
@@ -2757,6 +2806,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               hasProject: projectGroup != null,
             }),
             position,
+            source,
           ),
         );
         if (clicked._tag === "Failure") return;
@@ -2786,14 +2836,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   );
 
   const handleThreadContextMenu = useStableCallback(
-    (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
+    (threadRef: ScopedThreadRef, position: { x: number; y: number }, source: ContextMenuSource) => {
       void (async () => {
         const api = readLocalApi();
         if (!api) return;
         const threadKey = scopedThreadKey(threadRef);
         const selectionState = useThreadSelectionStore.getState();
         if (selectionState.hasSelection() && selectionState.selectedThreadKeys.has(threadKey)) {
-          await handleMultiSelectContextMenu(position);
+          await handleMultiSelectContextMenu(position, source);
           return;
         }
         const thread = threadByKeyRef.current.get(threadKey);
@@ -2862,6 +2912,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               }),
             ),
             position,
+            source,
           ),
         );
         if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -3632,6 +3683,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             timestampFormat={timestampFormat}
                             onThreadClick={handleThreadClick}
                             onThreadActivate={navigateToThread}
+                            onThreadOpen={openThreadFromRow}
+                            onThreadDoubleClick={handleThreadDoubleClick}
                             onStartRename={startThreadRename}
                             onRenameTitleChange={setRenamingTitle}
                             onCommitRename={commitThreadRename}
