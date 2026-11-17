@@ -24,7 +24,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { ComposerControlSize } from "./ComposerControl";
 import { ComposerPermissionsSection, type RuntimeModeOption } from "./ComposerFooterControls";
 import { composerFloatingLayerProps, focusCheckedPermission } from "./composerEventScope";
-import { EffortGlyph, FastBolt, resolveEffortGlyph } from "./EffortGlyph";
+import { EffortGauge, EffortGlyph, FastBolt, resolveEffortGlyph } from "./EffortGlyph";
 import { DockedPickerContext } from "./ProviderModelPicker";
 import {
   getTraitsSectionVisibility,
@@ -77,7 +77,7 @@ function columnControls(
 }
 
 /**
- * What the model trigger shows after the model name: the effort word (or bars, per the
+ * What the model trigger shows after the model name: the effort word (or bars or a gauge, per the
  * Appearance setting), a bolt for Fast, a workflow icon for Ultracode, and other traits such as a
  * context window.
  */
@@ -155,7 +155,11 @@ export function describeComposerEffort(
             {word}
           </span>
         ) : glyph ? (
-          <EffortGlyph count={glyph.count} filled={glyph.filled} size={size} />
+          effortDisplay === "gauge" ? (
+            <EffortGauge count={glyph.count} filled={glyph.filled} size={size} />
+          ) : (
+            <EffortGlyph count={glyph.count} filled={glyph.filled} size={size} />
+          )
         ) : null}
         {fast ? <FastBolt ultra={display.speedLabel === "Ultrafast"} /> : null}
         {display.ultracode ? (
