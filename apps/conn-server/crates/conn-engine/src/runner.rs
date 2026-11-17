@@ -232,6 +232,9 @@ impl Inner {
         run_id: &str,
         accepted: bool,
     ) {
+        if accepted {
+            self.events_stored(thread_id).await;
+        }
         let live = self.live_thread(thread_id);
         if let Some(live) = &live {
             let mut state = lock(&live.state);

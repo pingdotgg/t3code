@@ -25,6 +25,15 @@ use crate::{
 };
 
 pub fn register(table: &mut MethodTable, deps: &Deps) {
+    let restart = deps
+        .environment
+        .as_ref()
+        .map(|e| e.restart.clone())
+        .unwrap_or_default();
+    table.unary("server.restart", move |_, _: Value| {
+        let result = restart.request().map_err(|error| Failure::fail(&error));
+        async { result }
+    });
     table.unary("server.probe", |_, _: Value| async { Ok(json!({})) });
     // Activity leases gate the periodic provider probe (`BackgroundPolicy`).
     let status = deps.provider_status.clone();
@@ -380,7 +389,8 @@ mod tests {
     fn environment() -> (Arc<Environment>, std::path::PathBuf) {
         let dir =
             std::env::temp_dir().join(format!("conn-server-cfg-{}", crate::auth::random_hex(6)));
-        let env = Environment::load(&dir, Some("Test".into()), dir.clone()).unwrap();
+        let env =
+            Environment::load(&dir, Some("Test".into()), dir.clone(), Default::default()).unwrap();
         (Arc::new(env), dir)
     }
 

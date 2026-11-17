@@ -40,7 +40,7 @@ pub(super) async fn request(cx: &Cx<'_>, args: &Args) -> ToolResult {
     Ok(json!({"items":items}))
 }
 fn host(value: &str) -> Option<String> {
-    let value = crate::input::js_trim(value);
+    let value = conn_support::text::js_trim(value);
     if value.is_empty() {
         return None;
     }

@@ -418,8 +418,10 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn off_never_fetches() {
         let dir = temp_dir("off");
-        let environment =
-            Arc::new(crate::environment::Environment::load(&dir, None, dir.clone()).unwrap());
+        let environment = Arc::new(
+            crate::environment::Environment::load(&dir, None, dir.clone(), Default::default())
+                .unwrap(),
+        );
         assert!(!start_from(Source::Off, dir.clone(), environment));
         let mut state = State::default();
         for now in [0, 1, MANIFEST_TTL_MS * 10] {

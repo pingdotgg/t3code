@@ -408,6 +408,8 @@ const modelManifestRs = rustfmt(
 
 const LIMITED_METHODS = [
   "assets.createUrl",
+  "orchestration.getWorkflowScript",
+  "orchestration.stopWorkflow",
   "git.resolvePullRequest",
   "git.preparePullRequestThread",
   "git.runStackedAction",

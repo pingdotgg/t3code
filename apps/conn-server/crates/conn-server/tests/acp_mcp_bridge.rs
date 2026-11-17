@@ -68,6 +68,9 @@ fn relays_lines_with_t3s_headers_and_stays_small() {
     serve(listener, seen.clone());
     let mut child = Command::new(env!("CARGO_BIN_EXE_conn-server"))
         .arg("acp-mcp-bridge")
+        .env_remove("HOME")
+        .env_remove("T3CODE_HOME")
+        .env_remove("CONN_SERVER_HOME")
         .env(
             "T3_ACP_MCP_ENDPOINT",
             format!("http://127.0.0.1:{port}/mcp"),

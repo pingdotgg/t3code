@@ -14,6 +14,7 @@ pub mod limits;
 pub mod methods;
 pub mod model_manifest;
 mod project;
+pub mod restart;
 pub mod routes;
 pub mod scopes;
 pub mod serve;
@@ -21,6 +22,7 @@ pub mod session;
 pub mod settings;
 pub mod table;
 pub mod text_generation;
+mod workflow_script;
 
 pub use http::{AppState, router};
 use table::MethodTable;

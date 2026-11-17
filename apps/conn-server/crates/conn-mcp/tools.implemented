@@ -35,6 +35,8 @@ unlink_pull_requests
 list_thread_pull_requests
 t3_background_wait
 
+t3_workflow_stop
+tool_search
 html_render
 request_secret
 save_test_login

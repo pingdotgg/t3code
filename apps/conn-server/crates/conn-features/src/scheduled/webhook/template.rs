@@ -500,25 +500,7 @@ pub(crate) fn js_number(number: f64) -> String {
 
 // ---- Text rules of JavaScript ------------------------------------------------------------
 
-/// `\s` in a JavaScript regular expression, and what `String.prototype.trim` removes.
-pub(crate) fn is_js_space(c: char) -> bool {
-    matches!(
-        c,
-        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
-            ..='\u{200a}'
-                | '\u{2028}'
-                | '\u{2029}'
-                | '\u{202f}'
-                | '\u{205f}'
-                | '\u{3000}'
-                | '\u{feff}'
-    )
-}
-
-/// `String.prototype.trim`.
-pub(crate) fn js_trim(text: &str) -> &str {
-    text.trim_matches(is_js_space)
-}
+pub(crate) use conn_support::text::{is_js_space, js_trim};
 
 /// What `.` in a JavaScript regular expression does not match.
 fn is_line_terminator(c: char) -> bool {

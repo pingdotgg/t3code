@@ -1,6 +1,6 @@
 # capture-ts
 
-Feeds the recorded CLI transcripts in `testdata/cli` through the TypeScript `ClaudeAdapterV2` and
+Feeds recorded CLI and constructed workflow transcripts in `testdata/cli` through the TypeScript `ClaudeAdapterV2` and
 writes the events it emits to `testdata/ts/<name>.json` (`{note, offered, events}`, `driver` dropped).
 The Rust replay tests compare against those files.
 

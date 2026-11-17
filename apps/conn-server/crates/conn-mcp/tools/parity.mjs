@@ -230,7 +230,7 @@ function outcome(reply) {
     const text = reply.result.content?.[0]?.text ?? "";
     try {
       const failure = JSON.parse(text);
-      return { kind: "failure", code: failure.code };
+      return { kind: "failure", code: failure.code, message: failure.message };
     } catch {
       return { kind: "failure", code: text };
     }
@@ -303,6 +303,9 @@ const searchOrder = (value) => value.matches.map((match) => [match.title, match.
 // Per-server state the calls refer to: project and thread ids differ.
 const context = [{}, {}];
 const steps = [
+  ["t3_workflow_stop", () => ({ threadId: "thread:none", subagentId: "workflow:none" })],
+  ["t3_workflow_stop", () => ({ threadId: " ", subagentId: "workflow:none" })],
+  ["tool_search", () => ({ query: "t3_workflow_stop" })],
   ["mcp_call", () => ({ tool: "weather", arguments: {} })],
   ["mcp_connect", () => ({ name: "stub", url: "http://127.0.0.1:1/mcp" })],
   ["mcp_connect", () => ({ name: "stub" })],
@@ -338,6 +341,12 @@ const steps = [
       clientRequestId: "parity-worktree",
     }),
     (c, v) => (c.idleThreadId = v.threadId),
+    { noTurn: true },
+  ],
+  [
+    "t3_workflow_stop",
+    (c) => ({ threadId: c.idleThreadId, subagentId: "workflow:none" }),
+    undefined,
     { noTurn: true },
   ],
   ["t3_worktree_list", (c) => ({threadId:c.idleThreadId, refKind:"local"})],
@@ -631,7 +640,10 @@ for (const [tool, input, after, options] of run) {
     continue;
   }
   if (ts.kind === "failure") {
-    report(`${label}: both fail with ${ts.code}`, true);
+    report(
+      `${label}: both fail with ${ts.code}`,
+      tool !== "t3_workflow_stop" || ts.message === rust.message,
+    );
     continue;
   }
   const view = options?.view ?? ((value) => value);
@@ -731,7 +743,7 @@ if (noModel) {
     ["create_threads", () => ({threads:[{title:"   "}]})],
     ["create_threads", () => ({threads:[{prompt:"x".repeat(120001)}]})],
     ["create_threads", () => ({threads:[{target:{providerInstanceId:"missing"}}]})],
-    ["create_threads", () => ({threads:[{target:{driverKind:"kiro"}}]})],
+    ["create_threads", () => ({threads:[{target:{driverKind:"parity-missing"}}]})],
     ["create_threads", () => ({threads:[{target:{options:[{id:"effort",value:"bad"}]}}]})],
     ["t3_worktree_handoff", () => ({branch:"   "})],
     ["t3_attachment_prepare_upload", () => ({upload:{name:"shot.png",mimeType:"image/png",sizeBytes:0}})],

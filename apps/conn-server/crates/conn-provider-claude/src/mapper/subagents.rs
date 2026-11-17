@@ -6,7 +6,7 @@
 //! effort, owner). `task_started` opens the row, `task_progress` updates it, and
 //! `task_notification` (background) or the Agent `tool_result` (foreground) settles it. Child
 //! frames that arrive before `task_started` are held, with caps, and replayed after it.
-//! Not ported: workflow subagents (`local_workflow`), resume recovery from Claude's files.
+//! Resume recovery from Claude's files is not ported.
 
 use std::collections::{HashMap, VecDeque};
 
@@ -63,6 +63,9 @@ pub(crate) struct Sub {
     tool_order: Vec<String>,
     /// Effort from the launch; fixed for the subagent's life.
     effort: Option<String>,
+    members: HashMap<u64, Value>,
+    stop_requested: bool,
+    process_generation: u64,
 }
 
 impl Sub {
@@ -265,6 +268,10 @@ pub(crate) struct Update<'a> {
     pub progress: Option<String>,
     pub result: Option<String>,
     pub reopen: bool,
+    pub skip_parent_turn: bool,
+    pub workflow_name: Option<String>,
+    pub workflow_frame: Value,
+    pub workflow_handles: Option<Value>,
 }
 
 impl<E: Env> Mapper<E> {
@@ -304,10 +311,27 @@ impl<E: Env> Mapper<E> {
         );
     }
 
+    pub(crate) fn workflow_stop(&mut self, thread: &Value, task_id: &str, requested: bool) -> bool {
+        let Some(sub) = self.subagents.by_task.get_mut(task_id) else {
+            return false;
+        };
+        if !sub.running()
+            || sub.process_generation != self.process_generation
+            || !sub.task["workflow"].is_object()
+            || sub.parent.thread_id != thread["appThreadId"].as_str().unwrap_or_default()
+            || sub.parent.provider_thread_id != thread["id"].as_str().unwrap_or_default()
+        {
+            return false;
+        }
+        sub.stop_requested = requested;
+        true
+    }
+
     pub(super) fn on_task_started(&mut self, msg: &SystemMsg, out: &mut Vec<Out>) {
-        let (Some(task_id), Some(tool_use_id)) = (&msg.task_id, &msg.tool_use_id) else {
+        let Some(task_id) = &msg.task_id else {
             return;
         };
+        let tool_use_id = msg.tool_use_id.as_deref().unwrap_or_default();
         if matches!(msg.task_type.as_deref(), Some("local_bash")) {
             self.tail_bash_task(msg, out);
             return;
@@ -333,6 +357,18 @@ impl<E: Env> Mapper<E> {
                 task_id,
                 tool_use_id,
                 status: "running",
+                workflow_name: msg
+                    .workflow_name
+                    .as_deref()
+                    .filter(|_| msg.task_type.as_deref() == Some("local_workflow"))
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned),
+                workflow_frame: if msg.task_type.as_deref() == Some("local_workflow") {
+                    json!({"workflow_progress":msg.workflow_progress,"usage":msg.usage})
+                } else {
+                    Value::Null
+                },
                 prompt: msg.prompt.clone(),
                 title: msg.description.clone(),
                 model,
@@ -349,16 +385,45 @@ impl<E: Env> Mapper<E> {
     }
 
     pub(super) fn on_task_progress(&mut self, msg: &SystemMsg, out: &mut Vec<Out>) {
-        let (Some(task_id), Some(tool_use_id)) = (&msg.task_id, &msg.tool_use_id) else {
+        let Some(task_id) = &msg.task_id else {
             return;
         };
+        let tool_use_id = msg
+            .tool_use_id
+            .clone()
+            .or_else(|| {
+                self.subagents
+                    .by_task
+                    .get(task_id)
+                    .map(|s| s.tool_use_id.clone())
+            })
+            .unwrap_or_default();
+        let tool_use_id = tool_use_id.as_str();
         let progress = msg.description.as_deref().map(str::trim).unwrap_or("");
         let running = self
             .subagents
             .by_task
             .get(task_id)
             .is_some_and(Sub::running);
-        if progress.is_empty() || !running {
+        let frame = json!({"workflow_progress":msg.workflow_progress,"usage":msg.usage});
+        let coordinator = self
+            .subagents
+            .by_task
+            .get(task_id)
+            .is_some_and(|s| s.task["workflow"].is_object());
+        if !running
+            || (!super::workflows::has_snapshot(&frame) && (progress.is_empty() || coordinator))
+        {
+            return;
+        }
+        let skip_parent_turn = self.turn.is_none()
+            && self.last_ctx.as_ref().is_none_or(|ctx| {
+                self.subagents
+                    .by_task
+                    .get(task_id)
+                    .is_some_and(|sub| sub.parent.run_id != ctx.run_id)
+            });
+        if skip_parent_turn && (!coordinator || !super::workflows::has_snapshot(&frame)) {
             return;
         }
         self.update_subagent(
@@ -366,7 +431,9 @@ impl<E: Env> Mapper<E> {
                 task_id,
                 tool_use_id,
                 status: "running",
-                progress: Some(progress.to_string()),
+                progress: (!progress.is_empty()).then(|| progress.to_string()),
+                workflow_frame: frame,
+                skip_parent_turn,
                 ..Update::default()
             },
             out,
@@ -392,6 +459,7 @@ impl<E: Env> Mapper<E> {
                 tool_use_id: &tool_use_id,
                 status,
                 result: msg.summary.clone(),
+                workflow_frame: json!({"workflow_progress":msg.workflow_progress,"usage":msg.usage}),
                 ..Update::default()
             },
             out,
@@ -411,8 +479,29 @@ impl<E: Env> Mapper<E> {
         let Some(task_id) = self.subagents.by_tool.get(tool_use_id).cloned() else {
             return false;
         };
+        if let Some(handles) = structured.and_then(super::workflows::handles) {
+            self.update_subagent(
+                Update {
+                    task_id: &task_id,
+                    tool_use_id,
+                    status: "running",
+                    workflow_handles: Some(handles),
+                    ..Update::default()
+                },
+                out,
+            );
+            return false;
+        }
         if !is_error && is_async_ack(structured, content) {
             return true;
+        }
+        if self
+            .subagents
+            .by_task
+            .get(&task_id)
+            .is_some_and(|s| s.task["workflow"].is_object())
+        {
+            return false;
         }
         // The structured result holds the subagent's own text; the tool_result wraps it.
         let text = structured
@@ -433,7 +522,31 @@ impl<E: Env> Mapper<E> {
         true
     }
 
-    /// The process ended: every running subagent ends with it.
+    /// A retired query must leave the replacement query's tasks and turn alone.
+    pub(crate) fn end_process_subagents(&mut self, generation: u64, stopped: bool) -> Vec<Out> {
+        let mut out = Vec::new();
+        let running: Vec<(String, String)> = self
+            .subagents
+            .by_task
+            .iter()
+            .filter(|(_, sub)| sub.running() && sub.process_generation == generation)
+            .map(|(id, sub)| (id.clone(), sub.tool_use_id.clone()))
+            .collect();
+        for (task_id, tool_use_id) in running {
+            self.update_subagent(
+                Update {
+                    task_id: &task_id,
+                    tool_use_id: &tool_use_id,
+                    status: if stopped { "cancelled" } else { "failed" },
+                    ..Update::default()
+                },
+                &mut out,
+            );
+        }
+        out
+    }
+
+    /// The session ended: every running subagent ends with it.
     pub(super) fn end_running_subagents(&mut self, status: &str, out: &mut Vec<Out>) {
         let running: Vec<(String, String)> = self
             .subagents
@@ -601,6 +714,7 @@ impl<E: Env> Mapper<E> {
             &text,
             ordinal,
             None,
+            None,
             &now,
             out,
         );
@@ -677,6 +791,7 @@ impl<E: Env> Mapper<E> {
             // A resumed subagent (SendMessage) runs in the turn that resumed it.
             if is_reopen && let Some(parent) = current_parent {
                 sub.parent = parent;
+                sub.process_generation = self.process_generation;
             }
         } else {
             let Some(parent) = self.parent_ctx() else {
@@ -734,6 +849,9 @@ impl<E: Env> Mapper<E> {
                     tools: HashMap::new(),
                     tool_order: Vec::new(),
                     effort: input.effort.clone(),
+                    members: HashMap::new(),
+                    stop_requested: false,
+                    process_generation: self.process_generation,
                 },
             );
         }
@@ -749,9 +867,19 @@ impl<E: Env> Mapper<E> {
         };
 
         // The task row.
+        if let Some(workflow) = super::workflows::merge(
+            sub.task.get("workflow"),
+            input.workflow_name.as_deref(),
+            input.workflow_handles.as_ref(),
+            &input.workflow_frame,
+            &sub.child_thread_id,
+        ) {
+            sub.task["workflow"] = workflow;
+        }
         let task = &mut sub.task;
         task["status"] = json!(input.status);
         if is_reopen {
+            sub.stop_requested = false;
             task["runId"] = json!(sub.parent.run_id);
             task["startedAt"] = json!(now);
             task["result"] = Value::Null;
@@ -860,6 +988,7 @@ impl<E: Env> Mapper<E> {
                 &prompt,
                 ordinal,
                 Some(&sender),
+                Some(false),
                 &now,
                 out,
             );
@@ -876,27 +1005,31 @@ impl<E: Env> Mapper<E> {
                 &prompt,
                 100,
                 Some(&sender),
+                Some(task["workflow"].is_object()),
                 &now,
                 out,
             );
         }
+        project_workflow_members(sub, &task, &now, out);
         // 6. The subagent row in the parent turn.
-        let mut item = json!({
-            "id": sub.item_id, "threadId": task["threadId"], "runId": task["runId"],
-            "nodeId": task["id"], "providerThreadId": sub.parent.provider_thread_id,
-            "providerTurnId": sub.parent.provider_turn_id, "nativeItemRef": task["nativeTaskRef"],
-            "parentItemId": null, "ordinal": sub.item_ordinal, "status": task["status"],
-            "title": task["title"], "startedAt": task["startedAt"],
-            "completedAt": task["completedAt"], "updatedAt": task["updatedAt"],
-            "type": "subagent", "subagentId": task["id"], "origin": task["origin"],
-            "driver": task["driver"], "providerInstanceId": task["providerInstanceId"],
-            "childThreadId": task["childThreadId"], "prompt": task["prompt"],
-            "result": task["result"],
-        });
-        if let Some(progress) = task.get("progress") {
-            item["progress"] = progress.clone();
+        if !input.skip_parent_turn {
+            let mut item = json!({
+                "id": sub.item_id, "threadId": task["threadId"], "runId": task["runId"],
+                "nodeId": task["id"], "providerThreadId": sub.parent.provider_thread_id,
+                "providerTurnId": sub.parent.provider_turn_id, "nativeItemRef": task["nativeTaskRef"],
+                "parentItemId": null, "ordinal": sub.item_ordinal, "status": task["status"],
+                "title": task["title"], "startedAt": task["startedAt"],
+                "completedAt": task["completedAt"], "updatedAt": task["updatedAt"],
+                "type": "subagent", "subagentId": task["id"], "origin": task["origin"],
+                "driver": task["driver"], "providerInstanceId": task["providerInstanceId"],
+                "childThreadId": task["childThreadId"], "prompt": task["prompt"],
+                "result": task["result"],
+            });
+            if let Some(progress) = task.get("progress") {
+                item["progress"] = progress.clone();
+            }
+            out.push(turn_item(item));
         }
-        out.push(turn_item(item));
         // 7. The result, as the child thread's last message, unless the last reply said it.
         let result = input.result.as_deref().map(str::trim).unwrap_or("");
         let shown = input.status == "completed"
@@ -922,6 +1055,7 @@ impl<E: Env> Mapper<E> {
                 "assistant",
                 result,
                 ordinal,
+                None,
                 None,
                 &now,
                 out,
@@ -950,9 +1084,18 @@ fn child_app_thread(sub: &Sub, task: &Value, ordinal: u32, now: &str) -> Option<
     let parent_title = thread["title"].as_str().unwrap_or("").to_string();
     let map = thread.as_object_mut()?;
     map.remove("historyOrigin");
+    let workflow_title = task.get("workflow").map(|w| {
+        format!(
+            "Workflow · {}",
+            w["name"]
+                .as_str()
+                .or_else(|| task["title"].as_str())
+                .unwrap_or("Untitled")
+        )
+    });
     let title = child_title(
         &parent_title,
-        task["title"].as_str(),
+        workflow_title.as_deref().or_else(|| task["title"].as_str()),
         task["prompt"].as_str().unwrap_or(""),
         ordinal,
     );
@@ -1006,6 +1149,7 @@ fn child_message(
     text: &str,
     ordinal: u32,
     sender: Option<&str>,
+    workflow_script: Option<bool>,
     now: &str,
     out: &mut Vec<Out>,
 ) {
@@ -1028,8 +1172,10 @@ fn child_message(
             message["senderThreadId"] = json!(sender);
             item["senderThreadId"] = json!(sender);
         }
-        message["workflowScript"] = json!(false);
-        item["workflowScript"] = json!(false);
+        if let Some(script) = workflow_script {
+            message["workflowScript"] = json!(script);
+            item["workflowScript"] = json!(script);
+        }
         item["createdBy"] = json!("agent");
         item["creationSource"] = json!("provider");
         item["type"] = json!("user_message");
@@ -1044,6 +1190,173 @@ fn child_message(
     }
     if let Ok(item) = from_json(item) {
         out.push(event(ProviderEvent::TurnItemUpdated { turn_item: item }));
+    }
+}
+
+fn project_workflow_members(sub: &mut Sub, coordinator: &Value, now: &str, out: &mut Vec<Out>) {
+    let Some(agents) = coordinator["workflow"]["agents"].as_array() else {
+        return;
+    };
+    let Some(parent) = child_app_thread(sub, coordinator, 0, now)
+        .map(|t| serde_json::to_value(t).unwrap_or(Value::Null))
+    else {
+        return;
+    };
+    for agent in agents {
+        let Some(index) = agent["index"].as_u64() else {
+            continue;
+        };
+        let previous = sub.members.get(&index);
+        let key = format!("{}:agent:{index}", sub.child_thread_id);
+        let child = agent["childThreadId"].as_str().unwrap_or_default();
+        let root = ids::node_from_item(DRIVER, &format!("{key}:thread-root"));
+        let node = ids::node_from_item(DRIVER, &key);
+        let reported = agent["state"].as_str().unwrap_or("running");
+        let status =
+            if matches!(reported, "queued" | "running") && coordinator["status"] != "running" {
+                coordinator["status"].as_str().unwrap_or("cancelled")
+            } else if reported == "queued" {
+                "pending"
+            } else if reported == "failed"
+                && sub.stop_requested
+                && previous.is_none_or(|p| p["status"] != "failed")
+            {
+                "cancelled"
+            } else {
+                reported
+            };
+        let settled = !matches!(status, "pending" | "running");
+        let attempt = agent["attempt"]
+            .as_u64()
+            .or_else(|| previous.and_then(|p| p["attempt"].as_u64()))
+            .unwrap_or(1);
+        let restarted = previous.is_some_and(|p| attempt > p["attempt"].as_u64().unwrap_or(1));
+        let prompt = agent["prompt"]
+            .as_str()
+            .or_else(|| agent["label"].as_str())
+            .unwrap_or_default();
+        let model = agent["model"]
+            .as_str()
+            .or_else(|| parent["modelSelection"]["model"].as_str())
+            .unwrap_or_default();
+        let created = previous
+            .and_then(|p| p["createdAt"].as_str())
+            .unwrap_or(now);
+        let date = |field: &str| {
+            agent[field]
+                .as_i64()
+                .map(|n| json!(conn_support::time::iso_from_millis(n)))
+        };
+        let started = if status == "pending" {
+            Value::Null
+        } else {
+            date("startedAt")
+                .or_else(|| {
+                    (!restarted)
+                        .then(|| previous.map(|p| p["startedAt"].clone()))
+                        .flatten()
+                        .filter(|v| !v.is_null())
+                })
+                .unwrap_or_else(|| {
+                    if status == "running" {
+                        json!(now)
+                    } else {
+                        Value::Null
+                    }
+                })
+        };
+        let completed = if settled {
+            date("completedAt")
+                .or_else(|| {
+                    (!restarted)
+                        .then(|| previous.map(|p| p["completedAt"].clone()))
+                        .flatten()
+                        .filter(|v| !v.is_null())
+                })
+                .unwrap_or_else(|| json!(now))
+        } else {
+            Value::Null
+        };
+        let mut next_ordinal = previous
+            .and_then(|p| p["nextOrdinal"].as_u64())
+            .and_then(|n| u32::try_from(n).ok())
+            .unwrap_or(100);
+        let mut state = json!({"status":status,"attempt":attempt,"prompt":prompt,"label":agent["label"],"model":model,"result":agent["result"],"startedAt":started,"completedAt":completed,"createdAt":created,"nextOrdinal":next_ordinal});
+        if previous == Some(&state) {
+            continue;
+        }
+        if previous.is_none_or(|p| p["label"] != agent["label"] || p["model"] != model) {
+            let mut thread = parent.clone();
+            thread["id"] = json!(child);
+            thread["title"] = agent["label"].clone();
+            thread["lineage"]["parentThreadId"] = json!(sub.child_thread_id);
+            thread["forkedFrom"] = json!({"type":"node","nodeId":node});
+            thread["modelSelection"] = json!({"instanceId":sub.parent.instance_id,"model":model});
+            thread["createdAt"] = json!(created);
+            emit(
+                out,
+                |app_thread| ProviderEvent::AppThreadCreated {
+                    app_thread,
+                    create_only: None,
+                },
+                thread,
+            );
+        }
+        if previous.is_none_or(|p| p["prompt"] != prompt) {
+            child_message(
+                child,
+                &root,
+                &format!("{key}:prompt"),
+                "user",
+                prompt,
+                100,
+                None,
+                None,
+                now,
+                out,
+            );
+        }
+        let task = json!({"id":node,"threadId":sub.child_thread_id,"runId":null,"parentNodeId":sub.child_root,"origin":"provider_native","createdBy":"agent","driver":DRIVER,"providerInstanceId":sub.parent.instance_id,"providerThreadId":null,"childThreadId":child,"nativeTaskRef":{"driver":DRIVER,"nativeId":key,"strength":"strong"},"prompt":prompt,"title":agent["label"],"model":model,"status":status,"result":agent["result"],"startedAt":started,"completedAt":completed,"updatedAt":now});
+        for (id, thread, parent, kind) in [
+            (
+                &node,
+                sub.child_thread_id.as_str(),
+                json!(sub.child_root),
+                "subagent",
+            ),
+            (&root, child, Value::Null, "root_turn"),
+        ] {
+            emit(
+                out,
+                |node| ProviderEvent::NodeUpdated { node },
+                json!({"id":id,"threadId":thread,"runId":null,"parentNodeId":parent,"rootNodeId":if kind=="subagent" {&sub.child_root} else {&root},"kind":kind,"status":status,"countsForRun":false,"providerThreadId":null,"providerTurnId":null,"nativeItemRef":task["nativeTaskRef"],"runtimeRequestId":null,"checkpointScopeId":null,"startedAt":started,"completedAt":completed}),
+            );
+        }
+        emit(
+            out,
+            |subagent| ProviderEvent::SubagentUpdated { subagent },
+            task,
+        );
+        if settled
+            && let Some(result) = agent["result"].as_str()
+            && previous.is_none_or(|p| p["result"].is_null() || restarted)
+        {
+            next_ordinal = next_ordinal.saturating_add(1);
+            child_message(
+                child,
+                &root,
+                &format!("{key}:result:{attempt}"),
+                "assistant",
+                &format!("Partial answer from workflow progress:\n\n{result}"),
+                next_ordinal,
+                None,
+                None,
+                now,
+                out,
+            );
+        }
+        state["nextOrdinal"] = json!(next_ordinal);
+        sub.members.insert(index, state);
     }
 }
 

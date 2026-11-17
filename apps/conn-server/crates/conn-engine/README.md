@@ -63,8 +63,7 @@ The T3 sources are under `apps/server/src/orchestration-v2/` unless a path says 
 | `subagent.stop` | `Orchestrator.ts` `dispatchSubagentStop` | Stops one subagent of a run | `Session::stop_task` in the providers (in the trait, not built) | later |
 
 `orchestration.getTurnDiff` and `orchestration.getFullThreadDiff` were the two unserved
-`orchestration.*` methods (`checkpointing/CheckpointDiffQuery.ts`); both are served now, so
-all 23 are.
+`orchestration.*` methods (`checkpointing/CheckpointDiffQuery.ts`); both are served now.
 
 ## Behaviour worth knowing
 

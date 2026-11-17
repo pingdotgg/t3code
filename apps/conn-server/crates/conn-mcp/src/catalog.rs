@@ -40,7 +40,7 @@ pub(crate) fn offered(tool: &str, outside: bool) -> bool {
     !outside || !OUTSIDE_HIDDEN.lines().any(|name| name == tool)
 }
 
-fn line_name(line: &str) -> &str {
+pub(crate) fn line_name(line: &str) -> &str {
     line.strip_prefix("{\"name\":\"")
         .and_then(|rest| rest.split_once('"'))
         .map_or("", |(name, _)| name)
@@ -48,9 +48,13 @@ fn line_name(line: &str) -> &str {
 
 /// The `tools/list` result body, for a caller in a thread or an outside client.
 pub(crate) fn list_result(outside: bool) -> String {
+    list_filtered(|name| offered(name, outside) && name != "tool_search")
+}
+
+pub(crate) fn list_filtered(visible: impl Fn(&str) -> bool) -> String {
     let mut out = String::with_capacity(CATALOG.len() + 16);
     out.push_str("{\"tools\":[");
-    let offered = lines().filter(|line| offered(line_name(line), outside));
+    let offered = lines().filter(|line| visible(line_name(line)));
     for (i, line) in offered.enumerate() {
         if i > 0 {
             out.push(',');
@@ -292,7 +296,10 @@ mod tests {
             assert!(names().any(|n| n == tool["name"]));
         }
         let list: Value = serde_json::from_str(&list_result(false)).unwrap();
-        assert_eq!(list["tools"].as_array().unwrap().len(), names().count());
+        assert_eq!(
+            list["tools"].as_array().unwrap().len(),
+            names().filter(|name| *name != "tool_search").count()
+        );
     }
 
     /// The catalog is byte for byte what a live TypeScript server listed

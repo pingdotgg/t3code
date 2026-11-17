@@ -498,8 +498,15 @@ mod tests {
             ))
             .unwrap(),
         );
-        let environment =
-            Arc::new(Environment::load(&root.join("state"), None, root.join("server")).unwrap());
+        let environment = Arc::new(
+            Environment::load(
+                &root.join("state"),
+                None,
+                root.join("server"),
+                Default::default(),
+            )
+            .unwrap(),
+        );
         let deps = Deps {
             engine: Some(engine),
             environment: Some(environment),
@@ -599,8 +606,9 @@ mod tests {
         std::fs::write(repo.join("a.txt"), "a\n").unwrap();
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-qm", "init"]);
-        let environment =
-            Arc::new(Environment::load(&root.join("state"), None, repo.clone()).unwrap());
+        let environment = Arc::new(
+            Environment::load(&root.join("state"), None, repo.clone(), Default::default()).unwrap(),
+        );
         let deps = Deps {
             environment: Some(environment),
             ..Deps::default()

@@ -82,6 +82,8 @@ pub struct FakeProvider {
     process_exit: Option<Arc<tokio::sync::Notify>>,
     #[cfg(test)]
     pub(crate) late_start_entered: Arc<tokio::sync::Notify>,
+    #[cfg(test)]
+    pub(crate) workflow_stop_entered: Arc<tokio::sync::Notify>,
 }
 
 impl std::fmt::Debug for FakeProvider {
@@ -119,6 +121,8 @@ impl FakeProvider {
             process_exit: None,
             #[cfg(test)]
             late_start_entered: Arc::default(),
+            #[cfg(test)]
+            workflow_stop_entered: Arc::default(),
         }
     }
 
@@ -191,6 +195,8 @@ struct Turn {
 struct FakeSession {
     #[cfg(test)]
     late_start_entered: Arc<tokio::sync::Notify>,
+    #[cfg(test)]
+    workflow_stop_entered: Arc<tokio::sync::Notify>,
     id: ProviderSessionId,
     /// The run whose start the engine abandoned (`abandon_turn_start`), and its wake-up.
     abandoned: Arc<(Mutex<Option<String>>, tokio::sync::Notify)>,
@@ -304,6 +310,8 @@ impl Provider for FakeProvider {
                 session: Box::new(FakeSession {
                     #[cfg(test)]
                     late_start_entered: self.late_start_entered.clone(),
+                    #[cfg(test)]
+                    workflow_stop_entered: self.workflow_stop_entered.clone(),
                     id: input.provider_session_id,
                     abandoned: Arc::default(),
                     instance: self.id.as_str().to_owned(),
@@ -680,6 +688,18 @@ impl Session for FakeSession {
                     started.push(provider_turn(&turn, "completed"));
                     started.push(terminal(&turn, TurnStatus::Completed, None));
                 }
+                "workflow" => {
+                    self.background.store(true,Ordering::SeqCst);
+                    let now=now_iso();
+                    started.push(event(json!({"type":"subagent.updated","subagent":{
+                        "id":"workflow-coordinator","threadId":turn.thread_id,"runId":turn.run_id,
+                        "parentNodeId":turn.root,"origin":"provider_native","createdBy":"agent","driver":self.driver,
+                        "providerInstanceId":self.instance,"providerThreadId":null,"childThreadId":null,
+                        "nativeTaskRef":{"driver":self.driver,"nativeId":"wf1","strength":"strong"},
+                        "prompt":"workflow()","title":"Review","model":null,"workflow":{"name":"Review","phases":[],"agents":[]},
+                        "status":"running","result":null,"startedAt":now,"completedAt":null,"updatedAt":now,
+                    }})));
+                }
                 "background-task" | "background-task-hang" => {
                     self.background.store(true, Ordering::SeqCst);
                     *crate::lock(&self.roster) = vec![("bg-1".to_owned(), false)];
@@ -765,7 +785,11 @@ impl Session for FakeSession {
                 }
             }
             *crate::lock(&self.turn) = Some(turn);
-            tokio::spawn(async move { emit(&tx, started).await });
+            if text.starts_with("latestart") {
+                emit(&tx, started).await;
+            } else {
+                tokio::spawn(async move { emit(&tx, started).await });
+            }
             Ok(())
         })
     }
@@ -907,6 +931,23 @@ impl Session for FakeSession {
     fn set_mcp_servers(&self, servers: Vec<McpServer>) -> BoxFuture<'_, ProviderResult<()>> {
         *crate::lock(&self.mcp_servers) = servers;
         Box::pin(async { Ok(()) })
+    }
+
+    fn stop_task(&self, input: conn_provider::StopTaskInput) -> BoxFuture<'_, ProviderResult<()>> {
+        Box::pin(async move {
+            if input.task_id != "wf1" {
+                return Err(ProviderError::Protocol {
+                    detail: "No running workflow task belongs to this provider thread".into(),
+                });
+            }
+            crate::lock(&self.calls).push(format!("stop workflow {}", input.task_id));
+            #[cfg(test)]
+            self.workflow_stop_entered.notify_one();
+            if !self.control_delay.is_zero() {
+                tokio::time::sleep(self.control_delay).await;
+            }
+            Ok(())
+        })
     }
 
     fn has_pending_background_work(&self) -> bool {

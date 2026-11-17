@@ -1,8 +1,7 @@
 //! Streamable HTTP, protocol 2025-06-18, single endpoint, as Effect's `McpServer.layerHttp`
-//! serves it for T3. Every reply is one JSON body, never SSE: T3 sends no request-scoped
-//! notifications, so a reply never holds more than its result. `GET` (the server-to-client
-//! SSE stream) is 405, as in TS. Statuses and error bodies follow a live TS server
-//! (`README.md`, "Transport").
+//! serves it for T3. Search results with matches send a list-changed notification and result
+//! over SSE; other replies use JSON. `GET` (the server-to-client SSE stream) is 405, as in TS.
+//! Statuses and error bodies follow a live TS server (`README.md`, "Transport").
 
 use std::sync::Arc;
 
@@ -178,23 +177,50 @@ pub(crate) async fn handle(
         return Reply::empty(StatusCode::ACCEPTED).with(PROTOCOL_HEADER, PROTOCOL_VERSION.into());
     }
 
+    let mut changed = false;
     let body = match method_name {
         "ping" | "logging/setLevel" => {
             json!({"jsonrpc": "2.0", "id": rpc_id, "result": {}}).to_string()
         }
         "tools/list" => format!(
             "{{\"jsonrpc\":\"2.0\",\"id\":{rpc_id},\"result\":{}}}",
-            catalog::list_result(matches!(caller, Caller::Client(_)))
+            match &caller {
+                Caller::Thread(thread)
+                    if header(headers, "t3-tool-exposure") == Some("deferred") =>
+                {
+                    let exposure = crate::lock(&service.exposure);
+                    catalog::list_filtered(|name| {
+                        exposure.listed(&thread.provider_session_id, name)
+                    })
+                }
+                _ => catalog::list_result(matches!(caller, Caller::Client(_))),
+            }
         ),
         "tools/call" => {
             let params = message
                 .get_mut("params")
                 .map(Value::take)
                 .unwrap_or_default();
-            call(service, &caller, &rpc_id, params, headers).await
+            let (result, list_changed) = call(service, &caller, &rpc_id, params, headers).await;
+            changed = list_changed;
+            result
         }
         other => rpc_error(&rpc_id, -32601, &format!("Method not found: {other}")),
     };
+    if changed {
+        let notification =
+            json!({"jsonrpc":"2.0","method":"notifications/tools/list_changed","params":{}});
+        return Reply {
+            status: StatusCode::OK,
+            headers: vec![
+                ("content-type", "text/event-stream".into()),
+                (PROTOCOL_HEADER, PROTOCOL_VERSION.into()),
+            ],
+            body: Some(format!(
+                "event: message\ndata: {notification}\n\nevent: message\ndata: {body}\n\n"
+            )),
+        };
+    }
     Reply::json(StatusCode::OK, format!("{body}\n")).with(PROTOCOL_HEADER, PROTOCOL_VERSION.into())
 }
 
@@ -204,35 +230,28 @@ async fn call(
     id: &Value,
     mut params: Value,
     headers: &HeaderMap,
-) -> String {
+) -> (String, bool) {
+    let invalid = |message: &str| (rpc_error(id, -32602, message), false);
     let mut arguments = match params["arguments"].take() {
         Value::Object(map) => map,
         Value::Null => Map::new(),
-        _ => return rpc_error(id, -32602, "Invalid method parameters"),
+        _ => return invalid("Invalid method parameters"),
     };
     let Some(name) = params["name"].as_str() else {
-        return rpc_error(id, -32602, "Invalid method parameters");
+        return invalid("Invalid method parameters");
     };
     let found =
         catalog::tool(name).filter(|_| catalog::offered(name, matches!(caller, Caller::Client(_))));
     let Some((tool, order)) = found else {
-        return rpc_error(id, -32602, &format!("Tool '{name}' not found"));
+        return invalid(&format!("Tool '{name}' not found"));
     };
     if let Err(problem) =
         catalog::check_arguments(name, &tool["inputSchema"], &order, &mut arguments)
     {
-        return rpc_error(
-            id,
-            -32602,
-            &format!("Invalid parameters for tool '{name}': {problem}"),
-        );
+        return invalid(&format!("Invalid parameters for tool '{name}': {problem}"));
     }
     if let Err(problem) = crate::input::check(name, &mut arguments) {
-        return rpc_error(
-            id,
-            -32602,
-            &format!("Invalid parameters for tool '{name}': {problem}"),
-        );
+        return invalid(&format!("Invalid parameters for tool '{name}': {problem}"));
     }
     let origin = header(headers, "host")
         .filter(|host| !host.contains(['/', '\\', ' ']))
@@ -246,12 +265,19 @@ async fn call(
                 }
             )
         });
+    let mut changed = false;
     let result = match tools::call(service, caller, name, arguments, origin.as_deref()).await {
-        Ok(value) => json!({
-            "content": [{"type": "text", "text": value.to_string()}],
-            "structuredContent": value,
-            "isError": false,
-        }),
+        Ok(value) => {
+            changed = name == "tool_search"
+                && value["tools"]
+                    .as_array()
+                    .is_some_and(|tools| !tools.is_empty());
+            json!({
+                "content": [{"type": "text", "text": value.to_string()}],
+                "structuredContent": value,
+                "isError": false,
+            })
+        }
         Err(tools::ToolError::Failure { code, message }) => {
             let failure =
                 json!({"_tag": "OrchestratorMcpFailure", "code": code, "message": message});
@@ -265,12 +291,11 @@ async fn call(
             json!({"content": [{"type": "text", "text": message}], "isError": true})
         }
         Err(tools::ToolError::InvalidParams(problem)) => {
-            return rpc_error(
-                id,
-                -32602,
-                &format!("Invalid parameters for tool '{name}': {problem}"),
-            );
+            return invalid(&format!("Invalid parameters for tool '{name}': {problem}"));
         }
     };
-    json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string()
+    (
+        json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string(),
+        changed,
+    )
 }

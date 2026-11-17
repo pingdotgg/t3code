@@ -4,6 +4,11 @@
 
 use std::sync::Arc;
 
+use conn_support::{
+    ids::encode_component as encode,
+    modes::{interaction_rank, runtime_rank},
+};
+
 use conn_contract::{Command, ThreadId, from_json};
 use conn_engine::EngineError;
 use serde_json::{Map, Value, json};
@@ -26,6 +31,7 @@ mod secrets;
 mod tasks;
 mod test_logins;
 mod threads;
+mod workflows;
 pub(crate) mod worktree;
 
 pub(crate) type Args = Map<String, Value>;
@@ -71,7 +77,9 @@ pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError 
 
 /// Every name in `tools.implemented` has an arm here; a test checks both ways.
 #[cfg(test)]
-pub(crate) const HANDLED: [&str; 49] = [
+pub(crate) const HANDLED: &[&str] = &[
+    "tool_search",
+    "t3_workflow_stop",
     "html_render",
     "mcp_call",
     "mcp_connect",
@@ -145,6 +153,13 @@ pub(crate) async fn call(
         origin,
     };
     match name {
+        "t3_workflow_stop" => workflows::stop(&cx, &args).await,
+        "tool_search" => {
+            let caller = cx.require_thread("tool_search")?;
+            Ok(
+                serde_json::json!({"tools":crate::lock(&service.exposure).search(&caller.provider_session_id, args.get("query").and_then(Value::as_str).unwrap_or_default())}),
+            )
+        }
         "html_render" => html::render(&cx, &args).await,
         "create_threads" => create_threads::create(&cx, &args).await,
         "t3_attachment_prepare_upload" => attachments::prepare(&cx, &args).await,
@@ -205,21 +220,6 @@ pub(crate) struct Cx<'a> {
     service: &'a Arc<McpService>,
     caller: &'a Caller,
     origin: Option<&'a str>,
-}
-
-pub(crate) const RUNTIME_MODES: [&str; 4] = [
-    "approval-required",
-    "auto-accept-edits",
-    "auto",
-    "full-access",
-];
-
-pub(crate) fn runtime_rank(mode: &str) -> usize {
-    RUNTIME_MODES.iter().position(|m| *m == mode).unwrap_or(0)
-}
-
-pub(crate) fn interaction_rank(mode: &str) -> usize {
-    usize::from(mode != "plan")
 }
 
 /// The broadest modes the caller may start or drive threads in.
@@ -526,19 +526,6 @@ fn is_live_caller(
     thread["archivedAt"].is_null()
         && thread["providerInstanceId"] == provider_instance_id
         && (has_active_run(projection) || background)
-}
-
-/// `encodeURIComponent`.
-fn encode(part: &str) -> String {
-    let mut out = String::with_capacity(part.len());
-    for byte in part.bytes() {
-        if byte.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&byte) {
-            out.push(byte as char);
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
 }
 
 fn internal(message: impl std::fmt::Display) -> ToolError {
