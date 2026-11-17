@@ -6,7 +6,7 @@ tags: [upstream, fork, integration]
 status: stable
 generated:
   by: opencode/gpt-6.1-sol
-  at: 2026-11-17T00:54:19+00:00
+  at: 2026-11-17T02:15:40+00:00
 verified:
   - by: opencode/gpt-6.1-sol
     at: 2026-11-16T18:15:36+00:00
@@ -1161,7 +1161,7 @@ changes.[^open-in-default-app]
 Upstream (`36254ab82`) stops a watched pull request from holding its thread
 once every check finishes, even while review is pending, so forgotten watches
 cannot keep completed work in Working indefinitely.
-Open [PR #83](https://github.com/NicholasZolton/t3code/pull/83) preserves that default
+[PR #83](https://github.com/NicholasZolton/t3code/pull/83) preserves that default
 and adds an optional `waitForApproval` setting. An opted-in watch holds until
 checks finish and the host reports `approved`, including bot approvals without
 mandatory-review rules. Approval releases the hold without ending the watch.
