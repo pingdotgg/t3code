@@ -174,6 +174,7 @@ const makeCheckpointFixture = Effect.fn("makeCheckpointFixture")(function* (
   yield* git(["init"]);
   yield* git(["config", "user.name", "Test"]);
   yield* git(["config", "user.email", "test@test.com"]);
+  yield* git(["config", "core.autocrlf", "false"]);
   yield* fileSystem.writeFileString(path.join(cwd, "file.txt"), "initial\n");
   yield* git(["add", "."]);
   yield* git(["commit", "-m", "initial"]);

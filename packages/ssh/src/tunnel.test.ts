@@ -30,7 +30,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { captureLauncher, captureLauncherFor, runLauncher } from "./launcherTestHarness.ts";
 import * as SshAuth from "./auth.ts";
-import { remoteStateKey } from "./command.ts";
+import { remoteStateKey, shellSingleQuote } from "./command.ts";
 import { SshCommandError, SshPasswordPromptError, SshReadinessError } from "./errors.ts";
 import * as SshTunnel from "./tunnel.ts";
 
@@ -630,18 +630,7 @@ esac
       NodeChildProcess.execFileSync("sh", ["-c", `sha256sum ${archive} > SHA256SUMS`], {
         cwd: release,
       });
-      for (const tool of [
-        "sh",
-        "mkdir",
-        "mktemp",
-        "cat",
-        "rm",
-        "grep",
-        "cut",
-        checksum,
-        "tar",
-        "mv",
-      ]) {
+      for (const tool of ["sh", "mkdir", "mktemp", "cat", "rm", "grep", "cut", checksum, "mv"]) {
         NodeFS.symlinkSync(
           NodeChildProcess.execFileSync("sh", ["-c", `command -v ${tool}`], {
             encoding: "utf8",
@@ -649,6 +638,10 @@ esac
           NodePath.join(bin, tool),
         );
       }
+      // BSD tar inflates in-process. Model a remote tar that needs an external gzip.
+      NodeFS.writeFileSync(NodePath.join(bin, "tar"), '#!/bin/sh\nexec gzip -dc "$2"\n', {
+        mode: 0o755,
+      });
       NodeFS.writeFileSync(
         NodePath.join(bin, "uname"),
         '#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo x86_64 ;; esac\n',
@@ -1883,7 +1876,7 @@ const canBind = (port) =>
         yield* fs.makeDirectory(runtimeDir, { recursive: true });
         yield* fs.writeFileString(
           `${runtimeDir}/t3`,
-          `#!/bin/sh\nexec node '${fakeT3}' '${version}' "$@"\n`,
+          `#!/bin/sh\nexec ${shellSingleQuote(process.execPath)} ${shellSingleQuote(fakeT3)} ${shellSingleQuote(version)} "$@"\n`,
         );
         yield* fs.chmod(`${runtimeDir}/t3`, 0o755);
         yield* fs.writeFileString(`${runtimeDir}/.install-complete`, `${version}\n`);

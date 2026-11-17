@@ -90,6 +90,7 @@ describe("subscription widget snapshots", () => {
           },
         }),
         claude("rex", {
+          displayName: "rex@example.com",
           usageLimits: {
             checkedAt,
             windows: [{ ...window, resetsAt: "2026-09-05T11:50:00.000Z" }],
