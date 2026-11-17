@@ -4769,12 +4769,16 @@ function providerFailureFromResult(
     apiErrorStatus === 429 && message.result.startsWith("API Error:")
       ? gatewayCooldownResetAt(
           // CLIProxyAPI nests upstream errors in its message; only its own cooldown counts.
-          (message.result.startsWith(
+          message.result.startsWith(
             "API Error: Request rejected (429) · All credentials for model ",
           )
-            ? /^API Error: Request rejected \(429\) · All credentials for model [^\s()]+ are cooling down \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/
-            : /\(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/
-          ).exec(message.result),
+            ? (/^API Error: Request rejected \(429\) · All credentials for model [^\s()]+ are cooling down \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/.exec(
+                message.result,
+              ) ??
+                /^API Error: Request rejected \(429\) · All credentials for model [^\s()]+ are cooling down \(last error: [\s\S]*\) \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)$/.exec(
+                  message.result,
+                ))
+            : /\(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/.exec(message.result),
           receivedAt,
         )
       : undefined;
@@ -4945,6 +4949,8 @@ function formatClaudeUsageLimitWait(waitMs: number): string {
 
 interface ActiveClaudeTurnContext {
   retryBudgetFailure?: OrchestrationV2ProviderFailure;
+  // Set when the prompt starts or a request goes out; cleared by the turn's next frame.
+  unansweredRequestSince?: DateTime.Utc | undefined;
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly autoCompactWindow: string;
@@ -6393,39 +6399,72 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 : undefined;
             });
             const retry = yield* isCurrentRetry;
-            // A user Stop already in flight keeps its interrupted outcome.
-            if (
-              retry === undefined ||
-              (yield* Ref.get(interruptedTurns)).has(context.providerTurnId)
-            )
-              return;
-            context.retryBudgetFailure = { ...retry.failure, retryable: false };
-            const liveQuery = yield* Ref.get(queryContext);
-            yield* interruptTurn({
-              providerThread: context.input.providerThread,
-              providerTurnId: context.providerTurnId,
-            }).pipe(
-              Effect.timeoutOption(CLAUDE_STOP_CONFIRM_TIMEOUT_MS),
-              Effect.catch((cause) =>
-                Effect.logWarning("orchestration-v2.claude-retry-budget-stop-failed", { cause }),
-              ),
+            if (retry === undefined) return;
+            yield* failStalledTurn(
+              context,
+              { ...retry.failure, retryable: false },
+              Effect.map(isCurrentRetry, (current) => current !== undefined),
             );
-            if (liveQuery === null || (yield* isCurrentRetry) === undefined) return;
-            // The CLI did not confirm the stop; settle the turn without it.
-            const ownedLiveQuery = yield* Ref.modify(queryContext, (current) =>
-              current?.query === liveQuery.query ? [true, null] : [false, current],
-            );
-            if (!ownedLiveQuery) return;
-            liveQuery.stopping = true;
-            yield* liveQuery.query.close.pipe(
-              Effect.timeoutOption(CLAUDE_STOP_CONFIRM_TIMEOUT_MS),
-              Effect.ignore,
-            );
-            yield* finalizeActiveTurnAfterQueryExit(liveQuery);
-            yield* endSubagentCallsOfClosedQuery(liveQuery.nativeThreadId, "interrupted");
-            yield* Deferred.succeed(liveQuery.closed, undefined);
           },
         );
+
+        // Partial messages are on, so a started prompt or a sent request streams within seconds.
+        // A gateway can hold the request open without ever letting the CLI time out and retry.
+        const failUnansweredRequest = Effect.fn("ClaudeAdapterV2.failUnansweredRequest")(function* (
+          context: ActiveClaudeTurnContext,
+          since: DateTime.Utc,
+        ) {
+          const isUnanswered = Effect.map(
+            Ref.get(activeTurn),
+            (active) => active === context && context.unansweredRequestSince === since,
+          );
+          if (!(yield* isUnanswered)) return;
+          yield* failStalledTurn(
+            context,
+            makeProviderFailure({
+              class: "transport_error",
+              code: "claude_request_unanswered",
+              message: `Claude sent nothing for ${PROVIDER_RETRY_BUDGET_MS / 60_000} minutes. The API or a gateway in front of it is not responding.`,
+              retryable: false,
+            }),
+            // Once the stop is sent, a frame clearing the silence must not skip forced settlement.
+            Effect.map(Ref.get(activeTurn), (active) => active === context),
+          );
+        });
+
+        const failStalledTurn = Effect.fn("ClaudeAdapterV2.failStalledTurn")(function* (
+          context: ActiveClaudeTurnContext,
+          failure: OrchestrationV2ProviderFailure,
+          stillStalled: Effect.Effect<boolean>,
+        ) {
+          // A user Stop already in flight keeps its interrupted outcome.
+          if ((yield* Ref.get(interruptedTurns)).has(context.providerTurnId)) return;
+          context.retryBudgetFailure = failure;
+          const liveQuery = yield* Ref.get(queryContext);
+          yield* interruptTurn({
+            providerThread: context.input.providerThread,
+            providerTurnId: context.providerTurnId,
+          }).pipe(
+            Effect.timeoutOption(CLAUDE_STOP_CONFIRM_TIMEOUT_MS),
+            Effect.catch((cause) =>
+              Effect.logWarning("orchestration-v2.claude-retry-budget-stop-failed", { cause }),
+            ),
+          );
+          if (liveQuery === null || !(yield* stillStalled)) return;
+          // The CLI did not confirm the stop; settle the turn without it.
+          const ownedLiveQuery = yield* Ref.modify(queryContext, (current) =>
+            current?.query === liveQuery.query ? [true, null] : [false, current],
+          );
+          if (!ownedLiveQuery) return;
+          liveQuery.stopping = true;
+          yield* liveQuery.query.close.pipe(
+            Effect.timeoutOption(CLAUDE_STOP_CONFIRM_TIMEOUT_MS),
+            Effect.ignore,
+          );
+          yield* finalizeActiveTurnAfterQueryExit(liveQuery);
+          yield* endSubagentCallsOfClosedQuery(liveQuery.nativeThreadId, "interrupted");
+          yield* Deferred.succeed(liveQuery.closed, undefined);
+        });
 
         const rememberProviderThread =
           /* Provider events include streaming deltas; avoid a span for each update. */
@@ -9432,11 +9471,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               Effect.gen(function* () {
                 const nativeThreadId =
                   input.context.input.providerThread.nativeThreadRef?.nativeId ?? null;
+                const liveQuery = yield* Ref.get(queryContext);
+                // Background tasks outlive a failed turn while the process that ran it stays open.
+                const processKeepsTasks =
+                  input.status === "failed" &&
+                  liveQuery !== null &&
+                  !liveQuery.stopping &&
+                  liveQuery.lastTurn === input.context;
                 if (nativeThreadId !== null) {
-                  if (input.status !== "completed") {
+                  if (input.status !== "completed" && !processKeepsTasks) {
                     // Stop cancels Claude's wakeup and an exited process loses it; a failed
                     // turn on a live process leaves it pending. Process exits null the query first.
-                    if (input.status !== "failed" || (yield* Ref.get(queryContext)) === null) {
+                    if (input.status !== "failed" || liveQuery === null) {
                       scheduledWakeupsByNativeThread.delete(nativeThreadId);
                     }
                     yield* clearPendingBackgroundTasksForNativeThread(nativeThreadId);
@@ -9476,7 +9522,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   nativeThreadId === null ? undefined : goalsByNativeThread.get(nativeThreadId);
                 const goalChecked = goalCheckedTurns.delete(input.context.providerTurnId);
                 const terminalReason = input.result?.terminal_reason;
-                const liveQuery = yield* Ref.get(queryContext);
                 if (
                   nativeThreadId !== null &&
                   goal?.status === "active" &&
@@ -10551,6 +10596,33 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               yield* bufferWakeMessage({ nativeThreadId: liveQuery.nativeThreadId, message });
             }
             return;
+          }
+          if (context === (yield* Ref.get(activeTurn))) {
+            const lifecycle = claudePromptLifecycle(message);
+            if (
+              (message.type === "system" &&
+                message.subtype === "status" &&
+                message.status === "requesting") ||
+              (lifecycle?.state === "started" && lifecycle.uuid === context.promptUuid)
+            ) {
+              const since = yield* DateTime.now;
+              context.unansweredRequestSince = since;
+              yield* failUnansweredRequest(context, since).pipe(
+                Effect.delay(PROVIDER_RETRY_BUDGET_MS),
+                Effect.forkIn(sessionScope),
+              );
+            } else if (
+              // Background tasks from earlier turns keep streaming while the root request hangs.
+              // Only the root starts depth-1 tasks, so such a start (a forked skill) is this turn's.
+              Reflect.get(message, "parent_tool_use_id") == null &&
+              !(
+                message.type === "system" &&
+                message.subtype.startsWith("task_") &&
+                !(message.subtype === "task_started" && (message.spawn_depth ?? 1) <= 1)
+              )
+            ) {
+              context.unansweredRequestSince = undefined;
+            }
           }
           const focusedPlugin = claudeFocusRequestedPanePlugin(message);
           if (focusedPlugin !== null && context === (yield* Ref.get(activeTurn))) {

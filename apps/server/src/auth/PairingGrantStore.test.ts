@@ -16,6 +16,7 @@ import {
 } from "@t3tools/shared/desktopBootstrapToken";
 
 import * as ServerConfig from "../config.ts";
+import { MCP_APPROVAL_SUBJECT_PREFIX } from "../persistence/AuthPairingLinks.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 
@@ -254,7 +255,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
       );
       // An app approval code sends no update, issued or spent; the next belongs to a plain code.
       const approval = yield* grants.issueOneTimeToken({ mcpApproval: "auto" });
-      yield* grants.consume(approval.credential, { mcpApproval: "auto" });
+      yield* grants.consume(approval.credential, {
+        allowedSubject: `${MCP_APPROVAL_SUBJECT_PREFIX}auto`,
+      });
       for (const input of [{}, { label: "Synthetic phone" }]) {
         const issued = yield* grants.issueOneTimeToken(input);
         const change = yield* Queue.take(changes);
