@@ -1120,10 +1120,12 @@ export const layer: Layer.Layer<
                   }),
                 ];
           // History delivery (inline or injected) is text only, so missed images ride on prompts
-          // until one is accepted. Compaction and /goal starts carry none.
+          // until a later run's is accepted. Compaction and /goal starts carry none. A missed run's
+          // own accepted attempt predates its unsent steering input, so it does not count.
           const lastPromptOrdinal = Math.max(
             0,
             ...acceptedAttempts.flatMap((attempt) => {
+              if (missedRunIds.has(attempt.runId)) return [];
               const source = projection.runs.find((candidate) => candidate.id === attempt.runId);
               const message = projection.messages.find(
                 (candidate) => candidate.id === source?.userMessageId,
