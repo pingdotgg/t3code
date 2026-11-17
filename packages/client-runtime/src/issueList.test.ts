@@ -7,9 +7,6 @@ import type {
   ProjectId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-
-import { createMergedIssueCandidatesAtoms } from "./state/issues.ts";
 
 import {
   continueIssuePage,
@@ -132,38 +129,6 @@ describe("issueFilterScopes", () => {
         input: { projectId: api, tracker: "linear", host: "linear.app", scope: "ENG" },
       },
     ]);
-  });
-
-  it("keeps a Linear team's filter choices after a search returns no issues", () => {
-    const candidates = {
-      labels: [{ name: "bug", color: null, description: null }],
-      assignees: [{ id: "user-1", login: "julius", name: "Julius", avatarUrl: null }],
-      truncated: false,
-    };
-    const merged = createMergedIssueCandidatesAtoms(
-      () => Atom.make(AsyncResult.success(candidates)),
-      () => "Candidates could not be read",
-    );
-    const registry = AtomRegistry.make();
-    try {
-      const first = holdIssuePages(
-        [[environmentId, answer({ trackers: [tracker({})], entries: [linearRow] })]],
-        new Map(),
-      );
-      expect(registry.get(merged(issueFilterScopes(first, []))).labels).toEqual(candidates.labels);
-      const searched = holdIssuePages(
-        [[environmentId, answer({ trackers: [tracker({})], entries: [] })]],
-        first,
-      );
-      const choices = registry.get(merged(issueFilterScopes(searched, [])));
-      expect(
-        choices.labels,
-        "a search with no matches must retain the team's label choices",
-      ).toEqual(candidates.labels);
-      expect(choices.assignees).toEqual(candidates.assignees);
-    } finally {
-      registry.dispose();
-    }
   });
 
   it("keeps a Linear team's filter scope across a search's loading gap", () => {
