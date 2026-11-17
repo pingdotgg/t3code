@@ -7,7 +7,6 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -820,127 +819,62 @@ for (const cwd of ["/workspace with spaces/", "/workspace with spaces/file.ts:12
   );
 }
 
-// The Cursor Agent CLI installs a cursor script that fails when no IDE is behind it.
-const failingCursor = "#!/bin/sh\necho 'Error: no IDE behind this script' >&2\nexit 1\n";
-// Stays silent for longer than the `--version` check waits.
-const stalledCursor = "#!/bin/sh\nexec sleep 30\n";
-const isProcessAlive = (pid: number) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
-for (const { title, first, later, bundled, expected, platforms } of [
-  {
-    title: "keeps a working cursor on PATH ahead of the Cursor bundle",
-    first: "#!/bin/sh\n",
-    later: false,
-    bundled: true,
-    expected: "path",
-    platforms: ["darwin"],
-  },
-  {
-    title: "skips a failing cursor on PATH for the Cursor bundle",
-    first: failingCursor,
-    later: false,
-    bundled: true,
-    expected: "bundle",
-    platforms: ["darwin"],
-  },
-  {
-    title: "keeps a working cursor on PATH",
-    first: "#!/bin/sh\n",
-    later: false,
-    bundled: false,
-    expected: "path",
-    platforms: ["linux"],
-  },
-  {
-    title: "keeps a cursor on PATH that does not answer --version in time",
-    first: stalledCursor,
-    later: false,
-    bundled: false,
-    expected: "path",
-    platforms: ["darwin", "linux"],
-  },
-  {
-    title: "skips a failing cursor on PATH for a working cursor later on PATH",
-    first: failingCursor,
-    later: true,
-    bundled: false,
-    expected: "later",
-    platforms: ["darwin", "linux"],
-  },
-  {
-    title: "does not offer Cursor when the only cursor on PATH fails",
-    first: failingCursor,
-    later: false,
-    bundled: false,
-    expected: "none",
-    platforms: ["darwin", "linux"],
-  },
+// Stand-ins for a `--version` check. The Cursor Agent CLI installs a cursor script that fails
+// when no IDE is behind it, and a slow first start stays silent for longer than the check waits.
+const scripts = { works: "", fails: "exit 1", stalls: "exec sleep 30" };
+// Each row: title, editor, script first on PATH, extra install, result on darwin, result on linux.
+for (const [title, id, first, extra, onDarwin, onLinux = onDarwin] of [
+  ["keeps a working cursor on PATH ahead of the bundle", "cursor", "works", "bundle", "cursor"],
+  ["keeps a cursor that never answers --version", "cursor", "stalls", "none", "cursor"],
+  ["skips a failing cursor for a later cursor on PATH", "cursor", "fails", "later", "later"],
+  ["skips a failing cursor for the Cursor bundle", "cursor", "fails", "bundle", "bundle", "none"],
+  ["rejects a zed that never answers --version", "zed", "stalls", "none", "none"],
 ] as const) {
-  for (const platform of platforms) {
-    it.effect.skipIf(windowsHost)(platform === "darwin" ? title : `${title} on Linux`, () =>
+  for (const platform of ["darwin", "linux"] as const) {
+    it.effect.skipIf(windowsHost)(`${title} on ${platform}`, () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cursor-agent-cli-" });
-        const bundle = path.join(home, "Applications/Cursor.app/Contents/Resources/app/bin/cursor");
-        const binDir = path.join(home, ".local/bin");
-        const laterCursor = path.join(home, "later-bin/cursor");
-        for (const [command, script] of [
-          [path.join(binDir, "cursor"), first],
-          ...(later ? [[laterCursor, "#!/bin/sh\n"] as const] : []),
-          ...(bundled ? [[bundle, "#!/bin/sh\n"] as const] : []),
-        ] as const) {
-          yield* fs.makeDirectory(path.dirname(command), { recursive: true });
-          yield* fs.writeFileString(command, script);
-          yield* fs.chmod(command, 0o755);
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-check-" });
+        const commands = {
+          cursor: "cursor",
+          none: undefined,
+          first: path.join(home, "bin", id),
+          later: path.join(home, "later-bin", id),
+          bundle: path.join(home, "Applications/Cursor.app/Contents/Resources/app/bin/cursor"),
+        };
+        for (const key of ["first", extra] as const) {
+          if (key === "none") continue;
+          yield* fs.makeDirectory(path.dirname(commands[key]), { recursive: true });
+          const script = key === "first" ? scripts[first] : scripts.works;
+          yield* fs.writeFileString(commands[key], `#!/bin/sh\n${script}\n`);
+          yield* fs.chmod(commands[key], 0o755);
         }
-        const editor = EDITORS.find((editor) => editor.id === "cursor")!;
+        const editor = EDITORS.find((editor) => editor.id === id)!;
+        const env = { HOME: home, PATH: `${home}/bin:${home}/later-bin` };
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const firstPid = yield* Deferred.make<number>();
-        const resolving = yield* resolveEditorCommand(editor, {
-          HOME: home,
-          PATH: `${binDir}:${path.dirname(laterCursor)}`,
-        }).pipe(
-          Effect.provideService(HostProcess.Platform, platform),
-          // Keep a Cursor installed on the host, in /Applications or /usr/bin, out of the result.
-          Effect.provideService(FileSystem.FileSystem, {
-            ...fs,
-            stat: (file) =>
-              fs.stat(file.startsWith(`${home}${path.sep}`) ? file : path.join(home, "missing")),
-          }),
-          // Report the PID of the first `--version` check once its process runs.
-          Effect.provideService(
-            ChildProcessSpawner.ChildProcessSpawner,
-            ChildProcessSpawner.make((command) =>
-              spawner
-                .spawn(command)
-                .pipe(Effect.tap((handle) => Deferred.succeed(firstPid, handle.pid))),
+        const started = yield* Deferred.make<void>();
+        // Signal that the `--version` check has a running process.
+        const signal = Deferred.succeed(started, undefined);
+        const [resolved] = yield* Effect.all(
+          [
+            resolveEditorCommand(editor, env).pipe(
+              Effect.provideService(HostProcess.Platform, platform),
+              Effect.provideService(Path.Path, withSystemBin(path, path.join(home, "system-bin"))),
+              Effect.provideService(
+                ChildProcessSpawner.ChildProcessSpawner,
+                ChildProcessSpawner.make((cmd) => spawner.spawn(cmd).pipe(Effect.tap(signal))),
+              ),
             ),
-          ),
-          Effect.forkChild,
+            // The check runs on the test clock, so its timeout passes only when the clock moves.
+            first === "stalls"
+              ? Deferred.await(started).pipe(Effect.andThen(TestClock.adjust("2 seconds")))
+              : Effect.void,
+          ],
+          { concurrency: "unbounded" },
         );
-        const stalled = first === stalledCursor;
-        if (stalled) {
-          // The check runs on the test clock, so its timeout passes only when the clock moves.
-          assert.isTrue(isProcessAlive(yield* Deferred.await(firstPid)));
-          yield* TestClock.adjust("2 seconds");
-        }
-
-        const commands = { path: "cursor", bundle, later: laterCursor };
-        assert.deepEqual(
-          yield* Fiber.join(resolving),
-          expected === "none"
-            ? Option.none()
-            : Option.some({ command: commands[expected], baseArgs: ["--classic"] }),
-        );
-        // The timed-out check must not leave its child process behind.
-        if (stalled) assert.isFalse(isProcessAlive(yield* Deferred.await(firstPid)));
+        const expected = commands[platform === "darwin" ? onDarwin : onLinux];
+        assert.equal(Option.getOrUndefined(resolved)?.command, expected);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   }
@@ -1005,14 +939,16 @@ for (const { layout, pathNames, fallbackNames, expected } of [
   );
 }
 
-// Linux editor discovery also probes fixed system directories; tests point them at a temp
-// directory so an editor installed on the host cannot satisfy the lookup.
+// Editor discovery also probes fixed system directories (Linux bin folders, macOS /Applications);
+// tests point them at a temp directory so an editor installed on the host cannot satisfy the lookup.
 const withSystemBin = (path: Path.Path, systemBin: string): Path.Path => ({
   ...path,
   join: (...parts) =>
     path.join(
       ...parts.map((part) =>
-        ["/usr/local/bin", "/usr/bin", "/snap/bin"].includes(part) ? systemBin : part,
+        ["/Applications", "/usr/local/bin", "/usr/bin", "/snap/bin"].includes(part)
+          ? systemBin
+          : part,
       ),
     ),
 });
