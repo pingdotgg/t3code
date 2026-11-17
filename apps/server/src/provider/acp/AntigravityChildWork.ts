@@ -253,10 +253,19 @@ export const readAntigravityTaskIds = Effect.fn("readAntigravityTaskIds")(functi
         // Cortex step types: RUN_COMMAND=21, INVOKE_SUBAGENT=127, GENERIC=132 (exa.cortex_pb).
         for (const row of database
           .prepare(
-            "SELECT step_payload FROM steps WHERE step_type IN (21, 127, 132) AND step_format = 0 AND length(step_payload) <= ? ORDER BY idx DESC",
+            "SELECT idx, metadata FROM steps WHERE step_type IN (21, 127, 132) AND step_format = 0 AND length(metadata) <= ? ORDER BY idx DESC",
           )
           .iterate(MAX_STEP_BYTES)) {
-          const payload = payloadOf(row);
+          const metadata = row.metadata;
+          if (!(metadata instanceof Uint8Array)) continue;
+          const callId = safely((data) => text(message(data, METADATA_TOOL_CALL), 1))(metadata);
+          const owner = callId === undefined ? undefined : owners.get(callId);
+          if (owner === undefined || result.has(owner)) continue;
+          const payload = payloadOf(
+            database
+              .prepare("SELECT step_payload FROM steps WHERE idx = ? AND length(step_payload) <= ?")
+              .get(row.idx!, MAX_STEP_BYTES),
+          );
           if (payload === undefined) continue;
           bytes += payload.length;
           if (++rows > MAX_INVOKE_ROWS || bytes > MAX_SCAN_BYTES) break;
@@ -281,10 +290,9 @@ export const readAntigravityTaskIds = Effect.fn("readAntigravityTaskIds")(functi
             const id = taskId || commandId;
             return { callId, ids: children.length > 0 ? children : id ? [id] : [] };
           })(payload);
-          const owner = record?.callId === undefined ? undefined : owners.get(record.callId);
           if (
-            owner !== undefined &&
             record !== undefined &&
+            record.callId === callId &&
             record.ids.length > 0 &&
             !result.has(owner)
           ) {
