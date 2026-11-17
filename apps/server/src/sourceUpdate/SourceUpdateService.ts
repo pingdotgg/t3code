@@ -55,8 +55,9 @@ export const PULL_UPSTREAM_PROMPT = `Merge upstream into this checkout. It is th
 
 1. \`git fetch --multiple origin upstream\`, make sure the working tree is clean and on \`main\`, and fast-forward to \`origin/main\`.
 2. \`git merge --no-edit upstream/main\`. Never rebase: \`main\` is published. Resolve every conflict so both sides' intent survives; read the upstream commits when a resolution is not obvious, and ask me when it is a real product decision.
-3. Run \`vp i\` and \`vp run check:changed\`, and fix what fails.
-4. Push to \`origin main\`. Never push to \`upstream\` or open pull requests against it.
+3. Where a conflict came from our fork's code and upstream's sitting in the same lines, you may make a small refactor on our side so the next merge does not collide there: move our addition into its own function, file or module and keep only a one-line hook in upstream's code. Never remove or change what either side does, and keep it to the conflicted area.
+4. Run \`vp i\` and \`vp run check:changed\`, and fix what fails.
+5. Push to \`origin main\`. Never push to \`upstream\` or open pull requests against it.
 
 Then stop. Do not build or restart the server; I press Update in the app once this is pushed.`;
 
