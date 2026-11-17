@@ -1,4 +1,8 @@
-import type { TerminalGrid, TerminalOutputState } from "@t3tools/client-runtime/state/terminal";
+import {
+  terminalOutputText,
+  type TerminalGrid,
+  type TerminalOutputState,
+} from "@t3tools/client-runtime/state/terminal";
 import { memo, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import {
   Pressable,
@@ -199,7 +203,12 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface({
 });
 
 export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurfaceProps) {
-  const buffer = useTerminalSurfaceBuffer(props);
+  // The text fallback draws escape sequences literally, so it gets displayed text, not the replay.
+  const buffer = useTerminalSurfaceBuffer(
+    resolveNativeTerminalSurfaceView() || props.output === null
+      ? props
+      : { terminalKey: props.terminalKey, buffer: terminalOutputText(props.output) },
+  );
   return <ReadyTerminalSurface key={props.terminalKey} {...props} buffer={buffer} />;
 });
 

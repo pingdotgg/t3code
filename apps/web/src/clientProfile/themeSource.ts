@@ -155,10 +155,14 @@ export function createWebThemeSource(): ClientProfileValueSource {
   };
 }
 
-export function themeProfileValuesForDefault(themeId: string): Record<string, unknown> | null {
+export function themeProfileValuesForDefault(
+  themeId: string,
+  setsOwnMode = true,
+): Record<string, unknown> | null {
   const definition = getThemeDefinition(themeId);
   if (definition === null) return null;
   const single = singleAppearanceOf(definition);
   if (single === null) return { themeLight: themeId, themeDark: themeId };
-  return { [single === "light" ? "themeLight" : "themeDark"]: themeId, themeMode: single };
+  const half = { [single === "light" ? "themeLight" : "themeDark"]: themeId };
+  return setsOwnMode ? { ...half, themeMode: single } : half;
 }

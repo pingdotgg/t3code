@@ -4,6 +4,7 @@ import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { THREAD_ACTIVITY_PRESENTATION } from "./threadActivityPresentation";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
+import { contextMenuSourceOf } from "../../contextMenuSource";
 import { requestCustomSnooze } from "../CustomSnoozeDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { useDeadlinePassed } from "~/hooks/useDeadline";
@@ -27,12 +28,14 @@ import {
   resolveThreadProviderStack,
 } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { toServerClock } from "@t3tools/client-runtime/clock";
 import {
   resolveThreadActivityForDisplay,
   THREAD_ACTIVITY_PHASE_LABEL,
 } from "@t3tools/client-runtime/state/thread-execution";
 import {
   AuthOrchestrationOperateScope,
+  type ContextMenuSource,
   type EnvironmentId,
   type EnvironmentMachineKind,
   type ScopedThreadRef,
@@ -91,11 +94,12 @@ import {
   hasUnseenCompletion,
   resolveSidebarRowAccessibility,
   type SidebarDropVerb,
-  resolveSidebarThreadStatus,
+  resolveSidebarRowStatus,
   resolveThreadLastVisitedAt,
   shouldRecedeSidebarThread,
   resolveWorkingStartedAt,
   useRetainedValue,
+  withoutRemovedCheckout,
   useSidebarRowSubscriptionLease,
   setFileDragActive,
 } from "../Sidebar.logic";
@@ -174,18 +178,20 @@ function JumpHintBadge(props: { label: string }) {
 const JUMP_HINT_SLOT_CLASS_NAME =
   "[&>:not([data-jump-hint])]:invisible [&>:not([data-jump-hint])]:absolute";
 
-function WorkingDuration(props: { startedAt: string | null }) {
+function WorkingDuration(props: { environmentId: EnvironmentId; startedAt: string | null }) {
   const startedMs = props.startedAt !== null ? Date.parse(props.startedAt) : Number.NaN;
   if (Number.isNaN(startedMs)) return null;
-  return <WorkingDurationLabel startedMs={startedMs} />;
+  return <WorkingDurationLabel environmentId={props.environmentId} startedMs={startedMs} />;
 }
 
 // Self-ticking so only this span re-renders each second, not the whole row;
 // the shared tick lands every working row's update in the same frame.
-function WorkingDurationLabel(props: { startedMs: number }) {
+function WorkingDurationLabel(props: { environmentId: EnvironmentId; startedMs: number }) {
   const nowMs = useNowSecond();
   return (
-    <span className="tabular-nums">{formatWorkingDurationLabel(nowMs - props.startedMs)}</span>
+    <span className="tabular-nums">
+      {formatWorkingDurationLabel(toServerClock(props.environmentId, nowMs) - props.startedMs)}
+    </span>
   );
 }
 
@@ -614,11 +620,12 @@ type SidebarThreadRowProps = {
   wokeAt: string | null;
   isActive: boolean;
   // Set on the active row only; scrolls it into view when a reveal is owed.
-  revealRef?: ((row: HTMLElement, threadKey: string) => void) | undefined;
+  revealRef?: ((row: HTMLElement, threadKey: string) => (() => void) | undefined) | undefined;
   // Unlike isActive, never true for the ancestor standing in for an open
   // subagent: drafts and PR clicks care about which composer is on screen.
   isRouteThread: boolean;
-  openPullRequestsInRightPanel: boolean;
+  // Read at click time; a prop would re-render every row on entering or leaving a thread route.
+  readOpensPullRequestsInRightPanel: () => boolean;
   jumpLabel: string | null;
   currentEnvironmentId: string | null;
   environmentLabel: string | null;
@@ -632,11 +639,15 @@ type SidebarThreadRowProps = {
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
   onStartRename: (threadRef: ScopedThreadRef, title: string) => void;
   onRenameTitleChange: (title: string) => void;
-  onCommitRename: (threadRef: ScopedThreadRef, title: string, originalTitle: string) => void;
+  onCommitRename: (threadRef: ScopedThreadRef, title: string) => void;
   onCancelRename: () => void;
   isRenaming: boolean;
   renamingTitle: string;
-  onContextMenu: (threadRef: ScopedThreadRef, position: { x: number; y: number }) => void;
+  onContextMenu: (
+    threadRef: ScopedThreadRef,
+    position: { x: number; y: number },
+    source: ContextMenuSource,
+  ) => void;
   onSettle: (threadRef: ScopedThreadRef) => void;
   onActionSweepStart: (
     threadRef: ScopedThreadRef,
@@ -687,7 +698,7 @@ function ThreadRenameInput(props: {
       }}
       onClick={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
-      className="min-w-0 flex-1 rounded-sm border border-input bg-card px-1 text-sm font-medium text-card-foreground outline-none focus:border-foreground"
+      className="-mx-1 min-w-0 flex-1 rounded-sm bg-card px-1 text-sm font-medium text-card-foreground outline-none ring-1 ring-inset ring-input focus:ring-foreground"
     />
   );
 }
@@ -710,7 +721,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     onUnsettle,
     onUnsnooze,
     onUnpin,
-    openPullRequestsInRightPanel,
+    readOpensPullRequestsInRightPanel,
     renamingTitle,
     thread,
     variant,
@@ -722,8 +733,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const { leaseLiveStatus, rowRef: leaseRowRef } = useSidebarRowSubscriptionLease(props.isActive);
   const { revealRef } = props;
   const rowRef = (row: HTMLElement | null) => {
-    if (row !== null) revealRef?.(row, threadKey);
-    return leaseRowRef(row);
+    const stopReveal = row === null ? undefined : revealRef?.(row, threadKey);
+    const releaseLease = leaseRowRef(row);
+    if (!stopReveal) return releaseLease;
+    return () => {
+      stopReveal();
+      releaseLease?.();
+    };
   };
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const localLastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
@@ -768,6 +784,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     JSON.stringify([thread.environmentId, gitCwd]),
     gitStatus.data,
   );
+  const checkoutThread = withoutRemovedCheckout(thread, visibleGitStatus);
   const pr = linkedPullRequestStatus?.pr ?? null;
   const supportsMultiplePullRequests = useSupportsMultiplePullRequests(thread.environmentId);
   const currentLinkedPr = supportsMultiplePullRequests
@@ -781,7 +798,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     useWorkingSubagentCount(threadRef),
     ownWorkingSubagentCount(thread),
   );
-  const status = withWorkingSubagents(resolveSidebarThreadStatus(thread), workingSubagents);
+  const status = withWorkingSubagents(
+    resolveSidebarRowStatus({ ...thread, lastVisitedAt }),
+    workingSubagents,
+  );
   const activity = resolveThreadActivityForDisplay({ activity: thread.activity, status });
   const activityPresentation = activity ? THREAD_ACTIVITY_PRESENTATION[activity.phase] : null;
   const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
@@ -881,11 +901,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     : thread.modelSelection.model;
 
   const isRemote = thread.environmentId !== props.currentEnvironmentId;
-  const showsScratchMachine = !thread.branch && props.scratchMachineLabel !== null;
+  const showsScratchMachine = !checkoutThread.branch && props.scratchMachineLabel !== null;
 
   const detailsTooltip = (
     <SidebarThreadTooltip
-      thread={thread}
+      thread={checkoutThread}
       project={props.project}
       projectDisplayName={props.projectDisplayName}
       environmentLabel={props.environmentLabel}
@@ -914,7 +934,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   };
   const handleContextMenu = (event: ReactMouseEvent) => {
     event.preventDefault();
-    onContextMenu(threadRef, { x: event.clientX, y: event.clientY });
+    onContextMenu(threadRef, { x: event.clientX, y: event.clientY }, contextMenuSourceOf(event));
   };
   const handleKeyDown = (event: ReactKeyboardEvent) => {
     if (event.target !== event.currentTarget) return;
@@ -1019,7 +1039,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const handlePrClick = (event: ReactMouseEvent<HTMLElement>, targetUrl?: string) => {
     const url = targetUrl ?? pr?.url ?? currentLinkedPr?.url;
     if (!url) return;
-    const showInRightPanel = targetUrl !== undefined || openPullRequestsInRightPanel;
+    const showInRightPanel = targetUrl !== undefined || readOpensPullRequestsInRightPanel();
     const openedInRightPanel = openPrLink(event, url, showInRightPanel ? threadRef : undefined);
     if (openedInRightPanel && showInRightPanel && !props.isRouteThread) {
       onThreadActivate(threadRef);
@@ -1093,12 +1113,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     <ThreadRenameInput
       title={renamingTitle}
       onTitleChange={onRenameTitleChange}
-      onCommit={() => onCommitRename(threadRef, renamingTitle, thread.title)}
+      onCommit={() => onCommitRename(threadRef, renamingTitle)}
       onCancel={onCancelRename}
     />
   ) : (
     <span
-      aria-hidden
       className={cn(
         "min-w-0 flex-1 text-start text-sm transition-opacity motion-reduce:transition-none",
         shouldRecede ? "font-normal" : "font-medium",
@@ -1128,7 +1147,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       {thread.title}
     </span>
   );
-  const accessibleTitle = isRenaming ? null : <span className="sr-only">{thread.title}</span>;
 
   const prBadgeShape = supportsMultiplePullRequests
     ? resolveThreadPullRequestBadge(thread.pullRequests)
@@ -1218,18 +1236,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const diff = latestRunDiff(thread);
   // Only the trailing icons would remain, so the row moves them to the title line instead.
   const metaLineEmpty =
-    !thread.branch &&
+    !checkoutThread.branch &&
     !showsScratchMachine &&
     prBadge === null &&
     diff === null &&
     runningTerminalIds.length === 0;
   const metaLine = metaLineEmpty ? null : (
     <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
-      {thread.branch ? (
+      {checkoutThread.branch ? (
         <>
-          <ThreadWorktreeIndicator thread={thread} />
+          <ThreadWorktreeIndicator thread={checkoutThread} />
           <span className="flex min-w-0 flex-1">
-            <MiddleTruncate value={thread.branch} showTitle={false} />
+            <MiddleTruncate value={checkoutThread.branch} showTitle={false} />
           </span>
         </>
       ) : showsScratchMachine ? (
@@ -1301,7 +1319,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           sortable?.isDragging && "relative z-20",
         )}
       >
-        <Tooltip disabled={sortable?.isDragging}>
+        <Tooltip disabled={isRenaming || sortable?.isDragging}>
           <TooltipTrigger
             render={
               <div
@@ -1339,7 +1357,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     : "contents"
               }
             >
-              {accessibleTitle}
               {inFolder ? null : (
                 <span
                   className={cn(
@@ -1489,7 +1506,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                             onClick={handleSettleClick}
                             onPointerDown={handleActionPointerDown}
                             className={cn(
-                              "pointer-events-none absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
+                              "pointer-events-none absolute inset-y-0 right-0 -mr-2 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
                               isWoke && "group-any-hover/sidebar-row:static",
                             )}
                           />
@@ -1522,13 +1539,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       data-thread-item={threadKey}
       {...sortableRootProps}
       {...(fileDropHandlers ?? {})}
+      // The hints are the rendered heights inside py-0.5. Revealing the open thread measures rows
+      // that have not rendered yet, so a hint off by a pixel lands it a pixel short per row above.
       className={cn(
         "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]",
-        metaLineEmpty && "[contain-intrinsic-size:auto_58px]",
+        metaLineEmpty && "[contain-intrinsic-size:auto_60px]",
         sortable?.isDragging && "relative z-20",
       )}
     >
-      <Tooltip disabled={snoozeMenuOpen || sortable?.isDragging}>
+      <Tooltip disabled={isRenaming || snoozeMenuOpen || sortable?.isDragging}>
         <TooltipTrigger
           render={
             <div
@@ -1549,7 +1568,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             />
           }
         >
-          {accessibleTitle}
           <div
             className={cn(
               "relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)",
@@ -1652,6 +1670,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           {status === "preparing" || status === "working" ? (
                             <span aria-hidden>
                               <WorkingDuration
+                                environmentId={thread.environmentId}
                                 startedAt={
                                   resolveWorkingStartedAt(thread) ??
                                   (workingSubagents > 0
@@ -1662,7 +1681,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                             </span>
                           ) : status === "waiting" ? (
                             <span aria-hidden>
-                              <WorkingDuration startedAt={thread.latestRun?.completedAt ?? null} />
+                              <WorkingDuration
+                                environmentId={thread.environmentId}
+                                startedAt={thread.latestRun?.completedAt ?? null}
+                              />
                             </span>
                           ) : null}
                         </span>
@@ -1821,6 +1843,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
     JSON.stringify([thread.environmentId, gitCwd]),
     gitStatus.data,
   );
+  const checkoutThread = withoutRemovedCheckout(thread, visibleGitStatus);
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
     effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
     activeWorktreePath: thread.worktreePath,
@@ -1874,6 +1897,13 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
               aria-label={accessibility.label}
               {...dragListeners}
               onMouseMove={props.onHighlight}
+              // Focus stays in the search box, as for Enter. A focused result would lose focus as
+              // the results close, and its recovery scrolls the list away from the opened thread.
+              // dnd-kit ignores a prevented press, so the drag listener runs first.
+              onPointerDown={(event) => {
+                dragListeners?.onPointerDown?.(event);
+                event.preventDefault();
+              }}
               onClick={props.onSelect}
               className={cn(
                 "group/sidebar-row group/v2-row flex min-h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1 text-left text-sm outline-none",
@@ -1936,7 +1966,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
           </span>
         </TooltipTrigger>
         <SidebarThreadTooltip
-          thread={thread}
+          thread={checkoutThread}
           project={props.project}
           projectDisplayName={props.projectDisplayName}
           environmentLabel={props.environmentLabel}

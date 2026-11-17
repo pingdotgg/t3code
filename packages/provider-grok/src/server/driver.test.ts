@@ -168,7 +168,6 @@ it.layer(layerTest)("GrokDriver", (it) => {
             return JSON.stringify({ casks: [{ version: "1.2.4,789" }] });
           }),
         ),
-        Effect.scoped,
       );
     });
   }
@@ -186,9 +185,6 @@ it.layer(layerTest)("GrokDriver", (it) => {
         config: { ...GrokDriver.defaultConfig(), binaryPath: path.join(tempDir, "grok") },
       });
       expect((yield* instance.snapshot.resolveMaintenance()).update).toBeNull();
-    }).pipe(
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner)),
   );
 });

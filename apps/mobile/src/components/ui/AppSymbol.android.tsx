@@ -92,6 +92,7 @@ import IconListNumbers from "@tabler/icons-react-native/IconListNumbers";
 import IconMenu2 from "@tabler/icons-react-native/IconMenu2";
 import IconMessageCircleQuestion from "@tabler/icons-react-native/IconMessageCircleQuestion";
 import IconMessage from "@tabler/icons-react-native/IconMessage";
+import IconMail from "@tabler/icons-react-native/IconMail";
 import IconMessageDots from "@tabler/icons-react-native/IconMessageDots";
 import IconMessagePlus from "@tabler/icons-react-native/IconMessagePlus";
 import IconMinus from "@tabler/icons-react-native/IconMinus";
@@ -141,6 +142,7 @@ import IconWifiOff from "@tabler/icons-react-native/IconWifiOff";
 import IconWorld from "@tabler/icons-react-native/IconWorld";
 import IconX from "@tabler/icons-react-native/IconX";
 import type { AndroidSymbol, SFSymbol, SymbolViewProps } from "expo-symbols";
+import { StyleSheet, View } from "react-native";
 import { withUniwind } from "uniwind";
 
 const ANDROID_ICON_BY_SF_SYMBOL = {
@@ -208,6 +210,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   ellipsis: IconDots,
   moon: IconMoon,
   "ellipsis.circle": IconDotsCircleHorizontal,
+  "envelope.badge": IconMail,
   "exclamationmark.triangle": IconAlertTriangle,
   "exclamationmark.circle": IconAlertCircle,
   eye: IconEye,
@@ -374,16 +377,20 @@ function AppSymbolView(props: AppSymbolViewProps) {
     return props.fallback ?? null;
   }
 
-  return (
+  // react-native-svg applies style.transform to its inner path around (0,0), so a
+  // rotated icon draws outside its box. Transform a wrapping View instead.
+  const transformed = StyleSheet.flatten(props.style)?.transform !== undefined;
+  const icon = (
     <AndroidIcon
       accessibilityLabel={props.accessibilityLabel}
       color={props.tintColor}
       size={props.size}
       strokeWidth={2}
-      style={props.style}
+      style={transformed ? undefined : props.style}
       testID={props.testID}
     />
   );
+  return transformed ? <View style={props.style}>{icon}</View> : icon;
 }
 
 export const SymbolView = withUniwind(AppSymbolView);

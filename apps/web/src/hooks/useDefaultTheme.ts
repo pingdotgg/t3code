@@ -7,6 +7,7 @@ import { getThemeDefinition, singleAppearanceOf, subscribeToCustomThemes } from 
 import { setAppearanceMode, setTheme } from "./useTheme";
 
 const APPLIED_DEFAULT_THEME_STORAGE_PREFIX = "t3code:default-theme-applied:v2:";
+const APPLIED_DEFAULT_APPEARANCE_STORAGE_PREFIX = "t3code:default-appearance-applied:v1:";
 
 /** Include set time so reasserting the same theme still applies. */
 export function defaultThemeGeneration(theme: string, setAt: string): string {
@@ -35,6 +36,16 @@ export function defaultThemeChangedAt(setAt: string): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 }
 
+/** A single-appearance theme sets its own mode unless a mode was set with it or after it. */
+export function themeSetsOwnMode(input: {
+  readonly defaultThemeSetAt: string;
+  readonly defaultAppearance: string;
+  readonly defaultAppearanceSetAt: string;
+}): boolean {
+  // ISO timestamps from one server compare correctly as strings.
+  return input.defaultAppearance === "" || input.defaultAppearanceSetAt < input.defaultThemeSetAt;
+}
+
 function readAppliedGeneration(storageKey: string): string | null {
   if (typeof window === "undefined") return null;
   try {
@@ -54,7 +65,8 @@ async function adoptDefaultThemeOnce(): Promise<void> {
   if (typeof window === "undefined") return;
   const environmentId = appAtomRegistry.get(themeEnvironmentIdAtom);
   if (environmentId === null) return;
-  const { defaultTheme, defaultThemeSetAt } = appAtomRegistry.get(themeServerSettingsAtom);
+  const settings = appAtomRegistry.get(themeServerSettingsAtom);
+  const { defaultTheme, defaultThemeSetAt } = settings;
   const definition = getThemeDefinition(defaultTheme);
   const storageKey = `${APPLIED_DEFAULT_THEME_STORAGE_PREFIX}${environmentId}`;
   const generation = defaultThemeToApply({
@@ -66,7 +78,7 @@ async function adoptDefaultThemeOnce(): Promise<void> {
   });
   if (generation === null || definition === null) return;
 
-  const values = themeProfileValuesForDefault(defaultTheme);
+  const values = themeProfileValuesForDefault(defaultTheme, themeSetsOwnMode(settings));
   if (values === null) return;
   const result = await preferencesSync.adoptExternalChange({
     environmentId,
@@ -79,15 +91,41 @@ async function adoptDefaultThemeOnce(): Promise<void> {
     if (!setTheme(defaultTheme)) return;
     const half = singleAppearanceOf(definition);
     // Only record adoption after both writes succeed, so an appearance failure remains retryable.
-    if (half !== null && !setAppearanceMode(half)) return;
+    if (half !== null && themeSetsOwnMode(settings) && !setAppearanceMode(half)) return;
   }
+  writeAppliedGeneration(storageKey, generation);
+}
+
+/** Like the theme, the environment's mode applies once per set, then local choices win. */
+async function adoptDefaultAppearanceOnce(): Promise<void> {
+  if (typeof window === "undefined") return;
+  const environmentId = appAtomRegistry.get(themeEnvironmentIdAtom);
+  if (environmentId === null) return;
+  const { defaultAppearance, defaultAppearanceSetAt } =
+    appAtomRegistry.get(themeServerSettingsAtom);
+  const storageKey = `${APPLIED_DEFAULT_APPEARANCE_STORAGE_PREFIX}${environmentId}`;
+  const generation = defaultThemeToApply({
+    environmentId,
+    defaultTheme: defaultAppearance,
+    defaultThemeSetAt: defaultAppearanceSetAt,
+    appliedGeneration: readAppliedGeneration(storageKey),
+    resolves: true,
+  });
+  if (generation === null || defaultAppearance === "") return;
+  const result = await preferencesSync.adoptExternalChange({
+    environmentId,
+    values: { themeMode: defaultAppearance },
+    changedAt: defaultThemeChangedAt(defaultAppearanceSetAt),
+  });
+  if (result === "waiting") return;
+  if (result === "off" && !setAppearanceMode(defaultAppearance)) return;
   writeAppliedGeneration(storageKey, generation);
 }
 
 let adopting = false;
 let rerunQueued = false;
 
-async function adoptDefaultTheme(): Promise<void> {
+async function adoptDefaults(): Promise<void> {
   if (adopting) {
     rerunQueued = true;
     return;
@@ -98,6 +136,7 @@ async function adoptDefaultTheme(): Promise<void> {
       rerunQueued = false;
       try {
         await adoptDefaultThemeOnce();
+        await adoptDefaultAppearanceOnce();
       } catch (cause) {
         console.warn("Default theme adoption failed", cause);
       }
@@ -114,7 +153,7 @@ async function adoptDefaultTheme(): Promise<void> {
  * that resolves late still applies.
  */
 export function startDefaultThemeAdoption(): () => void {
-  const adopt = () => void adoptDefaultTheme();
+  const adopt = () => void adoptDefaults();
   const unsubscribes = [
     appAtomRegistry.subscribe(themeEnvironmentIdAtom, adopt),
     appAtomRegistry.subscribe(themeServerSettingsAtom, adopt),

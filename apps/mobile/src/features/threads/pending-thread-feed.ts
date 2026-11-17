@@ -158,6 +158,23 @@ export function appendPendingThreadMessages(
   ];
 }
 
+/**
+ * Messages the server accepted but has not projected yet. A new thread's first message stays
+ * anchored until the server's copy loads, and keeps its local attachments so its media does
+ * not drop out of the feed in between.
+ */
+export function appendAcceptedThreadMessages(
+  feed: ReadonlyArray<ThreadFeedEntry>,
+  acknowledged: ReadonlyArray<QueuedThreadMessage>,
+  creation: QueuedThreadMessage | null,
+): ReadonlyArray<PendingThreadFeedEntry> {
+  const accepted = creation === null ? acknowledged : [...acknowledged, creation];
+  if (accepted.length === 0) return feed;
+  return appendPendingThreadMessages(feed, feed, accepted).map((entry) =>
+    entry.pendingMessage ? { ...entry, acknowledged: true } : entry,
+  );
+}
+
 export function isCompactionCommandFeedEntry(entry: PendingThreadFeedEntry): boolean {
   return (
     entry.type === "message" &&

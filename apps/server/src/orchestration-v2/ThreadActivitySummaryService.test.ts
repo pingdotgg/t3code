@@ -99,6 +99,7 @@ const makeHarness = Effect.fn(function* (settings: { readonly enabled: boolean }
           ? Option.some({
               projectId,
               title: "Project",
+              hasCustomTitle: false,
               workspaceRoot: "/repo",
               defaultModelSelection: { instanceId: instances.claude.id, model: "claude-opus-5-5" },
               defaultThreadEnvMode: null,

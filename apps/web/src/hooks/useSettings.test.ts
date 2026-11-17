@@ -196,6 +196,28 @@ describe("persistClientSettingsPatch", () => {
     expect(persistenceMocks.setClientSettings).toHaveBeenNthCalledWith(1, firstSettings);
     expect(persistenceMocks.setClientSettings).toHaveBeenNthCalledWith(2, secondSettings);
   });
+
+  // regression: #35010 a save in one tab reverted settings another tab saved after it loaded
+  it("keeps a setting another tab saved after this tab loaded", async () => {
+    vi.stubGlobal("window", new EventTarget());
+    try {
+      await ensureClientSettingsHydrated();
+      const otherTabSettings = { ...DEFAULT_CLIENT_SETTINGS, timestampFormat: "12-hour" as const };
+      persistenceMocks.getClientSettings.mockResolvedValue(otherTabSettings);
+      window.dispatchEvent(
+        Object.assign(new Event("storage"), { key: "t3code:client-settings:v1" }),
+      );
+
+      await persistClientSettingsPatch({ wordWrap: false });
+
+      expect(persistenceMocks.setClientSettings).toHaveBeenLastCalledWith({
+        ...otherTabSettings,
+        wordWrap: false,
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe("persistClientSettingsUpdate", () => {
@@ -265,7 +287,7 @@ describe("persistClientSettingsUpdate", () => {
 });
 
 describe("adoptPersistedClientSettings", () => {
-  it("takes settings another tab saved but keeps a write still in flight", async () => {
+  it("takes settings another tab saved, reading them only after this tab's queued write", async () => {
     __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
     persistenceMocks.getClientSettings.mockResolvedValue({
       ...DEFAULT_CLIENT_SETTINGS,
@@ -280,11 +302,20 @@ describe("adoptPersistedClientSettings", () => {
       finishWrite = resolve;
     });
     const write = persistClientSettingsPatch({ wordWrap: false }, () => blocked);
-    persistenceMocks.getClientSettings.mockResolvedValue(DEFAULT_CLIENT_SETTINGS);
-    await adoptPersistedClientSettings();
+    persistenceMocks.getClientSettings.mockClear();
+    persistenceMocks.getClientSettings.mockResolvedValue({
+      ...DEFAULT_CLIENT_SETTINGS,
+      wordWrap: false,
+    });
+    const adopted = adoptPersistedClientSettings();
     expect(getClientSettings()).toMatchObject({ timestampFormat: "12-hour", wordWrap: false });
+    expect(persistenceMocks.getClientSettings).not.toHaveBeenCalled();
     finishWrite();
-    await write;
+    await Promise.all([write, adopted]);
+    expect(getClientSettings()).toMatchObject({
+      timestampFormat: DEFAULT_CLIENT_SETTINGS.timestampFormat,
+      wordWrap: false,
+    });
   });
 });
 

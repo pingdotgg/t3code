@@ -61,7 +61,6 @@ function mount(
     return (
       <AssistantCitationChip
         citation={chipCitation}
-        composer
         commentEditor={{ open, sourceAnchor, onOpenChange: setOpen, onSave }}
       />
     );
@@ -149,6 +148,19 @@ describe("citation comment caret", () => {
     expect(input.scrollTop).toBe(input.scrollHeight - input.clientHeight);
     await userEvent.keyboard("!");
     expect(input.value).toBe(`${comment}!`);
+  });
+
+  it("saves with Tab then Enter after typing a comment", async () => {
+    using _source = setup();
+    const onSave = vi.fn(() => true);
+    await using _screen = await mount(undefined, onSave);
+    await vi.waitFor(() => expect(document.activeElement).toBe(textarea()));
+
+    await userEvent.keyboard("agreed");
+    await userEvent.keyboard("{Tab}");
+    await userEvent.keyboard("{Enter}");
+
+    expect(onSave).toHaveBeenCalledWith("agreed");
   });
 });
 

@@ -53,6 +53,10 @@ const SETTINGS_SEARCH_TERMS = {
   SettingsScheduledTasks: ["automations", "schedule", "cron", "recurring", "webhook"],
   SettingsProjectOverview: ["project", "overview", "checkouts", "delete project"],
   SettingsOrganization: [
+    "language",
+    "locale",
+    "translation",
+    "english",
     "project grouping",
     "group projects",
     "organization",

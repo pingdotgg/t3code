@@ -50,6 +50,10 @@ const PREVIEW_FORWARDED_COMMANDS = [
   "rightPanel.toggle",
   "rightPanel.toggleMaximized",
   "preview.focusUrl",
+  "preview.zoomIn",
+  "preview.zoomOut",
+  "preview.resetZoom",
+  "preview.find",
 ] as const;
 
 const isGlobalPullRequests = (ref: ScopedThreadRef) =>
