@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
-import { morphConfig } from "../shared/proxy.ts";
+import { morphConfig } from "./proxy.ts";
 
 const decodeMorphReply = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
