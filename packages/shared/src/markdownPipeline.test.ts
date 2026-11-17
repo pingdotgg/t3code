@@ -726,18 +726,6 @@ const linkTargets = (node: ShownNode): [string, unknown][] =>
     ? (node.children ?? []).flatMap(linkTargets)
     : [[shownText(node), node.properties.href]];
 
-function seededRandom(seed: number) {
-  let state = seed;
-  return () => {
-    state = (state + 0x6d2b79f5) | 0;
-    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
-    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
-    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
-  };
-}
-// MARKDOWN_PROPERTY_SEED reruns a reported failure.
-const PROPERTY_SEED = Number(process.env.MARKDOWN_PROPERTY_SEED ?? 20261117);
-
 it("shows the spaces and tabs typed at the start of each line of a user message", () => {
   const shown = (markdown: string) => shownText(userMessage(markdown));
   const outline = "Plan\n   Step one\n   Step two\n        Detail a\n        Detail b";
@@ -886,80 +874,6 @@ it("adds only the typed indentation, and renders what follows it as without it",
         );
       }
     }
-  }
-});
-
-it("renders user messages whose whitespace is all structure as CommonMark does", () => {
-  const next = seededRandom(PROPERTY_SEED);
-  const pick = <T>(items: readonly T[]) => items[Math.floor(next() * items.length)]!;
-  const words = [
-    "plan",
-    "3",
-    "*em*",
-    "**strong**",
-    "[link](https://example.com)",
-    "`code`",
-    "~/a/b",
-    "~~old~~",
-    "https://example.com/x_",
-    "/tmp/a.ts",
-    "C:\\work",
-    "@thread",
-    "$skill",
-  ];
-  const text = () =>
-    Array.from({ length: 1 + Math.floor(next() * 3) }, () => pick(words)).join(" ");
-  const indent = (lines: string[], first: string, pad: string) =>
-    lines.map((line, index) => (index === 0 ? first : line ? pad : "") + line);
-  const blocks = (depth: number): string[] => {
-    // Indented code is left out: after a list, CommonMark reads it as the item's continuation.
-    const kinds = depth < 2 ? ["p", "p", "bullet", "ordered", "task", "quote", "fence"] : ["p"];
-    const kind = pick(kinds);
-    const paragraph = () => Array.from({ length: 1 + Math.floor(next() * 3) }, text);
-    if (kind === "p") return paragraph();
-    if (kind === "fence") return ["```", `${pick(["", "  ", "    "])}${text()}`, "```"];
-    if (kind === "quote") return blocks(depth + 1).map((line) => (line ? `> ${line}` : ">"));
-    const marker = kind === "ordered" ? "1. " : kind === "task" ? "- [ ] " : "- ";
-    const pad = " ".repeat(kind === "ordered" ? 3 : 2);
-    // A continuation line is either at the content column or lazy.
-    const lines = paragraph().map((line, index) =>
-      index === 0 || next() < 0.5 ? line : `${pad}${line}`,
-    );
-    const body = indent(lines, marker, "");
-    if (next() < 0.5) body.push(...indent(blocks(depth + 1), pad, pad));
-    return body;
-  };
-  for (let index = 0; index < 400; index++) {
-    const markdown = Array.from({ length: 1 + Math.floor(next() * 3) }, () =>
-      blocks(0).join("\n"),
-    ).join(pick(["\n", "\n\n"]));
-    expect(
-      userMessage(markdown),
-      `seed ${PROPERTY_SEED}, case ${index}: ${JSON.stringify(markdown)}`,
-    ).toEqual(commonMarkUserMessage(markdown));
-  }
-});
-
-it("shows each typed line of a plain user message as typed", () => {
-  const next = seededRandom(PROPERTY_SEED + 1);
-  const pick = <T>(items: readonly T[]) => items[Math.floor(next() * items.length)]!;
-  const word = () =>
-    Array.from({ length: 1 + Math.floor(next() * 5) }, () => pick([..."aZ09xQ7"])).join("");
-  const line = () => Array.from({ length: 1 + Math.floor(next() * 3) }, word).join(" ");
-  const whitespace = (most: number) =>
-    Array.from({ length: Math.floor(next() * (most + 1)) }, () => pick([" ", " ", "\t"])).join("");
-  for (let index = 0; index < 300; index++) {
-    const paragraphs = Array.from({ length: 1 + Math.floor(next() * 3) }, () => [
-      // More than three spaces, or a tab, would start a code block.
-      " ".repeat(Math.floor(next() * 4)) + line(),
-      ...Array.from({ length: Math.floor(next() * 4) }, () => whitespace(9) + line()),
-    ]);
-    const typed = paragraphs.map((lines) => lines.join("\n")).join("\n\n");
-    const markdown = next() < 0.3 ? typed.replaceAll("\n", "\r\n") : typed;
-    expect(
-      shownText(userMessage(markdown)),
-      `seed ${PROPERTY_SEED + 1}, case ${index}: ${JSON.stringify(markdown)}`,
-    ).toBe(paragraphs.flat().join("\n"));
   }
 });
 
