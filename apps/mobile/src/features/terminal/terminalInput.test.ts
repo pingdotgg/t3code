@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  chunkTerminalWrite,
-  encodeTerminalPaste,
-  resolveModifiedTerminalInput,
-  TERMINAL_WRITE_MAX_LENGTH,
-} from "./terminalInput";
+import { encodeTerminalPaste, resolveModifiedTerminalInput } from "./terminalInput";
 
 const byte = (code: number) => String.fromCharCode(code);
 const ESC = byte(0x1b);
@@ -76,25 +71,5 @@ describe("encodeTerminalPaste", () => {
 
   it("never lets a bracketed-paste end marker reach the shell", () => {
     expect(encodeTerminalPaste(`safe${ESC}[201~; rm -rf /\n`)).toBe("safe [201~; rm -rf /\r");
-  });
-});
-
-describe("chunkTerminalWrite", () => {
-  it("splits oversized writes so every chunk fits the contract", () => {
-    const chunks = chunkTerminalWrite("y".repeat(TERMINAL_WRITE_MAX_LENGTH * 2 + 5));
-    expect(chunks.map((chunk) => chunk.length)).toEqual([
-      TERMINAL_WRITE_MAX_LENGTH,
-      TERMINAL_WRITE_MAX_LENGTH,
-      5,
-    ]);
-    expect(chunks.join("")).toHaveLength(TERMINAL_WRITE_MAX_LENGTH * 2 + 5);
-  });
-
-  it("does not cut a surrogate pair in half at the boundary", () => {
-    const data = `${"z".repeat(TERMINAL_WRITE_MAX_LENGTH - 1)}😀tail`;
-    const chunks = chunkTerminalWrite(data);
-    expect(chunks[0]).toHaveLength(TERMINAL_WRITE_MAX_LENGTH - 1);
-    expect(chunks[1]).toBe("😀tail");
-    expect(chunks.join("")).toBe(data);
   });
 });

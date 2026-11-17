@@ -8,6 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { resolveSpeechPostProcessingModelSelection } from "@t3tools/shared/serverSettings";
 
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { buildTranscriptionPostProcessingPrompt } from "../textGeneration/TranscriptionPostProcessing.ts";
@@ -27,11 +28,13 @@ const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const fileSystem = yield* FileSystem.FileSystem;
   const textGeneration = yield* TextGeneration.TextGeneration;
+  const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   return SpeechPostProcessing.of({
     process: Effect.fn("SpeechPostProcessing.process")(
       function* (input) {
         if (input.transcript.trim().length === 0) return { text: input.transcript };
         const settings = yield* settingsService.getSettings;
+        const providers = yield* providerRegistry.getProviders;
         const { mode, customInstructions } = input.options.speechPostProcessingPrompt;
         const instructions =
           (mode === "custom" ? customInstructions.trim() : "") ||
@@ -46,7 +49,7 @@ const make = Effect.gen(function* () {
             input.draft,
             input.options.speechCorrectionWord,
           ),
-          modelSelection: resolveSpeechPostProcessingModelSelection(settings),
+          modelSelection: resolveSpeechPostProcessingModelSelection(settings, providers),
         });
         const text = generated.transcription.trim();
         return {
