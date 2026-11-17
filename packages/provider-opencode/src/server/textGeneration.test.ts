@@ -654,6 +654,58 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
     ),
   );
 
+  it.effect.each(["answer", "tool activity"] as const)(
+    "runs the standing check blind, without the selected agent (%s)",
+    (reply) =>
+      withOpenCodeTextGeneration(
+        DEFAULT_OPENCODE_SETTINGS,
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const answer = { results: [{ ref: 1, verdict: "standing", selfContained: true }] };
+            runtimeMock.state.promptResult = {
+              data: {
+                info: { providerID: "openai", modelID: "gpt-5" },
+                parts: [
+                  ...(reply === "tool activity"
+                    ? [{ type: "tool", tool: "read", state: { status: "completed" } }]
+                    : []),
+                  { type: "text", text: JSON.stringify(answer) },
+                ],
+              },
+            };
+            const result = yield* textGeneration
+              .checkFactStanding({
+                cwd: process.cwd(),
+                modelSelection: {
+                  ...DEFAULT_TEST_MODEL_SELECTION,
+                  options: [{ id: "agent", value: "reviewer" }],
+                },
+                statements: [{ kind: "convention", content: "Acme uses the shared test runner." }],
+              })
+              .pipe(Effect.exit);
+            if (reply === "tool activity")
+              expect(Exit.isFailure(result) ? Cause.pretty(result.cause) : "").toContain(
+                "tool activity",
+              );
+            else
+              expect(Exit.isSuccess(result) ? result.value : result).toEqual({
+                verdicts: ["standing"],
+              });
+            expect(runtimeMock.state.promptInputs[0]?.agent).toBeUndefined();
+            expect(runtimeMock.state.sessionCreateInputs[0]?.permission).toEqual([
+              { permission: "*", pattern: "*", action: "deny" },
+            ]);
+            const environment = runtimeMock.state.startEnvironments[0];
+            expect(environment?.OPENCODE_DISABLE_PROJECT_CONFIG).toBe("1");
+            expect(JSON.parse(environment?.OPENCODE_CONFIG_CONTENT ?? "null")).toEqual({});
+          }),
+        {
+          XDG_CONFIG_HOME: "/nonexistent/t3-opencode-config",
+          OPENCODE_CONFIG_CONTENT: '{"instructions":["/checkout/AGENTS.md"]}',
+        },
+      ),
+  );
+
   it.effect("gives up and aborts the session when a prompt never settles", () =>
     withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
@@ -838,6 +890,15 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
 it.layer(layerOpenCodeTextGenerationExistingServerTest)(
   "OpenCodeTextGeneration with configured server URL",
   (it) => {
+    it.effect("does not offer the standing check, which a shared server cannot run blind", () =>
+      withOpenCodeTextGeneration(EXISTING_SERVER_OPENCODE_SETTINGS, (textGeneration) =>
+        Effect.sync(() => {
+          expect(textGeneration.supportedOperations).not.toContain("checkFactStanding");
+          expect(textGeneration.supportedOperations).toContain("generateKnowledgeCandidates");
+        }),
+      ),
+    );
+
     it.effect("does not send a local environment password to a configured server", () =>
       withOpenCodeTextGeneration(
         EXTERNAL_SERVER_WITHOUT_AUTH_OPENCODE_SETTINGS,

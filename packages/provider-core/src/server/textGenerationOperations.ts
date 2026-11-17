@@ -280,8 +280,11 @@ export function fromRunner(
   return {
     supportedOperations: TextGenerationOperation.literals.filter(
       (operation) =>
-        (operation !== "generateReviewGuide" || options.supportsInvestigation) &&
-        (operation !== "generateModelEvaluation" || options.supportsBlindEvaluation === true),
+        ((operation !== "generateReviewGuide" || options.supportsInvestigation) &&
+          // The standing check must not see tools or workspace instructions either.
+          operation !== "generateModelEvaluation" &&
+          operation !== "checkFactStanding") ||
+        options.supportsBlindEvaluation === true,
     ),
     generateCommitMessage,
     generatePrContent,
