@@ -317,7 +317,8 @@ export function AnnotatableCodeView({
         enableGutterUtility: draft === null && !isRefreshingDiff,
         enableLineSelection: draft === null && !isRefreshingDiff,
         onGutterUtilityClick: beginComment,
-        onRevealSearchMatch: (item) => onRevealSearchMatch(item.id),
+        onItemCollapsedChange: (_item, nextItem) =>
+          onFileCollapsedChange(nextItem.id, nextItem.collapsed === true),
         onPostRender: (node, _instance, phase, context) => {
           if (context.type === "diff") {
             if (phase === "unmount") {

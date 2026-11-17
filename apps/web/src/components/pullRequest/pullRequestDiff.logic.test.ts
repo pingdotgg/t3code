@@ -3,9 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   getFileViewedRange,
-  isFileDiffCollapsed,
   isLineInFileDiff,
-  withFileDiffFold,
   retainReviewDiffSlices,
 } from "./pullRequestDiff.logic";
 

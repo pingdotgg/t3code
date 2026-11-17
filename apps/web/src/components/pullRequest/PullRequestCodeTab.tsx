@@ -49,7 +49,8 @@ import {
   ChevronsDownUpIcon,
   ChevronsUpDownIcon,
 } from "lucide-react";
-import { RegistryContext } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import { AsyncResult, Atom } from "effect/reactivity";
 import * as Schema from "effect/Schema";
 import {
   createContext,
@@ -142,12 +143,8 @@ import {
 import { pullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
 import {
   getFileViewedRange,
-  isFileDiffCollapsed,
   isLineInFileDiff,
-  withFileDiffFold,
   retainReviewDiffSlices,
-  type DiffFoldOverride,
-  type FileDiffFoldChoices,
 } from "./pullRequestDiff.logic";
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
 import { PullRequestDiffUnavailableState } from "./PullRequestDiffUnavailableState";
@@ -630,6 +627,20 @@ function PullRequestCodeTab({
     isViewed: isFileViewed,
     isStale: isFileViewedStale,
   } = filesViewed;
+  const [withheldLoads, setWithheldLoads] = useState<{
+    readonly scope: string;
+    readonly paths: ReadonlyArray<string>;
+    /** The render key each loaded file was last shown under; a changed patch gets a new one. */
+    readonly shownKeys: ReadonlyMap<string, string>;
+  }>({ scope: "", paths: NO_PATHS, shownKeys: new Map() });
+  const withheldPaths = withheldLoads.scope === scopeKey ? withheldLoads.paths : NO_PATHS;
+  const withheldInput = { ...reference, ...(commit === null ? {} : { commit }) };
+  const atomRegistry = useContext(RegistryContext);
+  const withheldFileDiff = (path: string) =>
+    pullRequestEnvironment.diff({ environmentId, input: { ...withheldInput, path } });
+  const refreshWithheldFiles = useEffectEvent(() => {
+    for (const path of withheldPaths) atomRegistry.refresh(withheldFileDiff(path));
+  });
   const appliedRefresh = useRef({ refreshToken, backgroundRefreshToken });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes mounted review pages from the environment query cache
   useEffect(() => {
@@ -652,6 +663,7 @@ function PullRequestCodeTab({
       ...retainReviewDiffSlices(current, scopeKey),
       refreshing: [],
     }));
+    refreshWithheldFiles();
     refreshFilesViewed();
   }, [
     refreshToken,
@@ -762,7 +774,7 @@ function PullRequestCodeTab({
   // Fold choices follow render keys, so a loaded or refetched patch would otherwise fold again
   // when marked Viewed: it opens on first load and keeps its earlier key's choice after.
   const rekeyed = [...withheldFiles].flatMap(([path, file]) => {
-    const key = buildFileDiffRenderKey(file);
+    const key = buildFileDiffIdentityKey(file);
     return withheldLoads.shownKeys.get(path) === key ? [] : [[path, key] as const];
   });
   if (withheldLoads.scope === scopeKey && rekeyed.length > 0) {
@@ -1299,14 +1311,26 @@ function PullRequestCodeTab({
     preferredHighlighter: PREFERRED_HIGHLIGHTER,
     themeType: resolvedTheme,
     stickyHeaders: true,
-    loadDiffFiles,
+    // Full contents would not match the cut lines, and would bring back the lines just cut.
+    loadDiffFiles: (fileDiff: FileDiffMetadata) =>
+      cutFiles.has(fileDiff)
+        ? Promise.reject(new Error("Unchanged lines are unavailable in a file with cut lines."))
+        : loadDiffFiles(fileDiff),
     enableGutterUtility:
-      canSelectLines && draft === null && !diffQuery.isPending && sliceState.refreshing === null,
+      canSelectLines &&
+      draft === null &&
+      !diffQuery.isPending &&
+      sliceState.refreshing === null &&
+      !withheldRefetching,
     enableLineSelection:
-      canSelectLines && draft === null && !diffQuery.isPending && sliceState.refreshing === null,
+      canSelectLines &&
+      draft === null &&
+      !diffQuery.isPending &&
+      sliceState.refreshing === null &&
+      !withheldRefetching,
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
-    onPostRender: (_node, _instance, phase, context) => {
+    onPostRender: (node, instance, phase, context) => {
       if (context.type === "diff") {
         if (phase === "unmount") renderedFiles.current.delete(context.item.id);
         else {
@@ -1318,10 +1342,18 @@ function PullRequestCodeTab({
         }
       }
       codeViewReveal.flush();
+      if (phase !== "unmount") {
+        node.toggleAttribute(
+          "data-cut-lines",
+          "fileDiff" in instance && cutFiles.has(instance.fileDiff),
+        );
+        if (withheldFiles.size > 0) markCutLineNotes(node);
+      }
     },
-    // Find may repeat requests before render; only unfold, never toggle.
-    onRevealSearchMatch: (item: CodeViewItem<ReviewAnnotationGroup>) =>
-      setFoldChoices((current) => withFileDiffFold(current, item.id, false)),
+    onItemCollapsedChange: (_item, nextItem) =>
+      setFoldChoices((current) =>
+        withFileDiffFold(current, nextItem.id, nextItem.collapsed === true),
+      ),
   } satisfies StyledDiffCodeViewOptions<ReviewAnnotationGroup>;
 
   const runThreadCommand = async (

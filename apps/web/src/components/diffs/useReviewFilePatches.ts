@@ -146,7 +146,7 @@ export function useReviewFilePatches({
             placeholder: {
               name: file.path,
               ...(file.previousPath ? { prevName: file.previousPath } : {}),
-              type: file.previousPath ? "rename-changed" : "change",
+              type: file.changeType ?? (file.previousPath ? "rename-changed" : "change"),
               hunks: [],
               additionLines: [],
               deletionLines: [],
