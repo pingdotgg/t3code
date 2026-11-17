@@ -98,6 +98,7 @@ async fn checkpoint_scenario(dir: &std::path::Path) -> (Vec<Value>, Vec<Value>, 
         .await
         .unwrap();
     read(&mut follow, &mut items, run_ended).await;
+    read_checkpoint(&mut follow, &mut items, 1).await;
     engine
         .dispatch(
             from_json(json!({
@@ -114,6 +115,7 @@ async fn checkpoint_scenario(dir: &std::path::Path) -> (Vec<Value>, Vec<Value>, 
     })
     .await;
     read(&mut follow, &mut items, |_| false).await;
+    read_checkpoint(&mut follow, &mut items, 2).await;
     // Rewind the conversation to the first turn (a root thread keeps its files).
     let projection = engine
         .get_thread_projection("thread-cp".into())
@@ -200,6 +202,27 @@ async fn read<T: serde::Serialize, E: serde::Serialize>(
         if stop {
             return;
         }
+    }
+}
+
+async fn read_checkpoint<T: serde::Serialize, E: serde::Serialize>(
+    stream: &mut Subscription<T, E>,
+    out: &mut Vec<Value>,
+    ordinal: u64,
+) {
+    let captured = |item: &Value| {
+        (item["event"]["type"] == "checkpoint.captured"
+            && item["event"]["payload"]["appRunOrdinal"] == ordinal)
+            || item["projection"]["checkpoints"]
+                .as_array()
+                .is_some_and(|rows| rows.iter().any(|row| row["appRunOrdinal"] == ordinal))
+    };
+    while !out.iter().any(captured) {
+        let item = stream.recv().await.expect("stream open until checkpoint");
+        out.push(match item {
+            Ok(item) => to_json(&item),
+            Err(e) => panic!("stream failed: {}", to_json(&e)),
+        });
     }
 }
 
