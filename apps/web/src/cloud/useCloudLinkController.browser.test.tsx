@@ -1,7 +1,8 @@
 import {
   AuthRelayReadScope,
   AuthRelayWriteScope,
-  AuthStandardClientScopes,
+  AuthAdministrativeClientScopes,
+  AuthRelayConfigureScope,
   EnvironmentId,
   type EnvironmentCloudLinkStateResult,
 } from "@t3tools/contracts";
@@ -67,8 +68,7 @@ vi.mock(import("../state/relay"), async (original) => {
 vi.mock(import("../state/session"), async (original) => ({
   ...(await original()),
   readEnvironmentScope: (_environmentId, scope) => testState.scopes.has(scope),
-  readEnvironmentCanConfigureRelay: () =>
-    AuthStandardClientScopes.every((scope) => testState.scopes.has(scope)),
+  readEnvironmentCanConfigureRelay: () => testState.scopes.has(AuthRelayConfigureScope),
 }));
 vi.mock(import("../state/use-atom-command"), async (original) => ({
   ...(await original()),
@@ -149,7 +149,7 @@ function expectNoMutations() {
 }
 
 function setup() {
-  testState.scopes = new Set(AuthStandardClientScopes);
+  testState.scopes = new Set(AuthAdministrativeClientScopes);
   testState.snapshot = linkedState;
   testState.renderedSnapshot = linkedState;
   testState.relayProviderKind = null;

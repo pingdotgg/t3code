@@ -1,6 +1,6 @@
 import {
   AuthRelayReadScope,
-  AuthStandardClientScopes,
+  AuthRelayConfigureScope,
   AuthRelayWriteScope,
   EnvironmentCloudEndpointUnavailableError,
   EnvironmentHttpApi,
@@ -15,7 +15,7 @@ import * as HttpEffect from "effect/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
-import { failEnvironmentScopeRequired, requireEnvironmentScope } from "../auth/http.ts";
+import { requireEnvironmentScope } from "../auth/http.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as CloudLink from "./CloudLink.ts";
@@ -127,12 +127,7 @@ export const layer = HttpApiBuilder.group(
       )
       .handle("relayConfig", ({ payload }) =>
         Effect.gen(function* () {
-          const principal = yield* requireEnvironmentScope(AuthRelayWriteScope);
-          for (const scope of AuthStandardClientScopes) {
-            if (!principal.scopes.has(scope)) {
-              return yield* failEnvironmentScopeRequired(scope);
-            }
-          }
+          yield* requireEnvironmentScope(AuthRelayConfigureScope);
           return yield* toHttpErrorOrUnavailable(cloudLink.applyRelayConfig(payload));
         }),
       )

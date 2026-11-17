@@ -449,8 +449,9 @@ and the agent it runs can use Git however the environment allows.
 
 Settings changes, provider management, environment maintenance, access
 management, and T3 Connect preferences can each be granted separately. Setting
-up or replacing a T3 Connect link requires a full-access session. New pairings
-without `--scope` include every permission. Existing clients keep the
+up or replacing a T3 Connect link requires the administrative
+`relay:configure` permission. `relay:write` covers preferences and unlinking.
+New pairings without `--scope` include the standard client permissions. Existing clients keep the
 permissions they paired with and can stay connected after an update, but newly
 separated features may require pairing again with the permissions they need.
 Older clients may show controls that the server denies. Create a fresh pairing

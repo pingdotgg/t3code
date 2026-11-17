@@ -299,10 +299,18 @@ describe("link proof over a non-loopback desktop transport", () => {
     }),
   );
 
-  it.effect("requires the scopes that relay configuration can delegate", () =>
+  it.effect("requires explicit permission to configure the relay", () =>
     Effect.gen(function* () {
       const { post, exchange } = yield* linkProofClient;
-      const token = yield* exchange(DESKTOP_BOOTSTRAP_TOKEN, "relay:write");
+      const admin = yield* exchange(DESKTOP_BOOTSTRAP_TOKEN);
+      const paired = yield* post(
+        "/api/auth/pairing-token",
+        {},
+        { authorization: `Bearer ${admin}` },
+      );
+      expect(paired.status).toBe(200);
+      const { credential } = (yield* responseJson(paired)) as { credential: string };
+      const token = yield* exchange(credential);
       const response = yield* post(
         "/api/connect/relay-config",
         {
@@ -315,7 +323,10 @@ describe("link proof over a non-loopback desktop transport", () => {
         { authorization: `Bearer ${token}` },
       );
       expect(response.status).toBe(403);
-      expect(yield* responseJson(response)).toMatchObject({ code: "insufficient_scope" });
+      expect(yield* responseJson(response)).toMatchObject({
+        code: "insufficient_scope",
+        requiredPermission: "relay:configure",
+      });
     }),
   );
 
