@@ -237,6 +237,21 @@ for readOnly in [true, false] {
   check(provider.loadCount == 0, "Locked inputs must not load pasted image providers")
 }
 
+func interceptedPaste(_ items: [String]) -> String? {
+  let savedItems = UIPasteboard.general.items
+  defer { UIPasteboard.general.items = savedItems }
+  let editor = ComposerTextView()
+  editor.textPasteThresholdBytes = 32 * 1024
+  var intercepted: String?
+  editor.onPasteText = { text, _ in intercepted = text }
+  UIPasteboard.general.items = items.map { [UTType.utf8PlainText.identifier: $0] }
+  editor.paste(nil)
+  return intercepted
+}
+let halfA = String(repeating: "A", count: 20_000)
+let halfB = String(repeating: "B", count: 20_000)
+check(interceptedPaste([halfA, halfB]) == halfA + halfB, "Text items that together reach the threshold must fold")
+
 // Two-frame animated GIF: a mixed paste keeps the GIF's original bytes and the still image's PNG, in order.
 private let gifBytes = Data(base64Encoded: "R0lGODlhAQABAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQACgAAACwAAAAAAQABAAAIBAABBAQAIfkEAAoAAAAsAAAAAAEAAQCBAP8AAAAAAAAAAAAACAQAAQQEADs=")!
 private let gifProvider = NSItemProvider()
