@@ -276,7 +276,8 @@ function ConversationCard({
         ? {
             "data-pr-link-target": true,
             tabIndex: -1,
-            className: "group rounded-lg py-2 ring-1 ring-primary/40 outline-none",
+            // Inset: the collapsible panel clips an outer ring's left and right edges.
+            className: "group rounded-lg py-2 ring-1 ring-inset ring-primary/40 outline-none",
           }
         : { className: "group py-2" })}
     >
