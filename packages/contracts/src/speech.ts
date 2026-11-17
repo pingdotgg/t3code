@@ -382,14 +382,36 @@ export const DEFAULT_SPEECH_OUTPUT_SETTINGS: SpeechOutputSettings = {
 export const SpeechSynthesisRequest = Schema.Struct({
   text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2000)),
   engine: Schema.Literals(["piper", "openai", "elevenlabs"]),
+  voice: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256))),
 });
 export type SpeechSynthesisRequest = typeof SpeechSynthesisRequest.Type;
 
-export const SpeechOutputDestination = Schema.Struct({
-  environmentId: EnvironmentId,
-  engine: SpeechSynthesisRequest.fields.engine,
-});
+const SpeechVoicePreference = Schema.optionalKey(
+  Schema.NullOr(Schema.String.check(Schema.isMaxLength(256))),
+);
+export const SpeechOutputDestination = Schema.Union([
+  Schema.Struct({
+    environmentId: EnvironmentId,
+    engine: SpeechSynthesisRequest.fields.engine,
+    voice: SpeechVoicePreference,
+  }),
+  Schema.Struct({
+    environmentId: Schema.Null,
+    engine: Schema.Literal("system"),
+    voice: SpeechVoicePreference,
+  }),
+]);
 export type SpeechOutputDestination = typeof SpeechOutputDestination.Type;
+
+export const SpeechSynthesisProvider = Schema.Struct({
+  id: SpeechSynthesisRequest.fields.engine,
+  name: Schema.String,
+  configured: Schema.Boolean,
+  defaultVoice: Schema.String,
+  voices: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String })),
+  model: Schema.optionalKey(Schema.String),
+});
+export type SpeechSynthesisProvider = typeof SpeechSynthesisProvider.Type;
 
 export const PiperRuntimeStatus = Schema.Struct({
   state: Schema.Literals(["unsupported", "not-installed", "installing", "ready"]),
@@ -467,6 +489,7 @@ export type SpeechSynthesisVoice = typeof SpeechSynthesisVoice.Type;
 export const SpeechSynthesisVoices = Schema.Struct({
   voices: Schema.Array(SpeechSynthesisVoice),
   runtime: Schema.optionalKey(PiperRuntimeStatus),
+  providers: Schema.optionalKey(Schema.Array(SpeechSynthesisProvider)),
 });
 export type SpeechSynthesisVoices = typeof SpeechSynthesisVoices.Type;
 export const SpeechSynthesisVoiceRequest = Schema.Struct({

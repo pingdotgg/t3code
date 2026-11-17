@@ -8,10 +8,12 @@ import { useEnvironmentScope } from "../state/session";
 import { ResponseSpeechButton } from "./ResponseSpeechButton";
 import { voiceOutput } from "./voiceOutput";
 
-vi.mock("./useSpeechOutputDestination", () => ({
+vi.mock("./useSpeechOutputDestination", async () => ({
+  SpeechPlaybackSettingsContext: (await import("react")).createContext(null),
   useSpeechOutputDestination: () => ({
     destination: null,
     playbackRate: 1,
+    canManage: true,
     setPlaybackRate: (rate: number) => voiceOutput.setPlaybackRate(rate),
   }),
 }));

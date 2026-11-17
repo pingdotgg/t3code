@@ -2546,6 +2546,7 @@ function renderFeedEntry(
             />
             {!message.streaming ? (
               <ResponseSpeechButton
+                threadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
                 environmentId={props.environmentId}
                 owner={`${props.environmentId}:${props.threadId}:${message.id}`}
                 text={renderedText}
@@ -2959,7 +2960,10 @@ const THREAD_FEED_MAINTAIN_SCROLL_AT_END = {
 let lastSplitViewport: { windowWidth: number; width: number; height: number } | null = null;
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
-  useResponseSpeechScope(`${props.environmentId}:${props.threadId}`);
+  useResponseSpeechScope(`${props.environmentId}:${props.threadId}`, {
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+  });
   const formatMessageTime = useMessageTimeFormatter();
   const { listRef, onIsAtEndChange, onHeaderMaterialVisibilityChange } = props;
   const workflowOpening = useWorkflowOpening(props.detailRef);

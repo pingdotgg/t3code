@@ -148,13 +148,26 @@ it("starts off, checks the selected environment, and offers managed Piper instal
   } as ReturnType<typeof useEnvironments>);
   vi.mocked(usePreparedConnection).mockReturnValue(Option.some(prepared));
   let runtime: PiperRuntimeStatus = { state: "not-installed", platform: "linux-x64" };
+  const voices: SpeechSynthesisVoices["voices"] = [
+    {
+      id: "pt_BR-faber-medium",
+      name: "Faber",
+      language: "pt_BR",
+      languageName: "Portuguese",
+      quality: "medium",
+      size: 1,
+      modelCardUrl: "https://example.com/voice",
+      active: false,
+      state: "installed",
+    },
+  ];
   vi.mocked(getEnvironmentSpeechVoices).mockImplementation(() =>
-    Effect.succeed({ voices: [], runtime }),
+    Effect.succeed({ voices, runtime }),
   );
   vi.mocked(installEnvironmentSpeechRuntime).mockImplementation(() =>
     Effect.sync(() => {
       runtime = { state: "ready", platform: "linux-x64" };
-      return { voices: [], runtime };
+      return { voices, runtime };
     }),
   );
   await using screen = await render(<SpeechOutputSettings />);
@@ -171,6 +184,19 @@ it("starts off, checks the selected environment, and offers managed Piper instal
   });
   await screen.getByRole("button", { name: "Download Piper" }).click();
   await expect.element(screen.getByRole("button", { name: "Remove Piper" })).toBeVisible();
+  vi.mocked(useEnvironmentScope).mockReturnValue(false);
+  await screen.rerender(<SpeechOutputSettings key="read-only-destination" />);
+  await expect.element(screen.getByRole("button", { name: "Remove Piper" })).toBeDisabled();
+  await expect
+    .element(screen.getByRole("button", { name: "Use voice", exact: true }))
+    .toBeEnabled();
+  await screen.getByRole("button", { name: "Use voice", exact: true }).click();
+  expect(getClientSettings().speechOutputDestination).toEqual({
+    environmentId: prepared.environmentId,
+    engine: "piper",
+    voice: "pt_BR-faber-medium",
+  });
+  expect(selectEnvironmentSpeechVoice).not.toHaveBeenCalled();
   await screen.getByRole("combobox", { name: "Read aloud with" }).click();
   await page.getByRole("option", { name: "Off", exact: true }).click();
   expect(getClientSettings().speechOutputDestination).toBeNull();
@@ -184,6 +210,23 @@ it("configures cloud keys in a dialog before loading and choosing account voices
   vi.mocked(useEnvironmentScope).mockReturnValue(true);
 
   const prepared = connection("cloud-speech");
+  vi.mocked(getEnvironmentSpeechVoices).mockImplementation(() =>
+    Effect.succeed({
+      voices: [],
+      providers: [
+        {
+          id: "openai" as const,
+          name: "OpenAI",
+          configured: true,
+          defaultVoice: "coral",
+          voices: [
+            { id: "coral", name: "Clear" },
+            { id: "nova", name: "Warm" },
+          ],
+        },
+      ],
+    }),
+  );
   let settings = {
     ...DEFAULT_SERVER_SETTINGS,
     secretProviders: {
@@ -323,9 +366,12 @@ it("configures cloud keys in a dialog before loading and choosing account voices
         );
         await screen.getByRole("combobox", { name: "ElevenLabs voice" }).click();
         await page.getByRole("option", { name: "Lia", exact: true }).click();
-        expect(cloudSettings.voice).toHaveBeenCalledWith({
-          speechOutput: { elevenLabsVoiceId: "lia" },
+        expect(getClientSettings().speechOutputDestination).toEqual({
+          environmentId: environment.environmentId,
+          engine: "elevenlabs",
+          voice: "lia",
         });
+        expect(cloudSettings.voice).not.toHaveBeenCalled();
         await screen.getByRole("button", { name: "Manage key…", exact: true }).click();
         await page.getByRole("combobox", { name: "ElevenLabs API key source" }).click();
         await page.getByRole("option", { name: "Work vault", exact: true }).click();
@@ -355,6 +401,7 @@ it("configures cloud keys in a dialog before loading and choosing account voices
         expect(getClientSettings().speechOutputDestination).toEqual({
           environmentId: prepared.environmentId,
           engine: "elevenlabs",
+          voice: "lia",
         });
         await page.getByLabelText("OpenAI API key", { exact: true }).fill("openai-fixture");
         await page.getByRole("button", { name: "Save key", exact: true }).click();
@@ -365,9 +412,16 @@ it("configures cloud keys in a dialog before loading and choosing account voices
           environmentId: prepared.environmentId,
           input: { patch: { cloudSpeechCredentials: { openai: "openai-fixture" } } },
         });
+        await screen.getByRole("combobox", { name: "Speech output voice" }).click();
+        await page.getByRole("option", { name: "Warm", exact: true }).click();
+        expect(getClientSettings().speechOutputDestination).toMatchObject({
+          engine: "openai",
+          voice: "nova",
+        });
         expect(getClientSettings().speechOutputDestination).toEqual({
           environmentId: prepared.environmentId,
           engine: "openai",
+          voice: "nova",
         });
         await screen.getByRole("combobox", { name: "Read aloud with" }).click();
         await page.getByRole("option", { name: "ElevenLabs", exact: true }).click();

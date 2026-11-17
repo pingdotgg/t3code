@@ -201,6 +201,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   voiceTranscription: Schema.optionalKey(Schema.Boolean),
   cloudVoiceTranscription: Schema.optionalKey(Schema.Boolean),
   voiceSynthesis: Schema.optionalKey(Schema.Boolean),
+  voiceSynthesisOverrides: Schema.optionalKey(Schema.Boolean),
   /**
    * The server config's flags of the same names. A server that names them here lets a client
    * load the shell snapshot before the socket opens, and answers its `resumeFrom`.

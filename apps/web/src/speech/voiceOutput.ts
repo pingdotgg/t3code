@@ -1,13 +1,23 @@
+import { playNativeSpeech } from "./nativeSpeech";
 import {
   VoiceOutputController,
   type SpeechAudioPlayer,
+  type NativeSpeechRequest,
 } from "@t3tools/client-runtime/voice-output";
 
 let audio: HTMLAudioElement | null = null;
 let recording = false;
+let nativeActive: object | null = null;
 
-const player: SpeechAudioPlayer = {
+const player: SpeechAudioPlayer<Uint8Array | NativeSpeechRequest> = {
   play(bytes, signal, onPlaying, rate) {
+    if (!(bytes instanceof Uint8Array)) {
+      const identity = {};
+      nativeActive = identity;
+      return playNativeSpeech(bytes, signal, onPlaying, rate).finally(() => {
+        if (nativeActive === identity) nativeActive = null;
+      });
+    }
     return new Promise<void>((resolve, reject) => {
       const url = URL.createObjectURL(new Blob([Uint8Array.from(bytes)], { type: "audio/wav" }));
       const element = new Audio(url);
@@ -45,8 +55,14 @@ const player: SpeechAudioPlayer = {
   setPlaybackRate: (rate) => {
     if (audio) audio.playbackRate = rate;
   },
-  pause: () => audio?.pause(),
-  resume: () => audio?.play() ?? Promise.resolve(),
+  pause: () => (nativeActive ? window.speechSynthesis.pause() : audio?.pause()),
+  resume: () => {
+    if (nativeActive) {
+      window.speechSynthesis.resume();
+      return Promise.resolve();
+    }
+    return audio?.play() ?? Promise.resolve();
+  },
 };
 
 export const voiceOutput = new VoiceOutputController(player);

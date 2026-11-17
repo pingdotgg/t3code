@@ -7,27 +7,28 @@ type Snapshot = {
   readonly error: string | null;
 };
 
-export type SpeechAudioPlayer = {
+export type SpeechAudioPlayer<Audio = Uint8Array> = {
   readonly play: (
-    audio: Uint8Array,
+    audio: Audio,
     signal: AbortSignal,
     onPlaying: () => void,
     rate: number,
   ) => Promise<void>;
   readonly setPlaybackRate: (rate: number) => void;
-  readonly pause: () => void;
+  readonly canPause?: () => boolean;
+  readonly pause: () => void | Promise<void>;
   readonly resume: () => Promise<void>;
 };
 
-export class VoiceOutputController {
+export class VoiceOutputController<Audio = Uint8Array> {
   private snapshot: Snapshot = { owner: null, phase: "idle", error: null };
   private readonly listeners = new Set<() => void>();
   private request: AbortController | null = null;
   private playbackRate = 1;
 
-  private readonly player: SpeechAudioPlayer;
+  private readonly player: SpeechAudioPlayer<Audio>;
 
-  constructor(player: SpeechAudioPlayer) {
+  constructor(player: SpeechAudioPlayer<Audio>) {
     this.player = player;
   }
 
@@ -60,7 +61,7 @@ export class VoiceOutputController {
   async start(
     owner: string,
     markdown: string,
-    synthesize: (text: string, signal: AbortSignal) => Promise<Uint8Array>,
+    synthesize: (text: string, signal: AbortSignal) => Promise<Audio>,
   ) {
     this.stop();
     const request = new AbortController();
@@ -111,13 +112,16 @@ export class VoiceOutputController {
     }
   }
 
+  readonly canPause = () => this.player.canPause?.() ?? true;
+
   async togglePause() {
     const request = this.request;
     const snapshot = this.snapshot;
     try {
       if (snapshot.phase === "playing") {
-        this.player.pause();
-        this.publish({ ...snapshot, phase: "paused" });
+        await this.player.pause();
+        if (this.request === request && this.snapshot === snapshot)
+          this.publish({ ...snapshot, phase: "paused" });
       } else if (snapshot.phase === "paused") {
         await this.player.resume();
         if (this.request === request && this.snapshot === snapshot)

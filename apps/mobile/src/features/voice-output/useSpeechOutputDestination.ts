@@ -1,25 +1,78 @@
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import type { SpeechPlaybackRate, SpeechOutputDestination } from "@t3tools/contracts";
+import { createContext, useContext } from "react";
+import type { SpeechPlaybackControls } from "@t3tools/client-runtime/voice-output";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { useQuietThreadShell } from "../../state/entities";
+import { useEnvironmentPresentation } from "../../state/presentation";
+import {
+  AuthSettingsWriteScope,
+  type ScopedThreadRef,
+  SpeechPlaybackRate,
+  SpeechOutputDestination,
+} from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import * as Dialog from "../../components/ui/Dialog";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { serverEnvironment } from "../../state/server";
+import { useEnvironmentScope } from "../../state/session";
 import { voiceOutput } from "./voiceOutput";
 
-export function useSpeechOutputDestination() {
+export const SpeechPlaybackSettingsContext = createContext<SpeechPlaybackControls | null>(null);
+
+export function useSpeechOutputDestination(
+  threadRef: ScopedThreadRef | null = null,
+): SpeechPlaybackControls {
+  const scoped = useContext(SpeechPlaybackSettingsContext);
+  const thread = useQuietThreadShell(threadRef);
+  const { presentation } = useEnvironmentPresentation(threadRef?.environmentId ?? null);
+  const update = useAtomCommand(serverEnvironment.updateSettings);
+  const canManage = useEnvironmentScope(threadRef?.environmentId ?? null, AuthSettingsWriteScope);
+  const settings = presentation?.serverConfig?.settings;
+  const effective = settings
+    ? resolveProjectSettings(settings, thread?.projectId ?? null).settings
+    : null;
   const preferences = useAtomValue(mobilePreferencesAtom);
   const save = useAtomSet(updateMobilePreferencesAtom, { mode: "promise" });
-  const destination = AsyncResult.isSuccess(preferences)
+  const localDestination = AsyncResult.isSuccess(preferences)
     ? (preferences.value.speechOutputDestination ?? null)
     : null;
-  const playbackRate = AsyncResult.isSuccess(preferences)
+  const localRate = AsyncResult.isSuccess(preferences)
     ? (preferences.value.speechPlaybackRate ?? 1)
     : 1;
+  const destination =
+    effective?.speechPlaybackDestination === undefined
+      ? localDestination
+      : effective.speechPlaybackDestination;
+  const playbackRate = effective?.speechPlaybackRate ?? localRate;
+  const persist = (patch: {
+    speechPlaybackDestination?: SpeechOutputDestination | null;
+    speechPlaybackRate?: SpeechPlaybackRate;
+  }) => {
+    if (!threadRef || !thread?.projectId || !settings) return false;
+    void update({
+      environmentId: threadRef.environmentId,
+      input: {
+        patch: {
+          projectSettingsOverrides: {
+            [thread.projectId]: {
+              ...settings.projectSettingsOverrides[thread.projectId],
+              ...patch,
+            },
+          },
+        },
+      },
+    });
+    return true;
+  };
   const setPlaybackRate = (rate: SpeechPlaybackRate) => {
-    voiceOutput.setPlaybackRate(rate);
-    void save({ speechPlaybackRate: rate });
+    if (threadRef && voiceOutput.getSnapshot().owner?.startsWith(`${scopedThreadKey(threadRef)}:`))
+      voiceOutput.setPlaybackRate(rate);
+    if (!persist({ speechPlaybackRate: rate })) void save({ speechPlaybackRate: rate });
   };
   const choose = (destination: SpeechOutputDestination | null) => {
-    voiceOutput.stop();
+    if (persist({ speechPlaybackDestination: destination })) return;
     void save({ speechOutputDestination: destination }).catch(() => {
       Dialog.alert(
         "Could not save speech output choice",
@@ -27,5 +80,16 @@ export function useSpeechOutputDestination() {
       );
     });
   };
-  return { destination, choose, playbackRate, setPlaybackRate };
+  return (
+    scoped ?? {
+      destination,
+      choose,
+      playbackRate,
+      setPlaybackRate,
+      selectVoice: (voice) => {
+        if (destination) choose({ ...destination, voice });
+      },
+      canManage: threadRef ? canManage : true,
+    }
+  );
 }

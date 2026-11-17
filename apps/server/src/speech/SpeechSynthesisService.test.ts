@@ -172,6 +172,12 @@ it.effect.each(["openai", "elevenlabs"] as const)(
       const synthesize = service
         .synthesize({ text: "Olá", engine })
         .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
+      const catalog = yield* service.voices;
+      expect(catalog.providers?.find((provider) => provider.id === engine)).toMatchObject({
+        configured: true,
+        defaultVoice:
+          engine === "openai" ? "coral" : DEFAULT_SPEECH_OUTPUT_SETTINGS.elevenLabsVoiceId,
+      });
       const audio = yield* synthesize;
       if (engine === "elevenlabs") {
         expect(audio.subarray(44)).toEqual(pcm);
@@ -219,6 +225,20 @@ it.effect.each(["openai", "elevenlabs"] as const)(
         expect(yield* Effect.flip(synthesize)).toMatchObject({ reason });
         expect(signal?.aborted).toBe(true);
       }
+      const voice = engine === "elevenlabs" ? "different-voice" : "nova";
+      yield* service
+        .synthesize({ text: "Scoped voice", engine, voice })
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
+      const [scopedUrl, scopedInit] = upstream.mock.calls.at(-1)!;
+      if (engine === "elevenlabs") expect(String(scopedUrl)).toContain("/different-voice?");
+      else expect(JSON.parse(String(scopedInit?.body)).voice).toBe("nova");
+      const calls = upstream.mock.calls.length;
+      expect(
+        yield* Effect.flip(
+          service.synthesize({ text: "Invalid voice", engine, voice: "https://invalid/voice" }),
+        ),
+      ).toMatchObject({ reason: "voice-not-found" });
+      expect(upstream).toHaveBeenCalledTimes(calls);
       upstream.mockResolvedValueOnce(new Response("invalid audio"));
       expect(yield* Effect.flip(synthesize)).toMatchObject({ reason: "invalid-audio" });
       if (engine === "elevenlabs") {

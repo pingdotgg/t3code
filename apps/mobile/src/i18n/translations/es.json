@@ -19,6 +19,7 @@
   "560997ace98edc9f": "Pestañas de navegación",
   "0bcc63fce8f612b5": "Teclado",
   "af4b7734da1d5ce7": "Voz",
+  "79518c023bd0ae3f": "Síntesis de voz",
   "2632f324dc2d9c48": "Agentes",
   "2f77cc3105ddd7f8": "Proveedores",
   "6d9bf91f0d4b7ba3": "Hilos",
@@ -30,5 +31,14 @@
   "79b768229c9ef672": "Mantenimiento",
   "54b188d65247e42f": "Labs",
   "f41ea186c275b56e": "Acerca de",
-  "2a546119bf3879ee": "Archivados"
+  "2a546119bf3879ee": "Archivados",
+  "78ea31b92d8f2466": "Usar los valores predeterminados del entorno",
+  "a05174414f2404ea": "Las preferencias de reproducción siguen el entorno o proyecto seleccionado. Desactivado por defecto.",
+  "d52b3d6bf9f2a013": "Mixto",
+  "52e8f8accdca2d32": "Voces del sistema",
+  "42a02a4b27828027": "No disponible",
+  "fe8ed6127f1d8a28": "Volver a intentar",
+  "1325d52f80cfa128": "Voz del sistema",
+  "9cc59ee2ddba1d3c": "Usa las voces disponibles en este dispositivo. Algunas voces pueden usar un servicio en línea.",
+  "a80add1cf9d4756e": "Actualiza el entorno seleccionado antes de usar una voz personalizada."
 }

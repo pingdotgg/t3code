@@ -1,3 +1,5 @@
+import { useGT } from "gt-react-native";
+import { SystemSpeechSettings } from "./SystemSpeechSettings";
 import { useState } from "react";
 import { ScrollView, View } from "react-native";
 import {
@@ -6,7 +8,6 @@ import {
   isSecretReference,
   type SecretProviderId,
   type SettingsSecretValue,
-  SpeechOutputSettings as SpeechOutputSchema,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import Constants from "expo-constants";
@@ -41,7 +42,9 @@ export function SpeechOutputSettings({
 }: {
   environments: ReadonlyArray<EnvironmentPresentation>;
 }) {
-  const { destination, choose } = useSpeechOutputDestination();
+  const gt = useGT();
+  const { destination, choose, canManage, mixedDestination, mixedTarget } =
+    useSpeechOutputDestination();
   const [choosing, setChoosing] = useState(false);
   const [pending, setPending] = useState<{
     environment: EnvironmentPresentation;
@@ -66,19 +69,27 @@ export function SpeechOutputSettings({
     <>
       <SettingsSection
         title="Response playback"
-        footer="Where response text is turned into speech. Off until you choose a destination on this device."
+        footer={gt(
+          "Playback preferences follow the selected environment or project. Off by default.",
+        )}
       >
         <ListActionRow
           label="Read aloud with"
           detail={
-            destination
-              ? `${destination.engine === "elevenlabs" ? "ElevenLabs via " : destination.engine === "openai" ? "OpenAI via " : ""}${chosen?.label ?? "Unavailable environment"}`
-              : "Off"
+            mixedDestination
+              ? gt("Mixed")
+              : destination
+                ? destination.engine === "system"
+                  ? gt("System voices")
+                  : `${destination.engine === "elevenlabs" ? "ElevenLabs via " : destination.engine === "openai" ? "OpenAI via " : ""}${chosen?.label ?? "Unavailable environment"}`
+                : "Off"
           }
+          disabled={!canManage}
           onPress={() => setChoosing(true)}
         />
         <SpeechPlaybackSpeed />
       </SettingsSection>
+      {!mixedTarget && destination?.engine === "system" ? <SystemSpeechSettings /> : null}
       {choosing ? (
         <Sheet title="Read aloud with" onClose={() => setChoosing(false)}>
           <ScrollView
@@ -91,6 +102,16 @@ export function SpeechOutputSettings({
                 selected={!destination}
                 onPress={() => {
                   choose(null);
+                  setChoosing(false);
+                }}
+              />
+            </ListSection>
+            <ListSection>
+              <ListChoiceRow
+                label={gt("System voices")}
+                selected={destination?.engine === "system"}
+                onPress={() => {
+                  choose({ engine: "system", environmentId: null });
                   setChoosing(false);
                 }}
               />
@@ -144,7 +165,7 @@ export function SpeechOutputSettings({
           </ScrollView>
         </Sheet>
       ) : null}
-      {chosen && destination ? (
+      {!mixedTarget && chosen && destination && destination.engine !== "system" ? (
         destination.engine === "piper" ? (
           <LocalPlaybackSettings key={chosen.environmentId} environment={chosen} />
         ) : (
@@ -221,20 +242,40 @@ function LocalPlaybackSettings({ environment }: { environment: EnvironmentPresen
 }
 
 function OpenAiPlaybackSettings({ environment }: { environment: EnvironmentPresentation }) {
+  const gt = useGT();
   const config = environment.serverConfig?.settings.speechOutput;
-  const canManage = useEnvironmentScope(environment.environmentId, AuthSettingsWriteScope);
-  const update = useAtomCommand(serverEnvironment.updateSettings);
+  const { destination, selectVoice, canManage } = useSpeechOutputDestination();
+  const catalog = useSpeechVoiceCatalog(environment.environmentId);
+  const provider = catalog.providers.find((provider) => provider.id === "openai");
   const [choosing, setChoosing] = useState(false);
   if (!config) return null;
+  const voiceId = destination?.voice ?? provider?.defaultVoice ?? config.voice;
   return (
     <>
-      <SettingsSection title="OpenAI voice" footer="Choose the voice used for response playback.">
+      <SettingsSection
+        title="OpenAI voice"
+        footer={
+          catalog.error ??
+          (catalog.loading
+            ? gt("Checking")
+            : !provider
+              ? gt("Unavailable")
+              : "Choose the voice used for response playback.")
+        }
+      >
         <ListActionRow
           label="Voice"
-          detail={config.voice}
-          disabled={!canManage}
+          detail={provider?.voices.find((voice) => voice.id === voiceId)?.name ?? voiceId}
+          disabled={!canManage || !provider}
           onPress={() => setChoosing(true)}
         />
+        {!provider && !catalog.loading ? (
+          <ListActionRow
+            label={gt("Try again")}
+            disabled={!catalog.connected}
+            onPress={() => void catalog.refresh()}
+          />
+        ) : null}
       </SettingsSection>
       {choosing ? (
         <Sheet title="OpenAI voice" onClose={() => setChoosing(false)}>
@@ -243,18 +284,17 @@ function OpenAiPlaybackSettings({ environment }: { environment: EnvironmentPrese
             contentContainerClassName="gap-3 p-4 pb-10"
           >
             <ListSection>
-              {SpeechOutputSchema.fields.voice.literals.map((voice, index) => (
+              {(provider?.voices ?? []).map((voice, index) => (
                 <ListChoiceRow
-                  key={voice}
-                  label={voice}
-                  selected={voice === config.voice}
+                  key={voice.id}
+                  label={voice.name}
+                  selected={
+                    voice.id === (destination?.voice ?? provider?.defaultVoice ?? config.voice)
+                  }
                   disabled={!canManage}
                   separated={index > 0}
                   onPress={() => {
-                    void update({
-                      environmentId: environment.environmentId,
-                      input: { patch: { speechOutput: { voice } } },
-                    });
+                    selectVoice(voice.id);
                     setChoosing(false);
                   }}
                 />
@@ -488,11 +528,12 @@ function SpeechApiKeySheet({
 function ElevenLabsVoiceSettings({ environment }: { environment: EnvironmentPresentation }) {
   const config = environment.serverConfig?.settings.speechOutput;
   const catalog = useElevenLabsVoices(environment.environmentId);
-  const canManage = useEnvironmentScope(environment.environmentId, AuthSettingsWriteScope);
-  const update = useAtomCommand(serverEnvironment.updateSettings);
+  const { destination, selectVoice, canManage } = useSpeechOutputDestination();
   const [choosing, setChoosing] = useState(false);
   if (!config) return null;
-  const selected = catalog.voices.find((voice) => voice.id === config.elevenLabsVoiceId);
+  const selected = catalog.voices.find(
+    (voice) => voice.id === (destination?.voice ?? config.elevenLabsVoiceId),
+  );
   const status = !catalog.connected
     ? "Connect with playback access to load voices."
     : catalog.failed
@@ -529,13 +570,10 @@ function ElevenLabsVoiceSettings({ environment }: { environment: EnvironmentPres
                   key={voice.id}
                   label={voice.name}
                   separated={index > 0}
-                  selected={voice.id === config.elevenLabsVoiceId}
+                  selected={voice.id === (destination?.voice ?? config.elevenLabsVoiceId)}
                   disabled={!canManage}
                   onPress={() => {
-                    void update({
-                      environmentId: environment.environmentId,
-                      input: { patch: { speechOutput: { elevenLabsVoiceId: voice.id } } },
-                    });
+                    selectVoice(voice.id);
                     setChoosing(false);
                   }}
                 />

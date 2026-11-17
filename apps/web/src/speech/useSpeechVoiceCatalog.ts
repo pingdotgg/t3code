@@ -103,8 +103,9 @@ export function useSpeechVoiceCatalog(environmentId: EnvironmentId | null) {
         voiceId,
         download: operation === "download" || operation === "installRuntime",
       });
+    let updated: SpeechSynthesisVoices | undefined;
     try {
-      let data = await runEnvironmentSpeech(
+      const data = await runEnvironmentSpeech(
         {
           installRuntime: installEnvironmentSpeechRuntime,
           cancelRuntime: cancelEnvironmentSpeechRuntime,
@@ -115,12 +116,8 @@ export function useSpeechVoiceCatalog(environmentId: EnvironmentId | null) {
           cancel: cancelEnvironmentSpeechVoiceDownload,
         }[operation](prepared, voiceId),
       );
-      if (
-        operation === "download" &&
-        data.voices.some((voice) => voice.id === voiceId && voice.state === "installed")
-      )
-        data = await runEnvironmentSpeech(selectEnvironmentSpeechVoice(prepared, voiceId));
       if (current === epoch.current) {
+        updated = data;
         revision.current++;
         setResult({ prepared, data, error: null });
       }
@@ -135,9 +132,11 @@ export function useSpeechVoiceCatalog(environmentId: EnvironmentId | null) {
     }
     if (current === epoch.current && operation !== "cancel" && operation !== "cancelRuntime")
       setPending(null);
+    return updated;
   };
   return {
     runtime: data?.runtime ?? null,
+    providers: data?.providers ?? [],
     voices: data?.voices ?? [],
     error,
     connected: prepared !== null,

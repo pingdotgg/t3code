@@ -1,10 +1,13 @@
 import {
   VoiceOutputController,
   type SpeechAudioPlayer,
+  type NativeSpeechRequest,
 } from "@t3tools/client-runtime/voice-output";
 import { createAudioPlayer } from "expo-audio";
 import { File, Paths } from "expo-file-system";
-import { AppState } from "react-native";
+import * as Speech from "expo-speech";
+import { playNativeSpeech } from "./nativeSpeech";
+import { Platform, AppState } from "react-native";
 import {
   createAudioPlaybackSession,
   disposeAudioPlayer,
@@ -13,8 +16,19 @@ import {
 import { uuidv4 } from "../../lib/uuid";
 
 let current: ReturnType<typeof createAudioPlaybackSession> | null = null;
-const player: SpeechAudioPlayer = {
+let nativeActive: object | null = null;
+const player: SpeechAudioPlayer<Uint8Array | NativeSpeechRequest> = {
   async play(bytes, signal, onPlaying, rate) {
+    if (!(bytes instanceof Uint8Array)) {
+      const identity = {};
+      nativeActive = identity;
+      try {
+        await playNativeSpeech(bytes, signal, onPlaying, rate);
+      } finally {
+        if (nativeActive === identity) nativeActive = null;
+      }
+      return;
+    }
     const file = new File(Paths.cache, `t3-speech-${uuidv4()}.wav`);
     try {
       signal.throwIfAborted();
@@ -71,11 +85,14 @@ const player: SpeechAudioPlayer = {
     }
   },
   setPlaybackRate: (rate) => currentAudioRate?.(rate),
+  canPause: () => !nativeActive || Platform.OS !== "android",
   pause: () => {
+    if (nativeActive) return Speech.pause();
     // A user pause retains ownership, so the recorder can still interrupt this playback.
     currentAudioPause?.();
   },
   resume: async () => {
+    if (nativeActive) return Speech.resume();
     await current?.play();
   },
 };

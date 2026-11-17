@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { SpeechPlaybackRate } from "@t3tools/contracts";
 import {
   Select,
@@ -9,10 +10,12 @@ import {
 import { useSpeechOutputDestination } from "./useSpeechOutputDestination";
 
 export function SpeechPlaybackSpeed({ compact = false }: { compact?: boolean }) {
-  const { playbackRate, setPlaybackRate } = useSpeechOutputDestination();
+  const gt = useGT();
+  const { playbackRate, setPlaybackRate, canManage, mixedRate } = useSpeechOutputDestination();
   return (
     <Select
-      value={String(playbackRate)}
+      value={mixedRate ? "mixed" : String(playbackRate)}
+      disabled={!canManage}
       onValueChange={(value) => {
         const rate = SpeechPlaybackRate.literals.find((rate) => String(rate) === value);
         if (rate) setPlaybackRate(rate);
@@ -23,9 +26,14 @@ export function SpeechPlaybackSpeed({ compact = false }: { compact?: boolean }) 
         size={compact ? "xs" : "sm"}
         variant={compact ? "ghost" : "default"}
       >
-        <SelectValue>{playbackRate}×</SelectValue>
+        <SelectValue>{mixedRate ? gt("Mixed") : `${playbackRate}×`}</SelectValue>
       </SelectTrigger>
       <SelectPopup>
+        {mixedRate ? (
+          <SelectItem value="mixed" disabled>
+            {gt("Mixed")}
+          </SelectItem>
+        ) : null}
         {SpeechPlaybackRate.literals.map((rate) => (
           <SelectItem key={rate} value={String(rate)}>
             {rate}×{rate === 1 ? " (Normal)" : ""}

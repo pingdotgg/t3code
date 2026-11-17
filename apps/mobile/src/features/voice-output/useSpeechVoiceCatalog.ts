@@ -105,6 +105,7 @@ export function useSpeechVoiceCatalog(environmentId: EnvironmentId) {
         voiceId,
         download: operation === "download" || operation === "installRuntime",
       });
+    let updated: SpeechSynthesisVoices | undefined;
     await runSpeech(
       {
         installRuntime: installEnvironmentSpeechRuntime,
@@ -115,37 +116,31 @@ export function useSpeechVoiceCatalog(environmentId: EnvironmentId) {
         remove: removeEnvironmentSpeechVoice,
         cancel: cancelEnvironmentSpeechVoiceDownload,
       }[operation](prepared, voiceId),
-    )
-      .then(async (data) => {
-        if (
-          operation === "download" &&
-          data.voices.some((voice) => voice.id === voiceId && voice.state === "installed")
-        )
-          return runSpeech(selectEnvironmentSpeechVoice(prepared, voiceId));
-        return data;
-      })
-      .then(
-        (data) => {
-          if (current === epoch.current) {
-            revision.current++;
-            setResult({ prepared, data, error: null });
-          }
-        },
-        () => {
-          if (current === epoch.current)
-            setResult((previous) => ({
-              ...previous,
-              error: operation.endsWith("Runtime")
-                ? "Could not update Piper. Check the connection and try again."
-                : "Could not update this voice. Check the connection and try again.",
-            }));
-        },
-      );
+    ).then(
+      (data) => {
+        if (current === epoch.current) {
+          updated = data;
+          revision.current++;
+          setResult({ prepared, data, error: null });
+        }
+      },
+      () => {
+        if (current === epoch.current)
+          setResult((previous) => ({
+            ...previous,
+            error: operation.endsWith("Runtime")
+              ? "Could not update Piper. Check the connection and try again."
+              : "Could not update this voice. Check the connection and try again.",
+          }));
+      },
+    );
     if (current === epoch.current && operation !== "cancel" && operation !== "cancelRuntime")
       setPending(null);
+    return updated;
   };
   return {
     runtime: data?.runtime ?? null,
+    providers: data?.providers ?? [],
     voices: data?.voices ?? [],
     error,
     connected: prepared !== null,

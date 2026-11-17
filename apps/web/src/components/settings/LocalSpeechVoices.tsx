@@ -1,3 +1,4 @@
+import { useSpeechOutputDestination } from "../../speech/useSpeechOutputDestination";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useState } from "react";
 import { Button } from "../ui/button";
@@ -12,6 +13,7 @@ export function LocalSpeechVoices({
   environment: { environmentId: EnvironmentId; label: string };
   catalog: ReturnType<typeof useSpeechVoiceCatalog>;
 }) {
+  const { destination, selectVoice, canManage } = useSpeechOutputDestination();
   const [choice, setChoice] = useState<{
     environmentId: EnvironmentId;
     language: string;
@@ -20,7 +22,8 @@ export function LocalSpeechVoices({
   const languages = [
     ...new Map(catalog.voices.map((voice) => [voice.language, voice.languageName])).entries(),
   ].sort((a, b) => a[1].localeCompare(b[1]));
-  const active = catalog.voices.find((voice) => voice.active);
+  const activeId = destination?.voice ?? catalog.voices.find((voice) => voice.active)?.id;
+  const active = catalog.voices.find((voice) => voice.id === activeId);
   const localChoice = choice?.environmentId === environment.environmentId ? choice : null;
   const language =
     localChoice?.language ??
@@ -31,9 +34,9 @@ export function LocalSpeechVoices({
   const options = catalog.voices.filter((voice) => voice.language === language);
   const selected =
     options.find((voice) => voice.id === localChoice?.voiceId) ??
-    options.find((voice) => voice.active) ??
+    options.find((voice) => voice.id === activeId) ??
     options[0];
-  const disabled = !catalog.canManage || catalog.busy || catalog.downloading;
+  const disabled = !canManage || !catalog.canManage || catalog.busy || catalog.downloading;
   const progress = catalog.transfer
     ? Math.floor((100 * (catalog.transfer.downloaded ?? 0)) / catalog.transfer.size)
     : 0;
@@ -136,10 +139,16 @@ export function LocalSpeechVoices({
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={disabled || selected.active}
-                      onClick={() => void catalog.run(selected.id, "select")}
+                      disabled={
+                        !canManage ||
+                        !catalog.connected ||
+                        catalog.busy ||
+                        catalog.downloading ||
+                        selected.id === activeId
+                      }
+                      onClick={() => selectVoice(selected.id)}
                     >
-                      {selected.active ? "Selected" : "Use voice"}
+                      {selected.id === activeId ? "Selected" : "Use voice"}
                     </Button>
                     <Button
                       size="sm"
@@ -155,7 +164,16 @@ export function LocalSpeechVoices({
                     size="sm"
                     variant="outline"
                     disabled={disabled}
-                    onClick={() => void catalog.run(selected.id, "download")}
+                    onClick={() =>
+                      void catalog.run(selected.id, "download").then((updated) => {
+                        if (
+                          updated?.voices.some(
+                            (voice) => voice.id === selected.id && voice.state === "installed",
+                          )
+                        )
+                          selectVoice(selected.id);
+                      })
+                    }
                   >
                     Download & use voice
                   </Button>

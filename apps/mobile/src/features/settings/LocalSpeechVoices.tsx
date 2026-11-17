@@ -1,3 +1,4 @@
+import { useSpeechOutputDestination } from "../voice-output/useSpeechOutputDestination";
 import { useState } from "react";
 import { Linking, ScrollView, View } from "react-native";
 import type { EnvironmentPresentation } from "../../state/environments";
@@ -34,13 +35,15 @@ function VoicePicker({
   environment: EnvironmentPresentation;
   onClose: () => void;
 }) {
+  const { destination, selectVoice, canManage } = useSpeechOutputDestination();
   const catalog = useSpeechVoiceCatalog(environment.environmentId);
   const [choice, setChoice] = useState<{ language: string; voiceId: string } | null>(null);
   const [choosingLanguage, setChoosingLanguage] = useState(false);
   const languages = [
     ...new Map(catalog.voices.map((voice) => [voice.language, voice.languageName])).entries(),
   ].sort((a, b) => a[1].localeCompare(b[1]));
-  const active = catalog.voices.find((voice) => voice.active);
+  const activeId = destination?.voice ?? catalog.voices.find((voice) => voice.active)?.id;
+  const active = catalog.voices.find((voice) => voice.id === activeId);
   const language =
     choice?.language ??
     active?.language ??
@@ -49,9 +52,9 @@ function VoicePicker({
   const options = catalog.voices.filter((voice) => voice.language === language);
   const selected =
     options.find((voice) => voice.id === choice?.voiceId) ??
-    options.find((voice) => voice.active) ??
+    options.find((voice) => voice.id === activeId) ??
     options[0];
-  const disabled = !catalog.canManage || catalog.busy || catalog.downloading;
+  const disabled = !canManage || !catalog.canManage || catalog.busy || catalog.downloading;
   return (
     <Sheet title={`Local voices · ${environment.label}`} onClose={onClose}>
       <ScrollView
@@ -138,9 +141,15 @@ function VoicePicker({
               {selected.state === "installed" ? (
                 <>
                   <ListActionRow
-                    label={selected.active ? "Selected" : "Use voice"}
-                    disabled={disabled || selected.active}
-                    onPress={() => void catalog.run(selected.id, "select")}
+                    label={selected.id === activeId ? "Selected" : "Use voice"}
+                    disabled={
+                      !canManage ||
+                      !catalog.connected ||
+                      catalog.busy ||
+                      catalog.downloading ||
+                      selected.id === activeId
+                    }
+                    onPress={() => selectVoice(selected.id)}
                   />
                   <ListActionRow
                     label="Remove voice"
@@ -154,7 +163,16 @@ function VoicePicker({
                   label="Download & use voice"
                   disabled={disabled}
                   loading={Boolean(catalog.transfer?.id === selected.id)}
-                  onPress={() => void catalog.run(selected.id, "download")}
+                  onPress={() =>
+                    void catalog.run(selected.id, "download").then((updated) => {
+                      if (
+                        updated?.voices.some(
+                          (voice) => voice.id === selected.id && voice.state === "installed",
+                        )
+                      )
+                        selectVoice(selected.id);
+                    })
+                  }
                 />
               )}
               <ListActionRow

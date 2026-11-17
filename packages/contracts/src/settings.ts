@@ -1206,6 +1206,8 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "continueThreadsAfterServerUpdate",
   "responseStreamingMode",
   "speechProjectCustomWords",
+  "speechPlaybackDestination",
+  "speechPlaybackRate",
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
 
@@ -1217,6 +1219,8 @@ export type ProjectProviderInstanceOverride = typeof ProjectProviderInstanceOver
 /** Absent keys inherit; null is a value for nullable settings.
  * providerInstances overrides fields per instance; other keys replace the whole setting. */
 export const ProjectSettingsOverrides = Schema.Struct({
+  speechPlaybackDestination: Schema.optionalKey(Schema.NullOr(SpeechOutputDestination)),
+  speechPlaybackRate: Schema.optionalKey(SpeechPlaybackRate),
   worktreeCleanup: Schema.optionalKey(WorktreeCleanup),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
@@ -1274,6 +1278,7 @@ const NULLABLE_PROJECT_SETTINGS_OVERRIDES: ReadonlySet<ProjectScopedServerSettin
   "reviewGuideModelSelection",
   "pullRequestMergeMethod",
   "sidebarAutoSettleAfterDays",
+  "speechPlaybackDestination",
 ]);
 
 /** Reclaimable bytes from which the offline `t3 doctor` repair is worth suggesting. */
@@ -1407,6 +1412,8 @@ export const ServerSettings = Schema.Struct({
   cloudSpeechCredentials: CloudSpeechCredentials.pipe(
     Schema.withDecodingDefault(Effect.succeed({ openai: "", xai: "", openrouter: "" })),
   ),
+  speechPlaybackDestination: Schema.optionalKey(Schema.NullOr(SpeechOutputDestination)),
+  speechPlaybackRate: Schema.optionalKey(SpeechPlaybackRate),
   speechOutput: SpeechOutputSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SPEECH_OUTPUT_SETTINGS)),
   ),
@@ -1876,6 +1883,8 @@ export const ServerSettingsPatch = Schema.Struct({
       openrouter: Schema.optionalKey(SettingsSecretValue),
     }),
   ),
+  speechPlaybackDestination: Schema.optionalKey(Schema.NullOr(SpeechOutputDestination)),
+  speechPlaybackRate: Schema.optionalKey(SpeechPlaybackRate),
   speechOutput: Schema.optionalKey(
     Schema.Struct({
       elevenLabsApiKey: Schema.optionalKey(SettingsSecretValue),

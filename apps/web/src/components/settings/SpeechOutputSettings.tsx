@@ -4,14 +4,16 @@ import {
   isSecretReference,
   type SecretProviderId,
   type SettingsSecretValue,
-  SpeechOutputSettings as SpeechOutputSchema,
 } from "@t3tools/contracts";
+import { useGT } from "gt-react";
+import { SystemSpeechSettings } from "./SystemSpeechSettings";
+import { nativeSpeechAvailable } from "../../speech/nativeSpeech";
 import { useId, useState } from "react";
 import * as Schema from "effect/Schema";
 import { MonitorIcon, VolumeXIcon } from "lucide-react";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
-import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
+import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { useSpeechOutputDestination } from "../../speech/useSpeechOutputDestination";
 import { useSpeechVoiceCatalog } from "../../speech/useSpeechVoiceCatalog";
 import { serverEnvironment } from "../../state/server";
@@ -54,7 +56,9 @@ const isApiKey = Schema.is(CloudSpeechApiKey);
 
 export function SpeechOutputSettings() {
   const { environments } = useEnvironments();
-  const { destination, choose } = useSpeechOutputDestination();
+  const gt = useGT();
+  const { destination, choose, canManage, mixedDestination, mixedTarget, mixedRate } =
+    useSpeechOutputDestination();
   const [pending, setPending] = useState<{
     environment: EnvironmentPresentation;
     engine: "openai" | "elevenlabs";
@@ -65,18 +69,32 @@ export function SpeechOutputSettings() {
   const available = environments.filter(
     (environment) => environment.serverConfig?.environment.capabilities.voiceSynthesis,
   );
-  const value = destination ? `${destination.engine}:${destination.environmentId}` : "off";
+  const value = mixedDestination
+    ? "mixed"
+    : destination?.engine === "system"
+      ? "system"
+      : destination
+        ? `${destination.engine}:${destination.environmentId}`
+        : "off";
   return (
     <SettingsSection id="speech-output" title="Response playback">
       <SettingsRow
         title="Read aloud with"
-        description="Where response text is turned into speech. Off until you choose a destination on this device."
-        devicePreference
+        description={gt(
+          "Playback preferences follow the selected environment or project. Off by default.",
+        )}
+        settingKeys={["speechPlaybackDestination"]}
+        mixed={mixedDestination ?? false}
         control={
           <div className="w-full min-w-0 @min-[32rem]/settings-row:max-w-72">
             <Select
               value={value}
+              disabled={!canManage}
               onValueChange={(value) => {
+                if (value === "system") {
+                  choose({ engine: "system", environmentId: null });
+                  return;
+                }
                 if (value === "off") {
                   choose(null);
                   return;
@@ -110,7 +128,7 @@ export function SpeechOutputSettings() {
                 <SelectValue>
                   <span className="flex min-w-0 items-center gap-2">
                     {destination ? (
-                      destination.engine === "piper" ? (
+                      destination.engine === "piper" || destination.engine === "system" ? (
                         <MonitorIcon aria-hidden className="size-4" />
                       ) : destination.engine === "elevenlabs" ? (
                         <ElevenLabs aria-hidden className="size-4 text-foreground" />
@@ -122,20 +140,32 @@ export function SpeechOutputSettings() {
                     )}
                     <span className="truncate">
                       {" "}
-                      {destination
-                        ? `${destination.engine === "elevenlabs" ? "ElevenLabs via " : destination.engine === "openai" ? "OpenAI via " : ""}${chosen?.label ?? "Chosen environment (unavailable)"}`
-                        : "Off"}
+                      {mixedDestination
+                        ? gt("Mixed")
+                        : destination
+                          ? destination.engine === "system"
+                            ? gt("System voices")
+                            : `${destination.engine === "elevenlabs" ? "ElevenLabs via " : destination.engine === "openai" ? "OpenAI via " : ""}${chosen?.label ?? "Chosen environment (unavailable)"}`
+                          : "Off"}
                     </span>
                   </span>
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
+                {mixedDestination ? (
+                  <SelectItem value="mixed" disabled>
+                    {gt("Mixed")}
+                  </SelectItem>
+                ) : null}
                 <SelectItem value="off">
                   <span className="flex items-center gap-2">
                     <VolumeXIcon aria-hidden className="size-4" />
                     Off
                   </span>
                 </SelectItem>
+                {nativeSpeechAvailable() ? (
+                  <SelectItem value="system">{gt("System voices")}</SelectItem>
+                ) : null}
                 <SelectGroup>
                   <SelectGroupLabel>On an environment</SelectGroupLabel>
                   {available.map((environment) => (
@@ -180,11 +210,17 @@ export function SpeechOutputSettings() {
       />
       <SettingsRow
         title="Playback speed"
-        description="Adjust listening speed on this device without generating new audio."
-        devicePreference
+        description={
+          destination?.engine === "system"
+            ? gt("Speed changes apply to the next segment with system voices.")
+            : gt("Adjust listening speed without generating new audio.")
+        }
+        settingKeys={["speechPlaybackRate"]}
+        mixed={mixedRate ?? false}
         control={<SpeechPlaybackSpeed />}
       />
-      {destination && chosen ? (
+      {!mixedTarget && destination?.engine === "system" ? <SystemSpeechSettings /> : null}
+      {!mixedTarget && destination && destination.engine !== "system" && chosen ? (
         destination.engine === "piper" ? (
           <LocalPlaybackSettings key={chosen.environmentId} environment={chosen} />
         ) : (
@@ -271,36 +307,59 @@ function LocalPlaybackSettings({ environment }: { environment: EnvironmentPresen
 }
 
 function OpenAiPlaybackSettings({ environment }: { environment: EnvironmentPresentation }) {
+  const gt = useGT();
   const config = useEnvironmentSettings(
     environment.environmentId,
     (settings) => settings.speechOutput,
   );
-  const update = useUpdateEnvironmentSettings(environment.environmentId);
-  const canManage = useEnvironmentScope(environment.environmentId, AuthSettingsWriteScope);
+  const { destination, selectVoice, canManage } = useSpeechOutputDestination();
+  const catalog = useSpeechVoiceCatalog(environment.environmentId);
+  const provider = catalog.providers.find((provider) => provider.id === "openai");
+  const voice = destination?.voice ?? provider?.defaultVoice ?? config.voice;
   return (
     <SettingsRow
       title="OpenAI voice"
-      description="Choose the voice used for response playback."
+      description={
+        catalog.error ??
+        (catalog.loading
+          ? gt("Checking")
+          : !provider
+            ? gt("Unavailable")
+            : "Choose the voice used for response playback.")
+      }
       control={
-        <Select
-          value={config.voice}
-          disabled={!canManage}
-          onValueChange={(value) => {
-            const voice = SpeechOutputSchema.fields.voice.literals.find((voice) => voice === value);
-            if (voice) update({ speechOutput: { voice } });
-          }}
-        >
-          <SelectTrigger size="sm" aria-label="Speech output voice">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectPopup>
-            {SpeechOutputSchema.fields.voice.literals.map((voice) => (
-              <SelectItem key={voice} value={voice}>
-                {voice}
-              </SelectItem>
-            ))}
-          </SelectPopup>
-        </Select>
+        <div className="flex items-center gap-2">
+          <Select
+            value={voice}
+            disabled={!canManage || !provider}
+            onValueChange={(value) => {
+              if (provider?.voices.some((voice) => voice.id === value)) selectVoice(value);
+            }}
+          >
+            <SelectTrigger size="sm" aria-label="Speech output voice">
+              <SelectValue>
+                {provider?.voices.find((candidate) => candidate.id === voice)?.name ?? voice}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup>
+              {(provider?.voices ?? []).map((voice) => (
+                <SelectItem key={voice.id} value={voice.id}>
+                  {voice.name}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+          {!provider && !catalog.loading ? (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!catalog.connected}
+              onClick={() => void catalog.refresh()}
+            >
+              {gt("Try again")}
+            </Button>
+          ) : null}
+        </div>
       }
     />
   );
@@ -538,9 +597,10 @@ function ElevenLabsVoiceSettings({ environment }: { environment: EnvironmentPres
     (settings) => settings.speechOutput,
   );
   const catalog = useElevenLabsVoices(environment.environmentId);
-  const canManage = useEnvironmentScope(environment.environmentId, AuthSettingsWriteScope);
-  const update = useUpdateEnvironmentSettings(environment.environmentId);
-  const selected = catalog.voices.find((voice) => voice.id === config.elevenLabsVoiceId);
+  const { destination, selectVoice, canManage } = useSpeechOutputDestination();
+  const selected = catalog.voices.find(
+    (voice) => voice.id === (destination?.voice ?? config.elevenLabsVoiceId),
+  );
   return (
     <>
       <SettingsRow
@@ -560,13 +620,12 @@ function ElevenLabsVoiceSettings({ environment }: { environment: EnvironmentPres
           <div className="flex w-full items-center gap-2 @min-[32rem]/settings-row:max-w-80">
             <div className="min-w-0 flex-1">
               <Select
-                value={config.elevenLabsVoiceId}
+                value={destination?.voice ?? config.elevenLabsVoiceId}
                 disabled={
                   !canManage || !catalog.connected || catalog.loading || catalog.voices.length === 0
                 }
                 onValueChange={(id) => {
-                  if (catalog.voices.some((voice) => voice.id === id))
-                    update({ speechOutput: { elevenLabsVoiceId: id! } });
+                  if (catalog.voices.some((voice) => voice.id === id)) selectVoice(id!);
                 }}
               >
                 <SelectTrigger size="sm" aria-label="ElevenLabs voice">
@@ -574,7 +633,7 @@ function ElevenLabsVoiceSettings({ environment }: { environment: EnvironmentPres
                 </SelectTrigger>
                 <SelectPopup>
                   {!selected ? (
-                    <SelectItem value={config.elevenLabsVoiceId} disabled>
+                    <SelectItem value={destination?.voice ?? config.elevenLabsVoiceId} disabled>
                       Current voice
                     </SelectItem>
                   ) : null}

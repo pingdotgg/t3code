@@ -1,5 +1,6 @@
 import {
   SpeechSynthesisError,
+  SpeechOutputSettings,
   type SpeechSynthesisRequest,
   type ElevenLabsVoicePage,
   type SpeechSynthesisVoices,
@@ -36,6 +37,9 @@ voice = PiperVoice.load(sys.argv[1], download_dir=Path(sys.argv[1]).parent)
 with wave.open(sys.argv[2], "wb") as output:
     voice.synthesize_wav(sys.stdin.read(), output)
 `;
+
+const OPENAI_MODEL = "gpt-4o-mini-tts";
+const ELEVENLABS_MODEL = "eleven_multilingual_v2";
 
 const MAX_AUDIO_BYTES = 32 * 1024 * 1024;
 const sameCredential = Schema.toEquivalence(SettingsSecretValue);
@@ -140,8 +144,34 @@ const make = Effect.gen(function* () {
     const snapshot = yield* settings.getSettings.pipe(
       Effect.mapError(SpeechSynthesisOperationError.fromCause),
     );
+    const runtimeStatus = yield* runtime.status;
     return {
-      runtime: yield* runtime.status,
+      runtime: runtimeStatus,
+      providers: [
+        {
+          id: "piper" as const,
+          name: "Piper",
+          configured: runtimeStatus.state === "ready",
+          defaultVoice: snapshot.speechOutput.piperVoiceId,
+          voices: [],
+        },
+        {
+          id: "openai" as const,
+          name: "OpenAI",
+          configured: Boolean(snapshot.cloudSpeechCredentials.openai),
+          defaultVoice: snapshot.speechOutput.voice,
+          voices: SpeechOutputSettings.fields.voice.literals.map((id) => ({ id, name: id })),
+          model: OPENAI_MODEL,
+        },
+        {
+          id: "elevenlabs" as const,
+          name: "ElevenLabs",
+          configured: Boolean(snapshot.speechOutput.elevenLabsApiKey),
+          defaultVoice: snapshot.speechOutput.elevenLabsVoiceId,
+          voices: [],
+          model: ELEVENLABS_MODEL,
+        },
+      ],
       voices: yield* Effect.forEach(
         SPEECH_VOICES,
         (voice) =>
@@ -350,11 +380,23 @@ const make = Effect.gen(function* () {
         Effect.mapError(SpeechSynthesisOperationError.fromCause),
       );
       const config = snapshot.speechOutput;
+      if (
+        input.engine === "openai" &&
+        input.voice &&
+        !SpeechOutputSettings.fields.voice.literals.some((voice) => voice === input.voice)
+      )
+        return yield* new SpeechSynthesisError({ reason: "voice-not-found" });
+      if (
+        input.engine === "elevenlabs" &&
+        input.voice &&
+        !/^[a-zA-Z0-9_-]{1,128}$/.test(input.voice)
+      )
+        return yield* new SpeechSynthesisError({ reason: "voice-not-found" });
       let audio: Uint8Array;
       if (input.engine === "piper") {
-        if (!config.piperVoiceId)
+        if (!(input.voice ?? config.piperVoiceId))
           return yield* new SpeechSynthesisError({ reason: "not-configured" });
-        const modelPath = yield* installedVoicePath(config.piperVoiceId);
+        const modelPath = yield* installedVoicePath(input.voice ?? config.piperVoiceId);
         const directory = yield* fs
           .makeTempDirectoryScoped({ prefix: "t3-tts-" })
           .pipe(Effect.mapError(SpeechSynthesisOperationError.fromCause));
@@ -385,19 +427,19 @@ const make = Effect.gen(function* () {
         const key = yield* cloudKey(input.engine, source);
         const request = elevenLabs
           ? HttpClientRequest.post(
-              `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(config.elevenLabsVoiceId)}?output_format=pcm_24000`,
+              `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(input.voice ?? config.elevenLabsVoiceId)}?output_format=pcm_24000`,
             ).pipe(
               HttpClientRequest.setHeader("xi-api-key", key),
               HttpClientRequest.setHeader("content-type", "application/json"),
-              HttpClientRequest.bodyJsonUnsafe({ text, model_id: "eleven_multilingual_v2" }),
+              HttpClientRequest.bodyJsonUnsafe({ text, model_id: ELEVENLABS_MODEL }),
             )
           : HttpClientRequest.post("https://api.openai.com/v1/audio/speech").pipe(
               HttpClientRequest.bearerToken(Redacted.make(key)),
               HttpClientRequest.setHeader("content-type", "application/json"),
               HttpClientRequest.bodyJsonUnsafe({
-                model: "gpt-4o-mini-tts",
+                model: OPENAI_MODEL,
                 input: text,
-                voice: config.voice,
+                voice: input.voice ?? config.voice,
                 response_format: "wav",
               }),
             );
