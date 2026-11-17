@@ -2035,7 +2035,7 @@ export function ThreadsSettingsPanel() {
             <SettingsRow
               serverScoped
               {...searchableSetting("auto-continue-heavy-threads")}
-              description="Let agents continue long tasks in a fresh thread with a handoff. Off by default. Requires an agent that supports T3 tools; rollover waits for active work to finish."
+              description="Let agents with T3 tools continue long tasks in a fresh thread with a handoff. Waits for active work to finish. Off by default."
               settingKeys={["autoContinueHeavyThreads"]}
               control={
                 <ScopedSwitch

@@ -162,7 +162,7 @@ export function AutoSettleSettingsRows(props: {
           <SettingsSwitchRow
             icon="arrow.triangle.branch"
             label="Continue context-heavy threads"
-            subtitle="Off by default. Agents with T3 tools can continue long tasks in a fresh thread with a handoff after active work finishes."
+            subtitle="Let agents with T3 tools continue long tasks in a fresh thread with a handoff. Waits for active work to finish. Off by default."
             value={uniformMobileSetting(displayTargets, "autoContinueHeavyThreads")}
             disabled={disabledFor("autoContinueHeavyThreads")}
             onValueChange={(value) => writeToAll({ autoContinueHeavyThreads: value })}
