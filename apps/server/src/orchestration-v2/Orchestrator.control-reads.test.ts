@@ -2025,6 +2025,18 @@ it.effect("starts and finishes a delegated task without reading the parent's his
         return Effect.succeed(statement);
       },
     );
+    const failedSpans: Array<string> = [];
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options);
+        const end = span.end.bind(span);
+        span.end = (time, exit) => {
+          end(time, exit);
+          if (Exit.isFailure(exit)) failedSpans.push(span.name);
+        };
+        return span;
+      },
+    });
     yield* orchestrator
       .dispatch({
         type: "delegated_task.request",
@@ -2040,7 +2052,9 @@ it.effect("starts and finishes a delegated task without reading the parent's his
         createdBy: "agent",
         creationSource: "mcp",
       })
-      .pipe(recordStatements);
+      .pipe(recordStatements, Effect.withTracer(tracer));
+    // The child thread is created by the same command, so its stored projection is expected to miss.
+    assert.deepEqual(failedSpans, []);
     const started = yield* projections.getThreadRecords(parentThreadId, ["subagents", "turnItems"]);
     const task = started.subagents[0]!;
     const childThreadId = task.childThreadId!;
