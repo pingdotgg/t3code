@@ -21,6 +21,13 @@ export function workspaceUsesColumns(tab: WorkspaceTab, settingsOpen = false) {
   return settingsOpen || tab === "threads" || tab === "pullRequests";
 }
 
+/** The tab whose list row shows the page directly above Home; a page drilled into from Usage has none. */
+export function workspaceDetailTab(routes: readonly { readonly name: string }[]) {
+  const page = routes[0]?.name === "Home" ? routes[1] : undefined;
+  if (page?.name === "Thread") return "threads";
+  return page?.name === "PullRequest" ? "pullRequests" : undefined;
+}
+
 export interface WorkspaceTabState {
   readonly query: string;
   readonly searchMode: WorkspaceSearchMode;
