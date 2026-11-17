@@ -40,11 +40,7 @@ import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import { isThreadEnvironmentLocked, resolveDraftHeroState } from "./ChatView.logic";
 import { useQueuedRunEdit } from "./chat/useQueuedRunEdit";
-import {
-  canSelectNewWorktree,
-  recallCheckoutIsRepo,
-  rememberCheckoutIsRepo,
-} from "./ChatView.logic";
+import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
 import { useLogicalProjectEnvironments } from "../hooks/useLogicalProjectEnvironments";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { useProjectScriptEditing } from "./chat/useProjectScriptEditing";
@@ -1767,8 +1763,7 @@ export default function ChatView(props: ChatViewProps) {
       rememberCheckoutIsRepo(environmentId, gitStatusCwd, liveIsGitRepo);
     }
   }, [environmentId, gitStatusCwd, liveIsGitRepo]);
-  const knownIsGitRepo = liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd);
-  const isGitRepo = knownIsGitRepo ?? true;
+  const isGitRepo = liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true;
   // Provider-native subagents cannot take messages; approvals and questions go to the top-level parent.
   const showProviderSubagentBar = isProviderSubagent;
   const composerMounted = !showProviderSubagentBar;
@@ -2784,19 +2779,6 @@ export default function ChatView(props: ChatViewProps) {
         );
         const next = logicalProjectEnvironments[(index + 1) % logicalProjectEnvironments.length];
         if (next) onEnvironmentChangeStable(next.environmentId);
-      },
-      "composer.newWorktree": ({ event }) => {
-        if (
-          !canSelectNewWorktree({
-            isGitRepo: knownIsGitRepo,
-            envLocked,
-            isMultiModel: multipleModelSelections !== null,
-            isLocalDraftThread,
-            canOverrideServerThreadEnvMode,
-          })
-        )
-          return false;
-        if (!event.repeat) onEnvModeChangeStable("worktree");
       },
       "thread.steerQueuedMessage": ({ event }) =>
         routeKind !== "draft" && queuedRunsControlRef.current?.steerNext(event.repeat) === true,
