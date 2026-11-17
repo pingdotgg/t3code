@@ -33,6 +33,27 @@ import {
 } from "./pullRequestStatus";
 import { PullRequestGlyph } from "./pullRequestGlyphs";
 
+/** A label as list rows show it: small, tinted by its color, truncating. */
+export function ListRowLabel(props: {
+  readonly label: { readonly name: string; readonly color: string | null };
+  readonly textClassName: string;
+}) {
+  const color = pullRequestLabelColor(props.label.color);
+  return (
+    <View
+      className="min-w-0 shrink flex-row items-center gap-1 rounded-md bg-subtle px-1.5 py-0.5"
+      style={{ maxWidth: 160, ...(color ? { backgroundColor: `${color}20` } : {}) }}
+    >
+      {color ? (
+        <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: color }} />
+      ) : null}
+      <Text className={cn("shrink text-2xs font-t3-medium", props.textClassName)} numberOfLines={1}>
+        {props.label.name}
+      </Text>
+    </View>
+  );
+}
+
 export const PullRequestListRow = memo(
   function PullRequestListRow(props: {
     readonly item: EnvironmentPullRequestListEntry;
@@ -144,31 +165,9 @@ export const PullRequestListRow = memo(
               </Text>
               <View className="flex-row items-center gap-1.5">
                 <View className="min-w-0 flex-1 flex-row items-center gap-1">
-                  {item.labels.slice(0, 2).map((label) => {
-                    const color = pullRequestLabelColor(label.color);
-                    return (
-                      <View
-                        key={label.name}
-                        className="min-w-0 shrink flex-row items-center gap-1 rounded-md bg-subtle px-1.5 py-0.5"
-                        style={{
-                          maxWidth: 160,
-                          ...(color ? { backgroundColor: `${color}20` } : {}),
-                        }}
-                      >
-                        {color ? (
-                          <View
-                            style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: color }}
-                          />
-                        ) : null}
-                        <Text
-                          className={cn("shrink text-2xs font-t3-medium", mutedForeground)}
-                          numberOfLines={1}
-                        >
-                          {label.name}
-                        </Text>
-                      </View>
-                    );
-                  })}
+                  {item.labels.slice(0, 2).map((label) => (
+                    <ListRowLabel key={label.name} label={label} textClassName={mutedForeground} />
+                  ))}
                   {item.labels.length > 2 ? (
                     <Text className={cn("shrink-0 text-2xs", tertiaryForeground)}>
                       +{item.labels.length - 2}
