@@ -1202,3 +1202,92 @@ it("requestSecret returns the unsaved note for a declined, cancelled or timed-ou
     { status: "timed_out", note: SECRET_REQUEST_UNSAVED_NOTE.timed_out },
   ]);
 });
+
+it("requestSecret opens a new card when a later run reuses a closed card's clientRequestId", async () => {
+  const laterRunId = RunId.make("run-mcp-later");
+  let currentRun = makeRun({ id: cancelledRunId, ordinal: 1, status: "running" });
+  // Like the orchestrator, a repeated commandId replays its receipt and changes nothing.
+  const receipts = new Set<string>();
+  const cards = new Map<string, { readonly runId: string; readonly secretStatus: string }>();
+  const projection = () =>
+    ({
+      thread: baseThread({
+        threadId: parentThreadId,
+        title: "Parent",
+        instanceId: parentInstanceId,
+        model: "gpt-5.4",
+      }),
+      runs: [{ ...currentRun, rootNodeId: taskId }],
+      visibleTurnItems: [],
+      turnItems: [...cards].map(([id, card]) => ({ type: "secret_request", id, ...card })),
+      providerTurns: [],
+      runtimeRequests: [],
+      messages: [],
+      contextTransfers: [],
+      subagents: [],
+      updatedAt: now,
+    }) as unknown as OrchestrationV2ThreadProjection;
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.sync(projection),
+          getThreadShell: () =>
+            Effect.sync(() => projection().thread as unknown as OrchestrationV2ThreadShell),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              if (command.type !== "secret_request.record" || receipts.has(command.commandId)) {
+                return {} as never;
+              }
+              receipts.add(command.commandId);
+              cards.set(command.turnItemId, {
+                runId: command.runId,
+                secretStatus: command.secretStatus,
+              });
+              return {} as never;
+            }),
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+        } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+  const input = {
+    label: "Router key",
+    reason: "Configures the router.",
+    clientRequestId: "router-key",
+    timeoutMs: 3_000,
+  };
+
+  const [first, second, pendingInLaterRun] = await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    const firstRequest = yield* service
+      .requestSecret(makeScope(), input)
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* TestClock.adjust("4 seconds");
+    const first = yield* Fiber.join(firstRequest);
+
+    currentRun = makeRun({ id: laterRunId, ordinal: 2, status: "running" });
+    const secondRequest = yield* service
+      .requestSecret(makeScope(), input)
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* TestClock.adjust("1 second");
+    const pendingInLaterRun = [...cards.values()].some(
+      (card) => card.runId === laterRunId && card.secretStatus === "pending",
+    );
+    yield* TestClock.adjust("3 seconds");
+    return [first, yield* Fiber.join(secondRequest), pendingInLaterRun] as const;
+  }).pipe(Effect.provide(Layer.merge(layer, TestClock.layer())), Effect.runPromise);
+
+  expect(first).toEqual({ status: "timed_out", note: SECRET_REQUEST_UNSAVED_NOTE.timed_out });
+  expect(pendingInLaterRun).toBe(true);
+  expect(second).toEqual({ status: "timed_out", note: SECRET_REQUEST_UNSAVED_NOTE.timed_out });
+});
