@@ -16,6 +16,7 @@ import {
   OrchestrationV2ThreadHistoryPage,
   OrchestrationV2TurnItem,
   OrchestrationV2TurnItemJson,
+  OrchestrationV2Command,
   OrchestrationV2WorkspacePreparation,
 } from "./orchestrationV2.ts";
 
@@ -649,6 +650,31 @@ describe("OrchestrationV2WorkspacePreparation memberBaseCommits", () => {
     for (const value of ["main", "HEAD", "a".repeat(7), "--upload-pack=touch pwn"]) {
       expect(() => decode({ ...strategy, memberBaseCommits: { api: value } })).toThrow();
     }
+  });
+
+  it("keeps memberBaseCommits on a thread.create initial message through command decode", () => {
+    const memberBaseCommits = { api: "a".repeat(40) };
+    const command = {
+      type: "thread.create",
+      commandId: "command-1",
+      threadId: "thread-1",
+      projectId: "project-1",
+      title: "Launch",
+      modelSelection: { instanceId: "instance-1", model: "model-1" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+      initialMessage: {
+        messageId: "message-1",
+        text: "hello",
+        attachments: [],
+        workspaceStrategy: { ...strategy, memberBaseCommits },
+      },
+    };
+    expect(Schema.decodeUnknownSync(OrchestrationV2Command)(command)).toEqual(command);
   });
 });
 
