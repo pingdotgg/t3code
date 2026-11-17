@@ -35,28 +35,28 @@ describe("resolveIssueLinkTarget", () => {
     expect(target?.ref).toMatchObject({ tracker: "github", host: "github.com", ...expected });
   });
 
-  it("prefers the project bound to the link's own port over one on the bare hostname", () => {
-    const enterprise = (id: string, host: string) =>
-      ({
-        id: ProjectId.make(id),
-        environmentId: EnvironmentId.make("env"),
-        repositoryIdentity: {
-          canonicalKey: `${host}/acme/web`,
-          provider: SourceControlProviderKind.make("github"),
-          displayName: "acme/web",
-          owner: "acme",
-          name: "web",
-        },
-      }) as never;
-    const target = resolveIssueLinkTarget({
-      url: "https://github.example.com:8443/acme/web/issues/7",
-      projects: [
-        enterprise("bare", "github.example.com"),
-        enterprise("ported", "github.example.com:8443"),
-      ],
-    });
-    expect(target?.ref.projectId).toBe("ported");
-  });
+  it.each(["github.example.com", "code.acme.test"])(
+    "prefers the project bound to an issue link's own port on %s",
+    (host) => {
+      const enterprise = (id: string, host: string) =>
+        ({
+          id: ProjectId.make(id),
+          environmentId: EnvironmentId.make("env"),
+          repositoryIdentity: {
+            canonicalKey: `${host}/acme/web`,
+            provider: SourceControlProviderKind.make("github"),
+            displayName: "acme/web",
+            owner: "acme",
+            name: "web",
+          },
+        }) as never;
+      const target = resolveIssueLinkTarget({
+        url: `https://${host}:8443/acme/web/issues/7`,
+        projects: [enterprise("bare", host), enterprise("ported", `${host}:8443`)],
+      });
+      expect(target?.ref.projectId).toBe("ported");
+    },
+  );
 
   it.each([
     "https://github.com.evil.example/acme/web/issues/7",
