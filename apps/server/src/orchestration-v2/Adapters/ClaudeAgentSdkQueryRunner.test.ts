@@ -397,42 +397,60 @@ it.effect.each([true, false])("only retries after confirmed process exit: %s", (
   }).pipe(Effect.provide(realQueryRunner)),
 );
 
-it.effect("stops retrying MCP registration after two timeouts and reports the cause", () =>
-  Effect.gen(function* () {
-    const firstRegistration = Promise.withResolvers<void>();
-    const secondRegistration = Promise.withResolvers<void>();
-    const disposed = vi.fn(async () => {});
-    const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(() => {
-      const started = querySpy.mock.calls.length === 1 ? firstRegistration : secondRegistration;
-      return {
-        initializationResult: async () => ({}),
-        setMcpServers: () => {
-          started.resolve();
-          return new Promise<ClaudeSdk.McpSetServersResult>(() => {});
-        },
-        [Symbol.asyncDispose]: disposed,
-      } as unknown as ClaudeSdk.Query;
-    });
-    yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
-    const runner = yield* ClaudeAgentSdkQueryRunner;
-    const opening = yield* runner.open(resumedMcpQueryInput).pipe(Effect.result, Effect.forkChild);
-    yield* Effect.promise(() => firstRegistration.promise);
-    yield* TestClock.adjust("90 seconds");
-    yield* Effect.promise(() => secondRegistration.promise);
-    yield* TestClock.adjust("90 seconds");
-    const result = yield* Fiber.join(opening);
+it.effect.each([true, false])(
+  "stops retrying MCP registration after two timeouts and reports the cause (fresh: %s)",
+  (fresh) =>
+    Effect.gen(function* () {
+      const started = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+      const disposed = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+      const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(() => {
+        const attempt = querySpy.mock.calls.length - 1;
+        return {
+          initializationResult: async () => ({}),
+          setMcpServers: () => {
+            started[attempt]?.resolve();
+            return new Promise<ClaudeSdk.McpSetServersResult>(() => {});
+          },
+          [Symbol.asyncDispose]: async () => {
+            disposed[attempt]?.resolve();
+          },
+        } as unknown as ClaudeSdk.Query;
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
+      const runner = yield* ClaudeAgentSdkQueryRunner;
+      const { resume, ...options } = resumedMcpQueryInput.options;
+      const opening = yield* runner
+        .open(
+          fresh
+            ? { ...resumedMcpQueryInput, options: { ...options, sessionId: resume } }
+            : resumedMcpQueryInput,
+        )
+        .pipe(Effect.result, Effect.forkChild);
+      yield* Effect.promise(() => started[0]!.promise);
+      yield* TestClock.adjust("90 seconds");
+      if (fresh) {
+        yield* Effect.promise(() => disposed[0]!.promise);
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("5 seconds");
+      }
+      yield* Effect.promise(() => started[1]!.promise);
+      yield* TestClock.adjust("90 seconds");
+      const result = yield* Fiber.join(opening);
 
-    assert.equal(result._tag, "Failure");
-    if (result._tag !== "Failure") return;
-    assert.equal(querySpy.mock.calls.length, 2);
-    assert.equal(disposed.mock.calls.length, 2);
-    assert.equal(
-      makeProviderFailure({
-        cause: { _tag: "ProviderAdapterTurnStartError", cause: result.failure },
-      }).message,
-      "Claude timed out while registering its MCP tools. Retry the turn; if it keeps failing, check Claude and the server logs.",
-    );
-  }).pipe(Effect.provide(realQueryRunner)),
+      assert.equal(result._tag, "Failure");
+      if (result._tag !== "Failure") return;
+      assert.equal(querySpy.mock.calls.length, 2);
+      yield* Effect.promise(() => disposed[1]!.promise);
+      const [first, second] = querySpy.mock.calls.map(([call]) => call.options);
+      if (fresh) assert.notEqual(first?.sessionId, second?.sessionId);
+      else assert.equal(first?.resume, second?.resume);
+      assert.equal(
+        makeProviderFailure({
+          cause: { _tag: "ProviderAdapterTurnStartError", cause: result.failure },
+        }).message,
+        "Claude timed out while registering its MCP tools. Retry the turn; if it keeps failing, check Claude and the server logs.",
+      );
+    }).pipe(Effect.provide(realQueryRunner)),
 );
 
 it.effect("cancels a stalled registration without retrying or retaining its prompt queue", () =>
@@ -533,48 +551,6 @@ it.effect.each(["initialize", "setMcpServers"] as const)(
       assert.deepEqual(delivered.value, message);
       assert.isFalse(delivered.done);
     }).pipe(Effect.provide(realQueryRunner)),
-);
-
-it.effect("stops retrying a fresh registration after two timeouts", () =>
-  Effect.gen(function* () {
-    const started = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
-    const disposed = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
-    const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(() => {
-      const attempt = querySpy.mock.calls.length - 1;
-      return {
-        initializationResult: async () => ({}),
-        setMcpServers: () => {
-          started[attempt]?.resolve();
-          return new Promise<ClaudeSdk.McpSetServersResult>(() => {});
-        },
-        [Symbol.asyncDispose]: async () => {
-          disposed[attempt]?.resolve();
-        },
-      } as unknown as ClaudeSdk.Query;
-    });
-    yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
-    const runner = yield* ClaudeAgentSdkQueryRunner;
-    const { resume, ...options } = resumedMcpQueryInput.options;
-    const opening = yield* runner
-      .open({ ...resumedMcpQueryInput, options: { ...options, sessionId: resume } })
-      .pipe(Effect.result, Effect.forkChild);
-    yield* Effect.promise(() => started[0]!.promise);
-    yield* TestClock.adjust("90 seconds");
-    yield* Effect.promise(() => disposed[0]!.promise);
-    yield* Effect.yieldNow;
-    yield* TestClock.adjust("5 seconds");
-    yield* Effect.promise(() => started[1]!.promise);
-    yield* TestClock.adjust("90 seconds");
-    const result = yield* Fiber.join(opening);
-
-    assert.equal(result._tag, "Failure");
-    assert.equal(querySpy.mock.calls.length, 2);
-    assert.notEqual(
-      querySpy.mock.calls[0]![0].options?.sessionId,
-      querySpy.mock.calls[1]![0].options?.sessionId,
-    );
-    yield* Effect.promise(() => disposed[1]!.promise);
-  }).pipe(Effect.provide(realQueryRunner)),
 );
 
 it.effect.each([
