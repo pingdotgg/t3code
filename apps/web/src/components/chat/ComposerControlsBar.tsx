@@ -18,7 +18,7 @@ import {
   type RuntimeMode,
   type ServerProvider,
 } from "@t3tools/contracts";
-import type { EffortDisplay } from "@t3tools/contracts/settings";
+import type { EffortDisplay, IdleCompactionMode } from "@t3tools/contracts/settings";
 import { cn } from "~/lib/utils";
 import { resolveComposerTraitsInput } from "./composerProviderState";
 import { useApplyThreadModelPick } from "./useApplyThreadModelPick";
@@ -60,6 +60,9 @@ export function ComposerControlsBar(props: {
   defaultRuntimeMode: RuntimeMode | undefined;
   compatibleRuntimeModeOptions: ReadonlyArray<RuntimeModeOption>;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
+  /** Null hides the footer control: only a Claude thread keeps its own early-compaction choice. */
+  idleCompaction: IdleCompactionMode | null;
+  handleIdleCompactionChange: (enabled: boolean) => void;
   composerControlsCollapsed: boolean;
   composerControlsHidden: boolean;
   restingHiddenBlockCount: number;
@@ -104,6 +107,8 @@ export function ComposerControlsBar(props: {
     defaultRuntimeMode,
     compatibleRuntimeModeOptions,
     handleRuntimeModeChange,
+    idleCompaction,
+    handleIdleCompactionChange,
     composerControlsCollapsed,
     composerControlsHidden,
     restingHiddenBlockCount: measuredHiddenBlockCount,
@@ -228,6 +233,8 @@ export function ComposerControlsBar(props: {
           runtimeMode={compatibleRuntimeMode}
           runtimeModeOptions={compatibleRuntimeModeOptions}
           onRuntimeModeChange={handleRuntimeModeChange}
+          idleCompaction={idleCompaction}
+          onIdleCompactionChange={handleIdleCompactionChange}
         />
       }
       terminalOpen={terminalOpen}

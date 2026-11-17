@@ -147,6 +147,8 @@ export interface UpdateThreadMetadataInput extends ThreadCommandInput {
   readonly regenerateTitle?: boolean;
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
   readonly expectedEmpty?: boolean;
+  /** Null restores the thread's provider instance choice. */
+  readonly idleCompaction?: import("@t3tools/contracts").OrchestrationV2ThreadIdleCompaction | null;
 }
 
 export interface SetThreadRuntimeModeInput extends ThreadCommandInput {
@@ -691,7 +693,8 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
       input.worktreePath !== undefined ||
       input.regenerateTitle !== undefined ||
       input.linkedPullRequest !== undefined ||
-      input.limitRecovery !== undefined
+      input.limitRecovery !== undefined ||
+      input.idleCompaction !== undefined
     ) {
       result = yield* dispatch({
         type: "thread.metadata.update",
@@ -706,6 +709,7 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
         ...(input.linkedPullRequest === undefined
           ? {}
           : { linkedPullRequest: input.linkedPullRequest }),
+        ...(input.idleCompaction === undefined ? {} : { idleCompaction: input.idleCompaction }),
       });
     }
     if (input.modelSelection !== undefined) {

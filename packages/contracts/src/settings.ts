@@ -1731,6 +1731,19 @@ export const resolveIdleCompaction = (
   return override === "default" ? globalIdleCompaction(settings) : override;
 };
 
+/** A managed policy lock outranks a thread's own choice, so it resolves to the locked setting. */
+export const resolveThreadIdleCompaction = (
+  settings: Pick<ServerSettings, "providerInstances" | "compactIdleThreads" | "idleCompaction">,
+  thread: {
+    readonly providerInstanceId: ProviderInstanceId;
+    readonly idleCompaction?: IdleCompactionMode | null | undefined;
+  },
+  locked: boolean,
+): IdleCompactionMode =>
+  locked
+    ? resolveIdleCompaction(settings, thread.providerInstanceId)
+    : (thread.idleCompaction ?? resolveIdleCompaction(settings, thread.providerInstanceId));
+
 export const ServerSettingsOperation = Schema.Literals([
   "normalize",
   "check-exists",

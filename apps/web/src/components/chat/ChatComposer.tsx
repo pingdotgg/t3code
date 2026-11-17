@@ -48,6 +48,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
+import type { IdleCompactionMode } from "@t3tools/contracts/settings";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
@@ -479,6 +480,9 @@ export interface ChatComposerProps {
   onOpenProviderSetup: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason: (instanceId: ProviderInstanceId, model: string) => string | null;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
+  /** The thread's effective idle compaction mode, or null when the footer hides the choice. */
+  idleCompaction: IdleCompactionMode | null;
+  handleIdleCompactionChange: (enabled: boolean) => void;
 
   focusComposer: () => void;
   scheduleComposerFocus: () => void;
@@ -568,6 +572,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onOpenProviderSetup,
     getModelDisabledReason,
     handleRuntimeModeChange,
+    idleCompaction,
+    handleIdleCompactionChange,
     focusComposer,
     scheduleComposerFocus,
     setThreadError,
@@ -2508,6 +2514,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       defaultRuntimeMode={props.defaultRuntimeMode}
       compatibleRuntimeModeOptions={compatibleRuntimeModeOptions}
       handleRuntimeModeChange={handleRuntimeModeChange}
+      idleCompaction={idleCompaction}
+      handleIdleCompactionChange={handleIdleCompactionChange}
       composerControlsCollapsed={composerControlsCollapsed}
       effortDisplay={settings.effortDisplay}
       permissionsShownInStrip={props.permissionsShownInStrip}

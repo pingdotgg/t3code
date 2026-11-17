@@ -1,5 +1,5 @@
 import {
-  resolveIdleCompaction,
+  resolveThreadIdleCompaction,
   type ModelSelection,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2ProviderTurnTokenUsage,
@@ -223,16 +223,14 @@ export function hasDismissedResumeCompaction(
 }
 
 export function shouldOfferResumeCompaction(input: {
-  readonly provider: string | null | undefined;
+  /** Any provider whose session can compact itself, so `/compact` lands as a native compaction. */
+  readonly supportsCompaction: boolean;
   readonly usedTokens: number | null | undefined;
   readonly updatedAt: string | null | undefined;
   readonly promptCacheTtlMs?: number | undefined;
   readonly now: string;
 }): boolean {
-  if (
-    input.provider !== "claudeAgent" ||
-    (input.usedTokens ?? 0) < COMPACTION_SUGGESTION_MIN_TOKENS
-  ) {
+  if (!input.supportsCompaction || (input.usedTokens ?? 0) < COMPACTION_SUGGESTION_MIN_TOKENS) {
     return false;
   }
 
@@ -271,6 +269,8 @@ export function compactBeforeSendTokens(input: {
   >;
   readonly text: string;
   readonly threadIdle: boolean;
+  /** A managed policy lock outranks the thread's own mode. */
+  readonly idleCompactionLocked: boolean;
   readonly now: string;
 }): number | null {
   const { projection } = input;
@@ -279,7 +279,8 @@ export function compactBeforeSendTokens(input: {
     provider === undefined ||
     !input.threadIdle ||
     COMPACT_COMMAND_PATTERN.test(input.text) ||
-    resolveIdleCompaction(input.settings, provider.instanceId) === "off" ||
+    resolveThreadIdleCompaction(input.settings, projection.thread, input.idleCompactionLocked) ===
+      "off" ||
     !provider.slashCommands.some((command) => command.name === "compact") ||
     resolvePendingHandoff(projection, input.selection, input.providers) !== null ||
     projection.runtimeRequests.some((request) => request.status === "pending") ||
@@ -321,7 +322,8 @@ export function compactBeforeSendTokens(input: {
   );
   return contextWindow !== null &&
     shouldOfferResumeCompaction({
-      provider: provider.driver,
+      // Checked above: the provider advertises `/compact`, which it routes natively.
+      supportsCompaction: true,
       usedTokens: contextWindow.usedTokens,
       updatedAt: contextWindow.updatedAt,
       promptCacheTtlMs: liveUsage?.promptCacheTtlMs,

@@ -454,6 +454,17 @@ export const OrchestrationV2ThreadOpens = Schema.Struct({
 });
 export type OrchestrationV2ThreadOpens = typeof OrchestrationV2ThreadOpens.Type;
 
+/** Why T3 Code compacted a thread on its own, on the `/compact` it sent. */
+export const OrchestrationV2IdleCompaction = Schema.Literals(["beforeCacheExpires", "onReturn"]);
+export type OrchestrationV2IdleCompaction = typeof OrchestrationV2IdleCompaction.Type;
+
+/** A thread's choice: either message mode, plus Never. Absent or null inherits its instance's. */
+export const OrchestrationV2ThreadIdleCompaction = Schema.Union([
+  OrchestrationV2IdleCompaction,
+  Schema.Literal("off"),
+]);
+export type OrchestrationV2ThreadIdleCompaction = typeof OrchestrationV2ThreadIdleCompaction.Type;
+
 // Open stats only rank search results, so a value this build cannot read (an
 // older or newer shape) becomes null instead of failing the whole thread.
 const LenientThreadOpens = Schema.NullOr(OrchestrationV2ThreadOpens).pipe(
@@ -474,6 +485,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
+  idleCompaction: Schema.optional(Schema.NullOr(OrchestrationV2ThreadIdleCompaction)),
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
@@ -1386,10 +1398,6 @@ export const OrchestrationV2Notification = Schema.Struct({
 });
 export type OrchestrationV2Notification = typeof OrchestrationV2Notification.Type;
 
-/** Why T3 Code compacted a thread on its own, on the `/compact` it sent. */
-export const OrchestrationV2IdleCompaction = Schema.Literals(["beforeCacheExpires", "onReturn"]);
-export type OrchestrationV2IdleCompaction = typeof OrchestrationV2IdleCompaction.Type;
-
 export const OrchestrationV2ConversationMessage = Schema.Struct({
   notification: Schema.optional(OrchestrationV2Notification),
   ...OrchestrationV2CreationFields,
@@ -2207,6 +2215,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
+  idleCompaction: Schema.optional(Schema.NullOr(OrchestrationV2ThreadIdleCompaction)),
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
@@ -3269,6 +3278,8 @@ export const OrchestrationV2Command = Schema.Union([
     limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),
     /** Link (object) or unlink (null) a pull request; absent leaves it unchanged. */
     linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
+    /** Null restores the thread's provider instance choice; absent leaves it unchanged. */
+    idleCompaction: Schema.optional(Schema.NullOr(OrchestrationV2ThreadIdleCompaction)),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.link"),

@@ -2,7 +2,7 @@ import {
   CommandId,
   IDLE_COMPACTION_TEXT,
   MessageId,
-  resolveIdleCompaction,
+  resolveThreadIdleCompaction,
   resolveProjectProviderInstanceEnabled,
   type RunId,
   type ThreadId,
@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
 import * as Stream from "effect/Stream";
 
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { idleCompactionWindow } from "./IdleCompaction.ts";
@@ -29,6 +30,9 @@ export const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const settings = yield* ServerSettings.ServerSettingsService;
+  const policy = yield* ManagedPolicy.ManagedPolicy;
+  // A policy lock outranks a thread's own choice, the same way it clamps the settings it locks.
+  const idleCompactionLocked = policy.settings.lockedPaths.includes("idleCompaction");
 
   const compactWhenDue = Effect.fn("IdleCompactionService.compactWhenDue")(
     function* (threadId: ThreadId, completedRunId: RunId) {
@@ -42,7 +46,8 @@ export const make = Effect.gen(function* () {
           : thread.providerInstanceId === "claudeAgent";
         if (
           !claudeInstance ||
-          resolveIdleCompaction(current, thread.providerInstanceId) !== "beforeCacheExpires" ||
+          resolveThreadIdleCompaction(current, thread, idleCompactionLocked) !==
+            "beforeCacheExpires" ||
           !resolveProjectProviderInstanceEnabled(
             current,
             thread.projectId,
@@ -79,7 +84,7 @@ export const make = Effect.gen(function* () {
           },
         );
         if (
-          resolveIdleCompaction(current, records.thread.providerInstanceId) !==
+          resolveThreadIdleCompaction(current, records.thread, idleCompactionLocked) !==
             "beforeCacheExpires" ||
           !resolveProjectProviderInstanceEnabled(
             current,

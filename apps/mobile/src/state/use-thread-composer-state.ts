@@ -446,6 +446,8 @@ export function useThreadComposerState(input: {
           providers: serverConfig.providers,
           settings: serverConfig.settings,
           text,
+          idleCompactionLocked:
+            serverConfig.managedPolicy?.lockedSettings.includes("idleCompaction") ?? false,
           threadIdle:
             !activeThreadBusy &&
             !runlessWorkActive &&

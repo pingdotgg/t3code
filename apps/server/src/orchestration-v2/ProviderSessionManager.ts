@@ -2,6 +2,7 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
+  DEFAULT_SERVER_SETTINGS,
   isOrchestrationV2WorkActive,
   ModelSelection,
   type OrchestrationV2AppThread,
@@ -18,6 +19,7 @@ import {
   type OrchestrationV2TurnItem,
   type ProviderThreadId,
   type ProviderTurnId,
+  resolveThreadIdleCompaction,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -49,6 +51,7 @@ import {
 } from "../observability/Metrics.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
@@ -439,6 +442,7 @@ export const layerWithOptions = (
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const managedPolicy = yield* Effect.serviceOption(ManagedPolicy.ManagedPolicy);
       const agentScope = yield* AgentScope;
       const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
       // Labs flag, read live: Codex per turn (its shared session outlives a toggle), Claude per query.
@@ -449,6 +453,19 @@ export const layerWithOptions = (
             Effect.map((settings) => settings.promptSuggestionsEnabled),
             Effect.orElseSucceed(() => false),
           );
+      const idleCompactionLocked =
+        Option.isSome(managedPolicy) &&
+        managedPolicy.value.settings.lockedPaths.includes("idleCompaction");
+      /** Read when the provider asks, so a thread's own choice and a policy lock both land live. */
+      const idleCompactionFor = Effect.fn("ProviderSessionManagerV2.idleCompactionFor")(function* (
+        threadId: ThreadId,
+      ) {
+        const thread = yield* projectionStore.getThread(threadId);
+        const settings = Option.isSome(serverSettings)
+          ? yield* serverSettings.value.getSettings
+          : DEFAULT_SERVER_SETTINGS;
+        return resolveThreadIdleCompaction(settings, thread, idleCompactionLocked);
+      });
       const agentAccessSettings = Effect.fn("ProviderSessionManagerV2.agentAccessSettings")(
         function* (threadId: ThreadId) {
           if (Option.isNone(serverSettings)) return { browser: true, device: false };
@@ -3053,6 +3070,10 @@ export const layerWithOptions = (
                     modelSelection: input.modelSelection,
                     runtimePolicy: input.runtimePolicy,
                     promptSuggestions: promptSuggestionsEnabled,
+                    // An unreadable thread or settings answer skips the dialog rather than compacting.
+                    idleCompaction: idleCompactionFor(input.threadId).pipe(
+                      Effect.orElseSucceed(() => "off" as const),
+                    ),
                     ...(input.resumeFromSession === undefined
                       ? {}
                       : { resumeFromSession: input.resumeFromSession }),
