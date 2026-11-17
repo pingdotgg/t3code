@@ -509,7 +509,7 @@ const layerTest = (
           }),
         ),
         Layer.mock(ElectronWindow.ElectronWindow)({
-          currentMainOrFirst: Effect.sync(() =>
+          currentAppWindow: Effect.sync(() =>
             Option.fromNullishOr(
               allWindowsMock().find((window) => !window.isDestroyed()) as
                 | Electron.BrowserWindow

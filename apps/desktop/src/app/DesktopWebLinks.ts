@@ -35,7 +35,7 @@ const make = Effect.gen(function* () {
 
   const flush = Effect.gen(function* () {
     if (pending.length === 0) return;
-    const current = yield* electronWindow.currentMainOrFirst;
+    const current = yield* electronWindow.currentAppWindow;
     const target = renderers.pick(current);
     if (target === undefined) return;
     for (const url of pending.splice(0)) target.webContents.send(WEB_LINK_OPEN_CHANNEL, url);

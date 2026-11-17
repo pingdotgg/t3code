@@ -203,7 +203,7 @@ export const make = Effect.gen(function* () {
         if (!destination?.startsWith(`${expectedOrigin}/`)) return false;
         void runPromise(
           Effect.gen(function* () {
-            const mainWindow = yield* electronWindow.currentMainOrFirst;
+            const mainWindow = yield* electronWindow.currentAppWindow;
             if (Option.isNone(mainWindow)) return;
             yield* Effect.promise(() => mainWindow.value.loadURL(destination));
             yield* electronWindow.reveal(mainWindow.value);
@@ -249,7 +249,7 @@ export const make = Effect.gen(function* () {
           return;
         void runPromise(
           Effect.gen(function* () {
-            const mainWindow = yield* electronWindow.currentMainOrFirst;
+            const mainWindow = yield* electronWindow.currentAppWindow;
             if (Option.isSome(mainWindow)) yield* electronWindow.reveal(mainWindow.value);
           }),
         );

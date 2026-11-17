@@ -153,7 +153,7 @@ const configureMenu = (
         Layer.provideMerge(layerDesktopWindow(selectedAction, services)),
         Layer.provideMerge(
           Layer.mock(ElectronWindow.ElectronWindow)({
-            main:
+            currentAppWindow:
               services.appWindowOpen === false
                 ? Effect.succeedNone
                 : Effect.succeedSome({} as Electron.BrowserWindow),

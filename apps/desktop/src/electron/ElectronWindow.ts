@@ -113,9 +113,7 @@ export class ElectronWindow extends Context.Service<
       options: Electron.BrowserWindowConstructorOptions,
     ) => Effect.Effect<Electron.BrowserWindow, ElectronWindowCreateError>;
     /** The current app window: focused, else last focused, else primary, else any. */
-    readonly main: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
-    readonly currentMainOrFirst: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
-    readonly focusedMainOrFirst: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
+    readonly currentAppWindow: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly primary: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly appWindows: Effect.Effect<ReadonlyArray<Electron.BrowserWindow>>;
     readonly appWindowFor: (sender: {
@@ -243,9 +241,7 @@ export const make = Effect.gen(function* () {
         catch: (cause) => new ElectronWindowCreateError({ options: diagnosticOptions, cause }),
       });
     }),
-    main: currentAppWindow,
-    currentMainOrFirst: currentAppWindow,
-    focusedMainOrFirst: currentAppWindow,
+    currentAppWindow,
     primary: Effect.gen(function* () {
       const live = yield* liveAppWindows;
       return Option.fromNullishOr(live.find((window) => window === primaryWindow) ?? null);

@@ -1052,7 +1052,7 @@ export const make = Effect.gen(function* () {
 
   const ensureMain = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return Option.none<Electron.BrowserWindow>();
-    const existingWindow = yield* electronWindow.main;
+    const existingWindow = yield* electronWindow.currentAppWindow;
     if (Option.isSome(existingWindow)) {
       return existingWindow;
     }
@@ -1086,7 +1086,7 @@ export const make = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return;
     const existingSplash = yield* Ref.get(splashWindowRef);
     if (Option.isSome(existingSplash)) return;
-    const existingWindow = yield* electronWindow.currentMainOrFirst;
+    const existingWindow = yield* electronWindow.currentAppWindow;
     if (Option.isSome(existingWindow)) return;
 
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
@@ -1146,7 +1146,7 @@ export const make = Effect.gen(function* () {
     const existingWindow =
       target !== undefined && !target.isDestroyed()
         ? Option.some(target)
-        : yield* electronWindow.main;
+        : yield* electronWindow.currentAppWindow;
     if (Option.isNone(existingWindow) && (!reveal || (yield* waitingForBackend))) {
       return Option.none<Electron.BrowserWindow>();
     }
@@ -1178,14 +1178,14 @@ export const make = Effect.gen(function* () {
       yield* createWindow({ primary: false, ...input });
     }),
     prepareCaptureReveal: Effect.gen(function* () {
-      const existingWindow = yield* electronWindow.currentMainOrFirst;
+      const existingWindow = yield* electronWindow.currentAppWindow;
       if (Option.isSome(existingWindow) && !pendingMainReveals.has(existingWindow.value)) {
         yield* electronWindow.prepareReveal(existingWindow.value);
       }
     }),
     activate: Effect.gen(function* () {
       if (yield* Ref.get(desktopState.quitting)) return;
-      const existingWindow = yield* electronWindow.currentMainOrFirst;
+      const existingWindow = yield* electronWindow.currentAppWindow;
       if (Option.isSome(existingWindow)) {
         yield* revealMain(existingWindow.value);
         return;
@@ -1233,14 +1233,18 @@ export const make = Effect.gen(function* () {
         reveal: event.type === "started",
         ...(pinned === undefined ? {} : { target: pinned }),
       });
-      if (captureId === undefined) return;
+      // A failure without an id cannot name its capture, so no pin should outlive it.
+      if (captureId === undefined) {
+        if (event.type === "failed") snapShotTargets.clear();
+        return;
+      }
       // A capture's later events go to the window that showed its first, even if focus moved.
       if (event.type === "ready" || event.type === "failed") snapShotTargets.delete(captureId);
       else if (Option.isSome(target)) snapShotTargets.set(captureId, target.value);
     }),
     zoomMain: Effect.fn("desktop.window.zoomMain")(function* (direction) {
       yield* Effect.annotateCurrentSpan({ direction });
-      const window = yield* electronWindow.main;
+      const window = yield* electronWindow.currentAppWindow;
       if (Option.isNone(window) || window.value.isDestroyed()) {
         return;
       }
@@ -1249,7 +1253,7 @@ export const make = Effect.gen(function* () {
     runMainContentsCommand: Effect.fn("desktop.window.runMainContentsCommand")(function* (command) {
       yield* Effect.annotateCurrentSpan({ command });
       // A focused OAuth popup must not receive the app's Reload command.
-      const window = yield* electronWindow.main;
+      const window = yield* electronWindow.currentAppWindow;
       if (Option.isNone(window) || window.value.isDestroyed()) return;
       const webContents = window.value.webContents;
       if (command === "reload") webContents.reload();

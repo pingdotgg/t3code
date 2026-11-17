@@ -38,7 +38,7 @@ export const receiveProviderAuthCallback = DesktopIpc.makeIpcMethod({
     });
     const requester =
       event === undefined ? Option.none() : yield* windows.appWindowFor(event.sender);
-    const window = Option.isSome(requester) ? requester : yield* windows.currentMainOrFirst;
+    const window = Option.isSome(requester) ? requester : yield* windows.currentAppWindow;
     if (Option.isSome(window)) yield* windows.reveal(window.value);
     return callbackUrl;
   }),

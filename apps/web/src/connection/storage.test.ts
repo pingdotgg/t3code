@@ -48,6 +48,28 @@ describe("ConnectionStorage.makeCatalogStore", () => {
     }),
   );
 
+  it.effect("keeps another window's write when it updates from a stale cache", () =>
+    Effect.gen(function* () {
+      let stored = encodeCatalog(emptyCatalog);
+      const backend = {
+        read: Effect.sync(() => stored),
+        write: (raw: string) =>
+          Effect.sync(() => {
+            stored = raw;
+          }),
+      };
+      const firstWindow = yield* ConnectionStorage.makeCatalogStore(backend);
+      const secondWindow = yield* ConnectionStorage.makeCatalogStore(backend);
+      yield* secondWindow.read;
+
+      const removed = EnvironmentId.make("removed-in-first-window");
+      yield* firstWindow.update((document) => ({ ...document, disabledEnvironmentIds: [removed] }));
+      yield* secondWindow.update((document) => ({ ...document }));
+
+      expect(decodeCatalog(stored).disabledEnvironmentIds).toEqual([removed]);
+    }),
+  );
+
   it.effect("does not hide catalog read failures", () =>
     Effect.gen(function* () {
       const failure = new ConnectionTransientError({

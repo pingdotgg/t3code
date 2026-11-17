@@ -63,7 +63,7 @@ const openNewWindow = Effect.fn("desktop.menu.openNewWindow")(function* (): Effe
   DesktopWindow.DesktopWindow | ElectronWindow.ElectronWindow
 > {
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
-  if (Option.isNone(yield* (yield* ElectronWindow.ElectronWindow).main)) {
+  if (Option.isNone(yield* (yield* ElectronWindow.ElectronWindow).currentAppWindow)) {
     yield* desktopWindow.createMainIfBackendReady;
     return;
   }

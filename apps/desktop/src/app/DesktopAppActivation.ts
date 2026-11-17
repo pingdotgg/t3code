@@ -329,7 +329,7 @@ export const make = Effect.gen(function* () {
   });
 
   const sendToReadyRenderer = (request: DesktopAppActivationRequest) => {
-    const current = runSync(electronWindow.currentMainOrFirst);
+    const current = runSync(electronWindow.currentAppWindow);
     const target = renderers.pick(current);
     // The broker treats a throw as no renderer and waits for the next one.
     if (target === undefined) throw new Error("No app window is ready.");

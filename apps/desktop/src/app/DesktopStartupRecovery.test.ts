@@ -163,7 +163,7 @@ it.effect.each([
               shouldUseDarkColors: Effect.succeed(false),
             } as ElectronTheme.ElectronTheme["Service"]),
             Layer.succeed(ElectronWindow.ElectronWindow, {
-              main: Ref.get(mainRef),
+              currentAppWindow: Ref.get(mainRef),
               create: () => Effect.succeed(recovery),
             } as unknown as ElectronWindow.ElectronWindow["Service"]),
             Layer.succeed(DesktopUpdates.DesktopUpdates, {
@@ -253,7 +253,7 @@ it.effect("installs the build the update action downloaded, not the one it offer
               shouldUseDarkColors: Effect.succeed(false),
             } as ElectronTheme.ElectronTheme["Service"]),
             Layer.succeed(ElectronWindow.ElectronWindow, {
-              main: Effect.succeedNone,
+              currentAppWindow: Effect.succeedNone,
               create: () => Effect.succeed(recovery),
             } as unknown as ElectronWindow.ElectronWindow["Service"]),
             Layer.succeed(DesktopUpdates.DesktopUpdates, {

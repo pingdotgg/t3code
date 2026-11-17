@@ -926,7 +926,7 @@ export const make = Effect.gen(function* () {
       transition.dispose();
       yield* fileSystem.makeDirectory(captureDirectory, { recursive: true });
       yield* emit({ type: "requested", id: id as DesktopSnapShotId });
-      const currentAppWindow = Option.getOrUndefined(yield* electronWindow.currentMainOrFirst);
+      const currentAppWindow = Option.getOrUndefined(yield* electronWindow.currentAppWindow);
       const snapshot = yield* Effect.tryPromise({
         try: () =>
           captureSource({

@@ -564,9 +564,11 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
   const state = yield* Ref.make<Option.Option<ConnectionCatalogDocumentType>>(Option.none());
   const lock = yield* Semaphore.make(1);
 
-  const loadUnlocked = Effect.fn("web.connectionStorage.loadCatalog")(function* () {
+  const loadUnlocked = Effect.fn("web.connectionStorage.loadCatalog")(function* (options?: {
+    readonly fresh?: boolean;
+  }) {
     const cached = yield* Ref.get(state);
-    if (Option.isSome(cached)) {
+    if (Option.isSome(cached) && options?.fresh !== true) {
       return cached.value;
     }
     const raw = yield* backend.read;
@@ -609,7 +611,8 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
     function* (transform) {
       yield* lock.withPermits(1)(
         Effect.gen(function* () {
-          const next = transform(yield* loadUnlocked());
+          // Another app window may have written since this one cached the catalog.
+          const next = transform(yield* loadUnlocked({ fresh: true }));
           yield* backend.write(yield* encodeCatalog(next));
           yield* Ref.set(state, Option.some(next));
         }),

@@ -1010,8 +1010,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   );
   const environmentMachineById = useEnvironmentMachines();
   const projectGroupsRef = useRef(projectGroups);
-  const persistedProjectScopeKeys = useWindowProjectScopeStore((store) => store.projectScopeKeys);
-  const setPersistedProjectScopeKeys = useWindowProjectScopeStore(
+  const windowProjectScopeKeys = useWindowProjectScopeStore((store) => store.projectScopeKeys);
+  const setWindowProjectScopeKeys = useWindowProjectScopeStore(
     (store) => store.setProjectScopeKeys,
   );
   const [projectScopeMenuState, dispatchProjectScopeMenu] = useReducer(
@@ -1082,7 +1082,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // The viewport outlives the scope and does not anchor, so a new list starts at the top.
   const setProjectScopeKeys = (keys: readonly string[]) => {
     clearSelection();
-    setPersistedProjectScopeKeys(keys);
+    setWindowProjectScopeKeys(keys);
     scrollSidebarToTop(sidebarContentRef.current);
   };
   // A scope whose project is gone reads as all projects once every snapshot has
@@ -1095,7 +1095,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     memberProjectKeys: chosenScopeProjectKeys,
   } = resolveSidebarProjectScope({
     groups: projectGroups,
-    keys: persistedProjectScopeKeys,
+    keys: windowProjectScopeKeys,
     settings: projectGroupingSettings,
     canClearMissingScope: allProjectSnapshotsReady && allProjectConfigsReady,
   });
@@ -1147,8 +1147,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   useEffect(() => {
     if (!revealWidensScope) return;
     clearSelection();
-    setPersistedProjectScopeKeys([]);
-  }, [clearSelection, revealWidensScope, setPersistedProjectScopeKeys]);
+    setWindowProjectScopeKeys([]);
+  }, [clearSelection, revealWidensScope, setWindowProjectScopeKeys]);
   const revealActiveRow = useActiveRowReveal(routeReveal, routeRowThreadKey, routeKeyInPlace);
   const showProjectEnvironments = projectGroupsSpanEnvironments(projectGroups);
   const scratchMachineLabelFor = (

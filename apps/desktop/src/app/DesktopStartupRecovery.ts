@@ -281,7 +281,7 @@ export const listen: Effect.Effect<
     function* () {
       if (yield* Ref.get(quitting)) return;
       // A visible boot shell still needs recovery if the backend has never started.
-      const main = yield* electronWindow.main;
+      const main = yield* electronWindow.currentAppWindow;
       if (
         backendHasStarted &&
         Option.isSome(main) &&
@@ -341,7 +341,7 @@ export const listen: Effect.Effect<
 
   const closeWhenMainReady = Effect.gen(function* () {
     if ((yield* SubscriptionRef.get(primaryBackendStartup))._tag !== "Ready") return;
-    const main = yield* electronWindow.main;
+    const main = yield* electronWindow.currentAppWindow;
     if (Option.isSome(main) && !main.value.isDestroyed() && main.value.isVisible()) yield* close;
   });
 

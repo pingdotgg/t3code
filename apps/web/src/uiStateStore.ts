@@ -277,6 +277,7 @@ function readStoredUiState(raw: string | null): UiState | null {
 /** This window's state as of its last write, load, or adoption of another window's write. */
 let persistedBaseline = readPersistedState();
 
+// Read-merge-write is not atomic across windows; two writes in the same instant can still race.
 export function persistState(state: UiState): void {
   if (typeof window === "undefined") {
     return;

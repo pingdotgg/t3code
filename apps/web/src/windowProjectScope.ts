@@ -120,7 +120,9 @@ export function initWindowProjectScope(): void {
 export function openProjectScopeWindow(projectScopeKeys: readonly string[]): void {
   const bridge = window.desktopBridge;
   if (bridge) {
-    void bridge.openAppWindow({ projectScopeKeys: [...projectScopeKeys] });
+    void bridge
+      .openAppWindow({ projectScopeKeys: [...projectScopeKeys] })
+      .catch((error: unknown) => console.error("Could not open a new window.", error));
     return;
   }
   const url = new URL(import.meta.env.BASE_URL, window.location.origin);

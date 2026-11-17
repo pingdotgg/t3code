@@ -235,7 +235,7 @@ describe("ElectronWindow", () => {
       yield* electronWindow.registerAppWindow(primary.window, { primary: true });
       yield* electronWindow.registerAppWindow(second.window, { primary: false });
       yield* electronWindow.registerAppWindow(third.window, { primary: false });
-      const current = () => Effect.map(electronWindow.main, Option.getOrNull);
+      const current = () => Effect.map(electronWindow.currentAppWindow, Option.getOrNull);
 
       getFocusedWindowMock.mockReturnValue(popup);
       assert.strictEqual(yield* current(), primary.window);

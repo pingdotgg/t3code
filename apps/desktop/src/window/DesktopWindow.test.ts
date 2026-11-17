@@ -245,7 +245,6 @@ function layerTest(input: {
   readonly onPopupTemplate?: (input: ElectronMenu.ElectronMenuTemplateInput) => Effect.Effect<void>;
   readonly previewZoomReapplies?: number[];
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
-  readonly focusedWindow?: Electron.BrowserWindow;
   readonly platform?: NodeJS.Platform;
   readonly appearanceWindows?: ReadonlyArray<{
     readonly window: Electron.BrowserWindow;
@@ -298,12 +297,7 @@ function layerTest(input: {
         Effect.andThen(input.onWindowCreate ?? Effect.void),
         Effect.as(input.window),
       ),
-    main: Ref.get(input.mainWindow),
-    currentMainOrFirst: Ref.get(input.mainWindow),
-    focusedMainOrFirst:
-      input.focusedWindow === undefined
-        ? Ref.get(input.mainWindow)
-        : Effect.succeedSome(input.focusedWindow),
+    currentAppWindow: Ref.get(input.mainWindow),
     primary: Ref.get(input.mainWindow),
     appWindows: Ref.get(input.mainWindow).pipe(Effect.map(Option.toArray)),
     appWindowFor: () => Ref.get(input.mainWindow),
@@ -389,7 +383,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
     const fallbackWindow = createOutcomes.find(
       (window): window is Electron.BrowserWindow => window !== null,
     );
-    const currentMainOrFirst = Ref.get(mainWindow);
+    const currentAppWindow = Ref.get(mainWindow);
 
     const electronWindowShape = {
       create: () =>
@@ -425,12 +419,10 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           yield* Ref.update(createdWindows, (windows) => [...windows, outcome]);
           return outcome;
         }),
-      main: Ref.get(mainWindow),
-      currentMainOrFirst,
-      focusedMainOrFirst: currentMainOrFirst,
-      primary: currentMainOrFirst,
-      appWindows: currentMainOrFirst.pipe(Effect.map(Option.toArray)),
-      appWindowFor: () => currentMainOrFirst,
+      currentAppWindow,
+      primary: currentAppWindow,
+      appWindows: currentAppWindow.pipe(Effect.map(Option.toArray)),
+      appWindowFor: () => currentAppWindow,
       registerAppWindow: (window) => Ref.set(mainWindow, Option.some(window)),
       prepareReveal: () => Effect.succeed(false),
       reveal: (window) => Ref.update(revealedWindows, (windows) => [...windows, window]),
@@ -775,10 +767,9 @@ describe("DesktopWindow", () => {
   // Chromium hands the main window's zoom level down to embedded preview
   // guests, so every app zoom has to put the preview browser back at its own
   // zoom or zooming the UI drags the previewed page with it.
-  it.effect("zooms main with a focused popup and reapplies preview zoom", () =>
+  it.effect("zooms the current app window and reapplies preview zoom", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
-      const popup = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const previewZoomReapplies: number[] = [];
@@ -787,7 +778,6 @@ describe("DesktopWindow", () => {
         createCount,
         mainWindow,
         previewZoomReapplies,
-        focusedWindow: popup.window,
       });
 
       yield* Effect.gen(function* () {
@@ -804,7 +794,6 @@ describe("DesktopWindow", () => {
           [-0.5, -1, -0.5, 0],
         );
         assert.deepEqual(previewZoomReapplies, [-0.5, -1, -0.5, 0]);
-        assert.equal(popup.setZoomLevel.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
     }),
   );
@@ -841,17 +830,15 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  it.effect("routes menu commands to the main window even when a popup has focus", () =>
+  it.effect("routes menu commands to the current app window", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
-      const popup = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const layer = layerTest({
         window: fakeWindow.window,
         createCount,
         mainWindow,
-        focusedWindow: popup.window,
       });
 
       yield* Effect.gen(function* () {
@@ -864,13 +851,9 @@ describe("DesktopWindow", () => {
         yield* desktopWindow.dispatchMenuAction("open-settings");
 
         assert.deepEqual(fakeWindow.send.mock.calls, [["desktop:menu-action", "open-settings"]]);
-        assert.equal(popup.send.mock.calls.length, 0);
         assert.equal(fakeWindow.reload.mock.calls.length, 1);
         assert.equal(fakeWindow.reloadIgnoringCache.mock.calls.length, 1);
         assert.equal(fakeWindow.toggleDevTools.mock.calls.length, 1);
-        assert.equal(popup.reload.mock.calls.length, 0);
-        assert.equal(popup.reloadIgnoringCache.mock.calls.length, 0);
-        assert.equal(popup.toggleDevTools.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
     }),
   );

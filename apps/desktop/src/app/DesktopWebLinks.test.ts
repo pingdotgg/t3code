@@ -46,7 +46,7 @@ const makeLayer = (windows: ReadonlyArray<ReturnType<typeof makeAppWindow>>) => 
       Layer.succeed(
         ElectronWindow.ElectronWindow,
         ElectronWindow.ElectronWindow.of({
-          currentMainOrFirst: current,
+          currentAppWindow: current,
           reveal: (target: Electron.BrowserWindow) => Effect.sync(() => void revealed.push(target)),
         } as unknown as ElectronWindow.ElectronWindow["Service"]),
       ),
