@@ -442,28 +442,42 @@ export function BranchToolbarBranchSelector({
     return resolveConfirmedSelectedRef(listedRef, result._tag === "Success" ? result.value : null);
   };
 
-  const confirmCheckoutSwitchIn = (
+  const confirmCheckoutSwitchIn = async (
     checkout: { readonly cwd: string; readonly worktreePath: string | null },
     nextBranch: string,
-  ) =>
-    activeProjectRef === null
-      ? Promise.resolve(true)
-      : confirmCheckoutSwitch({
-          environmentId,
-          projectId: activeProjectRef.projectId,
-          threadId: activeThreadId ?? null,
-          worktreePath: checkout.worktreePath,
-          currentBranch:
-            checkout.cwd === branchCwd
-              ? branchStatusQuery.data != null
-                ? branchStatusQuery.data.refName
-                : // Without status, assume the branch this thread expects rather than none.
-                  (currentGitBranch ?? activeThreadBranch)
-              : checkout.cwd === activeProjectCwd
-                ? (projectStatusQuery.data?.refName ?? null)
-                : null,
-          nextBranch,
-        });
+  ) => {
+    if (activeProjectRef === null) return true;
+    const knownStatus =
+      checkout.cwd === branchCwd
+        ? branchStatusQuery.data
+        : checkout.cwd === activeProjectCwd
+          ? projectStatusQuery.data
+          : null;
+    let currentBranch: string | null;
+    if (knownStatus != null) {
+      currentBranch = knownStatus.refName;
+    } else {
+      const fresh = await refreshLocalStatusForPicker({
+        environmentId,
+        input: { cwd: checkout.cwd, localOnly: true },
+      });
+      // Unreadable status is not a branchless checkout; keep the best guess so the prompt still runs.
+      currentBranch =
+        fresh._tag === "Success"
+          ? fresh.value.refName
+          : checkout.cwd === branchCwd
+            ? (currentGitBranch ?? activeThreadBranch)
+            : null;
+    }
+    return confirmCheckoutSwitch({
+      environmentId,
+      projectId: activeProjectRef.projectId,
+      threadId: activeThreadId ?? null,
+      worktreePath: checkout.worktreePath,
+      currentBranch,
+      nextBranch,
+    });
+  };
 
   const selectBranch = async (listedRef: VcsRef) => {
     if (!canUpdateThreadBranch || !branchCwd || !activeProjectCwd || isBranchActionPending) return;
