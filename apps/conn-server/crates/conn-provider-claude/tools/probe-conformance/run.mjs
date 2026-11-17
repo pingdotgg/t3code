@@ -27,8 +27,9 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import { exampleBinary } from "../../../../tools/check-binaries.mjs";
 import { monorepo, repoRoot } from "../../../../tools/monorepo.mjs";
-import { canaryEnv, cargoBuildEnv, sealedNodeEnv } from "../../../../tools/sealed-env.mjs";
+import { canaryEnv, sealedNodeEnv } from "../../../../tools/sealed-env.mjs";
 import { GUARD_IMPORT } from "../../../../tools/no-outside-fetch.mjs";
 
 const MONOREPO = monorepo();
@@ -328,19 +329,10 @@ NodeFS.writeFileSync(
     scenarios: plan.map((p) => ({ name: p.name, instance: p.rustInstance, cwd: p.cwd, title: p.title, tsOut: p.tsOut })),
   }),
 );
-const build = NodeChildProcess.spawnSync("cargo", ["build", "--quiet", "-p", "conn-provider-claude", "--example", "claude_probe"], {
-  cwd: repoRoot,
-  stdio: ["ignore", "inherit", "inherit"],
-  env: cargoBuildEnv(),
-});
-if (build.status !== 0) {
-  console.error("probe-conformance: claude_probe did not build");
-  process.exit(1);
-}
-const targetDir = process.env.CARGO_TARGET_DIR ? NodePath.resolve(repoRoot, process.env.CARGO_TARGET_DIR) : NodePath.join(repoRoot, "target");
+const binary = exampleBinary("conn-provider-claude", "claude_probe");
 // The example runs with a known environment, so its SDK host's is known too.
 const rustParent = { ...BASE_ENV };
-NodeChildProcess.spawnSync(NodePath.join(targetDir, "debug/examples/claude_probe"), [planFile, rustOut], {
+NodeChildProcess.spawnSync(binary, [planFile, rustOut], {
   cwd: repoRoot,
   env: rustParent,
   stdio: ["ignore", "inherit", "inherit"],
