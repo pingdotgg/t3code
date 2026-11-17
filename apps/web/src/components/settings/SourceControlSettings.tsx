@@ -3,6 +3,9 @@ import { ChevronDownIcon } from "lucide-react";
 import * as Option from "effect/Option";
 import { useState, type ReactNode } from "react";
 import { useTranslation, Trans } from "react-i18next";
+
+import { translateDynamic } from "../../i18nCore";
+
 import type {
   SourceControlDiscoveryResult,
   SourceControlProviderAuth,
@@ -78,12 +81,12 @@ function authPresentation(auth: SourceControlProviderAuth): {
   readonly badge: "secondary" | null;
 } {
   if (auth.status === "authenticated") {
-    return { label: "Authenticated", badge: null };
+    return { label: translateDynamic("sourceControl.authenticated"), badge: null };
   }
   if (auth.status === "unauthenticated") {
-    return { label: "Not authenticated", badge: "secondary" };
+    return { label: translateDynamic("sourceControl.authNotAuthenticated"), badge: "secondary" };
   }
-  return { label: "Status unknown", badge: null };
+  return { label: translateDynamic("sourceControl.authStatusUnknown"), badge: null };
 }
 
 function RedactedAccount(props: { readonly account: string | null }) {
@@ -223,6 +226,7 @@ function DiscoveryItemRow({
   readonly item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem;
   readonly children?: ReactNode;
 }) {
+  const { t } = useTranslation("settings");
   const version = optionLabel(item.version);
   const enabled = isProviderDiscoveryItem(item)
     ? item.status === "available" && item.auth.status === "authenticated"
@@ -256,7 +260,7 @@ function DiscoveryItemRow({
               {version ? <code className="text-xs text-muted-foreground">{version}</code> : null}
               {isVcsNotReady(item) ? (
                 <Badge variant="warning" size="sm">
-                  Coming Soon
+                  {t("sourceControl.comingSoonBadge")}
                 </Badge>
               ) : null}
               {authStatus?.badge ? (

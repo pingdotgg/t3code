@@ -13,6 +13,12 @@
     "thought": "Thought",
     "toolCallFailed": "Tool call failed",
     "toolCalls": "Tool calls",
+    "continued": "Continued",
+    "continuedFor": "Continued for {{duration}}",
+    "stoppedAfter": "You stopped after {{duration}}",
+    "stoppedThisResponse": "You stopped this response",
+    "worked": "Worked",
+    "workedFor": "Worked for {{duration}}",
     "working": "Working...",
     "workingFor": "Working for"
   },
@@ -209,6 +215,8 @@
     "changeComparisonTargetA11y": "Change comparison target. Currently {{base}}",
     "changedFilesCount_one": "{{count}} changed file",
     "changedFilesCount_other": "{{count}} changed files",
+    "changedFile": "Changed {{file}}",
+    "changedFiles": "Changed files",
     "changes": "Changes",
     "checkingFileAccess": "Checking file access...",
     "collapseAllFiles": "Collapse all files",
@@ -491,6 +499,10 @@
     "unlinkFailed": "Unable to unlink pull request",
     "useTemplate": "Use template"
   },
+  "markdownTable": {
+    "copied": "Copied",
+    "copyTable": "Copy table"
+  },
   "mcp": {
     "appLeftPage": "The {{server}} app left its page and was stopped",
     "appWasClosed": "The {{server}} app was closed",
@@ -515,6 +527,13 @@
     "renderFailed": "The diagram could not be rendered.",
     "retry": "Retry",
     "unablePrefix": "Unable to render diagram: {{message}}"
+  },
+  "openIn": {
+    "chooseEditor": "Choose editor",
+    "editor": "editor",
+    "openInApp": "Open in {{app}}",
+    "openInEditor": "Open in editor",
+    "openInMore": "Open in…"
   },
   "overlays": {
     "branchRestoreDetail": "You have uncommitted changes. They'll carry over to the other branch, or block the switch if they conflict.",
@@ -593,6 +612,22 @@
     "count_one": "{{count}} queued",
     "count_other": "{{count}} queued",
     "sentBy": "Sent by T3 Code"
+  },
+  "relationshipStatus": {
+    "starting": "Starting",
+    "running": "Running",
+    "queued": "Queued",
+    "waiting": "Waiting",
+    "done": "Done",
+    "failed": "Failed",
+    "stopped": "Stopped",
+    "reverted": "Reverted",
+    "resolvedNative": "Resolved (native)",
+    "resolvedPortable": "Resolved (portable)",
+    "consumed": "Consumed",
+    "superseded": "Superseded",
+    "idle": "Idle",
+    "unknown": "Unknown"
   },
   "relations": {
     "contextTransfer": "Context transfer",

@@ -51,6 +51,8 @@ import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
 import { shallow } from "zustand/vanilla/shallow";
 
+import { translateDynamic } from "./i18nCore";
+
 export { formatDuration } from "@t3tools/shared/orchestrationTiming";
 export {
   workEntryDisplayIndicatesToolFailure,
@@ -376,15 +378,21 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
         toolData: item,
       };
     case "file_change": {
+      // "Changed files" is the shared summary the provider adapters write; treat it as
+      // an absent title so the label localizes instead of echoing the English wire text.
+      const localizedTitle = title === "Changed files" ? null : title;
+      const changeCount = item.changes?.length ?? 0;
       return {
         ...common,
         label:
-          title ??
-          (item.changes !== undefined && item.changes.length > 1
-            ? `Changed ${item.changes.length} files`
-            : `Changed ${item.fileName}`),
+          localizedTitle ??
+          (changeCount > 1
+            ? translateDynamic("chat:diff.changedFilesCount", { count: changeCount })
+            : item.fileName
+              ? translateDynamic("chat:diff.changedFile", { file: item.fileName })
+              : translateDynamic("chat:diff.changedFiles")),
         changedFiles: item.changes?.map((change) => change.path) ?? [item.fileName],
-        toolTitle: title ?? "File change",
+        toolTitle: localizedTitle ?? "File change",
         toolData: item,
       };
     }

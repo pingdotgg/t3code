@@ -215,9 +215,16 @@ export interface SnoozePreset {
   readonly snoozedUntil: string;
 }
 
+/** Lets callers localize preset labels; `namesDay` mirrors the default labels' grammar. */
+export type SnoozePresetLabelFormatter = (
+  setting: SnoozePresetSetting,
+  daysAhead: number,
+) => { readonly label: string; readonly namesDay: boolean };
+
 export interface SnoozePresetOptions {
   readonly presets?: ReadonlyArray<SnoozePresetSetting>;
   readonly formatTime?: (date: Date) => string;
+  readonly formatLabel?: SnoozePresetLabelFormatter;
 }
 
 function snoozeTimeOfDayLabel(date: Date): string {
@@ -279,6 +286,7 @@ export function resolveSnoozePreset(
   setting: SnoozePresetSetting,
   now: Date,
   formatTime: (date: Date) => string = snoozeTimeOfDayLabel,
+  formatLabel?: SnoozePresetLabelFormatter,
 ): SnoozePreset | null {
   let wake: Date;
   let daysAhead = 0;
@@ -291,9 +299,12 @@ export function resolveSnoozePreset(
     // A today option whose time has passed is left out until tomorrow.
     if (wake.getTime() <= now.getTime()) return null;
   }
-  const label = snoozePresetLabel(setting, daysAhead);
+  const localized = formatLabel?.(setting, daysAhead);
+  const label = localized ? localized.label : snoozePresetLabel(setting, daysAhead);
   // Durations and "Next week" don't name the wake day, so a wake on another day shows it.
-  const labelNamesDay = setting.kind === "at" && label !== "Next week";
+  const labelNamesDay = localized
+    ? localized.namesDay
+    : setting.kind === "at" && label !== "Next week";
   const time = formatTime(wake);
   return {
     id: snoozePresetId(setting),
@@ -317,7 +328,10 @@ export function resolveSnoozePresets(
   const seen = new Set<number>();
   return (
     (options.presets ?? DEFAULT_SNOOZE_PRESETS)
-      .flatMap((setting) => resolveSnoozePreset(setting, now, options.formatTime) ?? [])
+      .flatMap(
+        (setting) =>
+          resolveSnoozePreset(setting, now, options.formatTime, options.formatLabel) ?? [],
+      )
       // flatMap returned a new array; Hermes has no `toSorted`.
       .sort((a, b) => wakeMinute(a) - wakeMinute(b))
       .filter((preset) => {

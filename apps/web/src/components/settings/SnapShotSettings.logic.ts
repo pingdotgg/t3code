@@ -1,4 +1,6 @@
 import type { ClientSettingsPatch, DesktopSnapShotState, SnapShotSound } from "@t3tools/contracts";
+
+import { translateDynamic } from "../../i18nCore";
 import {
   captureSetupBackend,
   captureSetupDesktopName,
@@ -94,7 +96,7 @@ export function snapShotFeedbackUnavailableMessage(
 export function snapShotDescription(state: DesktopSnapShotState | null): string {
   return state?.mode === "portal" && captureSetupBackend(state) === "picker"
     ? "Automatic capture isn't available here. Choose a window instead."
-    : "Capture a window and attach it to your current draft.";
+    : translateDynamic("settings:snapShotSetup.captureWindowDescription");
 }
 
 export function snapShotAccessibilityUnavailableMessage(
@@ -110,7 +112,7 @@ export function snapShotUnavailableMessage(hasBridge: boolean): string | undefin
   if (hasBridge) return undefined;
   return typeof window !== "undefined" && window.desktopBridge
     ? "Update the desktop app to use snapshots."
-    : "Only available in the desktop app.";
+    : translateDynamic("settings:snapShotSetup.desktopOnly");
 }
 
 export function snapShotSoundPatch(sound: SnapShotSoundSelection): ClientSettingsPatch {

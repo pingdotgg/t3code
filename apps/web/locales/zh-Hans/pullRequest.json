@@ -526,6 +526,7 @@
     "narrowSearch": "缩小搜索范围以找到更多变更请求。",
     "selectFirst": "请先选择一个变更请求",
     "showingLoaded": "显示的是最后已加载的变更请求。",
+    "sort": "排序",
     "sortPullRequests": "排序变更请求",
     "termLink": "{{term}}链接",
     "unavailable": "变更请求不可用",

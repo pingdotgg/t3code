@@ -531,6 +531,7 @@
     "narrowSearch": "Narrow your search to find more pull requests.",
     "selectFirst": "Select a pull request first",
     "showingLoaded": "Showing the last pull requests loaded.",
+    "sort": "Sort",
     "sortPullRequests": "Sort pull requests",
     "termLink": "{{term}} link",
     "unavailable": "Pull requests unavailable",

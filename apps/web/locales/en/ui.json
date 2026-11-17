@@ -39,6 +39,8 @@
   "thenRun": "Then",
   "toggleSidebar": "Toggle Sidebar",
   "tryAgain": "Try again",
+  "updateAll": "Update all",
+  "updating": "Updating…",
   "videoUnavailable": "Video unavailable",
   "waitingForComputer": "Waiting for your computer…",
   "windowsPowerShell": "Windows (PowerShell)"

@@ -331,7 +331,7 @@ export function ProviderModelsSection({
                 )
               }
             >
-              {allBuiltInModelsHidden ? "Enable all" : "Disable all"}
+              {allBuiltInModelsHidden ? t("customModel.enableAll") : t("customModel.disableAll")}
             </Button>
           ) : null}
           <span className="text-xs text-muted-foreground">

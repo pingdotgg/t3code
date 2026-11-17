@@ -1297,7 +1297,7 @@ export function PullRequestsPage() {
     <PullRequestCompactFilterMenu
       label={td("page.sortPullRequests")}
       triggerIcon={<ArrowDownUpIcon aria-hidden className="size-4" />}
-      triggerLabel="Sort"
+      triggerLabel={td("page.sort")}
       outlined
       value={sort}
       options={SORT_OPTIONS}

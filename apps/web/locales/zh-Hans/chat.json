@@ -13,6 +13,12 @@
     "thought": "思考",
     "toolCallFailed": "工具调用失败",
     "toolCalls": "工具调用",
+    "continued": "继续运行",
+    "continuedFor": "继续运行 {{duration}}",
+    "stoppedAfter": "你在 {{duration}} 后停止了",
+    "stoppedThisResponse": "你停止了此回复",
+    "worked": "已运行",
+    "workedFor": "已运行 {{duration}}",
     "working": "运行中...",
     "workingFor": "已运行"
   },
@@ -206,6 +212,8 @@
     "changeComparisonTargetA11y": "更改比较目标。当前为 {{base}}",
     "changedFilesCount_one": "{{count}} 个已更改的文件",
     "changedFilesCount_other": "{{count}} 个已更改的文件",
+    "changedFile": "已更改 {{file}}",
+    "changedFiles": "已更改文件",
     "changes": "变更",
     "checkingFileAccess": "正在检查文件访问权限...",
     "collapseAllFiles": "折叠全部文件",
@@ -484,6 +492,10 @@
     "unlinkFailed": "取消关联拉取请求失败",
     "useTemplate": "使用模板"
   },
+  "markdownTable": {
+    "copied": "已复制",
+    "copyTable": "复制表格"
+  },
   "mcp": {
     "appLeftPage": "{{server}} 应用离开了其页面，已被停止",
     "appWasClosed": "{{server}} 应用已关闭",
@@ -508,6 +520,13 @@
     "renderFailed": "该图无法渲染。",
     "retry": "重试",
     "unablePrefix": "无法渲染图：{{message}}"
+  },
+  "openIn": {
+    "chooseEditor": "选择编辑器",
+    "editor": "编辑器",
+    "openInApp": "在 {{app}} 中打开",
+    "openInEditor": "在编辑器中打开",
+    "openInMore": "打开…"
   },
   "overlays": {
     "branchRestoreDetail": "你有未提交的更改。它们会带到另一个分支；如果有冲突，则会阻止切换。",
@@ -585,6 +604,22 @@
     "count": "{{count}} 条排队中",
     "count_other": "{{count}} 条排队中",
     "sentBy": "由 T3 Code 发送"
+  },
+  "relationshipStatus": {
+    "starting": "启动中",
+    "running": "运行中",
+    "queued": "排队中",
+    "waiting": "等待中",
+    "done": "已完成",
+    "failed": "失败",
+    "stopped": "已停止",
+    "reverted": "已还原",
+    "resolvedNative": "已解决（原生）",
+    "resolvedPortable": "已解决（可移植）",
+    "consumed": "已使用",
+    "superseded": "已取代",
+    "idle": "空闲",
+    "unknown": "未知"
   },
   "relations": {
     "contextTransfer": "上下文转移",

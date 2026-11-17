@@ -13,6 +13,7 @@ import {
   MIN_TERMINAL_FONT_SIZE,
 } from "@t3tools/contracts/settings";
 import * as Schema from "effect/Schema";
+
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { isMacPlatform } from "../../lib/utils";
@@ -75,7 +76,7 @@ function InterfaceFontRow({ preview }: { preview?: ReactNode }) {
     <FontFamilySettingsRow
       id={searchableSetting("interface-font").id}
       title={t("search.interface-font")}
-      description="Everything outside code blocks and the terminal."
+      description={t("font.interfaceFontDescription")}
       defaultFamily={defaults.sans}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilySans}
       value={settings.fontFamilySans}
@@ -306,13 +307,14 @@ function SeparateFontsRow({
 }
 
 function SimpleFontRows() {
+  const { t } = useTranslation("settings");
   const settings = useScopedSettings();
   return (
     <>
       <InterfaceFontRow preview={<PromptFontPreview />} />
       <CodeFontRow
-        title="Monospace font"
-        description="Code blocks, diffs, file previews, and the terminal."
+        title={t("font.monospaceFont")}
+        description={t("font.monospaceDescription")}
         preview={
           <>
             <CodeFontPreview />
@@ -336,6 +338,7 @@ function SimpleFontRows() {
 }
 
 export function TypographySection() {
+  const { t } = useTranslation("settings");
   const [advanced, setAdvanced] = useLocalStorage(
     TYPOGRAPHY_ADVANCED_STORAGE_KEY,
     false,
@@ -352,7 +355,7 @@ export function TypographySection() {
   const showAdvanced =
     advanced || (searchTargetId !== null && isAdvancedTypographyTarget(searchTargetId));
   return (
-    <SettingsSection id="typography" title="Typography">
+    <SettingsSection id="typography" title={t("font.sectionTitle")}>
       {showAdvanced ? <FontSettingsGroup /> : <SimpleFontRows />}
       <WordWrapRow />
       <AdvancedSettings

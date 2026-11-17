@@ -941,6 +941,8 @@
     "customOption": "自定义选项",
     "customTag": "自定义",
     "default": "默认",
+    "disableAll": "全部停用",
+    "enableAll": "全部启用",
     "defaultChoiceAria": "默认选项值",
     "displayName": "显示名称",
     "idUsedTwice": "{{position}}：id「{{id}}」被使用了两次。",
@@ -1269,10 +1271,14 @@
   },
   "font": {
     "default": "默认",
+    "interfaceFontDescription": "代码块和终端以外的所有界面。",
+    "monospaceDescription": "代码块、差异对比、文件预览和终端。",
+    "monospaceFont": "等宽字体",
     "noFonts": "未找到字体。",
     "notMonospace": "「{{font}}」不是等宽字体",
     "notMonospaceDescription": "代码和终端需要等宽字体，因此保留了当前字体。",
     "searchPlaceholder": "搜索字体…",
+    "sectionTitle": "排版",
     "terminalPreviewAria": "终端字体预览"
   },
   "general": {
@@ -1811,6 +1817,7 @@
     "archiveDescription": "把项目从项目选择器中隐藏。会话和文件都会保留。",
     "archiveFailed": "归档项目失败",
     "cannotChange": "此连接无法更改该项目。",
+    "chooseNotice": "选择一个项目以管理它的名称、图标、检出和操作。",
     "checkouts": "检出",
     "checkoutUnavailable": "此检出在所选的项目和环境中已不可用。",
     "chooseFile": "选择文件",
@@ -1954,6 +1961,11 @@
     "noIcons": "未找到图标。",
     "pasteEmoji": "或粘贴任意 emoji",
     "saveIcon": "保存图标"
+  },
+  "providerSettingText": {
+    "binaryPath": { "label": "二进制文件路径" },
+    "launchArgs": { "label": "启动参数" },
+    "shadowHomePath": { "label": "影子主目录路径" }
   },
   "providerAdvisory": {
     "compatBroken": "已知损坏版本",
@@ -2925,6 +2937,7 @@
     "allowCapture": "允许捕获",
     "allowTitle": "允许快照",
     "back": "上一步",
+    "captureWindowDescription": "截取一个窗口并附加到当前草稿。",
     "captureNeedsAttention": "捕获需要处理。返回检查访问权限。",
     "check": {
       "notReady": "尚未就绪。请先完成上面的步骤。",
@@ -2939,6 +2952,7 @@
     "checking": "检查中…",
     "close": "关闭",
     "disableExtension": "停用扩展",
+    "desktopOnly": "仅在桌面应用中可用。",
     "enableExtension": "启用扩展",
     "enabling": "启用中…",
     "finishLater": "稍后完成",
@@ -3013,6 +3027,7 @@
     "description": "每个休眠菜单中的选项，按最早唤醒时间排序。工作日表示今天之后的下一个该工作日。",
     "duplicate": "与上方选项重复",
     "friday": "星期五",
+    "nextWeek": "下周",
     "hour": "小时",
     "hours": "小时",
     "in": "过",
@@ -3020,6 +3035,7 @@
     "maxOptions": "最多 {{count}} 个选项",
     "maxOptions_other": "最多 {{count}} 个选项",
     "menuNow": "当前菜单：{{items}}",
+    "nextWeekday": "下周{{day}}",
     "menusCustom": "菜单中仅提供「自定义」…",
     "minute": "分钟",
     "minutes": "分钟",
@@ -3030,6 +3046,11 @@
     "reset": "休眠选项",
     "sameTime": "与上方选项时间相同",
     "saturday": "星期六",
+    "sunday": "星期日",
+    "thisAfternoon": "今天下午",
+    "thisEvening": "今天晚上",
+    "thisMorning": "今天早上",
+    "thursday": "星期四",
     "sunday": "星期日",
     "thursday": "星期四",
     "time": "时间",
@@ -3049,11 +3070,14 @@
     "as": "，身份为",
     "asAria": "身份",
     "authenticated": "已认证",
+    "authNotAuthenticated": "未认证",
+    "authStatusUnknown": "状态未知",
     "available": "可用",
     "availableWithHint": "可用。{{hint}}",
     "chooseLogin": "选择每个 {{label}} 主机使用哪个 <code>{{cliName}}</code> 登录，或关闭某个主机。",
     "chosenLoginSignedOut": "所选登录已不再处于登录状态，因此现在使用活跃的 {{cliName}} 登录。",
     "comingSoon": "对 {{label}} 的支持即将推出。",
+    "comingSoonBadge": "即将推出",
     "connectToInspect": "连接一个环境以查看它的版本控制工具和托管集成。",
     "copyCode": "复制代码",
     "copyCodeOpenHost": "复制代码并打开 GitHub",
@@ -3467,6 +3491,11 @@
     "updating": "正在更新",
     "viewSourceAria": "查看 {{name}} 的源码"
   },
+  "threadDetails": {
+    "description": "选择会话详情卡片显示的内容，也可以右键点击卡片。",
+    "statusAria": "会话详情：{{enabled}}/{{total}} 项开启",
+    "statusOn": "{{enabled}}/{{total}} 项开启"
+  },
   "threadsPanel": {
     "addProjectAria": "添加项目基础目录",
     "addProjectDescription": "留空则打开「添加项目」浏览器时使用「~/」。",
@@ -3661,6 +3690,7 @@
   "voiceOptions": {
     "builtIn": "内置",
     "cleanupInstructions": "清理指令",
+    "transcriptionOptions": "转写选项",
     "cleanupInstructionsDescription": "使用内置指令，或自己编写。",
     "cleanupSection": "清理",
     "cleanupTranscripts": "清理转写文本",

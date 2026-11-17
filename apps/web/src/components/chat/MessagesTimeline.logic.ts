@@ -8,6 +8,8 @@ import {
   collectAssistantCitations,
 } from "@t3tools/shared/assistantCitations";
 import { shallow } from "zustand/vanilla/shallow";
+
+import { translateDynamic } from "../../i18nCore";
 import { claudeResumeCompactionAge } from "@t3tools/shared/claudeCompaction";
 import {
   IDLE_COMPACTING_LABELS,
@@ -1192,11 +1194,11 @@ function deriveTurnFolds(input: {
     const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
     const label = isLatestInterruptedTurn
       ? duration
-        ? `You stopped after ${duration}`
-        : "You stopped this response"
+        ? translateDynamic("chat:activity.stoppedAfter", { duration })
+        : translateDynamic("chat:activity.stoppedThisResponse")
       : duration
-        ? `Worked for ${duration}`
-        : "Worked";
+        ? translateDynamic("chat:activity.workedFor", { duration })
+        : translateDynamic("chat:activity.worked");
 
     // The top row keeps the whole turn's time, steers included. Work after a
     // steer folds under its own row below that steer, keyed apart from the run
@@ -1227,7 +1229,12 @@ function deriveTurnFolds(input: {
         createdAt: steer.createdAt,
         hiddenEntryIds: segmentHiddenIds(entries),
         entryIds: new Set(entries.map((entry) => entry.id)),
-        label: segmentMs !== null ? `Continued for ${formatDuration(segmentMs)}` : "Continued",
+        label:
+          segmentMs !== null
+            ? translateDynamic("chat:activity.continuedFor", {
+                duration: formatDuration(segmentMs),
+              })
+            : translateDynamic("chat:activity.continued"),
       });
     }
   }

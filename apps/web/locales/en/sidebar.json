@@ -48,6 +48,8 @@
     "usage": "Usage"
   },
   "header": {
+    "dragToResizeSidebar": "Drag to resize sidebar",
+    "resizeSidebar": "Resize Sidebar",
     "clearSearch": "Clear thread search",
     "searchPlaceholder": "Search",
     "searchThreads": "Search threads",

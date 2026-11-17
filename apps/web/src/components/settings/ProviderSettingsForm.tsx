@@ -54,6 +54,12 @@ function titleizeFieldKey(key: string): string {
     .replace(/^./, (char) => char.toUpperCase());
 }
 
+const LOCALIZED_PROVIDER_FIELD_LABELS = {
+  binaryPath: "providerSettingText.binaryPath.label",
+  launchArgs: "providerSettingText.launchArgs.label",
+  shadowHomePath: "providerSettingText.shadowHomePath.label",
+} as const;
+
 function readFieldAnnotations(
   fieldSchema: ProviderClientDefinition["settingsSchema"]["fields"][string],
 ) {
@@ -681,7 +687,13 @@ export function ProviderSettingsForm({
   environmentId,
 }: ProviderSettingsFormProps) {
   const { t } = useTranslation("settings");
-  const fields = deriveProviderSettingsFields(definition, value);
+  // Server schemas annotate these titles in English; the form maps the stable field keys
+  // to locale text so the panel follows the UI language. Descriptions stay per-provider.
+  const fields = deriveProviderSettingsFields(definition, value).map((field) => {
+    const labelKey =
+      LOCALIZED_PROVIDER_FIELD_LABELS[field.key as keyof typeof LOCALIZED_PROVIDER_FIELD_LABELS];
+    return labelKey ? { ...field, label: t(labelKey) } : field;
+  });
   const isLocalAcp =
     definition.driverKind === "acpRegistry" &&
     readProviderConfigString(value, "source") === "local";
