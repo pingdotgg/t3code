@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CodexSettings, type ProviderReplayTranscript } from "@t3tools/contracts";
 import * as CodexClient from "effect-codex-app-server/client";
@@ -12,6 +13,7 @@ import * as ServerConfig from "../../config.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
+import * as PortScanner from "../../preview/PortScanner.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import {
   makeReplayServerConfig,
@@ -124,7 +126,7 @@ export function layer(input: {
   const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(input.transcript.scenario).pipe(Effect.orDie),
-  ).pipe(Layer.provide(NodeServices.layer));
+  ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
   const layerRegistry = ProviderAdapterRegistry.layerFromAdaptersEffect(
     CodexAdapterV2.createCodexAdapterV2({
       instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
@@ -139,7 +141,9 @@ export function layer(input: {
         layerReplayClientFactory,
         layerServerConfig,
         NodeServices.layer,
+        NodeCrypto.layer,
         IdAllocator.layer,
+        PortScanner.layerTest,
       ),
     ),
   );

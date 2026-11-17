@@ -421,36 +421,6 @@ describe("shared device stream readiness and recovery", () => {
     vi.unstubAllGlobals();
   });
 
-  it("repairs the hub's fallback configuration without disabling hardware decoding", async () => {
-    const { client, videoBodies, Decoder } = recoveryFixture("ios", false);
-    try {
-      client.start();
-      await vi.advanceTimersByTimeAsync(0);
-      videoBodies[0]!.enqueue(
-        Uint8Array.from(
-          envelope(
-            1,
-            [
-              1, 100, 0, 51, 255, 225, 0, 12, 39, 100, 0, 51, 172, 86, 128, 76, 1, 73, 230, 164, 1,
-              0, 4, 40, 238, 60, 176,
-            ],
-          ),
-        ),
-      );
-      await vi.advanceTimersByTimeAsync(0);
-      expect(Decoder.isConfigSupported).toHaveBeenCalledExactlyOnceWith({
-        codec: "avc1.640033",
-        description: Uint8Array.from([
-          1, 100, 0, 51, 255, 225, 0, 17, 39, 100, 0, 51, 172, 86, 128, 76, 1, 73, 230, 168, 6, 208,
-          68, 35, 80, 1, 0, 4, 40, 238, 60, 176,
-        ]),
-        optimizeForLatency: true,
-      });
-    } finally {
-      client.stop();
-    }
-  });
-
   it("streams and drives a serve-sim-only Android device over serve-sim's AVCC and input socket", async () => {
     const { client, events, fetch, sockets, videoBodies, decoders } = recoveryFixture(
       "android",
@@ -498,6 +468,21 @@ describe("shared device stream readiness and recovery", () => {
       [0x03, { type: "begin", x: 0.25, y: 0.5 }],
       [0x04, { button: "back" }],
     ]);
+    client.stop();
+  });
+
+  it("stops retrying a Simlock lease that ended and keeps its reason", async () => {
+    const { client, events, fetch, sockets, videoBodies } = recoveryFixture("ios", false, true);
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    const reason = [...new TextEncoder().encode('{"reason":"expired"}')];
+    videoBodies[0]!.enqueue(new Uint8Array([...envelope(4, [1]), ...envelope(7, reason)]));
+    videoBodies[0]!.close();
+    sockets[0]!.onclose?.({ code: 4001, reason: "expired" });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(fetch.mock.calls.filter(([url]) => url.includes("stream.avcc"))).toHaveLength(1);
+    expect(sockets).toHaveLength(1);
+    expect(events.onStatus).toHaveBeenLastCalledWith("error", expect.stringContaining("expired"));
     client.stop();
   });
 

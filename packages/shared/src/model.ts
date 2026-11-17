@@ -130,6 +130,24 @@ export function draftModelPickMatchesThread(pick: ModelSelection, thread: ModelS
   return modelSelectionsEqual(withoutFastModeOff(pick), withoutFastModeOff(thread));
 }
 
+/** Cursor ACP can default Fast to true; T3 requires a user selection. */
+export function withImplicitFastModeDefault(
+  caps: ModelCapabilities,
+  modelOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): ReadonlyArray<ProviderOptionSelection> | undefined {
+  const hasExplicitFastMode = modelOptions?.some((selection) => selection.id === "fastMode");
+  if (hasExplicitFastMode) {
+    return modelOptions ?? undefined;
+  }
+  const hasFastModeDescriptor = caps.optionDescriptors?.some(
+    (descriptor) => descriptor.type === "boolean" && descriptor.id === "fastMode",
+  );
+  if (!hasFastModeDescriptor) {
+    return modelOptions ?? undefined;
+  }
+  return [...(modelOptions ?? []), { id: "fastMode", value: false }];
+}
+
 function resolveDescriptorChoiceValue(
   descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
   raw: string | null | undefined,
@@ -196,12 +214,40 @@ function withDescriptorCurrentValue(
   };
 }
 
+// Ultracode was a Claude effort level before it became its own toggle; that level ran at xhigh.
+export function withLegacyUltracodeEffort<
+  Selections extends ReadonlyArray<ProviderOptionSelection> | null | undefined,
+>(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor> | null | undefined,
+  selections: Selections,
+): Selections | Array<ProviderOptionSelection> {
+  if (
+    getRawSelectionValueById(selections, "effort") !== "ultracode" ||
+    !descriptors?.some(
+      (descriptor) => descriptor.id === "ultracode" && descriptor.type === "boolean",
+    )
+  ) {
+    return selections;
+  }
+  return [
+    ...(selections ?? []).map((selection) =>
+      selection.id === "effort" && selection.value === "ultracode"
+        ? { id: "effort", value: "xhigh" }
+        : selection,
+    ),
+    ...(getRawSelectionValueById(selections, "ultracode") === undefined
+      ? [{ id: "ultracode", value: true }]
+      : []),
+  ];
+}
+
 export function getProviderOptionDescriptors(input: {
   caps: ModelCapabilities;
   selections?: ReadonlyArray<ProviderOptionSelection> | null | undefined;
 }): ReadonlyArray<ProviderOptionDescriptor> {
-  const { caps, selections } = input;
+  const { caps } = input;
   const baseDescriptors = (caps.optionDescriptors ?? []).map(cloneDescriptor);
+  const selections = withLegacyUltracodeEffort(baseDescriptors, input.selections);
 
   return baseDescriptors.map((descriptor) =>
     withDescriptorCurrentValue(
@@ -312,7 +358,9 @@ export function buildExplicitProviderOptionSelectionsFromDescriptors(
   if (!selections || selections.length === 0) {
     return undefined;
   }
-  const explicitIds = new Set(selections.map((selection) => selection.id));
+  const explicitIds = new Set(
+    withLegacyUltracodeEffort(descriptors, selections).map(({ id }) => id),
+  );
   const normalized = buildProviderOptionSelectionsFromDescriptors(descriptors)?.filter(
     (selection) => explicitIds.has(selection.id),
   );
@@ -488,6 +536,17 @@ export function createModelSelection(
     model,
   };
   return selections.length > 0 ? { ...base, options: selections } : base;
+}
+
+/** A model picker's pick: re-picking the current model keeps its options, another model starts without any. */
+export function pickModelSelection(
+  current: ModelSelection | null | undefined,
+  instanceId: ProviderInstanceId,
+  model: string,
+): ModelSelection {
+  return current?.instanceId === instanceId && current.model === model
+    ? current
+    : createModelSelection(instanceId, model);
 }
 
 export function resolvePromptInjectedEffort(

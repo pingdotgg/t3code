@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import { type ServerProviderAuth, type ServerProviderModel } from "@t3tools/contracts";
 import type { FxSettings } from "../settings.ts";
 import { createModelCapabilities } from "@t3tools/shared/model";
@@ -19,13 +20,13 @@ import {
 import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
-  DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
   nonEmptyTrimmed,
-  parseGenericCliVersion,
+  parseCliVersionResult,
   type ProviderProbeResult,
   providerModelsFromSettings,
   type ServerProviderDraft,
+  providerProbeEnvironment,
   spawnAndCollect,
 } from "@t3tools/provider-core/server/snapshotProbe";
 
@@ -130,10 +131,10 @@ const FxStatus = Schema.fromJsonString(
   }),
 );
 const decodeFxStatus = Schema.decodeUnknownOption(FxStatus);
-const FxModels = Schema.fromJsonString(
-  Schema.Struct({ ids: Schema.optional(Schema.Array(Schema.String)) }),
-);
+const FxModels = Schema.fromJsonString(Schema.Struct({ ids: Schema.Array(Schema.String) }));
 const decodeFxModels = Schema.decodeUnknownOption(FxModels);
+
+const VERSION_PROBE_TIMEOUT_MS = 10_000;
 
 function fxAuth(auth: string | undefined): ServerProviderAuth {
   const method = nonEmptyTrimmed(auth);
@@ -162,8 +163,11 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
     });
   }
 
-  const versionResult = yield* runFxCli(settings, ["--version"], environment).pipe(
-    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+  const probeEnvironment = providerProbeEnvironment(environment);
+  const versionResult = yield* runFxCli(settings, ["--version"], probeEnvironment).pipe(
+    Effect.timeoutOption(
+      resolveProviderProbeTimeoutMs("fx", VERSION_PROBE_TIMEOUT_MS, environment),
+    ),
     Effect.result,
   );
   if (Result.isFailure(versionResult) || Option.isNone(versionResult.success)) {
@@ -177,7 +181,7 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
     });
   }
   const versionOutput = versionResult.success.value;
-  const version = parseGenericCliVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
+  const version = parseCliVersionResult(versionOutput);
   if (versionOutput.code !== 0) {
     return snapshot(settings, checkedAt, {
       installed: true,
@@ -189,15 +193,15 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
   }
 
   const read = (args: ReadonlyArray<string>) =>
-    runFxCli(settings, args, environment).pipe(
-      Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS),
+    runFxCli(settings, args, probeEnvironment).pipe(
+      Effect.timeoutOption(resolveProviderProbeTimeoutMs("fx", AUTH_PROBE_TIMEOUT_MS, environment)),
       Effect.map(Option.filter((output) => output.code === 0)),
       Effect.map(Option.map((output) => output.stdout)),
       Effect.orElseSucceed(() => Option.none<string>()),
     );
   const status = Option.flatMap(yield* read(["status", "--json"]), decodeFxStatus);
   const listed = Option.flatMap(yield* read(["models", "--json"]), decodeFxModels).pipe(
-    Option.map((models) => models.ids?.flatMap((id) => nonEmptyTrimmed(id) ?? []) ?? []),
+    Option.map((models) => models.ids.flatMap((id) => nonEmptyTrimmed(id) ?? [])),
   );
   const auth = fxAuth(Option.getOrUndefined(status)?.auth);
   const defaultModel = nonEmptyTrimmed(Option.getOrUndefined(status)?.model);

@@ -1,19 +1,23 @@
+/**
+ * HTTP runtime bridges and platform services for Effect's HTTP APIs.
+ */
 import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as ErrorReporter from "effect/ErrorReporter";
-import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Scope from "effect/Scope";
+import * as FileSystem from "effect/FileSystem";
+import * as Etag from "effect/http/Etag";
 import type { HttpBodyError } from "effect/http/HttpBody";
-import {
-  causeResponse,
-  type HttpServerError,
-} from "effect/http/HttpServerError";
+import * as HttpPlatform from "effect/http/HttpPlatform";
+import { causeResponse, type HttpServerError } from "effect/http/HttpServerError";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import { ManagedHttpShutdown } from "./Runtime/Bootstrap/ManagedHttpShutdown.ts";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Scope from "effect/Scope";
+import { ManagedHttpShutdown } from "./Runtime/ManagedHttpShutdown.ts";
 
 export type HttpEffect<Req = never> = Effect.Effect<
   HttpServerResponse.HttpServerResponse,
@@ -64,14 +68,8 @@ export class HttpServer extends Context.Service<
         HttpServerError | HttpBodyError,
         Req
       >,
-      options?: {
-        port?: number;
-      },
-    ) => Effect.Effect<
-      void,
-      never,
-      Exclude<Req, HttpServerRequest> | Scope.Scope
-    >;
+      options?: { port?: number },
+    ) => Effect.Effect<void, never, Exclude<Req, HttpServerRequest> | Scope.Scope>;
   }
 >()("HttpServer") {}
 
@@ -86,9 +84,7 @@ export const safeHttpEffect = <Req = never>(
     handler.pipe(
       // @ts-expect-error
       Effect.flatMap((response) =>
-        HttpServerResponse.isHttpServerResponse(response)
-          ? Effect.succeed(response)
-          : response,
+        HttpServerResponse.isHttpServerResponse(response) ? Effect.succeed(response) : response,
       ),
     ) as any as HttpEffect<Req>,
     (cause) =>
@@ -122,9 +118,7 @@ const logUnreportedCause = (cause: Cause.Cause<unknown>) => {
   const failures = cause.reasons.filter(
     (reason) =>
       reason._tag !== "Interrupt" &&
-      !ErrorReporter.isIgnored(
-        reason._tag === "Fail" ? reason.error : reason.defect,
-      ),
+      !ErrorReporter.isIgnored(reason._tag === "Fail" ? reason.error : reason.defect),
   );
   return failures.length === 0
     ? Effect.void
@@ -178,6 +172,11 @@ export interface NodeHttpServerOptions {
    * @default "0.0.0.0"
    */
   hostname?: string;
+  /**
+   * Port the Node HTTP server binds when the handler is served without an
+   * explicit port. Omit to read `PORT` (default `3000`).
+   */
+  port?: number;
 }
 
 export const NodeHttpServer = (serverOptions?: NodeHttpServerOptions) =>
@@ -191,7 +190,7 @@ export const NodeHttpServer = (serverOptions?: NodeHttpServerOptions) =>
       return {
         serve: (handler, options) =>
           Effect.gen(function* () {
-            const port = yield* resolvePort(options);
+            const port = yield* resolvePort({ port: options?.port ?? serverOptions?.port });
             const shutdown = yield* Effect.serviceOption(ManagedHttpShutdown);
             const managed = Option.getOrUndefined(shutdown);
             if (managed?.isStopping()) return yield* Effect.interrupt;
@@ -230,3 +229,37 @@ export const NodeHttpServer = (serverOptions?: NodeHttpServerOptions) =>
       };
     }),
   );
+
+const HttpPlatformStub: Layer.Layer<HttpPlatform.HttpPlatform> = Layer.succeed(
+  HttpPlatform.HttpPlatform,
+  {
+    platform: "web",
+    // Advertises no algorithms, so the compression middleware never engages
+    // and compressResponse is never called.
+    compression: {
+      algorithms: new Set<HttpPlatform.CompressionAlgorithm>(),
+      compressResponse: (response) => Effect.succeed(response),
+    },
+    fileResponse: () => Effect.die("HttpPlatform.fileResponse not supported"),
+    fileWebResponse: () => Effect.die("HttpPlatform.fileWebResponse not supported"),
+  },
+);
+
+/**
+ * The `HttpPlatform`, `Etag`, `Path`, and no-op `FileSystem` services `HttpApiBuilder.layer`
+ * wants, for runtimes without a filesystem: Workers, Lambda. File responses
+ * die, compression never engages.
+ *
+ * Provide it to `HttpApiBuilder.layer(api)` in a Worker or a Lambda:
+ *
+ * ```typescript
+ * HttpApiBuilder.layer(Api).pipe(
+ *   Layer.provide(handlers),
+ *   Layer.provide(Http.Platform),
+ *   HttpRouter.toHttpEffect,
+ * )
+ * ```
+ */
+export const Platform: Layer.Layer<
+  Etag.Generator | HttpPlatform.HttpPlatform | Path.Path | FileSystem.FileSystem
+> = Layer.mergeAll(Etag.layer, HttpPlatformStub, Path.layer, FileSystem.layerNoop({}));

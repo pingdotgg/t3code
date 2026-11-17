@@ -155,9 +155,7 @@ export function NoticeText({
             side="top"
             className="max-w-[min(30rem,calc(100vw-2rem))] whitespace-normal wrap-anywhere [--inline-button-text-align:start] [--inline-button-white-space:normal] [&_[data-slot=inline-button]]:max-w-full"
           >
-            <ComposerBanner.Scroll className="max-h-[min(var(--available-height),24rem,40dvh)]">
-              {children}
-            </ComposerBanner.Scroll>
+            <ComposerBanner.Scroll>{children}</ComposerBanner.Scroll>
           </PopoverPopup>
         </Popover>
       ) : null}
@@ -184,7 +182,7 @@ function NoticeCard({
         <ComposerBanner.Icon className="h-(--composer-banner-icon-column) self-start">
           {item.icon}
         </ComposerBanner.Icon>
-        <ComposerBanner.Content className="whitespace-nowrap">
+        <ComposerBanner.Content className="items-baseline whitespace-nowrap">
           <NoticeText
             detailsLabel={
               typeof item.title === "string"

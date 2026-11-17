@@ -25,6 +25,24 @@ describe("tokenizeCliArgs", () => {
         String.raw`--config model="gpt 5" --enable foo\ bar --config=profile='work profile'`,
       ),
     ).toEqual(["--config", "model=gpt 5", "--enable", "foo bar", "--config=profile=work profile"]);
+
+    for (const whitespace of [" ", "\t"]) {
+      const args = `--add-dir /tmp/project\\${whitespace}`;
+      expect(tokenizeCliArgs(args)).toEqual(["--add-dir", `/tmp/project${whitespace}`]);
+      expect(tokenizeCliArgs(`${args} --verbose`)).toEqual([
+        "--add-dir",
+        `/tmp/project${whitespace}`,
+        "--verbose",
+      ]);
+    }
+  });
+
+  it("ignores unescaped surrounding whitespace", () => {
+    expect(tokenizeCliArgs(" \t\n")).toEqual([]);
+    expect(tokenizeCliArgs(" \t--add-dir /tmp/project \t\n")).toEqual([
+      "--add-dir",
+      "/tmp/project",
+    ]);
   });
 
   it("preserves literal backslashes in path values", () => {
@@ -87,6 +105,14 @@ describe("parseCliArgs", () => {
       flags: { "append-system-prompt": "--", chrome: null },
       positionals: [],
     });
+  });
+
+  it("value flag consumes a next token that starts with --", () => {
+    expect(
+      parseCliArgs(["--append-system-prompt", "-- text", "--chrome"], {
+        valueFlags: ["append-system-prompt"],
+      }),
+    ).toEqual({ flags: { "append-system-prompt": "-- text", chrome: null }, positionals: [] });
   });
 
   it("boolean flag does not consume next token as value", () => {
