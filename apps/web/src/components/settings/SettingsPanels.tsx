@@ -622,7 +622,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? [gt("Archive confirmation")]
       : []),
     ...(settings.confirmTerminalClose !== DEFAULT_UNIFIED_SETTINGS.confirmTerminalClose
-      ? ["Terminal close confirmation"]
+      ? [gt("Terminal close confirmation")]
       : []),
     ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
       ? [gt("Delete confirmation")]
@@ -1051,7 +1051,7 @@ export function GeneralSettingsPanel() {
           resetAction={
             settings.confirmTerminalClose !== DEFAULT_UNIFIED_SETTINGS.confirmTerminalClose ? (
               <SettingResetButton
-                label="terminal close confirmation"
+                ariaLabel={gt("Reset terminal close confirmation to default")}
                 onClick={() =>
                   updateSettings({
                     confirmTerminalClose: DEFAULT_UNIFIED_SETTINGS.confirmTerminalClose,

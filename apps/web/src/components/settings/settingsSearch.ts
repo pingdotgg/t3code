@@ -1201,10 +1201,10 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "issue-trackers",
-    title: "Issue trackers",
+    title: msg("Issue trackers"),
     to: "/settings/source-control",
     scope: "environment-defaults",
-    searchTerms: ["linear jira issues tracker team api key connect bind project"],
+    searchTerms: [msg("linear jira issues tracker team api key connect bind project")],
   },
   {
     id: "source-control",

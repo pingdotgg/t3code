@@ -894,7 +894,9 @@ function KeybindingKeyControl({
           )}
         >
           {row.isUnassigned ? (
-            <span className="text-sm text-muted-foreground">Unassigned</span>
+            <span className="text-sm text-muted-foreground">
+              <T context="keyboard shortcut with no key assigned">Unassigned</T>
+            </span>
           ) : (
             <KeybindingPill value={row.key} />
           )}
@@ -1010,7 +1012,7 @@ function KeybindingRowMenu({
         ) : null}
         {canUnassign ? (
           <MenuItem variant="destructive" disabled={isSaving} onClick={() => onUnassign(row)}>
-            Unassign
+            {gt("Unassign", { $context: "verb, removes the key from a keyboard shortcut" })}
           </MenuItem>
         ) : null}
         {canRemove ? (
@@ -1102,7 +1104,7 @@ function KeybindingSettingsRow(props: KeybindingRowProps) {
       title={<KeybindingRowTitle row={row} />}
       description={
         row.isUnassigned && !editor.isDirty ? (
-          "No keyboard shortcut assigned. Click Unassigned to set one."
+          <T>No keyboard shortcut assigned. Click Unassigned to set one.</T>
         ) : (
           <KeybindingRowWhen row={row} editor={editor} variables={variables} />
         )

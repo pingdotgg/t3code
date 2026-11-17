@@ -1696,7 +1696,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:issues",
       searchTerms: ["issues", "issue", "bugs", "tracker", "github", "triage"],
-      title: "Open issues",
+      title: gt("Open issues"),
       icon: <IssueGlyph.issue className={ITEM_ICON_CLASS} />,
       run: async () => {
         await navigate({ to: "/issues", search: readIssueListPreferences() });

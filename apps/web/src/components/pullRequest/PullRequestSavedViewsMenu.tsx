@@ -1,3 +1,4 @@
+import { T, useGT, useMessages } from "gt-react";
 import { BookmarkIcon, CheckIcon, ChevronDownIcon, PlusIcon } from "lucide-react";
 import { useId, useState } from "react";
 import {
@@ -41,6 +42,8 @@ export function PullRequestSavedViewsMenu({
   preferences: PullRequestListPreferences;
   onApply: (preferences: PullRequestListPreferences) => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const [views, setViews] = useLocalStorage(
     PULL_REQUEST_SAVED_VIEWS_KEY,
     EMPTY_PULL_REQUEST_SAVED_VIEWS,
@@ -55,7 +58,10 @@ export function PullRequestSavedViewsMenu({
     views.find((view) => pullRequestViewMatches(view, preferences));
   if (selectedView && selectedId !== selectedView.id) setSelectedId(selectedView.id);
   const modified = selectedView !== undefined && !pullRequestViewMatches(selectedView, preferences);
-  const nameError = editor ? pullRequestViewNameError(editor.name, views, editor.id) : null;
+  const nameError = editor
+    ? pullRequestViewNameError(editor.name, views, editor.id, messages)
+    : null;
+  const defaultViewName = gt("PRs Requesting My Review");
 
   function persist(
     update: (current: ReadonlyArray<PullRequestSavedView>) => ReadonlyArray<PullRequestSavedView>,
@@ -79,9 +85,10 @@ export function PullRequestSavedViewsMenu({
     }
     toastManager.add({
       type: "error",
-      title: "Could not save PR views",
-      description:
+      title: gt("Could not save PR views"),
+      description: gt(
         "Local storage is unavailable or full. Try again after freeing space or allowing storage.",
+      ),
     });
     return false;
   }
@@ -105,8 +112,8 @@ export function PullRequestSavedViewsMenu({
       setEditor((current) => (current ? { name: current.name } : null));
       toastManager.add({
         type: "error",
-        title: "This saved view was removed",
-        description: "Your name has been kept. Save it as a new view or cancel.",
+        title: gt("This saved view was removed"),
+        description: gt("Your name has been kept. Save it as a new view or cancel."),
       });
       return;
     }
@@ -123,16 +130,18 @@ export function PullRequestSavedViewsMenu({
             render={
               <MenuTrigger
                 render={<Button variant="outline" />}
-                aria-label="Saved pull request views"
+                aria-label={gt("Saved pull request views")}
               />
             }
           >
             <BookmarkIcon aria-hidden className="size-4" />
-            <span className="max-w-40 truncate">{selectedView?.name ?? "Views"}</span>
-            {modified ? <span aria-label="Modified view">*</span> : null}
+            <span className="max-w-40 truncate">
+              {selectedView?.name ?? gt("Views", { $context: "saved filter views menu" })}
+            </span>
+            {modified ? <span aria-label={gt("Modified view")}>*</span> : null}
             <ChevronDownIcon aria-hidden className="size-3 shrink-0" />
           </TooltipTrigger>
-          <TooltipPopup>{selectedView?.name ?? "Saved pull request views"}</TooltipPopup>
+          <TooltipPopup>{selectedView?.name ?? gt("Saved pull request views")}</TooltipPopup>
         </Tooltip>
         <MenuPopup align="start">
           {views.map((view) => (
@@ -161,12 +170,12 @@ export function PullRequestSavedViewsMenu({
           <MenuItem
             onClick={() =>
               setEditor({
-                name: preferences.involvement === "reviewing" ? "PRs Requesting My Review" : "",
+                name: preferences.involvement === "reviewing" ? defaultViewName : "",
               })
             }
           >
             <PlusIcon aria-hidden />
-            Save current view…
+            <T>Save current view…</T>
           </MenuItem>
           {selectedView ? (
             <>
@@ -182,11 +191,11 @@ export function PullRequestSavedViewsMenu({
                     )
                   }
                 >
-                  Update saved view
+                  <T>Update saved view</T>
                 </MenuItem>
               ) : null}
               <MenuItem onClick={() => setEditor({ id: selectedView.id, name: selectedView.name })}>
-                Rename view…
+                <T>Rename view…</T>
               </MenuItem>
               <MenuItem
                 variant="destructive"
@@ -195,7 +204,7 @@ export function PullRequestSavedViewsMenu({
                     setSelectedId(null);
                 }}
               >
-                Delete view
+                <T>Delete view</T>
               </MenuItem>
             </>
           ) : null}
@@ -216,20 +225,22 @@ export function PullRequestSavedViewsMenu({
             }}
           >
             <DialogHeader>
-              <DialogTitle>{editor?.id ? "Rename PR view" : "Save PR view"}</DialogTitle>
+              <DialogTitle>{editor?.id ? <T>Rename PR view</T> : <T>Save PR view</T>}</DialogTitle>
               <DialogDescription>
-                Save your search, filters, and sort order on this device.
+                <T>Save your search, filters, and sort order on this device.</T>
               </DialogDescription>
             </DialogHeader>
             <DialogPanel>
               <div className="flex flex-col gap-2">
-                <Label htmlFor={inputId}>View name</Label>
+                <Label htmlFor={inputId}>
+                  <T>View name</T>
+                </Label>
                 <Input
                   id={inputId}
                   autoFocus
                   value={editor?.name ?? ""}
                   maxLength={PULL_REQUEST_VIEW_NAME_MAX_LENGTH}
-                  placeholder="PRs Requesting My Review"
+                  placeholder={defaultViewName}
                   aria-invalid={Boolean(editor?.name && nameError)}
                   aria-describedby={nameError && editor?.name ? errorId : undefined}
                   onChange={(event) =>
@@ -247,10 +258,10 @@ export function PullRequestSavedViewsMenu({
             </DialogPanel>
             <DialogFooter>
               <Button variant="outline" onClick={() => setEditor(null)}>
-                Cancel
+                <T>Cancel</T>
               </Button>
               <Button type="submit" disabled={nameError !== null}>
-                Save
+                <T>Save</T>
               </Button>
             </DialogFooter>
           </form>
