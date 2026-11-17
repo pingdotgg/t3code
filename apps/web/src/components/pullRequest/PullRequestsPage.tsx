@@ -54,6 +54,8 @@ import {
   type PullRequestListPreferencePatch,
   writePullRequestListPreferences,
 } from "./pullRequestListPreferences";
+import { SavedViewsMenu } from "../SavedViewsMenu";
+import { PULL_REQUEST_SAVED_VIEWS, pullRequestSavedViewPatch } from "./pullRequestSavedViews";
 import { environmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 import {
@@ -1189,6 +1191,8 @@ export function PullRequestsPage() {
   const searchInput = (
     <PullRequestSearchInput
       value={search.q ?? ""}
+      label="Search pull requests"
+      placeholder="Search pull requests, or label:bug"
       busy={typedQuery.length > 0 && (!querySettled || showingCarried)}
       onChange={(query) => updateListScope({ q: query || undefined })}
       onSubmit={submitQuery}
@@ -1419,6 +1423,13 @@ export function PullRequestsPage() {
     searchInput,
     sortMenu,
     filtersMenu,
+    savedViewsMenu: (
+      <SavedViewsMenu
+        kind={PULL_REQUEST_SAVED_VIEWS}
+        preferences={search}
+        onApply={(preferences) => updateListScope(pullRequestSavedViewPatch(preferences))}
+      />
+    ),
     rightPanelControl: !pullRequestsSupported ? null : (
       <span
         aria-hidden
