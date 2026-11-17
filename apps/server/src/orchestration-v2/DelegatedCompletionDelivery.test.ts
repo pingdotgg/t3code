@@ -5064,6 +5064,92 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
     }),
   );
 
+  it.effect("keeps a child's report when a later queued run ends without text", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:silent-wake-parent");
+      const projectId = ProjectId.make("project:silent-wake-parent");
+      const runId = RunId.make("run:silent-wake-parent");
+      const rootNodeId = NodeId.make("node:silent-wake-parent-root");
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId,
+        runId,
+        rootNodeId,
+        taskId: NodeId.make("node:silent-wake-parent-settled"),
+        deliveryState: "delivered",
+        now,
+      });
+      const child = yield* seedRestartCancelledChild({
+        parentThreadId: threadId,
+        projectId,
+        parentRunId: runId,
+        rootNodeId,
+        name: "silent-wake-child",
+        completionWake: "always",
+        continuationPending: false,
+        runStatus: "completed",
+        now,
+      });
+      yield* eventSink.write({
+        commandId: CommandId.make("command:silent-wake-child:report"),
+        events: [
+          {
+            id: EventId.make("event:silent-wake-child:report"),
+            type: "turn-item.updated",
+            threadId: child.childThreadId,
+            runId: child.childRunId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make("turn-item:silent-wake-child:report"),
+              type: "assistant_message",
+              messageId: MessageId.make("message:silent-wake-child:report"),
+              text: "REPORT-OK",
+              threadId: child.childThreadId,
+              runId: child.childRunId,
+              nodeId: rootNodeId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              status: "completed",
+              title: null,
+              streaming: false,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+            },
+          },
+          runEvent({
+            threadId: child.childThreadId,
+            runId: RunId.make("run:silent-wake-child:2"),
+            ordinal: 2,
+            status: "completed",
+            now,
+          }),
+        ],
+      });
+      yield* orchestrator.cancelDelegatedTask({
+        parentThreadId: threadId,
+        taskId: child.taskId,
+        command: {
+          type: "thread.stop",
+          commandId: CommandId.make("cancel-silent-wake-child"),
+          threadId: child.childThreadId,
+          stopDelegatedTasks: false,
+        },
+        stopDescendants: () => Effect.void,
+      });
+      const task = (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
+        (row) => row.id === child.taskId,
+      );
+      assert.equal(task?.result, "REPORT-OK");
+    }),
+  );
+
   // Running does not prove prompt consumption in Claude; re-offer cut deliveries even when resuming the turn.
   it.effect("re-offers a cut delivery even when a continuation resumes its turn", () =>
     Effect.gen(function* () {

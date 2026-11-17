@@ -203,28 +203,24 @@ function withStopNotice(
   return notice?.type === "system_notice" ? `${text}\n\n${notice.message}` : text;
 }
 
-export function subagentResultForRun(
-  projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems" | "providerTurns">,
-  run: OrchestrationV2Run,
-): {
-  readonly text: string;
-  readonly messageId: OrchestrationV2ConversationMessage["id"] | null;
-  readonly turnItemId: OrchestrationV2TurnItem["id"] | null;
-} {
+function assistantReportForRun(
+  projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems">,
+  runId: OrchestrationV2Run["id"],
+) {
   const turnItem =
     projection.turnItems
       .filter(
         (
           candidate,
         ): candidate is Extract<OrchestrationV2TurnItem, { readonly type: "assistant_message" }> =>
-          candidate.runId === run.id &&
+          candidate.runId === runId &&
           candidate.type === "assistant_message" &&
           candidate.text.trim().length > 0,
       )
       .toSorted((left, right) => right.ordinal - left.ordinal)[0] ?? null;
   const messages = projection.messages.filter(
     (candidate) =>
-      candidate.runId === run.id &&
+      candidate.runId === runId &&
       candidate.role === "assistant" &&
       candidate.text.trim().length > 0,
   );
@@ -237,6 +233,38 @@ export function subagentResultForRun(
         DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
     )[0] ??
     null;
+  return { turnItem, message };
+}
+
+/**
+ * A completed run without assistant text (a queued notice, message, or scheduled task) leaves
+ * the latest earlier report in `projection` standing; callers load only the task's own runs.
+ */
+export function subagentResultForRun(
+  projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems" | "providerTurns">,
+  run: OrchestrationV2Run,
+): {
+  readonly text: string;
+  readonly messageId: OrchestrationV2ConversationMessage["id"] | null;
+  readonly turnItemId: OrchestrationV2TurnItem["id"] | null;
+} {
+  const own = assistantReportForRun(projection, run.id);
+  const earlierReportRunId =
+    run.status === "completed" && own.turnItem === null && own.message === null
+      ? projection.turnItems
+          .filter(
+            (item) =>
+              item.runId !== null &&
+              item.runId !== run.id &&
+              item.type === "assistant_message" &&
+              item.text.trim().length > 0,
+          )
+          .toSorted((left, right) => right.ordinal - left.ordinal)[0]?.runId
+      : null;
+  const { turnItem, message } =
+    earlierReportRunId === null || earlierReportRunId === undefined
+      ? own
+      : assistantReportForRun(projection, earlierReportRunId);
   const failure =
     run.status === "failed"
       ? projection.turnItems
@@ -285,6 +313,21 @@ export function subagentHoldsCompletion(
   );
 }
 
+/** Monitor updates report progress, never a task's result. */
+export function monitorUpdateRunIds(
+  messages: ReadonlyArray<Pick<OrchestrationV2ConversationMessage, "runId" | "notification">>,
+) {
+  return new Set(
+    messages
+      .filter(
+        (message) =>
+          message.notification?.source.kind === "monitor" &&
+          message.notification.outcome === "updated",
+      )
+      .map((message) => message.runId),
+  );
+}
+
 export function delegatedTaskProgress(projection: {
   readonly runs: OrchestrationV2ThreadProjection["runs"];
   readonly messages: ReadonlyArray<
@@ -299,15 +342,7 @@ export function delegatedTaskProgress(projection: {
 }) {
   const terminal = (status: string) =>
     ["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(status);
-  const monitorRuns = new Set(
-    projection.messages
-      .filter(
-        (message) =>
-          message.notification?.source.kind === "monitor" &&
-          message.notification.outcome === "updated",
-      )
-      .map((message) => message.runId),
-  );
+  const monitorRuns = monitorUpdateRunIds(projection.messages);
   const workRuns = projection.runs.filter(
     (run) => !monitorRuns.has(run.id) && run.status !== "rolled_back",
   );

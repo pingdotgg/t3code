@@ -194,6 +194,7 @@ import {
   makeSubagentChildThread,
   subagentResultForRun,
   delegatedTaskProgress,
+  monitorUpdateRunIds,
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
 import {
@@ -14373,13 +14374,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
 
+      // A run that completes without text keeps the task's earlier report as its result.
+      const monitorRuns = monitorUpdateRunIds(childControls.messages);
+      const reportRunIds =
+        outcome === "completed"
+          ? (taskRuns.length === 0
+              ? childControls.runs.filter((run) => run.delegatedTaskId === undefined)
+              : taskRuns
+            )
+              .filter(
+                (run) =>
+                  run.ordinal <= childRun.ordinal &&
+                  run.status !== "rolled_back" &&
+                  !monitorRuns.has(run.id),
+              )
+              .map((run) => run.id)
+          : [];
+      const resultRunIds = [...new Set([childRun.id, ...reportRunIds])];
       const childResult = yield* projectionStore.getThreadRecords(
         childThreadId,
         ["messages", "turnItems"],
         {
           messageRoles: ["assistant"],
           messageRunIds: [childRun.id],
-          turnItemRunId: childRun.id,
+          turnItemRunIds: resultRunIds,
           turnItemTypes: ["assistant_message", "error", "system_notice"],
         },
       );
