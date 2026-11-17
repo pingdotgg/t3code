@@ -607,21 +607,6 @@ const agentPaths = (rules: ReadonlyArray<Rule>) =>
       (entry.action === "edit" || entry.action === "external_directory"),
   );
 
-/** A subagent's rules from its first deny on: its denies outrank T3's mode, and what it re-allows after them follows the mode. */
-const agentDenies = (rules: ReadonlyArray<Rule>, policy: RulesPolicy): ReadonlyArray<Rule> => {
-  const first = rules.findIndex((entry) => entry.effect === "deny");
-  if (first < 0) return [];
-  const mode = sessionRules(policy, [], []);
-  return rules.slice(first).map((entry) => {
-    if (entry.effect === "deny" || agentPaths([entry]).length > 0) return entry;
-    const effects = mode
-      .filter((moded) => moded.action === "*" || wildcardMatch(moded.action, entry.action))
-      .map((moded) => moded.effect);
-    const effect = (["deny", "ask", "allow"] as const).find((kind) => effects.includes(kind));
-    return effect === undefined ? entry : { ...entry, effect };
-  });
-};
-
 const ref = (nativeId: string, strength: "strong" | "weak" = "strong") => ({
   driver: OPENCODE_PROVIDER,
   nativeId,
@@ -2771,20 +2756,21 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       const state = ownerOf(asking);
       if (state === undefined) return;
-      if (asked.type === "permission" && (yield* settleAsk(asked.request))) return;
       const target = requestTurn(asking);
-      if (target !== undefined && !target.turn.awaitingStart) {
-        if (asked.type === "permission") return yield* onPermissionAsked(asked.request);
-        return yield* onFormCreated(asked.form);
-      }
-      if (state.unsettled || state.active?.awaitingStart === true) {
-        yield* stopStaleRequest(
+      const live = target !== undefined && !target.turn.awaitingStart;
+      // A request left by an execution T3 gave up on is stopped, never answered from the rules.
+      if (!live && (state.unsettled || state.active?.awaitingStart === true)) {
+        return yield* stopStaleRequest(
           asking,
           asked.type === "permission"
             ? { type: "permission", id: asked.request.id }
             : { type: "form", id: asked.form.id },
         );
       }
+      if (asked.type === "permission" && (yield* settleAsk(asked.request))) return;
+      if (!live) return;
+      if (asked.type === "permission") return yield* onPermissionAsked(asked.request);
+      return yield* onFormCreated(asked.form);
     });
 
     const sessionOfEvent = (event: OpenCode2Client.OpenCode2StreamEvent) =>
@@ -4126,31 +4112,31 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       // A subagent whose agent rules cannot be read is refused; a root's request goes to the user.
       if (!child && (own === undefined || rules === undefined)) return false;
       // A subagent's own denies outrank the mode here only, never in rules its own subagents would copy.
-      const enforced =
-        own === undefined || rules === undefined
-          ? undefined
-          : [...own, ...rules.rules, ...(child ? agentDenies(own, root.policy) : []), ...rules.mcp];
       const effects =
-        enforced === undefined
+        own === undefined || rules === undefined
           ? ["deny" as const]
-          : data.resources.map((resource) => effectOf(data.action, resource, enforced, windows));
+          : data.resources.map((resource) =>
+              child && effectOf(data.action, resource, own, windows) === "deny"
+                ? "deny"
+                : effectOf(data.action, resource, [...own, ...rules.rules, ...rules.mcp], windows),
+            );
       const denied = effects.includes("deny");
       if (!denied && (effects.length === 0 || effects.includes("ask"))) return false;
-      yield* client.permission
-        .reply({
-          sessionID: Session.ID.make(data.sessionID),
-          requestID: Permission.ID.make(data.id),
-          decision: denied ? "reject" : "once",
-          ...(denied
-            ? { message: `The ${agent} agent's permissions do not allow ${data.action} here.` }
-            : {}),
-        })
-        .pipe(
-          Effect.catchTags(permissionGone),
-          Effect.timeout(REQUEST_REPLY_TIMEOUT),
-          Effect.ignore({ log: true }),
-        );
-      return true;
+      const delivered = yield* deliver(
+        client.permission
+          .reply({
+            sessionID: Session.ID.make(data.sessionID),
+            requestID: Permission.ID.make(data.id),
+            decision: denied ? "reject" : "once",
+            ...(denied
+              ? { message: `The ${agent} agent's permissions do not allow ${data.action} here.` }
+              : {}),
+          })
+          .pipe(Effect.catchTags(permissionGone)),
+      );
+      // An approval that did not arrive goes to the user; a refusal must not become approvable.
+      if (!delivered && denied) yield* abandonRequest(state ?? owner, "permission reply failed");
+      return delivered || denied;
     });
 
     const writeTitle = Effect.fnUntraced(function* (state: ThreadState, title: string) {
