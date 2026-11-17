@@ -49,7 +49,7 @@ interface ComposerResumeInput {
 }
 
 /**
- * Resumes an interrupted run ("Continue where you left off.") and/or releases the turns held
+ * Resumes an interrupted run and/or releases the turns held
  * in its queue. Shares the per-route send lock with the composer's send paths.
  */
 export function useComposerResume(input: ComposerResumeInput) {
@@ -130,7 +130,7 @@ export function useComposerResume(input: ComposerResumeInput) {
           message: {
             messageId: newMessageId(),
             role: "user",
-            text: "Continue where you left off.",
+            text: "",
             attachments: [],
           },
           runtimeMode,
