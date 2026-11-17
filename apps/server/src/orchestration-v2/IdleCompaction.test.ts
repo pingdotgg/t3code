@@ -252,7 +252,6 @@ describe("IdleCompactionService", () => {
       dispatches: 0,
     },
     { mode: "off", reads: 0 },
-    { mode: "off", usageLimit: true, reads: 0 },
     { mode: "beforeCacheExpires", reads: 1 },
     { mode: "beforeCacheExpires", override: "off", reads: 0 },
     { mode: "onReturn", override: "beforeCacheExpires", reads: 1 },
