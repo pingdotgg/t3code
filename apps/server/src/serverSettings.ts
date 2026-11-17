@@ -1435,16 +1435,3 @@ const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(ServerSettingsService, make);
-
-/** The `t3AgentInstructions` setting, read through a service captured where one may be absent. */
-export const t3AgentInstructionsEnabled = (
-  settings: Option.Option<ServerSettingsService["Service"]>,
-): Effect.Effect<boolean> =>
-  Option.match(settings, {
-    onNone: () => Effect.succeed(true),
-    onSome: (service) =>
-      service.getSettings.pipe(
-        Effect.map((current) => current.t3AgentInstructions),
-        Effect.orElseSucceed(() => true),
-      ),
-  });

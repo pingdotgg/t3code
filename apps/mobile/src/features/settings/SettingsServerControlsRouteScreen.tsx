@@ -396,6 +396,21 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     onValueChange={(value) => write({ enableAgentBrowserAccess: value })}
                   />
                 </SettingsSection>
+                <SettingsSection title="Automatic additions">
+                  <SettingsSwitchRow
+                    icon="doc.text"
+                    label="T3 Code agent instructions"
+                    subtitle={managedSubtitle(
+                      "t3AgentInstructions",
+                      projectSelected
+                        ? "Environment-wide setting. Select All projects to change it."
+                        : "T3 Code tells each agent session about its own tools. Off removes this from new sessions. The tools stay available.",
+                    )}
+                    value={uniform("t3AgentInstructions")}
+                    disabled={disabledFor("t3AgentInstructions")}
+                    onValueChange={(value) => write({ t3AgentInstructions: value })}
+                  />
+                </SettingsSection>
                 <AutoSettleSettingsRows write={write} pending={pendingWrites > 0} />
                 <CompletionAudioSettingsRows />
               </>

@@ -665,6 +665,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["claude context compaction idle cache tokens usage summary resume"],
   },
   {
+    id: "t3-agent-instructions",
+    title: msg("T3 Code agent instructions"),
+    to: "/settings/threads",
+    searchTerms: ["automatic additions system prompt injected context delegation tools guidance"],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
     id: "auto-settle-merged-threads",
     title: "Auto-settle merged threads",
     to: "/settings/threads",

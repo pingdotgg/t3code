@@ -5611,6 +5611,8 @@ export interface ClaudeAdapterV2Options {
   readonly queryRunner: ClaudeAgentSdkQueryRunnerShape;
   readonly sessionOptimizers?: SessionOptimizerAttachments.SessionOptimizerAttachments["Service"];
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
+  /** Reads the `t3AgentInstructions` setting per turn; on when omitted. */
+  readonly t3AgentInstructions?: Effect.Effect<boolean>;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
   /**
    * Called with the requested cwd on a process's first init message, after its synchronous
@@ -13058,7 +13060,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? {}
               : { mcpServers: mcpOverrides.mcpServers }),
             deviceToolsAvailable: mcpSession?.capabilities?.has("device") === true,
-            t3AgentInstructions: yield* ServerSettings.t3AgentInstructionsEnabled(serverSettings),
+            t3AgentInstructions: yield* adapterOptions.t3AgentInstructions ?? Effect.succeed(true),
             permissionMode: queryPolicy.permissionMode,
             ...(queryPolicy.allowDangerouslySkipPermissions === undefined
               ? {}
@@ -14823,7 +14825,12 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     input: ProviderAdapterDriverCreateInput<ClaudeSettings>,
     hooks: Pick<
       ClaudeAdapterV2Options,
-      "scopedLimitNames" | "onUsageLimits" | "onSessionInit" | "modelCatalog" | "routeModelCatalog"
+      | "scopedLimitNames"
+      | "onUsageLimits"
+      | "onSessionInit"
+      | "modelCatalog"
+      | "routeModelCatalog"
+      | "t3AgentInstructions"
     > = {},
   ) {
     const { instanceId, environment, enabled, config } = input;

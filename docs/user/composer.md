@@ -406,10 +406,10 @@ An agent sees more than what you type. Some of it comes from T3 Code, some from 
 own CLI, and some from the model provider.
 
 - **T3 Code's instructions.** Each agent session gets instructions about T3 Code's own tools:
-  delegation, threads, browser, devices, pull request linking and runtime info. On web and
-  desktop, turn off **Settings → Threads → Automatic additions → T3 Code agent instructions**
-  to leave them out of sessions started afterwards. The tools stay available; the agent just
-  gets no guidance on them.
+  delegation, threads, browser, devices, pull request linking and runtime info. On web,
+  desktop and mobile, turn off **Settings → Threads → Automatic additions → T3 Code agent
+  instructions** to leave them out of sessions started afterwards. The tools stay available;
+  the agent just gets no guidance on them.
 - **Context T3 Code adds to a turn.** A handoff when you change provider or model, side-chat
   context, a note after a restart, and the goal block while a goal is active. The thread shows
   a row named **T3 Code added context to this turn**; open it to read the text that was sent.
