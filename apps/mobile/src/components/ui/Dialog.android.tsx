@@ -10,6 +10,7 @@ import {
   Text,
   useNativeState,
 } from "@expo/ui/jetpack-compose";
+import { verticalScroll } from "@expo/ui/jetpack-compose/modifiers";
 
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
 import { useScaledTextRole } from "../../features/settings/appearance/useScaledTextRole";
@@ -48,7 +49,10 @@ function setPresented(next: PresentedDialog | null) {
 }
 
 function submitRequest(dialog: DialogRequest) {
+  const replaced = presented;
   setPresented({ ...dialog, id: ++nextPresentationId });
+  // A replaced alert closed without an answer, which its owner hears as a dismissal.
+  if (replaced?.kind === "alert") replaced.request.options?.onDismiss?.();
 }
 
 /** Closes the dialog only if it is still the one the action came from. */
@@ -252,7 +256,9 @@ function DialogPresentation(props: DialogPresentationProps) {
           </AlertDialog.Text>
         ) : props.request.message ? (
           <AlertDialog.Text>
-            <Text style={bodyTypography}>{props.request.message}</Text>
+            <Text modifiers={[verticalScroll()]} style={bodyTypography}>
+              {props.request.message}
+            </Text>
           </AlertDialog.Text>
         ) : null}
         {actions.length > 1 ? (

@@ -58,9 +58,7 @@ layer(localRuntimeLayer)("RateLimit binding", (it) => {
           name: "ratelimit-test",
           compatibilityDate: "2026-03-10",
           compatibilityFlags: [],
-          modules: [
-            { name: "main.js", type: "ESModule", content: RATE_LIMIT_SCRIPT },
-          ],
+          modules: [{ name: "main.js", type: "ESModule", content: RATE_LIMIT_SCRIPT }],
           bindings: [
             RateLimit.local({
               binding: "TESTRATE",

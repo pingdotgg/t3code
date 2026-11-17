@@ -41,8 +41,7 @@ export const HEADER_BYTES_KIND = "x-platform-proxy-bytes-kind";
 export const HEADER_CACHE_NAME = "x-platform-proxy-cache-name";
 export const HEADER_CACHE_URL = "x-platform-proxy-cache-url";
 export const HEADER_CACHE_METHOD = "x-platform-proxy-cache-method";
-export const HEADER_CACHE_IGNORE_METHOD =
-  "x-platform-proxy-cache-ignore-method";
+export const HEADER_CACHE_IGNORE_METHOD = "x-platform-proxy-cache-ignore-method";
 export const HEADER_CACHE_STATUS = "x-platform-proxy-cache-status";
 export const HEADER_CACHE_HEADERS = "x-platform-proxy-cache-headers";
 
@@ -88,7 +87,7 @@ export type EncodedValue =
       readonly body?: { readonly base64: string };
     };
 
-export type BytesKind = "arraybuffer" | "uint8array" | string;
+export type BytesKind = string;
 
 export interface EncodedChainSegment {
   readonly method: string;
@@ -116,6 +115,7 @@ export type EnvBindingDescriptor =
       readonly className?: string;
     };
 
+// oxlint-disable-next-line effecttsgo/extends-native-error -- plain wire-protocol code shared with the proxy worker (no Effect); `name` identifies the error
 export class UnsupportedValueError extends Error {
   override readonly name = "UnsupportedValueError";
 }
@@ -184,13 +184,8 @@ export const encodeValue = (
     };
   }
   if (ArrayBuffer.isView(value)) {
-    const bytes = new Uint8Array(
-      value.buffer,
-      value.byteOffset,
-      value.byteLength,
-    );
-    const kind =
-      value instanceof Uint8Array ? "uint8array" : value.constructor.name;
+    const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    const kind = value instanceof Uint8Array ? "uint8array" : value.constructor.name;
     return { $: "bytes", kind, base64: bytesToBase64(bytes) };
   }
   if (value instanceof Error) {
@@ -231,9 +226,7 @@ export const encodeValue = (
  */
 export const decodeValue = (
   encoded: EncodedValue,
-  decodeUnknown?: (
-    encoded: EncodedValue,
-  ) => { readonly value: unknown } | undefined,
+  decodeUnknown?: (encoded: EncodedValue) => { readonly value: unknown } | undefined,
 ): unknown => {
   const custom = decodeUnknown?.(encoded);
   if (custom !== undefined) return custom.value;
@@ -257,10 +250,7 @@ export const decodeValue = (
     case "bytes": {
       const bytes = base64ToBytes(encoded.base64);
       if (encoded.kind === "arraybuffer") {
-        return bytes.buffer.slice(
-          bytes.byteOffset,
-          bytes.byteOffset + bytes.byteLength,
-        );
+        return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
       }
       return bytes;
     }

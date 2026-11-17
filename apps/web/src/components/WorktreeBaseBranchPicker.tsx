@@ -1,6 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ChevronDownIcon, GitBranchIcon } from "lucide-react";
-import { useDeferredValue, useState } from "react";
+import { useState } from "react";
 
 import { usePaginatedBranches } from "../state/queries";
 import { useEnvironmentQuery } from "../state/query";
@@ -32,11 +32,10 @@ export function WorktreeBaseBranchPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const deferredQuery = useDeferredValue(query.trim());
   const branches = usePaginatedBranches({
     environmentId,
     cwd,
-    query: sanitizeNewRefName(deferredQuery),
+    query: sanitizeNewRefName(query.trim()),
   });
   const selectedRefQuery = useEnvironmentQuery(
     cwd && value

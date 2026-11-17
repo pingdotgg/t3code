@@ -9,14 +9,14 @@ export const parseEasDeviceHostDraft = Schema.decodeUnknownOption(EasDeviceHostC
 export const newEasDeviceHost = (id: string): EasDeviceHostConfigType => ({
   kind: "eas",
   id,
-  label: "EAS Simulator",
+  label: "Expo Simulators",
   accessToken: "",
   maxSessionMinutes: 30,
   idleMinutes: 10,
   maxConcurrentSessions: 2,
 });
 
-/** Adds, replaces, or removes one EAS host. */
+/** Adds, replaces, or removes one Expo host. */
 /**
  * With `keepToken`, the environment keeps the token it holds: a saved token arrives redacted, and
  * one environment's token says nothing about another's. One new to the host uses its own Expo login.

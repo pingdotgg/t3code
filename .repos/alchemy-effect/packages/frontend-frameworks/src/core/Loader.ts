@@ -1,13 +1,11 @@
-import * as Data from "effect/Data";
-import * as Effect from "effect/Effect";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import * as NodePath from "node:path";
 import { pathToFileURL } from "node:url";
+import * as Data from "effect/Data";
+import * as Effect from "effect/Effect";
 
-export class ModuleLoadError extends Data.TaggedError<"ModuleLoadError">(
-  "ModuleLoadError",
-)<{
+export class ModuleLoadError extends Data.TaggedError<"ModuleLoadError">("ModuleLoadError")<{
   readonly specifier: string;
   readonly root: string;
   readonly cause?: unknown;
@@ -74,9 +72,7 @@ export const loadProjectModule = <T = unknown>(
         const require = createRequire(NodePath.resolve(root, "package.json"));
         const resolved = require.resolve(specifier);
         if (isCommonJsFile(resolved)) return require(resolved) as T;
-        return (await import(
-          /* @vite-ignore */ pathToFileURL(resolved).href
-        )) as T;
+        return (await import(/* @vite-ignore */ pathToFileURL(resolved).href)) as T;
       } catch (cause) {
         primary = cause;
       }
@@ -139,9 +135,7 @@ const packageDirFromRequirePaths = (
     const pkgJson = NodePath.join(dir, packageName, "package.json");
     if (!existsSync(pkgJson)) continue;
     try {
-      const name = (
-        JSON.parse(readFileSync(pkgJson, "utf8")) as { name?: unknown }
-      ).name;
+      const name = (JSON.parse(readFileSync(pkgJson, "utf8")) as { name?: unknown }).name;
       if (name === packageName) return NodePath.dirname(pkgJson);
     } catch {
       continue;
@@ -162,9 +156,7 @@ export const resolveInstalledPackageVersion = (
 ): Effect.Effect<string | undefined> =>
   Effect.sync(() => {
     try {
-      const require = createRequire(
-        NodePath.join(fromDirectory, "package.json"),
-      );
+      const require = createRequire(NodePath.join(fromDirectory, "package.json"));
       const pkg = require(`${packageName}/package.json`) as {
         version?: unknown;
       };

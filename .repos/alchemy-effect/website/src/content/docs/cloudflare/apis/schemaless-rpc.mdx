@@ -10,7 +10,7 @@ The schemaless RPC pattern — what makes a member callable, how the typed clien
 ## Expose an interface
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
@@ -35,7 +35,7 @@ Any non-`fetch` function member returning an Effect or a Stream becomes callable
 ## Worker → Worker
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -69,7 +69,7 @@ export default class BindingEffectCaller extends Cloudflare.Worker<BindingEffect
 ### The Durable Object's shape
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
@@ -103,7 +103,7 @@ A DO shape can mix value methods (`put`/`get` return Effects) with streaming met
 ### Value round-trip
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { WorkerEnvironmentKVObject } from "./object.ts";
@@ -150,7 +150,7 @@ The stub call is both an Effect and a Stream — value methods `yield*`, streami
 
 ```typescript
 // src/workerB.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -181,7 +181,7 @@ export default class WorkerB extends Cloudflare.Worker<WorkerB>()(
 ### Declare the Shape
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -228,7 +228,7 @@ Containers are the one pairing where the Shape is written explicitly as a type p
 ### Host it in a Durable Object
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { MyContainer } from "./container.ts";
 
@@ -238,17 +238,14 @@ export class ContainerHost extends Cloudflare.DurableObject<ContainerHost>()(
     const container = yield* MyContainer;
 
     return Effect.gen(function* () {
+      const start = container.start({ enableInternet: true });
       return {
-        ping: () => container.ping(),
+        ping: () => start.pipe(Effect.andThen(container.ping())),
         // Read the object from inside the container over RPC.
-        readObjectRpc: (key: string) => container.readObject(key),
+        readObjectRpc: (key: string) => start.pipe(Effect.andThen(container.readObject(key))),
       };
     });
-  }).pipe(
-    Effect.provide(
-      Cloudflare.Containers.layer(MyContainer, { enableInternet: true }),
-    ),
-  ),
+  }),
 ) {}
 ```
 
@@ -287,7 +284,7 @@ Or wrap the binding with `toRpcAsync` to auto-decode the wire
 envelopes:
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import type Backend from "../backend.ts";
 
 const backend = Cloudflare.toRpcAsync<Backend>(env.BACKEND);

@@ -1,4 +1,4 @@
-import * as GCP from "alchemy/GCP";
+import * as GCP from "@alchemy.run/gcp";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -56,10 +56,7 @@ export default class Ingest extends GCP.Function<Ingest>()(
             payload?: unknown;
           };
           if (!body.type) {
-            return yield* HttpServerResponse.json(
-              { error: "type is required" },
-              { status: 400 },
-            );
+            return yield* HttpServerResponse.json({ error: "type is required" }, { status: 400 });
           }
 
           const event: EventRow = {
@@ -78,10 +75,7 @@ export default class Ingest extends GCP.Function<Ingest>()(
             })
             .pipe(Effect.orDie);
 
-          return yield* HttpServerResponse.json(
-            { id: event.id },
-            { status: 202 },
-          );
+          return yield* HttpServerResponse.json({ id: event.id }, { status: 202 });
         }
 
         // Cloud Run Jobs are asynchronous: this returns as soon as the
@@ -113,17 +107,10 @@ export default class Ingest extends GCP.Function<Ingest>()(
           });
         }
 
-        return yield* HttpServerResponse.json(
-          { error: "not found" },
-          { status: 404 },
-        );
+        return yield* HttpServerResponse.json({ error: "not found" }, { status: 404 });
       }),
     };
   }).pipe(
-    Effect.provide([
-      GCP.PubSub.WriteTopicHttp,
-      GCP.BigQuery.ReadTableHttp,
-      GCP.Run.RunJobHttp,
-    ]),
+    Effect.provide([GCP.PubSub.WriteTopicHttp, GCP.BigQuery.ReadTableHttp, GCP.Run.RunJobHttp]),
   ),
 ) {}

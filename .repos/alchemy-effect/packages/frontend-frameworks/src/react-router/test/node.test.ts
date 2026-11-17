@@ -4,10 +4,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
 import { describe, expect, it } from "vitest";
-import {
-  NODE_BUNDLE_CONDITIONS,
-  NODE_SERVE_ENTRY_FILE_NAME,
-} from "../../core/NodeServe.ts";
+import { NODE_BUNDLE_CONDITIONS, NODE_SERVE_ENTRY_FILE_NAME } from "../../core/NodeServe.ts";
 import { SERVER_ENTRY_FILE_NAME, makeNodeTarget, target } from "../node.ts";
 import { DEFAULT_SERVER_BUILD_FILE } from "../ReactRouter.ts";
 
@@ -15,9 +12,7 @@ const runWithNode = <A, E>(
   effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>,
 ): Promise<A> =>
   Effect.runPromise(
-    Effect.scoped(effect).pipe(
-      Effect.provide(NodeServices.layer),
-    ) as Effect.Effect<A, E>,
+    Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer)) as Effect.Effect<A, E>,
   );
 
 describe("makeNodeTarget", () => {
@@ -35,9 +30,7 @@ describe("makeNodeTarget", () => {
   });
 
   it("carries the buildDirectory override on its config", () => {
-    expect(
-      makeNodeTarget({ buildDirectory: "dist" }).config.buildDirectory,
-    ).toBe("dist");
+    expect(makeNodeTarget({ buildDirectory: "dist" }).config.buildDirectory).toBe("dist");
   });
 
   it("exposes the named `target` module export as the factory", () => {

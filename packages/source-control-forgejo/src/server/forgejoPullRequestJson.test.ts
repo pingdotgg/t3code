@@ -1,9 +1,18 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
-import { ForgejoComment, forgejoComment } from "./forgejoPullRequestJson.ts";
+import {
+  ForgejoComment,
+  ForgejoPullRequest,
+  ForgejoReview,
+  forgejoChangeRequest,
+  forgejoComment,
+  forgejoReview,
+} from "./forgejoPullRequestJson.ts";
 
 const decodeForgejoComment = Schema.decodeSync(ForgejoComment);
+const decodeForgejoPullRequest = Schema.decodeSync(ForgejoPullRequest);
+const decodeForgejoReview = Schema.decodeSync(ForgejoReview);
 
 describe("forgejoComment", () => {
   const createdAt = "2026-10-10T19:52:40Z";
@@ -32,5 +41,66 @@ describe("forgejoComment", () => {
     assert.strictEqual(mapped.id, "29061");
     assert.strictEqual(mapped.author?.login, "forgejo-actions");
     assert.strictEqual(mapped.editedAt, "2026-10-10T20:04:50.000Z");
+  });
+});
+
+describe("forgejoChangeRequest", () => {
+  const headBranch = (
+    head: { ref: string; label?: string; repo: { full_name: string } | null },
+    flow?: number,
+  ) =>
+    forgejoChangeRequest(
+      decodeForgejoPullRequest({
+        number: 7,
+        title: "Merged feature",
+        body: null,
+        html_url: "https://forgejo.test/maria/project/pulls/7",
+        user: null,
+        state: "closed",
+        merged: true,
+        ...(flow === undefined ? {} : { flow }),
+        head: { ...head, sha: "head" },
+        base: { ref: "main", label: "main", sha: "base", repo: null },
+        created_at: "2026-10-10T19:52:40Z",
+        updated_at: "2026-10-12T00:00:00Z",
+        closed_at: "2026-10-12T00:00:00Z",
+        merged_at: "2026-10-12T00:00:00Z",
+        labels: null,
+      }),
+    ).headBranch;
+
+  it("reads a deleted head branch from its label", () => {
+    const head = { ref: "refs/pull/7/head", label: "feature" };
+    const repo = { full_name: "maria/project" };
+    assert.strictEqual(headBranch({ ...head, repo }, 0), "feature");
+    // A deleted fork leaves no repository to say whose `feature` that was.
+    assert.strictEqual(headBranch({ ...head, repo: null }), "refs/pull/7/head");
+    // An AGit label is a `user/topic` name, not a branch.
+    assert.strictEqual(headBranch({ ...head, label: "alice/topic", repo }, 1), "refs/pull/7/head");
+  });
+
+  it("keeps the ref when the server sends no label", () => {
+    assert.strictEqual(headBranch({ ref: "feature", repo: null }), "feature");
+  });
+});
+
+describe("forgejoReview", () => {
+  it.each([
+    ["REQUEST_CHANGES", false, "CHANGES_REQUESTED"],
+    ["REQUEST_CHANGES", true, "DISMISSED"],
+    ["APPROVED", true, "DISMISSED"],
+  ])("reads %s with dismissed %s as %s", (state, dismissed, reviewState) => {
+    const mapped = forgejoReview(
+      decodeForgejoReview({
+        id: 8,
+        body: "",
+        user: { login: "maria" },
+        state,
+        dismissed,
+        submitted_at: "2026-10-10T19:52:40Z",
+        comments_count: 0,
+      }),
+    );
+    assert.strictEqual(mapped.reviewState, reviewState);
   });
 });

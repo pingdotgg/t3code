@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import type { FxSettings } from "../settings.ts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
-import type * as Crypto from "effect/Crypto";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
@@ -26,7 +26,7 @@ export const FX_DRIVER_KIND = ProviderDriverKind.make("fx");
 /** T3's slug for "Default": the model `fx status` reports, never an fx model id. */
 export const FX_DEFAULT_MODEL_SLUG = "default";
 const FX_MODEL_CONFIG_ID = "model";
-const FX_MODE_CONFIG_ID = "mode";
+export const FX_MODE_CONFIG_ID = "mode";
 const FX_EFFORT_CONFIG_ID = "effort";
 const FX_DEFAULT_EFFORT = "medium";
 
@@ -56,6 +56,8 @@ export const FX_SUPPORTED_RUNTIME_MODES = [
 ] as const satisfies ReadonlyArray<RuntimeMode>;
 /** fx 0.0.13 answers a cancelled prompt with `stopReason: cancelled`. */
 export const FX_ACP_CANCEL_BEHAVIOR = "wait-for-prompt" as const;
+/** fx inherits the user's `~/.fx/mcp.json` servers only when session setup asks for them. */
+export const FX_SESSION_META = { fx: { profileMcpServers: true } };
 
 /**
  * Supervised runs fx's `ask` mode and Auto its automatic review. An explicit
@@ -219,7 +221,7 @@ export const makeFxAcpRuntime = Effect.fn("makeFxAcpRuntime")(function* (
 ): Effect.fn.Return<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
+  ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom | Scope.Scope
 > {
   const { fxSettings, environment, ...runtimeOptions } = input;
   const context = yield* Layer.build(
