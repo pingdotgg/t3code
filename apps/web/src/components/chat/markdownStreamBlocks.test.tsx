@@ -15,7 +15,7 @@ import { rehypeHeadingIds } from "./markdownFragments";
 const MATH_PLUGINS: PluggableList = [[remarkMath, { singleDollarTextMath: true }]];
 
 // Whitespace between top-level blocks collapses in the rendered message.
-const html = (source: string, math = false) =>
+const renderMarkdown = (source: string, math = false) =>
   renderToStaticMarkup(
     <ReactMarkdown
       remarkPlugins={[
@@ -30,6 +30,8 @@ const html = (source: string, math = false) =>
   )
     .replace(/>\s+</g, "><")
     .trim();
+
+const html = (source: string) => renderMarkdown(source);
 
 const punctuatedHeadings = [
   "Step 1: Install",
@@ -86,8 +88,10 @@ describe("splitMarkdownBlocks", () => {
       const source = text.slice(0, end);
       const blocks = splitMarkdownBlocks(source) ?? [source];
       expect(blocks.join("")).toBe(source);
-      expect(blocks.map((block) => html(block)).join("")).toBe(html(source));
-      expect(blocks.map((block) => html(block, true)).join("")).toBe(html(source, true));
+      expect(blocks.map(html).join("")).toBe(html(source));
+      expect(blocks.map((block) => renderMarkdown(block, true)).join("")).toBe(
+        renderMarkdown(source, true),
+      );
     }
   });
 
