@@ -473,7 +473,7 @@ export function DraftProjectRow(props: {
       {props.action ? (
         // Hidden, it takes no width, so the detail ends on the same line as
         // rows without an action.
-        <div className="flex w-0 shrink-0 justify-end overflow-hidden opacity-0 group-focus-within/row:-ml-1 group-focus-within/row:w-7 group-focus-within/row:pe-2 group-focus-within/row:opacity-100 group-hover/row:-ml-1 group-hover/row:w-7 group-hover/row:pe-2 group-hover/row:opacity-100">
+        <div className="flex w-0 shrink-0 justify-end overflow-hidden opacity-0 group-hover/row:-ml-1 group-hover/row:w-7 group-hover/row:pe-2 group-hover/row:opacity-100 group-has-focus-visible/row:-ml-1 group-has-focus-visible/row:w-7 group-has-focus-visible/row:pe-2 group-has-focus-visible/row:opacity-100 has-data-popup-open:-ml-1 has-data-popup-open:w-7 has-data-popup-open:pe-2 has-data-popup-open:opacity-100">
           {props.action}
         </div>
       ) : null}
