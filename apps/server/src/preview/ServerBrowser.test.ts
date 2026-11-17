@@ -1005,7 +1005,13 @@ it.effect("a server started without the desktop browser channel marks its tabs h
     // A WSL-only desktop starts its backend without the browser fds.
     Effect.provide(
       ServerBrowser.layer.pipe(
-        Layer.provide(DesktopChannel.layer),
+        Layer.provide(
+          DesktopChannel.layer.pipe(
+            Layer.provide(
+              ServerConfig.layerTest(process.cwd(), { prefix: "t3-headless-browser-" }),
+            ),
+          ),
+        ),
         Layer.provideMerge(dependencies),
       ),
     ),
