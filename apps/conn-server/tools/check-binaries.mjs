@@ -27,18 +27,21 @@ export function exampleBinary(pkg, name) {
     accessSync(binary, constants.X_OK);
     return binary;
   }
-  build(row[0], pkg, [name]);
+  build(row[0], [[pkg, name]]);
   return join(process.env.CARGO_TARGET_DIR ? resolve(repoRoot, process.env.CARGO_TARGET_DIR) : join(repoRoot, "target"), row[0], "examples", name);
 }
 
-function build(profile, pkg, names = [], withServer = false) {
-  const args = ["build", "--locked", "--quiet", "-p", pkg];
+function build(profile, selections, withServer = false) {
+  const args = ["build", "--locked", "--quiet"];
   if (profile === "release") args.push("--release");
-  if (pkg === "conn-engine" && names.includes("export_turn")) args.push("--features", "fake-provider");
-  for (const name of names) args.push("--example", name);
+  for (const [pkg, ...names] of selections) {
+    args.push("-p", pkg);
+    if (pkg === "conn-engine" && names.includes("export_turn")) args.push("--features", "conn-engine/fake-provider");
+    for (const name of names) args.push("--example", name);
+  }
   if (withServer) args.push("--bin", "conn-server");
   const result = spawnSync("cargo", args, { cwd: repoRoot, env: cargoBuildEnv(), stdio: "inherit" });
-  if (result.status !== 0) throw new Error(`Building ${pkg} failed (${result.status})`);
+  if (result.status !== 0) throw new Error(`Building ${profile} comparison binaries failed (${result.status})`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -49,11 +52,20 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     }
     const out = resolve(process.argv[3]);
     mkdirSync(join(out, "release/examples"), { recursive: true });
-    for (const [profile, pkg, ...names] of examples) {
-      if (selectedProfile !== "all" && selectedProfile !== profile) continue;
-      console.time(`${profile}/${pkg}`);
-      build(profile, pkg, names, pkg === "conn-server");
-      console.timeEnd(`${profile}/${pkg}`);
+    const selected = examples.filter(([profile]) => selectedProfile === "all" || selectedProfile === profile);
+    const release = selected.filter(([profile]) => profile === "release");
+    if (release.length) {
+      console.time("release");
+      build("release", release.map(([, ...selection]) => selection), true);
+      console.timeEnd("release");
+    }
+    for (const [profile, pkg, ...names] of selected) {
+      // Debug conformance examples share a filename; copy each before the next build.
+      if (profile === "debug") {
+        console.time(`${profile}/${pkg}`);
+        build(profile, [[pkg, ...names]]);
+        console.timeEnd(`${profile}/${pkg}`);
+      }
       if (profile === "debug") mkdirSync(join(out, pkg), { recursive: true });
       for (const name of names) {
         const source = join(repoRoot, "target", profile, "examples", name);
