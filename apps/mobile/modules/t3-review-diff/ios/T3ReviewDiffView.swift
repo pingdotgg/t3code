@@ -19,6 +19,12 @@ private struct ReviewDiffNativeRow: Decodable, Sendable {
   let commentText: String?
   let commentRangeLabel: String?
   let commentSectionTitle: String?
+  /** A notice drawn in the warning colors. */
+  let tone: String?
+  /** A notice that reports taps through `onPressNotice`. */
+  let actionable: Bool?
+  /** Where a cut line's note starts in `content`, in UTF-16 units. */
+  let noteStart: Int?
 }
 
 private struct ReviewDiffNativeWordDiffRange: Decodable, Sendable {
@@ -52,6 +58,8 @@ private struct ReviewDiffNativeThemePayload: Decodable {
   let deleteBar: String?
   let addText: String?
   let deleteText: String?
+  let warningText: String?
+  let warningBackground: String?
 }
 
 private struct ReviewDiffNativeTheme {
@@ -68,6 +76,8 @@ private struct ReviewDiffNativeTheme {
   let deleteBar: UIColor
   let addText: UIColor
   let deleteText: UIColor
+  let warningText: UIColor
+  let warningBackground: UIColor
 
   static func resolve(_ scheme: String) -> ReviewDiffNativeTheme {
     resolve(scheme, payload: nil)
@@ -95,7 +105,10 @@ private struct ReviewDiffNativeTheme {
       addBar: UIColor(reviewDiffHex: payload.addBar) ?? fallback.addBar,
       deleteBar: UIColor(reviewDiffHex: payload.deleteBar) ?? fallback.deleteBar,
       addText: UIColor(reviewDiffHex: payload.addText) ?? fallback.addText,
-      deleteText: UIColor(reviewDiffHex: payload.deleteText) ?? fallback.deleteText
+      deleteText: UIColor(reviewDiffHex: payload.deleteText) ?? fallback.deleteText,
+      warningText: UIColor(reviewDiffHex: payload.warningText) ?? fallback.warningText,
+      warningBackground: UIColor(reviewDiffHex: payload.warningBackground)
+        ?? fallback.warningBackground
     )
   }
 
@@ -114,7 +127,9 @@ private struct ReviewDiffNativeTheme {
         addBar: UIColor(red: 0.02, green: 0.82, blue: 0.54, alpha: 1),
         deleteBar: UIColor(red: 1.00, green: 0.36, blue: 0.50, alpha: 1),
         addText: UIColor(red: 0.10, green: 0.84, blue: 0.56, alpha: 1),
-        deleteText: UIColor(red: 1.00, green: 0.38, blue: 0.52, alpha: 1)
+        deleteText: UIColor(red: 1.00, green: 0.38, blue: 0.52, alpha: 1),
+        warningText: UIColor(red: 0.98, green: 0.80, blue: 0.40, alpha: 1),
+        warningBackground: UIColor(red: 0.20, green: 0.15, blue: 0.05, alpha: 1)
       )
     }
 
@@ -131,7 +146,9 @@ private struct ReviewDiffNativeTheme {
       addBar: UIColor(red: 0.02, green: 0.80, blue: 0.52, alpha: 1),
       deleteBar: UIColor(red: 1.00, green: 0.34, blue: 0.48, alpha: 1),
       addText: UIColor(red: 0.00, green: 0.56, blue: 0.34, alpha: 1),
-      deleteText: UIColor(red: 0.90, green: 0.10, blue: 0.24, alpha: 1)
+      deleteText: UIColor(red: 0.90, green: 0.10, blue: 0.24, alpha: 1),
+      warningText: UIColor(red: 0.55, green: 0.36, blue: 0.00, alpha: 1),
+      warningBackground: UIColor(red: 1.00, green: 0.96, blue: 0.84, alpha: 1)
     )
   }
 }
@@ -350,6 +367,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
   let onToggleViewedFile = EventDispatcher()
   let onPressLine = EventDispatcher()
   let onToggleComment = EventDispatcher()
+  let onPressNotice = EventDispatcher()
   let onPullToRefresh = EventDispatcher()
 
   private let pullRefreshControl = UIRefreshControl()
@@ -382,6 +400,9 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     }
     contentView.onToggleComment = { [weak self] commentId in
       self?.onToggleComment(["commentId": commentId])
+    }
+    contentView.onPressNotice = { [weak self] payload in
+      self?.onPressNotice(payload)
     }
     contentView.onDrawMetrics = { [weak self] metrics in
       self?.emitDebug("draw-metrics", metrics)
@@ -1214,6 +1235,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
   var onToggleViewedFile: ((String) -> Void)?
   var onPressLine: (([String: Any]) -> Void)?
   var onToggleComment: ((String) -> Void)?
+  var onPressNotice: (([String: Any]) -> Void)?
   var onDrawMetrics: (([String: Any]) -> Void)?
 
   private var stickyWidth: CGFloat {
@@ -1552,6 +1574,11 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     let row = rows[rowIndex]
     if row.kind == "comment" {
       onToggleComment?(row.id)
+      return
+    }
+
+    if row.kind == "notice", row.actionable == true {
+      onPressNotice?(["rowId": row.id, "fileId": resolvedFileId(for: row)])
       return
     }
 
@@ -2200,7 +2227,8 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       return
     }
 
-    theme.background.setFill()
+    let warning = row.tone == "warning"
+    (warning ? theme.warningBackground : theme.background).setFill()
     context.fill(rect)
 
     let hairline = 1 / traitCollection.displayScale
@@ -2214,7 +2242,8 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       width: iconSize,
       height: iconSize
     )
-    drawNoticeIcon(rect: iconRect, color: theme.mutedText)
+    let noticeColor = warning ? theme.warningText : theme.mutedText
+    drawNoticeIcon(rect: iconRect, color: noticeColor)
 
     drawSingleLineText(
       row.text ?? "",
@@ -2224,7 +2253,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
         width: max(24, viewportWidth - iconRect.maxX - 10 - style.fileHeaderHorizontalPadding),
         height: fileHeaderSubtextFont.lineHeight
       ),
-      color: theme.mutedText,
+      color: noticeColor,
       font: fileHeaderSubtextFont
     )
   }
@@ -2554,6 +2583,13 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
           NSRange(location: $0.start, length: $0.end - $0.start)
         },
         color: (change == "add" ? theme.addBar : theme.deleteBar).withAlphaComponent(0.28),
+        note: row.noteStart.map {
+          ReviewDiffCodeNote(
+            range: NSRange(location: $0, length: max(0, text.length - $0)),
+            color: theme.warningText,
+            background: theme.warningBackground
+          )
+        },
         version: codeDecorationVersion
       )
       layout.draw(
