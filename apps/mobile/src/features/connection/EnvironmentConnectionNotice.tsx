@@ -39,9 +39,33 @@ function noticeTitle(
   }
 }
 
+type ConnectionNoticeResource = "preview" | "review" | "terminal";
+
+const OFFLINE_DETAIL = {
+  preview: msg(
+    "Cached data remains available. The preview will load when your connection returns.",
+  ),
+  review: msg("Cached data remains available. The review will load when your connection returns."),
+  terminal: msg(
+    "Cached data remains available. The terminal will load when your connection returns.",
+  ),
+} satisfies Record<ConnectionNoticeResource, string>;
+
+const CONNECTING_DETAIL = {
+  preview: msg("The preview will load as soon as the environment is ready."),
+  review: msg("The review will load as soon as the environment is ready."),
+  terminal: msg("The terminal will load as soon as the environment is ready."),
+} satisfies Record<ConnectionNoticeResource, string>;
+
+const RECONNECT_DETAIL = {
+  preview: msg("Reconnect the environment to load the preview."),
+  review: msg("Reconnect the environment to load the review."),
+  terminal: msg("Reconnect the environment to load the terminal."),
+} satisfies Record<ConnectionNoticeResource, string>;
+
 function noticeDetail(
   phase: EnvironmentConnectionPhase,
-  resourceName: string,
+  resource: ConnectionNoticeResource,
   error: string | null,
   awaitingApproval: boolean,
   resolve: MessageResolver,
@@ -53,25 +77,17 @@ function noticeDetail(
       : error;
   }
 
-  const resource = resourceName;
   switch (phase) {
     case "offline":
-      return resolve(
-        msg(
-          "Cached data remains available. The {resource} will load when your connection returns.",
-          { resource },
-        ),
-      );
+      return resolve(OFFLINE_DETAIL[resource]);
     case "connecting":
     case "reconnecting":
-      return resolve(
-        msg("The {resource} will load as soon as the environment is ready.", { resource }),
-      );
+      return resolve(CONNECTING_DETAIL[resource]);
     case "unsupported":
       return resolve(msg("Use compatible versions of the app and server to connect."));
     case "available":
     case "error":
-      return resolve(msg("Reconnect the environment to load the {resource}.", { resource }));
+      return resolve(RECONNECT_DETAIL[resource]);
     case "connected":
       return "";
   }
@@ -80,7 +96,7 @@ function noticeDetail(
 export function EnvironmentConnectionNotice(props: {
   readonly environmentLabel: string;
   readonly connection: EnvironmentConnectionPresentation;
-  readonly resourceName: string;
+  readonly resource: ConnectionNoticeResource;
   readonly onRetry: () => void;
 }) {
   const gt = useGT();
@@ -113,7 +129,7 @@ export function EnvironmentConnectionNotice(props: {
         <Text className="text-center text-sm leading-normal text-foreground-muted">
           {noticeDetail(
             props.connection.phase,
-            props.resourceName,
+            props.resource,
             props.connection.error,
             props.connection.awaitingApproval === true,
             m,

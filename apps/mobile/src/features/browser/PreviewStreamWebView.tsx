@@ -19,7 +19,7 @@ import {
   useState,
   type Ref,
 } from "react";
-import { msg, useGT } from "gt-react-native";
+import { msg, useGT, useMessages } from "gt-react-native";
 import { Platform, Pressable, TextInput, View } from "react-native";
 import { WebView } from "react-native-webview";
 import * as Clipboard from "expo-clipboard";
@@ -114,7 +114,7 @@ function offerDownload(download: PreviewStreamDownload) {
 const MAX_REFUSALS = 3;
 
 export function PreviewStreamWebView(
-  props: Omit<PreviewStreamConfiguration, "access"> &
+  props: Omit<PreviewStreamConfiguration, "access" | "labels"> &
     Omit<NativeStreamBridge, "onUnauthorized" | "onRefused"> & {
       readonly environmentId: EnvironmentId;
       readonly paused?: boolean;
@@ -165,7 +165,8 @@ export function PreviewStreamWebView(
 function AuthorizedPreviewStream({
   ref,
   ...props
-}: PreviewStreamConfiguration & NativeStreamBridge) {
+}: Omit<PreviewStreamConfiguration, "labels"> & NativeStreamBridge) {
+  const gt = useGT();
   const [attempt, setAttempt] = useState(0);
   const [previousAccess, setPreviousAccess] = useState(props.access);
   // Wait for refreshed access, including cookie credentials with unchanged JSON.
@@ -181,6 +182,12 @@ function AuthorizedPreviewStream({
     tabId: props.tabId,
     interactive: props.interactive,
     background: props.background,
+    labels: {
+      page: gt("Browser page"),
+      pageInput: gt("Browser page input"),
+      pictureInPictureNotReady: gt("The page has not shown yet. Try again in a moment."),
+      pictureInPictureUnavailable: gt("Picture in picture is unavailable."),
+    },
   } satisfies PreviewStreamConfiguration);
   return (
     <PreviewStreamDocumentView
@@ -238,6 +245,7 @@ function PreviewStreamDocumentView({
 }) {
   const webView = useRef<WebView<object>>(null);
   const gt = useGT();
+  const messages = useMessages();
   const active = useRef(false);
   const failed = useRef(false);
   const bootstrapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -334,7 +342,7 @@ function PreviewStreamDocumentView({
       {!compact ? (
         <View className="flex-row items-center justify-between gap-2 border-b border-secondary-border px-3 py-2">
           <AppText className="text-xs text-foreground-muted">
-            {previewStreamControlLabel(control)}
+            {previewStreamControlLabel(control, messages)}
           </AppText>
           {control?.canOperate ? (
             <Button
@@ -397,7 +405,7 @@ function PreviewStreamDocumentView({
                 return;
               case "hostSetup":
                 setHostSetup({ need: message.need, command: message.command });
-                fail(previewStreamHostSetupMessage(message));
+                fail(previewStreamHostSetupMessage(message, m));
                 return;
               case "viewport":
                 onViewport?.(message);

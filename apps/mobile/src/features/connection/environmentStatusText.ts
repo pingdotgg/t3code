@@ -3,8 +3,13 @@ import {
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
 
-export function environmentStatusText(connection: EnvironmentConnectionPresentation): string {
+import { m, type MessageResolver } from "../../i18n/messages";
+
+export function environmentStatusText(
+  connection: EnvironmentConnectionPresentation,
+  resolve: MessageResolver = m,
+): string {
   return connection.phase === "unsupported" && connection.error !== null
     ? connection.error
-    : connectionStatusText(connection);
+    : connectionStatusText(connection, resolve);
 }

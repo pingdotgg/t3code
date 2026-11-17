@@ -1,4 +1,4 @@
-import { T, useGT, Var } from "gt-react-native";
+import { T, useGT, useLocale, Var } from "gt-react-native";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import {
@@ -119,14 +119,18 @@ export function useVoiceModels(environmentId: EnvironmentId, label: string) {
 
 export type VoiceModels = ReturnType<typeof useVoiceModels>;
 
-const languageNames =
-  typeof Intl.DisplayNames === "function"
-    ? new Intl.DisplayNames(undefined, { type: "language" })
-    : null;
-const languageLabel = (code: string) => languageNames?.of(code) ?? code.toUpperCase();
+const languageNames = new Map<string, Intl.DisplayNames>();
+function languageLabel(code: string, locale: string) {
+  if (typeof Intl.DisplayNames !== "function") return code.toUpperCase();
+  let names = languageNames.get(locale);
+  if (!names)
+    languageNames.set(locale, (names = new Intl.DisplayNames([locale], { type: "language" })));
+  return names.of(code) ?? code.toUpperCase();
+}
 
 function ModelStats(props: { readonly model: EnvironmentSpeechModel; readonly language: string }) {
   const { model, language } = props;
+  const locale = useLocale();
   const data = model.benchmark;
   const code = !data
     ? undefined
@@ -140,7 +144,7 @@ function ModelStats(props: { readonly model: EnvironmentSpeechModel; readonly la
           [
             "score",
             <T key="score">
-              <Var>{languageLabel(code)}</Var>{" "}
+              <Var>{languageLabel(code, locale)}</Var>{" "}
               <Text className="font-t3-medium text-foreground">
                 <Var>{score.grade}</Var>
               </Text>{" "}
@@ -181,7 +185,7 @@ function ModelStats(props: { readonly model: EnvironmentSpeechModel; readonly la
         ] as const)
       : score
         ? []
-        : ([["languages", languageLabel(model.languages[0] ?? "")]] as const)),
+        : ([["languages", languageLabel(model.languages[0] ?? "", locale)]] as const)),
     ["size", formatBytes(model.size)],
   ];
   return (

@@ -166,10 +166,14 @@ function UsageScreen(props: {
   const refreshingRef = useRef(false);
   const showingLimits = view === "limits";
   const metric: UsageChartMetric = view === "tokens" ? "tokens" : "cost";
-  const progress = usageProgress(selectedEnvironments, {
-    refreshing: refreshingUsage,
-    providerLabel,
-  });
+  const progress = usageProgress(
+    selectedEnvironments,
+    {
+      refreshing: refreshingUsage,
+      providerLabel,
+    },
+    m,
+  );
   const selectWindow = (days: number) => {
     setWindowSelection({
       days,
@@ -925,6 +929,6 @@ function usageEnvironmentStatus(
   if (progress.phase === "loading") return resolve(msg("Loading usage…"));
   if (progress.phase === "stale") return resolve(msg("Updating usage…"));
   if (progress.phase === "partway")
-    return updatingProvidersLabel(progress.providers, providerLabel);
+    return updatingProvidersLabel(progress.providers, providerLabel, resolve);
   return resolve(msg("Usage up to date"));
 }

@@ -18,7 +18,7 @@ export class NotificationPermissionReadError extends Schema.TaggedError<Notifica
   },
 ) {
   override get message(): string {
-    return "Failed to read notification permissions.";
+    return m(msg("Failed to read notification permissions."));
   }
 }
 
@@ -29,7 +29,7 @@ export class NotificationPermissionRequestError extends Schema.TaggedError<Notif
   },
 ) {
   override get message(): string {
-    return "Failed to request notification permissions.";
+    return m(msg("Failed to request notification permissions."));
   }
 }
 

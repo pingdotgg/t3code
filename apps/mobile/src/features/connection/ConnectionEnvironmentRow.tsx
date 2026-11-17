@@ -34,11 +34,14 @@ function connectionStatusLabel(
   if (!environment.isEnabled && environment.connectionState !== "unsupported") {
     return resolve(msg("Off", { $context: "environment is switched off" }));
   }
-  return environmentStatusText({
-    phase: environment.connectionState,
-    error: environment.connectionError,
-    traceId: environment.connectionErrorTraceId,
-  });
+  return environmentStatusText(
+    {
+      phase: environment.connectionState,
+      error: environment.connectionError,
+      traceId: environment.connectionErrorTraceId,
+    },
+    resolve,
+  );
 }
 
 export function ConnectionEnvironmentRow(props: {
@@ -75,7 +78,7 @@ export function ConnectionEnvironmentRow(props: {
   const statusTraceId = enabled ? props.environment.connectionErrorTraceId : null;
   const hasConnectionFailure = enabled && props.environment.connectionError !== null;
   const freeze = enabled
-    ? hostFreezeNotice(props.environment.environmentLabel, serverConfig?.lastEventLoopStall)
+    ? hostFreezeNotice(props.environment.environmentLabel, serverConfig?.lastEventLoopStall, m)
     : null;
   const isRetrying =
     enabled &&

@@ -16,6 +16,11 @@ export interface DeviceStreamConfiguration {
     readonly buttonForeground: string;
     readonly buttonBorder: string;
   };
+  /** Translated in React Native: the WebView cannot load the catalogs. */
+  readonly labels: {
+    readonly screen: string;
+    readonly reconnectingControls: string;
+  };
 }
 
 export function deviceStreamBaseUrl(

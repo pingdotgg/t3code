@@ -175,11 +175,15 @@ function timePickerValue(value: string): Date {
   return time;
 }
 
+function isWeekdays(weekdays: ReadonlyArray<number>): boolean {
+  const days = new Set(weekdays);
+  return days.size === 5 && [1, 2, 3, 4, 5].every((day) => days.has(day));
+}
+
 function repeatLabel(weekdays: ReadonlyArray<number>, resolve: MessageResolver = m): string {
   const days = new Set(weekdays);
   if (days.size === 7) return resolve(msg("Every day"));
-  if (days.size === 5 && [1, 2, 3, 4, 5].every((day) => days.has(day)))
-    return resolve(msg("Weekdays"));
+  if (isWeekdays(weekdays)) return resolve(msg("Weekdays"));
   return (
     DAYS.filter((day) => days.has(day.index))
       .map((day) => resolve(day.label))
@@ -292,6 +296,7 @@ function WebhookFilterRows(props: {
   ) => void;
 }) {
   const gt = useGT();
+  const m = useMessages();
   const update = (id: WebhookFilterDraft["id"], patch: Partial<WebhookFilterDraft>) =>
     props.onChange((filters) =>
       filters.map((filter) => (filter.id === id ? { ...filter, ...patch } : filter)),
@@ -328,10 +333,10 @@ function WebhookFilterRows(props: {
           />
           <SelectRow
             label={gt("Test", { $context: "noun, the comparison a webhook filter applies" })}
-            value={WEBHOOK_FILTER_OPS.find((option) => option.op === filter.op)?.label ?? ""}
+            value={m(WEBHOOK_FILTER_OPS.find((option) => option.op === filter.op)?.label ?? "")}
             actions={WEBHOOK_FILTER_OPS.map((option) => ({
               id: option.op,
-              title: option.label,
+              title: m(option.label),
               state: option.op === filter.op ? ("on" as const) : undefined,
             }))}
             onSelect={(id) => {
@@ -807,7 +812,7 @@ function TaskForm({
       );
       return;
     }
-    const parsedFilters = parseWebhookFilterDrafts(draft.schedule.filters);
+    const parsedFilters = parseWebhookFilterDrafts(draft.schedule.filters, m);
     if (draft.schedule.mode === "webhook" && "error" in parsedFilters) {
       Dialog.alert(gt("Invalid filter"), parsedFilters.error);
       return;
@@ -1081,11 +1086,14 @@ function TaskForm({
           {draft.workspace === "worktree" ? (
             <PickerRow
               label={gt("Base branch")}
-              value={resolveNewTaskBranchLabel({
-                branchName: draft.baseRef,
-                startFromOrigin: draft.startFromOrigin,
-                workspaceMode: "worktree",
-              })}
+              value={resolveNewTaskBranchLabel(
+                {
+                  branchName: draft.baseRef,
+                  startFromOrigin: draft.startFromOrigin,
+                  workspaceMode: "worktree",
+                },
+                m,
+              )}
               borderTop
               disabled={!draft.projectId || saving || dictationPending || environmentUnavailable}
               onPress={() => navigation.navigate("SettingsScheduledTaskBranch")}
@@ -1209,10 +1217,7 @@ function TaskForm({
                   {
                     id: "weekdays",
                     title: gt("Weekdays"),
-                    state:
-                      repeatLabel(draft.schedule.weekdays, m) === m(msg("Weekdays"))
-                        ? "on"
-                        : undefined,
+                    state: isWeekdays(draft.schedule.weekdays) ? "on" : undefined,
                   },
                   ...DAYS.map((day) => ({
                     id: String(day.index),
@@ -1464,6 +1469,7 @@ function WebhookScheduleDetails({
   readonly disabled: boolean;
 }) {
   const gt = useGT();
+  const m = useMessages();
   const [rotating, setRotating] = useState(false);
   const rotate = useAtomCommand(serverEnvironment.rotateScheduledTaskWebhookToken, {
     label: "scheduled task rotate webhook token",
@@ -1473,7 +1479,7 @@ function WebhookScheduleDetails({
   const httpBaseUrl =
     preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : null;
   const webhook = task?.schedule.type === "webhook" ? task.webhook : undefined;
-  const resolved = webhook ? webhookAddress(webhook, httpBaseUrl) : null;
+  const resolved = webhook ? webhookAddress(webhook, httpBaseUrl, m) : null;
   return (
     <View className="gap-2 border-t border-border-subtle px-4 py-3">
       <Text className="text-sm text-foreground-muted">

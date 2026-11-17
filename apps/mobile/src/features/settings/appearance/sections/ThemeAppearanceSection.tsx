@@ -17,8 +17,24 @@ import {
   type MobileThemeMode,
 } from "../../../../lib/mobileTheme";
 import { getMobileUniwindThemeName } from "../../../../lib/mobileThemeRuntime";
+import type { MessageResolver } from "../../../../i18n/messages";
 import { cn } from "../../../../lib/cn";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
+
+const THEME_NAMES: Readonly<Record<string, string>> = {
+  grove: msg("Grove", { $context: "color theme name" }),
+  ocean: msg("Ocean", { $context: "color theme name" }),
+  ember: msg("Ember", { $context: "color theme name" }),
+  iris: msg("Iris", { $context: "color theme name" }),
+};
+
+function themeName(
+  theme: { readonly id: string; readonly label: string },
+  resolve: MessageResolver,
+) {
+  const name = THEME_NAMES[theme.id];
+  return name === undefined ? theme.label : resolve(name);
+}
 
 const APPEARANCE_MODES: ReadonlyArray<{
   readonly id: MobileThemeMode;
@@ -336,7 +352,7 @@ export function ThemeAppearanceSection() {
             <ThemeCard
               disabled={!isReady}
               key={theme.id}
-              label={theme.label}
+              label={themeName(theme, m)}
               darkSelected={theme.id === themeIds.dark}
               lightSelected={theme.id === themeIds.light}
               onSelect={(appearance) => setThemeIdForAppearance(appearance, theme.id)}

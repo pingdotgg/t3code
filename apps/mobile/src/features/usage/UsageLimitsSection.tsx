@@ -13,7 +13,7 @@ import {
 import {
   type ResetCreditChoice,
   resetCreditChoices,
-  formatResetsIn,
+  formatDuration,
   limitsNotice,
   paceOf,
   paceRemainingPercent,
@@ -26,7 +26,7 @@ import { Linking, Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
-import { m as resolveNow } from "../../i18n/messages";
+import { m as resolveNow, type MessageResolver } from "../../i18n/messages";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
@@ -64,7 +64,7 @@ function WindowRow(props: {
   const timeLeft = paceRemainingPercent(window, now);
   const pace = paceOf(window, now);
   const m = useMessages();
-  const resetsIn = formatResetsIn(window, now);
+  const resetsIn = resetLabels(window, now, m)?.full;
   const [barWidth, setBarWidth] = useState(0);
   const tickX =
     timeLeft === null || barWidth < 6
@@ -372,5 +372,32 @@ export function useRefreshLimits(
     refreshing,
     failedLabels,
     refresh: refreshManually,
+  };
+}
+
+export function resetLabels(
+  window: ServerProviderUsageWindow,
+  now: number,
+  resolve: MessageResolver,
+): { readonly full: string; readonly refill: string; readonly compact: string } | null {
+  const resetsAt = window.resetsAt === undefined ? Number.NaN : Date.parse(window.resetsAt);
+  if (!Number.isFinite(resetsAt)) return null;
+  if (resetsAt <= now) {
+    const full = resolve(msg("resets now", { $context: "usage limit" }));
+    return {
+      full,
+      refill: resolve(msg("now", { $context: "usage limit resets now" })),
+      compact: full,
+    };
+  }
+  if (resetsAt - now < 60_000) {
+    const momentarily = resolve(msg("Resets momentarily"));
+    return { full: momentarily, refill: momentarily, compact: momentarily };
+  }
+  const duration = formatDuration(resetsAt - now);
+  return {
+    full: resolve(msg("resets in {duration}", { duration })),
+    refill: resolve(msg("in {duration}", { duration, $context: "usage limit refill" })),
+    compact: duration,
   };
 }

@@ -31,10 +31,11 @@ export function getCachedPullRequestDiffPages(
   scope: string,
   terminology: ChangeRequestTerminology,
   resolve: MessageResolver = m,
+  locale = "",
 ): ReviewParsedDiff {
   const first = pages[0];
   if (!first) return { kind: "empty" };
-  const key = JSON.stringify([scope, terminology.singular, first.cursor]);
+  const key = JSON.stringify([scope, terminology.singular, first.cursor, locale]);
   let snapshots = parsedSnapshots.get(first.result);
   if (!snapshots) {
     snapshots = new Map();
@@ -87,7 +88,11 @@ export function combinePullRequestDiffPages(
   const parsed = pages.map((page) => {
     const cached = cache.get(page.result);
     if (cached) return cached;
-    let value = buildReviewParsedDiff(page.result.patch, `${scope}:${page.cursor ?? "first"}`);
+    let value = buildReviewParsedDiff(
+      page.result.patch,
+      `${scope}:${page.cursor ?? "first"}`,
+      resolve,
+    );
     if (value.kind === "files" && page.result.omittedFileStats?.length) {
       const omittedFileStats = new Map(
         page.result.omittedFileStats.map((stat) => [stat.path, stat]),
@@ -137,14 +142,18 @@ export type WithheldFileLoad =
   | { readonly status: "loading" | "error" }
   | { readonly status: "loaded"; readonly result: PullRequestDiffResult };
 
-const withheldFileParses = new WeakMap<PullRequestDiffResult, ReviewRenderableFile | null>();
+const withheldFileParses = new WeakMap<
+  PullRequestDiffResult,
+  { readonly resolve: MessageResolver; readonly file: ReviewRenderableFile | null }
+>();
 
-function parseWithheldFile(result: PullRequestDiffResult, scope: string) {
-  if (withheldFileParses.has(result)) return withheldFileParses.get(result) ?? null;
-  const parsed = buildReviewParsedDiff(result.patch, scope);
+function parseWithheldFile(result: PullRequestDiffResult, scope: string, resolve: MessageResolver) {
+  const cached = withheldFileParses.get(result);
+  if (cached?.resolve === resolve) return cached.file;
+  const parsed = buildReviewParsedDiff(result.patch, scope, resolve);
   const file =
     parsed.kind === "files" ? (parsed.files.find((entry) => entry.rows.length > 0) ?? null) : null;
-  withheldFileParses.set(result, file);
+  withheldFileParses.set(result, { resolve, file });
   return file;
 }
 
@@ -180,7 +189,7 @@ export function withWithheldFiles(
     const load = loads.get(file.path);
     const loaded =
       load?.status === "loaded"
-        ? parseWithheldFile(load.result, `${scope}:withheld:${file.path}`)
+        ? parseWithheldFile(load.result, `${scope}:withheld:${file.path}`, resolve)
         : null;
     if (loaded !== null) return { ...loaded, id: file.id };
     return {

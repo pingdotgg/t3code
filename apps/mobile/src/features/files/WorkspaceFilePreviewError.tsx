@@ -37,7 +37,7 @@ export function WorkspaceFilePreviewError(props: {
               traceId: null,
             }
           }
-          resourceName="preview"
+          resource="preview"
           onRetry={retryConnection}
         />
       </View>

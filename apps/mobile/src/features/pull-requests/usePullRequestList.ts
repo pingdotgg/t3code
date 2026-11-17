@@ -9,7 +9,7 @@ import type { EnvironmentId, PullRequestDiffStat, PullRequestListInput } from "@
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
-import { msg } from "gt-react-native";
+import { msg, useMessages } from "gt-react-native";
 import { use, useMemo, useState } from "react";
 import { environmentCatalog } from "../../connection/catalog";
 import { m } from "../../i18n/messages";
@@ -182,6 +182,7 @@ const settledError = (result: AsyncResult.AsyncResult<string | null, never>) =>
   AsyncResult.isSuccess(result) && !result.waiting ? result.value : null;
 
 export function usePullRequestList(targets: readonly ListTarget[]) {
+  const messages = useMessages();
   const registry = use(RegistryContext);
   const scopeKey = JSON.stringify(targets);
   const sources = useAtomValue(sourcesFamily(scopeKey));
@@ -336,11 +337,13 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
             environmentId: target.environmentId,
             projectTitle: "",
             message:
-              cause instanceof Error ? cause.message : m(msg("Couldn't load pull requests.")),
+              cause instanceof Error
+                ? cause.message
+                : messages(msg("Couldn't load pull requests.")),
           },
         ];
       }),
-    [sources],
+    [sources, messages],
   );
   const listing = useMemo(
     () => ({ ...data, entries, errors: [...data.errors, ...errors] }),

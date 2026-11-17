@@ -1,4 +1,4 @@
-import { useGT } from "gt-react-native";
+import { useGT, useMessages } from "gt-react-native";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
 import type { FileDiffMetadata } from "@pierre/diffs";
@@ -28,12 +28,13 @@ export function ReviewGuideExcerpt({
   readonly onOpen: () => void;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const { nativeReviewDiffStyle, codeWordBreak } = useAppearanceCodeSurface();
   const { themeAppearance } = useAppearancePreferences();
   const slice = excerptPatch(file, excerpt);
   const data = (() => {
     const parsed = buildNativeReviewDiffData(
-      buildReviewParsedDiff(slice, `guide:${excerpt.path}:${excerpt.start}`),
+      buildReviewParsedDiff(slice, `guide:${excerpt.path}:${excerpt.start}`, messages),
     );
     return {
       ...parsed,

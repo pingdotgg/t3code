@@ -1,4 +1,3 @@
-import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/assets";
 import { videoMimeType } from "@t3tools/shared/video";
 import { T, useGT } from "gt-react-native";
 import { Modal, Pressable, View } from "react-native";
@@ -38,6 +37,7 @@ function useMediaPlayback(source: MediaVideoPreviewSource): PlaybackState {
   const resource = "resource" in source ? source.resource : null;
   const connection = usePreparedConnection(environmentId);
   const asset = useAssetUrlState(environmentId, resource);
+  const gt = useGT();
   const refreshAssetUrl = useRefreshAssetUrl(environmentId, resource);
   const uri = mediaVideoPreviewUri(source, asset._tag === "Success" ? asset.url : null);
   return {
@@ -51,7 +51,7 @@ function useMediaPlayback(source: MediaVideoPreviewSource): PlaybackState {
       (connection._tag === "None" || asset._tag === "Failure"),
     unavailableDetail:
       asset._tag === "Failure" && asset.reason === "missing-file-access"
-        ? MISSING_FILE_ACCESS_MESSAGE
+        ? gt("This connection cannot read host files. Pair again with a new link to view it.")
         : undefined,
     error: null,
     actionsSource: source.actionsSource,

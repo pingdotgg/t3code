@@ -47,7 +47,7 @@ export function availableCloudEnvironmentPresentation(
 
   if (input.status?.status === "offline") {
     const connectionError =
-      relayOfflineReasonMessage(input.status) ??
+      relayOfflineReasonMessage(input.status, resolve) ??
       input.status.error ??
       resolve(msg("Relay is offline."));
     return {

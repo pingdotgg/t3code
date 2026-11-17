@@ -289,17 +289,21 @@ function CloudEnvironmentRowShell(props: {
   readonly value: boolean;
 }) {
   const gt = useGT();
+  const m = useMessages();
   const isRetrying =
     props.connectionState === "connecting" || props.connectionState === "reconnecting";
   const shouldPulse = isRetrying;
   const statusText =
     props.statusText ??
-    environmentStatusText({
-      phase: props.connectionState,
-      error: props.connectionError,
-      traceId: props.connectionErrorTraceId,
-      ...(props.awaitingApproval ? { awaitingApproval: true as const } : {}),
-    });
+    environmentStatusText(
+      {
+        phase: props.connectionState,
+        error: props.connectionError,
+        traceId: props.connectionErrorTraceId,
+        ...(props.awaitingApproval ? { awaitingApproval: true as const } : {}),
+      },
+      m,
+    );
   const statusClassName =
     props.connectionError && props.connectionState !== "unsupported" && !props.awaitingApproval
       ? "text-danger-foreground"

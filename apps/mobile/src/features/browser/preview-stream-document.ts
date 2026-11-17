@@ -12,6 +12,13 @@ export interface PreviewStreamConfiguration {
   readonly tabId: string;
   readonly interactive: boolean;
   readonly background: string;
+  /** Translated in React Native: the WebView cannot load the catalogs. */
+  readonly labels: {
+    readonly page: string;
+    readonly pageInput: string;
+    readonly pictureInPictureNotReady: string;
+    readonly pictureInPictureUnavailable: string;
+  };
 }
 
 export type PreviewStreamMessage =

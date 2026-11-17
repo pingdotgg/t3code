@@ -637,7 +637,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
                     traceId: null,
                   }
                 }
-                resourceName="review"
+                resource="review"
                 onRetry={handleRetryEnvironment}
               />
             </View>

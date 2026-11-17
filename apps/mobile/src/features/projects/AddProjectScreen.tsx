@@ -68,7 +68,7 @@ import {
   type ParamListBase,
 } from "@react-navigation/native";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { msg, useGT } from "gt-react-native";
+import { msg, useGT, useMessages } from "gt-react-native";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -506,15 +506,18 @@ function SourceControlRow(props: {
 }) {
   const navigation = useNavigation();
   const gt = useGT();
+  const messages = useMessages();
   const title =
     props.source === "url"
       ? gt("Git URL")
-      : gt("{provider} repository", { provider: addProjectRemoteSourceLabel(props.source) });
+      : gt("{provider} repository", {
+          provider: addProjectRemoteSourceLabel(props.source, messages),
+        });
   const subtitle =
     props.source === "url"
       ? gt("Clone from a remote URL")
       : gt("Clone {provider} {hint}", {
-          provider: addProjectRemoteSourceLabel(props.source),
+          provider: addProjectRemoteSourceLabel(props.source, messages),
           hint: props.hint,
         });
   const icon =
@@ -579,7 +582,8 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
           input: {},
         }),
   );
-  const readiness = buildAddProjectRemoteSourceReadiness(discoveryState.data);
+  const messages = useMessages();
+  const readiness = buildAddProjectRemoteSourceReadiness(discoveryState.data, messages);
   const gt = useGT();
 
   return (
@@ -597,11 +601,14 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
                 subtitle={
                   canCreateProjectInEnvironment(environment.connectionState)
                     ? undefined
-                    : connectionStatusText({
-                        phase: environment.connectionState,
-                        error: environment.connectionError,
-                        traceId: environment.connectionErrorTraceId,
-                      })
+                    : connectionStatusText(
+                        {
+                          phase: environment.connectionState,
+                          error: environment.connectionError,
+                          traceId: environment.connectionErrorTraceId,
+                        },
+                        messages,
+                      )
                 }
                 icon={
                   <EnvironmentMachineSymbol
@@ -916,6 +923,7 @@ export function AddProjectRepositoryScreen(props: {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const gt = useGT();
+  const messages = useMessages();
 
   const lookupRepository = async () => {
     if (!environment || repositoryInput.trim().length === 0 || isSubmitting) return;
@@ -967,7 +975,9 @@ export function AddProjectRepositoryScreen(props: {
   };
 
   return (
-    <AddProjectShell title={source === "url" ? gt("Git URL") : addProjectRemoteSourceLabel(source)}>
+    <AddProjectShell
+      title={source === "url" ? gt("Git URL") : addProjectRemoteSourceLabel(source, messages)}
+    >
       {error ? <ErrorBanner message={error} /> : null}
       {environment ? (
         <>
@@ -1424,11 +1434,14 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
   const submitPath = async () => {
     if (!environment || isBrowseNavigating || isSubmitting) return;
     setError(null);
-    const resolved = resolveAddProjectPath({
-      rawPath: pathInput,
-      currentProjectCwd: null,
-      platform: environment.platform,
-    });
+    const resolved = resolveAddProjectPath(
+      {
+        rawPath: pathInput,
+        currentProjectCwd: null,
+        platform: environment.platform,
+      },
+      m,
+    );
     if (!resolved.ok) {
       setError(resolved.error);
       return;
@@ -1529,11 +1542,14 @@ export function AddProjectDestinationScreen(props: {
       return;
     }
     setError(null);
-    const resolved = resolveAddProjectPath({
-      rawPath: pathInput,
-      currentProjectCwd: null,
-      platform: environment.platform,
-    });
+    const resolved = resolveAddProjectPath(
+      {
+        rawPath: pathInput,
+        currentProjectCwd: null,
+        platform: environment.platform,
+      },
+      m,
+    );
     if (!resolved.ok) {
       setError(resolved.error);
       return;
