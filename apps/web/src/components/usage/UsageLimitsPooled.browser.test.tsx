@@ -180,13 +180,16 @@ describe("UsageLimitsPooled", () => {
     await commands.resetPointer();
     await expect.element(providerReorder).toHaveStyle({ opacity: "0" });
     await expect.element(screen.getByText("Session", { exact: true })).toBeVisible();
+    expect(screen.getByRole("button", { name: /Antigravity Gemini/ }).elements()).toHaveLength(0);
     await screen.getByText("Weekly", { exact: true }).hover();
     await screen.getByRole("button", { name: "Hide Codex Weekly", exact: true }).click();
     await expect.element(screen.getByText("Weekly", { exact: true })).not.toBeInTheDocument();
-    await expect.element(screen.getByRole("button", { name: "Show hidden limits" })).toHaveFocus();
-    await screen.getByRole("button", { name: "Show hidden limits" }).click();
+    await expect.element(screen.getByRole("button", { name: "1 item hidden" })).toHaveFocus();
+    await screen.getByRole("button", { name: "1 item hidden" }).click();
     await screen.getByRole("button", { name: "Show Codex Weekly", exact: true }).click();
-    await screen.getByRole("button", { name: "Hide hidden limits" }).click();
+    await expect
+      .element(screen.getByRole("button", { name: "1 item hidden" }))
+      .not.toBeInTheDocument();
     await expect
       .element(screen.getByRole("button", { name: "Collapse Codex limits" }))
       .toHaveFocus();
@@ -225,9 +228,12 @@ describe("UsageLimitsPooled", () => {
     await screen.getByRole("button", { name: "Hide Codex", exact: true }).click();
     await expect.element(screen.getByRole("heading", { name: /Codex/ })).not.toBeInTheDocument();
 
-    await screen.getByRole("button", { name: "Show hidden limits" }).click();
+    await expect.element(screen.getByRole("button", { name: "1 item hidden" })).toHaveFocus();
+    await screen.getByRole("button", { name: "1 item hidden" }).click();
     await screen.getByRole("button", { name: "Show Codex", exact: true }).click();
-    await screen.getByRole("button", { name: "Hide hidden limits" }).click();
+    await expect
+      .element(screen.getByRole("button", { name: "1 item hidden" }))
+      .not.toBeInTheDocument();
     await expect
       .element(screen.getByRole("button", { name: "Expand Codex limits" }))
       .toHaveAttribute("aria-expanded", "false");

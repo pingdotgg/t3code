@@ -40,7 +40,6 @@ import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { providerClients } from "../settings/providerDriverMeta";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { Button } from "../ui/button";
-import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -489,6 +488,7 @@ function PoolWindowCard({
   label,
   description,
   controlLabel,
+  arrangeable,
   onToggleVisibility,
   hidden,
 }: {
@@ -499,6 +499,7 @@ function PoolWindowCard({
   readonly description?: string | undefined;
   readonly id: string;
   readonly controlLabel: string;
+  readonly arrangeable: boolean;
   readonly onToggleVisibility: () => void;
   readonly hidden: boolean;
 }) {
@@ -575,8 +576,38 @@ function PoolWindowCard({
       {description ? (
         <p className="text-xs text-muted-foreground md:col-span-2">{description}</p>
       ) : null}
-      <div className="pointer-events-none absolute -top-3.5 right-3 z-10">{controls}</div>
+      {arrangeable ? (
+        <div className="pointer-events-none absolute -top-3.5 right-3 z-10">{controls}</div>
+      ) : null}
     </div>
+  );
+}
+
+const PAGE_SCOPE = "page";
+
+function HiddenLimitsToggle({
+  scope,
+  count,
+  revealed,
+  onToggle,
+}: {
+  readonly scope: string;
+  readonly count: number;
+  readonly revealed: boolean;
+  readonly onToggle: () => void;
+}) {
+  if (count === 0) return null;
+  return (
+    <Button
+      variant="ghost-muted"
+      size="xs"
+      data-hidden-toggle={scope}
+      aria-expanded={revealed}
+      onClick={onToggle}
+    >
+      {count} {count === 1 ? "item" : "items"} hidden
+      <ChevronRightIcon aria-hidden className={cn(revealed && "rotate-90")} />
+    </Button>
   );
 }
 
@@ -585,12 +616,18 @@ function PoolSection({
   windows,
   now,
   layout,
+  revealed,
+  onReveal,
+  onHide,
   onChange,
 }: {
   readonly pool: LimitPool;
   readonly windows: readonly LimitPoolWindow[];
   readonly now: number;
   readonly layout: UsageLimitLayout;
+  readonly revealed: boolean;
+  readonly onReveal: (revealed: boolean) => void;
+  readonly onHide: () => void;
   readonly onChange: (update: (current: UsageLimitLayout) => UsageLimitLayout) => void;
 }) {
   const {
@@ -606,35 +643,27 @@ function PoolSection({
   const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
   const hidden = layout.hiddenProviders.includes(pool.driver);
   const collapsed = layout.collapsedProviders.includes(pool.driver);
+  const keys = windows.map((window) => limitWindowKey(pool.driver, window));
+  const hiddenCount = keys.filter((key) => layout.hiddenWindows.includes(key)).length;
+  const shownWindows = revealed
+    ? windows
+    : windows.filter(
+        (window) => !layout.hiddenWindows.includes(limitWindowKey(pool.driver, window)),
+      );
   return (
-    <Collapsible
-      open={!hidden && !collapsed}
-      onOpenChange={(open) =>
-        onChange((current) => ({
-          ...current,
-          collapsedProviders: open
-            ? current.collapsedProviders.filter((driver) => driver !== pool.driver)
-            : [...current.collapsedProviders, pool.driver],
-        }))
-      }
-      render={
-        <section
-          ref={setNodeRef}
-          style={{
-            transform: CSS.Translate.toString(transform),
-            transition: transition,
-          }}
-          className={cn(
-            "flex flex-col gap-3",
-            isDragging && "relative z-10 rounded-lg bg-background shadow-md",
-          )}
-        />
-      }
+    <section
+      ref={setNodeRef}
+      data-limit-scope={pool.driver}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+      className={cn(
+        "flex flex-col gap-3",
+        isDragging && "relative z-10 rounded-lg bg-background shadow-md",
+      )}
     >
-      <div className="group/limit-row relative flex items-center">
+      <div className="group/limit-row relative flex min-h-6 items-center gap-2">
         <h2
           className={cn(
-            "flex min-w-0 flex-1 items-center gap-2 text-sm font-medium",
+            "flex min-w-0 items-center gap-2 text-sm font-medium",
             hidden ? "text-muted-foreground opacity-60" : "text-foreground",
           )}
         >
@@ -647,6 +676,14 @@ function PoolSection({
           />
           <span className="truncate">{label}</span>
         </h2>
+        {hidden || collapsed ? null : (
+          <HiddenLimitsToggle
+            scope={pool.driver}
+            count={hiddenCount}
+            revealed={revealed}
+            onToggle={() => onReveal(!revealed)}
+          />
+        )}
         <div className="pointer-events-none absolute top-1/2 right-0 z-10 -translate-y-1/2">
           <UsageLimitLayoutControls
             label={label}
@@ -656,45 +693,49 @@ function PoolSection({
             isDragging={isDragging}
             hidden={hidden}
             pinned={collapsed}
-            onToggleVisibility={() =>
+            onToggleVisibility={() => {
+              if (!hidden) onHide();
               onChange((current) => ({
                 ...current,
                 hiddenProviders: hidden
                   ? current.hiddenProviders.filter((driver) => driver !== pool.driver)
                   : [...current.hiddenProviders, pool.driver],
-              }))
-            }
+              }));
+            }}
           >
             {hidden ? null : (
-              <CollapsibleTrigger
+              <button
+                type="button"
+                aria-expanded={!collapsed}
                 aria-label={`${collapsed ? "Expand" : "Collapse"} ${label} limits`}
-                render={
-                  <button className="flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" />
+                className="flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                onClick={() =>
+                  onChange((current) => ({
+                    ...current,
+                    collapsedProviders: collapsed
+                      ? current.collapsedProviders.filter((driver) => driver !== pool.driver)
+                      : [...current.collapsedProviders, pool.driver],
+                  }))
                 }
               >
                 <ChevronRightIcon aria-hidden className={cn("size-4", !collapsed && "rotate-90")} />
-              </CollapsibleTrigger>
+              </button>
             )}
           </UsageLimitLayoutControls>
         </div>
       </div>
-      <CollapsiblePanel animate={false}>
+      {hidden || collapsed || shownWindows.length === 0 ? null : (
         <UsageLimitSortableList
-          items={windows.map((window) => limitWindowKey(pool.driver, window))}
+          items={shownWindows.map((window) => limitWindowKey(pool.driver, window))}
           onReorder={(active, over) =>
             onChange((current) => ({
               ...current,
-              windowOrder: moveLimitItem(
-                current.windowOrder,
-                windows.map((window) => limitWindowKey(pool.driver, window)),
-                active,
-                over,
-              ),
+              windowOrder: moveLimitItem(current.windowOrder, keys, active, over),
             }))
           }
         >
           <div className="flex flex-col gap-3">
-            {windows.map((window) => {
+            {shownWindows.map((window) => {
               const details =
                 pool.driver === "cursor" ? cursorUsageWindowDetails(window.id, pool) : undefined;
               const key = limitWindowKey(pool.driver, window);
@@ -709,22 +750,24 @@ function PoolSection({
                   label={details?.label}
                   description={details?.description}
                   controlLabel={`${label} ${details?.label ?? window.label}`}
+                  arrangeable={windows.length > 1}
                   hidden={windowHidden}
-                  onToggleVisibility={() =>
+                  onToggleVisibility={() => {
+                    if (!windowHidden) onReveal(false);
                     onChange((current) => ({
                       ...current,
                       hiddenWindows: windowHidden
                         ? current.hiddenWindows.filter((id) => id !== key)
                         : [...current.hiddenWindows, key],
-                    }))
-                  }
+                    }));
+                  }}
                 />
               );
             })}
           </div>
         </UsageLimitSortableList>
-      </CollapsiblePanel>
-    </Collapsible>
+      )}
+    </section>
   );
 }
 
@@ -736,10 +779,9 @@ export function UsageLimitsPooled({
   readonly now: number;
 }) {
   const [segmentPopover] = useState(() => PopoverCreateHandle<SegmentPayload>());
-  const [showHidden, setShowHidden] = useState(false);
-  const restoreButton = useRef<HTMLButtonElement | null>(null);
+  const [revealed, setRevealed] = useState<readonly string[]>([]);
   const limitsRoot = useRef<HTMLDivElement | null>(null);
-  const focusedBeforeChange = useRef<Element | null>(null);
+  const focusedBeforeChange = useRef<{ element: Element; scope: string | null } | null>(null);
   const [layout, setLayout] = useLocalStorage(
     USAGE_LIMIT_LAYOUT_KEY,
     DEFAULT_LIMIT_LAYOUT,
@@ -767,26 +809,60 @@ export function UsageLimitsPooled({
     .filter(
       ({ pool, windows }) => !layout.hiddenProviders.includes(pool.driver) && windows.length > 0,
     );
-  const hasHidden = layout.hiddenProviders.length > 0 || layout.hiddenWindows.length > 0;
+  const hiddenProviderCount = pools.filter((pool) =>
+    layout.hiddenProviders.includes(pool.driver),
+  ).length;
+  const providersRevealed = revealed.includes(PAGE_SCOPE);
+  const shownPools = providersRevealed
+    ? arrangedPools
+    : arrangedPools.filter(({ pool }) => !layout.hiddenProviders.includes(pool.driver));
   const hasLayout = Object.values(layout).some((items) => items.length > 0);
-  const shownPools = showHidden ? arrangedPools : visiblePools;
   const notices = collectLimitNotices(presentations);
   const externalLinks = collectExternalUsageLinks(presentations);
+  const reveal = (scope: string, next: boolean) =>
+    setRevealed((current) =>
+      next ? [...current, scope] : current.filter((revealedScope) => revealedScope !== scope),
+    );
+  const rememberFocus = () => {
+    const element = document.activeElement;
+    focusedBeforeChange.current = element
+      ? {
+          element,
+          scope: element.closest("[data-limit-scope]")?.getAttribute("data-limit-scope") ?? null,
+        }
+      : null;
+  };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Hand off focus after an action removes its control.
   useLayoutEffect(() => {
-    if (focusedBeforeChange.current && !focusedBeforeChange.current.isConnected) {
-      const target =
-        restoreButton.current ??
-        limitsRoot.current?.querySelector<HTMLButtonElement>("button[aria-expanded]") ??
-        limitsRoot.current;
-      target?.focus();
-    }
+    const before = focusedBeforeChange.current;
     focusedBeforeChange.current = null;
+    if (!before || before.element.isConnected) return;
+    const root = limitsRoot.current;
+    const section = before.scope
+      ? root?.querySelector(`[data-limit-scope="${globalThis.CSS.escape(before.scope)}"]`)
+      : null;
+    const target =
+      section?.querySelector<HTMLElement>("[data-hidden-toggle]") ??
+      section?.querySelector<HTMLElement>("button[aria-expanded]") ??
+      root?.querySelector<HTMLElement>(`[data-hidden-toggle="${PAGE_SCOPE}"]`) ??
+      root?.querySelector<HTMLElement>("button[aria-expanded]") ??
+      root;
+    target?.focus();
   });
   return (
     <div ref={limitsRoot} tabIndex={-1} className="flex flex-col gap-8 outline-none">
-      {pools.length > 0 && visiblePools.length === 0 && !showHidden ? (
-        <p className="text-sm text-muted-foreground">All limits are hidden.</p>
+      {hiddenProviderCount > 0 ? (
+        <div className="-mb-5 flex">
+          <HiddenLimitsToggle
+            scope={PAGE_SCOPE}
+            count={hiddenProviderCount}
+            revealed={providersRevealed}
+            onToggle={() => {
+              rememberFocus();
+              reveal(PAGE_SCOPE, !providersRevealed);
+            }}
+          />
+        </div>
       ) : null}
       {pools.length === 0 && notices.length === 0 && externalLinks.length === 0 ? (
         <p className="text-sm text-muted-foreground">
@@ -816,8 +892,14 @@ export function UsageLimitsPooled({
                 windows={windows}
                 now={now}
                 layout={layout}
+                revealed={revealed.includes(pool.driver)}
+                onReveal={(next) => {
+                  rememberFocus();
+                  reveal(pool.driver, next);
+                }}
+                onHide={() => reveal(PAGE_SCOPE, false)}
                 onChange={(update) => {
-                  focusedBeforeChange.current = document.activeElement;
+                  rememberFocus();
                   setLayout(update);
                 }}
               />
@@ -825,29 +907,15 @@ export function UsageLimitsPooled({
           </div>
         </UsageLimitSortableList>
       </SegmentPopoverContext>
-      {hasLayout || showHidden ? (
+      {hasLayout ? (
         <div className="flex flex-wrap items-center gap-2">
-          {hasHidden || showHidden ? (
-            <Button
-              ref={restoreButton}
-              variant="ghost-muted"
-              size="sm"
-              aria-pressed={showHidden}
-              onClick={() => {
-                focusedBeforeChange.current = document.activeElement;
-                setShowHidden(!showHidden);
-              }}
-            >
-              {showHidden ? "Hide hidden limits" : "Show hidden limits"}
-            </Button>
-          ) : null}
           <Button
             variant="ghost-muted"
             size="sm"
             onClick={() => {
-              focusedBeforeChange.current = document.activeElement;
+              rememberFocus();
               setLayout(DEFAULT_LIMIT_LAYOUT);
-              setShowHidden(false);
+              setRevealed([]);
             }}
           >
             Reset layout

@@ -126,13 +126,13 @@ Keychain. Account details remain inside the bar at narrow widths too.
 
 The same account signed in on more than one environment, or reported by a hub as well, counts once.
 Filter with the environment dropdown to see what a single machine has.
-On web and desktop, use the arrow beside a provider heading to collapse or expand its limits.
-Hover over a provider or window, or focus it with the keyboard, to reveal hide and reorder
-controls. Drag the handle to reorder providers or windows. With the handle focused, press
-Space to pick it up, use the arrow keys to move, and press Space to drop or Escape to cancel.
-Touch devices always show these controls. Choose **Show hidden limits** below the
-list to restore hidden items, or **Reset layout** to restore defaults. These preferences are
-saved on this device.
+On web and desktop, hover over a provider or window, or focus it with the keyboard, to reveal
+controls to collapse, hide, and reorder it. A provider with a single limit only has
+provider-level controls. Drag the handle to reorder providers or windows. With the handle
+focused, press Space to pick it up, use the arrow keys to move, and press Space to drop or
+Escape to cancel. Touch devices always show these controls. Hidden items are counted at the
+top of their provider, and hidden providers at the top of the list; choose the count to show
+them again. **Reset layout** restores defaults. These preferences are saved on this device.
 
 When a Claude or Codex account has no overall weekly quota left, its pooled session contribution
 shows 0% left. The next refill depends on both reset times: an exhausted session must also reset,
