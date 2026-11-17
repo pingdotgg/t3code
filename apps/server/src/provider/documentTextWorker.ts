@@ -14,9 +14,11 @@ const CELL_END = Symbol("cell-end");
 type TextPart = string | typeof CELL_START | typeof CELL_END | { fallback: string };
 
 const TRUNCATED = "\n\n[Extracted text truncated at document extraction limits.]";
-// Parts the document never displays: tracked deletions and moves, field codes, phonetic guides,
-// paragraph properties such as tab-stop definitions.
+// Parts the document never displays: the XHTML head, tracked deletions and moves, field codes,
+// phonetic guides, paragraph properties such as tab-stop definitions, drawing anchor layout
+// values and encoded field data.
 const HIDDEN = new Set([
+  "head",
   "script",
   "style",
   "binary-data",
@@ -27,6 +29,11 @@ const HIDDEN = new Set([
   "delInstrText",
   "tracked-changes",
   "pPr",
+  "positionH",
+  "positionV",
+  "sizeRelH",
+  "sizeRelV",
+  "fldData",
 ]);
 
 // @effect-diagnostics-next-line extendsNativeError:off - this worker loads no Effect runtime; Truncation is a local throw sentinel.
@@ -108,7 +115,7 @@ function xml(source: string, extension: string): XmlNode {
       parent.children.pop();
       return;
     }
-    if (!node.hasText && node.name !== "noBreakHyphen") return;
+    if (HIDDEN.has(node.name) || (!node.hasText && node.name !== "noBreakHyphen")) return;
     parent.hasText = true;
     if (node.name === "Choice") parent.hasTextChoice = true;
   });

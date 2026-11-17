@@ -51,12 +51,15 @@ function projectFailure(error: Project.ProjectServiceError) {
 function worktreeCheckHint(
   error:
     | ThreadLaunch.ThreadLaunchBaseRefError
+    | ThreadLaunch.ThreadLaunchBranchExistsError
     | ThreadLaunch.ThreadLaunchBranchConflictError
     | ThreadLaunch.ThreadLaunchNotRepositoryError,
   strategy: { readonly startFromOrigin?: boolean | undefined },
 ) {
   if (error._tag === "ThreadLaunchNotRepositoryError")
     return `Use workspaceStrategy: {type: "root"}, or pass the projectId of a Git repository.`;
+  if (error._tag === "ThreadLaunchBranchExistsError")
+    return "Pass a branch name that does not exist yet, or omit branch to get a generated name.";
   if (error._tag === "ThreadLaunchBranchConflictError") {
     const sibling = error.branch.replaceAll("/", "-");
     return `Use a name that does not nest under or contain an existing branch${
@@ -161,24 +164,30 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const launchedModel =
           launched === null || launched.deletedAt !== null ? undefined : launched.modelSelection;
         const replaying = launchedModel !== undefined;
-        const project = replaying
-          ? undefined
-          : yield* Project.ProjectService.pipe(
-              Effect.flatMap((projects) => projects.getById(projectId)),
-              Effect.mapError(unavailable),
-              Effect.flatMap(
-                Option.match({
-                  onNone: () =>
-                    Effect.fail(
-                      new OrchestratorMcpFailure({
-                        code: "invalid_request",
-                        message: "The project was not found.",
-                      }),
-                    ),
-                  onSome: Effect.succeed,
-                }),
-              ),
-            );
+        if (launched !== null && replaying && launched.projectId !== projectId)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "A launch retry must use the original project.",
+          });
+        const project =
+          replaying && input.workspaceStrategy?.type !== "existing_worktree"
+            ? undefined
+            : yield* Project.ProjectService.pipe(
+                Effect.flatMap((projects) => projects.getById(projectId)),
+                Effect.mapError(unavailable),
+                Effect.flatMap(
+                  Option.match({
+                    onNone: () =>
+                      Effect.fail(
+                        new OrchestratorMcpFailure({
+                          code: "invalid_request",
+                          message: "The project was not found.",
+                        }),
+                      ),
+                    onSome: Effect.succeed,
+                  }),
+                ),
+              );
         if (project !== undefined && input.workspaceStrategy?.type === "existing_worktree")
           yield* assertProjectWorktree(project.workspaceRoot, input.workspaceStrategy.worktreePath);
         if (!replaying && input.modelSelection !== undefined) {
@@ -189,7 +198,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             yield* OrchestrationMcp.requireAdvertisedModel(provider, model);
         }
         const projectSettings =
-          project === undefined
+          replaying || project === undefined
             ? undefined
             : yield* ServerSettings.ServerSettingsService.pipe(
                 Effect.flatMap((settings) => settings.getSettings),
@@ -406,6 +415,13 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   ),
   t3_project_delete: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
+      const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      if (yield* folders.isScratchProject(input.projectId))
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message:
+            '"No project" is the built-in scratch project and cannot be deleted through MCP. The user can remove it in Settings.',
+        });
       const projects = yield* Project.ProjectService;
       const clones = yield* ProjectCloneTracker.ProjectCloneTracker;
       return yield* mutateProjectWithClone(projects, clones, {

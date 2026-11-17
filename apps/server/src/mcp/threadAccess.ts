@@ -144,11 +144,18 @@ export const loadCaller = Effect.fn("mcp.loadCaller")(function* () {
 
 export const assertTargetWithinLimits = (
   limits: CallerLimits,
-  target: { readonly runtimeMode: RuntimeMode; readonly interactionMode: ProviderInteractionMode },
+  target: Pick<OrchestrationV2ThreadShell, "id" | "runtimeMode" | "interactionMode">,
 ) =>
   resolveRuntimeMode(limits.runtimeMode, target.runtimeMode).pipe(
     Effect.andThen(resolveInteractionMode(limits.interactionMode, target.interactionMode)),
     Effect.asVoid,
+    Effect.mapError(
+      (error) =>
+        new OrchestratorMcpFailure({
+          code: error.code,
+          message: `Thread "${target.id}" runs in ${target.runtimeMode}/${target.interactionMode}, above this caller's ${limits.runtimeMode}/${limits.interactionMode} limit. For linked calls, this limit is also capped by the link's approved access. This call does not create an approval request. Have the user act directly in the target thread through an authorized client.`,
+        }),
+    ),
   );
 
 /** Background subagents retain credentials until provider exit; archived threads and other instances cannot act. */
