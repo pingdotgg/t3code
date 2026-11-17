@@ -17,7 +17,7 @@ export type AssistantCitationSourceAnchor = {
 };
 
 export function findAssistantCitationSourceAnchor(
-  document: Document,
+  document: Document | HTMLElement,
   citation: AssistantCitation,
 ): AssistantCitationSourceAnchor | null {
   const source = [

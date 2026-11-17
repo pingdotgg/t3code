@@ -25,6 +25,7 @@ import {
 import { cn } from "~/lib/utils";
 import { useQuietThreadShell } from "~/state/entities";
 import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip";
+import { Badge } from "../ui/badge";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
 import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCommentDismissal";
@@ -178,9 +179,11 @@ export function ResponseReplyCard({
 /** The citation chip in the composer, with its comment editor. */
 export function AssistantCitationChip({
   citation,
+  citationNumber,
   commentEditor,
 }: {
   citation: AssistantCitation;
+  citationNumber?: number | undefined;
   commentEditor?: {
     open: boolean;
     sourceAnchor?: AssistantCitationSourceAnchor | undefined;
@@ -271,6 +274,7 @@ export function AssistantCitationChip({
       data-assistant-citation-chip="true"
       data-markdown-copy={serializeAssistantCitation(citation)}
     >
+      {citationNumber !== undefined ? <Badge>{citationNumber}</Badge> : null}
       {composerSourceLink}
       {commentEditor ? (
         <Popover
