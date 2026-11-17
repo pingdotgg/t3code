@@ -93,6 +93,7 @@ import { incomingShareImports, useIncomingShare } from "../sharing/IncomingShare
 import { idleShareFlagAtom, idleShareImportPhaseAtom } from "./incomingShareImport";
 import { newTaskFlowKey } from "./new-task-flow-state";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
+import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { ConnectionStatusDot } from "../connection/ConnectionStatusDot";
 import { appAtomRegistry } from "../../state/atom-registry";
 
@@ -734,6 +735,16 @@ export function NewTaskDraftScreen(props: {
       The shared content is no longer in the inbox. You can continue editing this task draft.
     </Text>
   ) : null;
+  const renderSelectedProjectIcon = (size: number) => (
+    <ProjectFavicon
+      environmentId={selectedProject.environmentId}
+      faviconPath={selectedProject.faviconPath}
+      projectIcon={selectedProject.projectIcon}
+      size={size}
+      projectTitle={selectedProject.title}
+      workspaceRoot={selectedProject.workspaceRoot}
+    />
+  );
   const hero = flow.isScratchDraft ? (
     <View className="items-center gap-2 px-6" testID="new-task-hero">
       <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
@@ -742,11 +753,11 @@ export function NewTaskDraftScreen(props: {
       <View className="flex-row flex-wrap items-center justify-center gap-x-1">
         <ComposerInlineControl
           accessibilityHint="Opens the project picker"
-          accessibilityLabel="No project"
+          accessibilityLabel={selectedProjectLabel ?? selectedProject.title}
           chevronDirection="right"
           disabled={isComposerInteractionLocked}
-          icon="folder"
-          label="No project"
+          renderIcon={renderSelectedProjectIcon}
+          label={selectedProjectLabel ?? selectedProject.title}
           onPress={chooseProject}
         />
         {environmentControl}
@@ -821,9 +832,7 @@ export function NewTaskDraftScreen(props: {
       </NativeScrollEdgeEffectsContext>
     );
 
-  const contextProjectLabel = flow.isScratchDraft
-    ? "No project"
-    : (selectedProjectLabel ?? selectedProject.title);
+  const contextProjectLabel = selectedProjectLabel ?? selectedProject.title;
   const contextControls = (
     <View className="flex-row items-center gap-1 px-2">
       <View className="min-w-0 shrink">
@@ -832,7 +841,9 @@ export function NewTaskDraftScreen(props: {
           accessibilityLabel={`Project: ${contextProjectLabel}`}
           chevronDirection="right"
           disabled={isComposerInteractionLocked}
-          icon="folder"
+          {...(flow.isScratchDraft
+            ? { renderIcon: renderSelectedProjectIcon }
+            : { icon: "folder" as const })}
           label={contextProjectLabel}
           maxWidth="100%"
           onPress={chooseProject}
