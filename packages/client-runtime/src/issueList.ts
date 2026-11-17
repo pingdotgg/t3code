@@ -31,45 +31,13 @@ export interface HeldIssuePage {
   readonly nextCursors: IssueListCursors;
   /** Why the last "Load more" failed, until a retry succeeds or a new first page arrives. */
   readonly moreFailure: string | null;
-  /**
-   * Every scope a row has named since the list was opened. A bound Linear team is named only by
-   * its rows, so a search that matches none must not take the team's filter choices away.
-   */
-  readonly rowScopes: ReadonlyArray<IssueScopeRef>;
 }
 
 export function issueTrackerKey(tracker: Pick<IssueTrackerSummary, "tracker" | "host">): string {
   return `${tracker.tracker} ${tracker.host.toLowerCase()}`;
 }
 
-function withRowScopes(
-  scopes: ReadonlyArray<IssueScopeRef>,
-  entries: ReadonlyArray<IssueListEntry>,
-): ReadonlyArray<IssueScopeRef> {
-  const next = [...scopes];
-  for (const entry of entries) {
-    const index = next.findIndex(
-      (s) =>
-        s.tracker === entry.tracker &&
-        s.host?.toLowerCase() === entry.host.toLowerCase() &&
-        s.scope.toLowerCase() === entry.scope.toLowerCase(),
-    );
-    const scope = {
-      projectId: entry.projectId,
-      tracker: entry.tracker,
-      host: entry.host,
-      scope: entry.scope,
-    };
-    if (index === -1) next.push(scope);
-    else next[index] = scope;
-  }
-  return next;
-}
-
-/**
- * Continuations are laid over the first page they continue; a new first page forgets them but
- * keeps the scopes the pages before it named. Pass back what `keepIssuePages` kept.
- */
+/** Continuations are laid over the first page they continue; a new first page forgets them. */
 export function holdIssuePages(
   answers: ReadonlyArray<readonly [EnvironmentId, IssueListResult]>,
   pages: ReadonlyMap<EnvironmentId, HeldIssuePage>,
@@ -88,24 +56,10 @@ export function holdIssuePages(
             moreErrors: [],
             nextCursors: answer.nextCursors,
             moreFailure: null,
-            rowScopes: withRowScopes(previous?.rowScopes ?? [], answer.entries),
           },
     );
   }
   return next;
-}
-
-/**
- * What a list keeps for its next `holdIssuePages`: every page held, beside the last page of an
- * environment still loading its next answer. The same map when nothing new arrived, so a client
- * can store it during render without looping.
- */
-export function keepIssuePages(
-  pages: ReadonlyMap<EnvironmentId, HeldIssuePage>,
-  held: ReadonlyMap<EnvironmentId, HeldIssuePage>,
-): ReadonlyMap<EnvironmentId, HeldIssuePage> {
-  if ([...held].every(([environmentId, page]) => pages.get(environmentId) === page)) return pages;
-  return new Map([...pages, ...held]);
 }
 
 /** The cursors of one tracker host, so its "Load more" leaves the other trackers where they are. */
@@ -136,7 +90,6 @@ export function continueIssuePage(
       ...next.nextCursors,
     },
     moreFailure: null,
-    rowScopes: withRowScopes(page.rowScopes, next.entries),
   };
 }
 
@@ -236,8 +189,17 @@ export function issueFilterScopes(
         input: { projectId: project.id, tracker: tracker.tracker, host, scope },
       });
     }
-    // A tracker bound in settings (a Linear team) is no repository's; its rows name its scope.
-    for (const input of page.rowScopes) {
+    // A tracker bound in settings (a Linear team) is no repository's; the answer names its scope,
+    // matched or not. Older servers do not, so their rows stand in.
+    const covered: ReadonlyArray<IssueScopeRef> =
+      page.answer.scopes ??
+      page.entries.map(({ projectId, tracker, host, scope }) => ({
+        projectId,
+        tracker,
+        host,
+        scope,
+      }));
+    for (const input of covered) {
       const host = input.host?.toLowerCase();
       const tracker = page.answer.trackers.find(
         (t) => t.tracker === input.tracker && t.host.toLowerCase() === host,

@@ -13,7 +13,6 @@ import {
   holdIssuePages,
   issueCursorsForHost,
   issueFilterScopes,
-  keepIssuePages,
 } from "./issueList.ts";
 
 const environmentId = "env-1" as EnvironmentId;
@@ -131,65 +130,17 @@ describe("issueFilterScopes", () => {
     ]);
   });
 
-  it("keeps a Linear team's filter scope across a search's loading gap", () => {
-    const first = holdIssuePages(
-      [[environmentId, answer({ trackers: [tracker({})], entries: [linearRow] })]],
-      new Map(),
-    );
-    const pages = keepIssuePages(new Map(), first);
-    const loading = holdIssuePages([], pages);
-    const kept = keepIssuePages(pages, loading);
-    const searched = holdIssuePages(
-      [[environmentId, answer({ trackers: [tracker({})], entries: [] })]],
-      kept,
-    );
-    expect(issueFilterScopes(searched, [])).toEqual([
-      {
-        environmentId,
-        input: { projectId: api, tracker: "linear", host: "linear.app", scope: "ENG" },
-      },
+  it("offers a bound tracker's scope the answer names when a search matches nothing", () => {
+    const scope = {
+      projectId: api,
+      tracker: "linear" as IssueTrackerKind,
+      host: "linear.app",
+      scope: "ENG",
+    };
+    const held = new Map([
+      [environmentId, hold(answer({ trackers: [tracker({})], entries: [], scopes: [scope] }))],
     ]);
-  });
-
-  it("refreshes a remembered team's project while retaining other teams", () => {
-    const remaining = "remaining-project" as ProjectId;
-    const first = holdIssuePages(
-      [
-        [
-          environmentId,
-          answer({
-            trackers: [tracker({})],
-            entries: [
-              { ...linearRow, projectId: "deleted-project" as ProjectId },
-              { ...linearRow, key: "OPS-1", scope: "OPS" },
-            ],
-          }),
-        ],
-      ],
-      new Map(),
-    );
-    const refreshed = holdIssuePages(
-      [
-        [
-          environmentId,
-          answer({
-            trackers: [tracker({})],
-            entries: [{ ...linearRow, projectId: remaining }],
-          }),
-        ],
-      ],
-      first,
-    );
-    expect(issueFilterScopes(refreshed, [])).toEqual([
-      {
-        environmentId,
-        input: { projectId: remaining, tracker: "linear", host: "linear.app", scope: "ENG" },
-      },
-      {
-        environmentId,
-        input: { projectId: api, tracker: "linear", host: "linear.app", scope: "OPS" },
-      },
-    ]);
+    expect(issueFilterScopes(held, [])).toEqual([{ environmentId, input: scope }]);
   });
 
   it("skips a tracker that cannot be read", () => {
