@@ -661,22 +661,23 @@ export const make: Effect.Effect<
             Effect.flatMap((ids) =>
               ids.length === 0
                 ? Effect.succeed({ items: [], nextCursor: null })
-                : read({
+                : invokeWithBody({
                     cwd: input.cwd,
                     operation: "listIssues",
-                    args: invokeArgs({
-                      ...scope,
-                      resource: "workitems",
-                      query: [
-                        `ids=${ids
-                          .slice(0, limit)
-                          .map((row) => row.id)
-                          .join(",")}`,
-                        `fields=${LIST_FIELDS.join(",")}`,
-                      ],
-                    }),
-                    decode: (raw) => decodeWorkItemsJson(raw, closed),
+                    // az resolves `wit/workitems` to the create route (`workitems/${type}`)
+                    // and fails before sending; `workitemsbatch` has a single route.
+                    args: invokeArgs({ ...scope, resource: "workitemsbatch", method: "POST" }),
+                    body: {
+                      ids: ids.slice(0, limit).map((row) => row.id),
+                      fields: LIST_FIELDS,
+                    },
                   }).pipe(
+                    Effect.flatMap((raw) => {
+                      const decoded = decodeWorkItemsJson(raw, closed);
+                      return Result.isSuccess(decoded)
+                        ? Effect.succeed(decoded.success)
+                        : Effect.fail(unreadable("listIssues", decoded.failure));
+                    }),
                     Effect.map((hydrated) => {
                       // The cursor is the last row WIQL sorted, so its order is restored.
                       const position = new Map(ids.map((row, index) => [String(row.id), index]));

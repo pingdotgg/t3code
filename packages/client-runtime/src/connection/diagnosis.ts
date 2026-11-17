@@ -286,10 +286,19 @@ function steps(
           ]
         : [resolve(msg("Make sure {host} is awake and online.", { host })), checkHost];
     case "server":
-      return [
-        resolve(msg("Make sure T3 Code is running on {host}.", { host })),
-        resolve(msg("Retry. If it keeps failing, copy the diagnostics.")),
-      ];
+      return failure?.reason === "authentication"
+        ? [
+            resolve(
+              msg(
+                "This device's sign-in to {host} expired or was revoked. Pair it again with a new pairing link from {host}.",
+                { host },
+              ),
+            ),
+          ]
+        : [
+            resolve(msg("Make sure T3 Code is running on {host}.", { host })),
+            resolve(msg("Retry. If it keeps failing, copy the diagnostics.")),
+          ];
   }
 }
 

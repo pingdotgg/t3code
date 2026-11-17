@@ -418,6 +418,13 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
       kind: LinearApi.KIND,
       capabilities: CAPABILITIES,
       standalone: DESCRIPTOR,
+      parseIssueUrl: (url) => {
+        if (url.protocol !== "https:" || url.host.toLowerCase() !== DESCRIPTOR.host) return null;
+        const [, workspace, resource, key] = url.pathname.split("/");
+        if (!workspace || resource !== "issue" || key === undefined) return null;
+        const scope = /^([A-Z][A-Z0-9_]*)-[1-9][0-9]*$/.exec(key)?.[1];
+        return scope === undefined ? null : { host: DESCRIPTOR.host, workspace, scope, key };
+      },
 
       probeCredential: (token) =>
         linear.viewer(token).pipe(
