@@ -5,6 +5,7 @@ import {
   OrchestratorMcpFailure,
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ProjectId,
+  T3_PROJECT_FILE_NAME,
 } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
@@ -26,7 +27,11 @@ import * as ServerSettings from "../../../serverSettings.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as DateTime from "effect/DateTime";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import {
+  resolveProjectFileBackedSetting,
+  resolveProjectSettings,
+} from "@t3tools/shared/projectSettings";
+import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -92,6 +97,21 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
       message:
         "worktreePath must be one of the project's git worktrees. t3_worktree_list shows them.",
     });
+});
+
+/** The composer falls back to the project's t3.json when no setting picks the mode. */
+const projectFileThreadEnvMode = Effect.fn("mcp.projectFileThreadEnvMode")(function* (
+  workspaceRoot: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const contents = yield* fileSystem
+    .readFileString(`${workspaceRoot}/${T3_PROJECT_FILE_NAME}`)
+    .pipe(Effect.orElseSucceed(() => null));
+  return resolveProjectFileBackedSetting(
+    "defaultThreadEnvMode",
+    null,
+    contents === null ? null : parseT3ProjectFile(contents),
+  ).value;
 });
 
 /** Branches from the checkout's current branch, as the composer does; a checkout with no commit or a detached HEAD stays shared. */
@@ -249,7 +269,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           input.workspaceStrategy === undefined &&
           caller === undefined &&
           project !== undefined &&
-          projectSettings?.defaultThreadEnvMode === "worktree"
+          projectSettings !== undefined &&
+          (projectSettings.defaultThreadEnvMode ??
+            (yield* projectFileThreadEnvMode(project.workspaceRoot))) === "worktree"
             ? yield* defaultWorktreeStrategy(project.workspaceRoot)
             : input.workspaceStrategy;
         // An omitted startFromOrigin follows the new-worktree setting, as the composer and

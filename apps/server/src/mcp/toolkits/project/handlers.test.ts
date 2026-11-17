@@ -691,37 +691,49 @@ it.effect("a worktree launch that omits startFromOrigin follows the new-worktree
 it.effect("a launch that omits its workspace follows the new-threads-in-a-worktree default", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
-    const repo = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-launch-env-mode-" });
-    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
-    const { projectId, dependencies } = clientLaunchHarness({
-      runtimeModeCeiling: "auto",
-      launched,
-      workspaceRoot: repo,
-      defaultThreadEnvMode: "worktree",
-    });
-    const git = yield* GitVcsDriver.GitVcsDriver.pipe(Effect.provide(dependencies));
-    for (const args of [
-      ["init", "-b", "main"],
-      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init"],
-    ]) {
-      yield* git.execute({ operation: "test.setupRepo", cwd: repo, args });
-    }
-    const toolkit = yield* ProjectToolkit.pipe(
-      Effect.provide(
-        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
-      ),
-    );
-    for (const workspaceStrategy of [undefined, { type: "root" as const }]) {
-      yield* toolkit
-        .handle("t3_thread_launch", {
-          title: "Fix",
-          projectId,
-          ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
-        })
-        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
-    }
+    for (const source of ["setting", "t3.json"] as const) {
+      const repo = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-launch-env-mode-" });
+      const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+      const { projectId, dependencies } = clientLaunchHarness({
+        runtimeModeCeiling: "auto",
+        launched,
+        workspaceRoot: repo,
+        ...(source === "setting" ? { defaultThreadEnvMode: "worktree" as const } : {}),
+      });
+      const git = yield* GitVcsDriver.GitVcsDriver.pipe(Effect.provide(dependencies));
+      for (const args of [
+        ["init", "-b", "main"],
+        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init"],
+      ]) {
+        yield* git.execute({ operation: "test.setupRepo", cwd: repo, args });
+      }
+      if (source === "t3.json")
+        yield* fileSystem.writeFileString(
+          `${repo}/t3.json`,
+          JSON.stringify({ defaultThreadEnvMode: "worktree" }),
+        );
+      const toolkit = yield* ProjectToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
+      for (const workspaceStrategy of [undefined, { type: "root" as const }]) {
+        yield* toolkit
+          .handle("t3_thread_launch", {
+            title: "Fix",
+            projectId,
+            ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
+          })
+          .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+      }
 
-    expect(launched.map((launch) => launch.workspaceStrategy.type)).toEqual(["worktree", "root"]);
+      expect(
+        launched.map((launch) => launch.workspaceStrategy.type),
+        source,
+      ).toEqual(["worktree", "root"]);
+    }
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
