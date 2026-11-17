@@ -35,7 +35,7 @@ interface BufferedProviderText {
 
 // Every flush resends the whole text, so the delay grows with it past this length; per item,
 // snapshot traffic then stays near this many characters per interval instead of growing
-// quadratically with the reply.
+// quadratically with the reply, until the one-second responsiveness ceiling.
 const FULL_RATE_TEXT_LENGTH = 1024;
 
 function providerTextBufferKey(turnId: string, itemId: string): string {
@@ -124,9 +124,11 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
                   }),
                 );
                 if (shouldSchedule) {
-                  const delayMs =
+                  const delayMs = Math.min(
+                    1_000,
                     Math.max(1, input.flushIntervalMs) *
-                    Math.max(1, textLength / FULL_RATE_TEXT_LENGTH);
+                      Math.max(1, textLength / FULL_RATE_TEXT_LENGTH),
+                  );
                   yield* Effect.sleep(Duration.millis(delayMs)).pipe(
                     Effect.andThen(flushDirty),
                     Effect.interruptible,

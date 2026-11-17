@@ -155,6 +155,72 @@ describe("CodexAdapterV2 assistant message streaming", () => {
     }),
   );
 
+  it.effect.each([50, 400])(
+    "flushes long snapshots within one second at interval %s",
+    (flushIntervalMs) =>
+      Effect.gen(function* () {
+        const updates = yield* Ref.make<ReadonlyArray<ProviderTextDeltaUpdate>>([]);
+        const coalescer = yield* makeProviderTextDeltaCoalescer({
+          flushIntervalMs,
+          emit: (update) => Ref.update(updates, (current) => [...current, update]),
+        });
+        yield* coalescer.append({ turnId: "turn", itemId: "long", delta: "a".repeat(102_400) });
+        yield* TestClock.adjust("1 second");
+        expect((yield* Ref.get(updates)).map((update) => update.text.length)).toEqual([102_400]);
+        yield* coalescer.append({ turnId: "turn", itemId: "long", delta: "b" });
+        yield* TestClock.adjust("1 second");
+        expect((yield* Ref.get(updates)).map((update) => update.text.length)).toEqual([
+          102_400, 102_401,
+        ]);
+      }),
+  );
+
+  it.effect.each(["complete", "flushTurn"] as const)(
+    "streams a fresh item promptly after %s of a long item",
+    (finish) =>
+      Effect.gen(function* () {
+        const updates = yield* Ref.make<ReadonlyArray<ProviderTextDeltaUpdate>>([]);
+        const coalescer = yield* makeProviderTextDeltaCoalescer({
+          flushIntervalMs: 50,
+          emit: (update) => Ref.update(updates, (current) => [...current, update]),
+        });
+        yield* coalescer.append({ turnId: "old", itemId: "item", delta: "a".repeat(102_400) });
+        if (finish === "complete") {
+          yield* coalescer.complete({ turnId: "old", itemId: "item" });
+        } else {
+          yield* coalescer.flushTurn("old");
+        }
+        yield* coalescer.append({ turnId: "new", itemId: "item", delta: "hello" });
+        yield* TestClock.adjust("50 millis");
+        expect((yield* Ref.get(updates)).map(({ turnId, text, completed }) => ({
+          turnId, length: text.length, completed,
+        }))).toEqual([
+          { turnId: "old", length: 102_400, completed: true },
+          { turnId: "new", length: 5, completed: false },
+        ]);
+        yield* TestClock.adjust("1 second");
+        expect((yield* Ref.get(updates)).length).toBe(2);
+      }),
+  );
+
+  it.effect.each([true, false])("keeps concurrent item flush schedules independent, short first: %s", (shortFirst) =>
+    Effect.gen(function* () {
+      const updates = yield* Ref.make<ReadonlyArray<ProviderTextDeltaUpdate>>([]);
+      const coalescer = yield* makeProviderTextDeltaCoalescer({
+        flushIntervalMs: 50,
+        emit: (update) => Ref.update(updates, (current) => [...current, update]),
+      });
+      const long = { turnId: "turn", itemId: "long", delta: "a".repeat(102_400) };
+      const short = { turnId: "turn", itemId: "short", delta: "hello" };
+      yield* coalescer.append(shortFirst ? short : long);
+      yield* coalescer.append(shortFirst ? long : short);
+      yield* TestClock.adjust("50 millis");
+      expect((yield* Ref.get(updates)).map((update) => update.itemId)).toEqual(["short"]);
+      yield* TestClock.adjust("950 millis");
+      expect((yield* Ref.get(updates)).map((update) => update.itemId)).toEqual(["short", "long"]);
+    }),
+  );
+
   it.effect("flushes buffered text synchronously before item and turn completion", () =>
     Effect.gen(function* () {
       const updates = yield* Ref.make<ReadonlyArray<ProviderTextDeltaUpdate>>([]);
