@@ -1,40 +1,45 @@
 // Renders another environment's localhost pages in a local webview: the partition's loopback
 // traffic goes to a SOCKS5 listener here, and each connection rides one WebSocket to the
 // environment's /api/preview/tunnel. The page keeps its localhost origin.
-import * as NodeNet from "node:net";
-
+import * as NodeSocket from "@effect/platform-node/NodeSocket";
+import * as NodeSocketServer from "@effect/platform-node/NodeSocketServer";
+import * as NodeWS from "@effect/platform-node/NodeWS";
 import type { DesktopPreviewTunnelAccessRequest } from "@t3tools/contracts";
+import type { NonEmptyReadonlyArray } from "effect/Array";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as NetAddress from "effect/net/NetAddress";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
+import * as Socket from "effect/socket/Socket";
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { PREVIEW_TUNNEL_ACCESS_REQUEST_CHANNEL } from "../ipc/channels.ts";
 
 const ACCESS_TIMEOUT = "15 seconds";
-const SEND_HIGH_WATER_BYTES = 1024 * 1024;
-const RECEIVE_LIMIT_BYTES = 64 * 1024 * 1024;
-const DRAIN_POLL = "20 millis";
+const CONNECT_TIMEOUT = "10 seconds";
 
 const REPLY_SUCCEEDED = 0;
 const REPLY_FAILURE = 1;
 const REPLY_NOT_ALLOWED = 2;
 const REPLY_COMMAND_NOT_SUPPORTED = 7;
 const REPLY_ADDRESS_NOT_SUPPORTED = 8;
-const IPV6_LOOPBACK = Buffer.from([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
 
-const socksReply = (code: number) => Buffer.from([5, code, 0, 1, 0, 0, 0, 0, 0, 0]);
+const socksReply = (code: number) => Uint8Array.of(5, code, 0, 1, 0, 0, 0, 0, 0, 0);
 
 // Chromium names the host as typed, so IP literals also arrive as domain names.
 const isLoopbackName = (name: string) =>
   name === "localhost" ||
   name.endsWith(".localhost") ||
-  name === "::1" ||
-  (NodeNet.isIPv4(name) && name.startsWith("127."));
+  Result.match(NetAddress.ipFromString(name), {
+    onSuccess: NetAddress.isLoopback,
+    onFailure: () => false,
+  });
 
 // `*://` matches only http and https, so WebSocket schemes are listed separately.
 const UNSPECIFIED_ADDRESS_URLS = ["http", "https", "ws", "wss"].flatMap((scheme) => [
@@ -53,10 +58,10 @@ const sendUnspecifiedToLocalhost = (
   callback({ redirectURL: url.toString() });
 };
 
+type SocksRequest = { readonly port: number } | { readonly refusal: number };
+
 /** Undefined until the whole request has arrived. */
-const parseConnect = (
-  data: Buffer,
-): { readonly port: number } | { readonly refusal: number } | undefined => {
+const parseConnect = (data: Buffer): SocksRequest | undefined => {
   if (data.length < 5) return undefined;
   const addressType = data[3];
   const hostLength =
@@ -67,12 +72,37 @@ const parseConnect = (
   const host = data.subarray(4, 4 + hostLength);
   const loopback =
     addressType === 1
-      ? host[0] === 127
+      ? NetAddress.isLoopback(NetAddress.ipv4FromBytesUnsafe(host))
       : addressType === 4
-        ? host.equals(IPV6_LOOPBACK)
+        ? NetAddress.isLoopback(NetAddress.ipv6FromBytesUnsafe(host))
         : isLoopbackName(host.subarray(1).toString("latin1").toLowerCase());
   return loopback ? { port: data.readUInt16BE(4 + hostLength) } : { refusal: REPLY_NOT_ALLOWED };
 };
+
+/** Answers the greeting and reads the CONNECT; undefined when the client offers no usable auth. */
+const readSocksRequest = Effect.fnUntraced(function* (
+  pull: Effect.Effect<NonEmptyReadonlyArray<Uint8Array>, Socket.SocketError>,
+  writer: Socket.Writer,
+) {
+  let received = Buffer.alloc(0);
+  let greeted = false;
+  while (true) {
+    received = Buffer.concat([received, ...(yield* pull)]);
+    if (!greeted) {
+      const methods = received[1];
+      if (methods === undefined || received.length < 2 + methods) continue;
+      if (received[0] !== 5 || !received.subarray(2, 2 + methods).includes(0)) {
+        yield* writer.write(Uint8Array.of(5, 0xff));
+        return undefined;
+      }
+      yield* writer.write(Uint8Array.of(5, 0));
+      received = received.subarray(2 + methods);
+      greeted = true;
+    }
+    const request = parseConnect(received);
+    if (request !== undefined) return request;
+  }
+});
 
 // Over an SSH forward the environment's own origin is a loopback port here, and signed asset
 // URLs point at it. That port is the environment, not one of its loopback servers.
@@ -89,62 +119,51 @@ const isTunnelEndpoint = (tunnelUrl: string, port: number) => {
   return isLoopbackName(endpoint.host) && endpoint.port === port;
 };
 
-const pipeToEndpoint = (socket: NodeNet.Socket, tunnelUrl: string) => {
-  const endpoint = NodeNet.connect(tunnelEndpoint(tunnelUrl));
-  endpoint.once("connect", () => {
-    socket.write(socksReply(REPLY_SUCCEEDED));
-    socket.pipe(endpoint);
-    endpoint.pipe(socket);
-    socket.resume();
-  });
-  endpoint.once("error", () => {
-    if (endpoint.connecting) socket.end(socksReply(REPLY_FAILURE));
-    else socket.destroy();
-  });
-  socket.once("close", () => endpoint.destroy());
-};
-
-/** Pipes an accepted SOCKS connection through the tunnel WebSocket; never falls back to direct. */
-const pipeThroughTunnel = (
-  socket: NodeNet.Socket,
-  tunnelUrl: string,
-  port: number,
-  whenDrained: (tunnel: WebSocket, resume: () => void) => void,
-) => {
+/** Opens a connection to the destination; `ws` pauses its socket, so a slow page slows the tunnel. */
+const dialDestination = Effect.fnUntraced(function* (tunnelUrl: string, port: number) {
+  if (isTunnelEndpoint(tunnelUrl, port)) {
+    const endpoint = yield* NodeSocket.makeNet({
+      ...tunnelEndpoint(tunnelUrl),
+      openTimeout: CONNECT_TIMEOUT,
+    });
+    return { pull: yield* Socket.readerBytes(endpoint), writer: yield* endpoint.writer };
+  }
   const url = new URL(tunnelUrl);
   url.searchParams.set("port", String(port));
-  const tunnel = new WebSocket(url);
-  tunnel.binaryType = "arraybuffer";
-  let opened = false;
-  let draining = false;
-  tunnel.addEventListener("open", () => {
-    opened = true;
-    socket.write(socksReply(REPLY_SUCCEEDED));
-    socket.resume();
+  const tunnel = yield* Effect.acquireRelease(
+    Effect.sync(() =>
+      // Closing before the handshake finishes emits an error after Socket's listeners are gone.
+      new NodeWS.WebSocket(url).on("error", () => undefined),
+    ),
+    (tunnel) => Effect.sync(() => tunnel.close()),
+  );
+  const socket = yield* Socket.fromWebSocket(Effect.succeed(tunnel), {
+    openTimeout: CONNECT_TIMEOUT,
   });
-  tunnel.addEventListener("message", (event) => {
-    if (!(event.data instanceof ArrayBuffer)) return;
-    socket.write(new Uint8Array(event.data));
-    // WebSocket has no way to pause its sender, so a page that stops reading loses the connection.
-    if (socket.writableLength > RECEIVE_LIMIT_BYTES) socket.destroy();
-  });
-  tunnel.addEventListener("close", () => {
-    // end() flushes what the page has not read yet; destroy() would truncate the response.
-    if (opened) socket.end();
-    else socket.end(socksReply(REPLY_FAILURE));
-  });
-  socket.on("data", (chunk) => {
-    tunnel.send(chunk);
-    if (draining || tunnel.bufferedAmount < SEND_HIGH_WATER_BYTES) return;
-    draining = true;
-    socket.pause();
-    whenDrained(tunnel, () => {
-      draining = false;
-      socket.resume();
+  // Effect's WebSocket writer never waits for the send buffer; `ws` calls back once it is written.
+  const sendAll = (chunks: NonEmptyReadonlyArray<Uint8Array>) =>
+    Effect.callback<void>((resume) => {
+      const last = chunks.length - 1;
+      chunks.forEach((chunk, index) =>
+        tunnel.send(chunk, index === last ? () => resume(Effect.void) : undefined),
+      );
     });
+  return {
+    pull: yield* Socket.readerBytes(socket),
+    writer: { write: (chunk: Uint8Array) => sendAll([chunk]), writeAll: sendAll },
+  };
+});
+
+const pump =
+  /* Runs for the life of the connection; a span per direction adds no diagnostic value. */
+  Effect.fnUntraced(function* (
+    pull: Effect.Effect<NonEmptyReadonlyArray<Uint8Array>, Socket.SocketError>,
+    writeAll: (
+      chunks: NonEmptyReadonlyArray<Uint8Array>,
+    ) => Effect.Effect<void, Socket.SocketError>,
+  ) {
+    while (true) yield* writeAll(yield* pull);
   });
-  socket.on("close", () => tunnel.close());
-};
 
 export class LoopbackTunnelRouteError extends Schema.TaggedError<LoopbackTunnelRouteError>()(
   "LoopbackTunnelRouteError",
@@ -173,20 +192,12 @@ export class LoopbackTunnel extends Context.Service<
 
 const make = Effect.gen(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
-  const runFork = Effect.runForkWith(yield* Effect.context<never>());
+  const listenerScope = yield* Effect.scope;
   const routing = yield* Semaphore.make(1);
   const pending = new Map<string, Deferred.Deferred<string | null>>();
-  const listeners = new Map<string, NodeNet.Server>();
-  const sockets = new Set<NodeNet.Socket>();
+  const listenerPorts = new Map<string, number>();
   const routed = new WeakSet<Electron.Session>();
   let requestCount = 0;
-
-  yield* Effect.addFinalizer(() =>
-    Effect.sync(() => {
-      for (const server of listeners.values()) server.close();
-      for (const socket of sockets) socket.destroy();
-    }),
-  );
 
   // The renderer owns environment credentials and the selected route, so it is asked per
   // connection; it decides how long a ticket is reused.
@@ -209,75 +220,37 @@ const make = Effect.gen(function* () {
     );
   });
 
-  // WebSocket reports no drain event, so its send buffer is polled while a socket is paused.
-  const whenDrained = (tunnel: WebSocket, resume: () => void) => {
-    runFork(
-      Effect.sleep(DRAIN_POLL).pipe(
-        Effect.repeat({
-          until: () =>
-            tunnel.readyState !== WebSocket.OPEN || tunnel.bufferedAmount < SEND_HIGH_WATER_BYTES,
-        }),
-        Effect.map(resume),
-      ),
-    );
-  };
-
-  const accept = (environmentId: string) => (socket: NodeNet.Socket) => {
-    sockets.add(socket);
-    socket.on("close", () => sockets.delete(socket));
-    socket.on("error", () => undefined);
-    let received = Buffer.alloc(0);
-    let greeted = false;
-    const onData = (chunk: Buffer) => {
-      received = Buffer.concat([received, chunk]);
-      if (!greeted) {
-        const methods = received[1];
-        if (methods === undefined || received.length < 2 + methods) return;
-        if (received[0] !== 5 || !received.subarray(2, 2 + methods).includes(0)) {
-          socket.end(Buffer.from([5, 0xff]));
-          return;
-        }
-        socket.write(Buffer.from([5, 0]));
-        received = received.subarray(2 + methods);
-        greeted = true;
-      }
-      const request = parseConnect(received);
+  /** Serves one SOCKS connection; never falls back to a direct local connection. */
+  const serve = (environmentId: string) => (socket: Socket.Socket) =>
+    Effect.gen(function* () {
+      const pull = yield* Socket.readerBytes(socket);
+      const writer = yield* socket.writer;
+      const request = yield* readSocksRequest(pull, writer);
       if (request === undefined) return;
-      socket.off("data", onData);
-      socket.pause();
-      if ("refusal" in request) {
-        socket.end(socksReply(request.refusal));
-        return;
-      }
-      runFork(
-        requestAccess(environmentId).pipe(
-          Effect.map((url) => {
-            if (socket.destroyed) return;
-            if (url === null) socket.end(socksReply(REPLY_FAILURE));
-            else if (isTunnelEndpoint(url, request.port)) pipeToEndpoint(socket, url);
-            else pipeThroughTunnel(socket, url, request.port, whenDrained);
-          }),
-        ),
+      if ("refusal" in request) return yield* writer.write(socksReply(request.refusal));
+      const tunnelUrl = yield* requestAccess(environmentId);
+      if (tunnelUrl === null) return yield* writer.write(socksReply(REPLY_FAILURE));
+      const destination = yield* dialDestination(tunnelUrl, request.port).pipe(Effect.option);
+      if (Option.isNone(destination)) return yield* writer.write(socksReply(REPLY_FAILURE));
+      yield* writer.write(socksReply(REPLY_SUCCEEDED));
+      return yield* Effect.raceFirst(
+        pump(pull, destination.value.writer.writeAll),
+        pump(destination.value.pull, writer.writeAll),
       );
-    };
-    socket.on("data", onData);
-  };
+    }).pipe(Effect.scoped, Effect.ignoreCause);
 
   const listen = Effect.fn("LoopbackTunnel.listen")(function* (environmentId: string) {
-    const existing = listeners.get(environmentId);
-    const server = existing ?? NodeNet.createServer(accept(environmentId));
-    if (existing === undefined) {
-      yield* Effect.tryPromise({
-        try: () =>
-          new Promise<void>((resolve, reject) => {
-            server.once("error", reject);
-            server.listen(0, "127.0.0.1", resolve);
-          }),
-        catch: (cause) => new LoopbackTunnelRouteError({ environmentId, cause }),
-      });
-      listeners.set(environmentId, server);
-    }
-    return (server.address() as NodeNet.AddressInfo).port;
+    const existing = listenerPorts.get(environmentId);
+    if (existing !== undefined) return existing;
+    // Listeners live as long as the app: a session can be routed back through at any time.
+    const server = yield* NodeSocketServer.make({ port: 0, host: "127.0.0.1" }).pipe(
+      Scope.provide(listenerScope),
+      Effect.mapError((cause) => new LoopbackTunnelRouteError({ environmentId, cause })),
+    );
+    yield* server.run(serve(environmentId)).pipe(Effect.forkIn(listenerScope));
+    const port = (server.address as NetAddress.InetAddress).port;
+    listenerPorts.set(environmentId, port);
+    return port;
   });
 
   const route: LoopbackTunnel["Service"]["route"] = Effect.fn("LoopbackTunnel.route")(function* ({
