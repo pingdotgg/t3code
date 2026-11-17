@@ -116,6 +116,8 @@ function layerExecutorFor(input: {
       ProviderSessionManager.ProviderSessionManagerV2,
       ProviderSessionManager.ProviderSessionManagerV2.of({
         shutdown: Effect.void,
+        interruptForShutdown: () => Effect.void,
+        resumeEventIngestion: Effect.void,
         open: () => Effect.die("unused open"),
         get: () => Effect.succeedNone,
         isLive: () => Effect.succeed(false),

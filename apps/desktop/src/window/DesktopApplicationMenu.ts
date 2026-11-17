@@ -104,7 +104,7 @@ const checkForUpdatesFromMenu = Effect.gen(function* () {
       type: "info",
       title: "Update ready",
       message: `${describeUpdate(updateState.downloadedVersion ?? updateState.availableVersion)} is ready to install.`,
-      detail: `${APP_NAME} will restart to install it. Any running tasks will be interrupted.`,
+      detail: `${APP_NAME} will restart to install it. Running turns pause first and resume after the restart.`,
       buttons: ["Restart", "Later"],
       defaultId: 0,
       cancelId: 1,

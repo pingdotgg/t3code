@@ -8,6 +8,8 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Schema from "effect/Schema";
@@ -24,8 +26,10 @@ import {
   DesktopBackendBootstrap,
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
+  DesktopHostTelemetryMessage,
   DesktopTelemetryControlMessage,
   type DesktopTelemetryControlMessage as DesktopTelemetryControlMessageValue,
+  type DesktopTelemetryRunsPausedForUpdate,
 } from "@t3tools/contracts";
 import { isRunningDatabaseMigrations } from "@t3tools/shared/databaseMigrationLog";
 import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/httpReadiness";
@@ -263,6 +267,8 @@ export interface DesktopBackendInstance {
   readonly currentConfig: Effect.Effect<Option.Option<DesktopBackendStartConfig>>;
   readonly snapshot: Effect.Effect<DesktopBackendSnapshot>;
   readonly waitForReady: (timeout: Duration.Duration) => Effect.Effect<boolean>;
+  /** Asks the running server to pause its turns; None when it has no control channel or stops first. */
+  readonly pauseRunsForUpdate: Effect.Effect<Option.Option<number>>;
 }
 
 export interface BackendInstanceSpec {
@@ -445,6 +451,10 @@ const encodeBootstrapJson = Schema.encodeEffect(Schema.fromJsonString(DesktopBac
 const decodeDesktopTelemetryControlLine = Schema.decodeUnknownEffect(
   Schema.fromJsonString(DesktopTelemetryControlMessage),
 );
+const encodeDesktopTelemetryLine = Schema.encodeSync(
+  Schema.fromJsonString(DesktopHostTelemetryMessage),
+);
+const telemetryTextEncoder = new TextEncoder();
 
 export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   options: RunBackendProcessOptions,
@@ -701,6 +711,9 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   const httpClient = yield* HttpClient.HttpClient;
   const state = yield* SubscriptionRef.make(initialState);
   const mutex = yield* Semaphore.make(1);
+  const pauseRequests = yield* Queue.unbounded<string>();
+  const pauseReplies = yield* PubSub.unbounded<DesktopTelemetryRunsPausedForUpdate>();
+  let nextPauseRequestId = 0;
   const outputTail = yield* Ref.make("");
   // One streaming decoder per stream keeps UTF-8 characters split across chunks intact.
   const makeOutputDecoders = () => ({ stdout: new TextDecoder(), stderr: new TextDecoder() });
@@ -975,11 +988,23 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
 
         const program = runBackendProcess({
           ...config.value,
-          desktopTelemetryStream: desktopTelemetryPublisher.encoded,
+          desktopTelemetryStream: Stream.merge(
+            desktopTelemetryPublisher.encoded,
+            Stream.fromQueue(pauseRequests).pipe(
+              Stream.map((requestId) =>
+                telemetryTextEncoder.encode(
+                  `${encodeDesktopTelemetryLine({ version: 1, type: "pauseRunsForUpdate", requestId })}\n`,
+                ),
+              ),
+            ),
+            { haltStrategy: "left" },
+          ),
           desktopBrowserStream: desktopBrowserHost.events,
           onDesktopBrowserCommand: desktopBrowserHost.handleCommandLine,
           onDesktopTelemetryControl: (message) =>
-            desktopTelemetryPublisher.handleControlForSource(spec.id, message),
+            message.type === "runsPausedForUpdate"
+              ? PubSub.publish(pauseReplies, message).pipe(Effect.asVoid)
+              : desktopTelemetryPublisher.handleControlForSource(spec.id, message),
           onStarted: Effect.fn("desktop.backendInstance.onStarted")(function* (pid) {
             yield* updateActiveRun(runId, (run) => ({
               ...run,
@@ -1239,6 +1264,39 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
       ),
   );
 
+  const pauseRunsForUpdate = Effect.scoped(
+    Effect.gen(function* () {
+      const current = yield* SubscriptionRef.get(state);
+      const config = Option.getOrUndefined(current.config);
+      if (
+        !current.ready ||
+        config === undefined ||
+        config.bootstrapDelivery !== "fd3" ||
+        config.bootstrap.desktopTelemetryFd === undefined ||
+        config.bootstrap.desktopTelemetryControlFd === undefined
+      ) {
+        return Option.none<number>();
+      }
+      nextPauseRequestId += 1;
+      const requestId = `${spec.id}:pause:${nextPauseRequestId}`;
+      const replies = yield* PubSub.subscribe(pauseReplies);
+      yield* Queue.offer(pauseRequests, requestId);
+      const reply = Stream.fromSubscription(replies).pipe(
+        Stream.filter((message) => message.requestId === requestId),
+        Stream.map((message) => message.pausedRuns),
+        Stream.runHead,
+      );
+      const stopped = SubscriptionRef.changes(state).pipe(
+        Stream.filter((latest) => !latest.ready),
+        Stream.runHead,
+        Effect.as(Option.none<number>()),
+      );
+      return yield* Effect.raceFirst(reply, stopped).pipe(
+        Effect.ensuring(Queue.clear(pauseRequests)),
+      );
+    }),
+  ).pipe(Effect.withSpan("DesktopBackendManager.pauseRunsForUpdate"));
+
   yield* Effect.addFinalizer(() => stop());
 
   return {
@@ -1249,5 +1307,6 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
     currentConfig,
     snapshot,
     waitForReady,
+    pauseRunsForUpdate,
   } satisfies DesktopBackendInstance;
 });

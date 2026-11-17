@@ -25,6 +25,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "./config.ts";
@@ -45,6 +46,8 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import { makeUpdatePauseController } from "./updatePauseController.ts";
+import { UpdatePause } from "./updatePause.ts";
 import { forkParked, forkParkedFiber } from "./serverActivation.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
@@ -73,8 +76,18 @@ export class ServerRuntimeStartup extends Context.Service<
     readonly enqueueCommand: <A, E>(
       effect: Effect.Effect<A, E>,
     ) => Effect.Effect<A, E | ServerRuntimeStartupError>;
+    readonly pauseRunsForUpdate: UpdatePause["Service"]["pauseRunsForUpdate"];
+    readonly resumeRunsAfterUpdate: UpdatePause["Service"]["resumeRunsAfterUpdate"];
   }
 >()("t3/serverRuntimeStartup") {}
+
+export const layerUpdatePause = Layer.effect(
+  UpdatePause,
+  Effect.gen(function* () {
+    const { pauseRunsForUpdate, resumeRunsAfterUpdate } = yield* ServerRuntimeStartup;
+    return { pauseRunsForUpdate, resumeRunsAfterUpdate };
+  }),
+);
 
 interface QueuedCommand {
   readonly run: Effect.Effect<void, never>;
@@ -86,6 +99,9 @@ interface CommandGate {
   readonly awaitCommandReady: Effect.Effect<void, ServerRuntimeStartupError>;
   readonly signalCommandReady: Effect.Effect<void>;
   readonly failCommandReady: (error: ServerRuntimeStartupError) => Effect.Effect<void>;
+  /** Refuses commands until reopened; only a ready gate closes, so startup failures stay final. */
+  readonly closeCommands: (error: ServerRuntimeStartupError) => Effect.Effect<void>;
+  readonly reopenCommands: Effect.Effect<void>;
   readonly enqueueCommand: <A, E>(
     effect: Effect.Effect<A, E>,
   ) => Effect.Effect<A, E | ServerRuntimeStartupError>;
@@ -100,6 +116,7 @@ export const makeCommandGate = Effect.gen(function* () {
   const commandReady = yield* Deferred.make<void, ServerRuntimeStartupError>();
   const commandQueue = yield* Queue.unbounded<QueuedCommand>();
   const commandReadinessState = yield* Ref.make<CommandReadinessState>("pending");
+  const closedWhileReady = yield* Ref.make(false);
 
   const commandWorker = Effect.forever(
     Queue.take(commandQueue).pipe(Effect.flatMap((command) => command.run)),
@@ -138,6 +155,13 @@ export const makeCommandGate = Effect.gen(function* () {
       yield* Ref.set(commandReadinessState, error);
       yield* Deferred.fail(commandReady, error).pipe(Effect.orDie);
     }),
+    closeCommands: (error) =>
+      Ref.modify(commandReadinessState, (current) =>
+        current === "ready" ? ([true, error] as const) : ([false, current] as const),
+      ).pipe(Effect.flatMap((closed) => (closed ? Ref.set(closedWhileReady, true) : Effect.void))),
+    reopenCommands: Ref.getAndSet(closedWhileReady, false).pipe(
+      Effect.flatMap((closed) => (closed ? Ref.set(commandReadinessState, "ready") : Effect.void)),
+    ),
     enqueueCommand,
   } satisfies CommandGate;
 });
@@ -407,25 +431,49 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
   const commandGate = yield* makeCommandGate;
   const httpListening = yield* Deferred.make<void>();
   const effectWorkerFiber = yield* Ref.make<Fiber.Fiber<void, never> | null>(null);
+  const shutdownError = (cause: string) =>
+    new ServerRuntimeStartupError({
+      mode: serverConfig.mode,
+      host: serverConfig.host ?? null,
+      port: serverConfig.port,
+      cause,
+    });
+  const stopEffectWorker = Effect.gen(function* () {
+    const workerFiber = yield* Ref.getAndSet(effectWorkerFiber, null);
+    if (workerFiber !== null) {
+      yield* Fiber.interrupt(workerFiber).pipe(Effect.ignore);
+    }
+  });
+  const workerContext = yield* Effect.context<
+    EffectWorker.OrchestrationEffectWorkerV2 | Scope.Scope
+  >();
+  const startEffectWorker = forkParkedFiber(EffectWorker.runDaemon).pipe(
+    Effect.flatMap((fiber) => Ref.set(effectWorkerFiber, fiber)),
+    Effect.provideContext(workerContext),
+  );
+  const updatePause = yield* makeUpdatePauseController({
+    closeCommands: commandGate.closeCommands(
+      shutdownError(`${APP_NAME} is pausing running turns to install an update.`),
+    ),
+    reopenCommands: commandGate.reopenCommands,
+    stopEffectWorker,
+    startEffectWorker,
+    recovery: providerRuntimeRecovery,
+    sessions: providerSessions,
+  });
 
   yield* Effect.addFinalizer(() =>
     Effect.gen(function* () {
-      yield* commandGate.failCommandReady(
-        new ServerRuntimeStartupError({
-          mode: serverConfig.mode,
-          host: serverConfig.host ?? null,
-          port: serverConfig.port,
-          cause: "Server runtime is shutting down.",
-        }),
-      );
-      const workerFiber = yield* Ref.getAndSet(effectWorkerFiber, null);
-      if (workerFiber !== null) {
-        yield* Fiber.interrupt(workerFiber).pipe(Effect.ignore);
-      }
+      const pausedForUpdate = yield* updatePause.beginShutdown;
+      yield* commandGate.failCommandReady(shutdownError("Server runtime is shutting down."));
+      yield* stopEffectWorker;
       yield* providerRuntimeRecovery.prepareForShutdown.pipe(
         Effect.ensuring(providerSessions.shutdown),
       );
-      const reconciliation = yield* providerRuntimeRecovery.reconcile("shutdown");
+      const reconciliation = yield* providerRuntimeRecovery.reconcile(
+        "shutdown",
+        pausedForUpdate ? { update: "paused" } : {},
+      );
       yield* Effect.logInfo("V2 orchestration shutdown reconciliation completed", reconciliation);
     }).pipe(
       Effect.withSpan("server.shutdown"),
@@ -499,12 +547,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
         // the same recovered runs.
         orchestrator.recoverDelegatedTasks.pipe(Effect.andThen(threadTasks.recover)),
       ),
-      startEffectWorker: runStartupPhase(
-        "orchestration-v2.effect-worker.start",
-        forkParkedFiber(EffectWorker.runDaemon).pipe(
-          Effect.flatMap((fiber) => Ref.set(effectWorkerFiber, fiber)),
-        ),
-      ),
+      startEffectWorker: runStartupPhase("orchestration-v2.effect-worker.start", startEffectWorker),
       autoBootstrap: (serverConfig.autoBootstrapProjectFromCwd
         ? runStartupPhase(
             "welcome.autobootstrap",
@@ -667,6 +710,8 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
     awaitCommandReady: commandGate.awaitCommandReady,
     markHttpListening: Deferred.succeed(httpListening, undefined),
     enqueueCommand: commandGate.enqueueCommand,
+    pauseRunsForUpdate: updatePause.pauseRunsForUpdate,
+    resumeRunsAfterUpdate: updatePause.resumeRunsAfterUpdate,
   } satisfies ServerRuntimeStartup["Service"];
 });
 

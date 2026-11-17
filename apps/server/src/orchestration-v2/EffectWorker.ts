@@ -170,6 +170,10 @@ export const layerExecutor: Layer.Layer<
               ...(effect.request.processLossCount === undefined
                 ? {}
                 : { processLossCount: effect.request.processLossCount }),
+              ...(effect.request.reason === undefined ? {} : { reason: effect.request.reason }),
+              ...(effect.request.pausedOnVersion === undefined
+                ? {}
+                : { pausedOnVersion: effect.request.pausedOnVersion }),
             }).pipe(
               Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
               Effect.provideService(ServerSettings.ServerSettingsService, settings),

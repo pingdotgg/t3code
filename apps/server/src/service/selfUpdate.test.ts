@@ -20,6 +20,7 @@ import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
+import { UpdatePause } from "../updatePause.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 import * as ServerSelfUpdate from "./selfUpdate.ts";
 
@@ -153,6 +154,10 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
   const selfUpdate = yield* ServerSelfUpdate.make().pipe(
     Effect.provideService(ProcessRunner.ProcessRunner, runner),
     Effect.provideService(ServiceLauncherClient.ServiceLauncherClient, launcher),
+    Effect.provideService(UpdatePause, {
+      pauseRunsForUpdate: Effect.succeed({ pausedRuns: 0 }),
+      resumeRunsAfterUpdate: Effect.void,
+    }),
     Effect.provideService(
       DesktopAppUpdate.DesktopAppUpdate,
       options.desktopAppUpdate ?? {

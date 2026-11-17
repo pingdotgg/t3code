@@ -337,11 +337,20 @@ export const DesktopShellEnvironmentSnapshot = Schema.Struct({
 });
 export type DesktopShellEnvironmentSnapshot = typeof DesktopShellEnvironmentSnapshot.Type;
 
+/** Asks the server to pause running turns so they resume after the update restarts it. */
+export const DesktopPauseRunsForUpdateRequest = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("pauseRunsForUpdate"),
+  requestId: TrimmedNonEmptyString,
+});
+export type DesktopPauseRunsForUpdateRequest = typeof DesktopPauseRunsForUpdateRequest.Type;
+
 export const DesktopHostTelemetryMessage = Schema.Union([
   DesktopHostTelemetryHello,
   DesktopShellEnvironmentSnapshot,
   DesktopHostTelemetrySnapshot,
   DesktopUpdateStatusReport,
+  DesktopPauseRunsForUpdateRequest,
 ]);
 export type DesktopHostTelemetryMessage = typeof DesktopHostTelemetryMessage.Type;
 
@@ -393,6 +402,14 @@ export const DesktopTelemetryServerReady = Schema.Struct({
 });
 export type DesktopTelemetryServerReady = typeof DesktopTelemetryServerReady.Type;
 
+export const DesktopTelemetryRunsPausedForUpdate = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("runsPausedForUpdate"),
+  requestId: TrimmedNonEmptyString,
+  pausedRuns: NonNegativeInt,
+});
+export type DesktopTelemetryRunsPausedForUpdate = typeof DesktopTelemetryRunsPausedForUpdate.Type;
+
 export const DesktopTelemetryControlMessage = Schema.Union([
   DesktopTelemetryServerReady,
   DesktopTelemetrySetDiagnosticsDemand,
@@ -400,6 +417,7 @@ export const DesktopTelemetryControlMessage = Schema.Union([
   DesktopTelemetryRequestDesktopUpdate,
   DesktopTelemetryCommitDesktopUpdate,
   DesktopTelemetryCancelDesktopUpdate,
+  DesktopTelemetryRunsPausedForUpdate,
 ]);
 export type DesktopTelemetryControlMessage = typeof DesktopTelemetryControlMessage.Type;
 

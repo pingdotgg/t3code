@@ -225,6 +225,15 @@ export type ProviderSessionManagerV2Error = typeof ProviderSessionManagerV2Error
 
 export interface ProviderSessionManagerV2Shape {
   readonly shutdown: Effect.Effect<void>;
+  /** Stops recording provider events, as a shutdown signal does, then interrupts each turn. */
+  readonly interruptForShutdown: (
+    turns: ReadonlyArray<{
+      readonly providerSessionId: ProviderSessionId;
+      readonly providerThread: OrchestrationV2ProviderThread;
+      readonly providerTurnId: ProviderTurnId;
+    }>,
+  ) => Effect.Effect<void>;
+  readonly resumeEventIngestion: Effect.Effect<void>;
   readonly open: (input: {
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
@@ -3017,6 +3026,37 @@ export const layerWithOptions = (
 
       return ProviderSessionManagerV2.of({
         shutdown,
+        resumeEventIngestion: Effect.sync(() => {
+          shutdownSignal.received = false;
+        }),
+        interruptForShutdown: Effect.fn("ProviderSessionManager.interruptForShutdown")(
+          function* (turns) {
+            shutdownSignal.received = true;
+            const live = yield* Ref.get(sessions);
+            yield* Effect.forEach(
+              turns,
+              (turn) => {
+                const entry = live.get(sessionKey(turn.providerSessionId));
+                if (entry === undefined) return Effect.void;
+                return entry.runtime
+                  .interruptTurn({
+                    providerThread: turn.providerThread,
+                    providerTurnId: turn.providerTurnId,
+                  })
+                  .pipe(
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning("orchestration-v2.driver-session.update-interrupt-failed", {
+                        providerSessionId: turn.providerSessionId,
+                        providerTurnId: turn.providerTurnId,
+                        cause,
+                      }),
+                    ),
+                  );
+              },
+              { concurrency: "unbounded", discard: true },
+            );
+          },
+        ),
         open: (input) =>
           sessionOpen.withLock(
             input.providerSessionId,

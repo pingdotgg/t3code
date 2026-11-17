@@ -483,6 +483,69 @@ describe("DesktopBackendManager", () => {
     ),
   );
 
+  it.effect("asks the server to pause runs and returns the count from the matching reply", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+        const readyLine = encodeDesktopTelemetryControl({ version: 1, type: "serverReady" });
+        const instance = yield* makeTestInstance({
+          config: { ...baseConfig, bootstrap: configWithObservability },
+          desktopTelemetryStream: Stream.never,
+          spawnerLayer: Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) => {
+              const telemetry =
+                command._tag === "StandardCommand" &&
+                command.options.additionalFds?.fd4?.type === "input"
+                  ? (command.options.additionalFds.fd4.stream ?? Stream.empty)
+                  : Stream.empty;
+              const replies = telemetry.pipe(
+                Stream.decodeText(),
+                Stream.splitLines,
+                Stream.map((line) => JSON.parse(line) as { type: string; requestId?: string }),
+                Stream.filter((message) => message.type === "pauseRunsForUpdate"),
+                Stream.flatMap(({ requestId = "" }) =>
+                  Stream.make(
+                    encodeDesktopTelemetryControl({
+                      version: 1,
+                      type: "runsPausedForUpdate",
+                      requestId: `${requestId}-other`,
+                      pausedRuns: 9,
+                    }),
+                    encodeDesktopTelemetryControl({
+                      version: 1,
+                      type: "runsPausedForUpdate",
+                      requestId,
+                      pausedRuns: 3,
+                    }),
+                  ),
+                ),
+              );
+              return Effect.succeed(
+                makeProcess({
+                  getOutputFd: (fd) =>
+                    fd === 5
+                      ? Stream.concat(Stream.make(readyLine), replies).pipe(
+                          Stream.map((line) => `${line}\n`),
+                          Stream.encodeText,
+                        )
+                      : Stream.empty,
+                  exitCode: Deferred.await(exit),
+                  kill: () =>
+                    Deferred.succeed(exit, ChildProcessSpawner.ExitCode(0)).pipe(Effect.asVoid),
+                }),
+              );
+            }),
+          ),
+        });
+
+        yield* instance.start;
+        assert.isTrue(yield* instance.waitForReady(Duration.seconds(15)));
+        assert.deepEqual(yield* instance.pauseRunsForUpdate, Option.some(3));
+      }),
+    ),
+  );
+
   it.effect("continues routing desktop telemetry control messages after an invalid line", () =>
     Effect.gen(function* () {
       const handled = yield* Deferred.make<boolean>();
