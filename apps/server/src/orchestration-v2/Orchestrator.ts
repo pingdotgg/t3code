@@ -6358,10 +6358,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       readonly model: string | null;
       readonly text: string;
     }> = [...unseen];
+    // A message to everyone reaches a seat with the primary's reply, so its attachments come then.
+    const addressedId =
+      command.messageId ?? unseen.findLast((entry) => entry.speaker === "user")?.messageId;
     const addressed =
-      command.messageId === undefined
+      addressedId == null
         ? undefined
-        : parent.messages.find((message) => message.id === command.messageId);
+        : parent.messages.find((message) => message.id === addressedId);
     if (
       addressed !== undefined &&
       !handed.has(seatMessageId(addressed.id)) &&

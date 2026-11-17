@@ -239,7 +239,7 @@ describe("parallel decision rule", () => {
 });
 
 describe("production prompt and policy simulation", () => {
-  it("uses the real initial fanout and exposes only serial reactions to the next seat", async () => {
+  it("starts with the lead, so the seat's first turn already reads the lead's reply", async () => {
     for (const parallel of [true, false]) {
       const result = await simulateDiscussion(
         "Design approvals.",
@@ -250,18 +250,15 @@ describe("production prompt and policy simulation", () => {
         }),
       );
       expect(result.entries).toHaveLength(5);
-      expect(result.trace.map((wave) => wave.start)).toEqual(
-        parallel
-          ? [
-              ["primary", peerId],
-              ["primary", peerId],
-            ]
-          : [["primary", peerId], ["primary"], [peerId]],
-      );
+      expect(result.trace.map((wave) => wave.start)).toEqual([
+        ["primary"],
+        [peerId],
+        ["primary"],
+        [peerId],
+      ]);
       const history = result.histories.find(([member]) => member === peerId)![1];
-      expect(history[0]!.text).not.toContain("Rowan reply 1.");
-      expect(history[2]!.text).toContain("Rowan reply 1.");
-      expect(history[2]!.text.includes("Rowan reply 2.")).toBe(!parallel);
+      expect(history[0]!.text).toContain("Rowan reply 1.");
+      expect(history[2]!.text).toContain("Rowan reply 2.");
       expect(result.close).toBe("budget");
     }
   });
@@ -273,7 +270,7 @@ describe("production prompt and policy simulation", () => {
           role: "assistant",
           text,
         }));
-        expect(result.entries).toHaveLength(3);
+        expect(result.entries).toHaveLength(2);
         expect(result.close).toBe("settled");
       }
     }

@@ -256,7 +256,10 @@ export function decideGroupMembership(input: {
   }
 }
 
-/** Who a message reaches. A message reaches seats only through an active group. */
+/**
+ * Whom a message starts. A message to everyone starts only the primary, and its reply wakes the
+ * seats, so they build on that answer instead of racing it. Named members all start at once.
+ */
 export function resolveGroupAudience(
   group: OrchestrationV2ThreadGroup,
   audience: "everyone" | ReadonlyArray<GroupMember> | undefined,
@@ -265,14 +268,13 @@ export function resolveGroupAudience(
   readonly includesPrimary: boolean;
   readonly seats: ReadonlyArray<ThreadId>;
 } {
-  const seated = seatedSeatIds(group);
   if (audience === undefined || audience === "everyone") {
-    return { mode: "everyone", includesPrimary: true, seats: seated };
+    return { mode: "everyone", includesPrimary: true, seats: [] };
   }
   return {
     mode: "direct",
     includesPrimary: audience.includes("primary"),
-    seats: seated.filter((seat) => audience.includes(seat)),
+    seats: seatedSeatIds(group).filter((seat) => audience.includes(seat)),
   };
 }
 

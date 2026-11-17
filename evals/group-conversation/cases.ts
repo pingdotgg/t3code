@@ -18,8 +18,10 @@ export interface BehaviorCase extends BaseCase {
   readonly context:
     | "seat-first"
     | "seat-reaction"
+    | "seat-after-lead"
     | "primary-first"
     | "primary-return"
+    | "primary-wake"
     | "side-chat"
     | "ordinary";
   readonly prior: ReadonlyArray<Exchange>;
@@ -29,6 +31,13 @@ export interface BehaviorCase extends BaseCase {
   readonly edit?: { readonly path: string; readonly content: string };
   readonly delegate?: boolean;
 }
+
+const screenshot =
+  'Maintainer screenshot, 2026-11-16: both models in a group answered one question, then traded affirmations such as "I agree with you on synonyms".';
+const rememberMe =
+  "We keep sessions in a cookie. How long should a remember-me token last, and how do we revoke it? Keep it short.";
+const flawedRememberMe =
+  "Make the token a signed JWT that lasts 90 days and store it in the cookie. To revoke it, delete the cookie on logout.";
 
 const source = "Phase 5 implementation brief, 2026-11-06; group UX premise review, Behaviour evals";
 
@@ -128,6 +137,55 @@ export const cases: ReadonlyArray<DiscussionCase | BehaviorCase> = [
     outcome: "substantive",
     rubric: [
       "Answers the clock-skew objection with a concrete mitigation or changes the design. Passing, agreement alone, or repetition fails.",
+    ],
+  },
+  {
+    id: "seat-adds-nothing-to-complete-answer",
+    source: `${screenshot} Authored guard against restating the lead.`,
+    kind: "behavior",
+    context: "seat-after-lead",
+    prior: [
+      {
+        label: "Rowan",
+        text: "No. The calling model already rephrases a query when it finds nothing, and it knows the intent better than a synonym list does. Automatic synonyms would also widen matches nobody asked for and make ranking harder to explain. Keep search literal, return an explicit no-match result naming the terms tried, and let the caller retry with different words.",
+      },
+    ],
+    request:
+      "Our search tool returns nothing for some queries. Should it generate synonyms automatically and retry? Keep it short.",
+    rubric: [
+      "Either replies PASS, or every point it makes is absent from Rowan's answer. Agreeing with Rowan, praising the answer, or restating any of Rowan's points fails.",
+    ],
+  },
+  {
+    id: "seat-corrects-lead",
+    source: `${screenshot} Authored guard that a seat still speaks up when the lead is wrong.`,
+    kind: "behavior",
+    context: "seat-after-lead",
+    prior: [{ label: "Rowan", text: flawedRememberMe }],
+    request: rememberMe,
+    outcome: "substantive",
+    rubric: [
+      "Points out that deleting the cookie does not revoke a copied or stolen token, and proposes server-side revocation such as a stored token record or denylist.",
+      "Does not open by agreeing with or praising Rowan, and does not restate Rowan's advice as its own.",
+    ],
+  },
+  {
+    id: "lead-folds-in-correction",
+    source: `${screenshot} Authored guard that the lead closes with what changed instead of re-answering.`,
+    kind: "behavior",
+    context: "primary-wake",
+    prior: [
+      { label: "Rowan", text: flawedRememberMe },
+      {
+        label: "Kai",
+        text: "Deleting the cookie only clears this browser. A copied token stays valid for 90 days. Store a token ID server-side and check it on every use, so logout and sign-out-everywhere can delete it.",
+      },
+    ],
+    request: rememberMe,
+    outcome: "address_user",
+    rubric: [
+      "Tells the user that revocation now relies on a server-side token record.",
+      "Does not thank or praise Kai, and does not repeat its whole earlier answer.",
     ],
   },
   {

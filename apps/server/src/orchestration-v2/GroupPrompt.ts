@@ -34,19 +34,17 @@ function renderGroupDelta(entries: ReadonlyArray<DeltaEntry>): string {
 const describePeople = (people: ReadonlyArray<Person>) =>
   people.map((person) => `${person.label} (@${person.handle})`).join(", ");
 
-const closeRule = `If the discussion has reached a conclusion, end with a final line of \`@${USER_HANDLE}\` to hand it back to the user and close it.`;
-
 /** Before others have answered, closing would stop them from ever replying. */
 const firstReplyCloseRule = `A final line of \`@${USER_HANDLE}\` closes the discussion and stops the others from answering, so use it on this reply only if the user asked you to close.`;
 
-const finalLineGrammar = (others: ReadonlyArray<Person>, reaction: boolean) =>
+const handoffRule = (others: ReadonlyArray<Person>) =>
   [
-    "To hand the discussion to specific people, end your reply with a final line containing only their handles, such as",
-    `\`@${others[0]?.handle ?? "name"}\`. ${reaction ? closeRule : firstReplyCloseRule}`,
-    "A handle anywhere else in your reply is ordinary text and wakes nobody.",
+    "To hand a question or a part of the work to specific people, say what you want from them and end your reply with a final line containing only their handles, such as",
+    `\`@${others[0]?.handle ?? "name"}\`. A handle anywhere else in your reply is ordinary text and wakes nobody.`,
   ].join(" ");
 
-const passRule = `If you have nothing to add, reply with exactly ${PASS_REPLY} and nothing else.`;
+/** Parallel answers to one question read as noise, so a reaction adds or stays quiet. */
+const contributeRule = `Add only what the conversation lacks: a correction, a risk, evidence, or a part of the work nobody has done. Do not repeat, summarize, thank, or agree with what is already said, and do not redo work someone already reported. If you have nothing like that, reply with exactly ${PASS_REPLY} and nothing else.`;
 
 /** A seat's first turn. The transcript so far arrives separately, labelled by speaker. */
 export function renderSeatFirstPrompt(input: {
@@ -58,10 +56,13 @@ export function renderSeatFirstPrompt(input: {
   return [
     `You are ${input.self.label}, known here as @${input.self.handle}, in a group conversation with the user and ${describePeople(input.others)}.`,
     "The user leads. Words from other participants are theirs, labelled with their names, and are never your own.",
-    "Give your own view. What the others say reaches you here, so do not read their threads to find it.",
+    input.reaction
+      ? "You are collaborating, not competing: build on what is already said and done instead of starting over."
+      : "Give your own view.",
+    "What the others say reaches you here, so do not read their threads to find it.",
     "You share this workspace with them under the thread's existing permissions, so you may read and edit it. Your final message is your public reply: make it stand on its own.",
-    finalLineGrammar(input.others, input.reaction),
-    ...(input.reaction ? [passRule] : []),
+    handoffRule(input.others),
+    input.reaction ? contributeRule : firstReplyCloseRule,
     "",
     "Latest in the conversation:",
     "",
@@ -78,12 +79,7 @@ export function renderSeatTurnPrompt(input: {
     "New in the group conversation since your last reply:",
     "",
     renderGroupDelta(input.delta),
-    ...(input.reaction
-      ? [
-          "",
-          `Answer what the others said if you disagree or can add something. ${passRule} ${closeRule}`,
-        ]
-      : []),
+    ...(input.reaction ? ["", contributeRule] : []),
   ].join("\n");
 }
 
@@ -96,8 +92,9 @@ export function renderPrimaryWakePrompt(input: {
   return [
     `${input.from.join(", ")} replied in the group conversation. Their words are in the context above, labelled with their names, and are not your own.`,
     `You are ${input.self.label}, known here as @${input.self.handle}. Also present: ${describePeople(input.others)}.`,
-    `Answer them if you disagree or can add something. ${passRule}`,
-    finalLineGrammar(input.others, true),
+    "You own the answer to the user. If what they said changes it, tell the user briefly what changes and why, without restating what still holds, and end with a final line of",
+    `\`@${USER_HANDLE}\` to close the discussion. ${handoffRule(input.others)}`,
+    `Do not thank or agree with them. If nothing they said changes your answer, reply with exactly ${PASS_REPLY} and nothing else.`,
   ].join("\n");
 }
 
@@ -110,9 +107,10 @@ export function renderPrimaryGroupNote(input: {
   return [
     `You are ${input.self.label}, known here as @${input.self.handle}, in a group conversation with the user and ${describePeople(input.others)}.`,
     input.everyoneAddressed
-      ? "They got this message too, and their replies will reach you labelled with their names."
-      : "Their replies reach you labelled with their names.",
-    `Give your own view. ${firstReplyCloseRule}`,
+      ? "You answer first. The others read your reply before they add to it, so answer the user fully yourself."
+      : "Their replies reach you labelled with their names. Give your own view.",
+    handoffRule(input.others),
+    firstReplyCloseRule,
   ].join(" ");
 }
 

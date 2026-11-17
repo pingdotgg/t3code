@@ -180,7 +180,7 @@ async function behavior(fixture: BehaviorCase, model: string) {
   for (let step = 0; step < 6; step++) {
     const answer = await client.call(
       model,
-      `You are ${fixture.context === "primary-return" ? "Rowan" : "Kai"}, a coding assistant in /home/user/app. Keep replies under 220 words.`,
+      `You are ${fixture.context.startsWith("primary") ? "Rowan" : "Kai"}, a coding assistant in /home/user/app. Keep replies under 220 words.`,
       messages,
       tools,
       fixture.id,

@@ -31,7 +31,8 @@ export async function simulateDiscussion(
   reply: (member: GroupMember, messages: ReadonlyArray<Message>) => Promise<Message>,
 ) {
   const { planWave } = await policy(parallel);
-  let state = groupAfterMessage(group(), resolveGroupAudience(group(), "everyone"), "user", 1);
+  const audience = resolveGroupAudience(group(), "everyone");
+  let state = groupAfterMessage(group(), audience, "user", 1);
   const entries: Exchange[] = [{ label: "User", text: request }];
   const histories = new Map<GroupMember, Message[]>([
     ["primary", []],
@@ -43,7 +44,10 @@ export async function simulateDiscussion(
   ]);
   const trace: Array<{ start: ReadonlyArray<GroupMember>; through: number; turnsLeft: number }> =
     [];
-  let next: ReadonlyArray<GroupMember> = ["primary", peerId];
+  let next: ReadonlyArray<GroupMember> = [
+    ...(audience.includesPrimary ? (["primary"] as const) : []),
+    ...audience.seats,
+  ];
   for (let wave = 0; wave < 4; wave++) {
     const through = entries.length;
     trace.push({ start: next, through, turnsLeft: state.discussion!.turnsLeft });
