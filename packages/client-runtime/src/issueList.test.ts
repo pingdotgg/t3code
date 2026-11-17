@@ -62,7 +62,10 @@ describe("continueIssuePage", () => {
       cursors,
     );
     expect(failed.errors.map((error) => error.message)).toEqual(["boom", "rate limited"]);
+    // The server hands a failed scope's cursor back unchanged; scrolling must not re-ask it.
+    expect(failed.moreFailure).not.toBeNull();
     const retried = continueIssuePage(failed, answer({ entries: [entry({ key: "2" })] }), cursors);
+    expect(retried.moreFailure).toBeNull();
     // The first page's failure has no cursor, so no continuation retried it.
     expect(retried.errors.map((error) => error.message)).toEqual(["boom"]);
   });
