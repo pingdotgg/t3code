@@ -5,9 +5,12 @@ import {
   type ChatAttachment,
   ChatAttachmentId,
   CommandId,
+  COMPOSER_CONTEXT_MAX_RECORDS,
+  ComposerContextId,
   EventId,
   MessageId,
   type ModelSelection,
+  type OrchestrationMessageContext,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
@@ -28,6 +31,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -545,6 +549,7 @@ const say = Effect.fn("GroupConversationTest.say")(function* (
   groupAudience?: "everyone" | ReadonlyArray<ThreadId | "primary">,
   delivery: "auto" | "queue" = "auto",
   attachments: ReadonlyArray<ChatAttachment> = [],
+  context?: OrchestrationMessageContext,
 ) {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   return yield* orchestrator.dispatch({
@@ -556,6 +561,7 @@ const say = Effect.fn("GroupConversationTest.say")(function* (
     creationSource: "web",
     text,
     attachments,
+    ...(context === undefined ? {} : { context }),
     ...(groupAudience === undefined ? {} : { groupAudience }),
     dispatchMode: { type: "queue_after_active" },
     ...(delivery === "auto" ? { deliveryIntent: "auto" as const } : {}),
@@ -667,11 +673,12 @@ const noticesOf = (projection: Pick<OrchestrationV2ThreadProjection, "turnItems"
 
 describe("group conversations", () => {
   it.live.each([
-    ["cross-instance", ASTRA, "Astra"],
-    ["same-instance", OPUS, "Opus"],
+    ["cross-instance", ASTRA, "Astra", 1],
+    ["same-instance", OPUS, "Opus", 1],
+    ["context-limit", ASTRA, "Astra", COMPOSER_CONTEXT_MAX_RECORDS],
   ] as const)(
     "runs a %s discussion to its budget without moving the primary",
-    ([kind, peer, label]) =>
+    ([kind, peer, label, contextCount]) =>
       Effect.scoped(
         Effect.gen(function* () {
           const harness = yield* makeHarness(`everyone-${kind}`);
@@ -698,13 +705,30 @@ describe("group conversations", () => {
                 mimeType: "text/markdown",
                 sizeBytes: 12,
               };
+              const terminal = {
+                version: 1 as const,
+                kind: "terminal" as const,
+                contextId: ComposerContextId.make(`terminal-${kind}`),
+                label: "Sync failure",
+                terminalId: "sync",
+                terminalLabel: "Sync",
+                lineStart: 1,
+                lineEnd: 1,
+                text: "Replica rejected a duplicate revision.",
+              };
+              const records = Array.from({ length: contextCount }, (_, index) => ({
+                ...terminal,
+                contextId: ComposerContextId.make(`${terminal.contextId}-${index}`),
+                text: `${terminal.text} Context ${index}.`,
+              }));
               yield* say(
                 threadId,
                 "question",
-                "Should sync be CRDT or event log?",
+                `Should sync be CRDT or event log? ${records.map(formatComposerContextReference).join(" ")}`,
                 undefined,
                 "auto",
                 [sketch],
+                { version: 1, records },
               );
               yield* Deferred.await(primaryHold.started);
 
@@ -720,6 +744,30 @@ describe("group conversations", () => {
               const seatProjection = yield* orchestrator.getThreadProjection(seat);
               assert.equal(seatProjection.thread.runtimeMode, before.thread.runtimeMode);
               assert.equal(seatProjection.thread.lineage.sideChat, true);
+              yield* until(
+                orchestrator
+                  .getThreadProjection(threadId)
+                  .pipe(
+                    Effect.map((p) => p.providerTurns.some((turn) => turn.status === "running")),
+                  ),
+              );
+              yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+              const clarification = {
+                ...terminal,
+                contextId: ComposerContextId.make(`clarification-${kind}`),
+                text: "Replica logs include conflicting branches.",
+              };
+              yield* say(
+                threadId,
+                "clarification",
+                `Please check the edge cases too.${contextCount > 1 ? ` ${formatComposerContextReference(clarification)}` : ""}`,
+                undefined,
+                "auto",
+                [],
+                contextCount > 1 ? { version: 1, records: [clarification] } : undefined,
+              );
+              assert.equal(yield* Queue.take(harness.control.steered), threadId);
+              yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
               yield* Deferred.succeed(primaryHold.release, "completed");
 
               const after = yield* settle(threadId);
@@ -741,6 +789,22 @@ describe("group conversations", () => {
               assert.lengthOf(seatTurns, 2, "first answer and one reaction");
               assert.include(seatTurns[0]!.text, "group conversation");
               assert.include(seatTurns[0]!.text, "Should sync be CRDT or event log?");
+              assert.include(seatTurns[0]!.text, "Please check the edge cases too.");
+              assert.include(
+                seatTurns[0]!.text,
+                terminal.text,
+                "the original context reaches peers",
+              );
+              if (contextCount > 1) {
+                assert.include(seatTurns[0]!.text, records.at(-1)!.text);
+                assert.include(seatTurns[0]!.text, clarification.text);
+                assert.notInclude(seatTurns[0]!.text, records[0]!.text);
+                assert.notInclude(seatTurns[0]!.text, formatComposerContextReference(records[0]!));
+                assert.include(
+                  seatTurns[0]!.text,
+                  `kind="terminal" id="${records[0]!.contextId}" unavailable="true"`,
+                );
+              }
               assert.include(seatTurns[0]!.text, `from ${threadId}`, "the lead's reply came first");
               const seatFirst = (yield* orchestrator.getThreadProjection(seat)).messages.find(
                 (message) => message.role === "user",
@@ -768,7 +832,7 @@ describe("group conversations", () => {
               const visibleUserRows = after.turnItems.filter(
                 (item) => item.type === "user_message",
               );
-              assert.lengthOf(visibleUserRows, 2, "a wake writes no user row");
+              assert.lengthOf(visibleUserRows, 3, "a wake writes no user row");
               assert.isTrue(after.turnItems.some((item) => item.type === "notification"));
               assert.isFalse(
                 after.turnItems.some((item) => item.type === "handoff"),
