@@ -13,6 +13,7 @@ import {
   threadPullRequestKeyOf,
   visibleThreadPullRequests,
 } from "@t3tools/client-runtime/thread-pull-requests";
+import { T, Var } from "gt-react";
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { useState, type ComponentProps, type MouseEvent as ReactMouseEvent } from "react";
 
@@ -149,7 +150,13 @@ function ThreadDetailsPrRows({
         ) : (
           <ChevronDownIcon aria-hidden className="size-4 shrink-0" />
         )}
-        {expanded ? "Show less" : `Show ${rest.length} more`}
+        {expanded ? (
+          <T>Show less</T>
+        ) : (
+          <T>
+            Show <Var>{rest.length}</Var> more
+          </T>
+        )}
       </ThreadDetailsControl>
     </>
   );
