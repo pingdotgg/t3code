@@ -1,7 +1,7 @@
 import { DEFAULT_THEMES, preloadHighlighter } from "@pierre/diffs";
 import { EnvironmentId, ThreadId, type ProjectReadFileResult } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import type { ReactNode } from "react";
+import { StrictMode, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../../test/render";
@@ -223,6 +223,17 @@ describe("source file focus", () => {
       isMacPlatform(navigator.platform) ? "{Meta>}f{/Meta}" : "{Control>}f{/Control}",
     );
     await vi.waitFor(() => expect(deepActiveElement()).toBeInstanceOf(HTMLInputElement));
+
+    const findField = deepActiveElement() as HTMLInputElement;
+    await userEvent.keyboard("server");
+    findField.blur();
+    expect(focus.focus("panel", false)).toBe(true);
+    await vi.waitFor(editorHasFocus);
+    const editor = deepActiveElement() as HTMLElement;
+    await userEvent.keyboard("ab");
+    await vi.waitFor(() => expect(editor.textContent).toContain("xabconst server"));
+    expect(findField.value).toBe("server");
+    editorHasFocus();
   });
 
   it("focuses the editor when a file row is clicked or activated with Enter", async () => {
@@ -265,6 +276,41 @@ describe("source file focus", () => {
     (fileRow.element() as HTMLElement).focus();
     await userEvent.keyboard("{Enter}");
     await vi.waitFor(editorHasFocus);
+  });
+});
+
+describe("source file scroll", () => {
+  it("returns a file tab to where it was scrolled after another file was shown", async () => {
+    using _settings = setup();
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["typescript"] });
+    const sourceFile = (relativePath: string, lines: number) => {
+      const contents = Array.from({ length: lines }, (_, i) => `const line${i} = ${i};`).join("\n");
+      state.file = { relativePath, contents, byteLength: contents.length, truncated: false };
+      // The app mounts under StrictMode, whose remount must not wipe the saved offset.
+      return (
+        <StrictMode>
+          <div style={{ height: 400, display: "flex", flexDirection: "column" }}>
+            {filePreview(relativePath)}
+          </div>
+        </StrictMode>
+      );
+    };
+    const scroller = () => document.querySelector<HTMLElement>(".file-preview-virtualizer");
+
+    await using screen = await render(sourceFile("a.ts", 2000));
+    await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(5000));
+    scroller()!.scrollTop = 4200;
+    await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(4200));
+
+    await screen.rerender(sourceFile("b.ts", 1500));
+    await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(0));
+    await screen.rerender(sourceFile("a.ts", 2000));
+
+    await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(4200));
   });
 });
 

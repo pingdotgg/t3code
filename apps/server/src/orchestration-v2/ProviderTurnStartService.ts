@@ -9,6 +9,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
+  type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   isCompactionCommandMessage,
   parseGoalCommand,
@@ -43,6 +44,7 @@ import * as EventSink from "./EventSink.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import { isActiveRun } from "./CommandPolicy.ts";
+import { contextBoundaryOrdinal } from "./contextBoundary.ts";
 import {
   DEFAULT_HANDOFF_TOKEN_CAP,
   handoffTokenCapConfig,
@@ -117,6 +119,53 @@ const refusedBeforePrompt = (error: unknown): boolean =>
     error.driver === CLAUDE_PROVIDER &&
     error.detail === CLAUDE_QUERY_ENDED_BEFORE_TURN_DETAIL) ||
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
+
+/**
+ * Whether a non-truncating provider's native session lost the conversation kept before `run`.
+ * Rollback resets it: the newest accepted turn was rolled back (works without legacy-missing
+ * native ids) or ran under another native id (rollback of runs the provider never accepted).
+ */
+const nativeSessionMissesKeptTurns = (
+  projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "thread" | "runs" | "attempts" | "providerTurns" | "contextHandoffs"
+  >,
+  providerThread: OrchestrationV2ProviderThread,
+  run: OrchestrationV2Run,
+): boolean => {
+  const nativeId = providerThread.nativeThreadRef?.nativeId;
+  if (nativeId === undefined) return false;
+  const acceptedAttemptIds = new Set(projection.providerTurns.map((turn) => turn.runAttemptId));
+  const accepted = projection.attempts.filter((attempt) => acceptedAttemptIds.has(attempt.id));
+  const runsById = new Map(projection.runs.map((source) => [source.id, source]));
+  const ordinalOf = (attempt: OrchestrationV2RunAttempt) =>
+    runsById.get(attempt.runId)?.ordinal ?? 0;
+  const newest = accepted
+    .filter((attempt) => attempt.providerThreadId === providerThread.id)
+    .toSorted((a, b) => ordinalOf(a) - ordinalOf(b) || a.attemptOrdinal - b.attemptOrdinal)
+    .at(-1);
+  if (newest === undefined) return false;
+  // Inherited fork history is kept even when every local run was rolled back.
+  const keepsHistory =
+    (projection.thread.forkedFrom?.type === "run" && projection.thread.lineage.sideChat !== true) ||
+    accepted.some((attempt) => {
+      const source = runsById.get(attempt.runId);
+      return (
+        source !== undefined && source.ordinal < run.ordinal && source.status !== "rolled_back"
+      );
+    });
+  return (
+    keepsHistory &&
+    (runsById.get(newest.runId)?.status === "rolled_back" ||
+      (newest.nativeThreadId !== undefined && newest.nativeThreadId !== nativeId)) &&
+    !projection.contextHandoffs.some(
+      (handoff) =>
+        handoff.toProviderThreadId === providerThread.id &&
+        handoff.delivery?.nativeThreadId === nativeId &&
+        handoff.delivery.status !== "pending",
+    )
+  );
+};
 
 /** Missing execution records cannot be repaired by retrying a start. */
 export class ProviderTurnStartRunStateMissingError extends Schema.TaggedError<ProviderTurnStartRunStateMissingError>()(
@@ -258,6 +307,19 @@ export const layer: Layer.Layer<
             Effect.map((current) => current.thread.worktreePath !== input.worktreePath),
             Effect.catchCause(() => Effect.succeed(false)),
           ),
+        loadUnsettledWork: (threadId: ThreadId, nodeIds: ReadonlyArray<NodeId>) =>
+          projectionStore
+            .getThreadRecords(threadId, ["subagents", "nodes", "turnItems"], {
+              nodeIds,
+              subagentIds: nodeIds,
+              turnItemStatuses: ["pending", "running", "waiting"],
+            })
+            .pipe(
+              Effect.catchTags({
+                ProjectionStoreThreadNotFoundError: () =>
+                  Effect.succeed({ subagents: [], nodes: [], turnItems: [] }),
+              }),
+            ),
         loadRunInterruptReason: () =>
           projectionStore
             .getThreadRecords(input.threadId, ["turnItems"], {
@@ -1083,11 +1145,7 @@ export const layer: Layer.Layer<
           });
           const createdAt = yield* DateTime.now;
           const history = yield* projectionStore.getTurnStartHistory(input.threadId);
-          // Turn-start context carries only this run's turn items; the boundary needs the thread's.
-          const boundary = ContextHandoffService.contextBoundaryOrdinal({
-            runs: projection.runs,
-            turnItems: history,
-          });
+          const boundary = contextBoundaryOrdinal({ runs: projection.runs, turnItems: history });
           const from = Math.max(1, boundary);
           const handoff = yield* contextHandoffService.prepareProviderHandoff({
             threadId: projection.thread.id,
@@ -1100,16 +1158,25 @@ export const layer: Layer.Layer<
             coveredRunOrdinals: { from, to: Math.max(from, run.ordinal - 1) },
             strategy: "full_thread_summary",
             runs: projection.runs,
-            items: history.filter((item) =>
-              item.runId === null
-                ? boundary === 0
-                : projection.runs.some(
-                    (source) =>
-                      source.id === item.runId &&
-                      source.ordinal >= from &&
-                      source.ordinal < run.ordinal,
-                  ),
-            ),
+            items: [
+              ...(boundary === 0
+                ? yield* ContextHandoffService.readInheritedHandoffItems(
+                    projectionStore,
+                    projection.thread,
+                  )
+                : []),
+              ...history.filter((item) =>
+                item.runId === null
+                  ? boundary === 0
+                  : projection.runs.some(
+                      (source) =>
+                        source.id === item.runId &&
+                        source.ordinal >= boundary &&
+                        source.ordinal < run.ordinal &&
+                        source.status !== "rolled_back",
+                    ),
+              ),
+            ],
             createdAt,
           });
           return { handoff, transferId, createdAt };
@@ -1336,15 +1403,21 @@ export const layer: Layer.Layer<
             handoff.delivery?.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
             handoff.delivery?.status === "pending",
         );
+        // A provider that cannot truncate rolls back into a fresh native session holding none of the kept turns.
+        const nativeSessionLacksKeptTurns =
+          !session.providerSession.capabilities.checkpointing.providerCanRollbackConversation &&
+          nativeSessionMissesKeptTurns(projection, providerThread, run);
         const resumed = yield* Effect.result(
-          uncertainDelivery
+          uncertainDelivery || nativeSessionLacksKeptTurns
             ? Effect.fail(
                 new ProviderAdapter.ProviderAdapterTurnStartError({
                   driver: session.driver,
                   threadId: projection.thread.id,
                   providerThreadId: providerThread.id,
                   runId,
-                  cause: "Uncertain native history injection",
+                  cause: uncertainDelivery
+                    ? "Uncertain native history injection"
+                    : "Native session holds none of the kept conversation",
                 }),
               )
             : session.resumeThread({
@@ -1424,9 +1497,11 @@ export const layer: Layer.Layer<
           runId,
           reason: uncertainDelivery
             ? "uncertain_history_delivery"
-            : resumed._tag === "Success"
-              ? "handoff_budget_exhausted"
-              : "resume_failed",
+            : nativeSessionLacksKeptTurns
+              ? "native_session_lacks_kept_turns"
+              : resumed._tag === "Success"
+                ? "handoff_budget_exhausted"
+                : "resume_failed",
           errorTag: resumed._tag === "Failure" ? resumed.failure._tag : "ContextHandoffBudgetError",
         });
         const replacement = yield* loadFromProvider(
@@ -1875,6 +1950,7 @@ export const layer: Layer.Layer<
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
         loadRunInterruptReason: runControls.loadRunInterruptReason,
         hasWorkspaceMoved: runControls.hasWorkspaceMoved,
+        loadUnsettledWork: runControls.loadUnsettledWork,
         message: {
           messageId: message.id,
           text: userText,

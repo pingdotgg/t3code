@@ -459,7 +459,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
-    readonly startTurn?: Effect.Effect<void>;
+    readonly startTurn?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
     readonly interruptTurn?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
     readonly unloads?: Queue.Queue<string>;
@@ -641,7 +641,7 @@ function layerTest(input: {
   readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
-  readonly startTurn?: Effect.Effect<void>;
+  readonly startTurn?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
   readonly interruptTurn?: Effect.Effect<void>;
   readonly beforeUnload?: Effect.Effect<void>;
   readonly unloads?: Queue.Queue<string>;
@@ -1630,6 +1630,86 @@ it.effect("ProviderSessionManagerV2 gives up on a provider that never confirms a
       assert.equal((yield* Fiber.join(stopping))._tag, "ProviderAdapterInterruptTimeoutError");
     }).pipe(
       Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, interruptTurn: Effect.never })),
+    );
+  }),
+);
+
+// A failed start can leave its native thread gone, as when Claude rejects a resume.
+it.effect("ProviderSessionManagerV2 resumes a thread natively again after its start failed", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-failed-start-resume");
+      const providerSessionId = idAllocator.derive.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = makeProviderThread({
+        idAllocator,
+        threadId,
+        providerSessionId,
+        now,
+        nativeThreadId: `native-${threadId}`,
+      });
+      const resume = runtime.resumeThread({
+        providerThread,
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* resume;
+      yield* resume;
+      assert.equal((yield* Ref.get(state)).resumeCount, 1);
+      const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+      yield* runtime
+        .startTurn({
+          appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+          threadId,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+            text: "turn",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        })
+        .pipe(Effect.flip);
+      yield* resume;
+      assert.equal((yield* Ref.get(state)).resumeCount, 2);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 60_000,
+          startTurn: Effect.fail(
+            new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: CODEX_DRIVER,
+              detail: "query ended before the turn could start",
+            }),
+          ),
+        }),
+      ),
     );
   }),
 );
@@ -3484,6 +3564,14 @@ it.effect.each(["detach", "stream failure", "provider stop", "early close"] as c
                 .detachedThreadId
             : undefined,
           release === "detach" ? threadId : undefined,
+        );
+        // A run ends the work it tracks only when the adapter reported its runtime failing.
+        assert.equal(
+          Exit.isFailure(consumed)
+            ? (Cause.squash(consumed.cause) as ProviderAdapter.ProviderAdapterEventStreamError)
+                .raisedByT3
+            : undefined,
+          Exit.isFailure(consumed) ? true : undefined,
         );
         yield* interrupts(2);
 
