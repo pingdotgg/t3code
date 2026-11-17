@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Probes the server's native SQLite ownership lock.
 import * as NodeSqlite from "node:sqlite";
 
+import { CLI_NPM_PACKAGE_NAME } from "@t3tools/shared/cliRelease";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -92,7 +93,7 @@ export const readLiveHomeOwner = Effect.fn("DesktopHomeOwner.readLiveHomeOwner")
 export const homeOwnedMessage = (owner: Option.Option<HomeOwner>): string =>
   Option.match(owner, {
     onNone: () =>
-      "Another T3 Code server, such as the background service, is using this data directory, or an older background service is set up for it. Stop that server or try `t3 update`. If the older launcher cannot update, run `t3 service uninstall` and optionally reinstall with `t3 service install` from a current CLI. Use `npx t3@latest` if `t3` is missing or outdated, and pass `--base-dir` with the service's T3 home to each command. Then reopen T3 Code. You can also set a separate T3CODE_HOME and pair with the running server.",
+      `Another T3 Code server, such as the background service, is using this data directory, or an older background service is set up for it. Stop that server or try \`t3 update\`. If the older launcher cannot update, run \`t3 service uninstall\` and optionally reinstall with \`t3 service install\` from a current CLI. Use \`npx ${CLI_NPM_PACKAGE_NAME}@latest\` if \`t3\` is missing or outdated, and pass \`--base-dir\` with the service's T3 home to each command. Then reopen T3 Code. You can also set a separate T3CODE_HOME and pair with the running server.`,
     onSome: (owner) => {
       const kind = owner.serviceManaged
         ? "The T3 Code background service"
