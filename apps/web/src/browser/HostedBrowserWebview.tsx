@@ -35,7 +35,7 @@ import { resolveHostedBrowserWebviewWrapperStyle } from "./hostedBrowserWebviewS
 import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
 import { useBrowserLayoutZoomFactor } from "./useBrowserLayoutZoomFactor";
 import { useBrowserViewportResize } from "./useBrowserViewportResize";
-import { isWebviewDomReady, trackWebviewDomReady } from "./webviewDomReady";
+import { isWebviewDomReady, onWebviewDomReady, trackWebviewDomReady } from "./webviewDomReady";
 import {
   INITIAL_WEBVIEW_CRASH_RECOVERY_STATE,
   planWebviewCrashRecovery,
@@ -240,7 +240,7 @@ export function HostedBrowserWebview(props: {
     const relayLaravelToolbar = (event: Event) =>
       relayLaravelToolbarMessage(runtimeTabId, webview, event);
     webview.addEventListener("did-attach", register);
-    webview.addEventListener("dom-ready", register);
+    const stopListeningForReady = onWebviewDomReady(webview, register);
     webview.addEventListener("render-process-gone", recoverGuest);
     webview.addEventListener("focus", dismissHostPopups);
     webview.addEventListener("ipc-message", guestPointerDown);
@@ -250,7 +250,7 @@ export function HostedBrowserWebview(props: {
       disposed = true;
       stopHost?.();
       if (recoveryTimeout !== null) clearTimeout(recoveryTimeout);
-      webview.removeEventListener("dom-ready", register);
+      stopListeningForReady();
       webview.removeEventListener("render-process-gone", recoverGuest);
       webview.removeEventListener("focus", dismissHostPopups);
       webview.removeEventListener("ipc-message", guestPointerDown);

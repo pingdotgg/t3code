@@ -1,6 +1,6 @@
-// Track readiness at the host ref, before toolbar effects can discover the guest.
-// A toolbar can mount after dom-ready, so listening only in the toolbar loses it.
+// Keep guest readiness for consumers that mount after dom-ready.
 const readyWebviews = new WeakSet<EventTarget>();
+const readyListeners = new WeakMap<EventTarget, Set<() => void>>();
 type WebviewElement = EventTarget & { readonly isConnected: boolean };
 
 export function isNewWebviewDocument(event: Event): boolean {
@@ -16,10 +16,23 @@ export function isWebviewDomReady(webview: WebviewElement): boolean {
   return readyWebviews.has(webview);
 }
 
+export function onWebviewDomReady(webview: WebviewElement, listener: () => void): () => void {
+  let listeners = readyListeners.get(webview);
+  if (!listeners) {
+    listeners = new Set();
+    readyListeners.set(webview, listeners);
+  }
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
 export function trackWebviewDomReady(webview: WebviewElement): () => void {
   const reset = () => readyWebviews.delete(webview);
   const ready = () => {
-    if (webview.isConnected) readyWebviews.add(webview);
+    if (!webview.isConnected) return;
+    readyWebviews.add(webview);
+    // Ref reattachment can reorder DOM listeners; notify only after readiness is recorded.
+    readyListeners.get(webview)?.forEach((listener) => listener());
   };
   const navigate = (event: Event) => {
     if (isNewWebviewDocument(event)) reset();

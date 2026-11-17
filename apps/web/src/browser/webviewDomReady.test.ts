@@ -2,6 +2,7 @@ import { expect, it, vi } from "vite-plus/test";
 import {
   executeReadyWebviewScript,
   isWebviewDomReady,
+  onWebviewDomReady,
   trackWebviewDomReady,
 } from "./webviewDomReady";
 
@@ -11,6 +12,29 @@ function guest() {
     executeJavaScript: vi.fn(async (_code: string): Promise<unknown> => "ok"),
   });
 }
+
+it("notifies ready consumers after tracking, even when the host ref reattaches later", () => {
+  const webview = guest();
+  let stopTracking = trackWebviewDomReady(webview);
+  const readiness: boolean[] = [];
+  const stopListening = onWebviewDomReady(webview, () => {
+    readiness.push(isWebviewDomReady(webview));
+    void executeReadyWebviewScript(webview, "test");
+  });
+
+  stopTracking();
+  stopTracking = trackWebviewDomReady(webview);
+  webview.dispatchEvent(new Event("dom-ready"));
+  expect(readiness).toEqual([true]);
+  expect(webview.executeJavaScript).toHaveBeenCalledExactlyOnceWith("test");
+
+  stopListening();
+  stopTracking();
+  stopTracking = trackWebviewDomReady(webview);
+  webview.dispatchEvent(new Event("dom-ready"));
+  expect(readiness).toEqual([true]);
+  stopTracking();
+});
 
 it("resets readiness when the host ref changes and does not inherit another guest's readiness", async () => {
   const first = guest();

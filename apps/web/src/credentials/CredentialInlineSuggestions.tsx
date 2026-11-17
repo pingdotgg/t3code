@@ -9,6 +9,7 @@ import {
   executeReadyWebviewScript,
   isNewWebviewDocument,
   isWebviewDomReady,
+  onWebviewDomReady,
 } from "~/browser/webviewDomReady";
 import {
   credentialInlineCommandScript,
@@ -77,6 +78,7 @@ export function CredentialInlineSuggestions(props: {
     let disposed = false,
       generation = 0;
     let webview: ScriptableWebview | undefined;
+    let stopListeningForReady: (() => void) | undefined;
     const stop = () => {
       generation += 1;
       const current = channel.current;
@@ -140,7 +142,7 @@ export function CredentialInlineSuggestions(props: {
       if (isNewWebviewDocument(event)) reset();
     };
     const detach = () => {
-      webview?.removeEventListener("dom-ready", start);
+      stopListeningForReady?.();
       webview?.removeEventListener("did-start-navigation", navigate);
       webview?.removeEventListener("render-process-gone", reset);
     };
@@ -154,7 +156,7 @@ export function CredentialInlineSuggestions(props: {
       webview = found;
       setGuestElement(found ?? null);
       if (!webview) return;
-      webview.addEventListener("dom-ready", start);
+      stopListeningForReady = onWebviewDomReady(webview, start);
       webview.addEventListener("did-start-navigation", navigate);
       webview.addEventListener("render-process-gone", reset);
       start();
