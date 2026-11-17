@@ -16,7 +16,7 @@ import {
   waitForComposerDraftsLoaded,
 } from "./use-composer-drafts";
 import {
-  dispatchingQueuedMessageIdAtom,
+  dispatchingQueuedMessageIdsAtom,
   editingQueuedMessageIdsAtom,
   holdEditingQueuedMessage,
   releaseEditingQueuedMessage,
@@ -26,7 +26,7 @@ import {
 export async function editPendingThreadMessage(message: QueuedThreadMessage): Promise<boolean> {
   if (
     message.creation ||
-    appAtomRegistry.get(dispatchingQueuedMessageIdAtom) === message.messageId ||
+    appAtomRegistry.get(dispatchingQueuedMessageIdsAtom)[message.messageId] ||
     appAtomRegistry.get(editingQueuedMessageIdsAtom)[message.messageId]
   ) {
     return false;
