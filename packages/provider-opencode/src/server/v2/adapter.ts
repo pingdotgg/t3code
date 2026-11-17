@@ -475,10 +475,15 @@ const agentLimits = (
     );
 };
 
-// Mirrors OpenCode's Wildcard.match: `*` is any run, `?` one character, no case on Windows.
+// Mirrors OpenCode's Wildcard.match: `*` is any run, `?` one character, a trailing ` *` is
+// optional, no case on Windows.
 // Agent config is untrusted; a backtracking RegExp stalls the event loop on runs of `*`, while
 // resuming only from the last `*` keeps this within pattern length times action length.
-const actionMatches = (pattern: string, action: string, caseless: boolean) => {
+const actionMatches = (pattern: string, action: string, caseless: boolean) =>
+  globMatches(pattern, action, caseless) ||
+  (pattern.endsWith(" *") && globMatches(pattern.slice(0, -2), action, caseless));
+
+const globMatches = (pattern: string, action: string, caseless: boolean) => {
   const glob = caseless ? pattern.toLowerCase() : pattern;
   const name = caseless ? action.toLowerCase() : action;
   let at = 0;
