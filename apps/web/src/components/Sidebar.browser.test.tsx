@@ -12,7 +12,7 @@ import {
 } from "@t3tools/contracts";
 import { isMacPlatform } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
@@ -49,6 +49,7 @@ vi.mock(import("../state/server"), async (original) => {
   const keybindings = compileResolvedKeybindingsConfig([
     { key: "mod+1", command: "thread.jump.1" },
     { key: "mod+2", command: "thread.jump.2" },
+    { key: "mod+alt+p", command: "projectFilter.toggle", when: "!terminalFocus" },
   ]);
   return { ...(await original()), primaryServerKeybindingsAtom: Atom.make(keybindings) };
 });
@@ -123,6 +124,42 @@ describe("sidebar header new thread", () => {
       expect(openCommandPalette).not.toHaveBeenCalled();
       expect(startThread).toHaveBeenCalledExactlyOnceWith(currentProjectRef);
     }
+  });
+});
+
+describe("sidebar project filter", () => {
+  it("opens the filter at the pointer and focuses its search from the shortcut", async () => {
+    using stack = new DisposableStack();
+    const previousSettings = getClientSettings();
+    stack.defer(() => __setClientSettingsForTests(previousSettings));
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS });
+    await page.viewport(1200, 900);
+    vi.mocked(useProjects).mockReturnValue([project("alpha"), project("beta")]);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: null,
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: null,
+    });
+    await using _screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+
+    const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 240, clientY: 160 }));
+    await userEvent.keyboard(`{${modifier}>}{Alt>}p{/Alt}{/${modifier}}`);
+
+    await expect.element(page.getByPlaceholder("Search projects...")).toHaveFocus();
+    const popup = document.querySelector('[data-slot="combobox-popup"]');
+    expect(popup).not.toBeNull();
+    const popupRect = popup!.getBoundingClientRect();
+    expect(Math.abs(popupRect.left - 240)).toBeLessThan(2);
+    expect(Math.abs(popupRect.top - 164)).toBeLessThan(2);
   });
 });
 

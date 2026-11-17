@@ -1,6 +1,7 @@
 import { assert, describe, expect, it } from "vite-plus/test";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import {
+  DEFAULT_RESOLVED_KEYBINDINGS,
   compileResolvedKeybindingsConfig,
   parseKeybindingShortcut,
 } from "@t3tools/shared/keybindings";
@@ -10,6 +11,7 @@ import { resolveShortcutCommand } from "../../keybindings";
 import {
   buildKeybindingRows,
   buildWhenVariableOptions,
+  groupKeybindingRows,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
   parseWhenExpressionDraft,
@@ -19,6 +21,19 @@ import {
 } from "./KeybindingsSettings.logic";
 
 describe("KeybindingsSettings.logic", () => {
+  it("lists the project filter shortcut as an editable Navigation binding", () => {
+    const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS);
+    expect(rows.find((row) => row.command === "projectFilter.toggle")).toMatchObject({
+      key: "mod+alt+p",
+      source: "Default",
+    });
+    expect(
+      groupKeybindingRows(rows)
+        .find((group) => group.id === "navigation")
+        ?.rows.some((row) => row.command === "projectFilter.toggle"),
+    ).toBe(true);
+  });
+
   it("keeps sibling row identities when a saved binding moves to the end", () => {
     const bindings = compileResolvedKeybindingsConfig([
       { command: "chat.new", key: "mod+n" },

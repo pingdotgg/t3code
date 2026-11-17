@@ -51,6 +51,12 @@ on macOS and Ctrl on Windows and Linux, including GNOME, KDE Plasma, Niri, and
 Hyprland. If a custom desktop shortcut takes the same keys, choose another binding
 in Settings.
 
+## Filter threads by project
+
+On web and desktop, press `mod+alt+p` to open the sidebar's project filter at
+the pointer and focus its search. It expands a collapsed sidebar first. Change
+the shortcut under **Project Filter: Toggle** in **Settings → Keybindings**.
+
 ## Copy pull request references
 
 With a PR open in the right panel or on the Pull requests page, use `mod+shift+c`
