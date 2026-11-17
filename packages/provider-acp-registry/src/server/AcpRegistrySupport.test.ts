@@ -483,6 +483,40 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  it.effect("launches Devin without its shared daemon", () => {
+    const agent = {
+      ...makeAgent({
+        binary: { "linux-x86_64": { archive: archiveUrl, cmd: "./bin/devin", args: ["acp"] } },
+      }),
+      id: "devin",
+    };
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-devin-" });
+      const commandPath = `${cacheDir}/devin`;
+      yield* fileSystem.writeFileString(commandPath, "#!/bin/sh\n");
+      yield* fileSystem.chmod(commandPath, 0o755);
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      });
+      const resolved = yield* resolver.resolve(
+        settings({ agentId: "devin", commandPath }),
+        "/workspace",
+        {},
+      );
+      expect(resolved.spawn.args).toEqual(["acp", "--process-model", "in-process"]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
   it.effect("installs into T3 home a package and launches its exposed command", () => {
     const agent = makeAgent({
       npx: { package: "@example/acp@V1.2.3", args: ["--stdio"] },

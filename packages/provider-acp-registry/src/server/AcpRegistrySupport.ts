@@ -1922,6 +1922,9 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         );
         args = distribution.args;
       }
+      // Devin's daemon mode starts one daemon shared by every session inside the launching
+      // session's process scope, so releasing that session would end all the others.
+      if (agent.id === "devin") args = [...args, "--process-model", "in-process"];
 
       const baseSpawnEnvironment = {
         ...effectiveEnvironment,
