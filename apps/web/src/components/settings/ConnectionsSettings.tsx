@@ -102,7 +102,7 @@ import {
   desktopNetworkAccessStateAtom,
   refreshDesktopNetworkAccessState,
 } from "~/state/desktopNetworkAccess";
-import { desktopWslStateAtom, refreshDesktopWslState } from "~/state/desktopWslState";
+import { desktopWslAccessStateAtom, refreshDesktopWslState } from "~/state/desktopWslState";
 import { useDesktopUpdateState } from "~/state/desktopUpdate";
 import {
   type EnvironmentPresentation,
@@ -430,7 +430,7 @@ function ConnectionsSettingsContent({
     m,
   );
   const desktopWsl = useEnvironmentQuery(
-    showsAccess && canManageLocalBackend && desktopBridge ? desktopWslStateAtom : null,
+    showsAccess && canManageLocalBackend && desktopBridge ? desktopWslAccessStateAtom : null,
     m,
   );
   const desktopWslState = desktopWsl.data;

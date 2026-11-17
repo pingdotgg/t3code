@@ -575,7 +575,7 @@ const isStale = (result: AsyncResult.AsyncResult<unknown, unknown>, staleTimeMs:
  * TTL skips on a remount; this layer has no TTL (a transform drops it) while `self` keeps the cache.
  * It reads `self` as a dependency, not a subscription, so `self` goes idle with its last reader.
  */
-const revalidateOnMount =
+export const revalidateOnMount =
   (staleTimeMs: number) =>
   <A, E>(
     self: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
