@@ -1,14 +1,19 @@
 import { assert, describe, it } from "@effect/vitest";
 import type { ResourceTelemetryProcess, ResourceTelemetrySnapshot } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as References from "effect/References";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as ServerConfig from "../config.ts";
+import * as NativeTelemetryClient from "./NativeTelemetryClient.ts";
 import * as ProcessGroupMetrics from "./ProcessGroupMetrics.ts";
+import * as ResourceMonitorBinary from "./ResourceMonitorBinary.ts";
 import * as ResourceTelemetry from "./ResourceTelemetry.ts";
 
 const { groupProcesses } = ProcessGroupMetrics;
@@ -115,6 +120,73 @@ describe("ProcessGroupMetrics.layer", () => {
           Layer.succeed(References.MinimumLogLevel, "Debug"),
         ),
       ),
+    );
+  });
+
+  it.effect("warns with the resource monitor's own failure, not its startup state", () => {
+    const warnings: Array<string> = [];
+    const logger = Logger.make(({ logLevel, cause }) => {
+      if (logLevel === "Warn") warnings.push(Cause.pretty(cause));
+    });
+    const config = ServerConfig.layer({
+      cwd: "/",
+      otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+    } as ServerConfig.ServerConfig["Service"]);
+    const nativeClient = NativeTelemetryClient.layer.pipe(
+      Layer.provide(
+        Layer.succeed(ResourceMonitorBinary.ResourceMonitorBinary, {
+          // The real resolver checks the filesystem, so the supervisor is still starting meanwhile.
+          resolve: Effect.sleep("10 millis").pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ResourceMonitorBinary.ResourceMonitorBinaryNotFound({
+                  platform: "linux",
+                  architecture: "x64",
+                  candidates: [],
+                }),
+              ),
+            ),
+          ),
+        }),
+      ),
+      Layer.provide(
+        Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.die("spawned without a binary")),
+        ),
+      ),
+      Layer.provide(
+        Layer.succeed(
+          SecureRandom.SecureRandom,
+          SecureRandom.make(() => new Uint8Array(16)),
+        ),
+      ),
+      Layer.provide(config),
+    );
+    return Effect.gen(function* () {
+      const native = yield* NativeTelemetryClient.NativeTelemetryClient;
+      const telemetry = {
+        refresh: native.sampleNow.pipe(
+          Effect.mapError(
+            (cause) =>
+              new ResourceTelemetry.ResourceTelemetryRefreshFailed({ operation: "refresh", cause }),
+          ),
+        ),
+      } as unknown as ResourceTelemetry.ResourceTelemetry["Service"];
+      yield* Layer.build(
+        ProcessGroupMetrics.layer.pipe(
+          Layer.provide(Layer.succeed(ResourceTelemetry.ResourceTelemetry, telemetry)),
+          Layer.provide(config),
+        ),
+      );
+      yield* TestClock.adjust("3 minutes");
+
+      assert.strictEqual(warnings.length, 1);
+      assert.include(warnings[0], "Resource monitor binary was not found for linux/x64.");
+    }).pipe(
+      Effect.provide(nativeClient),
+      Effect.scoped,
+      Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
     );
   });
 });
