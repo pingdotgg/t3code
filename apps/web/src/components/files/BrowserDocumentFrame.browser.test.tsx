@@ -5,7 +5,7 @@ import { page } from "vite-plus/test/browser";
 import "~/index.css";
 import { render } from "../../../test/render";
 
-import { HtmlRenderDocument } from "./BrowserDocumentFrame";
+import { BrowserDocumentFrame, HtmlRenderDocument } from "./BrowserDocumentFrame";
 
 const sizeChanged = (height: number) => ({
   jsonrpc: "2.0",
@@ -218,4 +218,55 @@ it("keeps the first and last selected card rings inside the fitted renderer fram
     expect(bounds.bottom).toBeLessThanOrEqual(bounds.viewportHeight);
     expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.viewportWidth);
   }
+});
+
+describe("BrowserDocumentFrame", () => {
+  it("keeps a page on screen until its next revision has loaded", async () => {
+    using pages = (() => {
+      const urls = ["first", "second", "third"].map((name) =>
+        URL.createObjectURL(new Blob([`<p>${name}</p>`], { type: "text/html" })),
+      );
+      return { urls, [Symbol.dispose]: () => urls.forEach((url) => URL.revokeObjectURL(url)) };
+    })();
+    const [first, second, third] = pages.urls as [string, string, string];
+    const frame = (revision: string, src: string) => (
+      <div className="flex h-75 w-100 flex-col">
+        <BrowserDocumentFrame
+          src={src}
+          title="Report"
+          pdf={false}
+          documentKey={`report:${revision}`}
+          documentId="report"
+        />
+      </div>
+    );
+    await using screen = await render(frame("1", first));
+    const srcs = () => Array.from(screen.container.querySelectorAll("iframe"), (f) => f.src);
+    const onScreen = () => {
+      const box = screen.container.getBoundingClientRect();
+      const hit = document.elementFromPoint(box.left + box.width / 2, box.top + 10);
+      return hit instanceof HTMLIFrameElement ? hit.src : null;
+    };
+    await vi.waitFor(() => expect(onScreen()).toBe(first));
+
+    // The incoming frame cannot have loaded when it is inserted, so the current page must cover it.
+    const atInsertion = new Promise<string | null>((resolve) => {
+      const observer = new MutationObserver(() => {
+        if (!srcs().includes(second)) return;
+        observer.disconnect();
+        resolve(onScreen());
+      });
+      observer.observe(screen.container, { childList: true, subtree: true });
+    });
+    await screen.rerender(frame("2", second));
+    expect(await atInsertion).toBe(first);
+    await vi.waitFor(() => expect(srcs()).toEqual([second]));
+    expect(onScreen()).toBe(second);
+
+    await screen.rerender(frame("3", third));
+    await screen.rerender(frame("2", second));
+    expect(srcs(), "returning to the shown revision kept the pending frame").toEqual([second]);
+    await screen.rerender(frame("3", third));
+    await vi.waitFor(() => expect(onScreen()).toBe(third));
+  });
 });

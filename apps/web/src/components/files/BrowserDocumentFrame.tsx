@@ -157,21 +157,86 @@ export function BrowserDocumentFrame(props: {
       className="min-h-0 flex-1"
     />
   ) : (
-    <FileDocument key={key} src={props.src} title={props.title} />
+    <FileDocument
+      key={props.documentId ?? key}
+      documentKey={key}
+      src={props.src}
+      title={props.title}
+    />
   );
 }
 
-// URL renewals must not discard form input or scroll; a new key mounts a fresh document.
-function FileDocument(props: { readonly src: string; readonly title: string }) {
-  const [src] = useState(props.src);
+interface FileDocumentRevision {
+  readonly key: string;
+  readonly src: string;
+}
+
+interface FileDocumentFrames {
+  readonly shown: FileDocumentRevision;
+  readonly next: FileDocumentRevision | null;
+}
+
+// Identity, not key, so a late load from a replaced frame cannot uncover a newer unloaded one.
+const showRevision =
+  (next: FileDocumentRevision) =>
+  (current: FileDocumentFrames): FileDocumentFrames =>
+    current.next === next ? { shown: next, next: null } : current;
+
+// A page whose load never fires (a stalled subresource) must not pin the previous revision.
+const FILE_DOCUMENT_SWAP_TIMEOUT_MS = 5_000;
+
+// URL renewals keep a revision's first URL, so they do not discard form input or scroll. A new
+// revision loads beneath the page on screen and replaces it once painted, so no blank frame shows.
+function FileDocument(props: {
+  readonly documentKey: string;
+  readonly src: string;
+  readonly title: string;
+}) {
+  const [frames, setFrames] = useState<FileDocumentFrames>(() => ({
+    shown: { key: props.documentKey, src: props.src },
+    next: null,
+  }));
+  if ((frames.next ?? frames.shown).key !== props.documentKey) {
+    setFrames({
+      shown: frames.shown,
+      next:
+        frames.shown.key === props.documentKey ? null : { key: props.documentKey, src: props.src },
+    });
+  }
+  const { next } = frames;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- swaps in a revision whose load event never arrives
+  useEffect(() => {
+    if (next === null) return;
+    const timer = setTimeout(() => setFrames(showRevision(next)), FILE_DOCUMENT_SWAP_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [next]);
+  // The shown frame stays last so it paints on top and is never moved, which would reload it.
   return (
-    <iframe
-      src={src}
-      title={props.title}
-      className="min-h-0 flex-1 border-0"
-      style={{ backgroundColor: "Canvas" }}
-      sandbox="allow-scripts allow-forms allow-popups allow-downloads"
-    />
+    <div className="relative min-h-0 flex-1">
+      {[next, frames.shown].map((revision) =>
+        revision === null ? null : (
+          <iframe
+            key={revision.key}
+            src={revision.src}
+            title={props.title}
+            className="absolute inset-0 size-full border-0"
+            style={{ backgroundColor: "Canvas" }}
+            sandbox="allow-scripts allow-forms allow-popups allow-downloads"
+            inert={revision === next}
+            aria-hidden={revision === next ? true : undefined}
+            onLoad={
+              revision === next
+                ? // Two frames let the browser paint the incoming page before it is uncovered.
+                  () =>
+                    requestAnimationFrame(() =>
+                      requestAnimationFrame(() => setFrames(showRevision(revision))),
+                    )
+                : undefined
+            }
+          />
+        ),
+      )}
+    </div>
   );
 }
 
