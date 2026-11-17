@@ -61,7 +61,7 @@ struct Limit {
     min_length: Option<usize>,
     max_length: Option<usize>,
     items: Option<Box<Limit>>,
-    pattern: Option<(String, Regex)>,
+    pattern: Option<(String, Pattern)>,
     max_properties: Option<usize>,
     int: bool,
     minimum: Option<f64>,
@@ -69,17 +69,75 @@ struct Limit {
     max_area: Option<u64>,
 }
 
+/// A payload pattern. Rust's regex has no lookaround, so a leading negative lookahead
+/// (`^(?!X)rest`, as T3's theme ids use) becomes a second regex the value must not match.
+struct Pattern {
+    allow: Regex,
+    deny: Option<Regex>,
+}
+
+impl Pattern {
+    fn is_match(&self, text: &str) -> bool {
+        self.allow.is_match(text) && !self.deny.as_ref().is_some_and(|deny| deny.is_match(text))
+    }
+}
+
+/// The index of the `)` that closes the group opened just before `from`.
+fn group_end(source: &str, from: usize) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut escaped = false;
+    let mut class = false;
+    for (index, c) in source[from..].char_indices() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' => escaped = true,
+            '[' if !class => class = true,
+            ']' if class => class = false,
+            '(' if !class => depth += 1,
+            ')' if !class => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(from + index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn compile_pattern(source: &str) -> Result<Pattern, String> {
+    const LOOKAHEAD: &str = "^(?!";
+    if source.starts_with(LOOKAHEAD)
+        && let Some(end) = group_end(source, LOOKAHEAD.len())
+    {
+        let negated = &source[LOOKAHEAD.len()..end];
+        let after = &source[end + 1..];
+        let deny = Regex::new(&format!("^(?:{negated})")).map_err(|e| e.to_string())?;
+        let allow = Regex::new(&format!("^{after}")).map_err(|e| e.to_string())?;
+        return Ok(Pattern {
+            allow,
+            deny: Some(deny),
+        });
+    }
+    Regex::new(source)
+        .map(|allow| Pattern { allow, deny: None })
+        .map_err(|e| e.to_string())
+}
+
 impl Limit {
     /// Compiles the patterns. A pattern Rust's regex cannot compile is dropped with a warning;
     /// the test `every_generated_pattern_compiles` keeps that from shipping.
     fn build(raw: RawLimit) -> Self {
-        let pattern = raw.pattern.and_then(|source| match Regex::new(&source) {
-            Ok(regex) => Some((source, regex)),
-            Err(error) => {
-                eprintln!("conn-server: payload pattern {source:?} does not compile: {error}");
-                None
-            }
-        });
+        let pattern = raw
+            .pattern
+            .and_then(|source| match compile_pattern(&source) {
+                Ok(regex) => Some((source, regex)),
+                Err(error) => {
+                    eprintln!("conn-server: payload pattern {source:?} does not compile: {error}");
+                    None
+                }
+            });
         let mut fields: Vec<_> = raw
             .fields
             .into_iter()
@@ -319,7 +377,7 @@ mod tests {
             serde_json::from_str(generated::LIMITS).expect("generated limits parse");
         fn walk(limit: &RawLimit) {
             if let Some(source) = &limit.pattern {
-                Regex::new(source).expect("pattern compiles");
+                compile_pattern(source).expect("pattern compiles");
             }
             limit.fields.values().for_each(walk);
             limit.variants.values().for_each(walk);
@@ -329,6 +387,18 @@ mod tests {
         }
         raw.values().for_each(walk);
         assert!(raw.contains_key("terminal.open") && raw.contains_key("assets.createUrl"));
+    }
+
+    #[test]
+    fn a_leading_negative_lookahead_refuses_what_it_names() {
+        let pattern =
+            compile_pattern("^(?!(?:system|light|dark)$)[a-z0-9](?:[a-z0-9-]{0,47})$").unwrap();
+        for ok in ["ocean", "dark-blue", "lightning", "s"] {
+            assert!(pattern.is_match(ok), "{ok}");
+        }
+        for refused in ["system", "light", "dark", "Dark", "-x", ""] {
+            assert!(!pattern.is_match(refused), "{refused}");
+        }
     }
 
     #[derive(Deserialize)]
