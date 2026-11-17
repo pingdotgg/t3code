@@ -12,7 +12,7 @@ import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretReso
 import * as ServerSettings from "../serverSettings.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
 import { localSynthesisLanguage, localSynthesisRuntime } from "./LocalSpeechSynthesis.ts";
-import { pcm16Mono } from "./synthesisAudio.ts";
+import { encodeMp3, pcm16Mono } from "./synthesisAudio.ts";
 
 it("encodes model samples as clipped mono 16-bit PCM", () => {
   const pcm = pcm16Mono(Float32Array.of(0, 1, -1, 2, -2, Number.NaN, 0.5), 1);
@@ -21,12 +21,22 @@ it("encodes model samples as clipped mono 16-bit PCM", () => {
 });
 
 // An MPEG audio frame header's version bits and sample-rate index give the encoded rate.
-// At 48 kbps, LAME keeps 24 kHz input and resamples 44.1 kHz input to 32 kHz.
 function mp3SampleRate(bytes: Uint8Array) {
   expect(bytes[0]).toBe(0xff);
   const rates = { 0: [11025, 12000, 8000], 2: [22050, 24000, 16000], 3: [44100, 48000, 32000] };
   return rates[((bytes[1]! >> 3) & 3) as 0 | 2 | 3][(bytes[2]! >> 2) & 3];
 }
+
+// lamejs's resampler turns speech into near-silence, so the encoded rate must match the input.
+it.effect.each([8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000])(
+  "encodes %i Hz speech without resampling it",
+  (rate) =>
+    Effect.gen(function* () {
+      const pcm = new Uint8Array(rate * 2);
+      const [first] = yield* Stream.runCollect(Stream.take(encodeMp3(pcm, rate), 1));
+      expect(mp3SampleRate(first!)).toBe(rate);
+    }),
+);
 
 it.each([
   ["en-US", "en"],
@@ -167,7 +177,7 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
           upstream.mockClear();
         }
         const result = yield* synthesize(provider, request);
-        if (provider === "openrouter") expect(mp3SampleRate(result)).toBe(32000);
+        if (provider === "openrouter") expect(mp3SampleRate(result)).toBe(44100);
         else expect([...result]).toEqual([73, 68, 51, 1]);
         const [url, init] = upstream.mock.calls[0]!;
         expect(String(url)).toBe(
@@ -230,7 +240,7 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
           expect(JSON.parse(String(upstream.mock.calls.at(-1)?.[1]?.body)).voice).toBe("reader");
           for (const [model, expectedRate] of [
             ["google/gemini-tts", 24000],
-            ["heygen/heygen-voice-1", 32000],
+            ["heygen/heygen-voice-1", 44100],
           ] as const) {
             upstream.mockResolvedValueOnce(
               new Response(Uint8Array.of(0, 1), { headers: { "content-type": "audio/pcm" } }),

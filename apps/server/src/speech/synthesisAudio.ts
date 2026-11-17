@@ -3,8 +3,14 @@ import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
 export const MAX_SYNTHESIS_BYTES = 32 * 1024 * 1024;
-/** Mono speech stays intelligible here at a tenth of 16-bit PCM's size. */
-export const MP3_KBPS = 48;
+
+/**
+ * The lowest bitrate at which LAME keeps the input rate: lamejs's resampler turns speech into
+ * near-silence. Self-contained so the synthesis worker can inline it with `toString()`.
+ */
+export function mp3Kbps(sampleRate: number) {
+  return sampleRate > 32000 ? 64 : 48;
+}
 const MP3_SAMPLE_RATES = [8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000];
 // About half a second at 44.1 kHz, which encodes in about 15 ms.
 export const ENCODE_SLICE_SAMPLES = 1152 * 20;
@@ -44,7 +50,7 @@ export function encodeMp3(
   for (let index = 0; index < samples.length; index++)
     samples[index] = view.getInt16(index * 2, true) / 0x8000;
   const mono = pcm16Mono(samples, channels);
-  const encoder = new Mp3Encoder(1, rate, MP3_KBPS);
+  const encoder = new Mp3Encoder(1, rate, mp3Kbps(rate));
   const slices = Math.ceil(mono.length / ENCODE_SLICE_SAMPLES);
   return Stream.range(0, slices - 1).pipe(
     Stream.mapEffect((slice) =>

@@ -2,7 +2,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeSea from "node:sea";
 import { bindAudioCpp, type AudioCppSynthesisRequest } from "@t3tools/audio-cpp";
-import { ENCODE_SLICE_SAMPLES, MP3_KBPS, pcm16Mono } from "./synthesisAudio.ts";
+import { ENCODE_SLICE_SAMPLES, mp3Kbps, pcm16Mono } from "./synthesisAudio.ts";
 
 // Inlined like the dictation worker, so packaged builds need no separate worker artifact.
 const entry = `
@@ -12,6 +12,7 @@ const entry = `
   const { pathToFileURL } = await import("node:url");
   const bindAudioCpp = ${bindAudioCpp.toString()};
   const pcm16Mono = ${pcm16Mono.toString()};
+  const mp3Kbps = ${mp3Kbps.toString()};
   const packageJson = (name) => {
     const path = findPackageJSON(name, baseUrl);
     if (!path) throw new Error("The " + name + " package is unavailable.");
@@ -53,7 +54,7 @@ const entry = `
           while (!cancelled) {
             const audio = stream.next();
             if (!audio) break;
-            encoder ??= new lame.Mp3Encoder(1, audio.sampleRate, message.kbps);
+            encoder ??= new lame.Mp3Encoder(1, audio.sampleRate, mp3Kbps(audio.sampleRate));
             const pcm = pcm16Mono(audio.samples, audio.channels);
             // Encoding a text chunk takes longer than synthesizing it, so send it slice by slice.
             for (let start = 0; start < pcm.length && !cancelled; start += ${ENCODE_SLICE_SAMPLES}) {
@@ -193,7 +194,7 @@ export async function loadLocalSynthesisModel(options: {
     stream: async (request: AudioCppSynthesisRequest, onAudio: (bytes: Uint8Array) => void) => {
       receive = onAudio;
       try {
-        await send({ kind: "synthesize", request, kbps: MP3_KBPS });
+        await send({ kind: "synthesize", request });
       } finally {
         receive = undefined;
       }
