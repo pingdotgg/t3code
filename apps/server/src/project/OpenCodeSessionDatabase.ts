@@ -19,8 +19,8 @@ export interface OpenCodeSession {
 type Row = Record<string, unknown>;
 
 const MAX_SESSIONS = 5_000;
-const MAX_MESSAGES_PER_SESSION = 2_000;
-const MAX_MESSAGE_CHARS = 256_000;
+const MAX_MESSAGES_PER_SESSION = 200;
+const MAX_MESSAGE_CHARS = 100_000;
 
 function parseJson(value: unknown): Row | null {
   if (typeof value !== "string") return null;
@@ -61,9 +61,11 @@ function isoTime(value: unknown, fallback: string): string {
 }
 
 function modelName(value: unknown): string | null {
-  if (typeof value === "string" && value.trim()) return value.trim();
-  if (value === null || typeof value !== "object") return null;
-  const model = value as Row;
+  const decoded = typeof value === "string" ? parseJson(value) : value;
+  if (decoded === null || typeof decoded !== "object") {
+    return typeof value === "string" && value.trim() ? value.trim() : null;
+  }
+  const model = decoded as Row;
   const id = typeof model.id === "string" ? model.id : null;
   const provider = typeof model.providerID === "string" ? model.providerID : null;
   return id === null ? null : provider === null ? id : `${provider}/${id}`;
@@ -103,8 +105,9 @@ function readV2(db: NodeSqlite.DatabaseSync): OpenCodeSession[] {
   const sessions = db.prepare(
     `SELECT * FROM session_v2 ORDER BY "${updatedColumn}" DESC LIMIT ?`,
   ).all(MAX_SESSIONS) as Row[];
+  const messageOrderColumn = pickColumn(messageColumns, "seq", "time_created") ?? "rowid";
   const readMessages = db.prepare(
-    `SELECT * FROM session_message WHERE "${messageSessionColumn}" = ? ORDER BY seq ASC LIMIT ?`,
+    `SELECT * FROM session_message WHERE "${messageSessionColumn}" = ? ORDER BY "${messageOrderColumn}" ASC LIMIT ?`,
   );
   return sessions.flatMap((session): OpenCodeSession[] => {
     if (typeof session[idColumn] !== "string" ||
