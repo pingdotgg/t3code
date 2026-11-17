@@ -1,6 +1,12 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { PGlite } from "@electric-sql/pglite";
+import { drizzle } from "drizzle-orm/pglite";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import type { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 
 import * as RelayDb from "../db.ts";
@@ -64,44 +70,88 @@ describe("EnvironmentLinks", () => {
     );
   });
 
-  it.effect("updates Live Activities only on the matching active link", () => {
-    const fakeDb = {
-      update: (table: unknown) => {
-        expect(table).toBe(relayEnvironmentLinks);
-        return {
-          set: (values: Record<string, unknown>) => {
-            expect(values).toEqual({
-              liveActivitiesEnabled: false,
-              updatedAt: expect.any(String),
-            });
-            return {
-              where: (condition: unknown) => {
-                const query = new PgDialect().sqlToQuery(condition as never);
-                expect(query.params).toEqual(["user-1", "env-1", "public-key-1"]);
-                expect(query.sql).toContain('"relay_environment_links"."revoked_at" is null');
-                return { returning: () => Effect.succeed([]) };
-              },
-            };
-          },
-        };
-      },
-    } as unknown as RelayDb.RelayDb["Service"];
+  it.effect("updates Live Activities only on the matching active link", () =>
+    Effect.gen(function* () {
+      const pg = yield* Effect.acquireRelease(
+        Effect.promise(() => PGlite.create()),
+        (client) => Effect.promise(() => client.close()),
+      );
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const migrationsDir = yield* path.fromFileUrl(
+        new URL("../../migrations/postgres/", import.meta.url),
+      );
+      for (const name of (yield* fs.readDirectory(migrationsDir)).toSorted()) {
+        const migration = yield* fs.readFileString(`${migrationsDir}${name}/migration.sql`);
+        yield* Effect.promise(() => pg.exec(migration));
+      }
 
-    return Effect.gen(function* () {
-      const links = yield* EnvironmentLinks.EnvironmentLinks;
-      const updated = yield* links.updateLiveActivityPreference({
-        userId: "user-1",
-        environmentId: "env-1",
-        environmentPublicKey: "public-key-1",
-        liveActivitiesEnabled: false,
-      });
-      expect(updated).toBe(false);
-    }).pipe(
-      Effect.provide(
-        EnvironmentLinks.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),
-      ),
-    );
-  });
+      const db = drizzle({ client: pg });
+      const matching = { userId: "user-1", environmentId: "env-1", environmentPublicKey: "key-1" };
+      const revoked = { ...matching, environmentId: "revoked-env" };
+      const timestamp = "2026-01-01T00:00:00.000Z";
+      const rows = [
+        matching,
+        { ...matching, userId: "user-2" },
+        { ...matching, environmentId: "env-2" },
+        { ...matching, userId: "user-3", environmentPublicKey: "key-2" },
+        { ...revoked, revokedAt: timestamp },
+      ];
+      yield* Effect.promise(() =>
+        db.insert(relayEnvironmentLinks).values(
+          rows.map((row) => ({
+            ...row,
+            endpointHttpBaseUrl: "https://environment.test",
+            endpointWsBaseUrl: "wss://environment.test",
+            endpointProviderKind: "cloudflare_tunnel",
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          })),
+        ),
+      );
+      // PGlite returns promises where the production Drizzle driver returns Effects.
+      const effectDb = {
+        update: (table: typeof relayEnvironmentLinks) => ({
+          set: (values: Partial<typeof relayEnvironmentLinks.$inferInsert>) => ({
+            where: (condition: SQL | undefined) => ({
+              returning: (fields: { environmentId: typeof relayEnvironmentLinks.environmentId }) =>
+                Effect.promise(() =>
+                  db.update(table).set(values).where(condition).returning(fields),
+                ),
+            }),
+          }),
+        }),
+      } as unknown as RelayDb.RelayDb["Service"];
+      const links = yield* Effect.service(EnvironmentLinks.EnvironmentLinks).pipe(
+        Effect.provide(
+          EnvironmentLinks.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, effectDb))),
+        ),
+      );
+      expect(
+        yield* links.updateLiveActivityPreference({ ...matching, liveActivitiesEnabled: false }),
+      ).toBe(true);
+      expect(
+        yield* links.updateLiveActivityPreference({
+          ...matching,
+          environmentPublicKey: "key-2",
+          liveActivitiesEnabled: false,
+        }),
+      ).toBe(false);
+      expect(
+        yield* links.updateLiveActivityPreference({ ...revoked, liveActivitiesEnabled: false }),
+      ).toBe(false);
+
+      const updated = yield* Effect.promise(() => db.select().from(relayEnvironmentLinks));
+      expect(
+        updated
+          .filter((row) => !row.liveActivitiesEnabled)
+          .map(({ userId, environmentId }) => ({
+            userId,
+            environmentId,
+          })),
+      ).toEqual([{ userId: matching.userId, environmentId: matching.environmentId }]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
   it.effect("revokes only the active link owned by the requesting user", () => {
     const updateValues: Array<Record<string, unknown>> = [];
