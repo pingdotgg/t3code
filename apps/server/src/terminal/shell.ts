@@ -1,3 +1,6 @@
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+
 export interface ShellCandidate {
   shell: string;
   args?: string[];
@@ -10,10 +13,10 @@ export function defaultShellResolver(platform: NodeJS.Platform, env: NodeJS.Proc
   return env.SHELL ?? "bash";
 }
 
-function normalizeShellCommand(
+const normalizeShellCommand = Effect.fn("terminal.normalizeShellCommand")(function* (
   value: string | undefined,
   platform: NodeJS.Platform,
-): string | null {
+) {
   if (!value) return null;
   const trimmed = value.trim();
   if (trimmed.length === 0) return null;
@@ -22,10 +25,24 @@ function normalizeShellCommand(
     return trimmed;
   }
 
-  const firstToken = trimmed.split(/\s+/g)[0]?.trim();
-  if (!firstToken) return null;
-  return firstToken.replace(/^['"]|['"]$/g, "");
-}
+  const quoted = /^(['"])(.*?)\1(?:\s|$)/.exec(trimmed);
+  if (quoted) return quoted[2] || null;
+
+  if (trimmed.startsWith("/") && /\s/.test(trimmed)) {
+    const fs = yield* FileSystem.FileSystem;
+    const ends = [...trimmed.matchAll(/\s+/g)].map((match) => match.index);
+    // Unquoted paths are ambiguous; prefer the longest existing file over flag syntax.
+    for (const end of [trimmed.length, ...ends.reverse()]) {
+      const candidate = trimmed.slice(0, end);
+      const info = yield* fs
+        .stat(candidate)
+        .pipe(Effect.catchTags({ PlatformError: () => Effect.succeed(null) }));
+      if (info?.type === "File") return candidate;
+    }
+  }
+
+  return trimmed.split(/\s+(?=-)/)[0]?.replace(/^['"]|['"]$/g, "") || null;
+});
 
 function basenameForPlatform(command: string, platform: NodeJS.Platform): string {
   const normalized =
@@ -46,6 +63,10 @@ function joinWindowsPath(...parts: ReadonlyArray<string>): string {
     .join("\\");
 }
 
+// PowerShell decodes native output with the console code page (often OEM 437), mangling UTF-8.
+const POWERSHELL_UTF8_SETUP =
+  "[Console]::OutputEncoding = $OutputEncoding = [System.Text.UTF8Encoding]::new()";
+
 function shellCandidateFromCommand(
   command: string | null,
   platform: NodeJS.Platform,
@@ -53,7 +74,10 @@ function shellCandidateFromCommand(
   if (!command || command.length === 0) return null;
   const shellName = basenameForPlatform(command, platform).toLowerCase();
   if (platform === "win32" && (shellName === "pwsh.exe" || shellName === "powershell.exe")) {
-    return { shell: command, args: ["-NoLogo"] };
+    return { shell: command, args: ["-NoLogo", "-NoExit", "-Command", POWERSHELL_UTF8_SETUP] };
+  }
+  if (platform === "win32" && (shellName === "bash.exe" || shellName === "bash")) {
+    return { shell: command, args: ["--login", "-i"] };
   }
   if (platform !== "win32" && shellName === "zsh") {
     return { shell: command, args: ["-o", "nopromptsp"] };
@@ -101,18 +125,22 @@ function uniqueShellCandidates(candidates: Array<ShellCandidate | null>): ShellC
   return ordered;
 }
 
-export function resolveShellCandidates(
+export const resolveShellCandidates = Effect.fn("terminal.resolveShellCandidates")(function* (
   shellResolver: () => string,
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
-): ShellCandidate[] {
+  terminalShell: string | undefined,
+) {
+  // This is an executable path, not a command line; spaces belong to the path.
+  const configured = shellCandidateFromCommand(terminalShell?.trim() || null, platform);
   const requested = shellCandidateFromCommand(
-    normalizeShellCommand(shellResolver(), platform),
+    yield* normalizeShellCommand(shellResolver(), platform),
     platform,
   );
 
   if (platform === "win32") {
     return uniqueShellCandidates([
+      configured,
       requested,
       shellCandidateFromCommand("pwsh.exe", platform),
       shellCandidateFromCommand(windowsPowerShellPath(env), platform),
@@ -124,8 +152,9 @@ export function resolveShellCandidates(
   }
 
   return uniqueShellCandidates([
+    configured,
     requested,
-    shellCandidateFromCommand(normalizeShellCommand(env.SHELL, platform), platform),
+    shellCandidateFromCommand(yield* normalizeShellCommand(env.SHELL, platform), platform),
     shellCandidateFromCommand("/bin/zsh", platform),
     shellCandidateFromCommand("/bin/bash", platform),
     shellCandidateFromCommand("/bin/sh", platform),
@@ -133,4 +162,4 @@ export function resolveShellCandidates(
     shellCandidateFromCommand("bash", platform),
     shellCandidateFromCommand("sh", platform),
   ]);
-}
+});

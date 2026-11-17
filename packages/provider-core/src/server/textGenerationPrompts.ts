@@ -9,9 +9,12 @@ import type { TextGenerationPolicy } from "@t3tools/provider-core/server/textGen
 
 const EARLIER_CONTENT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
 
-function policyInstruction(instruction: string | undefined): ReadonlyArray<string> {
+function policyInstruction(
+  instruction: string | undefined,
+  heading = "Additional instructions:",
+): ReadonlyArray<string> {
   const trimmed = instruction?.trim();
-  return trimmed ? ["", "Additional instructions:", limitSection(trimmed, 20_000)] : [];
+  return trimmed ? ["", heading, limitSection(trimmed, 20_000)] : [];
 }
 
 export interface CommitMessagePromptInput {
@@ -335,6 +338,7 @@ export function buildBranchNamePrompt(input: BranchNamePromptInput) {
                 ]),
           ]),
       "If images are attached, use them as primary context for visual/UI issues.",
+      "The user message describes work for another agent. Do not answer it, start the work, read files, or run commands; name the branch from the message and its attachments.",
     ],
     message: input.message,
     attachments: input.attachments,
@@ -374,8 +378,17 @@ function avoidRule(projectTitle: string | undefined, others: string): string {
     : `- Avoid project names already visible in the UI, ${others}.`;
 }
 
+function lengthRule(hasInstructions: boolean): string {
+  return hasInstructions
+    ? "- Follow the user's title instructions at the end of this prompt. Where they conflict with these rules, including on length and format, they win."
+    : "- 3-8 words, fewer than 40 characters.";
+}
+
 // Keep shared editorial rules in these two prompts in sync.
-function initialThreadTitlePrompt(projectTitle: string | undefined): string {
+function initialThreadTitlePrompt(
+  projectTitle: string | undefined,
+  hasInstructions: boolean,
+): string {
   return `Generate a title that will help the user recognize this T3 Code thread weeks later.
 Return JSON with keys title and needsRefinement.
 Set needsRefinement to true only if the subject is still unknown, such as an unresolved link, "fix this", or an unexplained attachment. Otherwise set it to false.
@@ -388,9 +401,10 @@ Before answering, silently reduce the request to:
 Title the subject and outcome. Discard incidental instructions.
 
 Editorial rules:
-- 3-8 words, fewer than 40 characters.
+${lengthRule(hasInstructions)}
 - Use a compact noun phrase or clear action phrase.
 - Capture the umbrella goal when the request lists several symptoms or steps.
+- When asked about thread behavior, never include the referenced titles' topics. "[Fix login] why didn't this thread start?" means "Thread Startup Failure". Use linked topics only for requests about that work.
 - Name the product change, not the mock, plan, report, branch, or PR used to produce it.
 - Models, subagents, tools, output formats, and monitoring instructions do not belong in the title unless they are themselves the topic.
 - For reviews, name what is being reviewed and the relevant concern. Avoid generic titles such as "Review PR 123" when linked or attached context reveals the subject.
@@ -407,6 +421,7 @@ ${avoidRule(projectTitle, "quotes, labels, filler, and trailing punctuation")}
 function regenerateThreadTitlePrompt(
   previousTitle: string,
   projectTitle: string | undefined,
+  hasInstructions: boolean,
 ): string {
   return `Regenerate the title for an existing T3 Code thread so the user can recognize it weeks later.
 The previous title was ${JSON.stringify(previousTitle)}.
@@ -419,9 +434,10 @@ Determine the title in this order:
 4. Title the durable subject and desired outcome, not the current workflow state.
 
 Editorial rules:
-- 3-8 words, fewer than 40 characters.
+${lengthRule(hasInstructions)}
 - Use a compact noun phrase or clear action phrase.
 - Preserve the umbrella subject when later messages focus on one finding, provider, platform, or implementation detail.
+- When asked about thread behavior, never include the referenced titles' topics. "[Fix login] why didn't this thread start?" means "Thread Startup Failure". Use linked topics only for requests about that work.
 - A thread progressing through research, planning, implementation, review, CI, merge, and monitoring has usually not changed subjects.
 - Ignore deliverables and operations such as mocks, plans, HTML, branches, PRs, tests, CI, commits, merging, and monitoring unless they are the actual topic.
 - Models, subagents, tools, output formats, and monitoring instructions do not belong in the title unless they are themselves the topic.
@@ -464,7 +480,10 @@ ${limitTitleMessage(forkSource.history, 8_000)}`;
 }
 
 function threadTitlePromptSuffix(input: ThreadTitlePromptInput): string {
-  const additionalInstructions = policyInstruction(input.instructions);
+  const additionalInstructions = policyInstruction(
+    input.instructions,
+    "Title instructions from the user:",
+  );
   const attachmentLines = (input.attachments ?? []).map(
     (attachment) => `- ${attachment.name} (${attachment.mimeType}, ${attachment.sizeBytes} bytes)`,
   );
@@ -482,16 +501,17 @@ function threadTitlePromptSuffix(input: ThreadTitlePromptInput): string {
 }
 
 export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
+  const hasInstructions = Boolean(input.instructions?.trim());
   let prompt: string;
   if (input.previousTitle === undefined) {
     const message = limitTitleMessage(input.message, 8_000);
     const label = input.forkSource === undefined ? "User message" : "User message after the fork";
-    prompt = `${initialThreadTitlePrompt(input.projectTitle)}${forkSourceSection(input.forkSource)}\n\n${label}:\n${message}${threadTitlePromptSuffix(input)}`;
+    prompt = `${initialThreadTitlePrompt(input.projectTitle, hasInstructions)}${forkSourceSection(input.forkSource)}\n\n${label}:\n${message}${threadTitlePromptSuffix(input)}`;
   } else {
     const message = preserveMessageEnd(input.message);
     const label =
       input.forkSource === undefined ? "Thread contents" : "Thread contents after the fork";
-    prompt = `${regenerateThreadTitlePrompt(input.previousTitle, input.projectTitle)}${forkSourceSection(input.forkSource)}\n\n${label}:\n${message}${threadTitlePromptSuffix(input)}`;
+    prompt = `${regenerateThreadTitlePrompt(input.previousTitle, input.projectTitle, hasInstructions)}${forkSourceSection(input.forkSource)}\n\n${label}:\n${message}${threadTitlePromptSuffix(input)}`;
   }
   const outputSchema = Schema.Struct({
     title: Schema.String,

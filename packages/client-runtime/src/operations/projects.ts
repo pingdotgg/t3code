@@ -5,12 +5,13 @@ import type {
   ProjectMutation,
   ProjectId,
   ServerConfig,
+  ServerSettings,
   SourceControlDiscoveryResult,
   SourceControlRepositoryInfo,
 } from "@t3tools/contracts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { cloneUrlRepositoryPath } from "@t3tools/shared/cloneUrl";
-import { newProjectFolderName } from "@t3tools/shared/path";
+import { isExplicitRelativePath, isHostPath, newProjectFolderName } from "@t3tools/shared/path";
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
@@ -141,11 +142,24 @@ export function getDefaultCloneUrl(
     : repository.sshUrl;
 }
 
+export type OfferedSourceControlProviders = ServerSettings["offeredSourceControlProviders"];
+
+/** Whether the project pickers offer a host. Only the default host is on until the user turns others on. */
+export function isSourceControlProviderOffered(
+  offered: OfferedSourceControlProviders | undefined,
+  kind: SourceControlProviderKind,
+): boolean {
+  return offered?.[kind] ?? kind === sourceControlClients.get(undefined).kind;
+}
+
 export function sortAddProjectProviderSources(
   readiness: AddProjectRemoteSourceReadiness,
+  offered: OfferedSourceControlProviders | undefined,
 ): ReadonlyArray<SourceControlProviderKind> {
   return Arr.sort(
-    ADD_PROJECT_REMOTE_PROVIDER_SOURCES,
+    ADD_PROJECT_REMOTE_PROVIDER_SOURCES.filter((source) =>
+      isSourceControlProviderOffered(offered, source),
+    ),
     Order.mapInput(
       Order.Struct({
         ready: Order.flip(Order.Boolean),
@@ -190,7 +204,10 @@ export function buildAddProjectRemoteSourceReadiness(
 
 export function getAddProjectInitialQuery(baseDirectory: string | null | undefined): string {
   const trimmed = baseDirectory?.trim() ?? "";
-  return trimmed.length === 0 ? "~/" : ensureBrowseDirectoryPath(trimmed);
+  if (trimmed.length === 0) return "~/";
+  // A bare relative setting such as `Desktop/dev` means a folder under home.
+  const isAnchored = trimmed === "~" || isHostPath(trimmed) || isExplicitRelativePath(trimmed);
+  return ensureBrowseDirectoryPath(isAnchored ? trimmed : `~/${trimmed}`);
 }
 
 export function getCloneDirectoryName(repositoryOrRemoteUrl: string | null | undefined): string {
@@ -253,9 +270,11 @@ export interface NewProjectPublishTarget {
 
 export function getNewProjectPublishTargets(
   discovery: SourceControlDiscoveryResult | null,
+  offered: OfferedSourceControlProviders | undefined,
 ): ReadonlyArray<NewProjectPublishTarget> {
   const readiness = buildAddProjectRemoteSourceReadiness(discovery);
   return sourceControlClients.definitions.flatMap((definition) => {
+    if (!isSourceControlProviderOffered(offered, definition.kind)) return [];
     if (!readiness(definition.kind).ready) return [];
     const provider = discovery?.sourceControlProviders.find(
       (candidate) => candidate.kind === definition.kind,

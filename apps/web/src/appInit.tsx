@@ -14,6 +14,7 @@ import { startElectronBrowserHost } from "./browser/ElectronBrowserHost";
 import { startBrowserProfileReporting } from "./browser/BrowserProfileReporter";
 import { startPreviewTitleRecording } from "./browserHistoryStore";
 import { retainThreadOverlaysForThread } from "./components/chat/threadOverlayRetention";
+import { resolveWindowTitleThreadStatus } from "./components/Sidebar.logic";
 import { startBackgroundThreadAnnouncements } from "./components/BackgroundThreadAnnouncer";
 import { startSshPasswordPromptQueue } from "./components/desktop/SshPasswordPromptDialog";
 import { startHostFreezeToasts } from "./components/HostFreezeToastCoordinator";
@@ -36,6 +37,7 @@ import {
 } from "./composerDraftStore";
 import { startDefaultThemeAdoption } from "./hooks/useDefaultTheme";
 import { startEnvironmentThemeRepaint } from "./hooks/useEnvironmentTheme";
+import { startThemeBackground } from "./themeBackground";
 import { readLocalStorageValue, subscribeLocalStorageKey } from "./hooks/useLocalStorage";
 import { startHostEnvironmentLookup } from "./state/primaryEnvironment";
 import {
@@ -133,7 +135,10 @@ function readOpenThreadRef(router: AppRouter): ScopedThreadRef | null {
   return resolveActiveThreadRouteRef(target, draft);
 }
 
-/** Names the open thread and its project in the window title, or the app when none is open. */
+/**
+ * Names the open thread and its project in the window title, or the app when none is open.
+ * Screen readers read it on Alt+Tab, so it can lead with the thread and what it's doing.
+ */
 function startDocumentTitle(router: AppRouter): void {
   const readOnGuestPage = () => router.state.matches.some((match) => match.routeId === "/guest");
   let openThreadRef = readOpenThreadRef(router);
@@ -163,6 +168,11 @@ function startDocumentTitle(router: AppRouter): void {
       }),
       projectTitle: project?.title ?? null,
       threadTitle: thread?.title ?? null,
+      ...(getClientSettings().screenReaderWindowTitle && {
+        screenReader: {
+          threadStatus: thread === null ? null : resolveWindowTitleThreadStatus(thread),
+        },
+      }),
       desktop: isElectron,
     });
     // Projects change whenever any project does; most changes leave the title alone.
@@ -198,6 +208,7 @@ function startDocumentTitle(router: AppRouter): void {
   watchOpenThread();
   appAtomRegistry.subscribe(primaryServerConfigAtom, write, { immediate: true });
   appAtomRegistry.subscribe(environmentProjects.projectsAtom, write);
+  subscribeClientSettings(write);
   router.subscribe("onResolved", updateOpenThread);
   useComposerDraftStore.subscribe(updateOpenThread);
 }
@@ -254,6 +265,7 @@ export function startAppServices(): AppRouter {
   startDocumentTitle(router);
   startHostEnvironmentLookup();
   startEnvironmentThemeRepaint();
+  startThemeBackground();
   startBrowserChromeThemeSync(router);
   startDefaultThemeAdoption();
   startModelPreferencesMigration();

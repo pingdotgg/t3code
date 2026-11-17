@@ -185,11 +185,12 @@ const make = Effect.gen(function* () {
         yield* fs.makeDirectory(directory(item.threadId), { recursive: true });
         const outputHandle = yield* fs.open(outputFile, { flag: "w" });
         const encoder = new TextEncoder();
-        const candidates = resolveShellCandidates(
+        const candidates = yield* resolveShellCandidates(
           () => defaultShellResolver(processPlatform, environment),
           processPlatform,
           environment,
-        );
+          environment.T3CODE_TERMINAL_SHELL,
+        ).pipe(Effect.provideService(FileSystem.FileSystem, fs));
         const child = yield* Effect.firstSuccessOf(
           candidates.map(({ shell }) =>
             spawner.spawn(

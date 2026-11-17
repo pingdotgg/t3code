@@ -1,5 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { AssistantCitation } from "@t3tools/contracts";
+import type { AssistantCitation, ResponseContextRecord } from "@t3tools/contracts";
 import {
   assistantCitationLabel,
   serializeAssistantCitation,
@@ -12,6 +12,7 @@ import {
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
 } from "react";
 import {
   findAssistantCitationSourceAnchor,
@@ -49,10 +50,69 @@ function useCitationSourceLinkProps(citation: AssistantCitation) {
   };
 }
 
+const flat = (text: string) => text.replace(/\s+/g, " ");
+
 /**
- * A quoted response inside a message. Clicking it goes to the source; its comment follows as
- * text. `leading` and `trailing` say it starts or ends its block, which already has spacing.
+ * The card a response shows as inside a message. Clicking it goes to the source; a comment follows
+ * as text. `leading` and `trailing` say it starts or ends its block, which already has spacing.
  */
+function ResponseCard({
+  citation,
+  copyMarkdown,
+  cardCopyMarkdown = copyMarkdown,
+  label,
+  title,
+  preview,
+  comment,
+  leading,
+  trailing,
+}: {
+  citation: AssistantCitation;
+  copyMarkdown: string;
+  cardCopyMarkdown?: string;
+  label: string;
+  title?: string | undefined;
+  preview: ReactNode;
+  comment?: string | undefined;
+  leading: boolean;
+  trailing: boolean;
+}) {
+  const linkProps = useCitationSourceLinkProps(citation);
+  return (
+    // One copy boundary for the card and its comment, so a copied card carries the comment once.
+    <span
+      data-markdown-copy={copyMarkdown}
+      className={cn("block", !leading && "mt-[0.65rem]", !trailing && "mb-[0.65rem]")}
+    >
+      <Link
+        {...linkProps}
+        // A selection inside the card's boundary copies the card here and the comment as text.
+        data-markdown-copy={cardCopyMarkdown}
+        // The response is findable in its own message; here it is clamped and mostly hidden.
+        data-thread-find-ignore
+        aria-label={label}
+        // The message's markdown styles colour and underline links; a card is neither.
+        className="block min-w-0 rounded-lg bg-black/10 px-2.5 py-1.5 text-start text-sm text-muted-foreground! no-underline! wrap-break-word hover:bg-black/14 focus-visible:outline-2 focus-visible:outline-ring dark:bg-black/35 dark:hover:bg-black/50"
+      >
+        {title ? (
+          <span className="block truncate text-xs font-medium text-foreground/80" dir="auto">
+            {title}
+          </span>
+        ) : null}
+        <span className="line-clamp-2" dir={textDirection(citation.text)}>
+          {preview}
+        </span>
+      </Link>
+      {comment ? (
+        <span className="mt-1.5 block whitespace-pre-wrap" dir={textDirection(comment)}>
+          {comment}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+/** A passage quoted from a response, with its surrounding context and the user's comment. */
 export function AssistantCitationEmbed({
   citation,
   leading,
@@ -63,45 +123,55 @@ export function AssistantCitationEmbed({
   trailing: boolean;
 }) {
   const wholeResponse = citation.prefix === "" && citation.suffix === "";
-  const flat = (text: string) => text.replace(/\s+/g, " ");
   const { comment, ...quoted } = citation;
-  const linkProps = useCitationSourceLinkProps(citation);
   return (
-    // One copy boundary for the card and its comment, so a copied quote carries the comment once.
-    <span
-      data-markdown-copy={linkProps["data-markdown-copy"]}
-      className={cn("block", !leading && "mt-[0.65rem]", !trailing && "mb-[0.65rem]")}
-    >
-      <Link
-        {...linkProps}
-        // A selection inside the card's boundary copies the quote here and the comment as text.
-        data-markdown-copy={serializeAssistantCitation(quoted)}
-        // The quote is findable in its source message; here it is clamped and mostly hidden.
-        data-thread-find-ignore
-        aria-label={`Go to quoted response: ${assistantCitationLabel(quoted)}`}
-        // The message's markdown styles colour and underline links; a quote is neither.
-        className="block min-w-0 rounded-lg bg-black/10 px-2.5 py-1.5 text-start text-sm text-muted-foreground! no-underline! wrap-break-word hover:bg-black/14 focus-visible:outline-2 focus-visible:outline-ring dark:bg-black/35 dark:hover:bg-black/50"
-      >
-        <span className="line-clamp-2" dir={textDirection(citation.text)}>
-          {wholeResponse ? (
-            flat(citation.text)
-          ) : (
-            <>
-              {citation.prefix ? `…${flat(citation.prefix)}` : null}
-              <mark className="rounded-sm bg-foreground/12 px-0.5 text-foreground">
-                {flat(citation.text)}
-              </mark>
-              {citation.suffix ? `${flat(citation.suffix)}…` : null}
-            </>
-          )}
-        </span>
-      </Link>
-      {comment ? (
-        <span className="mt-1.5 block whitespace-pre-wrap" dir={textDirection(comment)}>
-          {comment}
-        </span>
-      ) : null}
-    </span>
+    <ResponseCard
+      citation={citation}
+      copyMarkdown={serializeAssistantCitation(citation)}
+      cardCopyMarkdown={serializeAssistantCitation(quoted)}
+      label={`Go to quoted response: ${assistantCitationLabel(quoted)}`}
+      comment={comment}
+      leading={leading}
+      trailing={trailing}
+      preview={
+        wholeResponse ? (
+          flat(citation.text)
+        ) : (
+          <>
+            {citation.prefix ? `…${flat(citation.prefix)}` : null}
+            <mark className="rounded-sm bg-foreground/12 px-0.5 text-foreground">
+              {flat(citation.text)}
+            </mark>
+            {citation.suffix ? `${flat(citation.suffix)}…` : null}
+          </>
+        )
+      }
+    />
+  );
+}
+
+/** The response a message replies to: its subagents, when it had any, and how it starts. */
+export function ResponseReplyCard({
+  record,
+  copyMarkdown,
+  leading,
+  trailing,
+}: {
+  record: ResponseContextRecord;
+  copyMarkdown: string;
+  leading: boolean;
+  trailing: boolean;
+}) {
+  return (
+    <ResponseCard
+      citation={record.citation}
+      copyMarkdown={copyMarkdown}
+      label={`Go to the response this replies to: ${record.label}`}
+      title={record.subagents?.map((subagent) => subagent.title).join(", ")}
+      preview={flat(record.citation.text)}
+      leading={leading}
+      trailing={trailing}
+    />
   );
 }
 

@@ -100,6 +100,7 @@ const refreshedSnapshotSecond: ServerProvider = {
 function layerProviderHost(input: {
   readonly runBackgroundWork: boolean;
   readonly settings?: Pick<ProviderHost.ProviderHost["Service"], "settings">["settings"];
+  readonly awaitServerReady?: Effect.Effect<void>;
 }) {
   return Layer.succeed(
     ProviderHost.ProviderHost,
@@ -118,6 +119,7 @@ function layerProviderHost(input: {
         subscribe: Effect.succeed(Stream.empty),
       },
       shouldRunBackgroundWork: () => Effect.succeed(input.runBackgroundWork),
+      ...(input.awaitServerReady ? { awaitServerReady: input.awaitServerReady } : {}),
       resolveAttachmentPath: () => null,
       credentials: () => Effect.die("unused"),
     }),
@@ -272,6 +274,7 @@ describe("makeManagedServerProvider", () => {
 
           const initial = yield* provider.getSnapshot;
           assert.deepStrictEqual(initial, initialSnapshot);
+          assert.strictEqual(yield* provider.isAwaitingFirstCheck!, true);
 
           const updatesFiber = yield* Stream.take(provider.streamChanges, 1).pipe(
             Stream.runCollect,
@@ -287,9 +290,53 @@ describe("makeManagedServerProvider", () => {
 
           assert.deepStrictEqual(updates, [refreshedSnapshot]);
           assert.deepStrictEqual(latest, refreshedSnapshot);
+          assert.strictEqual(yield* provider.isAwaitingFirstCheck!, false);
           assert.strictEqual(yield* Ref.get(checkCalls), 1);
         }),
       ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
+  it.effect("holds the first provider check until server startup finishes", () =>
+    Effect.gen(function* () {
+      const serverReady = yield* Deferred.make<void>();
+      const checkStarted = yield* Deferred.make<void>();
+      const checkCalls = yield* Ref.make(0);
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const provider = yield* makeManagedServerProvider<TestSettings>({
+            resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+            getSettings: Effect.succeed({ enabled: true }),
+            streamSettings: Stream.empty,
+            haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+            initialSnapshot: () => Effect.succeed(initialSnapshot),
+            checkProvider: Ref.update(checkCalls, (count) => count + 1).pipe(
+              Effect.andThen(Deferred.succeed(checkStarted, undefined)),
+              Effect.as(refreshedSnapshot),
+            ),
+            refreshInterval: "1 hour",
+          });
+
+          yield* TestClock.adjust("10 seconds");
+          assert.strictEqual(yield* Ref.get(checkCalls), 0);
+          assert.deepStrictEqual(yield* provider.getSnapshot, initialSnapshot);
+          assert.isTrue(yield* provider.isAwaitingFirstCheck!);
+
+          yield* Deferred.succeed(serverReady, undefined);
+          yield* Deferred.await(checkStarted);
+          assert.strictEqual(yield* Ref.get(checkCalls), 1);
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerProviderHost({
+              runBackgroundWork: false,
+              awaitServerReady: Deferred.await(serverReady),
+            }),
+            TestClock.layer(),
+          ),
+        ),
+      );
+    }),
   );
 
   it.effect("skips periodic provider refreshes without foreground provider-status demand", () =>
@@ -362,6 +409,53 @@ describe("makeManagedServerProvider", () => {
         ]);
         yield* TestClock.adjust("3 seconds");
         assert.strictEqual(yield* Ref.get(checkCalls), 2);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
+  );
+
+  it.effect("rechecks a ready provider after one failed periodic check before publishing it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checkCalls = yield* Ref.make(0);
+        const initialCheckDone = yield* Deferred.make<void>();
+        const failedSnapshot: ServerProvider = {
+          ...refreshedSnapshot,
+          status: "error",
+          auth: { status: "unknown" },
+          message: "Codex app-server provider probe failed: workspace routing discovery timed out.",
+        };
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
+            Effect.tap((count) =>
+              count === 1
+                ? Deferred.succeed(initialCheckDone, undefined).pipe(Effect.ignore)
+                : Effect.void,
+            ),
+            Effect.map((count) => (count === 2 ? failedSnapshot : refreshedSnapshot)),
+          ),
+          refreshInterval: "5 minutes",
+        });
+        yield* Deferred.await(initialCheckDone);
+        const published = yield* Ref.make<ReadonlyArray<ServerProvider>>([]);
+        yield* provider.streamChanges.pipe(
+          Stream.runForEach((snapshot) => Ref.update(published, (all) => [...all, snapshot])),
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+
+        yield* TestClock.adjust("5 minutes");
+        yield* TestClock.adjust("1 minute");
+
+        assert.strictEqual((yield* provider.getSnapshot).status, "ready");
+        assert.deepStrictEqual(
+          (yield* Ref.get(published)).filter((snapshot) => snapshot.status === "error"),
+          [],
+        );
       }),
     ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
   );

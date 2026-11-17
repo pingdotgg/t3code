@@ -43,6 +43,7 @@ export function fakePullRequestProvider(
       review: FULL_REVIEW,
       reviewers: FULL_REVIEWERS,
       edit: { changeRequest: true, comment: true },
+      withheldFileDiff: true,
     },
     getViewer: () => Effect.succeed("bilal"),
     getViewerPermissions: () =>
