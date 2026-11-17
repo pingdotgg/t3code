@@ -396,7 +396,6 @@ export default defineRule({
       },
       JSXAttribute(node) {
         if (node.name.type !== "JSXIdentifier" || !isCopyName(node.name.name)) return;
-        if (insideNonCopyElement(node)) return;
         const value = node.value;
         if (value?.type === "Literal") reportLeaves(value);
         else if (value?.type === "JSXExpressionContainer") reportLeaves(value.expression);
