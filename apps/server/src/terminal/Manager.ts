@@ -2745,9 +2745,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             ...spawnEnv,
             PATH: (spawnEnv.PATH ?? spawnEnv.Path ?? spawnEnv.path ?? "")
               .split(":")
-              .map((entry) => entry.trim().replace(/^"+|"+$/g, ""))
-              .filter((entry) => entry.length > 0)
-              .map((entry) => path.resolve(session.cwd, entry))
+              // An empty entry means the working directory, which resolve("") yields.
+              .map((entry) => path.resolve(session.cwd, entry.trim().replace(/^"+|"+$/g, "")))
               .join(":"),
           };
     // POSIX node-pty can return a PTY before exec fails, so validate before accepting a candidate.

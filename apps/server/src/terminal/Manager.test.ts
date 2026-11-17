@@ -2261,13 +2261,19 @@ it.layer(
         yield* fs.makeDirectory(toolsDir);
         yield* fs.writeFileString(customShell, "#!/bin/sh\nexec /bin/sh\n");
         yield* fs.chmod(customShell, 0o755);
-        for (const { shell, searchPath, expectedShell } of [
+        for (const { shell, searchPath, cwd, expectedShell } of [
           { shell: path.join(baseDir, "missing"), searchPath: "/bin", expectedShell: "/bin/sh" },
           { shell: nonExecutable, searchPath: "/bin", expectedShell: "/bin/sh" },
           { shell: "custom-shell", searchPath: "./tools", expectedShell: customShell },
           { shell: "custom-shell", searchPath: toolsDir, expectedShell: customShell },
           { shell: "custom-shell", searchPath: '"./tools"', expectedShell: customShell },
-        ]) {
+          { shell: "custom-shell", searchPath: ":/bin", cwd: toolsDir, expectedShell: customShell },
+        ] as ReadonlyArray<{
+          shell: string;
+          searchPath: string;
+          cwd?: string;
+          expectedShell: string;
+        }>) {
           const spawnedShells: string[] = [];
           const manager = yield* TerminalManager.makeWithOptions({
             logsDir: path.join(baseDir, "logs"),
@@ -2280,7 +2286,7 @@ it.layer(
             shellResolver: () => "/bin/sh",
             env: { ...process.env, T3CODE_TERMINAL_SHELL: shell, PATH: searchPath },
           });
-          const snapshot = yield* manager.open(openInput({ cwd: baseDir }));
+          const snapshot = yield* manager.open(openInput({ cwd: cwd ?? baseDir }));
           expect(spawnedShells).toEqual([expectedShell]);
           expect(snapshot.status).toBe("running");
           yield* manager.close({ threadId: "thread-1" });
