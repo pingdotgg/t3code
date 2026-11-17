@@ -2145,7 +2145,7 @@ function parseClaudeInteger(text: string): number {
 // A background command that starts by sleeping is a timer the agent set to check back, which
 // Claude wakes it for when it ends. A dev server never starts that way.
 function isClaudeSleepTimer(command: string | undefined): boolean {
-  return command !== undefined && /^\s*sleep\s+\d/.test(command);
+  return command !== undefined && /^\s*sleep\s+(?:\d|\$\(\()/.test(command);
 }
 
 // Claude Code defers MCP tools behind ToolSearch, so the agent only finds
