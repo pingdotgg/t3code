@@ -31,6 +31,16 @@ jobs:
       - name: Setup Vite+ and dependencies
         uses: ./.github/actions/setup-ci-deps
 
+      - name: Raise Windows packaged payload limit
+        shell: pwsh
+        run: |
+          $file = 'scripts/build-desktop-artifact.ts'
+          $source = Get-Content -LiteralPath $file -Raw
+          $updated = $source -replace 'WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT = 80', 'WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT = 100'
+          if ($updated -eq $source) { throw 'Expected Windows payload limit declaration was not found; refusing to build.' }
+          Set-Content -LiteralPath $file -Value $updated -NoNewline
+          Write-Host 'Windows packaged payload limit set to 100.'
+
       - name: Build Windows x64 installer
         run: vp run dist:desktop:win:x64
         env:
@@ -40,7 +50,8 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          $stages = Get-ChildItem -LiteralPath $env:RUNNER_TEMP -Directory -Recurse -Filter 't3code-desktop-win-stage-*' -ErrorAction SilentlyContinue
+          $temp = [IO.Path]::GetTempPath()
+          $stages = Get-ChildItem -LiteralPath $temp -Directory -Recurse -Filter 't3code-desktop-win-stage-*' -ErrorAction SilentlyContinue
           foreach ($stage in $stages) {
             $dist = Join-Path $stage.FullName 'app/dist'
             if (-not (Test-Path -LiteralPath $dist)) { continue }
