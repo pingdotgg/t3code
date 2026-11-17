@@ -11,6 +11,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   type EnvironmentId,
   type ProjectScopedServerSettingKey,
+  type ProjectSettingsOverrides,
   type ServerSettings,
   type UnifiedSettings,
 } from "@t3tools/contracts";
@@ -146,9 +147,11 @@ export function useUpdateScopedSettings() {
 export function useClearScopedSettings() {
   const context = useOptionalSettingsScope();
   const run = useRunScopedPlan();
-  return (keys: readonly ProjectScopedServerSettingKey[]) => {
+  return (keys: readonly ProjectScopedServerSettingKey[], preserve?: ProjectSettingsOverrides) => {
     if (context === null) return;
-    run(context.environments, (current) => planScopedSettingsClear(context.scope, current, keys));
+    run(context.environments, (current) =>
+      planScopedSettingsClear(context.scope, current, keys, preserve),
+    );
   };
 }
 

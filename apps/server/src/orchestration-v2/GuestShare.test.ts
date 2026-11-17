@@ -39,7 +39,11 @@ const layerTest = Layer.mergeAll(
   ProviderReplayHarness.layerWithRegistry(
     { name: "guest-share" },
     ProviderAdapterRegistry.layerFromAdapters([adapter]),
-    { databaseLayer: layerDatabase, runEffectWorker: false },
+    {
+      databaseLayer: layerDatabase,
+      runEffectWorker: false,
+      serverSettings: { newChatPromptEnabled: true, newChatPrompt: "Run relevant tests." },
+    },
   ),
 );
 
@@ -130,6 +134,8 @@ it.effect("redeems a guest link once and sends each guest message once, with its
       text: "Why not keep the old cache?",
       shareId,
     });
+    const item = projection.turnItems.find((item) => item.type === "user_message");
+    assert.equal(item?.text, sent?.text);
     assert.lengthOf(projection.runs, 1);
     assert.equal((yield* projections.getThreadShell(threadId))?.pendingGuestMessageCount, 0);
 

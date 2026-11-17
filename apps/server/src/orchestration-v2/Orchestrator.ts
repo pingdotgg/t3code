@@ -82,6 +82,7 @@ import {
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { modelSwitchSince } from "./modelSwitch.ts";
 import { contextBoundaryOrdinal, isScheduledFreshRun } from "./contextBoundary.ts";
 import { isPlaceholderThreadTitle } from "./placeholderThreadTitle.ts";
@@ -6820,6 +6821,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: projection.thread,
       });
       return;
+    }
+    if (
+      command.createdBy === "user" &&
+      command.scheduledTaskId === undefined &&
+      command.guestMessageId === undefined &&
+      projection.thread.createdBy === "user" &&
+      projection.providerThreads.length === 0 &&
+      projection.thread.lineage.parentThreadId === null &&
+      projection.messages.length === 0 &&
+      (command.attachments.length > 0 || !command.text.trimStart().startsWith("/"))
+    ) {
+      const current = yield* serverSettings.getSettings.pipe(mapDispatchError(command));
+      const { settings } = resolveProjectSettings(current, projection.thread.projectId);
+      const prompt = settings.newChatPrompt.trim();
+      if (
+        settings.newChatPromptEnabled &&
+        prompt !== "" &&
+        (yield* projectionStore
+          .getMessageCount(command.threadId)
+          .pipe(mapDispatchError(command))) === 0
+      ) {
+        const suffix = `\n\n${prompt}`;
+        command = {
+          ...command,
+          text: command.text.endsWith(suffix) ? command.text : `${command.text}${suffix}`,
+        };
+      }
     }
     const activeProviderInstanceId = projection.providerThreads.find(
       (candidate) => candidate.id === projection.thread.activeProviderThreadId,
