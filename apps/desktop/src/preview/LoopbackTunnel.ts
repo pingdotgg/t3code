@@ -270,8 +270,9 @@ const make = Effect.gen(function* () {
                 proxyRules: `socks5://127.0.0.1:${port}`,
                 // Chromium never asks a PAC script about loopback hosts, so the split is done
                 // here: `*` sends everything direct, and the later `<-loopback>` takes loopback
-                // back out of that bypass. The order matters. A fixed proxy has no direct retry.
-                proxyBypassRules: "*,<-loopback>",
+                // back out of that bypass, along with link-local, which the CIDRs return. The
+                // last matching rule wins. A fixed proxy has no direct retry.
+                proxyBypassRules: "*,<-loopback>,169.254.0.0/16,fe80::/10",
               },
         );
         // The bypass rules don't cover the unspecified address, so it would reach this machine.
