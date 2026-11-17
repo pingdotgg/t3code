@@ -1,4 +1,5 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -22,6 +23,7 @@ const OpenCodeServerEntry = Schema.Struct({
   startTime: Schema.String,
   command: Schema.String,
   args: Schema.optionalKey(Schema.Array(Schema.String)),
+  marker: Schema.optionalKey(Schema.String),
   port: Schema.Int,
   stateDir: Schema.String,
   owner: ProcessIdentity,
@@ -38,9 +40,14 @@ export class OpenCodeServerLedger extends Context.Service<
       readonly pid: number;
       readonly port: number;
       readonly args: ReadonlyArray<string>;
+      readonly marker: string;
     }) => Effect.Effect<Effect.Effect<void>>;
   }
 >()("@t3tools/provider-opencode/server/OpenCodeServerLedger") {}
+
+// OpenCode starts each shell command in its own session, so once the server exits
+// only this inherited variable, set to the entry's marker, ties a command to it.
+export const SERVER_MARKER_ENV = "T3CODE_OPENCODE_SERVER_MARKER";
 
 const ENTRY_DIRECTORY = "opencode-servers";
 const ENTRY_FILE = /^\d+\.json$/;
@@ -104,6 +111,8 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
   const platform = yield* HostProcess.Platform;
   const directory = path.join(input.stateDir, ENTRY_DIRECTORY);
   const recordable = platform === "linux" || platform === "darwin";
+  // A T3 Code server started from one of those commands carries a marker too.
+  const inheritedMarker = yield* Config.String(SERVER_MARKER_ENV).pipe(Config.withDefault(""));
 
   // A process-group scan calls this for every /proc entry; avoid a span per process.
   const observeLinux = Effect.fnUntraced(function* (pid: number, group?: number) {
@@ -176,6 +185,46 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
     return Effect.succeed([]);
   };
 
+  // procps has no `ps -E`, so /proc serves wherever it exists; macOS has no /proc.
+  const markedGroups = (marker: string): Effect.Effect<ReadonlyArray<number>> => {
+    const variable = `${SERVER_MARKER_ENV}=${marker}`;
+    const fromProc = fs.readDirectory("/proc").pipe(
+      Effect.flatMap((names) =>
+        Effect.forEach(
+          names.filter((name) => /^\d+$/.test(name)),
+          (name) =>
+            fs.readFileString(`/proc/${name}/environ`).pipe(
+              Effect.flatMap((environ) =>
+                environ.split("\0").includes(variable)
+                  ? observeLinux(Number(name))
+                  : Effect.undefined,
+              ),
+              Effect.orElseSucceed(() => undefined),
+            ),
+          { concurrency: 16 },
+        ),
+      ),
+    );
+    const fromPs = psDarwin(["-A", "-E"]).pipe(
+      Effect.map((found) =>
+        found.filter((candidate) => candidate.command.split(" ").includes(variable)),
+      ),
+    );
+    return fs.exists("/proc/self/environ").pipe(
+      Effect.flatMap((hasProc) =>
+        hasProc ? fromProc : platform === "darwin" ? fromPs : Effect.succeed([]),
+      ),
+      Effect.map((found) => [
+        ...new Set(
+          found.flatMap((candidate) =>
+            candidate === undefined || candidate.zombie ? [] : [candidate.pgid],
+          ),
+        ),
+      ]),
+      Effect.orElseSucceed(() => []),
+    );
+  };
+
   const isRunning = (identity: ProcessIdentity) =>
     observe(identity.pid).pipe(
       Effect.map(
@@ -217,6 +266,7 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
         startTime: member.startTime,
         command: member.command,
         args: server.args,
+        marker: server.marker,
         port: server.port,
         stateDir: input.stateDir,
         owner,
@@ -243,6 +293,15 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
     ),
   );
 
+  const stopGroup = Effect.fn("OpenCodeServerLedger.stopGroup")(function* (pgid: number) {
+    signalGroup(pgid, "SIGTERM");
+    for (let attempt = 0; attempt < STOP_POLL_ATTEMPTS && groupExists(pgid); attempt++) {
+      yield* Effect.sleep(STOP_POLL_INTERVAL);
+    }
+    // The group never emptied, so its pgid cannot have been reused.
+    if (groupExists(pgid)) signalGroup(pgid, "SIGKILL");
+  });
+
   // Signals only a group whose recorded member still has the same pid, start
   // time, and group and still has the same command line or serve arguments, so
   // a recycled pid is never touched.
@@ -264,12 +323,21 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
       pid: entry.pgid,
       port: entry.port,
     });
-    signalGroup(entry.pgid, "SIGTERM");
-    for (let attempt = 0; attempt < STOP_POLL_ATTEMPTS && groupExists(entry.pgid); attempt++) {
-      yield* Effect.sleep(STOP_POLL_INTERVAL);
-    }
-    // The group never emptied, so its pgid cannot have been reused.
-    if (groupExists(entry.pgid)) signalGroup(entry.pgid, "SIGKILL");
+    yield* stopGroup(entry.pgid);
+  });
+
+  // Runs after the server is stopped so it cannot start more commands meanwhile.
+  const stopMarked = Effect.fn("OpenCodeServerLedger.stopMarked")(function* (
+    entry: OpenCodeServerEntry,
+  ) {
+    if (entry.marker === undefined || entry.marker === inheritedMarker) return;
+    const groups = yield* markedGroups(entry.marker);
+    if (groups.length === 0) return;
+    yield* Effect.logInfo("Stopping commands left by a previous OpenCode server", {
+      pid: entry.pgid,
+      groups,
+    });
+    yield* Effect.forEach(groups, stopGroup, { concurrency: "unbounded", discard: true });
   });
 
   const reapEntry = Effect.fn("OpenCodeServerLedger.reapEntry")(
@@ -278,6 +346,7 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
       if (Option.isSome(entry) && entry.value.stateDir === input.stateDir) {
         if (yield* isRunning(entry.value.owner)) return;
         yield* stopOrphan(entry.value);
+        yield* stopMarked(entry.value);
       }
       yield* fs.remove(entryPath, { force: true });
     },

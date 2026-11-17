@@ -13,6 +13,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
@@ -46,10 +47,15 @@ const killGroup = (pgid: number) =>
 const groupLeaderGuard = `pgid="$(ps -o pgid= -p $$ 2>&1 | tr -d ' ')"; [ "$pgid" = "$$" ] || { echo "ungrouped:$pgid"; exit 97; }; echo grouped; `;
 
 // Yields the group, or a description of why this shell cannot be used as one.
-const spawnGroupLeader = (args: ReadonlyArray<string>, script: string) =>
+const spawnGroupLeader = (
+  args: ReadonlyArray<string>,
+  script: string,
+  env: Record<string, string>,
+) =>
   Effect.gen(function* () {
     const child = NodeChildProcess.spawn("/bin/sh", ["-c", groupLeaderGuard + script, ...args], {
       detached: true,
+      env: { ...process.env, ...env },
       stdio: ["ignore", "pipe", "ignore"],
     });
     const pid = child.pid;
@@ -85,12 +91,16 @@ const spawnGroupLeader = (args: ReadonlyArray<string>, script: string) =>
 // mean the guard itself is broken (for example a missing or BusyBox `ps`).
 const GROUP_LEADER_ATTEMPTS = 5;
 
-const spawnGroup = (args: ReadonlyArray<string>, script = "sleep 600 & wait") =>
+const spawnGroup = (
+  args: ReadonlyArray<string>,
+  script = "sleep 600 & wait",
+  env: Record<string, string> = {},
+) =>
   Effect.acquireRelease(
     Effect.gen(function* () {
       let failure = "";
       for (let attempt = 0; attempt < GROUP_LEADER_ATTEMPTS; attempt++) {
-        const group = yield* spawnGroupLeader(args, script);
+        const group = yield* spawnGroupLeader(args, script, env);
         if (typeof group !== "string") return group;
         failure = group;
       }
@@ -101,14 +111,20 @@ const spawnGroup = (args: ReadonlyArray<string>, script = "sleep 600 & wait") =>
     ({ pid }) => killGroup(pid),
   );
 
-const recordFromDeadServer = (stateDir: string, server: { readonly pid: number }) =>
+const recordFromDeadServer = (
+  stateDir: string,
+  server: { readonly pid: number },
+  marker: string = SecureRandom.uuidV4Unsafe(),
+) =>
   Effect.gen(function* () {
     const previousServer = yield* spawnGroup([]);
     const previousLedger = yield* OpenCodeServerLedger.make({
       stateDir,
       ownerPid: previousServer.pid,
     });
-    yield* Effect.asVoid(previousLedger.track({ pid: server.pid, port: 4096, args: SERVE_ARGS }));
+    yield* Effect.asVoid(
+      previousLedger.track({ pid: server.pid, port: 4096, args: SERVE_ARGS, marker }),
+    );
     yield* killGroup(previousServer.pid);
     yield* previousServer.exited;
   });
@@ -143,7 +159,7 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
     }).pipe(provideHost),
   );
 
-  // OpenCode's bash tool starts each shell command in its own process group.
+  // OpenCode's bash tool starts each shell command in its own session.
   it.live("stops a shell command whose OpenCode server exited before restart", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -152,9 +168,11 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
       const gate = path.join(stateDir, "gate");
       const shellPidFile = path.join(stateDir, "shell-pid");
       NodeChildProcess.execFileSync("mkfifo", [gate, shellPidFile]);
+      const marker = SecureRandom.uuidV4Unsafe();
       const server = yield* spawnGroup(
         SERVE_ARGS,
-        `perl -e 'setpgrp(0, 0); open(F, ">", shift); print F "$$\\n"; close(F); exec @ARGV' '${shellPidFile}' sleep 600 & read _ < '${gate}'; exit 0`,
+        `perl -MPOSIX -e 'POSIX::setsid(); open(F, ">", shift); print F "$$\\n"; close(F); exec @ARGV' '${shellPidFile}' sleep 600 & read _ < '${gate}'; exit 0`,
+        { [OpenCodeServerLedger.SERVER_MARKER_ENV]: marker },
       );
       const shell = yield* Effect.acquireRelease(
         fs.readFileString(shellPidFile).pipe(Effect.map((pid) => Number(pid.trim()))),
@@ -162,7 +180,7 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
       );
       expect(shell).not.toBe(server.pid);
       expect(groupExists(shell)).toBe(true);
-      yield* recordFromDeadServer(stateDir, server);
+      yield* recordFromDeadServer(stateDir, server, marker);
       yield* fs.writeFileString(gate, "\n");
       yield* server.exited;
 
@@ -279,7 +297,12 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
       const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-ledger-" });
       const running = yield* OpenCodeServerLedger.make({ stateDir });
       const server = yield* spawnGroup(SERVE_ARGS);
-      const forget = yield* running.track({ pid: server.pid, port: 4096, args: SERVE_ARGS });
+      const forget = yield* running.track({
+        pid: server.pid,
+        port: 4096,
+        args: SERVE_ARGS,
+        marker: SecureRandom.uuidV4Unsafe(),
+      });
 
       const other = yield* OpenCodeServerLedger.make({ stateDir });
       yield* other.reapOrphans;
