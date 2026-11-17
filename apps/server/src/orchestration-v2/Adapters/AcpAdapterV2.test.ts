@@ -3458,7 +3458,19 @@ describe("AcpAdapterV2", () => {
         const png =
           "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aY9sAAAAASUVORK5CYII=";
         const image = { type: "image", mimeType: "image/png", data: png } as const;
+        // A separate progress message must stay outside the image reply.
+        const progress: Array<EffectAcpSchema.SessionUpdate> =
+          messageId === undefined
+            ? []
+            : [
+                {
+                  sessionUpdate: "agent_message_chunk",
+                  messageId: "progress",
+                  content: { type: "text", text: "progress" },
+                },
+              ];
         const updates: Array<EffectAcpSchema.SessionUpdate> = [
+          ...progress,
           ...(
             [
               { type: "text", text: "before" },
@@ -3590,10 +3602,21 @@ describe("AcpAdapterV2", () => {
         const answers = [...items.values()].filter((item) => item.type === "assistant_message");
         assert.deepEqual(
           answers.map((item) => item.text),
-          protocolVersion === 1
-            ? ["before", "", "between", "", "after"]
-            : ["authoritative mixed reply"],
+          [
+            ...(messageId === undefined ? [] : ["progress"]),
+            ...(protocolVersion === 1
+              ? ["before", "", "between", "", "after"]
+              : ["authoritative mixed reply"]),
+          ],
         );
+        if (!imagesWithoutId) {
+          assert.deepEqual(
+            answers.map((item) => (item.type === "assistant_message" ? item.phase : undefined)),
+            answers.map((item) =>
+              protocolVersion === 1 && item.text !== "progress" ? "final_answer" : undefined,
+            ),
+          );
+        }
         const attachments = answers.flatMap((item) => item.attachments ?? []);
         assert.lengthOf(attachments, protocolVersion === 1 ? 2 : 0);
         if (protocolVersion === 1) assert.notEqual(attachments[0]?.id, attachments[1]?.id);

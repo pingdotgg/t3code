@@ -1238,29 +1238,11 @@ function deriveThreadFeedRunFolds(
     const visibleCompactionId = group.entries.findLast(
       (entry) => entry.type === "activity-group" && isContextCompactionActivityGroup(entry),
     )?.id;
-    const terminalEntryIndex = terminalAssistantId
-      ? group.entries.findIndex((entry) => entry.id === terminalAssistantId)
-      : group.entries.length;
-    const responseBoundaryIndex =
-      group.steerSegments.findLast(({ startIndex }) => startIndex <= terminalEntryIndex)
-        ?.startIndex ?? 0;
-    let responseStartIndex = terminalEntryIndex;
-    let responseHasImages = false;
-    // Inline images split one reply into consecutive text and attachment messages.
-    for (let index = terminalEntryIndex; index >= responseBoundaryIndex; index--) {
-      const entry = group.entries[index];
-      if (entry?.type !== "message" || entry.message.role !== "assistant") break;
-      responseStartIndex = index;
-      if (entry.message.attachments.some((attachment) => attachment.type === "image")) {
-        responseHasImages = true;
-      }
-    }
-    if (!responseHasImages) responseStartIndex = terminalEntryIndex;
     const hiddenEntryIds = new Set(
       group.entries
         .filter(
-          (entry, index) =>
-            (index < responseStartIndex || index > terminalEntryIndex) &&
+          (entry) =>
+            entry.id !== terminalAssistantId &&
             !(entry.type === "message" && retainedAnswerIds.has(entry.message.id)) &&
             entry.id !== visibleCompactionId &&
             !staysOutOfFold(entry),

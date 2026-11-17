@@ -1456,6 +1456,7 @@ interface ActiveTextSegment {
   sourceMessageId: string | null;
   text: string;
   attachments: ReadonlyArray<ChatAttachment>;
+  phase?: "final_answer";
   // The running node and first text have been emitted.
   emitted: boolean;
   // Text changed since the last emission; a delayed flush is scheduled.
@@ -1487,6 +1488,8 @@ interface ActiveAcpTurn {
   readonly assistant: ActiveTextStream;
   readonly reasoning: ActiveTextStream;
   readonly assistantImageSegments: Map<string, number>;
+  /** Latest object of each assistant segment, by native item id. */
+  readonly assistantSegments: Map<string, ActiveTextSegment>;
   providerRetry?:
     | {
         readonly failure: OrchestrationV2ProviderFailure;
@@ -3021,6 +3024,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       completedAt: completed ? now : null,
                       updatedAt: now,
                       type: "assistant_message",
+                      ...(segment.phase === undefined ? {} : { phase: segment.phase }),
                       messageId,
                       text,
                       attachments: segment.attachments,
@@ -3130,7 +3134,36 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               : { ...closed, emitted: false, dirty: false };
           if (closed === undefined) stream.nextSegment += 1;
           stream.current = segment;
+          if (kind === "assistant") context.assistantSegments.set(segment.nativeItemId, segment);
           return segment;
+        });
+
+        // Inline images split one reply into adjacent segments of the same message. Marking them
+        // as the final answer keeps the whole reply out of the client's fold, not only its last part.
+        const markImageReplyFinal = Effect.fnUntraced(function* (context: ActiveAcpTurn) {
+          const ordinal = (segment: ActiveTextSegment) =>
+            context.itemOrdinals.get(segment.nativeItemId) ?? 0;
+          const segments = [...context.assistantSegments.values()].toSorted(
+            (left, right) => ordinal(left) - ordinal(right),
+          );
+          const reply = segments.slice(-1);
+          for (let index = segments.length - 2; index >= 0; index--) {
+            const segment = segments[index]!;
+            const next = reply[0]!;
+            if (
+              segment.sourceMessageId !== next.sourceMessageId ||
+              ordinal(segment) + 1 !== ordinal(next)
+            )
+              break;
+            reply.unshift(segment);
+          }
+          if (reply.length < 2 || !reply.some((segment) => segment.attachments.length > 0)) return;
+          for (const segment of reply) {
+            segment.phase = "final_answer";
+            context.assistant.current = segment;
+            yield* emitTextSegment(context, "assistant", true);
+          }
+          context.assistant.current = null;
         });
 
         const appendText = Effect.fnUntraced(function* (
@@ -8174,6 +8207,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             });
           }
           yield* closeTextStreams(context);
+          yield* markImageReplyFinal(context);
           // Ingestion may stop at turn.terminal, before a delayed flush would run.
           yield* textEmissionPermit.withPermit(
             Effect.forEach(context.subagents.values(), flushPendingSubagentAssistant, {
@@ -8769,6 +8803,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               assistant: { current: null, nextSegment: 0, closedNamedSegments: new Map() },
               reasoning: { current: null, nextSegment: 0, closedNamedSegments: new Map() },
               assistantImageSegments: new Map(),
+              assistantSegments: new Map(),
               contextUsage: rememberedContextUsage ?? turnInput.providerThread.contextUsage ?? null,
               nativeMetadata: initialNativeMetadata,
               tools: new Map(),
