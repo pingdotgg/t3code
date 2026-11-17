@@ -1,69 +1,96 @@
-import { pullRequestViewNameError } from "@t3tools/client-runtime/pull-request-saved-views";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import {
+  type SavedViewIdentity as SavedViewIdentitySchema,
+  savedViewNameError,
+} from "@t3tools/client-runtime/saved-views";
+import { AsyncResult } from "effect/reactivity";
 import { useState } from "react";
 import { Alert } from "react-native";
 
-import { prompt as showTextInputDialog } from "../../components/ui/Dialog";
-import type { MenuProps } from "../../components/ui/Menu.types";
-import { uuidv4 } from "../../lib/uuid";
-import type { PullRequestSavedView } from "../../persistence/mobile-preferences";
-import { ListFilterMenu } from "../layout/workspace/ListFilterMenu";
-import { pullRequestViewMatches, type PullRequestSavedViewScope } from "./pullRequestSavedViews";
-import { usePullRequestSavedViews } from "./usePullRequestListControls";
+import { prompt as showTextInputDialog } from "../../../components/ui/Dialog";
+import type { MenuProps } from "../../../components/ui/Menu.types";
+import { uuidv4 } from "../../../lib/uuid";
+import type { Preferences } from "../../../persistence/mobile-preferences";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
+import { ListFilterMenu } from "./ListFilterMenu";
 
-export function PullRequestSavedViewsMenu({
+type SavedViewIdentity = typeof SavedViewIdentitySchema.Type;
+const EMPTY_SAVED_VIEWS: ReadonlyArray<never> = [];
+
+export function SavedViewsMenu<Scope extends object>({
+  read,
+  write,
+  noun,
+  shortNoun,
+  suggestedName,
   scope,
+  matches,
   onApply,
 }: {
-  scope: PullRequestSavedViewScope;
-  onApply: (view: PullRequestSavedView) => Promise<void>;
+  read: (preferences: Preferences) => ReadonlyArray<Scope & SavedViewIdentity> | undefined;
+  write: (views: ReadonlyArray<Scope & SavedViewIdentity>) => Partial<Preferences>;
+  /** "pull request" in the menu's label, "PR" in its dialogs. */
+  noun: string;
+  shortNoun: string;
+  suggestedName: string;
+  scope: Scope;
+  matches: (view: Scope, scope: Scope) => boolean;
+  onApply: (view: Scope & SavedViewIdentity) => Promise<void> | void;
 }) {
-  const { views, ready, update } = usePullRequestSavedViews();
+  type View = Scope & SavedViewIdentity;
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom, { mode: "promise" });
+  const ready = AsyncResult.isSuccess(preferences) && !preferences.waiting;
+  const views: ReadonlyArray<View> = AsyncResult.isSuccess(preferences)
+    ? (read(preferences.value) ?? EMPTY_SAVED_VIEWS)
+    : EMPTY_SAVED_VIEWS;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const selectedView =
-    views.find((view) => view.id === selectedId) ??
-    views.find((view) => pullRequestViewMatches(view, scope));
+    views.find((view) => view.id === selectedId) ?? views.find((view) => matches(view, scope));
   if (selectedId === null && selectedView) setSelectedId(selectedView.id);
-  const modified = selectedView !== undefined && !pullRequestViewMatches(selectedView, scope);
+  const modified = selectedView !== undefined && !matches(selectedView, scope);
 
   // These avoid `finally`, which the React Compiler cannot lower; every path clears `busy`.
-  async function applyView(view: PullRequestSavedView) {
+  async function applyView(view: View) {
     setBusy(true);
     try {
       await onApply(view);
       setSelectedId(view.id);
     } catch {
-      Alert.alert("Could not apply PR view", "The device could not save your filters. Try again.");
+      Alert.alert(
+        `Could not apply ${shortNoun} view`,
+        "The device could not save your filters. Try again.",
+      );
     }
     setBusy(false);
   }
 
-  async function persist(
-    transform: (
-      current: ReadonlyArray<PullRequestSavedView>,
-    ) => ReadonlyArray<PullRequestSavedView>,
-  ) {
+  async function persist(transform: (current: ReadonlyArray<View>) => ReadonlyArray<View>) {
     setBusy(true);
     let saved = true;
     try {
-      await update(transform);
+      await savePreferences({
+        transform: (current) => write(transform(read(current) ?? EMPTY_SAVED_VIEWS)),
+      });
     } catch {
-      Alert.alert("Could not save PR views", "The device could not save your views. Try again.");
+      Alert.alert(
+        `Could not save ${shortNoun} views`,
+        "The device could not save your views. Try again.",
+      );
       saved = false;
     }
     setBusy(false);
     return saved;
   }
 
-  function editName(view?: PullRequestSavedView) {
+  function editName(view?: View) {
     showTextInputDialog({
-      title: view ? "Rename PR view" : "Save PR view",
-      initialValue:
-        view?.name ??
-        (scope.controls.involvement === "reviewing" ? "PRs Requesting My Review" : ""),
+      title: view ? `Rename ${shortNoun} view` : `Save ${shortNoun} view`,
+      initialValue: view?.name ?? suggestedName,
       confirmText: "Save",
       onConfirm: (value) => {
-        const error = pullRequestViewNameError(value, views, view?.id);
+        const error = savedViewNameError(value, views, view?.id);
         if (error) {
           Alert.alert("Could not save view", error);
           return;
@@ -101,7 +128,7 @@ export function PullRequestSavedViewsMenu({
     <ListFilterMenu
       label={selectedView ? `${selectedView.name}${modified ? " *" : ""}` : "Views"}
       active={selectedView !== undefined}
-      accessibilityLabel="Saved pull request views"
+      accessibilityLabel={`Saved ${noun} views`}
       actions={actions.map((action) => ({
         ...action,
         attributes: { ...action.attributes, disabled: !ready || busy },
