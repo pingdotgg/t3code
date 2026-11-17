@@ -537,6 +537,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer chec
   );
 });
 
+// regression: #38234
 describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("concurrent installers", () => {
   it("publishes one runtime without nesting the other install's staging directory", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-concurrent-"));
