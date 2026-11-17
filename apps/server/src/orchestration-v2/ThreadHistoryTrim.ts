@@ -60,6 +60,17 @@ type Candidate = {
 type Mode = "background" | "manual";
 type Removed = { readonly itemCount: number; readonly bytes: number };
 
+// Space a row gives back: its payload plus each copy of its ids in the row, its indexes and its position row.
+const ITEM_BYTES = `(octet_length(payload_json) + 5 * length(turn_item_id) + 8 * length(thread_id)
+  + 3 * COALESCE(length(run_id), 0) + 2 * COALESCE(length(node_id), 0)
+  + 2 * COALESCE(length(provider_turn_id), 0) + COALESCE(length(provider_thread_id), 0)
+  + COALESCE(length(parent_item_id), 0))`;
+const nodeBytes = (alias: string) =>
+  `(octet_length(${alias}payload_json) + 2 * length(${alias}node_id) + 3 * length(${alias}thread_id)
+  + length(${alias}root_node_id) + 2 * COALESCE(length(${alias}run_id), 0)
+  + 2 * COALESCE(length(${alias}parent_node_id), 0) + 2 * COALESCE(length(${alias}provider_turn_id), 0)
+  + COALESCE(length(${alias}provider_thread_id), 0))`;
+
 function trimNoticeMessage(afterDays: number): string {
   return `Tool output and reasoning above this point were removed to save space after ${afterDays} ${afterDays === 1 ? "day" : "days"} without use. Messages, plans and file changes are kept.`;
 }
@@ -175,11 +186,11 @@ const make = Effect.gen(function* () {
             WHERE thread_id = ${candidate.threadId}
               AND type IN ${sql.in(TRIMMED_ITEM_TYPES)}
               AND status NOT IN ${sql.in(LIVE_ITEM_STATUSES)}) AS items,
-          COALESCE((SELECT SUM(octet_length(payload_json)) FROM orchestration_v2_projection_turn_items
+          COALESCE((SELECT SUM(${sql.literal(ITEM_BYTES)}) FROM orchestration_v2_projection_turn_items
             WHERE thread_id = ${candidate.threadId}
               AND type IN ${sql.in(TRIMMED_ITEM_TYPES)}
               AND status NOT IN ${sql.in(LIVE_ITEM_STATUSES)}), 0)
-          + COALESCE((SELECT SUM(octet_length(payload_json)) FROM orchestration_v2_projection_nodes
+          + COALESCE((SELECT SUM(${sql.literal(nodeBytes(""))}) FROM orchestration_v2_projection_nodes
             WHERE thread_id = ${candidate.threadId}
               AND kind IN ${sql.in(TRIMMED_NODE_KINDS)}
               AND status NOT IN ${sql.in(LIVE_NODE_STATUSES)}), 0) AS bytes
@@ -278,7 +289,7 @@ const make = Effect.gen(function* () {
         parent_item_id AS parent,
         type,
         status,
-        octet_length(payload_json) AS bytes
+        ${sql.literal(ITEM_BYTES)} AS bytes
       FROM orchestration_v2_projection_turn_items
       WHERE thread_id = ${threadId} AND ordinal < ${boundary}
     `.pipe(NodeSqliteClient.readOnlyBackground);
@@ -322,7 +333,7 @@ const make = Effect.gen(function* () {
         node.kind,
         node.status,
         COALESCE(run.ordinal <= ${candidate.runOrdinal}, 0) AS settled,
-        octet_length(node.payload_json) AS bytes
+        ${sql.literal(nodeBytes("node."))} AS bytes
       FROM orchestration_v2_projection_nodes AS node
       LEFT JOIN orchestration_v2_projection_runs AS run ON run.run_id = node.run_id
       WHERE node.thread_id = ${threadId}
