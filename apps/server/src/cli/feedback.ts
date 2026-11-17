@@ -1,16 +1,28 @@
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
-import { Command, Flag } from "effect/cli";
+import * as Layer from "effect/Layer";
+import * as References from "effect/References";
+import { Command, Flag, GlobalFlag } from "effect/cli";
+
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../config.ts";
+import { listFeedbackReports } from "../feedback/FeedbackList.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 import {
   FEEDBACK_CLI_CLIENT_LABEL,
   FEEDBACK_OFF_MESSAGE,
   FeedbackInput,
-  FeedbackReport,
   FeedbackSubmitResult,
 } from "../feedback/FeedbackReport.ts";
-import { projectLocationFlags } from "./config.ts";
+import {
+  authLocationFlags,
+  type CliAuthLocationFlags,
+  projectLocationFlags,
+  resolveCliAuthConfig,
+} from "./config.ts";
 import {
   jsonFlag,
   printJson,
@@ -23,17 +35,38 @@ import {
 const feedbackOff = ({ tool }: { readonly tool: string }) =>
   Effect.fail(new ThreadToolFailedError({ tool, detail: FEEDBACK_OFF_MESSAGE }));
 
-const feedbackListCommand = Command.make("list", { ...projectLocationFlags, json: jsonFlag }).pipe(
+/** Reads this machine's database and settings directly, whether or not its server runs. */
+const listReports = Effect.fn("cli.feedback.listReports")(function* (flags: CliAuthLocationFlags) {
+  const config = yield* resolveCliAuthConfig(flags, yield* GlobalFlag.LogLevel, {
+    quietLogs: true,
+  });
+  return yield* listFeedbackReports.pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        SqlitePersistence.layerCliConfig,
+        ServerSettings.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              ServerSecretStore.layer,
+              SqlitePersistence.layerCliConfig,
+              ManagedPolicy.layer,
+            ),
+          ),
+        ),
+      ).pipe(
+        Layer.provide(ServerConfig.layer(config)),
+        Layer.provide(Layer.succeed(References.MinimumLogLevel, "Error")),
+      ),
+    ),
+  );
+});
+
+const feedbackListCommand = Command.make("list", { ...authLocationFlags, json: jsonFlag }).pipe(
   Command.withDescription("List recent feedback reports saved on this machine, newest first."),
-  Command.withHandler((flags) =>
-    withThreadTools(
-      { ...flags, clientLabel: FEEDBACK_CLI_CLIENT_LABEL },
-      Effect.fn("cli.feedback.list")(function* (tools) {
-        const { reports } = yield* tools.call(
-          "t3_feedback_list",
-          {},
-          Schema.Struct({ reports: Schema.Array(FeedbackReport) }),
-        );
+  Command.withHandler(
+    Effect.fn("cli.feedback.list")(
+      function* (flags) {
+        const reports = yield* listReports(flags);
         if (flags.json) return yield* printJson(reports);
         for (const report of reports) {
           yield* Console.log(
@@ -42,6 +75,7 @@ const feedbackListCommand = Command.make("list", { ...projectLocationFlags, json
               report.threadId ?? "-",
               report.kind,
               report.subject || "-",
+              report.userRequested ? "approved" : "unprompted",
               report.sent ? "sent" : "local",
             ].join("  "),
           );
@@ -55,8 +89,13 @@ const feedbackListCommand = Command.make("list", { ...projectLocationFlags, json
             );
           }
         }
-      }),
-    ).pipe(Effect.catchTags({ ThreadToolMissingError: feedbackOff }), reportThreadErrors),
+      },
+      Effect.tapError((error) =>
+        error._tag === "FeedbackOffError" || error._tag === "FeedbackStorageError"
+          ? Console.error(error.message)
+          : Effect.void,
+      ),
+    ),
   ),
 );
 

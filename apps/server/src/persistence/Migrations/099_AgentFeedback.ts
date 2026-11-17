@@ -10,5 +10,6 @@ export default Effect.gen(function* () {
     user_requested INTEGER NOT NULL DEFAULT 0, trace TEXT, source TEXT NOT NULL,
     sent INTEGER NOT NULL DEFAULT 0
   )`;
-  yield* sql`CREATE INDEX agent_feedback_thread_run_idx ON agent_feedback(thread_id, run_id)`;
+  // The per-turn limit counts by turn and kind; reports outside a turn are few.
+  yield* sql`CREATE INDEX agent_feedback_run_idx ON agent_feedback(run_id, user_requested)`;
 });

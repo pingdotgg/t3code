@@ -30,6 +30,7 @@ import * as Settings from "../serverSettings.ts";
 import * as Analytics from "../telemetry/AnalyticsService.ts";
 import * as Approvals from "./FeedbackApprovals.ts";
 import type { FeedbackInput } from "./FeedbackReport.ts";
+import { listFeedbackReports } from "./FeedbackList.ts";
 import * as Feedback from "./FeedbackService.ts";
 
 const threadId = ThreadId.make("thread:feedback");
@@ -132,7 +133,7 @@ const harness = Effect.gen(function* () {
   });
   const layer = Feedback.layer(() => ["t3_thread_read"]).pipe(
     Layer.provideMerge(Approvals.layer),
-    Layer.provide(
+    Layer.provideMerge(
       Layer.mergeAll(
         threads,
         Layer.mock(Settings.ServerSettingsService)({
@@ -232,7 +233,7 @@ it.effect("stores nothing and fails when agent feedback is off", () =>
       const error = yield* Effect.flip(feedback.submit(input, fromThread));
       expect(error._tag).toBe("FeedbackOffError");
       expect(error.message).toContain("Settings > Labs");
-      expect((yield* Effect.flip(feedback.list))._tag).toBe("FeedbackOffError");
+      expect((yield* Effect.flip(listFeedbackReports))._tag).toBe("FeedbackOffError");
     }).pipe(Effect.provide(layer));
     expect(yield* Ref.get(events)).toEqual([]);
   }),
@@ -309,7 +310,7 @@ it.effect("scrubs the caller's private values and sends only the event contract"
       ])
         yield* feedback.submit({ ...input, subject }, { source: "cli" });
       expect(
-        (yield* feedback.list).map(({ subject, userRequested, sent, threadId }) => ({
+        (yield* listFeedbackReports).map(({ subject, userRequested, sent, threadId }) => ({
           subject,
           userRequested,
           sent,
@@ -327,56 +328,70 @@ it.effect("scrubs the caller's private values and sends only the event contract"
   }),
 );
 
-it.effect("allows 3 reports per turn and 10 per thread, not counting refused reports", () =>
-  Effect.gen(function* () {
-    const { mode, runId, events, layer } = yield* harness;
-    yield* Effect.gen(function* () {
-      const feedback = yield* Feedback.FeedbackService;
-      const limited = Effect.flip(feedback.submit(input, fromThread)).pipe(
-        Effect.map((error) => error._tag),
-      );
-      for (const subject of ["", "acme payments roadmap", "mcp__other__t3_thread_read"]) {
-        const error = yield* Effect.flip(feedback.submit({ ...input, subject }, fromThread));
-        expect(error.message).toBe(
-          "Set subject to the exact T3 tool name, the t3 command, or `general`.",
+it.effect(
+  "allows 3 reports of each kind per turn, and 10 an hour outside a turn, counting no refusal",
+  () =>
+    Effect.gen(function* () {
+      const { mode, runId, events, cards, layer } = yield* harness;
+      yield* Effect.gen(function* () {
+        const feedback = yield* Feedback.FeedbackService;
+        const limited = Effect.flip(feedback.submit(input, fromThread)).pipe(
+          Effect.map((error) => error._tag),
         );
-      }
-      const refused = (report: Partial<typeof input>, caller: Feedback.FeedbackCaller) =>
-        Effect.flip(feedback.submit({ ...input, ...report }, caller)).pipe(
-          Effect.map((error) => error.message),
+        for (const subject of ["", "acme payments roadmap", "mcp__other__t3_thread_read"]) {
+          const error = yield* Effect.flip(feedback.submit({ ...input, subject }, fromThread));
+          expect(error.message).toBe(
+            "Set subject to the exact T3 tool name, the t3 command, or `general`.",
+          );
+        }
+        const refused = (report: Partial<typeof input>, caller: Feedback.FeedbackCaller) =>
+          Effect.flip(feedback.submit({ ...input, ...report }, caller)).pipe(
+            Effect.map((error) => error.message),
+          );
+        expect(yield* refused({ includeTurns: 2 }, fromThread)).toBe(
+          "Conversation text goes only on a report the user asked for (userRequested).",
         );
-      expect(yield* refused({ includeTurns: 2 }, fromThread)).toBe(
-        "Conversation text goes only on a report the user asked for (userRequested).",
-      );
-      // Only a thread can show the user a requested report to approve.
-      expect(yield* refused({ includeTurns: 1, userRequested: true }, { source: "cli" })).toBe(
-        "A report the user asks for is shown to them for approval in their thread, and this call has no active thread turn, so nothing was sent.",
-      );
-      yield* Ref.set(mode, "on-request");
-      expect(yield* refused({}, fromThread)).toBe(
-        "Agent feedback is set to When I ask: send a report only when the user asks for one.",
-      );
-      expect(yield* refused({}, { source: "cli" })).toBe(
-        "Agent feedback is set to When I ask: ask your agent in a thread to send it, so you can approve what is sent.",
-      );
-      yield* Ref.set(mode, "auto");
-      expect(yield* Ref.get(events)).toEqual([]);
-      yield* Effect.replicateEffect(feedback.submit(input, fromThread), 3, { discard: true });
-      expect(yield* limited).toBe("FeedbackLimitError");
-      for (const run of ["run:2", "run:3"]) {
-        yield* Ref.set(runId, RunId.make(run));
+        // Only a thread can show the user a requested report to approve.
+        expect(yield* refused({ includeTurns: 1, userRequested: true }, { source: "cli" })).toBe(
+          "A report the user asks for is shown to them for approval in their thread, and this call has no active thread turn, so nothing was sent.",
+        );
+        yield* Ref.set(mode, "on-request");
+        expect(yield* refused({}, fromThread)).toBe(
+          "Agent feedback is set to When I ask: send a report only when the user asks for one.",
+        );
+        expect(yield* refused({}, { source: "cli" })).toBe(
+          "Agent feedback is set to When I ask: ask your agent in a thread to send it, so you can approve what is sent.",
+        );
+        yield* Ref.set(mode, "auto");
+        expect(yield* Ref.get(events)).toEqual([]);
         yield* Effect.replicateEffect(feedback.submit(input, fromThread), 3, { discard: true });
-      }
-      yield* Ref.set(runId, RunId.make("run:4"));
-      yield* feedback.submit(input, fromThread);
-      expect(yield* limited).toBe("FeedbackLimitError");
-      // Reports from no thread, such as the CLI's, have no per-thread limit.
-      yield* Effect.replicateEffect(feedback.submit(input, { source: "cli" }), 11, {
-        discard: true,
-      });
-      expect(yield* feedback.list).toHaveLength(21);
-    }).pipe(Effect.provide(layer));
-  }),
+        expect(yield* limited).toBe("FeedbackLimitError");
+        // Unprompted reports leave a requested one its own room in the turn.
+        yield* Effect.replicateEffect(approved(cards, { ...input, userRequested: true }), 3, {
+          discard: true,
+        });
+        const requested = yield* Effect.flip(
+          feedback.submit({ ...input, userRequested: true }, fromThread),
+        );
+        expect(requested.message).toBe(
+          "This turn already sent 3 agent feedback reports of this kind; nothing was sent.",
+        );
+        // No cap per thread: each new turn has room again.
+        for (const run of ["run:2", "run:3", "run:4", "run:5"]) {
+          yield* Ref.set(runId, RunId.make(run));
+          yield* Effect.replicateEffect(feedback.submit(input, fromThread), 3, { discard: true });
+        }
+        // Outside a turn, such as `t3 feedback`, 10 an hour.
+        const fromCli = { source: "cli" as const };
+        yield* Effect.replicateEffect(feedback.submit(input, fromCli), 10, { discard: true });
+        expect((yield* Effect.flip(feedback.submit(input, fromCli))).message).toBe(
+          "This machine already sent 10 agent feedback reports outside a turn in the last hour; nothing was sent.",
+        );
+        yield* TestClock.adjust("1 hour");
+        yield* feedback.submit(input, fromCli);
+        expect(yield* listFeedbackReports).toHaveLength(29);
+      }).pipe(Effect.provide(layer));
+    }),
 );
 
 it.effect("attaches a trace only to requested reports, with text only for includeTurns", () =>
@@ -433,7 +448,7 @@ it.effect("attaches a trace only to requested reports, with text only for includ
       expect(recent(capped)).toEqual(recent(withText));
 
       const sent = (yield* Ref.get(events)).map(([, properties]) => properties);
-      const stored = (yield* feedback.list).map((report) => report.trace).toReversed();
+      const stored = (yield* listFeedbackReports).map((report) => report.trace).toReversed();
       expect(stored).toEqual(sent.map((properties) => (properties as { trace: unknown }).trace));
 
       // Under the entry and byte caps, a message cut to 1,000 characters alone marks the trace.
@@ -471,7 +486,7 @@ it.effect(
         const approvals = yield* Approvals.FeedbackApprovals;
         const requested = { ...input, userRequested: true, includeTurns: 1 };
         const nothingKept = Effect.gen(function* () {
-          expect(yield* feedback.list).toEqual([]);
+          expect(yield* listFeedbackReports).toEqual([]);
           expect(yield* Ref.get(events)).toEqual([]);
         });
 
@@ -514,7 +529,7 @@ it.effect(
         expect(outcome).toMatchObject({ userRequested: true, threadId, sent: true });
         expect((yield* Queue.take(cards)).feedbackStatus).toBe("sent");
         const [[, properties]] = (yield* Ref.get(events)) as [[string, Record<string, unknown>]];
-        const [stored] = yield* feedback.list;
+        const [stored] = yield* listFeedbackReports;
         for (const kept of [properties, stored]) {
           expect({
             kind: kept?.kind,
@@ -531,7 +546,7 @@ it.effect(
         // reports did not count: this turn still takes two more.
         yield* Effect.replicateEffect(feedback.submit(input, fromThread), 2, { discard: true });
         expect(yield* Queue.size(cards)).toBe(0);
-        expect((yield* feedback.list).map((report) => report.userRequested)).toEqual([
+        expect((yield* listFeedbackReports).map((report) => report.userRequested)).toEqual([
           false,
           false,
           true,

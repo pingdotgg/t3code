@@ -41,7 +41,8 @@ they worked, and how long they took. The outline has no text. Tools from your ot
 appear only as `mcp`. If you ask the agent to include the conversation, or its last few turns, the
 text of your messages and the agent's replies in those turns is attached too, up to 1,000
 characters per message and 16 KB in all, oldest text dropped first. Tool inputs and outputs,
-files, and attachments are never sent.
+files, and attachments are never sent. An agent can send at most 3 reports of each kind (asked
+for, and on its own) per turn, and `t3 feedback` at most 10 an hour.
 
 Before anything is saved, T3 Code removes file paths (when text mentions one, the rest of that line
 goes with it), your user name, machine name, project title, branch, and git remote, and anything

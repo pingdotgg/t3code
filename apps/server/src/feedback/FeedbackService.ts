@@ -27,7 +27,8 @@ import * as Analytics from "../telemetry/AnalyticsService.ts";
 import { providerDimensions } from "../telemetry/ProviderDimensions.ts";
 import {
   FEEDBACK_NOT_APPROVED_NOTE,
-  FEEDBACK_OFF_MESSAGE,
+  FeedbackOffError,
+  FeedbackStorageError,
   FEEDBACK_SUBJECT_MESSAGE,
   FEEDBACK_TRACE_TURNS,
   type FeedbackInput,
@@ -40,27 +41,21 @@ import * as Approvals from "./FeedbackApprovals.ts";
 import { buildFeedbackTrace, FEEDBACK_TRACE_ITEM_TYPES } from "./FeedbackTrace.ts";
 import { scrubFeedback } from "./scrubFeedback.ts";
 
-const MAX_REPORTS_PER_RUN = 3;
-const MAX_REPORTS_PER_THREAD = 10;
-const LIST_LIMIT = 50;
+// Requested and unprompted reports count apart, so neither can use up the other's turn.
+const MAX_REPORTS_PER_TURN = 3;
+// Reports from no turn, such as `t3 feedback`, have no turn to count in.
+const MAX_REPORTS_OUTSIDE_TURNS_PER_HOUR = 10;
 // As long as a secret card waits; Claude's and Codex's T3 tool calls allow 65 minutes.
 const APPROVAL_TIMEOUT = Duration.minutes(10);
 
-export class FeedbackOffError extends Schema.TaggedError<FeedbackOffError>()(
-  "FeedbackOffError",
-  {},
-) {
-  override get message() {
-    return FEEDBACK_OFF_MESSAGE;
-  }
-}
-
 export class FeedbackLimitError extends Schema.TaggedError<FeedbackLimitError>()(
   "FeedbackLimitError",
-  {},
+  { scope: Schema.Literals(["turn", "hour"]) },
 ) {
   override get message() {
-    return `This thread already sent the most agent feedback reports allowed (${MAX_REPORTS_PER_RUN} per turn, ${MAX_REPORTS_PER_THREAD} per thread).`;
+    return this.scope === "turn"
+      ? `This turn already sent ${MAX_REPORTS_PER_TURN} agent feedback reports of this kind; nothing was sent.`
+      : `This machine already sent ${MAX_REPORTS_OUTSIDE_TURNS_PER_HOUR} agent feedback reports outside a turn in the last hour; nothing was sent.`;
   }
 }
 
@@ -103,15 +98,6 @@ export class FeedbackApprovalError extends Schema.TaggedError<FeedbackApprovalEr
   }
 }
 
-export class FeedbackStorageError extends Schema.TaggedError<FeedbackStorageError>()(
-  "FeedbackStorageError",
-  { cause: Schema.Defect() },
-) {
-  override get message() {
-    return "Could not save agent feedback.";
-  }
-}
-
 export interface FeedbackCaller {
   readonly source: "mcp" | "cli";
   readonly threadId?: ThreadId;
@@ -137,17 +123,11 @@ export class FeedbackService extends Context.Service<
       | FeedbackLimitError
       | FeedbackStorageError
     >;
-    /** Newest first. */
-    readonly list: Effect.Effect<
-      ReadonlyArray<FeedbackReport>,
-      FeedbackOffError | FeedbackStorageError
-    >;
   }
 >()("t3/feedback/FeedbackService") {}
 
 const storageError = (cause: unknown) => new FeedbackStorageError({ cause });
 const TraceJson = Schema.NullOr(Schema.fromJsonString(FeedbackTrace));
-const decodeTrace = Schema.decodeUnknownEffect(TraceJson);
 const encodeTrace = Schema.encodeEffect(TraceJson);
 
 /** `mcpToolNames` is read per report: the MCP server registers tools after this service starts. */
@@ -274,7 +254,8 @@ const make = Effect.fn("FeedbackService.make")(function* (
     }
 
     // Nothing is stored, sent or counted before the user answers.
-    if (yield* overLimit(caller.threadId ?? null, runId)) return yield* new FeedbackLimitError({});
+    const limited = yield* overLimit(runId, true);
+    if (limited !== undefined) return yield* new FeedbackLimitError({ scope: limited });
     const run =
       runId === null || caller.threadId === undefined
         ? undefined
@@ -355,9 +336,8 @@ const make = Effect.fn("FeedbackService.make")(function* (
       sql
         .withTransaction(
           Effect.gen(function* () {
-            if (yield* overLimit(report.threadId, context.runId)) {
-              return yield* new FeedbackLimitError({});
-            }
+            const limited = yield* overLimit(context.runId, userRequested);
+            if (limited !== undefined) return yield* new FeedbackLimitError({ scope: limited });
             yield* sql`INSERT INTO agent_feedback ${sql.insert({
               id: report.id,
               thread_id: report.threadId,
@@ -390,50 +370,27 @@ const make = Effect.fn("FeedbackService.make")(function* (
     return { ...report, sent };
   });
 
-  const overLimit = (threadId: string | null, runId: string | null) =>
-    threadId === null
-      ? Effect.succeed(false)
-      : sql<{ readonly thread: number; readonly run: number }>`
-          SELECT COUNT(*) AS thread, COALESCE(SUM(run_id IS ${runId}), 0) AS run
-          FROM agent_feedback WHERE thread_id = ${threadId}`.pipe(
-          Effect.map(
-            ([counts]) =>
-              (counts?.thread ?? 0) >= MAX_REPORTS_PER_THREAD ||
-              (counts?.run ?? 0) >= MAX_REPORTS_PER_RUN,
-          ),
-          Effect.mapError(storageError),
-        );
+  /** The limit the next report would pass, or undefined while there is room. */
+  const overLimit = Effect.fn("FeedbackService.overLimit")(function* (
+    runId: string | null,
+    userRequested: boolean,
+  ) {
+    if (runId !== null) {
+      const [row] = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM agent_feedback
+        WHERE run_id = ${runId} AND user_requested = ${userRequested ? 1 : 0}`.pipe(
+        Effect.mapError(storageError),
+      );
+      return (row?.count ?? 0) >= MAX_REPORTS_PER_TURN ? ("turn" as const) : undefined;
+    }
+    const since = DateTime.formatIso(DateTime.subtract(yield* DateTime.now, { hours: 1 }));
+    const [row] = yield* sql<{ readonly count: number }>`
+      SELECT COUNT(*) AS count FROM agent_feedback
+      WHERE run_id IS NULL AND created_at > ${since}`.pipe(Effect.mapError(storageError));
+    return (row?.count ?? 0) >= MAX_REPORTS_OUTSIDE_TURNS_PER_HOUR ? ("hour" as const) : undefined;
+  });
 
-  const list = requireOn.pipe(
-    Effect.andThen(
-      () =>
-        sql<
-          Omit<FeedbackReport, "sent" | "userRequested" | "trace"> & {
-            readonly sent: number;
-            readonly userRequested: number;
-            readonly trace: string | null;
-          }
-        >`
-      SELECT id, thread_id AS "threadId", created_at AS "createdAt", kind, subject,
-        expected, actual, workaround, user_requested AS "userRequested", trace, source, sent
-      FROM agent_feedback ORDER BY rowid DESC LIMIT ${LIST_LIMIT}`,
-    ),
-    Effect.flatMap((rows) =>
-      Effect.forEach(rows, (row) =>
-        decodeTrace(row.trace).pipe(
-          Effect.map((trace) => ({
-            ...row,
-            trace,
-            userRequested: row.userRequested === 1,
-            sent: row.sent === 1,
-          })),
-        ),
-      ),
-    ),
-    Effect.mapError((error) => (error._tag === "FeedbackOffError" ? error : storageError(error))),
-  );
-
-  return FeedbackService.of({ submit, list });
+  return FeedbackService.of({ submit });
 });
 
 export const layer = (mcpToolNames: () => ReadonlyArray<string>) =>

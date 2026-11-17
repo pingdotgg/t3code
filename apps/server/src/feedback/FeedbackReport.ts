@@ -74,6 +74,24 @@ export type FeedbackNotApproved = typeof FeedbackNotApproved.Type;
 export const FEEDBACK_OFF_MESSAGE =
   "Agent feedback is off. Turn it on in T3 Code under Settings > Labs, then try again.";
 
+export class FeedbackOffError extends Schema.TaggedError<FeedbackOffError>()(
+  "FeedbackOffError",
+  {},
+) {
+  override get message() {
+    return FEEDBACK_OFF_MESSAGE;
+  }
+}
+
+export class FeedbackStorageError extends Schema.TaggedError<FeedbackStorageError>()(
+  "FeedbackStorageError",
+  { cause: Schema.Defect() },
+) {
+  override get message() {
+    return "Could not save agent feedback.";
+  }
+}
+
 /** The MCP client label `t3 feedback` signs in with, so its reports count as `cli`. */
 export const FEEDBACK_CLI_CLIENT_LABEL = "t3 feedback cli";
 

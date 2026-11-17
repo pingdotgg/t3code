@@ -1,3 +1,5 @@
+import * as NodeSqlite from "node:sqlite";
+
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -77,7 +79,8 @@ it.effect("points to Labs only when the server hides the feedback tool", () =>
       readonly stderr: string;
     }> = [
       { args: submit, call: (tool) => Effect.fail(hidden(tool)), stderr: FEEDBACK_OFF_MESSAGE },
-      { args: ["list"], call: (tool) => Effect.fail(hidden(tool)), stderr: FEEDBACK_OFF_MESSAGE },
+      // The list reads this machine's database, never the agent tools.
+      { args: ["list"], stderr: FEEDBACK_OFF_MESSAGE },
       {
         args: submit,
         call: () =>
@@ -111,6 +114,50 @@ it.effect("points to Labs only when the server hides the feedback tool", () =>
       const lines = yield* TestConsole.errorLines;
       expect(String(lines.at(-1)), args.join(" ")).toContain(stderr);
     }
+
+    // On, the list prints each stored report whole, trace included, with no server running.
+    yield* fs.writeFileString(
+      path.join(baseDir, "userdata", "settings.json"),
+      JSON.stringify({ agentFeedback: { mode: "auto" } }),
+    );
+    const trace = {
+      turns: 1,
+      textTurns: 0,
+      truncated: false,
+      entries: [{ turn: 1, type: "user", length: 4 }],
+    };
+    const database = new NodeSqlite.DatabaseSync(path.join(baseDir, "userdata", "statev2.sqlite"));
+    database
+      .prepare(
+        `INSERT INTO agent_feedback (id, thread_id, run_id, created_at, kind, subject, expected,
+          actual, workaround, user_requested, trace, source, sent)
+        VALUES ('r1', 't1', 'run1', '2026-11-17T00:00:00.000Z', 'bug', 't3_thread_read', 'a', 'b',
+          '', 1, ?, 'mcp', 1)`,
+      )
+      .run(JSON.stringify(trace));
+    database.close();
+    yield* Command.runWith(feedbackCommand, { version: "0.0.0" })([
+      "list",
+      "--json",
+      "--base-dir",
+      baseDir,
+    ]);
+    expect(JSON.parse(String((yield* TestConsole.logLines).at(-1)))).toEqual([
+      {
+        id: "r1",
+        threadId: "t1",
+        createdAt: "2026-11-17T00:00:00.000Z",
+        kind: "bug",
+        subject: "t3_thread_read",
+        expected: "a",
+        actual: "b",
+        workaround: "",
+        userRequested: true,
+        trace,
+        source: "mcp",
+        sent: true,
+      },
+    ]);
   }).pipe(
     Effect.scoped,
     Effect.provide(

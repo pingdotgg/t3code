@@ -44,17 +44,4 @@ export const layer = McpToolAccess.toLayer(FeedbackToolkit, {
         );
     }),
   ),
-  t3_feedback_list: McpToolAccess.reads(() =>
-    Feedback.FeedbackService.pipe(
-      Effect.flatMap((feedback) => feedback.list),
-      Effect.map((reports) => ({ reports })),
-      Effect.mapError(
-        (error) =>
-          new OrchestratorMcpFailure({
-            code: error._tag === "FeedbackStorageError" ? "orchestration_error" : "invalid_request",
-            message: error.message,
-          }),
-      ),
-    ),
-  ),
 });

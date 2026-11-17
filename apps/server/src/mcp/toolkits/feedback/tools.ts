@@ -5,7 +5,6 @@ import { McpSchema, Tool, Toolkit } from "effect/ai";
 import {
   FeedbackInput,
   FeedbackNotApproved,
-  FeedbackReport,
   FeedbackSubmitResult,
 } from "../../../feedback/FeedbackReport.ts";
 import * as Feedback from "../../../feedback/FeedbackService.ts";
@@ -30,14 +29,6 @@ export const FeedbackToolkit = Toolkit.make(
     parameters: FeedbackInput,
     success: Schema.Union([FeedbackSubmitResult, FeedbackNotApproved]),
   })
-    .annotate(Tool.Destructive, false)
-    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileFeedbackOff),
-  Tool.make("t3_feedback_list", {
-    ...shared,
-    description: "List this machine's recent T3 Code feedback reports.",
-    success: Schema.Struct({ reports: Schema.Array(FeedbackReport) }),
-  })
-    .annotate(Tool.Readonly, true)
     .annotate(Tool.Destructive, false)
     .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileFeedbackOff),
 );
