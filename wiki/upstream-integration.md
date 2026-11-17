@@ -6,7 +6,7 @@ tags: [upstream, fork, integration]
 status: stable
 generated:
   by: opencode/gpt-6.1-sol
-  at: 2026-11-17T00:00:53+00:00
+  at: 2026-11-17T00:54:19+00:00
 verified:
   - by: opencode/gpt-6.1-sol
     at: 2026-11-16T18:15:36+00:00
@@ -410,7 +410,7 @@ sources:
     title: Open-in picker item that opens a file with the host's default app
   - id: pr-watch-review-hold
     resource: ../packages/shared/src/orchestrationV2PendingBackgroundWork.ts
-    title: Active pull request watch task that keeps its thread waiting
+    title: Opt-in PR approval hold alongside upstream's checks-only waiting
 ---
 
 # Upstream integration
@@ -1156,16 +1156,17 @@ and never becomes the favorite editor, so the contracts and server stay
 unchanged. Keep the item when integrating upstream picker
 changes.[^open-in-default-app]
 
-## Active pull request watches keep threads waiting
+## Opt-in pull request approval waits
 
 Upstream (`36254ab82`) stops a watched pull request from holding its thread
-once every check finishes, so the thread leaves Waiting while it still needs a
-reviewer. [PR #83](https://github.com/NicholasZolton/t3code/pull/83) keeps every
-active watch awaited until the agent unwatches or the pull request merges or
-closes. This includes bot reviews on repositories without required-review
-rules; a passing check or approval alone does not end the agent's watch. Keep
-active watch tasks awaited when integrating upstream pull request watch
-changes.[^pr-watch-review-hold]
+once every check finishes, even while review is pending, so forgotten watches
+cannot keep completed work in Working indefinitely.
+Open [PR #83](https://github.com/NicholasZolton/t3code/pull/83) preserves that default
+and adds an optional `waitForApproval` setting. An opted-in watch holds until
+checks finish and the host reports `approved`, including bot approvals without
+mandatory-review rules. Approval releases the hold without ending the watch.
+Keep the opt-in separate from the default checks-only policy when integrating
+upstream watch changes.[^pr-watch-review-hold]
 
 ## Rechecking the boundary
 
@@ -1281,7 +1282,7 @@ git log --reverse --oneline origin/main..upstream/main
 
 [^open-in-default-app]: The Open-in picker's "Default app" item and its local-exec, file-only gate.
 
-[^pr-watch-review-hold]: The active pull request watch task's completion hold.
+[^pr-watch-review-hold]: The watch option and shared completion hold derived from the PR snapshot.
 
 [^reviewed-fork-main]: Exact fork main revision fetched for this review.
 

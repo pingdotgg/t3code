@@ -435,7 +435,7 @@ describe("derivePendingBackgroundWork kinds", () => {
       ]);
     });
 
-    it("keeps a watch holding after checks finish until the agent stops watching", () => {
+    it("releases a default watch after checks finish while keeping it listed", () => {
       const input = {
         latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
         providerThreads: [],
@@ -448,10 +448,9 @@ describe("derivePendingBackgroundWork kinds", () => {
           taskId: "pull-request-watch:github.com/acme/app#1",
           description: "Watching pull request #1",
           kind: "monitor",
-          awaited: true,
         },
       ]);
-      expect(backgroundWorkHoldsCompletion(tasks)).toBe(true);
+      expect(backgroundWorkHoldsCompletion(tasks)).toBe(false);
       // PR watches hold through awaited, not the progress-monitor wake rule.
       expect(
         monitorHoldsWakeCompletion({
@@ -474,13 +473,20 @@ describe("derivePendingBackgroundWork kinds", () => {
       expect(backgroundWorkHoldsCompletion(unwatched)).toBe(false);
     });
 
-    it.each(["approved", "changes-requested", "review-required", null, undefined] as const)(
-      "keeps watching with finished checks and review decision %s",
-      (reviewDecision) => {
+    it.each([
+      { reviewDecision: "approved", checksPending: false, holds: false },
+      { reviewDecision: "approved", checksPending: true, holds: true },
+      { reviewDecision: "changes-requested", checksPending: false, holds: true },
+      { reviewDecision: "review-required", checksPending: false, holds: true },
+      { reviewDecision: null, checksPending: false, holds: true },
+      { reviewDecision: undefined, checksPending: false, holds: true },
+    ] as const)(
+      "an approval wait with $reviewDecision review and checks pending $checksPending holds: $holds",
+      ({ reviewDecision, checksPending, holds }) => {
         const pullRequest = {
           ...link(1, {}),
           snapshot: { state: "open" as const, reviewDecision },
-          watch: { ...watch, passed: true, checksPending: false },
+          watch: { ...watch, passed: true, checksPending, waitForApproval: true },
         };
         const tasks = derivePendingBackgroundWork({
           latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
@@ -488,7 +494,16 @@ describe("derivePendingBackgroundWork kinds", () => {
           turnItems: [],
           pullRequests: [pullRequest],
         });
-        expect(backgroundWorkHoldsCompletion(tasks)).toBe(true);
+        expect(backgroundWorkHoldsCompletion(tasks)).toBe(holds);
+        const defaultWatch = derivePendingBackgroundWork({
+          latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+          providerThreads: [],
+          turnItems: [],
+          pullRequests: [
+            { ...pullRequest, watch: { ...pullRequest.watch, waitForApproval: false } },
+          ],
+        });
+        expect(backgroundWorkHoldsCompletion(defaultWatch)).toBe(checksPending);
       },
     );
 

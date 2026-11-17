@@ -69,8 +69,13 @@ export class PullRequestWatchService extends Context.Service<
       readonly threadId: ThreadId;
       readonly target: PullRequestTarget;
       readonly watching: boolean;
+      readonly waitForApproval?: boolean;
     }) => Effect.Effect<
-      ResolvedTarget & { readonly watching: boolean; readonly wasWatching: boolean },
+      ResolvedTarget & {
+        readonly watching: boolean;
+        readonly wasWatching: boolean;
+        readonly waitForApproval: boolean;
+      },
       | PullRequestWatchFailedError
       | PullRequestNotOpenError
       | PullRequestWatchFromSubagentError
@@ -104,6 +109,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly target: PullRequestTarget;
     readonly watching: boolean;
+    readonly waitForApproval?: boolean;
   }) {
     const { watching } = input;
     const thread = yield* requireThread(input.threadId);
@@ -157,6 +163,7 @@ const make = Effect.gen(function* () {
         repository: target.repository,
         number: target.number,
         watching,
+        ...(input.waitForApproval === undefined ? {} : { waitForApproval: input.waitForApproval }),
         ...(watching ? { link: { url: target.url, source: "agent" as const } } : {}),
       })
       .pipe(
@@ -171,6 +178,7 @@ const make = Effect.gen(function* () {
       ...target,
       watching: watchedLink(after)?.watch !== undefined,
       wasWatching: before?.watch !== undefined,
+      waitForApproval: watchedLink(after)?.watch?.waitForApproval ?? false,
     };
   });
 

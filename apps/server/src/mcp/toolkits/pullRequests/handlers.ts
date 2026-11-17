@@ -64,6 +64,9 @@ function entryOf(
     url: link.url,
     source: link.source,
     watching: link.watch !== undefined,
+    ...(link.watch?.waitForApproval === undefined
+      ? {}
+      : { waitForApproval: link.watch.waitForApproval }),
     state: link.snapshot?.state ?? null,
     title: link.snapshot?.title ?? null,
     headBranch: link.snapshot?.headBranch ?? null,
@@ -201,16 +204,24 @@ const make = Effect.gen(function* () {
   const setWatching = Effect.fnUntraced(function* (
     input: PullRequestTargetInput,
     watching: boolean,
+    waitForApproval?: boolean,
   ) {
     const scope = yield* McpInvocationContext.requireMcpCapability("pull-requests");
     const threadId = input.threadId ?? scope.thread?.threadId;
     if (threadId === undefined) return yield* new PullRequestThreadRequiredError();
-    return yield* watches.setWatching({ threadId, target: input, watching }).pipe(
-      Effect.catchTags({
-        PullRequestWatchThreadNotFoundError: (error) =>
-          threadNotFound(engine, scope, error.threadId, error.message),
-      }),
-    );
+    return yield* watches
+      .setWatching({
+        threadId,
+        target: input,
+        watching,
+        ...(waitForApproval === undefined ? {} : { waitForApproval }),
+      })
+      .pipe(
+        Effect.catchTags({
+          PullRequestWatchThreadNotFoundError: (error) =>
+            threadNotFound(engine, scope, error.threadId, error.message),
+        }),
+      );
   });
 
   const locateAll = Effect.fn("PullRequestsToolkit.locateAll")(function* (
@@ -439,7 +450,7 @@ const make = Effect.gen(function* () {
         Effect.map((thread) => listThreadPullRequests(thread, input.cursor, input.states)),
       ),
     ),
-    watch_pull_request: writesThread((input) => setWatching(input, true)),
+    watch_pull_request: writesThread((input) => setWatching(input, true, input.waitForApproval)),
     unwatch_pull_request: writesThread((input) => setWatching(input, false)),
     write_pull_request_guides: McpToolAccess.writesWithCapability((input) =>
       Effect.gen(function* () {

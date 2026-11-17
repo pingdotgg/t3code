@@ -82,6 +82,8 @@ export type ThreadPullRequestKey = typeof ThreadPullRequestKey.Type;
 
 export const ThreadPullRequestWatch = Schema.Struct({
   startedAt: IsoDateTime,
+  /** Opt-in completion hold until the host reports approval, even after checks finish. */
+  waitForApproval: Schema.optional(Schema.Boolean),
   headSha: Schema.NullOr(TrimmedNonEmptyString),
   failedChecks: Schema.Array(TrimmedNonEmptyString),
   passed: Schema.Boolean,

@@ -2,7 +2,7 @@
 
 ## 2026-11-17
 
-- **Compatibility**: Recorded [PR #83](https://github.com/NicholasZolton/t3code/pull/83)'s fork-only [active pull request watch hold](upstream-integration.md#active-pull-request-watches-keep-threads-waiting). Watching keeps a thread Waiting until the agent unwatches or the pull request merges or closes, including bot reviews without required-review rules.
+- **Compatibility**: Recorded [PR #83](https://github.com/NicholasZolton/t3code/pull/83)'s [opt-in PR approval wait](upstream-integration.md#opt-in-pull-request-approval-waits). Default watches retain upstream's checks-only waiting; `waitForApproval` also waits for a host-reported approval and releases automatically without unwatching.
 
 ## 2026-11-16
 

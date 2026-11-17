@@ -881,11 +881,16 @@ function syncedPullRequestWatch(
   },
 ): ThreadPullRequestWatch | undefined {
   if (command.watch === null) return undefined;
+  // Registration owns this option; an in-flight host read must not undo a caller's change.
+  const watch: ThreadPullRequestWatch = {
+    ...command.watch,
+    waitForApproval: existing?.waitForApproval,
+  };
   // A push cleared the answer while this read was in flight, so its answer is the old head's.
   if (command.checksPendingBefore === undefined || existing?.checksPending !== undefined) {
-    return command.watch;
+    return watch;
   }
-  return withoutChecksAnswer(command.watch);
+  return withoutChecksAnswer(watch);
 }
 
 const withoutChecksAnswer = ({
@@ -5052,7 +5057,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : linked;
           const existing = links.find(visible);
           if (existing === undefined) return thread;
-          const watch =
+          let watch: ThreadPullRequestWatch | undefined =
             command.type === "thread.pull-request-watch.sync"
               ? existing.watch?.startedAt === command.startedAt
                 ? syncedPullRequestWatch(existing.watch, command)
@@ -5096,6 +5101,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     remarkIds: [],
                     wakes: 0,
                   });
+          if (
+            command.type === "thread.pull-request.watch" &&
+            command.waitForApproval !== undefined &&
+            watch !== undefined &&
+            watch.waitForApproval !== command.waitForApproval
+          ) {
+            watch = { ...watch, waitForApproval: command.waitForApproval };
+          }
           if (watch === existing.watch && links === linked) return thread;
           const final =
             command.type === "thread.pull-request-watch.sync" && watch === undefined

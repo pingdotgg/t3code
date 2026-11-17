@@ -235,6 +235,7 @@ export function evaluatePullRequestWatch(
     changes,
     next: {
       startedAt: watch.startedAt,
+      ...(watch.waitForApproval === undefined ? {} : { waitForApproval: watch.waitForApproval }),
       headSha,
       failedChecks,
       passed,
