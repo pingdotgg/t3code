@@ -81,10 +81,7 @@ export function FloatingWorkingControl(props: {
   const extensionStatus = props.extensionStatus ?? null;
   const extensionOnly = props.status?.kind === "extension";
   const useGlass = NATIVE_LIQUID_GLASS_SUPPORTED && !extensionOnly;
-  const action =
-    props.status?.kind === "background" || props.status?.kind === "stop"
-      ? props.status.action
-      : null;
+  const action = props.status?.kind === "stop" ? props.status.action : null;
   const [agentsWidth, setAgentsWidth] = useState(0);
   const hasQueue = props.queuedCount > 0;
   const hasPreview = props.devicePreview !== null || props.browserPreview !== null;
@@ -164,8 +161,7 @@ export function FloatingWorkingControl(props: {
   const statusInteractive =
     props.status?.kind === "connection" ||
     props.status?.kind === "extension" ||
-    props.status?.kind === "child-input" ||
-    props.status?.kind === "background";
+    props.status?.kind === "child-input";
   const capsuleInteractive =
     statusInteractive ||
     extensionStatus !== null ||
@@ -431,28 +427,6 @@ function FloatingStatusLabel(props: {
           className="max-w-[260px] shrink font-t3-medium text-xs text-foreground"
           numberOfLines={1}
         >
-          {props.status.label}
-        </Text>
-      </StatusLabelRow>
-    );
-  }
-  if (props.status.kind === "background") {
-    return (
-      <StatusLabelRow
-        key="background"
-        accessibilityLabel={props.status.accessibilityLabel}
-        accessibilityRole="button"
-        onPress={props.status.onPress}
-        className="gap-2"
-        onLayout={props.onLayout}
-      >
-        <SymbolView
-          name={props.status.waiting ? "person.2" : "terminal"}
-          size={13}
-          tintColorClassName="accent-foreground"
-          type="monochrome"
-        />
-        <Text className="shrink font-t3-medium text-xs text-foreground" numberOfLines={1}>
           {props.status.label}
         </Text>
       </StatusLabelRow>

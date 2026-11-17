@@ -90,6 +90,13 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
+const utf8 = new TextEncoder();
+
+// OpenSSH's glob matches UTF-8 bytes, so `?` consumes one byte of a filename.
+function globBytes(value: string): string {
+  return Array.from(utf8.encode(value), (byte) => String.fromCharCode(byte)).join("");
+}
+
 function globToRegExp(pattern: string): RegExp {
   return new RegExp(
     `^${escapeRegex(pattern).replace(/\\\*/gu, "[^]*").replace(/\\\?/gu, ".")}$`,
@@ -119,7 +126,7 @@ const expandGlob = Effect.fnUntraced(function* (
   const directoryIsGlob = hasGlobWildcard(directoryPattern);
   const directories = directoryIsGlob ? yield* expandGlob(directoryPattern) : [directoryPattern];
 
-  const matcher = globToRegExp(basePattern);
+  const matcher = globToRegExp(globBytes(basePattern));
   const matchedPaths: string[] = [];
   for (const directory of directories) {
     if (!(yield* fs.exists(directory))) continue;
@@ -130,7 +137,7 @@ const expandGlob = Effect.fnUntraced(function* (
       : yield* fs.readDirectory(directory);
     for (const entry of entries) {
       if (entry.startsWith(".") && !basePattern.startsWith(".")) continue;
-      if (!matcher.test(entry)) {
+      if (!matcher.test(globBytes(entry))) {
         continue;
       }
       const entryPath = path.join(directory, entry);

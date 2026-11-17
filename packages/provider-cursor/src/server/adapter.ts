@@ -326,7 +326,12 @@ export function makeCursorAgentOptions(input: {
     local: {
       ...(input.runtimePolicy.cwd === null ? {} : { cwd: input.runtimePolicy.cwd }),
       autoReview: policy.autoReview,
-      settingSources: [...CURSOR_AGENT_SETTING_SOURCES],
+      settingSources:
+        input.runtimePolicy.runtimeMode === "full-access" &&
+        !policy.autoReview &&
+        !policy.sandboxEnabled
+          ? [...CURSOR_AGENT_SETTING_SOURCES]
+          : CURSOR_AGENT_SETTING_SOURCES.filter((source) => source !== "project"),
       sandboxOptions: {
         enabled: policy.sandboxEnabled,
       },
