@@ -12,7 +12,9 @@ import {
   parseKeybindingWhenExpression,
   US_SHIFTED_TO_UNSHIFTED_KEYS,
 } from "@t3tools/shared/keybindings";
+import { msg } from "gt-react";
 
+import { m, type MessageResolver } from "../../i18n/messages";
 import { shortcutConflictKey, shortcutKeyFromEvent } from "../../keybindings";
 import { isMacPlatform } from "../../lib/utils";
 import { METRIC_OPTIONS, WINDOW_OPTIONS } from "../usage/usageShortcuts";
@@ -103,12 +105,16 @@ export function whenAstToExpression(node: KeybindingWhenNode | undefined): strin
   }
 }
 
-export function whenNodeRemoveLabel(node: KeybindingWhenNode, depth: number): string {
-  if (depth === 0) return "Clear all conditions";
+export function whenNodeRemoveLabel(
+  node: KeybindingWhenNode,
+  depth: number,
+  resolve: MessageResolver = m,
+): string {
+  if (depth === 0) return resolve(msg("Clear all conditions"));
   if (node.type === "identifier" || (node.type === "not" && node.node.type === "identifier")) {
-    return "Remove condition";
+    return resolve(msg("Remove condition"));
   }
-  return "Remove group and its conditions";
+  return resolve(msg("Remove group and its conditions"));
 }
 
 function wrapWhenExpression(node: KeybindingWhenNode): string {
@@ -118,6 +124,7 @@ function wrapWhenExpression(node: KeybindingWhenNode): string {
 
 export function parseWhenExpressionDraft(
   expression: string,
+  resolve: MessageResolver = m,
 ): { ok: true; value: KeybindingWhenNode | undefined } | { ok: false; message: string } {
   const trimmed = expression.trim();
   if (trimmed.length === 0) return { ok: true, value: undefined };
@@ -126,7 +133,7 @@ export function parseWhenExpressionDraft(
   if (!ast) {
     return {
       ok: false,
-      message: "Use variables with !, &&, ||, and parentheses.",
+      message: resolve(msg("Use variables with !, &&, ||, and parentheses.")),
     };
   }
 
@@ -135,7 +142,8 @@ export function parseWhenExpressionDraft(
 
 function sourceForBinding(binding: ResolvedKeybindingRule): KeybindingSource {
   if (String(binding.command).startsWith("script.")) {
-    return "Project";
+    const source: KeybindingSource = "Project";
+    return source;
   }
 
   const bindingKey = shortcutToKeybindingInput(binding.shortcut);
@@ -147,7 +155,8 @@ function sourceForBinding(binding: ResolvedKeybindingRule): KeybindingSource {
       whenAstToExpression(entry.whenAst) === bindingWhen,
   );
 
-  return isDefault ? "Default" : "Custom";
+  const source: KeybindingSource = isDefault ? "Default" : "Custom";
+  return source;
 }
 
 function defaultBindingForBinding(
@@ -183,6 +192,7 @@ export function keybindingConflictLabels(
   rows: ReadonlyArray<KeybindingRow>,
   input: { readonly rowId: string; readonly key: string; readonly when: string },
   platform = navigator.platform,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<string> {
   if (input.key.trim().length === 0) return [];
   const shortcut = parseKeybindingShortcut(input.key);
@@ -196,7 +206,7 @@ export function keybindingConflictLabels(
       shortcutConflictKey(candidate.binding.shortcut, platform) === conflictKey &&
       conflictsWithWhen(candidate.when, input.when)
     ) {
-      conflicts.push(commandLabel(candidate.command));
+      conflicts.push(commandLabel(candidate.command, resolve));
     }
   }
   return [...new Set(conflicts)].toSorted();
@@ -211,17 +221,24 @@ export interface KeybindingGroup {
 const KEYBINDING_GROUPS = [
   {
     id: "navigation",
-    title: "Navigation",
+    title: msg("Navigation"),
     prefixes: ["sidebar", "rightPanel", "commandPalette", "filePicker", "projectSearch", "editor"],
   },
-  { id: "threads", title: "Threads", prefixes: ["thread", "chat", "pullRequest"] },
-  { id: "composer", title: "Composer", prefixes: ["composer", "modelPicker"] },
-  { id: "terminal", title: "Terminal", prefixes: ["terminal"] },
-  { id: "preview", title: "Preview & diff", prefixes: ["preview", "diff"] },
-  { id: "appearance", title: "Appearance", prefixes: ["theme", "appearance", "themeEditor"] },
-  { id: "scripts", title: "Project scripts", prefixes: ["script"] },
+  { id: "threads", title: msg("Threads"), prefixes: ["thread", "chat", "pullRequest"] },
+  { id: "composer", title: msg("Composer"), prefixes: ["composer", "modelPicker"] },
+  { id: "terminal", title: msg("Terminal"), prefixes: ["terminal"] },
+  { id: "preview", title: msg("Preview & diff"), prefixes: ["preview", "diff"] },
+  {
+    id: "appearance",
+    title: msg("Appearance"),
+    prefixes: ["theme", "appearance", "themeEditor"],
+  },
+  { id: "scripts", title: msg("Project scripts"), prefixes: ["script"] },
 ] as const;
-const OTHER_KEYBINDING_GROUP = { id: "other", title: "Other" } as const;
+const OTHER_KEYBINDING_GROUP = {
+  id: "other",
+  title: msg("Other", { $context: "keybinding group" }),
+} as const;
 
 function keybindingGroupFor(command: KeybindingCommand): { id: string; title: string } {
   const prefix = String(command).split(".")[0] ?? "";
@@ -250,6 +267,7 @@ export function groupKeybindingRows(
 export function buildKeybindingRows(
   keybindings: ResolvedKeybindingsConfig,
   platform = navigator.platform,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<KeybindingRow> {
   const rowsById = new Map<string, KeybindingRow>();
   for (const binding of keybindings) {
@@ -280,6 +298,7 @@ export function buildKeybindingRows(
         when: row.when,
       },
       platform,
+      resolve,
     );
     return conflicts.length > 0
       ? Object.assign({}, row, { conflicts: [...new Set(conflicts)].toSorted() })
@@ -298,13 +317,14 @@ export function buildKeybindingRows(
 export function filterKeybindingRows(
   rows: ReadonlyArray<KeybindingRow>,
   query: string,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<KeybindingRow> {
   const normalizedQuery = query.trim().toLowerCase();
   if (normalizedQuery.length === 0) return rows;
   return rows.filter((row) => {
     return (
       row.command.toLowerCase().includes(normalizedQuery) ||
-      commandLabel(row.command).toLowerCase().includes(normalizedQuery) ||
+      commandLabel(row.command, resolve).toLowerCase().includes(normalizedQuery) ||
       row.key.toLowerCase().includes(normalizedQuery) ||
       row.when.toLowerCase().includes(normalizedQuery) ||
       row.source.toLowerCase().includes(normalizedQuery)
@@ -360,34 +380,51 @@ export function buildWhenVariableOptions(): ReadonlyArray<WhenVariableOption> {
 
 export function buildKeybindingCommandOptions(
   keybindings: ResolvedKeybindingsConfig,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<KeybindingCommandOption> {
   const commands = new Set<KeybindingCommand>(STATIC_KEYBINDING_COMMANDS);
   for (const binding of keybindings) {
     commands.add(binding.command);
   }
-  return [...commands].toSorted((left, right) => compareCommands(left, right, commandLabel));
+  return [...commands].toSorted((left, right) =>
+    compareCommands(left, right, (command) => commandLabel(command, resolve)),
+  );
 }
 
-export function commandLabel(command: KeybindingCommand): string {
-  if (command === "workspace.focusNext") return "Focus Next Workspace Area";
-  if (command === "workspace.focusPrevious") return "Focus Previous Workspace Area";
-  if (command === "composer.sendAlternate") return "Composer: Opposite Queue or Steer Action";
-  if (command === "composer.sendBackground") return "Composer: Start in Background";
-  if (command === "composer.sendAndNewThread") return "Composer: Send and Start New Thread";
-  if (command === "composer.dictation") return "Composer: Start or Finish Dictation";
-  if (command === "thread.steerQueuedMessage") return "Queue: Send First Queued Message";
-  if (command === "thread.editQueuedMessage") return "Queue: Edit Last Queued Message";
-  if (command === "thread.copyReference") return "Pull Request: Copy Link or Thread";
+const COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
+  "workspace.focusNext": msg("Focus Next Workspace Area"),
+  "workspace.focusPrevious": msg("Focus Previous Workspace Area"),
+  "composer.sendAlternate": msg("Composer: Opposite Queue or Steer Action"),
+  "composer.sendBackground": msg("Composer: Start in Background"),
+  "composer.sendAndNewThread": msg("Composer: Send and Start New Thread"),
+  "composer.dictation": msg("Composer: Start or Finish Dictation"),
+  "thread.steerQueuedMessage": msg("Queue: Send First Queued Message"),
+  "thread.editQueuedMessage": msg("Queue: Edit Last Queued Message"),
+  "thread.copyReference": msg("Pull Request: Copy Link or Thread"),
+};
+
+const LATE_COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
+  "view.reopenClosed": msg("Reopen Closed Tab"),
+  "preview.focusUrl": msg("Preview: Focus URL"),
+  "preview.find": msg("Preview: Find on Page"),
+};
+
+export function commandLabel(command: KeybindingCommand, resolve: MessageResolver = m): string {
+  const label = COMMAND_LABELS[command];
+  if (label) return resolve(label);
   const usageMetric = METRIC_OPTIONS.find((option) => option.command === command);
-  if (usageMetric) return `Usage: ${usageMetric.label}`;
+  if (usageMetric) return resolve(msg("Usage: {metric}", { metric: usageMetric.label }));
   const usagePeriod = WINDOW_OPTIONS.find((option) => option.command === command);
-  if (usagePeriod) return `Usage: Period: ${usagePeriod.label}`;
-  if (command === "view.reopenClosed") return "Reopen Closed Tab";
-  if (command === "preview.focusUrl") return "Preview: Focus URL";
-  if (command === "preview.find") return "Preview: Find on Page";
+  if (usagePeriod) return resolve(msg("Usage: Period: {period}", { period: usagePeriod.label }));
+  const lateLabel = LATE_COMMAND_LABELS[command];
+  if (lateLabel) return resolve(lateLabel);
   const raw = String(command);
   if (raw.startsWith("script.") && raw.endsWith(".run")) {
-    return `Run Script: ${titleCaseCommandSegment(raw.slice("script.".length, -".run".length))}`;
+    return resolve(
+      msg("Run Script: {name}", {
+        name: titleCaseCommandSegment(raw.slice("script.".length, -".run".length)),
+      }),
+    );
   }
   return raw.split(".").map(titleCaseCommandSegment).join(": ");
 }
