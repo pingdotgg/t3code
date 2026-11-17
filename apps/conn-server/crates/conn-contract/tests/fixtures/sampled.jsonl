@@ -25,7 +25,8 @@
 {"key":"AuthClientSession","value":{"sessionId":"0","subject":"+","scopes":[],"method":"browser-session-cookie","client":{"deviceType":"desktop"},"issuedAt":"-271821-04-20T00:00:00.000Z","expiresAt":"1970-01-01T00:00:00.009Z","lastConnectedAt":"1970-01-01T00:00:00.047Z","connected":false,"current":true}}
 {"key":"AuthConnectDevice","value":{"proofKeyThumbprint":"+","verificationCode":"`","approvedAt":"-271821-04-20T00:00:00.011Z"}}
 {"key":"AuthConnectDeviceRequest","value":{"verificationCode":"*"}}
-{"key":"AuthCreatePairingCredentialInput","value":{"access":"auto-accept-edits"}}
+{"key":"AuthCreatePairingCredentialInput","value":{"label":"&HxX"}}
+{"key":"AuthCreatePairingCredentialInput","value":{"label":"😀","access":"full-access","purpose":"peer-link"}}
 {"key":"AuthEnvironmentScope","value":"orchestration:read"}
 {"key":"AuthEnvironmentScope","value":"orchestration:operate"}
 {"key":"AuthEnvironmentScope","value":"settings:write"}
@@ -82,7 +83,7 @@
 {"key":"AuthMcpTokenError","value":{"error":"unsupported_grant_type","error_description":"Hbi{"}}
 {"key":"AuthMcpTokenRequest","value":{"code_verifier":"","resource":"y}E"}}
 {"key":"AuthMcpTokenResult","value":{"access_token":"\n","token_type":"Bearer","expires_in":7.977057154333507e+127,"scope":"0"}}
-{"key":"AuthPairingCredentialResult","value":{"id":"z0Lq","credential":"�","label":"E","expiresAt":"1969-12-31T23:59:59.987Z"}}
+{"key":"AuthPairingCredentialResult","value":{"id":"�","credential":"😀","expiresAt":"+041849-02-26T09:39:01.315Z"}}
 {"key":"AuthPairingLink","value":{"id":"!?","scopes":["preview:operate","terminal:operate","relay:read","terminal:operate"],"subject":"v","createdAt":"1970-01-01T00:00:00.028Z","expiresAt":"1969-12-31T23:59:59.948Z"}}
 {"key":"AuthRevokeClientSessionInput","value":{"sessionId":"p;{X"}}
 {"key":"AuthRevokeConnectDeviceInput","value":{"proofKeyThumbprint":"\\"}}
@@ -836,19 +837,19 @@
 {"key":"OrchestrationV2OlderSettledThreadsPage","value":{"snapshotSequence":4,"threads":[],"counts":[{"projectId":"G","count":6},{"projectId":"c","count":7},{"projectId":"e(_t","count":11},{"projectId":"C","count":11}]}}
 {"key":"OrchestrationV2PendingBackgroundTask","value":{"taskId":"z=","kind":"subagent"}}
 {"key":"OrchestrationV2PendingBackgroundTask","value":{"taskId":"n","kind":"subagent"}}
-{"key":"OrchestrationV2PendingBackgroundTask","value":{"taskId":"-1","description":"0","kind":"subagent"}}
-{"key":"OrchestrationV2PendingBackgroundTask","value":{"taskId":"\u0000","parentTaskId":"m","kind":"command"}}
-{"key":"OrchestrationV2PendingBackgroundTask","value":{"taskId":"+qkt","kind":"command"}}
-{"key":"OrchestrationV2PendingBackgroundTask","value":{"taskId":"]S","description":"&s","kind":"command"}}
-{"key":"OrchestrationV2PendingBackgroundTask","value":{"taskId":"|::H","kind":"monitor"}}
+{"key":"OrchestrationV2PendingBackgroundTask","value":{"itemId":"|","taskId":"NR^6","kind":"subagent"}}
+{"key":"OrchestrationV2PendingBackgroundTask","value":{"taskId":"�","awaited":true,"kind":"command"}}
+{"key":"OrchestrationV2PendingBackgroundTask","value":{"taskId":"S,yu","nativeItemId":"�","kind":"command"}}
+{"key":"OrchestrationV2PendingBackgroundTask","value":{"taskId":"0#h","runId":"0","kind":"command"}}
+{"key":"OrchestrationV2PendingBackgroundTask","value":{"taskId":"-1","kind":"monitor"}}
 {"key":"OrchestrationV2PendingBackgroundTask","value":{"taskId":"\u0000","kind":"monitor"}}
-{"key":"OrchestrationV2PendingBackgroundTask","value":{"taskId":"|q","kind":"monitor"}}
+{"key":"OrchestrationV2PendingBackgroundTask","value":{"taskId":"\u0000","kind":"monitor"}}
 {"key":"OrchestrationV2PendingBackgroundTask","value":{"taskId":"yLG","kind":"background_task"}}
 {"key":"OrchestrationV2PendingBackgroundTask","value":{"taskId":"�","kind":"background_task"}}
 {"key":"OrchestrationV2PendingBackgroundTask","value":{"taskId":"\u0000","kind":"background_task"}}
-{"key":"OrchestrationV2PendingBackgroundTask","value":{"taskId":"'0","kind":"background_task"}}
-{"key":"OrchestrationV2PendingBackgroundTask","value":{"taskId":"9","parentTaskId":"\u0000","awaited":true,"kind":"command"}}
-{"key":"OrchestrationV2PendingBackgroundTask","value":{"taskId":"�","parentTaskId":"@","kind":"monitor"}}
+{"key":"OrchestrationV2PendingBackgroundTask","value":{"taskId":"0PKr","kind":"background_task"}}
+{"key":"OrchestrationV2PendingBackgroundTask","value":{"command":" ","taskId":"D","kind":"command"}}
+{"key":"OrchestrationV2PendingBackgroundTask","value":{"command":"\n","itemId":"v","taskId":"U","kind":"monitor"}}
 {"key":"OrchestrationV2PendingRuntimeRequestSummary","value":{"id":"viV-","kind":"dynamic_tool_call","createdAt":"1969-12-31T23:59:59.980Z"}}
 {"key":"OrchestrationV2PendingRuntimeRequestSummary","value":{"id":"M","kind":"mcp-elicitation","createdAt":"1970-01-01T00:00:00.000Z"}}
 {"key":"OrchestrationV2PendingRuntimeRequestSummary","value":{"id":"W","kind":"file-read","createdAt":"1969-12-31T23:59:59.988Z","blocking":false}}
@@ -1700,7 +1701,6 @@
 {"key":"rpc::annotations::subscribe::Error","value":{"_tag":"AnnotationStoreError","reason":"0"}}
 {"key":"rpc::annotations::subscribe::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\n","requiredScope":"terminal:operate"}}
 {"key":"rpc::assets::create_url::Payload","value":{"resource":{"_tag":"tool-output-image","threadId":"aaYM","itemId":"�","index":4}}}
-{"key":"rpc::assets::create_url::Success","value":{"relativeUrl":"3","expiresAt":1.1943508701678757e+244,"imageDimensions":{"width":16,"height":17}}}
 {"key":"rpc::assets::create_url::Error","value":{"_tag":"AssetGitHubMediaUrlValidationError"}}
 {"key":"rpc::assets::create_url::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"access:write","requiredPermission":"\n"}}
 {"key":"rpc::assets::persist_chat_attachments::Payload","value":{"threadId":"�","messageId":"\u0000","attachments":[]}}
@@ -1709,7 +1709,6 @@
 {"key":"rpc::assets::persist_chat_attachments::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"providers:manage","requiredPermission":"V"}}
 {"key":"rpc::attachments::create_upload_url::Payload","value":{"name":")dB1","mimeType":"image/gif","sizeBytes":6249816}}
 {"key":"rpc::attachments::create_upload_url::Payload","value":{"type":"file","name":"L/Xp","mimeType":"q`vS","sizeBytes":19}}
-{"key":"rpc::attachments::create_upload_url::Success","value":{"attachmentId":"😀","relativeUrl":"I","expiresAt":-7.4e-323}}
 {"key":"rpc::attachments::create_upload_url::Error","value":{"_tag":"AttachmentUploadSigningKeyError","cause":false}}
 {"key":"rpc::attachments::create_upload_url::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"filesystem:write"}}
 {"key":"rpc::attachments::delete::Payload","value":{"attachmentId":"Ut.R"}}
@@ -2497,18 +2496,18 @@
 {"key":"rpc::pull_requests::change_breakdown::Payload","value":{"projectId":"c6","repository":"c~","number":14}}
 {"key":"rpc::pull_requests::change_breakdown::Success","value":{"code":{"additions":2,"deletions":1},"tests":{"additions":2,"deletions":4},"mocks":{"additions":4,"deletions":3},"generated":{"additions":0,"deletions":11},"docs":{"additions":12,"deletions":9}}}
 {"key":"rpc::pull_requests::change_breakdown::Success","value":null}
-{"key":"rpc::pull_requests::change_breakdown::Error","value":{"_tag":"PullRequestUnavailableError","reason":"provider-unsupported","repository":"0"}}
+{"key":"rpc::pull_requests::change_breakdown::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-missing"}}
 {"key":"rpc::pull_requests::change_breakdown::Error","value":{"_tag":"PullRequestOperationError","operation":"\t","detail":"0","cause":"�"}}
 {"key":"rpc::pull_requests::change_breakdown::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"review:write"}}
 {"key":"rpc::pull_requests::checks::Payload","value":{"projectId":"i","repository":"😀","number":7}}
 {"key":"rpc::pull_requests::checks::Success","value":{"state":"open","checks":[{"name":"�","status":"cancelled","description":"~C0e","url":" "},{"name":"0","status":"pending","description":"","url":null},{"name":"�","status":"pending","description":null,"url":null}]}}
 {"key":"rpc::pull_requests::checks::Success","value":null}
-{"key":"rpc::pull_requests::checks::Error","value":{"_tag":"PullRequestUnavailableError","reason":"provider-unsupported","repository":"f4Bc","cause":true}}
+{"key":"rpc::pull_requests::checks::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-missing"}}
 {"key":"rpc::pull_requests::checks::Error","value":{"_tag":"PullRequestOperationError","operation":"-1","detail":"r","reason":"not-found"}}
 {"key":"rpc::pull_requests::checks::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"providers:manage","requiredPermission":"😀"}}
 {"key":"rpc::pull_requests::comment::Payload","value":{"projectId":")","repository":"t","number":3,"body":"("}}
 {"key":"rpc::pull_requests::comment::Success","value":null}
-{"key":"rpc::pull_requests::comment::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-unauthenticated"}}
+{"key":"rpc::pull_requests::comment::Error","value":{"_tag":"PullRequestUnavailableError","reason":"provider-unsupported"}}
 {"key":"rpc::pull_requests::comment::Error","value":{"_tag":"PullRequestOperationError","operation":"^","detail":"\u0000"}}
 {"key":"rpc::pull_requests::comment::Error","value":{"_tag":"EnvironmentAuthorizationError","message":" ","requiredScope":"terminal:read"}}
 {"key":"rpc::pull_requests::detail::Payload","value":{"projectId":"😀","repository":"Q","number":15}}
@@ -2516,7 +2515,7 @@
 {"key":"rpc::pull_requests::detail::Error","value":{"_tag":"PullRequestUnavailableError","reason":"repository-without-project"}}
 {"key":"rpc::pull_requests::detail::Error","value":{"_tag":"PullRequestOperationError","operation":"ay<","detail":"�"}}
 {"key":"rpc::pull_requests::detail::Error","value":{"_tag":"EnvironmentAuthorizationError","message":" ","requiredScope":"preview:operate"}}
-{"key":"rpc::pull_requests::diff_file_contents::Payload","value":{"projectId":"b","repository":"f","number":12,"changeType":"rename-pure","oldPath":"*","newPath":"0"}}
+{"key":"rpc::pull_requests::diff_file_contents::Payload","value":{"projectId":"-1","repository":"1<hX","number":12,"changeType":"deleted","oldPath":"\t","newPath":"N)["}}
 {"key":"rpc::pull_requests::diff_file_contents::Success","value":{"oldContents":"rL","newContents":""}}
 {"key":"rpc::pull_requests::diff_file_contents::Error","value":{"_tag":"PullRequestUnavailableError","reason":"repository-without-project"}}
 {"key":"rpc::pull_requests::diff_file_contents::Error","value":{"_tag":"PullRequestOperationError","operation":"0","detail":"."}}
@@ -2528,17 +2527,17 @@
 {"key":"rpc::pull_requests::files_viewed::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"😀","requiredScope":"preview:operate","requiredPermission":"+fE-"}}
 {"key":"rpc::pull_requests::filter_options::Payload","value":{"kind":"references","host":"pMJd"}}
 {"key":"rpc::pull_requests::filter_options::Success","value":{"labels":[],"authors":[],"references":[],"truncated":true}}
-{"key":"rpc::pull_requests::filter_options::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-missing"}}
+{"key":"rpc::pull_requests::filter_options::Error","value":{"_tag":"PullRequestUnavailableError","reason":"provider-unsupported"}}
 {"key":"rpc::pull_requests::filter_options::Error","value":{"_tag":"PullRequestOperationError","operation":"�","detail":"V"}}
 {"key":"rpc::pull_requests::filter_options::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0","requiredScope":"filesystem:read"}}
 {"key":"rpc::pull_requests::generate_review_guide::Payload","value":{"projectId":"26Ik","expectedAccountId":"R","repository":"0","number":16}}
 {"key":"rpc::pull_requests::generate_review_guide::Success","value":{"guide":null,"run":null,"currentHeadSha":"�"}}
-{"key":"rpc::pull_requests::generate_review_guide::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-unauthenticated","provider":"e","cause":true}}
+{"key":"rpc::pull_requests::generate_review_guide::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-unauthenticated","cause":""}}
 {"key":"rpc::pull_requests::generate_review_guide::Error","value":{"_tag":"PullRequestOperationError","operation":"\n","detail":"3"}}
 {"key":"rpc::pull_requests::generate_review_guide::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"😀","requiredScope":"environment:maintain"}}
 {"key":"rpc::pull_requests::invalidate::Payload","value":{}}
 {"key":"rpc::pull_requests::invalidate::Success","value":null}
-{"key":"rpc::pull_requests::invalidate::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-missing"}}
+{"key":"rpc::pull_requests::invalidate::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-unauthenticated","provider":"mix","cause":{}}}
 {"key":"rpc::pull_requests::invalidate::Error","value":{"_tag":"PullRequestOperationError","operation":"�","detail":"m"}}
 {"key":"rpc::pull_requests::invalidate::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"9","requiredScope":"access:write","requiredPermission":"-1"}}
 {"key":"rpc::pull_requests::label_candidates::Payload","value":{"projectId":"😀","repository":"0","number":11}}
@@ -2548,7 +2547,7 @@
 {"key":"rpc::pull_requests::label_candidates::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"[","requiredScope":"relay:read"}}
 {"key":"rpc::pull_requests::linked_threads::Payload","value":{"projectId":"😀","repository":"x","number":8}}
 {"key":"rpc::pull_requests::linked_threads::Success","value":{"threads":[]}}
-{"key":"rpc::pull_requests::linked_threads::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-unauthenticated","requirement":"\u0000","cause":""}}
+{"key":"rpc::pull_requests::linked_threads::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-unauthenticated","cause":null}}
 {"key":"rpc::pull_requests::linked_threads::Error","value":{"_tag":"PullRequestOperationError","operation":"2L","detail":"�","cause":null}}
 {"key":"rpc::pull_requests::linked_threads::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"terminal:operate","requiredPermission":"m%R "}}
 {"key":"rpc::pull_requests::list::Payload","value":{"state":"merged","query":"@f"}}
@@ -2568,7 +2567,7 @@
 {"key":"rpc::pull_requests::preview::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"source-control:write","requiredPermission":"�"}}
 {"key":"rpc::pull_requests::reply_to_thread::Payload","value":{"projectId":"0iU%","repository":"7","number":12,"threadId":"�","body":"0"}}
 {"key":"rpc::pull_requests::reply_to_thread::Success","value":null}
-{"key":"rpc::pull_requests::reply_to_thread::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-unauthenticated"}}
+{"key":"rpc::pull_requests::reply_to_thread::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-missing"}}
 {"key":"rpc::pull_requests::reply_to_thread::Error","value":{"_tag":"PullRequestOperationError","operation":"😀","detail":"C"}}
 {"key":"rpc::pull_requests::reply_to_thread::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\n","requiredScope":"filesystem:read"}}
 {"key":"rpc::pull_requests::report_state::Payload","value":{"reference":{"projectId":"bB&r","host":"2+Y","repository":"-1","number":16},"state":"closed","isDraft":false}}
@@ -2578,12 +2577,12 @@
 {"key":"rpc::pull_requests::report_state::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\n","requiredScope":"access:write"}}
 {"key":"rpc::pull_requests::request_reviewers::Payload","value":{"projectId":"-1","repository":"0","number":2,"reviewers":[{"id":"�","kind":"user"}],"requested":true}}
 {"key":"rpc::pull_requests::request_reviewers::Success","value":null}
-{"key":"rpc::pull_requests::request_reviewers::Error","value":{"_tag":"PullRequestUnavailableError","reason":"provider-unsupported","repository":"xZ?"}}
+{"key":"rpc::pull_requests::request_reviewers::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-unauthenticated","repository":"36j#"}}
 {"key":"rpc::pull_requests::request_reviewers::Error","value":{"_tag":"PullRequestOperationError","operation":"","detail":"%"}}
 {"key":"rpc::pull_requests::request_reviewers::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"diagnostics:read","requiredPermission":""}}
 {"key":"rpc::pull_requests::review_guide::Payload","value":{"projectId":"R","repository":"|_mK","number":11}}
 {"key":"rpc::pull_requests::review_guide::Success","value":{"guide":null,"run":null,"currentHeadSha":null}}
-{"key":"rpc::pull_requests::review_guide::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-missing"}}
+{"key":"rpc::pull_requests::review_guide::Error","value":{"_tag":"PullRequestUnavailableError","reason":"repository-without-project"}}
 {"key":"rpc::pull_requests::review_guide::Error","value":{"_tag":"PullRequestOperationError","operation":"\u0000","detail":"4A71"}}
 {"key":"rpc::pull_requests::review_guide::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"E:e","requiredScope":"review:write"}}
 {"key":"rpc::pull_requests::reviewer_candidates::Payload","value":{"projectId":"\u0000","repository":"�","number":1}}
@@ -2598,7 +2597,7 @@
 {"key":"rpc::pull_requests::routing::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"-1","requiredScope":"terminal:operate","requiredPermission":"😀"}}
 {"key":"rpc::pull_requests::routing_identity::Payload","value":{"host":"?"}}
 {"key":"rpc::pull_requests::routing_identity::Success","value":{"accountId":"=y","host":"�","provider":"q78","viewer":"l'-"}}
-{"key":"rpc::pull_requests::routing_identity::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-missing","cause":null}}
+{"key":"rpc::pull_requests::routing_identity::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-missing","host":"\u0000"}}
 {"key":"rpc::pull_requests::routing_identity::Error","value":{"_tag":"PullRequestOperationError","operation":"","detail":"�"}}
 {"key":"rpc::pull_requests::routing_identity::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"relay:write","requiredPermission":"�"}}
 {"key":"rpc::pull_requests::run_action::Payload","value":{"projectId":"9(?@","repository":"17e.","number":5,"action":"revert"}}
@@ -2609,12 +2608,12 @@
 {"key":"rpc::pull_requests::run_action::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"Z'","requiredScope":"orchestration:read"}}
 {"key":"rpc::pull_requests::set_files_viewed::Payload","value":{"projectId":"-1","repository":"😀","number":2,"files":[]}}
 {"key":"rpc::pull_requests::set_files_viewed::Success","value":null}
-{"key":"rpc::pull_requests::set_files_viewed::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-unauthenticated"}}
+{"key":"rpc::pull_requests::set_files_viewed::Error","value":{"_tag":"PullRequestUnavailableError","reason":"provider-unsupported"}}
 {"key":"rpc::pull_requests::set_files_viewed::Error","value":{"_tag":"PullRequestOperationError","operation":"😀","detail":"�","reason":"not-found"}}
 {"key":"rpc::pull_requests::set_files_viewed::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0HiM","requiredScope":"review:write","requiredPermission":" "}}
 {"key":"rpc::pull_requests::set_labels::Payload","value":{"projectId":"0","repository":"Z.KM","number":14,"labels":["Qv"],"applied":false}}
 {"key":"rpc::pull_requests::set_labels::Success","value":null}
-{"key":"rpc::pull_requests::set_labels::Error","value":{"_tag":"PullRequestUnavailableError","reason":"provider-unsupported"}}
+{"key":"rpc::pull_requests::set_labels::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-missing","host":":#F>"}}
 {"key":"rpc::pull_requests::set_labels::Error","value":{"_tag":"PullRequestOperationError","operation":"\n","detail":"�"}}
 {"key":"rpc::pull_requests::set_labels::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"access:write","requiredPermission":""}}
 {"key":"rpc::pull_requests::set_reaction::Payload","value":{"projectId":"Y *6","repository":"Tk","number":7,"content":"rocket","reacted":false}}
@@ -2635,7 +2634,7 @@
 {"key":"rpc::pull_requests::stack::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"-1","requiredScope":"providers:manage"}}
 {"key":"rpc::pull_requests::submit_review::Payload","value":{"projectId":"0","repository":"😀","number":15,"verdict":"comment","body":"' ","comments":[{"path":"Oqjb","position":{"kind":"deleted","oldLine":2},"body":"\n"},{"path":"😀","position":{"kind":"added","newLine":1},"body":"-1"},{"path":"7433","position":{"kind":"deleted","oldLine":3},"body":":c"},{"path":"DJ'-","position":{"kind":"context","oldLine":16,"newLine":5,"side":"left"},"startPosition":{"kind":"deleted","oldLine":11},"body":"�"}]}}
 {"key":"rpc::pull_requests::submit_review::Success","value":null}
-{"key":"rpc::pull_requests::submit_review::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-unauthenticated","requirement":"2u="}}
+{"key":"rpc::pull_requests::submit_review::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-missing"}}
 {"key":"rpc::pull_requests::submit_review::Error","value":{"_tag":"PullRequestOperationError","operation":"^qv$","detail":"!"}}
 {"key":"rpc::pull_requests::submit_review::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0","requiredScope":"filesystem:read","requiredPermission":"z"}}
 {"key":"rpc::pull_requests::subscribe_linked_thread_refreshes::Payload","value":{}}
@@ -2646,7 +2645,7 @@
 {"key":"rpc::pull_requests::subscribe_refreshes::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"U","requiredScope":"review:write","requiredPermission":"😀"}}
 {"key":"rpc::pull_requests::summary::Payload","value":{"projectId":"0","host":"😀","repository":"ZNqx","number":1}}
 {"key":"rpc::pull_requests::summary::Success","value":{"provider":"vbux","projectId":"0","repository":"Otm","number":1,"title":"pQ","url":"V%","state":"open","headBranch":"@8Wl","baseBranch":"😀","updatedAt":"-1"}}
-{"key":"rpc::pull_requests::summary::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-unauthenticated","requirement":"Sv"}}
+{"key":"rpc::pull_requests::summary::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-missing"}}
 {"key":"rpc::pull_requests::summary::Error","value":{"_tag":"PullRequestOperationError","operation":"btS","detail":"z/uV"}}
 {"key":"rpc::pull_requests::summary::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"L{2a","requiredScope":"review:write","requiredPermission":""}}
 {"key":"rpc::pull_requests::thread_comments::Payload","value":{"projectId":"RL!Y","repository":"0","number":17,"threadId":"0","cursor":"m"}}
@@ -2656,19 +2655,19 @@
 {"key":"rpc::pull_requests::thread_comments::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"+X`l","requiredScope":"orchestration:read"}}
 {"key":"rpc::pull_requests::update::Payload","value":{"projectId":"x","repository":"ZeBI","number":15}}
 {"key":"rpc::pull_requests::update::Success","value":null}
-{"key":"rpc::pull_requests::update::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-missing","cause":"Q8.s"}}
+{"key":"rpc::pull_requests::update::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-unauthenticated"}}
 {"key":"rpc::pull_requests::update::Error","value":{"_tag":"PullRequestOperationError","operation":"Z]J^","detail":"g/6"}}
 {"key":"rpc::pull_requests::update::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"<$7","requiredScope":"providers:manage"}}
 {"key":"rpc::pull_requests::update_comment::Payload","value":{"projectId":"E","repository":"0","number":14,"commentId":"�","kind":"review-comment","body":"😀"}}
 {"key":"rpc::pull_requests::update_comment::Success","value":null}
-{"key":"rpc::pull_requests::update_comment::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-missing","provider":"duzb","cause":false}}
+{"key":"rpc::pull_requests::update_comment::Error","value":{"_tag":"PullRequestUnavailableError","reason":"repository-without-project"}}
 {"key":"rpc::pull_requests::update_comment::Error","value":{"_tag":"PullRequestOperationError","operation":"�","detail":"0"}}
 {"key":"rpc::pull_requests::update_comment::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"&g","requiredScope":"relay:read","requiredPermission":"-1"}}
 {"key":"rpc::review::get_branch_commits::Payload","value":{"cwd":"-1"}}
 {"key":"rpc::review::get_branch_commits::Success","value":{"commits":[{"sha":" ","subject":"","committedAt":"EVo"},{"sha":"�","subject":"-1","committedAt":""},{"sha":"`/","subject":" ","committedAt":"2"},{"sha":"`\"[$","subject":"","committedAt":"j0l"}],"truncated":true}}
 {"key":"rpc::review::get_branch_commits::Error","value":{"_tag":"VcsUnsupportedOperationError","operation":"N(","kind":"unknown","detail":"😀"}}
 {"key":"rpc::review::get_branch_commits::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"providers:manage"}}
-{"key":"rpc::review::get_diff_file_contents::Payload","value":{"cwd":"0","sourceKind":"working-tree","changeType":"rename-pure","baseRef":"�","headRef":null,"oldPath":"j{","newPath":"]^0+"}}
+{"key":"rpc::review::get_diff_file_contents::Payload","value":{"cwd":"\u0000","sourceKind":"branch-range","changeType":"change","baseRef":null,"headRef":"{","oldPath":" ","newPath":"😀"}}
 {"key":"rpc::review::get_diff_file_contents::Success","value":{"oldContents":"lc!7","newContents":"😀"}}
 {"key":"rpc::review::get_diff_file_contents::Error","value":{"_tag":"VcsProcessExitError","operation":"0","command":"KgI7","cwd":"0","exitCode":-7.4e-323,"detail":"A58F"}}
 {"key":"rpc::review::get_diff_file_contents::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"k{`'","requiredScope":"filesystem:write"}}
@@ -2951,8 +2950,8 @@
 {"key":"rpc::subscribe_server_config::field::Error","value":{"_tag":"ServerSettingsError","settingsPath":"\n","operation":"use-disallowed-provider"}}
 {"key":"rpc::subscribe_server_config::field::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"filesystem:read"}}
 {"key":"rpc::subscribe_server_lifecycle::field::Payload","value":{}}
-{"key":"rpc::subscribe_server_lifecycle::field::Item","value":{"version":1,"sequence":15,"type":"welcome","payload":{"environment":{"environmentId":"%","label":"\u0000","platform":{"os":"unknown","arch":"x64"},"serverVersion":"I","capabilities":{"repositoryIdentity":true,"requiredWorktreeBootstrap":false,"environmentThemes":true,"threadAutoSettleOptOut":false}},"cwd":"gpR","projectName":"\u0000"}}}
-{"key":"rpc::subscribe_server_lifecycle::field::Item","value":{"version":1,"sequence":1,"type":"ready","payload":{"at":"�","environment":{"environmentId":"�","label":"😀","platform":{"os":"unknown","arch":"other"},"serverVersion":"-1","capabilities":{"repositoryIdentity":true,"sideChats":false,"threadAutoSettlement":false}}}}}
+{"key":"rpc::subscribe_server_lifecycle::field::Item","value":{"version":1,"sequence":2,"type":"welcome","payload":{"environment":{"environmentId":"<qe","label":":","platform":{"os":"darwin","arch":"arm64"},"serverVersion":"�","capabilities":{"repositoryIdentity":false,"projectWorktreeCleanup":true}},"cwd":"TgFB","projectName":"Qdz<"}}}
+{"key":"rpc::subscribe_server_lifecycle::field::Item","value":{"version":1,"sequence":14,"type":"ready","payload":{"at":"-1","environment":{"environmentId":"dWn","label":"Ky]","platform":{"os":"darwin","arch":"other","machine":"cloud"},"serverVersion":"eiIz","capabilities":{"repositoryIdentity":true,"mcpHostedApproval":false}},"updateOutcome":{"id":"�","fromVersion":"�","targetVersion":".","status":"failed"}}}}
 {"key":"rpc::subscribe_server_lifecycle::field::Item","value":{"version":1,"sequence":10,"type":"legacyThreadMigration","payload":{"status":"running","totalThreadCount":14}}}
 {"key":"rpc::subscribe_server_lifecycle::field::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"filesystem:write"}}
 {"key":"rpc::subscribe_terminal_metadata::field::Payload","value":{}}

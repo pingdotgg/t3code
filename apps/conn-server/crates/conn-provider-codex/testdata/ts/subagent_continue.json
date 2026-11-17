@@ -1,6 +1,6 @@
 {
-  "note": "ProviderAdapterV2 calls and events from CodexAdapterV2 (TS) replaying cli/subagent_continue.ndjson through the orchestrator fixture runner at b12470dcad; driver dropped.",
-  "capturedOn": "2026-11-14",
+  "note": "ProviderAdapterV2 calls and events from CodexAdapterV2 (TS) replaying cli/subagent_continue.ndjson through the orchestrator fixture runner at ea8a2d2e79; driver dropped.",
+  "capturedOn": "2026-11-17",
   "startTurn": [
     {
       "appThread": {
@@ -79,7 +79,7 @@
       "runtimePolicy": {
         "runtimeMode": "full-access",
         "interactionMode": "default",
-        "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-subagent_continue-RhSGnP"
+        "cwd": "/var/folders/37/b_lcw0w931g1hyx157fr4zdr0000gn/T/t3-orchestrator-v2-subagent_continue-3XV2Q8"
       }
     },
     {
@@ -149,7 +149,7 @@
         "nativeMetadata": null,
         "goal": null,
         "createdAt": "1970-01-01T00:00:00.001Z",
-        "updatedAt": "1970-01-01T00:00:00.002Z"
+        "updatedAt": "1970-01-01T00:00:00.003Z"
       },
       "message": {
         "messageId": "message:thread:thread%3Afixture%3Asubagent_continue%3Aproject%3Aproject%253Afixture%253Asubagent_continue%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2:63eeefed-6d16-4148-87c0-1fc053d7697f",
@@ -165,7 +165,7 @@
       "runtimePolicy": {
         "runtimeMode": "full-access",
         "interactionMode": "default",
-        "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-subagent_continue-RhSGnP"
+        "cwd": "/var/folders/37/b_lcw0w931g1hyx157fr4zdr0000gn/T/t3-orchestrator-v2-subagent_continue-3XV2Q8"
       }
     }
   ],
@@ -186,7 +186,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-14T18:55:07.665Z",
+        "startedAt": "2026-11-17T02:53:07.265Z",
         "completedAt": null
       }
     },
@@ -324,7 +324,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-14T18:55:07.665Z",
+        "startedAt": "2026-11-17T02:53:07.265Z",
         "completedAt": null,
         "tokenUsage": {
           "usedTokens": 19742,
@@ -804,7 +804,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-14T18:55:07.665Z",
+        "startedAt": "2026-11-17T02:53:07.265Z",
         "completedAt": null,
         "tokenUsage": {
           "usedTokens": 22693,
@@ -1244,7 +1244,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-14T18:55:07.665Z",
+        "startedAt": "2026-11-17T02:53:07.265Z",
         "completedAt": null,
         "tokenUsage": {
           "usedTokens": 22806,
@@ -1391,7 +1391,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-14T18:55:07.665Z",
+        "startedAt": "2026-11-17T02:53:07.265Z",
         "completedAt": null,
         "tokenUsage": {
           "usedTokens": 22955,
@@ -1419,7 +1419,7 @@
         },
         "ordinal": 1,
         "status": "completed",
-        "startedAt": "2026-11-14T18:55:07.665Z",
+        "startedAt": "2026-11-17T02:53:07.265Z",
         "completedAt": "2026-09-25T00:38:41.000Z",
         "turnTokenUsage": {
           "usageStatus": "complete",
@@ -1461,7 +1461,7 @@
         },
         "ordinal": 2,
         "status": "running",
-        "startedAt": "2026-11-14T18:55:07.830Z",
+        "startedAt": "2026-11-17T02:53:07.445Z",
         "completedAt": null
       }
     },
@@ -1876,7 +1876,7 @@
         },
         "ordinal": 2,
         "status": "running",
-        "startedAt": "2026-11-14T18:55:07.830Z",
+        "startedAt": "2026-11-17T02:53:07.445Z",
         "completedAt": null,
         "tokenUsage": {
           "usedTokens": 27458,
@@ -2414,7 +2414,7 @@
         },
         "ordinal": 2,
         "status": "running",
-        "startedAt": "2026-11-14T18:55:07.830Z",
+        "startedAt": "2026-11-17T02:53:07.445Z",
         "completedAt": null,
         "tokenUsage": {
           "usedTokens": 27591,
@@ -2511,7 +2511,7 @@
         },
         "ordinal": 2,
         "status": "running",
-        "startedAt": "2026-11-14T18:55:07.830Z",
+        "startedAt": "2026-11-17T02:53:07.445Z",
         "completedAt": null,
         "tokenUsage": {
           "usedTokens": 27661,
@@ -2539,7 +2539,7 @@
         },
         "ordinal": 2,
         "status": "completed",
-        "startedAt": "2026-11-14T18:55:07.830Z",
+        "startedAt": "2026-11-17T02:53:07.445Z",
         "completedAt": "2026-09-25T00:38:51.000Z",
         "turnTokenUsage": {
           "usageStatus": "complete",

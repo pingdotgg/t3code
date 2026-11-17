@@ -148,6 +148,7 @@ pub mod lit {
     literal!(EnvironmentRequestInvalidError = "EnvironmentRequestInvalidError");
     literal!(EnvironmentResourceNotFoundError = "EnvironmentResourceNotFoundError");
     literal!(EnvironmentScopeRequiredError = "EnvironmentScopeRequiredError");
+    literal!(EnvironmentThemeBackground = "environment-theme-background");
     literal!(EnvironmentThemesUpdated = "environmentThemesUpdated");
     literal!(Error = "error");
     literal!(Event = "event");
@@ -266,6 +267,7 @@ pub mod lit {
     literal!(PairingLinkRemoved = "pairingLinkRemoved");
     literal!(PairingLinkUpserted = "pairingLinkUpserted");
     literal!(PastedText = "pasted-text");
+    literal!(PeerLink = "peer-link");
     literal!(PeerLinkError = "PeerLinkError");
     literal!(PeerLinkRequestError = "PeerLinkRequestError");
     literal!(PersistChatAttachmentsError = "PersistChatAttachmentsError");
@@ -904,13 +906,35 @@ pub enum AuthMcpClientAccess {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthCreatePairingCredentialInput {
+pub struct AuthCreatePairingCredentialInputReadOnly {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scopes: Option<AuthGrantScopes>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub access: Option<AuthMcpClientAccess>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<()>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthCreatePairingCredentialInputReadOnly2 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<AuthGrantScopes>,
+    pub access: AuthMcpClientAccess,
+    pub purpose: lit::PeerLink,
+}
+
+tagged_union! {
+    AuthCreatePairingCredentialInput, "access",
+    variants { ReadOnly(AuthCreatePairingCredentialInputReadOnly), ReadOnly2(AuthCreatePairingCredentialInputReadOnly2) },
+    dispatch {
+        "read-only" | "approval-required" | "auto-accept-edits" | "auto" | "full-access" => [ReadOnly(AuthCreatePairingCredentialInputReadOnly), ReadOnly2(AuthCreatePairingCredentialInputReadOnly2)],
+    },
+    fallback [ReadOnly(AuthCreatePairingCredentialInputReadOnly)]
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1234,6 +1258,8 @@ pub struct AuthPairingCredentialResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     pub expires_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<lit::PeerLink>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub access: Option<AuthMcpClientAccess>,
 }
@@ -8170,6 +8196,8 @@ pub struct OrchestrationV2PendingBackgroundTaskSubagent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_item_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub awaited: Option<lit::True>,
     pub kind: lit::Subagent,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -8195,6 +8223,8 @@ pub struct OrchestrationV2PendingBackgroundTaskCommand {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_item_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub awaited: Option<lit::True>,
     pub kind: lit::Command,
 }
@@ -8215,6 +8245,8 @@ pub struct OrchestrationV2PendingBackgroundTaskMonitor {
     pub parent_task_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_item_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub awaited: Option<lit::True>,
     pub kind: lit::Monitor,
@@ -8237,6 +8269,8 @@ pub struct OrchestrationV2PendingBackgroundTaskBackgroundTask {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_item_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub awaited: Option<lit::True>,
     pub kind: lit::BackgroundTask,
 }
@@ -8257,6 +8291,8 @@ pub struct OrchestrationV2PendingBackgroundTaskUnknown {
     pub parent_task_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_item_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub awaited: Option<lit::True>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -10282,6 +10318,14 @@ pub struct AssetResourceNativeAppIcon {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AssetResourceEnvironmentThemeBackground {
+    #[serde(rename = "_tag")]
+    pub tag: lit::EnvironmentThemeBackground,
+    pub theme_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AssetResourceGithubMedia {
     #[serde(rename = "_tag")]
     pub tag: lit::GithubMedia,
@@ -10293,7 +10337,7 @@ pub struct AssetResourceGithubMedia {
 
 tagged_union! {
     AssetResource, "_tag",
-    variants { WorkspaceFile(AssetResourceWorkspaceFile), MediaFile(AssetResourceMediaFile), DraftWorkspaceFile(AssetResourceDraftWorkspaceFile), Attachment(AssetResourceAttachment), ToolOutputImage(AssetResourceToolOutputImage), ProjectFavicon(AssetResourceProjectFavicon), NativeAppIcon(AssetResourceNativeAppIcon), GithubMedia(AssetResourceGithubMedia) },
+    variants { WorkspaceFile(AssetResourceWorkspaceFile), MediaFile(AssetResourceMediaFile), DraftWorkspaceFile(AssetResourceDraftWorkspaceFile), Attachment(AssetResourceAttachment), ToolOutputImage(AssetResourceToolOutputImage), ProjectFavicon(AssetResourceProjectFavicon), NativeAppIcon(AssetResourceNativeAppIcon), EnvironmentThemeBackground(AssetResourceEnvironmentThemeBackground), GithubMedia(AssetResourceGithubMedia) },
     dispatch {
         "workspace-file" => [WorkspaceFile(AssetResourceWorkspaceFile)],
         "media-file" => [MediaFile(AssetResourceMediaFile)],
@@ -10302,6 +10346,7 @@ tagged_union! {
         "tool-output-image" => [ToolOutputImage(AssetResourceToolOutputImage)],
         "project-favicon" => [ProjectFavicon(AssetResourceProjectFavicon)],
         "native-app-icon" => [NativeAppIcon(AssetResourceNativeAppIcon)],
+        "environment-theme-background" => [EnvironmentThemeBackground(AssetResourceEnvironmentThemeBackground)],
         "github-media" => [GithubMedia(AssetResourceGithubMedia)],
     },
     fallback []
@@ -15476,6 +15521,8 @@ pub struct PullRequestUnavailableError {
     pub requirement: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -18074,6 +18121,8 @@ pub struct ExecutionEnvironmentCapabilities {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_approval_codes: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_link_pairing_codes: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_hosted_approval: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub triage: Option<bool>,
@@ -19580,6 +19629,8 @@ pub struct EnvironmentTheme {
     pub variants: Option<EnvironmentThemeVariants>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub css: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

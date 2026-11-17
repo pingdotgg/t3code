@@ -1,6 +1,6 @@
 {
-  "note": "ProviderAdapterV2 calls and events from CodexAdapterV2 (TS) replaying cli/tool_call_read_only_on_request.ndjson through the orchestrator fixture runner at 5b571fe04a; driver dropped.",
-  "capturedOn": "2026-11-13",
+  "note": "ProviderAdapterV2 calls and events from CodexAdapterV2 (TS) replaying cli/tool_call_read_only_on_request.ndjson through the orchestrator fixture runner at ea8a2d2e79; driver dropped.",
+  "capturedOn": "2026-11-17",
   "startTurn": [
     {
       "appThread": {
@@ -10,7 +10,10 @@
         "projectId": "project:fixture:tool_call_read_only_on_request:f2604e9d-55b7-45de-a716-838867faae7e",
         "title": "Replay fixture: tool_call_read_only_on_request",
         "providerInstanceId": "codex",
-        "modelSelection": { "instanceId": "codex", "model": "gpt-6-sol" },
+        "modelSelection": {
+          "instanceId": "codex",
+          "model": "gpt-6-sol"
+        },
         "runtimeMode": "full-access",
         "interactionMode": "default",
         "branch": null,
@@ -69,15 +72,20 @@
         "createdBy": "user",
         "creationSource": "web"
       },
-      "modelSelection": { "instanceId": "codex", "model": "gpt-6-sol" },
+      "modelSelection": {
+        "instanceId": "codex",
+        "model": "gpt-6-sol"
+      },
       "runtimePolicy": {
         "runtimeMode": "full-access",
         "interactionMode": "default",
-        "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-2x97eh",
+        "cwd": "/var/folders/37/b_lcw0w931g1hyx157fr4zdr0000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-tafEhL",
         "approvalPolicy": "on-request",
         "sandboxPolicy": {
           "type": "readOnly",
-          "access": { "type": "fullAccess" },
+          "access": {
+            "type": "fullAccess"
+          },
           "networkAccess": false
         }
       }
@@ -105,7 +113,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-13T12:14:28.377Z",
+        "startedAt": "2026-11-17T02:53:05.919Z",
         "completedAt": null
       }
     },
@@ -467,7 +475,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-13T12:14:28.377Z",
+        "startedAt": "2026-11-17T02:53:05.919Z",
         "completedAt": null,
         "tokenUsage": {
           "usedTokens": 22726,
@@ -564,7 +572,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-13T12:14:28.377Z",
+        "startedAt": "2026-11-17T02:53:05.919Z",
         "completedAt": null,
         "tokenUsage": {
           "usedTokens": 22810,
@@ -592,7 +600,7 @@
         },
         "ordinal": 1,
         "status": "completed",
-        "startedAt": "2026-11-13T12:14:28.377Z",
+        "startedAt": "2026-11-17T02:53:05.919Z",
         "completedAt": "2026-09-25T00:43:25.000Z",
         "turnTokenUsage": {
           "usageStatus": "complete",
@@ -603,7 +611,9 @@
           "outputTokens": 315,
           "reasoningTokens": 155,
           "hasSubagents": false,
-          "models": ["gpt-6-sol"]
+          "models": [
+            "gpt-6-sol"
+          ]
         },
         "model": "gpt-6-sol"
       }

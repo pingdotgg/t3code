@@ -2,8 +2,8 @@
   "roots": 1015,
   "namedSchemas": 1808,
   "references": 1477,
-  "rustItems": 1767,
-  "literalTypes": 506,
+  "rustItems": 1770,
+  "literalTypes": 508,
   "methods": 237,
   "methodsFullyTyped": 237,
   "opaqueFallbacks": 0,
@@ -66,12 +66,14 @@
     }
   ],
   "fixtures": {
-    "roots": 1013,
-    "samples": 3082,
-    "sampleFailures": 2,
+    "roots": 1011,
+    "samples": 3081,
+    "sampleFailures": 4,
     "encodeForbidden": 6,
     "failed": [
       "ChatAttachment#0: SampleError",
+      "rpc::assets::create_url::Success#0: SampleError",
+      "rpc::attachments::create_upload_url::Success#0: SampleError",
       "rpc::server::check_otlp_endpoint::Payload#0: SampleError"
     ],
     "keys": 1014

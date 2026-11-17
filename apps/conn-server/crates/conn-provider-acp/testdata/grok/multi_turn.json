@@ -1,6 +1,6 @@
 {
- "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/multi_turn/grok_transcript.ndjson through the orchestrator fixture runner at 18e031346e; driver dropped.",
- "capturedOn": "2026-11-16",
+ "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/multi_turn/grok_transcript.ndjson through the orchestrator fixture runner at ea8a2d2e79; driver dropped.",
+ "capturedOn": "2026-11-17",
  "outcome": "passed",
  "gates": [],
  "transcripts": [
@@ -4623,7 +4623,7 @@
      },
      "goal": null,
      "createdAt": "1970-01-01T00:00:00.001Z",
-     "updatedAt": "1970-01-01T00:00:00.002Z"
+     "updatedAt": "1970-01-01T00:00:00.003Z"
     },
     "message": {
      "messageId": "message:thread:thread%3Afixture%3Amulti_turn%3Aproject%3Aproject%253Afixture%253Amulti_turn%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2:63eeefed-6d16-4148-87c0-1fc053d7697f",

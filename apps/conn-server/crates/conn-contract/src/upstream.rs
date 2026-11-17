@@ -4,4 +4,4 @@
 /// The `version` of `apps/server/package.json` at the pinned Conn commit: the T3 server
 /// version this server stands in for. Clients compare it with their own version; the Codex
 /// provider sends it as its client version, as the T3 server does.
-pub const T3_SERVER_VERSION: &str = "0.1.9";
+pub const T3_SERVER_VERSION: &str = "0.1.10";
