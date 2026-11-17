@@ -71,6 +71,7 @@ const layerHandler = (
     readonly xdgMimeExitCode?: number;
     readonly writeError?: PlatformError.PlatformError;
     readonly existingEntry?: string;
+    readonly otherEntries?: Record<string, string>;
     readonly iconSource?: string;
     readonly iconWriteError?: PlatformError.PlatformError;
   } = {},
@@ -115,7 +116,13 @@ const layerHandler = (
               : Effect.sync(() => {
                   recorded.icons.push({ path, bytes: [...bytes] });
                 }),
-          readFileString: () => Effect.succeed(input.existingEntry ?? ""),
+          readDirectory: () => Effect.succeed(Object.keys(input.otherEntries ?? {})),
+          readFileString: (path) =>
+            Effect.succeed(
+              input.otherEntries?.[path.slice(path.lastIndexOf("/") + 1)] ??
+                input.existingEntry ??
+                "",
+            ),
           makeDirectory: (path) =>
             Effect.sync(() => {
               recorded.directories.push(path);
@@ -295,6 +302,22 @@ describe("DesktopLinuxUrlHandler", () => {
       });
 
       assert.include(recorded.files[0]?.content, 'Exec="/opt/T3 Code/t3code" %U');
+      assert.include(recorded.files[0]?.content, "NoDisplay=true");
+      assert.notInclude(recorded.files[0]?.content, "StartupWMClass=");
+    });
+  });
+
+  it.effect("keeps the entry hidden when an AppImage integrator already launches it", () => {
+    const recorded = emptyRecording();
+
+    return Effect.gen(function* () {
+      yield* runRegister(recorded, {
+        otherEntries: {
+          "appimagekit_0123abcd-T3_Code.desktop":
+            "[Desktop Entry]\nExec=/home/alice/Applications/T3-Code.AppImage %U\n",
+        },
+      });
+
       assert.include(recorded.files[0]?.content, "NoDisplay=true");
       assert.notInclude(recorded.files[0]?.content, "StartupWMClass=");
     });

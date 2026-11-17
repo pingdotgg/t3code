@@ -75,7 +75,7 @@ const escapeUrlHandlerExecTarget = (value: string): string =>
     : escapeDesktopEntryString(value.replaceAll("%", "%%"));
 
 // A standalone AppImage has no other launcher, so this entry must be visible and own the window.
-// Packages with their own launcher get a hidden URL-only entry that cannot compete with it.
+// Packages and integrated AppImages have their own launcher, so they get a hidden URL-only entry.
 export function renderUrlHandlerDesktopEntry(input: {
   readonly displayName: string;
   readonly execTarget: string;
@@ -99,6 +99,10 @@ export function renderUrlHandlerDesktopEntry(input: {
     "",
   ].join("\n");
 }
+
+// AppImageLauncher, Gear Lever and appimaged install their own visible entry for the AppImage.
+export const launchesAppImage = (entry: string, appImagePath: string): boolean =>
+  entry.split("\n").some((line) => line.startsWith("Exec=") && line.includes(appImagePath));
 
 function parseUrlHandlerExecTarget(entry: string): string | null {
   const exec = /^Exec=(.*) %U$/mu.exec(entry)?.[1];
@@ -167,6 +171,23 @@ export const make = Effect.gen(function* () {
   const hicolorDir = environment.path.join(iconsDir, "hicolor");
   const themeIconDir = environment.path.join(hicolorDir, LINUX_THEME_ICON_SIZE, "apps");
 
+  const integratedAppImage = (appImagePath: string) =>
+    fileSystem.readDirectory(environment.linuxApplicationsDir).pipe(
+      Effect.orElseSucceed((): ReadonlyArray<string> => []),
+      Effect.flatMap((names) =>
+        Effect.forEach(
+          names.filter(
+            (name) => name.endsWith(".desktop") && name !== environment.linuxDesktopEntryName,
+          ),
+          (name) =>
+            fileSystem
+              .readFileString(environment.path.join(environment.linuxApplicationsDir, name))
+              .pipe(Effect.orElseSucceed(() => "")),
+        ),
+      ),
+      Effect.map((entries) => entries.some((entry) => launchesAppImage(entry, appImagePath))),
+    );
+
   const writeDesktopEntry = Effect.gen(function* () {
     // Distribution packages that run on a shared Electron set
     // T3CODE_DESKTOP_LAUNCHER_PATH, because process.execPath is that Electron.
@@ -176,12 +197,16 @@ export const make = Effect.gen(function* () {
       Option.orElse(() => environment.appImagePath),
       Option.getOrElse(() => process.execPath),
     );
+    const standaloneAppImage =
+      Option.isSome(environment.appImagePath) &&
+      Option.isNone(environment.desktopLauncherPath) &&
+      !(yield* integratedAppImage(environment.appImagePath.value));
     const content = renderUrlHandlerDesktopEntry({
       displayName: environment.displayName,
       execTarget,
       scheme,
       ...(environment.isPackaged ? { iconPath } : {}),
-      ...(Option.isSome(environment.appImagePath) && Option.isNone(environment.desktopLauncherPath)
+      ...(standaloneAppImage
         ? { startupWMClass: environment.linuxDesktopEntryName.replace(/\.desktop$/u, "") }
         : {}),
     });
