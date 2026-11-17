@@ -509,6 +509,112 @@ describe("OrchestratorMcpService", () => {
     }),
   );
 
+  it.effect("takes a silent run's report only from the same task's earlier runs", () =>
+    Effect.gen(function* () {
+      const parentThreadId = ThreadId.make("thread:mcp-report-parent");
+      const childThreadId = ThreadId.make("thread:mcp-report-child");
+      const taskA = NodeId.make("node:mcp-report-task-a");
+      const taskB = NodeId.make("node:mcp-report-task-b");
+      const silent = "Child task completed without an assistant result.";
+      const parentProjection = {
+        thread: { id: parentThreadId },
+        runs: [],
+        contextTransfers: [],
+        subagents: [taskA, taskB].map((id) => ({
+          id,
+          threadId: parentThreadId,
+          origin: "app_owned",
+          childThreadId,
+          driver: "codex",
+          model: "gpt-5.6-terra",
+          status: "running",
+          result: null,
+          completionDelivery: null,
+        })),
+      } as unknown as OrchestrationV2ThreadProjection;
+      const run = (ordinal: number, delegatedTaskId: NodeId) => ({
+        id: RunId.make(`run:mcp-report-${ordinal}`),
+        ordinal,
+        status: "completed",
+        delegatedTaskId,
+        startedAt: DateTime.makeUnsafe(`2026-10-24T10:0${ordinal}:00Z`),
+        completedAt: DateTime.makeUnsafe(`2026-10-24T10:0${ordinal}:30Z`),
+      });
+      const runs = [run(1, taskA), run(2, taskA), run(3, taskB)];
+      let reports: ReadonlyArray<readonly [number, string]> = [];
+      // The mock ignores run filters, so every report is loaded whichever runs are asked for.
+      const childProjection = () =>
+        ({
+          thread: { id: childThreadId, title: "Child task" },
+          runs,
+          contextTransfers: [],
+          messages: reports.map(([ordinal, text]) => ({
+            id: MessageId.make(`message:mcp-report-${ordinal}`),
+            runId: runs[ordinal - 1]!.id,
+            role: "assistant",
+            text,
+            createdAt: runs[ordinal - 1]!.completedAt,
+            updatedAt: runs[ordinal - 1]!.completedAt,
+          })),
+          subagents: [],
+          providerThreads: [],
+          providerTurns: [],
+          runtimeRequests: [],
+          turnItems: [],
+        }) as unknown as OrchestrationV2ThreadProjection;
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId) =>
+            Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection()),
+          delegatedTaskResultPending: () => Effect.succeed(false),
+          dispatch: () => Effect.succeed({} as never),
+        }),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      const scope: McpInvocationScope = {
+        environmentId: EnvironmentId.make("environment:mcp-report"),
+        requestNamespace: "provider-session:mcp-report",
+        thread: {
+          threadId: parentThreadId,
+          providerSessionId: "provider-session:mcp-report",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        // Task A reported, then a run queued behind the report ended without text.
+        reports = [[1, "REPORT-A"]];
+        const reported = yield* service.taskStatus(scope, taskA);
+        assert.equal(reported.status, "completed");
+        assert.equal(reported.summary, "REPORT-A");
+        assert.equal(reported.latestTerminalRunId, runs[2]!.id);
+        assert.equal(reported.latestTerminalSummary, silent);
+        assert.equal((yield* service.taskStatus(scope, taskB)).summary, silent);
+
+        // A later task's report is not the result of a task that said nothing.
+        reports = [[3, "REPORT-B"]];
+        const quiet = yield* service.taskStatus(scope, taskA);
+        assert.equal(quiet.summary, silent);
+        assert.equal(quiet.latestTerminalSummary, "REPORT-B");
+        assert.equal((yield* service.taskStatus(scope, taskB)).summary, "REPORT-B");
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
   it.effect("tells the parent to end its turn only while its task still runs", () =>
     Effect.gen(function* () {
       const parentThreadId = ThreadId.make("thread:mcp-next-parent");

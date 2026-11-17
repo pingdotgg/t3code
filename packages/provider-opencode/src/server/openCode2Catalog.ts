@@ -7,15 +7,18 @@ import type { OpenCode2Catalog } from "./status.ts";
 // Cold catalogs take seconds; model reads already retry empty catalogs.
 const DECORATION_TIMEOUT = "3 seconds";
 
-const listProviders = (client: OpenCodeClient, directory: string) =>
-  client.provider.list({ location: { directory } }).pipe(
+const locationOf = (directory: string | undefined) =>
+  directory === undefined ? {} : { location: { directory } };
+
+const listProviders = (client: OpenCodeClient, directory: string | undefined) =>
+  client.provider.list(locationOf(directory)).pipe(
     Effect.timeout(DECORATION_TIMEOUT),
     Effect.map((list) => list.data),
   );
 
 // Only primary agents can run a thread's turns; subagents are the model's own tools.
-const listAgents = (client: OpenCodeClient, directory: string) =>
-  client.agent.list({ location: { directory } }).pipe(
+const listAgents = (client: OpenCodeClient, directory: string | undefined) =>
+  client.agent.list(locationOf(directory)).pipe(
     Effect.timeout(DECORATION_TIMEOUT),
     Effect.map((list) =>
       list.data
@@ -27,13 +30,13 @@ const listAgents = (client: OpenCodeClient, directory: string) =>
 
 const readCatalog = <E>(
   client: OpenCodeClient,
-  directory: string,
+  directory: string | undefined,
   providers: Effect.Effect<ReadonlyArray<{ readonly id: string; readonly name: string }>, E>,
 ): Effect.Effect<OpenCode2Catalog, OpenCodeRuntime.OpenCodeRuntimeError> =>
   Effect.all(
     {
       // Callers bound the read: a busy host can hold it past OpenCode's own activation wait.
-      models: client.model.list({ location: { directory } }).pipe(Effect.map((list) => list.data)),
+      models: client.model.list(locationOf(directory)).pipe(Effect.map((list) => list.data)),
       providers,
       agents: listAgents(client, directory),
     },
@@ -69,7 +72,7 @@ const readCatalog = <E>(
   );
 
 /** Provider names and agents are optional decoration; bound their reads so models cannot stall. */
-export const loadOpenCode2Catalog = (client: OpenCodeClient, directory: string) =>
+export const loadOpenCode2Catalog = (client: OpenCodeClient, directory: string | undefined) =>
   readCatalog(
     client,
     directory,
