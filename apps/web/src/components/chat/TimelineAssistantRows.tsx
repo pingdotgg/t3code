@@ -72,6 +72,8 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
               }
               threadRef={ctx.threadRef ?? undefined}
               isStreaming={Boolean(row.message.streaming)}
+              // Plugins turn off block-by-block streaming, so references link once the reply settles.
+              {...(row.message.streaming ? {} : { extraRemarkPlugins: ctx.referenceRemarkPlugins })}
               lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
               skills={ctx.skills}
               headingLevelOffset={MESSAGE_HEADING_LEVEL}
@@ -132,6 +134,7 @@ export function SentMessageTimelineRow({
           cwd={ctx.markdownCwd}
           threadRef={ctx.threadRef ?? undefined}
           lineBreaks={shouldPreserveAssistantLineBreaks(row.text)}
+          extraRemarkPlugins={ctx.referenceRemarkPlugins}
           skills={ctx.skills}
           headingLevelOffset={MESSAGE_HEADING_LEVEL}
           onUseArtifactTemplate={ctx.onUseArtifactTemplate}

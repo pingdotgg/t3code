@@ -194,6 +194,7 @@ import {
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
 import { threadPullRequestPanelTarget } from "./pullRequest/pullRequestDetail.logic";
+import { projectReferenceMarkdownPlugins } from "./pullRequest/pullRequestMarkdown.logic";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { GuestPendingMessages } from "./chat/GuestShareControls";
 import { useDeviceState } from "~/state/device";
@@ -3515,6 +3516,9 @@ export default function ChatView(props: ChatViewProps) {
                   onFileOpen={openFileAttachmentStable}
                   onFileDownload={downloadFileAttachmentStable}
                   markdownCwd={gitCwd ?? undefined}
+                  referenceRemarkPlugins={projectReferenceMarkdownPlugins(
+                    activeProject?.repositoryIdentity,
+                  )}
                   resolvedTheme={resolvedTheme}
                   timestampFormat={timestampFormat}
                   workspaceRoot={activeWorkspaceRoot}

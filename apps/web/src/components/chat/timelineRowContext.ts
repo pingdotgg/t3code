@@ -23,6 +23,7 @@ import { useEffect, useRef, createContext, type MouseEvent, type ReactNode } fro
 import { type LegendListRef } from "@legendapp/list/react";
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import type { PendingApproval } from "../../session-logic";
+import type { PluggableList } from "unified";
 import { type ChatFileAttachment } from "../../types";
 import { type ExpandedImageItem, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { type AssistantCitationTarget } from "./AssistantCitationSource";
@@ -58,6 +59,8 @@ export interface TimelineRowSharedState {
   routeThreadKey: string;
   threadRef: ScopedThreadRef | null;
   markdownCwd: string | undefined;
+  /** Links `#123` in the thread's words to its project's repository. */
+  referenceRemarkPlugins: PluggableList;
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
   skills: ReadonlyArray<ServerProviderSkill>;

@@ -141,6 +141,7 @@ import { useThreadFindPositionReader } from "./useThreadFindPositionReader";
 import { ThreadActivityAnnouncer } from "./ThreadActivityAnnouncer";
 import { useStableHandoffRuns, useIncrementalTimelineRows, useStableRows } from "./useTimelineRows";
 import { useClientSettings } from "../../hooks/useSettings";
+import type { PluggableList } from "unified";
 
 function timelineListStateFor(identity: string): {
   readonly identity: string;
@@ -193,6 +194,7 @@ function TimelineListFooter({
 }
 
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
+const EMPTY_REFERENCE_REMARK_PLUGINS: PluggableList = [];
 const TIMELINE_MAINTAIN_SCROLL_AT_END = {
   animated: false,
   on: {
@@ -300,6 +302,7 @@ interface MessagesTimelineProps {
   onFileDownload?: (attachment: ChatFileAttachment) => void;
   activeThreadEnvironmentId: EnvironmentId;
   markdownCwd: string | undefined;
+  referenceRemarkPlugins?: PluggableList;
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
@@ -401,6 +404,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onFileDownload = NOOP_OPEN_ATTACHMENT,
   activeThreadEnvironmentId,
   markdownCwd,
+  referenceRemarkPlugins = EMPTY_REFERENCE_REMARK_PLUGINS,
   resolvedTheme,
   timestampFormat,
   workspaceRoot,
@@ -1109,6 +1113,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     routeThreadKey,
     threadRef: citationThreadRef,
     markdownCwd,
+    referenceRemarkPlugins,
     resolvedTheme,
     workspaceRoot,
     skills,

@@ -1,3 +1,4 @@
+import { projectChangeRequestUrl } from "@t3tools/client-runtime/change-request-links";
 import {
   changeRequestReferenceAutolinker,
   resolveChangeRequestMediaUrl,
@@ -6,6 +7,7 @@ import {
   sourceControlClients,
   type ReferenceAutolink,
 } from "@t3tools/client-runtime/source-control-clients";
+import type { RepositoryIdentity } from "@t3tools/contracts";
 import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
@@ -101,6 +103,60 @@ export function pullRequestMarkdownPlugins(
     markdownPlugins.set(key, plugins);
   }
   return plugins;
+}
+
+const referencePlugins = new Map<string, PluggableList>();
+
+/**
+ * Bare `#123` only, stable per repository so messages share one renderer and its parse cache.
+ * Mentions, SHAs and qualified forms stay text: `@scope/pkg`, hex words and `PR#13` are common prose.
+ */
+function hostReferencePlugins(
+  provider: string | undefined,
+  repositoryUrl: string | null,
+): PluggableList {
+  const find =
+    provider === undefined ? undefined : sourceControlClients.find(provider)?.referenceAutolinks;
+  if (find === undefined || repositoryUrl === null) return NO_PLUGINS;
+  const key = `${provider}\u0000${repositoryUrl}`;
+  let plugins = referencePlugins.get(key);
+  if (plugins === undefined) {
+    const autolinks = (text: string) =>
+      find(text, repositoryUrl).filter(
+        (link) => link.kind === "reference" && /^#\d+$/u.test(link.text),
+      );
+    plugins = [[remarkPullRequestAutolinks, { autolinks }]];
+    referencePlugins.set(key, plugins);
+  }
+  return plugins;
+}
+
+/** An issue body is the host's markdown too, read against the repository the issue is in. */
+export function issueMarkdownPlugins(issue: {
+  readonly tracker: string;
+  readonly url: string;
+  readonly scope: string;
+}): PluggableList {
+  const origin = URL.canParse(issue.url) ? new URL(issue.url).origin : null;
+  return hostReferencePlugins(issue.tracker, origin && `${origin}/${issue.scope}`);
+}
+
+/** `#123` references in a thread's own words, read against its project's repository. */
+export function projectReferenceMarkdownPlugins(
+  identity: RepositoryIdentity | null | undefined,
+): PluggableList {
+  const provider = identity?.provider;
+  const url = projectChangeRequestUrl(
+    identity,
+    sourceControlClients.repositorySelector(identity) ?? "",
+    1,
+  );
+  const repositoryUrl =
+    provider === undefined || url === null || !URL.canParse(url)
+      ? null
+      : (sourceControlClients.get(provider).parseChangeRequestUrl(new URL(url))?.repositoryUrl ??
+        null);
+  return hostReferencePlugins(provider, repositoryUrl);
 }
 
 const commentPreviewProcessor = unified()

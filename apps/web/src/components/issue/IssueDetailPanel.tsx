@@ -59,7 +59,11 @@ import { PullRequestCandidatePicker } from "../pullRequest/PullRequestCandidateP
 import { PullRequestCommentBody } from "../pullRequest/PullRequestCommentBody";
 import { PullRequestDetailTitleRow } from "../pullRequest/PullRequestDetailLayout";
 import { PullRequestEditButton } from "../pullRequest/PullRequestEditButton";
-import { PullRequestMarkdown } from "../pullRequest/PullRequestMarkdown";
+import {
+  PullRequestMarkdown,
+  PullRequestMarkdownContext,
+} from "../pullRequest/PullRequestMarkdown";
+import { issueMarkdownPlugins } from "../pullRequest/pullRequestMarkdown.logic";
 import { PullRequestMarkdownEditor } from "../pullRequest/PullRequestMarkdownEditor";
 import { readableFailure } from "../pullRequest/pullRequestDetail.logic";
 import { pullRequestLabelColor } from "../pullRequest/pullRequestList.logic";
@@ -484,6 +488,12 @@ export function IssueDetailPanel({
     }
     return <IssueDetailGhost seed={listEntry} />;
   }
+  const markdownContext = {
+    remarkPlugins: issueMarkdownPlugins(detail),
+    lineBreaks: false,
+    threadRef,
+    repository: null,
+  };
 
   // Older pages are tied to the cursor the detail was read with; a refreshed detail starts over.
   const olderComments = older?.seed === detail.commentsCursor ? older.comments : [];
@@ -792,12 +802,14 @@ export function IssueDetailPanel({
                 onCancel={() => setEditing(null)}
               />
             ) : (
-              <PullRequestMarkdown
-                text={detail.body.trim().length > 0 ? detail.body : "_No description provided._"}
-                cwd={cwd}
-                environmentId={environmentId}
-                threadRef={threadRef}
-              />
+              <PullRequestMarkdownContext value={markdownContext}>
+                <PullRequestMarkdown
+                  text={detail.body.trim().length > 0 ? detail.body : "_No description provided._"}
+                  cwd={cwd}
+                  environmentId={environmentId}
+                  threadRef={threadRef}
+                />
+              </PullRequestMarkdownContext>
             )}
             {detail.reactions !== undefined ? (
               <IssueReactionBar
@@ -875,12 +887,14 @@ export function IssueDetailPanel({
                       <span>{formatRelativeTimeLabel(item.comment.createdAt)}</span>
                     )}
                   </PullRequestMetaLine>
-                  <PullRequestCommentBody
-                    text={item.comment.body}
-                    cwd={cwd}
-                    environmentId={environmentId}
-                    threadRef={threadRef}
-                  />
+                  <PullRequestMarkdownContext value={markdownContext}>
+                    <PullRequestCommentBody
+                      text={item.comment.body}
+                      cwd={cwd}
+                      environmentId={environmentId}
+                      threadRef={threadRef}
+                    />
+                  </PullRequestMarkdownContext>
                   {item.comment.reactions !== undefined ? (
                     <IssueReactionBar
                       reactions={item.comment.reactions}

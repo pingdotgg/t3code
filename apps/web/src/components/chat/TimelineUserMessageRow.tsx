@@ -93,6 +93,7 @@ import {
   TimelineRowTimestamp,
 } from "./TimelineRowParts";
 import { UserMessageContextReferenceChip } from "./UserMessageContextChips";
+import type { PluggableList } from "unified";
 import {
   resolvePreviewAnnotationImage,
   userMessageFileLabel,
@@ -1233,6 +1234,18 @@ const USER_MESSAGE_REMARK_PLUGINS = [
   remarkEnableOrderedListNumbers,
 ];
 
+const userMessagePlugins = new WeakMap<PluggableList, PluggableList>();
+
+function userMessageRemarkPlugins(referencePlugins: PluggableList): PluggableList {
+  if (referencePlugins.length === 0) return USER_MESSAGE_REMARK_PLUGINS;
+  let plugins = userMessagePlugins.get(referencePlugins);
+  if (!plugins) {
+    plugins = [...USER_MESSAGE_REMARK_PLUGINS, ...referencePlugins];
+    userMessagePlugins.set(referencePlugins, plugins);
+  }
+  return plugins;
+}
+
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
   renderContextReference?: (reference: ChatMarkdownContextReference) => ReactNode;
@@ -1252,7 +1265,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       className="text-message-foreground user-message-markdown"
       lineBreaks
       parseRawHtml={false}
-      extraRemarkPlugins={USER_MESSAGE_REMARK_PLUGINS}
+      extraRemarkPlugins={userMessageRemarkPlugins(ctx.referenceRemarkPlugins)}
       renderContextReference={props.renderContextReference}
       headingLevelOffset={MESSAGE_HEADING_LEVEL}
     />
