@@ -44,6 +44,7 @@ import * as EventSink from "./EventSink.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import { isActiveRun } from "./CommandPolicy.ts";
+import { contextBoundaryOrdinal } from "./contextBoundary.ts";
 import {
   DEFAULT_HANDOFF_TOKEN_CAP,
   handoffTokenCapConfig,
@@ -1132,6 +1133,8 @@ export const layer: Layer.Layer<
             type: "provider_resume_fallback",
           });
           const createdAt = yield* DateTime.now;
+          const history = yield* projectionStore.getTurnStartHistory(input.threadId);
+          const boundary = contextBoundaryOrdinal({ runs: projection.runs, turnItems: history });
           const handoff = yield* contextHandoffService.prepareProviderHandoff({
             threadId: projection.thread.id,
             targetRunId: run.id,
@@ -1144,19 +1147,22 @@ export const layer: Layer.Layer<
             strategy: "full_thread_summary",
             runs: projection.runs,
             items: [
-              ...(yield* ContextHandoffService.readInheritedHandoffItems(
-                projectionStore,
-                projection.thread,
-              )),
-              ...(yield* projectionStore.getTurnStartHistory(input.threadId)).filter(
-                (item) =>
-                  item.runId === null ||
-                  projection.runs.some(
-                    (source) =>
-                      source.id === item.runId &&
-                      source.ordinal < run.ordinal &&
-                      source.status !== "rolled_back",
-                  ),
+              ...(boundary === 0
+                ? yield* ContextHandoffService.readInheritedHandoffItems(
+                    projectionStore,
+                    projection.thread,
+                  )
+                : []),
+              ...history.filter((item) =>
+                item.runId === null
+                  ? boundary === 0
+                  : projection.runs.some(
+                      (source) =>
+                        source.id === item.runId &&
+                        source.ordinal >= boundary &&
+                        source.ordinal < run.ordinal &&
+                        source.status !== "rolled_back",
+                    ),
               ),
             ],
             createdAt,

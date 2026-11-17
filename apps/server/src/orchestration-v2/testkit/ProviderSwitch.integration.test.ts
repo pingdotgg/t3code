@@ -1711,6 +1711,18 @@ describe("orchestration v2 provider switching", () => {
       delivers: ["home town is Oslo"],
       withholds: ["favourite colour is teal", "favourite animal is an otter"],
     },
+    {
+      name: "an ACP rollback in a thread restarted with fresh context",
+      instanceId: GROK_MODEL_SELECTION.instanceId,
+      driver: GROK_DRIVER,
+      capabilities: AcpProviderCapabilitiesV2,
+      modelSelection: GROK_MODEL_SELECTION,
+      rollback: "replaces_native_thread",
+      failResumeAfterRollback: false,
+      history: "after_fresh_context",
+      delivers: ["favourite colour is teal"],
+      withholds: ["home town is Oslo", "favourite animal is an otter"],
+    },
   ] as const)(
     "gives the agent the kept conversation and not the rewound turn after $name",
     (scenario) =>
@@ -1728,7 +1740,7 @@ describe("orchestration v2 provider switching", () => {
               driver: scenario.driver,
               capabilities: scenario.capabilities,
               modelSelection: scenario.modelSelection,
-              responseByRunOrdinal: { 1: "noted", 2: "noted" },
+              responseByRunOrdinal: { 1: "noted", 2: "noted", 3: "noted" },
               capturedTurns,
               injectedHistory,
               failResumeOnce,
@@ -1743,6 +1755,7 @@ describe("orchestration v2 provider switching", () => {
               ordinal: number,
               text: string,
               thread: ThreadId = threadId,
+              freshContext = false,
             ) {
               yield* orchestrator.dispatch({
                 type: "message.dispatch",
@@ -1754,6 +1767,7 @@ describe("orchestration v2 provider switching", () => {
                 text,
                 attachments: [],
                 modelSelection: scenario.modelSelection,
+                ...(freshContext ? { freshContext: true } : {}),
                 dispatchMode: { type: "start_immediately" },
               });
               yield* orchestrator.streamStoredEvents.pipe(
@@ -1806,12 +1820,19 @@ describe("orchestration v2 provider switching", () => {
             } else {
               yield* createThread(threadId);
             }
+            // Runs before a fresh-context run never reach a provider again.
+            const first = scenario.history === "after_fresh_context" ? 2 : 1;
+            if (first === 2) {
+              yield* runToCompletion(1, "My home town is Oslo. Reply with only the word: noted");
+            }
             yield* runToCompletion(
-              1,
+              first,
               "My favourite colour is teal. Reply with only the word: noted",
+              threadId,
+              first === 2,
             );
             yield* runToCompletion(
-              2,
+              first + 1,
               "My favourite animal is an otter. Reply with only the word: noted",
             );
             const beforeRollback = yield* orchestrator.getThreadProjection(threadId);
@@ -1828,7 +1849,7 @@ describe("orchestration v2 provider switching", () => {
                 ),
               });
             }
-            const keptOrdinal = scenario.history === "forked_to_baseline" ? 0 : 1;
+            const keptOrdinal = scenario.history === "forked_to_baseline" ? 0 : first;
             const keptCheckpoint = beforeRollback.checkpoints.find(
               (checkpoint) =>
                 (checkpoint.appRunOrdinal ?? 0) === keptOrdinal && checkpoint.status === "ready",
@@ -1848,7 +1869,7 @@ describe("orchestration v2 provider switching", () => {
               Stream.filter(
                 ({ event }) =>
                   (event.type === "run.updated" &&
-                    event.payload.ordinal === 2 &&
+                    event.payload.ordinal === first + 1 &&
                     event.payload.status === "rolled_back") ||
                   (event.type === "thread.metadata-updated" &&
                     event.payload.rollbackFailure != null),
@@ -1860,7 +1881,7 @@ describe("orchestration v2 provider switching", () => {
               (yield* orchestrator.getThreadProjection(threadId)).runs.map((run) => run.status),
               scenario.history === "forked_to_baseline"
                 ? ["rolled_back", "rolled_back"]
-                : ["completed", "rolled_back"],
+                : [...(first === 2 ? ["completed"] : []), "completed", "rolled_back"],
             );
             if (scenario.failResumeAfterRollback) {
               const providerSessionId = (yield* orchestrator.getThreadProjection(threadId))
@@ -1878,7 +1899,7 @@ describe("orchestration v2 provider switching", () => {
               yield* Ref.set(failResumeOnce, true);
             }
             const historyBeforeRun3 = (yield* Ref.get(injectedHistory)).length;
-            yield* runToCompletion(3, "What did I say first?");
+            yield* runToCompletion(first + 2, "What did I say first?");
 
             const run3 = (yield* Ref.get(capturedTurns)).at(-1);
             const delivered =
