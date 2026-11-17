@@ -188,3 +188,12 @@ it("keeps a successfully captured image when optional KDE effects fail", async (
   await expect(NodeFSP.stat(args[1])).rejects.toMatchObject({ code: "ENOENT" });
   capture.feedback?.close();
 });
+
+it("updates a helper left stale by an app update before capturing", async () => {
+  await setup.perform("install-kde-helper");
+  await NodeFSP.writeFile(paths.bundle, "update");
+  const capture = await captureKdeWindow(paths);
+  expect(capture.png).toEqual(png);
+  expect(await NodeFSP.readFile(kdeCapturePaths(paths).executable, "utf8")).toBe("update");
+  capture.feedback?.close();
+});
