@@ -15,17 +15,6 @@ const ATX_HEADING_PATTERN =
 const SETEXT_UNDERLINE_PATTERN = /^ {0,3}(?:=+|-+)[ \t]*$/;
 
 /**
- * Approximates the slug `rehypeHeadingIds` derives from a heading's rendered text. It drops
- * images, link destinations and underscores, so it may match where the real slugs differ, never
- * the other way round for the syntax this splitter lets through.
- */
-function headingKey(text: string): string {
-  return githubHeadingSlug(
-    text.replace(/!\[[^\]]*\]\([^)]*\)/g, "").replace(/\]\([^)]*\)/g, "]"),
-  ).replaceAll("_", "");
-}
-
-/**
  * Cuts Markdown at blank lines that close every open block, so each piece renders exactly as it
  * would inside the whole text. Returns null when the text uses syntax that spans blocks, such as
  * headings with the same slug, whose ids are numbered across the whole text.
@@ -41,20 +30,23 @@ export function splitMarkdownBlocks(text: string): string[] | null {
   let insightIndent: string | null = null;
   let previousLine = "";
   const headingKeys = new Set<string>();
-  const repeatsHeading = (headingText: string | undefined) => {
-    const key = headingText === undefined ? "" : headingKey(headingText);
+  const needsWholeHeading = (headingText: string | undefined) => {
+    if (headingText === undefined) return false;
+    // Inline syntax needs the renderer's interpretation before its heading slug is known.
+    if (/[^\p{L}\p{M}\p{N} -]/u.test(headingText)) return true;
+    const key = githubHeadingSlug(headingText);
     if (!key) return false;
     if (headingKeys.has(key)) return true;
     headingKeys.add(key);
     return false;
   };
-  const repeatsHeadingOnLine = (line: string, previous: string, afterBlank: boolean) => {
+  const headingNeedsWholeDocument = (line: string, previous: string, afterBlank: boolean) => {
     const headingText = SETEXT_UNDERLINE_PATTERN.test(line)
       ? afterBlank
         ? undefined
         : previous
       : ATX_HEADING_PATTERN.exec(line)?.[1];
-    return repeatsHeading(headingText);
+    return needsWholeHeading(headingText);
   };
   for (const line of text.split("\n")) {
     const opener = FENCE_PATTERN.exec(line)?.[1];
@@ -63,7 +55,7 @@ export function splitMarkdownBlocks(text: string): string[] | null {
       if (/\S/.test(line.slice(0, fenceIndent))) {
         const rest = text.slice(lineStart).split("\n");
         for (const restLine of rest) {
-          if (repeatsHeadingOnLine(restLine, previousLine, afterBlankLine)) return null;
+          if (headingNeedsWholeDocument(restLine, previousLine, afterBlankLine)) return null;
           previousLine = restLine;
           afterBlankLine = restLine.trim() === "";
         }
@@ -83,7 +75,7 @@ export function splitMarkdownBlocks(text: string): string[] | null {
     } else if (line.trim() === "") {
       afterBlankLine = true;
     } else {
-      if (repeatsHeadingOnLine(line, previousLine, afterBlankLine)) return null;
+      if (headingNeedsWholeDocument(line, previousLine, afterBlankLine)) return null;
       if (
         afterBlankLine &&
         insightIndent === null &&
