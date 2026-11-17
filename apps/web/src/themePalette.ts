@@ -1528,7 +1528,7 @@ function parseThemeColorOverrides(value: unknown): ThemeColorOverrides {
 
 function parseThemeSeedColor(name: string, value: unknown): string {
   if (typeof value !== "string" || !toCanonicalThemeColor(value)) {
-    throw new Error(`The theme's "${name}" must be a literal CSS color.`);
+    throw new Error(m(msg("The theme''s \"{name}\" must be a literal CSS color.", { name })));
   }
   return value;
 }
