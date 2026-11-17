@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// @effect-diagnostics nodeBuiltinImport:off - A one-shot CI check; synchronous Node APIs keep it small.
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off - A one-shot CI check; synchronous Node APIs keep it small.
 // Fails when a committed GT catalog drifts from the source: `gt generate` would write a different
 // en.json, or a locale catalog's keys differ from en.json. Needs no GT credentials or network.
 import * as NodeChildProcess from "node:child_process";
