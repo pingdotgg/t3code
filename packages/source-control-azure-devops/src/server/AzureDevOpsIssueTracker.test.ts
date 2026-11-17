@@ -8,7 +8,6 @@ import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSour
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as AzureDevOpsIssueTracker from "./AzureDevOpsIssueTracker.ts";
-import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 
 const encode = (value: unknown) => JSON.stringify(value);
 
@@ -128,16 +127,11 @@ function answer(args: ReadonlyArray<string>): string {
   throw new Error(`unexpected az invocation ${args.join(" ")}`);
 }
 
-const pullRequestViewer = Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
-  getViewer: () => Effect.succeed("bilal@acme.test"),
-});
-
 function tracker(onExecute: (args: ReadonlyArray<string>, stdin: string | undefined) => string) {
   return AzureDevOpsIssueTracker.make.pipe(
     Effect.provide(
       Layer.mergeAll(
         NodeFileSystem.layer,
-        pullRequestViewer,
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
           execute: ({ args, stdin }) =>
             Effect.succeed(TestSourceControlHost.processOutput(onExecute(args, stdin))),
@@ -227,46 +221,43 @@ describe("AzureDevOpsIssueTracker", () => {
       const hydrated: string[] = [];
       const api = yield* AzureDevOpsIssueTracker.make.pipe(
         Effect.provide(
-          Layer.mergeAll(
-            pullRequestViewer,
-            Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
-              execute: ({ args }) => {
-                const resource = args[args.indexOf("--resource") + 1];
-                if (resource === "workitems") {
-                  // `az devops invoke` resolves `wit/workitems` to the create route
-                  // (`.../workitems/${type}`) and fails before sending anything.
-                  return Effect.fail(
-                    new AzureDevOpsCli.AzureDevOpsCommandFailedError({
-                      operation: "execute",
-                      command: "az",
-                      cwd: "/w",
-                      argumentCount: args.length,
-                      cause: "KeyError: 'type'",
-                    }),
-                  );
-                }
-                if (resource !== "wiql" && resource !== "workitemsbatch") {
-                  return Effect.succeed(TestSourceControlHost.processOutput(answer(args)));
-                }
-                return fs.readFileString(args[args.indexOf("--in-file") + 1]!).pipe(
-                  Effect.orDie,
-                  Effect.map((body) => {
-                    if (resource === "wiql") {
-                      bodies.push(body);
-                      return TestSourceControlHost.processOutput(
-                        encode({ workItems: [{ id: 9 }, { id: 7 }, { id: 3 }] }),
-                      );
-                    }
-                    hydrated.push((JSON.parse(body) as { ids: number[] }).ids.join(","));
-                    // The page as REST answers it: an envelope, in an order of its own.
-                    return TestSourceControlHost.processOutput(
-                      encode({ count: 2, value: [WORK_ITEM, { ...WORK_ITEM, id: 9 }] }),
-                    );
+          Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
+            execute: ({ args }) => {
+              const resource = args[args.indexOf("--resource") + 1];
+              if (resource === "workitems") {
+                // `az devops invoke` resolves `wit/workitems` to the create route
+                // (`.../workitems/${type}`) and fails before sending anything.
+                return Effect.fail(
+                  new AzureDevOpsCli.AzureDevOpsCommandFailedError({
+                    operation: "execute",
+                    command: "az",
+                    cwd: "/w",
+                    argumentCount: args.length,
+                    cause: "KeyError: 'type'",
                   }),
                 );
-              },
-            }),
-          ),
+              }
+              if (resource !== "wiql" && resource !== "workitemsbatch") {
+                return Effect.succeed(TestSourceControlHost.processOutput(answer(args)));
+              }
+              return fs.readFileString(args[args.indexOf("--in-file") + 1]!).pipe(
+                Effect.orDie,
+                Effect.map((body) => {
+                  if (resource === "wiql") {
+                    bodies.push(body);
+                    return TestSourceControlHost.processOutput(
+                      encode({ workItems: [{ id: 9 }, { id: 7 }, { id: 3 }] }),
+                    );
+                  }
+                  hydrated.push((JSON.parse(body) as { ids: number[] }).ids.join(","));
+                  // The page as REST answers it: an envelope, in an order of its own.
+                  return TestSourceControlHost.processOutput(
+                    encode({ count: 2, value: [WORK_ITEM, { ...WORK_ITEM, id: 9 }] }),
+                  );
+                }),
+              );
+            },
+          }),
         ),
       );
       const page = yield* api.listIssues({
@@ -299,47 +290,12 @@ describe("AzureDevOpsIssueTracker", () => {
     }).pipe(Effect.provide(NodeFileSystem.layer)),
   );
 
-  it.effect("reads the viewer from the organization's account service", () =>
+  it.effect("names the viewer without a request that a sign-in could refuse", () =>
     Effect.gen(function* () {
-      const organizations: Array<string | undefined> = [];
       const api = yield* tracker((args) => {
-        organizations.push(args[args.indexOf("--organization") + 1]);
-        return encode({ displayName: "Theo", emailAddress: "theo@acme.test" });
+        throw new Error(`unexpected az invocation ${args.join(" ")}`);
       });
-      const viewer = yield* api.getViewer({ cwd: "/w", host: "dev.azure.com", scope: "acme/web" });
-      yield* api.getViewer({ cwd: "/w", host: "acme.visualstudio.com", scope: "web" });
-      expect(viewer).toBe("theo@acme.test");
-      expect(organizations).toEqual([
-        "https://vssps.dev.azure.com/acme",
-        "https://vssps.dev.azure.com/acme",
-      ]);
-    }),
-  );
-
-  it.effect("names the viewer through the organization when its PAT cannot reach profiles", () =>
-    Effect.gen(function* () {
-      const api = yield* AzureDevOpsIssueTracker.make.pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            NodeFileSystem.layer,
-            pullRequestViewer,
-            Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
-              execute: ({ args }) =>
-                Effect.fail(
-                  new AzureDevOpsCli.AzureDevOpsCliAuthenticationError({
-                    operation: "execute",
-                    command: "az",
-                    cwd: "/w",
-                    argumentCount: args.length,
-                    cause: "TF400813: The user is not authorized to access this resource.",
-                  }),
-                ),
-            }),
-          ),
-        ),
-      );
-      const viewer = yield* api.getViewer({ cwd: "/w", host: "dev.azure.com", scope: "acme/web" });
-      expect(viewer).toBe("bilal@acme.test");
+      expect(yield* api.getViewer({ cwd: "/w", host: "dev.azure.com" })).toBe("@Me");
     }),
   );
 
@@ -512,7 +468,6 @@ describe("AzureDevOpsIssueTracker", () => {
               FileSystem.makeNoop({ makeTempFileScoped: () => Effect.fail(denied) }),
             ),
             Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
-            pullRequestViewer,
           ),
         ),
       );

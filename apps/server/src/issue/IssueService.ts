@@ -333,11 +333,7 @@ const make = Effect.gen(function* () {
       if (viewerRequests.has(project.host)) continue;
       const request = yield* Effect.cached(
         project.api
-          .getViewer({
-            cwd: project.project.workspaceRoot,
-            host: project.host,
-            scope: project.scope,
-          })
+          .getViewer({ cwd: project.project.workspaceRoot, host: project.host })
           .pipe(Effect.tap((viewer) => Effect.sync(() => viewers.set(project.host, viewer)))),
       );
       viewerRequests.set(project.host, request);

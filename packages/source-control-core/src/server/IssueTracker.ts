@@ -99,7 +99,10 @@ export interface IssueTrackerApi {
   readonly capabilities: IssueCapabilities;
 
   /** The signed-in account, which is what involvement filtering compares against. */
-  readonly getViewer: (input: IssueScopeTarget) => Effect.Effect<string, IssueTrackerError>;
+  readonly getViewer: (input: {
+    readonly cwd: string;
+    readonly host: string;
+  }) => Effect.Effect<string, IssueTrackerError>;
 
   readonly listIssues: (
     input: IssueScopeTarget & {

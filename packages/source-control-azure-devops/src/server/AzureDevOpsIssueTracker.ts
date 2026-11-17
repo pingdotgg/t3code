@@ -21,13 +21,11 @@ import {
 } from "@t3tools/source-control-core/server/IssueTracker";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
-import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import {
   azureDevOpsReactionType,
   closedStateNames,
   workItemStates,
   decodeCommentsJson,
-  decodeProfileJson,
   decodeUpdatesJson,
   decodeWorkItemJson,
   decodeWorkItemsJson,
@@ -145,18 +143,6 @@ function parseScope(
   return { organization: `https://${host}/${encodeURIComponent(organization)}`, project };
 }
 
-/**
- * The organization's account service, where profiles live: `az` finds no `profile` area on the
- * organization URL itself, and takes only a URL that names an organization.
- */
-function profileOrganization(organization: string): string {
-  const url = new URL(organization);
-  const name = url.hostname.toLowerCase().endsWith(".visualstudio.com")
-    ? url.hostname.split(".")[0]
-    : url.pathname.split("/")[1];
-  return `https://vssps.dev.azure.com/${name}`;
-}
-
 function parseNumber(key: string): number | null {
   return /^[1-9]\d{0,9}$/.test(key) ? Number(key) : null;
 }
@@ -216,12 +202,9 @@ function reasonFor(error: AzureDevOpsCli.AzureDevOpsCliError): IssueTrackerError
 export const make: Effect.Effect<
   IssueTrackerApi,
   never,
-  | AzureDevOpsCli.AzureDevOpsCli
-  | AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli
-  | FileSystem.FileSystem
+  AzureDevOpsCli.AzureDevOpsCli | FileSystem.FileSystem
 > = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
-  const pullRequests = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
   const fs = yield* FileSystem.FileSystem;
 
   const fail = (operation: string) => (error: AzureDevOpsCli.AzureDevOpsCliError) =>
@@ -596,43 +579,9 @@ export const make: Effect.Effect<
     kind: KIND,
     capabilities: CAPABILITIES,
 
-    // The profile the token belongs to, which is what WIQL's `@Me` resolves to. Its email is the
-    // `uniqueName` every identity on a work item carries, so the two compare.
-    getViewer: (input) =>
-      scoped("getViewer", input).pipe(
-        Effect.flatMap((scope) =>
-          read({
-            cwd: input.cwd,
-            operation: "getViewer",
-            args: [
-              "devops",
-              "invoke",
-              "--detect",
-              "false",
-              "--organization",
-              profileOrganization(scope.organization),
-              "--area",
-              "profile",
-              "--resource",
-              "profiles",
-              "--api-version",
-              REST_API_VERSION,
-              "--route-parameters",
-              "id=me",
-            ],
-            decode: decodeProfileJson,
-          }),
-        ),
-        Effect.filterOrFail(
-          (login) => login !== null,
-          () => refused("getViewer", "Azure DevOps could not name the signed-in account."),
-        ),
-        // A PAT saved for one organization does not authenticate the account service, which `az`
-        // keys apart; the pull request lookup resolves `me` through the organization instead.
-        Effect.catch((profileError) =>
-          pullRequests.getViewer({ cwd: input.cwd }).pipe(Effect.mapError(() => profileError)),
-        ),
-      ),
+    // Listing filters with WIQL's `@Me`, so nothing compares against a name. Looking one up
+    // needs a profile host that a PAT saved for one organization cannot reach.
+    getViewer: () => Effect.succeed("@Me"),
 
     listIssues: Effect.fn("AzureDevOpsIssueTracker.listIssues")(function* (input) {
       const cursor = input.cursor === undefined ? undefined : parseCursor(input.cursor);
