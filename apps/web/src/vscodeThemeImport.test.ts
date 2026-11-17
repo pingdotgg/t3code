@@ -468,6 +468,26 @@ describe("VS Code theme import", () => {
     expect(getThemeColorsForMode(themes[2]!, "light")).toBeNull();
   });
 
+  it("keeps the custom CSS a light and dark pair shares, and pairs no differing CSS", () => {
+    const make = (appearance: "light" | "dark", css: string) =>
+      parseThemeFile({
+        version: THEME_FILE_VERSION,
+        name: `Aurora ${appearance === "light" ? "Light" : "Dark"}`,
+        appearance,
+        colors: { canvas: appearance === "light" ? "#fafafa" : "#101014" },
+        css,
+      });
+    const shared = "body { outline: 8px solid #ff2d95; }";
+    const paired = pairVsCodeThemes([make("light", shared), make("dark", shared)]);
+    expect(paired.map((theme) => [theme.label, theme.css])).toEqual([["Aurora", shared]]);
+
+    const separate = pairVsCodeThemes([
+      make("light", shared),
+      make("dark", "body { color: red; }"),
+    ]);
+    expect(separate.map((theme) => theme.label)).toEqual(["Aurora Light", "Aurora Dark"]);
+  });
+
   it("does not guess when a family is ambiguous", () => {
     const make = (name: string, type: "light" | "dark") =>
       parseVsCodeThemeFile({
